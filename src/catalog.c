@@ -74,7 +74,7 @@ static int local_list(const char *kind,int page,const char *query){
     FILE *f=fopen("library.local.tsv","r");if(!f)return -1;
     char line[2600];int first=(page-1)*PAGE_SIZE;
     while(fgets(line,sizeof(line),f)){
-        char *p[8];if(line[0]=='#'||split(line,p,8)!=8||strcmp(p[4],kind))continue;
+        char *p[8];if((line[0]=='#'&&!strchr(line,'\t'))||split(line,p,8)!=8||strcmp(p[4],kind))continue;
         if(*query&&!strcasestr(p[0],query))continue;
         if(total++<first||used==PAGE_SIZE)continue;
         Entry *e=&entries[used++];clean(e->title,sizeof(e->title),p[0]);clean(e->meta,sizeof(e->meta),p[1]);

@@ -8,7 +8,7 @@ worker = pathlib.Path("build/greenlink-catalog").resolve()
 with tempfile.TemporaryDirectory() as folder:
     root = pathlib.Path(folder)
     rows = [f"Movie {i}\t2000 / MOVIE\t\t\tmovie\t{i}\t0\t0\n" for i in range(1, 8)]
-    rows += ["A Show\tSERIES\t\t\ttv\t100\t0\t0\n"]
+    rows += ["#A Show\tSERIES\t\t\ttv\t100\t0\t0\n"]
     (root / "library.local.tsv").write_text("".join(rows))
     (root / "sources.local.tsv").write_text(
         "1\t0\t0\tmovie\tServer A\t720P\thttps://example.org/movie.m3u8\n"
@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory() as folder:
     assert len(run("movie")) == 7
     assert run("movie", 2)[0] == "# pages=2 total=7"
     assert run("movie", 2)[1].startswith("Movie 7\t")
-    assert run("tv")[1].startswith("A Show\t")
+    assert run("tv")[1].startswith("#A Show\t")
     episode = run("source", ident=100, season=1, episode=2)
     assert len(episode) == 3 and "Server A" in episode[1] and "Server B" in episode[2]
     assert "wrong.m3u8" not in "".join(episode) and "file:" not in "".join(episode)

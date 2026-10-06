@@ -102,7 +102,7 @@ static int read_catalog(const char *path) {
     if(!f) { snprintf(status,sizeof(status),"CATALOG NOT FOUND - ADD CATALOG.TSV");return 0; }
     while(fgets(line,sizeof(line),f) && count<MAX_TITLES) {
         char *fields[8],*p=line; int nf=0;
-        if(line[0]=='#'){int pages,items;if(sscanf(line,"# pages=%d total=%d",&pages,&items)==2&&pages>0&&pages<=2000&&items>=0){listing_pages=pages;listing_total=items;}continue;}
+        if(line[0]=='#'&&!strchr(line,'\t')){int pages,items;if(sscanf(line,"# pages=%d total=%d",&pages,&items)==2&&pages>0&&pages<=2000&&items>=0){listing_pages=pages;listing_total=items;}continue;}
         if(line[0]=='\n')continue;
         if(!strchr(line,'\n')&&!feof(f)) { int ch; while((ch=fgetc(f))!=EOF&&ch!='\n'){} continue; }
         line[strcspn(line,"\r\n")]=0;

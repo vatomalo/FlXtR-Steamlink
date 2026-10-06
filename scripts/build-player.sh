@@ -33,6 +33,7 @@ cd "$project"
 $CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" \
     $(pkg-config --cflags sdl2) -c src/player.c -o build/player-arm.o
 $CC build/player-arm.o -o build/greenlink-player-arm \
+    -Wl,--dynamic-list=scripts/player.exports \
     -L"$cache/install/lib" -lavformat -lavcodec -lswresample -lavutil \
     -lSLVideo $(pkg-config --libs sdl2 gnutls) -lm -lpthread -ldl -lz
 $STRIP build/greenlink-player-arm

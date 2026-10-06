@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "font.h"
+#include "video_layout.h"
 
 #define W 960
 #define H 540
@@ -29,6 +30,7 @@ static SDL_Texture *posters[VISIBLE];
 static SDL_GameController *pads[4];
 static pid_t player_pid;
 static int stopping_player;
+static int viewing=VIEW_FIT;
 static Uint32 stop_time;
 static char status[100]="SELECT A TITLE TO BEGIN";
 static unsigned char star_x[STARS], star_y[STARS], star_speed[STARS];
@@ -63,6 +65,23 @@ static void wrap(int x,int y,const char *str,int cols,int lines,SDL_Color c) {
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
+}
+/* SDL_HideWindow leaves the last graphics frame over the hardware video plane
+ * on Steam Link. Release the graphics backend before handing over to SLVideo. */
+static void close_ui(void) {
+    clear_posters();
+    SDL_DestroyRenderer(renderer);renderer=NULL;
+    SDL_DestroyWindow(window);window=NULL;
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+}
+static int open_ui(void) {
+    if(SDL_InitSubSystem(SDL_INIT_VIDEO))return -1;
+    window=SDL_CreateWindow("FlXtR Steamlink",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,W,H,SDL_WINDOW_SHOWN);
+    if(window)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
+    if(window&&!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
+    if(!renderer){close_ui();return -1;}
+    SDL_RenderSetLogicalSize(renderer,W,H);SDL_ShowCursor(SDL_DISABLE);
+    return 0;
 }
 static void filter(void) {
     total=0; for(int i=0;i<count;i++)if(!ready_only||titles[i].url[0])visible[total++]=i;
@@ -149,6 +168,8 @@ static void draw(Uint32 tick) {
         rect(665,94,1,378,dim,1);text(690,97,"NOW SELECTED",1,dim,30);
         wrap(690,126,t->title,19,4,green);wrap(690,228,t->meta,19,5,white);
         text(690,354,t->url[0]?"[A] PLAY":"NO STREAM YET",2,t->url[0]?green:dim,20);
+        text(690,395,"[LB/RB] VIEW",1,dim,25);
+        text(690,416,view_names[viewing],1,green,25);
         snprintf(num,sizeof(num),"PAGE %02d / %02d",page+1,(total+5)/6);text(690,455,num,1,dim,25);
     }
     rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(713,509,"DPAD MOVE / B BACK",1,green,30);
@@ -159,24 +180,28 @@ static void play(void) {
     Title *t=&titles[visible[selection]];
     if(!t->url[0]) { snprintf(status,sizeof(status),"NO DIRECT STREAM - FLIXER RESOLUTION IS NOT CONNECTED YET");return; }
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
-    clear_posters();SDL_HideWindow(window);
+    close_ui();
     player_pid=fork();
     if(player_pid==0) {
+        signal(SIGUSR1,SIG_IGN); /* Ignore a controller press before exec is ready. */
         int log=open("player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
-        execl("./greenlink-player","greenlink-player",t->url,(char*)NULL);_exit(127);
+        const char *modes[]={"fit","stretch","pixel"};
+        execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],(char*)NULL);_exit(127);
     }
-    if(player_pid<0){player_pid=0;SDL_ShowWindow(window);snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
+    if(player_pid<0){player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
 }
 static void action(SDL_Keycode key) {
     if(player_pid) {
+        if(key==SDLK_y||key==SDLK_v||key==SDLK_i)kill(player_pid,SIGUSR1);
         if((key==SDLK_ESCAPE||key==SDLK_BACKSPACE) && !stopping_player){kill(player_pid,SIGTERM);stopping_player=1;stop_time=SDL_GetTicks();}
         return;
     }
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else running=0; }
     else if(key==SDLK_i)about=!about;
     else if(key==SDLK_y)stars_on=!stars_on;
+    else if(key==SDLK_v){viewing=(viewing+1)%VIEW_COUNT;snprintf(status,sizeof(status),"VIEW: %s / DURING PLAYBACK: Y CHANGE VIEW, B STOP",view_names[viewing]);}
     else if(key==SDLK_TAB){ready_only=!ready_only;filter();}
     else if(key==SDLK_RETURN||key==SDLK_SPACE)play();
     else if(!about&&total){
@@ -202,12 +227,9 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--no-stars"))stars_on=0;
         else {fprintf(stderr,"Usage: %s [--catalog file] [--screenshot file.bmp] [--frames N] [--no-stars]\n",argv[0]);return 2;}
     }
-    if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMECONTROLLER|SDL_INIT_TIMER)) {fprintf(stderr,"SDL: %s\n",SDL_GetError());return 1;}
-    window=SDL_CreateWindow("FlXtR Steamlink",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,W,H,SDL_WINDOW_SHOWN);
-    if(window)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
-    if(window&&!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
-    if(!renderer){fprintf(stderr,"Renderer: %s\n",SDL_GetError());SDL_Quit();return 1;}
-    SDL_RenderSetLogicalSize(renderer,W,H);SDL_ShowCursor(SDL_DISABLE);
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
+    if(SDL_Init(SDL_INIT_GAMECONTROLLER|SDL_INIT_TIMER)) {fprintf(stderr,"SDL: %s\n",SDL_GetError());return 1;}
+    if(open_ui()){fprintf(stderr,"Renderer: %s\n",SDL_GetError());SDL_Quit();return 1;}
     for(int i=0;i<SDL_NumJoysticks();i++)add_pad(i);
     uint32_t seed=0x31415926;
     for(int i=0;i<STARS;i++){seed=seed*1664525u+1013904223u;star_x[i]=seed>>24;star_y[i]=seed>>16;star_speed[i]=1+(seed%3);}
@@ -227,6 +249,8 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_TAB);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_START:action(SDLK_i);break;
+                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(SDLK_v);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:action(SDLK_UP);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:action(SDLK_DOWN);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:action(SDLK_LEFT);break;
@@ -235,7 +259,7 @@ int main(int argc,char **argv) {
             }
         } while(SDL_PollEvent(&event));
         if(player_pid){int code;pid_t p=waitpid(player_pid,&code,WNOHANG);
-            if(p==player_pid){player_pid=0;stopping_player=0;SDL_ShowWindow(window);snprintf(status,sizeof(status),WIFEXITED(code)&&WEXITSTATUS(code)==0?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");dirty=1;}
+            if(p==player_pid){player_pid=0;stopping_player=0;if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;}snprintf(status,sizeof(status),WIFEXITED(code)&&WEXITSTATUS(code)==0?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");dirty=1;}
             else if(stopping_player&&SDL_GetTicks()-stop_time>3000)kill(player_pid,SIGKILL);
             SDL_Delay(30);continue;
         }
@@ -247,6 +271,6 @@ int main(int argc,char **argv) {
         }
     }
     if(player_pid){kill(player_pid,SIGKILL);waitpid(player_pid,NULL,0);}
-    clear_posters();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
-    SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_Quit();return 0;
+    close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
+    SDL_Quit();return 0;
 }

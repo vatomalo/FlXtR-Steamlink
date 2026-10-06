@@ -4,6 +4,15 @@
 #include <assert.h>
 
 int main(void) {
+    VideoRect r;
+    assert(!video_rect(VIEW_FIT,720,576,16,15,1920,1080,&r));
+    assert(r.x==240&&r.y==0&&r.w==1440&&r.h==1080);
+    assert(!video_rect(VIEW_STRETCH,640,480,1,1,1920,1080,&r));
+    assert(r.x==0&&r.y==0&&r.w==1920&&r.h==1080);
+    assert(!video_rect(VIEW_PIXEL,640,480,1,1,1920,1080,&r));
+    assert(r.x==640&&r.y==300&&r.w==640&&r.h==480);
+    assert(video_rect(VIEW_PIXEL,1920,1080,1,1,1280,720,&r)<0);
+    assert(video_rect(VIEW_FIT,0,480,1,1,1920,1080,&r)<0);
     assert(SDL_Init(SDL_INIT_TIMER)==0);
     FILE *f=fopen("build/test-catalog.tsv","w");assert(f);
     fputs("# comment\nONE\tDEMO\t\thttps://example.org/one.m3u8\nTWO\tDEMO\t\t\n",f);
@@ -21,6 +30,17 @@ int main(void) {
     action(SDLK_TAB);assert(total==3);
     action(SDLK_i);assert(about);action(SDLK_ESCAPE);assert(!about&&running);
     action(SDLK_y);assert(!stars_on);
+    action(SDLK_v);assert(viewing==VIEW_STRETCH);
+    action(SDLK_v);assert(viewing==VIEW_PIXEL);
+    action(SDLK_v);assert(viewing==VIEW_FIT);
+    SDL_setenv("SDL_VIDEODRIVER","dummy",1);
+    assert(open_ui()==0);selection=1;draw(0);
+    assert(cached_page==0);
+    close_ui();assert(!window&&!renderer&&cached_page==-1);
+    assert(!(SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO));
+    assert(SDL_WasInit(SDL_INIT_TIMER)&SDL_INIT_TIMER);
+    assert(open_ui()==0);assert(selection==1&&total==3);draw(0);
+    close_ui();
     action(SDLK_ESCAPE);assert(!running);
-    SDL_Quit();puts("PASS: catalog bounds, URL policy, navigation, filters and exit");return 0;
+    SDL_Quit();puts("PASS: catalog bounds, navigation, graphics release/restore and exit");return 0;
 }

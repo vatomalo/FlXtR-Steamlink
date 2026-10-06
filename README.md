@@ -31,6 +31,22 @@ WSL/Docker are build tools on the PC.
 | All / playable filter | X | Tab |
 | Toggle stars | Y | Y |
 | About | Start | I |
+| Select viewing mode in library | LB / RB | V |
+| Cycle viewing mode during playback | Y / LB / RB / Start | Controller required |
+
+Launching a movie releases the library's graphics layer completely. Stopping it
+recreates the library at the same selection. Viewing modes are fullscreen fit
+(preserve aspect ratio), stretch (fill display), and centered 1:1 source pixels.
+1:1 is unavailable when the source is larger than the display. A small mode label
+appears for 2.5 seconds after switching, then disappears.
+
+Viewing modes use an optional Marvell viewport adapter because SLVideo has no
+public video-rectangle API. It captures the live handle from SLVideo's existing
+viewport call, verifies rectangle readback, and restores the original viewport on
+exit. It uses no private object offsets. This is experimental: rectangle acceptance
+does not establish visual scaling on every firmware. Unsupported modes report
+`VIEW MODE UNAVAILABLE`. Keyboard events during playback are unavailable while
+the library's video subsystem is released; controller input remains active.
 
 The player currently supports sequential playback and stop. Seeking, pause,
 subtitles, network retry, and a robust audio-master synchronization loop remain work

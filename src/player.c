@@ -1,6 +1,7 @@
 /* Direct H.264 player. Video stays compressed until Valve SLVideo decodes it.
  * Prototype: sequential playback/stop only; seeking/subtitles are not implemented.
  */
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include <SDL.h>
 #include <SLVideo.h>
@@ -15,10 +16,54 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "hardware_layout.h"
+#include "font.h"
 
 static volatile sig_atomic_t stopped;
+static volatile sig_atomic_t change_view;
+static int viewing=VIEW_FIT,screen_w,screen_h,source_w,source_h,sar_n=1,sar_d=1;
+static CSLVideoContext *view_context;
+static CSLVideoOverlay *view_overlay;
+static Uint32 overlay_until;
 static int64_t deadline;
 static void stop(int sig) { (void)sig;stopped=1; }
+static void next_view(int sig) { (void)sig;change_view=1; }
+static void show_view(const char *label) {
+    if(!view_overlay)view_overlay=SLVideo_CreateOverlay(view_context,480,64);
+    if(!view_overlay)return;
+    uint32_t *pixels=NULL;int pitch=0;
+    SLVideo_HideOverlay(view_overlay);
+    SLVideo_GetOverlayPixels(view_overlay,&pixels,&pitch);
+    if(!pixels||pitch<480*4)return;
+    for(int y=0;y<64;y++){
+        uint32_t *row=(uint32_t*)((char*)pixels+y*pitch);
+        for(int x=0;x<480;x++)row[x]=0xe8000000;
+    }
+    for(int n=0;label[n]&&n<38;n++){
+        size_t i;
+        for(i=0;i<sizeof(glyphs)/sizeof(glyphs[0]);i++)if(glyphs[i].c==label[n])break;
+        if(i==sizeof(glyphs)/sizeof(glyphs[0]))continue;
+        for(int y=0;y<7;y++)for(int x=0;x<5;x++)if(glyphs[i].row[y]&(16>>x))
+            for(int dy=0;dy<2;dy++)for(int dx=0;dx<2;dx++)
+                ((uint32_t*)((char*)pixels+(24+y*2+dy)*pitch))[12+n*12+x*2+dx]=0xff74ff84;
+    }
+    SLVideo_SetOverlayDisplayArea(view_overlay,0.05f,0.83f,0.5f,0.12f);
+    SLVideo_ShowOverlay(view_overlay);overlay_until=SDL_GetTicks()+2500;
+}
+static void apply_view(int notify) {
+    VideoRect rect;
+    int rc=video_rect(viewing,source_w,source_h,sar_n,sar_d,screen_w,screen_h,&rect);
+    if(!rc)rc=hardware_viewport(&rect);
+    if(rc){fprintf(stderr,"Viewing mode unavailable: %s\n",view_names[viewing]);if(notify)show_view("VIEW MODE UNAVAILABLE");}
+    else {
+        fprintf(stderr,"Viewport %s: %d,%d %dx%d (readback verified)\n",view_names[viewing],rect.x,rect.y,rect.w,rect.h);
+        if(notify)show_view(view_names[viewing]);
+    }
+}
+static void playback_controls(void) {
+    if(change_view&&view_context){change_view=0;viewing=(viewing+1)%VIEW_COUNT;apply_view(1);}
+    if(overlay_until&&(Sint32)(SDL_GetTicks()-overlay_until)>=0){SLVideo_HideOverlay(view_overlay);overlay_until=0;}
+}
 static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&av_gettime_relative()>deadline); }
 /* Apply TLS verification to every HLS playlist, key and segment, not only the
  * top-level URL. Never permit a remote playlist to read local files. */
@@ -30,7 +75,7 @@ static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int fla
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
 }
 static void wait_until(int64_t when) {
-    while(!stopped&&av_gettime_relative()<when)SDL_Delay(2);
+    while(!stopped&&av_gettime_relative()<when){playback_controls();SDL_Delay(2);}
 }
 static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFrame *frame,SDL_AudioDeviceID device) {
     int rc=avcodec_send_packet(codec,pkt);
@@ -42,7 +87,7 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
         if(av_samples_alloc(&pcm,NULL,2,out_count,AV_SAMPLE_FMT_S16,0)<0){av_frame_unref(frame);return AVERROR(ENOMEM);}
         int samples=swr_convert(swr,&pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
-            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2)SDL_Delay(5);
+            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(5);}
             if(!stopped&&SDL_QueueAudio(device,pcm,samples*4)<0){av_freep(&pcm);av_frame_unref(frame);return AVERROR(EIO);}
         }
         av_freep(&pcm);av_frame_unref(frame);
@@ -57,12 +102,20 @@ int main(int argc,char **argv) {
     CSLVideoContext *context=NULL;CSLVideoStream *video=NULL;
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
     int64_t origin=AV_NOPTS_VALUE,clock_start=0;unsigned frames=0;double limit=0;
-    if(argc<2||argc>3){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] | --probe URL\n");return 2;}
+    if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
     int probe=!strcmp(argv[1],"--probe");
     if(probe&&argc!=3)return 2;
     const char *url=probe?argv[2]:argv[1];
-    if(!probe&&argc==3)limit=atof(argv[2]);
-    signal(SIGINT,stop);signal(SIGTERM,stop);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
+    if(!probe)for(int i=2;i<argc;i++){
+        if(!strcmp(argv[i],"--view")&&i+1<argc){
+            const char *v=argv[++i];
+            if(!strcmp(v,"fit"))viewing=VIEW_FIT;
+            else if(!strcmp(v,"stretch"))viewing=VIEW_STRETCH;
+            else if(!strcmp(v,"pixel"))viewing=VIEW_PIXEL;
+            else return 2;
+        }else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
+    }
+    signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
     fmt=avformat_alloc_context();if(!fmt)goto done;
     fmt->interrupt_callback.callback=interrupt_io;fmt->io_open=open_io;
@@ -90,6 +143,9 @@ int main(int argc,char **argv) {
     /* Normal mode supports B-frames, unlike Moonlight's low-latency mode. */
     video=SLVideo_CreateStream(context,k_ESLVideoFormatH264,0);
     if(!video){fprintf(stderr,"SLVideo stream unavailable\n");goto done;}
+    view_context=context;source_w=vp->width;source_h=vp->height;
+    AVRational sar=av_guess_sample_aspect_ratio(fmt,vs,NULL);sar_n=sar.num;sar_d=sar.den;
+    SLVideo_GetDisplayResolution(context,&screen_w,&screen_h);apply_view(0);
     AVRational fps=av_guess_frame_rate(fmt,vs,NULL);
     if(fps.num>0&&fps.den>0)SLVideo_SetStreamTargetFramerate(video,fps.num,fps.den);
     rc=av_bsf_alloc(av_bsf_get_by_name("h264_mp4toannexb"),&bsf);if(rc<0)goto done;
@@ -113,6 +169,7 @@ int main(int argc,char **argv) {
     if(!packet||!filtered||!frame)goto done;
     deadline=0;
     while(!stopped) {
+        playback_controls();
         deadline=av_gettime_relative()+15000000;rc=av_read_frame(fmt,packet);deadline=0;
         if(rc<0)break;
         int track=packet->stream_index;
@@ -150,6 +207,8 @@ int main(int argc,char **argv) {
     result=(stopped||rc==AVERROR_EOF)?0:1;
     fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
 done:
+    if(view_overlay){SLVideo_HideOverlay(view_overlay);SLVideo_FreeOverlay(view_overlay);view_overlay=NULL;}
+    restore_viewport();view_context=NULL;
     if(device)SDL_CloseAudioDevice(device);
     if(video)SLVideo_FreeStream(video);
     if(context)SLVideo_FreeContext(context);

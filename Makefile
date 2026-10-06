@@ -4,7 +4,7 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
 all: build/greenlink
-build/greenlink: src/shell.c src/font.h
+build/greenlink: src/shell.c src/font.h src/video_layout.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS)
 

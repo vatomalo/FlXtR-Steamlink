@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Build the public source inside a Steam Link SDK container. No deployment secrets.
+set -euo pipefail
+repo=https://github.com/vatomalo/FlXtR-Steamlink.git
+source_dir=${FLXTR_SOURCE_DIR:-/opt/FlXtR-Steamlink}
+export GREENLINK_BUILD_CACHE=${GREENLINK_BUILD_CACHE:-/var/cache/flxtr-steamlink}
+export STEAMLINK_SDK_PATH=${STEAMLINK_SDK_PATH:-/opt/steamlink-sdk}
+shell_only=0
+update=1
+usage() {
+    cat <<'HELP'
+Usage: autocompile [--shell-only] [--no-update]
+
+Clone/update vatomalo/FlXtR-Steamlink and build an installable Steam Link package.
+  --shell-only  Build the UI without compiling the video player.
+  --no-update   Use the current checkout without fetching GitHub changes.
+  -h, --help    Show this help.
+
+Defaults:
+  source: /opt/FlXtR-Steamlink
+  cache:  /var/cache/flxtr-steamlink
+  SDK:    /opt/steamlink-sdk
+
+Override with FLXTR_SOURCE_DIR, GREENLINK_BUILD_CACHE, STEAMLINK_SDK_PATH or JOBS.
+Updates fast-forward main only. Local modifications are never reset or discarded.
+Builds only; does not connect to, reboot, or interrupt the Steam Link.
+HELP
+}
+for arg in "$@"; do
+    case "$arg" in
+        --shell-only) shell_only=1 ;;
+        --no-update) update=0 ;;
+        -h|--help) usage; exit 0 ;;
+        *) printf 'Unknown option: %s\n' "$arg" >&2; usage >&2; exit 2 ;;
+    esac
+done
+if [[ ! -f "$STEAMLINK_SDK_PATH/setenv.sh" ]]; then
+    printf 'Steam Link SDK missing: %s\n' "$STEAMLINK_SDK_PATH" >&2; exit 1
+fi
+if [[ ! -e "$source_dir" ]]; then
+    git clone --branch main --single-branch "$repo" "$source_dir"
+elif [[ ! -d "$source_dir/.git" ]]; then
+    printf 'Source path is not a Git checkout: %s\n' "$source_dir" >&2; exit 1
+fi
+cd "$source_dir"
+if (( update )); then
+    if [[ -n "$(git status --porcelain)" ]]; then
+        printf 'Local changes found. Commit them or use --no-update; nothing was overwritten.\n' >&2; exit 1
+    fi
+    if [[ "$(git branch --show-current)" != main ]]; then
+        printf 'Checkout is not on main. Select main or use --no-update.\n' >&2; exit 1
+    fi
+    origin=$(git remote get-url origin)
+    if [[ "${origin%.git}" != "${repo%.git}" ]]; then
+        printf 'Unexpected origin. Use the intended checkout or --no-update.\n' >&2; exit 1
+    fi
+    git fetch origin main
+    git merge --ff-only origin/main
+fi
+mkdir -p "$GREENLINK_BUILD_CACHE"
+if (( ! shell_only )); then bash scripts/build-player.sh; fi
+bash scripts/build-steamlink.sh
+{
+    printf 'commit=%s\n' "$(git rev-parse HEAD)"
+    printf 'built_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    sha256sum dist/greenlink.tgz
+} > dist/build-info.txt
+printf '\nBuild ready: %s/dist/greenlink.tgz\n' "$source_dir"
+printf 'Manifest:    %s/dist/build-info.txt\n' "$source_dir"

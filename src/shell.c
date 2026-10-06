@@ -115,7 +115,7 @@ static void draw(Uint32 tick) {
         int x=star_x[i]*W/256, y=(star_y[i]*H/256+(tick/100)*star_speed[i]/8)%H;
         SDL_Color c={145+(i%3)*40,145+(i%3)*40,145+(i%3)*40,255};rect(x,y,1+(i%9==0),1+(i%9==0),c,1);
     }
-    text(30,24,"GREENLINK",4,green,12);text(251,38,"CINEMA / STEAM LINK",1,dim,24);
+    text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
     text(737,32,"NATIVE / MINIMAL",2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
@@ -203,7 +203,7 @@ int main(int argc,char **argv) {
         else {fprintf(stderr,"Usage: %s [--catalog file] [--screenshot file.bmp] [--frames N] [--no-stars]\n",argv[0]);return 2;}
     }
     if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMECONTROLLER|SDL_INIT_TIMER)) {fprintf(stderr,"SDL: %s\n",SDL_GetError());return 1;}
-    window=SDL_CreateWindow("Greenlink",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,W,H,SDL_WINDOW_SHOWN);
+    window=SDL_CreateWindow("FlXtR Steamlink",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,W,H,SDL_WINDOW_SHOWN);
     if(window)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
     if(window&&!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
     if(!renderer){fprintf(stderr,"Renderer: %s\n",SDL_GetError());SDL_Quit();return 1;}

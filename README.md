@@ -1,6 +1,6 @@
 # FlXtR-Steamlink
 
-A tiny native movie-library shell (currently named Greenlink): black background, green pixel text, poster art,
+A tiny native movie-library shell: black background, green pixel text, poster art,
 and a sparse white starfield inspired by old emulator menus.
 
 This is an **early prototype**, not a completed Flixer client. It does not bundle
@@ -53,6 +53,22 @@ docker run --rm -v "$PWD:/src" -w /src steamlink-sdk-wsl bash scripts/build-stea
 
 Output: `dist/greenlink.tgz` and `dist/steamlink/apps/greenlink/`.
 
+### One-command rebuild inside Docker
+
+The Dockerfile installs `/usr/local/bin/autocompile`. To add it to an existing SDK
+container, copy `scripts/autocompile` there and run `chmod 755` on that file.
+
+```sh
+autocompile               # update main, compile the player and shell, package
+autocompile --shell-only  # just rebuild the shell (retains an already-built player)
+autocompile --no-update   # build local changes without fetching
+```
+
+The default checkout is `/opt/FlXtR-Steamlink`; output is
+`/opt/FlXtR-Steamlink/dist/greenlink.tgz`. FFmpeg is cached in
+`/var/cache/flxtr-steamlink`. Updates refuse to overwrite local changes.
+This command builds only; it stores no SSH credentials and does not interrupt the box.
+
 ## Build the player
 
 ```sh
@@ -70,7 +86,7 @@ FFmpeg compilation uses four jobs by default; override `JOBS` if needed.
 ## Install
 
 Copy the `dist/steamlink` folder onto a FAT32 USB drive, insert it into the Steam
-Link, then power-cycle it. The Greenlink entry appears in the native menu. Existing
+Link, then power-cycle it. The FlXtR Steamlink entry appears in the native menu. Existing
 firmware and other apps are not replaced.
 
 Alternatively, extract `dist/greenlink.tgz` under `/home/apps` over an authenticated
@@ -89,6 +105,8 @@ art and empty playback URLs, not a scraped movie collection. Add a working direc
 URL before trying playback; automatic title lookup is not yet implemented.
 Use `catalog.local.tsv` for private or temporary URLs (excluded from Git), and launch
 `./greenlink --catalog catalog.local.tsv`. Playback URLs may expire.
+The menu launcher automatically uses `catalog.local.tsv` when it exists. This
+private catalog is excluded from Git and should be preserved during updates.
 
 ## Desktop tests
 

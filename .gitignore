@@ -2,5 +2,8 @@ build/
 dist/
 *.log
 catalog.local.tsv
+library.local.tsv
+sources.local.tsv
+catalog-cache/
 posters/
 __pycache__/

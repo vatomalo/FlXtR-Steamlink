@@ -1,5 +1,24 @@
 # Playback investigation — 2026-10-05
 
+## Update — 2026-10-06
+
+- The user confirmed visible movie playback and sound on the original hardware.
+- SDL_HideWindow left the library over video. The shell now destroys the renderer,
+  window and video subsystem during playback, then recreates them afterward.
+- Optional Marvell viewport interception enables fit/stretch/1:1 requests without
+  reading private SLVideo object layouts. The device accepted/read back the fit
+  rectangle. Subsequent remote playback attempts hit occupied/unavailable hardware
+  audio/video resources; all viewing modes still need a visual test via the launcher.
+- Native metadata requests on the Steam Link successfully returned seasons and
+  episodes. Poster HTTPS initially failed with the old CA store; the pinned current
+  Mozilla bundle resolves that validation failure while keeping verification on.
+- The popular-list crawl reached the API's 500-page limit for both types and yielded
+  8,911 unique movies and 9,849 unique series. It contains no playback links. Those
+  counts are a dated snapshot, not a claim that all entries are playable.
+- Controller browsing/search and season/episode/source screens are implemented.
+  Sources can have multiple server/quality entries keyed to the exact episode.
+  Automatic signed-request/WASM source resolution is still not implemented.
+
 ## Observed
 
 1. Flixer serves a React browser UI with HLS.js in its player bundle.

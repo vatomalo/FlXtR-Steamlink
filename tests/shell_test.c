@@ -40,6 +40,19 @@ int main(void) {
     assert(!(SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO));
     assert(SDL_WasInit(SDL_INIT_TIMER)&SDL_INIT_TIMER);
     assert(open_ui()==0);assert(selection==1&&total==3);draw(0);
+    browse.mode=2;action(SDLK_F3);assert(search_on);
+    search_key=0;action(SDLK_F4);assert(!strcmp(search_text,"A"));
+    action(SDLK_BACKSPACE);assert(!search_text[0]);action(SDLK_ESCAPE);assert(!search_on);
+    mkdir("catalog-cache",0700);
+    f=fopen("catalog-cache/result.tsv","w");assert(f);
+    fputs("# pages=2 total=7\nSeason 1\t7 EPISODES\t\t\tseason\t1396\t1\t0\n",f);fclose(f);
+    pending=(Browse){3,1,1396,0,0,0,"","A SHOW"};pending_push=1;
+    catalog_pid=fork();assert(catalog_pid>=0);if(!catalog_pid)_exit(0);
+    while(catalog_pid){finish_catalog();SDL_Delay(1);}
+    assert(browse.mode==3&&history_size==1&&history[0].mode==2);
+    assert(total==1&&listing_pages==2&&titles[0].id==1396&&titles[0].season==1);
+    assert(!strcmp(titles[0].kind,"season"));
+    browse.mode=0;history_size=0;
     close_ui();
     action(SDLK_ESCAPE);assert(!running);
     SDL_Quit();puts("PASS: catalog bounds, navigation, graphics release/restore and exit");return 0;

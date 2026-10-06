@@ -3,10 +3,11 @@
 A tiny native movie-library shell: black background, green pixel text, poster art,
 and a sparse white starfield inspired by old emulator menus.
 
-This is an **early prototype**, not a completed Flixer client. It does not bundle
-Flixer's website or automatically resolve Flixer titles yet. The catalog accepts
-direct HTTP(S) video URLs. No browser, Node, Python, or Docker runs on the box.
-WSL/Docker are build tools on the PC.
+This is an **early prototype**, not a completed Flixer client. Native movie/series
+browsing, search, seasons and episodes now work on the box. Automatic Flixer
+playback-link resolution is still missing: a listing is not a playable source.
+Direct HTTP(S) URLs and multiple locally supplied server/quality entries work.
+No browser, Node, Python, or Docker runs on the box. WSL/Docker are build tools.
 
 ![Native shell](preview.png)
 
@@ -15,7 +16,10 @@ WSL/Docker are build tools on the PC.
 - C99 + the Steam Link's existing SDL2 library; built-in 5x7 pixel font.
 - Six cached poster textures, each at most 192x288. BMP files only; pre-size posters
   before deployment. Decoded poster texture pixels total at most 1.27 MiB.
-- Fixed 128-title catalog; no background networking from the shell.
+- At most six entries per online page; local direct-URL catalogs accept 128 rows.
+- A separate short-lived C worker fetches metadata and six bounded JPEG posters,
+  using the firmware's curl, json-c and SDL2_image. The library stays responsive;
+  B cancels loading. A large metadata snapshot is scanned from disk, not kept in RAM.
 - 56 white stars, capped to approximately 30 updates/sec. Toggle them off to draw
   only when state changes. Actual total RSS includes SDL and graphics driver memory.
 - The separate player uses FFmpeg libraries for HLS/MP4 demuxing and audio, and
@@ -28,9 +32,15 @@ WSL/Docker are build tools on the PC.
 | Move | D-pad | Arrow keys |
 | Play | A | Enter |
 | Stop / back / exit | B | Escape |
-| All / playable filter | X | Tab |
+| Local / movies / series | X | F2 |
+| Search movies or series | Start | / or F3 |
+| Type in search | D-pad + A | Keyboard |
+| Submit search | Start or the > key | Enter |
+| Delete search character | B or the < key | Backspace |
+| Next / previous catalog page | Move beyond grid edge | Page Down / Page Up |
+| All / playable filter in local catalog | — | Tab |
 | Toggle stars | Y | Y |
-| About | Start | I |
+| About outside movie/series root | Start | I |
 | Select viewing mode in library | LB / RB | V |
 | Cycle viewing mode during playback | Y / LB / RB / Start | Controller required |
 
@@ -51,6 +61,11 @@ the library's video subsystem is released; controller input remains active.
 The player currently supports sequential playback and stop. Seeking, pause,
 subtitles, network retry, and a robust audio-master synchronization loop remain work
 in progress. Do not mistake a successful frame-submission test for verified lip sync.
+
+Press X to choose Series, A on a show, then A on a season and episode. B retraces
+those screens and restores the previous selection. Source choices show a compact
+server/quality list. Missing links display an explicit message; selecting a title
+never silently substitutes a different episode or a demo video.
 
 ## Build the shell
 
@@ -94,7 +109,11 @@ docker run --rm -v "$PWD:/src" -w /src greenlink-sdk bash scripts/build-steamlin
 
 FFmpeg 4.4.5 is pinned for the old Valve SDK toolchain; download SHA-256 is checked.
 The build enables a restricted set of codecs/protocols and uses the firmware's
-GnuTLS library with certificate verification enabled. This legacy dependency needs
+GnuTLS library with certificate verification enabled. The package includes a
+SHA-256-pinned Mozilla CA bundle from curl (2026-09-25, MPL 2.0) because the old
+firmware certificate store cannot validate the current poster CDN. The app uses
+its own bundle; it does not modify system trust or disable verification.
+This legacy dependency needs
 an update/security review before treating the application as production-ready.
 Build-cache persistence is optional via `GREENLINK_BUILD_CACHE` and a Docker mount.
 FFmpeg compilation uses four jobs by default; override `JOBS` if needed.
@@ -124,9 +143,45 @@ Use `catalog.local.tsv` for private or temporary URLs (excluded from Git), and l
 The menu launcher automatically uses `catalog.local.tsv` when it exists. This
 private catalog is excluded from Git and should be preserved during updates.
 
+### Movie and series listings
+
+The native worker talks directly to the site's public metadata API. With no
+snapshot installed it fetches popular listings on demand. Search always queries
+the API; season and episode details also load on demand, including season 0.
+
+To cache both popular lists on disk, run on your build machine:
+
+```sh
+python3 tools/crawl_catalog.py --cache /tmp/flxtr-metadata --output library.local.tsv
+```
+
+Copy `library.local.tsv` into the installed app directory. The crawler resumes
+cached pages, deduplicates IDs, and issues at most two requests per second. It
+collects metadata only. The upstream endpoint caps each list at 500 pages even
+though it reports more pages; this is not a complete index of every playable title.
+Search can find entries outside those popular lists. Metadata and artwork are
+provided by TMDB through the site's metadata service; FlXtR is not endorsed or
+certified by TMDB.
+
+### Multiple sources
+
+Private `sources.local.tsv` rows have seven tab-separated fields:
+
+```text
+TMDB_ID<TAB>SEASON<TAB>EPISODE<TAB>movie|tv<TAB>SERVER LABEL<TAB>QUALITY LABEL<TAB>DIRECT URL
+```
+
+Movies use season/episode `0 / 0`; TV uses actual season and episode numbers.
+Multiple rows provide selectable servers or quality variants for that exact title.
+These are supplied URLs, not automatically extracted servers or HLS renditions.
+The verified local test link remains separate from this public repository.
+`catalog.local.tsv`, `library.local.tsv`, `sources.local.tsv` and `catalog-cache/`
+are ignored by Git and preserved across package updates.
+
 ## Desktop tests
 
-Install a C compiler, pkg-config and SDL2 development files, then:
+Install a C compiler, Python 3, pkg-config, and SDL2, SDL2_image, curl and json-c
+development files, then:
 
 ```sh
 make test
@@ -143,11 +198,10 @@ See [RESEARCH.md](RESEARCH.md). In particular, a working URL outside a browser d
 not prove a fully native, automatic Flixer resolver. No third-party resolver code,
 passwords, or scraped playback links are included in this repository.
 
-The intended experience is controller-first: title, season/episode for TV, server,
-quality, then playback. This first prototype has the library grid, ready filter,
-star toggle and direct playback launch. Server/quality and season/episode menus
-are not implemented yet. The final application must operate with the PC off;
-no PC-side resolver is part of the intended architecture.
+The controller flow is title, season/episode for TV, source/quality, then playback.
+The screens are implemented; automatic server lookup is the remaining gap between
+catalog browsing and playback of arbitrary titles. The application operates with
+the PC off; no PC-side resolver is part of the architecture.
 
 ## Licensing
 

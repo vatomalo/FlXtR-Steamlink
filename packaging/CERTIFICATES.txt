@@ -1,0 +1,6 @@
+Mozilla CA certificates, converted to PEM by the curl project.
+Source and dated file: https://curl.se/ca/cacert-2026-09-25.pem
+Original certificate database: https://hg.mozilla.org/projects/nss/raw-file/tip/lib/ckfw/builtins/certdata.txt
+Licensed under the Mozilla Public License, version 2.0.
+A copy of the license is available at https://www.mozilla.org/MPL/2.0/
+This application uses the unmodified bundle with certificate verification enabled.

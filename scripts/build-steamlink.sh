@@ -9,8 +9,18 @@ set -u
 mkdir -p build dist/steamlink/apps/greenlink
 $CC -Os -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) src/shell.c -o build/greenlink-arm $(pkg-config --libs sdl2)
 $STRIP build/greenlink-arm
+$CC -Os -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) src/catalog.c -o build/greenlink-catalog-arm -lcurl -ljson-c -lSDL2_image $(pkg-config --libs sdl2)
+$STRIP build/greenlink-catalog-arm
 app=dist/steamlink/apps/greenlink
+if [ ! -f build/cacert.pem ]; then
+    wget -q https://curl.se/ca/cacert-2026-09-25.pem -O build/cacert.pem
+fi
+echo 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505  build/cacert.pem' | sha256sum -c -
+mkdir -p "$app/certs"
+cp build/cacert.pem "$app/certs/cacert.pem"
+cp packaging/CERTIFICATES.txt "$app/certs/NOTICE.txt"
 cp build/greenlink-arm "$app/greenlink"
+cp build/greenlink-catalog-arm "$app/greenlink-catalog"
 cp packaging/greenlink.sh packaging/toc.txt "$app/"
 cp catalog.tsv "$app/catalog.tsv"
 if [ -d assets ]; then cp -R assets "$app/"; fi

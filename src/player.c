@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "hardware_layout.h"
 #include "font.h"
 
@@ -26,6 +27,7 @@ static CSLVideoContext *view_context;
 static CSLVideoOverlay *view_overlay;
 static Uint32 overlay_until;
 static int64_t deadline;
+static const char *ca_file;
 static void stop(int sig) { (void)sig;stopped=1; }
 static void next_view(int sig) { (void)sig;change_view=1; }
 static void show_view(const char *label) {
@@ -69,7 +71,7 @@ static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&
  * top-level URL. Never permit a remote playlist to read local files. */
 static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int flags,AVDictionary **opts) {
     av_dict_set(opts,"tls_verify","1",0);
-    av_dict_set(opts,"ca_file","/etc/ssl/certs/ca-certificates.crt",0);
+    av_dict_set(opts,"ca_file",ca_file,0);
     av_dict_set(opts,"rw_timeout","15000000",0);
     av_dict_set(opts,"protocol_whitelist","http,https,tcp,tls,crypto",0);
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
@@ -106,6 +108,7 @@ int main(int argc,char **argv) {
     int probe=!strcmp(argv[1],"--probe");
     if(probe&&argc!=3)return 2;
     const char *url=probe?argv[2]:argv[1];
+    ca_file=access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem";
     if(!probe)for(int i=2;i<argc;i++){
         if(!strcmp(argv[i],"--view")&&i+1<argc){
             const char *v=argv[++i];
@@ -121,7 +124,7 @@ int main(int argc,char **argv) {
     fmt->interrupt_callback.callback=interrupt_io;fmt->io_open=open_io;
     av_dict_set(&opts,"rw_timeout","15000000",0);
     av_dict_set(&opts,"tls_verify","1",0);
-    av_dict_set(&opts,"ca_file","/etc/ssl/certs/ca-certificates.crt",0);
+    av_dict_set(&opts,"ca_file",ca_file,0);
     av_dict_set(&opts,"protocol_whitelist","http,https,tcp,tls,crypto",0);
     av_dict_set(&opts,"probesize","2097152",0);av_dict_set(&opts,"analyzeduration","3000000",0);
     deadline=av_gettime_relative()+20000000;

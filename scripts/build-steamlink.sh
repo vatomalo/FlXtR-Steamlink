@@ -25,6 +25,10 @@ cp packaging/greenlink.sh packaging/toc.txt "$app/"
 cp catalog.tsv "$app/catalog.tsv"
 if [ -d assets ]; then cp -R assets "$app/"; fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi
+if [ -f build/greenlink-resolver-arm ]; then
+    cp build/greenlink-resolver-arm "$app/greenlink-resolver"
+    cp build/resolver/WABT-LICENSE.txt "$app/WABT-LICENSE.txt"
+fi
 chmod +x "$app/greenlink" "$app/greenlink.sh"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink
 file build/greenlink-arm

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+project=$PWD
+cache=${GREENLINK_BUILD_CACHE:-/tmp/greenlink-build}
+sdk=${STEAMLINK_SDK_PATH:-/opt/steamlink-sdk}
+mkdir -p "$cache" build/resolver
+archive="$cache/wabt-1.0.36.tar.gz"
+if [ ! -f "$archive" ]; then
+    wget -q https://github.com/WebAssembly/wabt/archive/refs/tags/1.0.36.tar.gz -O "$archive"
+fi
+echo "e07ceeecfc682c12157ff2738b8a4633d7d19da18c1ecf16daae700397ecce2c  $archive" | sha256sum -c -
+if [ ! -d "$cache/wabt-1.0.36" ]; then tar -xf "$archive" -C "$cache"; fi
+pico="$cache/wabt-1.0.36/third_party/picosha2/picosha2.h"
+if [ ! -f "$pico" ]; then
+    mkdir -p "$(dirname "$pico")"
+    wget -q https://raw.githubusercontent.com/okdshin/PicoSHA2/27fcf6979298949e8a462e16d09a0351c18fcaf2/picosha2.h -O "$pico"
+fi
+echo "8f183eaae529cd9d6a3d4843c7559e2a3e3d68b6caaa223e7c24c3c899b3d988  $pico" | sha256sum -c -
+if [ ! -x "$cache/wabt-host/wasm2c" ]; then
+    cmake -S "$cache/wabt-1.0.36" -B "$cache/wabt-host" -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release >"$cache/wabt-cmake.log" 2>&1
+    cmake --build "$cache/wabt-host" --target wasm2c -j"${JOBS:-4}" >"$cache/wabt-make.log" 2>&1 || { tail -50 "$cache/wabt-make.log"; exit 1; }
+fi
+wasm="$cache/img_data-6942482f.wasm"
+if [ ! -f "$wasm" ]; then
+    wget -q https://plsdontscrapemelove.flixer.gd/assets/wasm/img_data_bg.wasm -O "$wasm"
+fi
+echo "6942482ff310cee739b250cb9eeee7bc373121fb1580c598405899ca61b2e4e5  $wasm" | sha256sum -c -
+"$cache/wabt-host/wasm2c" "$wasm" -o build/resolver/img_data.c --module-name img_data
+python3 tools/resolver_imports.py build/resolver/img_data.h build/resolver/resolver_imports.inc
+set +u
+source "$sdk/setenv.sh"
+set -u
+runtime="$cache/wabt-1.0.36/wasm2c"
+flags=(-Os -std=c11 -D_POSIX_C_SOURCE=200809L -DNDEBUG -DWASM_RT_USE_MMAP=0 -DWASM_RT_MEMCHECK_BOUNDS_CHECK=1 -Ibuild/resolver -Isrc -I"$runtime")
+$CC "${flags[@]}" -c build/resolver/img_data.c -o build/resolver/module.o
+$CC "${flags[@]}" -Wall -Wextra -Werror -c src/resolver_bridge.c -o build/resolver/bridge.o
+$CC "${flags[@]}" -c "$runtime/wasm-rt-impl.c" -o build/resolver/runtime.o
+$CC "${flags[@]}" -c "$runtime/wasm-rt-mem-impl.c" -o build/resolver/memory.o
+$CC "${flags[@]}" -Wall -Wextra -Werror -c src/resolver.c -o build/resolver/client.o
+$CC build/resolver/{module,bridge,runtime,memory,client}.o -o build/greenlink-resolver-arm -lcurl -ljson-c -lcrypto -lm -lpthread
+$STRIP build/greenlink-resolver-arm
+cp "$cache/wabt-1.0.36/LICENSE" build/resolver/WABT-LICENSE.txt
+file build/greenlink-resolver-arm
+wc -c build/greenlink-resolver-arm

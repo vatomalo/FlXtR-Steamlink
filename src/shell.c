@@ -20,7 +20,7 @@
 #define MAX_TITLES 128
 #define VISIBLE 6
 #define STARS 56
-typedef struct { char title[80],meta[96],poster[192],url[2048],kind[16];int id,season,episode; } Title;
+typedef struct { char title[80],meta[96],poster[192],url[2048],kind[16];int id,season,episode,height; } Title;
 static Title titles[MAX_TITLES];
 static int count, selection, ready_only, about, stars_on=1, running=1;
 static int visible[MAX_TITLES], total, cached_page=-1;
@@ -37,8 +37,8 @@ static Browse browse={0,1,0,0,0,0,"",""},pending,history[4];
 static int history_size,pending_push,pending_pop,listing_pages=1,listing_total;
 static pid_t catalog_pid;
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS / QUALITY"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -101,18 +101,19 @@ static int read_catalog(const char *path) {
     FILE *f=fopen(path,"r"); char line[2600];
     if(!f) { snprintf(status,sizeof(status),"CATALOG NOT FOUND - ADD CATALOG.TSV");return 0; }
     while(fgets(line,sizeof(line),f) && count<MAX_TITLES) {
-        char *fields[8],*p=line; int nf=0;
+        char *fields[9],*p=line; int nf=0;
         if(line[0]=='#'&&!strchr(line,'\t')){int pages,items;if(sscanf(line,"# pages=%d total=%d",&pages,&items)==2&&pages>0&&pages<=2000&&items>=0){listing_pages=pages;listing_total=items;}continue;}
         if(line[0]=='\n')continue;
         if(!strchr(line,'\n')&&!feof(f)) { int ch; while((ch=fgetc(f))!=EOF&&ch!='\n'){} continue; }
         line[strcspn(line,"\r\n")]=0;
-        while(nf<8){fields[nf++]=p;char *tab=strchr(p,'\t');if(!tab)break;*tab=0;p=tab+1;}
-        if((nf!=4&&nf!=8)||!fields[0][0]||strchr(fields[nf-1],'\t'))continue;
+        while(nf<9){fields[nf++]=p;char *tab=strchr(p,'\t');if(!tab||nf==9)break;*tab=0;p=tab+1;}
+        if((nf!=4&&nf!=8&&nf!=9)||!fields[0][0]||strchr(fields[nf-1],'\t'))continue;
         Title *t=&titles[count];
         if(strlen(fields[0])>=sizeof(t->title)||strlen(fields[1])>=sizeof(t->meta)||strlen(fields[2])>=sizeof(t->poster)||strlen(fields[3])>=sizeof(t->url))continue;
         if(fields[3][0] && strncmp(fields[3],"https://",8) && strncmp(fields[3],"http://",7))continue;
         strcpy(t->title,fields[0]);strcpy(t->meta,fields[1]);strcpy(t->poster,fields[2]);strcpy(t->url,fields[3]);count++;
-        if(nf==8){snprintf(t->kind,sizeof(t->kind),"%s",fields[4]);t->id=atoi(fields[5]);t->season=atoi(fields[6]);t->episode=atoi(fields[7]);}
+        if(nf>=8){snprintf(t->kind,sizeof(t->kind),"%s",fields[4]);t->id=atoi(fields[5]);t->season=atoi(fields[6]);t->episode=atoi(fields[7]);}
+        if(nf==9){t->height=atoi(fields[8]);if(t->height<0||t->height>1080)t->height=0;}
     }
     fclose(f); filter();return count;
 }
@@ -131,7 +132,7 @@ static void request_catalog(Browse next,int push,int pop){
         if(out<0||log<0)_exit(126);
         dup2(out,STDOUT_FILENO);dup2(log,STDERR_FILENO);close(out);close(log);
         char pg[16],id[16],sn[16],ep[16];snprintf(pg,sizeof(pg),"%d",next.page);snprintf(id,sizeof(id),"%d",next.id);snprintf(sn,sizeof(sn),"%d",next.season);snprintf(ep,sizeof(ep),"%d",next.episode);
-        execl("./greenlink-catalog","greenlink-catalog",browse_kinds[next.mode],pg,next.query,id,sn,ep,(char*)NULL);_exit(127);
+        execl("./greenlink-catalog","greenlink-catalog",browse_kinds[next.mode],pg,next.query,id,sn,ep,next.mode==6?next.query:"",(char*)NULL);_exit(127);
     }
     if(catalog_pid<0){catalog_pid=0;snprintf(status,sizeof(status),"COULD NOT LOAD CATALOG");}
     else snprintf(status,sizeof(status),"LOADING %s - B TO CANCEL",browse_labels[next.mode]);
@@ -140,13 +141,13 @@ static void finish_catalog(void){
     if(!catalog_pid)return;
     int code;pid_t p=waitpid(catalog_pid,&code,WNOHANG);if(p!=catalog_pid)return;
     catalog_pid=0;
-    if(!WIFEXITED(code)||WEXITSTATUS(code)){snprintf(status,sizeof(status),"COULD NOT LOAD CATALOG - CHECK CONNECTION / CATALOG.LOG");return;}
+    if(!WIFEXITED(code)||WEXITSTATUS(code)){snprintf(status,sizeof(status),pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
     for(int i=0;i<VISIBLE;i++){char src[80],dst[80];snprintf(src,sizeof(src),"catalog-cache/poster-%d.next.bmp",i);snprintf(dst,sizeof(dst),"catalog-cache/poster-%d.bmp",i);rename(src,dst);}
     if(pending_push&&history_size<4)history[history_size++]=browse;
     if(pending_pop&&history_size)history_size--;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
-    if(browse.mode==5&&!total)snprintf(status,sizeof(status),"NO RESOLVED LINKS YET - AUTOMATIC SERVER LOOKUP IS NOT CONNECTED");
+    if(browse.mode>=5&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
 }
 static void next_catalog_page(int direction){
@@ -208,15 +209,15 @@ static void draw(Uint32 tick) {
         text(194,419,"B / ESC TO RETURN",2,green,30);
     } else if(!total) {
         text(194,143,"NOTHING HERE YET",3,green,40);
-        wrap(194,195,browse.mode==5?"NO RESOLVED SOURCES FOR THIS TITLE YET. AUTOMATIC FLIXER LINK LOOKUP IS STILL IN DEVELOPMENT.":"NO MATCHING TITLES. X CHANGES LIBRARY. START OPENS SEARCH.",48,5,white);
-    } else if(browse.mode==5){
-        text(194,96,"SERVER / QUALITY",3,green,35);text(194,136,browse.name,1,white,78);
+        wrap(194,195,browse.mode>=5?"THE PROVIDER RETURNED NO SOURCES. B RETURNS TO THE PREVIOUS SCREEN.":"NO MATCHING TITLES. X CHANGES LIBRARY. START OPENS SEARCH.",48,5,white);
+    } else if(browse.mode>=5){
+        text(194,96,browse_labels[browse.mode],3,green,35);text(194,136,browse.name,1,white,78);
         for(int i=0;i<total;i++){
             int y=180+i*43;Title *t=&titles[visible[i]];
             rect(190,y-8,726,37,i==selection?green:dim,0);
             text(204,y,t->title,2,i==selection?green:white,35);text(652,y,t->meta,1,dim,39);
         }
-        text(194,460,"A PLAY / B RETURN / Y STARS",1,green,70);
+        text(194,460,browse.mode==6?"A PLAY / B CHANGE SERVER":"A SELECT SERVER / B RETURN",1,green,70);
     } else {
         int page=selection/VISIBLE;cache_page(page);
         for(int slot=0;slot<VISIBLE && page*VISIBLE+slot<total;slot++) {
@@ -249,7 +250,8 @@ static void play(void) {
     Title *t=&titles[visible[selection]];
     if(!t->url[0]&&t->kind[0]){
         Browse next={0,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
-        next.mode=!strcmp(t->kind,"tv")?3:!strcmp(t->kind,"season")?4:5;
+        next.mode=!strcmp(t->kind,"tv")?3:!strcmp(t->kind,"season")?4:!strcmp(t->kind,"server")?6:5;
+        if(next.mode==6){snprintf(next.query,sizeof(next.query),"%.31s",t->title);snprintf(next.name,sizeof(next.name),"%s",browse.name);}
         request_catalog(next,1,0);return;
     }
     if(!t->url[0]) { snprintf(status,sizeof(status),"NO DIRECT STREAM - FLIXER RESOLUTION IS NOT CONNECTED YET");return; }
@@ -261,7 +263,8 @@ static void play(void) {
         int log=open("player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
         const char *modes[]={"fit","stretch","pixel"};
-        execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],(char*)NULL);_exit(127);
+        char height[16];snprintf(height,sizeof(height),"%d",t->height);
+        execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,(char*)NULL);_exit(127);
     }
     if(player_pid<0){player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
@@ -297,7 +300,7 @@ static void action(SDL_Keycode key) {
     else if(!about&&total){
         if(key==SDLK_RIGHT){if(selection+1<total)selection++;else next_catalog_page(1);}
         if(key==SDLK_LEFT){if(selection>0)selection--;else next_catalog_page(-1);}
-        int step=browse.mode==5?1:3;
+        int step=browse.mode>=5?1:3;
         if(key==SDLK_DOWN && selection+step<total)selection+=step;
         else if(key==SDLK_DOWN)next_catalog_page(1);
         if(key==SDLK_UP && selection>=step)selection-=step;

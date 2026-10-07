@@ -1,5 +1,20 @@
 # Playback investigation — 2026-10-05
 
+## Update — 2026-10-07
+
+- The native C resolver runs on the Steam Link. It retrieved six server choices
+  and fresh source links for movie 278 and TV 1396, season 1 episode 1.
+- The native player probed the newly resolved movie as H.264 1920x1072 with audio,
+  and the episode as H.264 1280x720 with audio. No browser, Node or PC service was
+  involved in these device requests.
+- The site's response module is translated to C using WABT, then compiled to ARM.
+  Original bounded C host bindings supply its small imported interface. The entire
+  resolver binary is approximately 285 KB. Downloads are SHA-256 pinned.
+- Server and quality selection are wired into the controller screens. HLS quality
+  choices preserve the original master URL so separate audio groups remain usable.
+- These results supersede the earlier missing-resolver notes below. Viewing modes
+  still need visual confirmation on the TV; probe tests do not validate rendering.
+
 ## Update — 2026-10-06
 
 - The user confirmed visible movie playback and sound on the original hardware.

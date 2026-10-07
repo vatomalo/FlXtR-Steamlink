@@ -3,10 +3,10 @@
 A tiny native movie-library shell: black background, green pixel text, poster art,
 and a sparse white starfield inspired by old emulator menus.
 
-This is an **early prototype**, not a completed Flixer client. Native movie/series
-browsing, search, seasons and episodes now work on the box. Automatic Flixer
-playback-link resolution is still missing: a listing is not a playable source.
-Direct HTTP(S) URLs and multiple locally supplied server/quality entries work.
+This is an **early prototype**. Native movie/series browsing, search, seasons,
+episodes, server lookup and direct playback run on the box. Selecting a title
+fetches its actual servers; selecting a server resolves a fresh playback link.
+Quality choices come from the source's HLS master playlist when available.
 No browser, Node, Python, or Docker runs on the box. WSL/Docker are build tools.
 
 ![Native shell](preview.png)
@@ -20,6 +20,9 @@ No browser, Node, Python, or Docker runs on the box. WSL/Docker are build tools.
 - A separate short-lived C worker fetches metadata and six bounded JPEG posters,
   using the firmware's curl, json-c and SDL2_image. The library stays responsive;
   B cancels loading. A large metadata snapshot is scanned from disk, not kept in RAM.
+- The native resolver is approximately 285 KB. Its response decoder is compiled
+  to ARM from the site's pinned WebAssembly client module at build time, with
+  bounded C host bindings. No JS engine or WASM interpreter runs on the box.
 - 56 white stars, capped to approximately 30 updates/sec. Toggle them off to draw
   only when state changes. Actual total RSS includes SDL and graphics driver memory.
 - The separate player uses FFmpeg libraries for HLS/MP4 demuxing and audio, and
@@ -64,8 +67,11 @@ in progress. Do not mistake a successful frame-submission test for verified lip 
 
 Press X to choose Series, A on a show, then A on a season and episode. B retraces
 those screens and restores the previous selection. Source choices show a compact
-server/quality list. Missing links display an explicit message; selecting a title
-never silently substitutes a different episode or a demo video.
+server/quality list. Unavailable servers leave you in the server list to choose
+another. Selecting a title never substitutes a different episode or a demo video.
+Single-quality sources show AUTO. Master playlists expose compatible quality
+choices up to 1080p. Playback retains the master playlist for separate audio
+groups and selects the requested H.264 height, discarding other tracks.
 
 ## Build the shell
 
@@ -90,8 +96,8 @@ The Dockerfile installs `/usr/local/bin/autocompile`. To add it to an existing S
 container, copy `scripts/autocompile` there and run `chmod 755` on that file.
 
 ```sh
-autocompile               # update main, compile the player and shell, package
-autocompile --shell-only  # just rebuild the shell (retains an already-built player)
+autocompile               # update main, build player, resolver and shell, package
+autocompile --shell-only  # rebuild UI/catalog; retain built player and resolver
 autocompile --no-update   # build local changes without fetching
 ```
 
@@ -104,6 +110,7 @@ This command builds only; it stores no SSH credentials and does not interrupt th
 
 ```sh
 docker run --rm -v "$PWD:/src" -w /src greenlink-sdk bash scripts/build-player.sh
+docker run --rm -v "$PWD:/src" -w /src greenlink-sdk bash scripts/build-resolver.sh
 docker run --rm -v "$PWD:/src" -w /src greenlink-sdk bash scripts/build-steamlink.sh
 ```
 
@@ -117,6 +124,11 @@ This legacy dependency needs
 an update/security review before treating the application as production-ready.
 Build-cache persistence is optional via `GREENLINK_BUILD_CACHE` and a Docker mount.
 FFmpeg compilation uses four jobs by default; override `JOBS` if needed.
+
+The resolver build uses CMake and host g++ to build pinned WABT 1.0.36, then
+translates a SHA-256-pinned upstream decoder module to C and cross-compiles it.
+Unknown imports or changed downloads fail the build. Downloaded modules and
+generated code stay in the build cache; they are not committed to this repository.
 
 ## Install
 
@@ -137,7 +149,7 @@ TITLE<TAB>METADATA<TAB>RELATIVE POSTER BMP PATH<TAB>DIRECT HTTP(S) VIDEO URL
 
 An empty URL shows `SOURCE NEEDED`. The sample catalog contains original procedural
 art and empty playback URLs, not a scraped movie collection. Add a working direct
-URL before trying playback; automatic title lookup is not yet implemented.
+URL for local playback, or press X to browse the online Movies/Series libraries.
 Use `catalog.local.tsv` for private or temporary URLs (excluded from Git), and launch
 `./greenlink --catalog catalog.local.tsv`. Playback URLs may expire.
 The menu launcher automatically uses `catalog.local.tsv` when it exists. This
@@ -165,7 +177,13 @@ certified by TMDB.
 
 ### Multiple sources
 
-Private `sources.local.tsv` rows have seven tab-separated fields:
+With the resolver installed, sources are fetched on demand directly from the site.
+The server list is deduplicated and sorted, and resolving a server generates fresh
+signed requests. No account password, PC helper, or pre-crawled media URL is needed.
+An unavailable server can be retried or replaced using B to return to the list.
+
+For builds without the resolver, private `sources.local.tsv` rows provide an
+offline source list with seven tab-separated fields:
 
 ```text
 TMDB_ID<TAB>SEASON<TAB>EPISODE<TAB>movie|tv<TAB>SERVER LABEL<TAB>QUALITY LABEL<TAB>DIRECT URL
@@ -194,14 +212,15 @@ frames. `SDL_VIDEODRIVER=dummy` allows headless shell tests.
 
 ## Research and remaining work
 
-See [RESEARCH.md](RESEARCH.md). In particular, a working URL outside a browser does
-not prove a fully native, automatic Flixer resolver. No third-party resolver code,
-passwords, or scraped playback links are included in this repository.
+See [RESEARCH.md](RESEARCH.md). The native resolver has fetched fresh movie and TV
+episode links on the Steam Link, and the native player probed both successfully.
+This is not a guarantee that every title/server is available or compatible.
+No passwords, generated upstream module code, or playback links are committed.
 
 The controller flow is title, season/episode for TV, source/quality, then playback.
-The screens are implemented; automatic server lookup is the remaining gap between
-catalog browsing and playback of arbitrary titles. The application operates with
-the PC off; no PC-side resolver is part of the architecture.
+The application operates with the PC off. Provider changes, expiring links,
+unsupported codecs and failed servers remain possible. Pause, seeking, subtitles,
+resume positions and automatic next-episode playback are not implemented yet.
 
 ## Licensing
 
@@ -211,3 +230,7 @@ LGPL 2.1-or-later; static binary redistribution requires its corresponding sourc
 license notices and relinkable application object files. Build scripts download
 FFmpeg from its official upstream. Do not publish player binaries without those
 materials; source-only publication is separate from binary distribution.
+The compiled resolver includes the Apache-2.0 WABT runtime; its license is included
+in the local package. The upstream decoder is fetched from its original host at
+build time. This repository publishes original source and build scripts, not
+upstream module files or compiled binary releases.

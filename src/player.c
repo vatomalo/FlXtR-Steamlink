@@ -103,7 +103,7 @@ int main(int argc,char **argv) {
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;
     CSLVideoContext *context=NULL;CSLVideoStream *video=NULL;
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
-    int64_t origin=AV_NOPTS_VALUE,clock_start=0;unsigned frames=0;double limit=0;
+    int64_t origin=AV_NOPTS_VALUE,clock_start=0;unsigned frames=0;double limit=0;int height_limit=1080;
     if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
     int probe=!strcmp(argv[1],"--probe");
     if(probe&&argc!=3)return 2;
@@ -116,7 +116,8 @@ int main(int argc,char **argv) {
             else if(!strcmp(v,"stretch"))viewing=VIEW_STRETCH;
             else if(!strcmp(v,"pixel"))viewing=VIEW_PIXEL;
             else return 2;
-        }else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
+        }else if(!strcmp(argv[i],"--height")&&i+1<argc){char *end;long h=strtol(argv[++i],&end,10);if(*end||h<0||h>1080)return 2;height_limit=h?(int)h:1080;}
+        else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
     }
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
@@ -131,9 +132,16 @@ int main(int argc,char **argv) {
     rc=avformat_open_input(&fmt,url,NULL,&opts);av_dict_free(&opts);
     if(rc<0){fprintf(stderr,"Could not open stream (%d)\n",rc);goto done;}
     rc=avformat_find_stream_info(fmt,NULL);if(rc<0){fprintf(stderr,"Could not inspect stream (%d)\n",rc);goto done;}
-    vi=av_find_best_stream(fmt,AVMEDIA_TYPE_VIDEO,-1,-1,NULL,0);
-    ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,-1,NULL,0);
-    if(vi<0){fprintf(stderr,"No video track\n");goto done;}
+    int best_pixels=0;
+    for(unsigned i=0;i<fmt->nb_streams;i++){
+        AVCodecParameters *v=fmt->streams[i]->codecpar;const AVPixFmtDescriptor *p=av_pix_fmt_desc_get(v->format);
+        if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>1920||v->height>height_limit)continue;
+        if(p&&(p->comp[0].depth>8||p->log2_chroma_w!=1||p->log2_chroma_h!=1))continue;
+        if(v->width*v->height>best_pixels){best_pixels=v->width*v->height;vi=(int)i;}
+    }
+    ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,NULL,0);
+    if(vi<0){fprintf(stderr,"No compatible H.264 track at selected quality\n");goto done;}
+    for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
     AVStream *vs=fmt->streams[vi];AVCodecParameters *vp=vs->codecpar;
     const AVPixFmtDescriptor *pix=av_pix_fmt_desc_get(vp->format);
     if(vp->codec_id!=AV_CODEC_ID_H264||vp->width>1920||vp->height>1080||

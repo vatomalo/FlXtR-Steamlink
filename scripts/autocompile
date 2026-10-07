@@ -58,7 +58,7 @@ if (( update )); then
     git merge --ff-only origin/main
 fi
 mkdir -p "$GREENLINK_BUILD_CACHE"
-if (( ! shell_only )); then bash scripts/build-player.sh; fi
+if (( ! shell_only )); then bash scripts/build-player.sh; bash scripts/build-resolver.sh; fi
 bash scripts/build-steamlink.sh
 {
     printf 'commit=%s\n' "$(git rev-parse HEAD)"

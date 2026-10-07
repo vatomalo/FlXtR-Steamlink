@@ -52,6 +52,9 @@ int main(void) {
     assert(browse.mode==3&&history_size==1&&history[0].mode==2);
     assert(total==1&&listing_pages==2&&titles[0].id==1396&&titles[0].season==1);
     assert(!strcmp(titles[0].kind,"season"));
+    f=fopen("build/quality.tsv","w");assert(f);
+    fputs("720P\tALPHA\t\thttps://example.org/master.m3u8\tsource\t1396\t1\t2\t720\n",f);fclose(f);
+    count=0;read_catalog("build/quality.tsv");assert(count==1&&titles[0].height==720&&titles[0].episode==2);
     browse.mode=0;history_size=0;
     close_ui();
     action(SDLK_ESCAPE);assert(!running);

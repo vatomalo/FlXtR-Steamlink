@@ -15,6 +15,8 @@ test: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/shell_test.c -o build/shell-test $(SDL_LIBS)
 	./build/shell-test
 	python3 tests/catalog_test.py
+	$(CC) $(CFLAGS) tests/resolver_test.c -o build/resolver-test -lcurl -ljson-c -lcrypto
+	./build/resolver-test
 	SDL_VIDEODRIVER=dummy ./build/greenlink --screenshot build/preview.bmp
 
 .PHONY: all test

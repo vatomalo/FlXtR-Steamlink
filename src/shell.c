@@ -15,6 +15,9 @@
 #include "font.h"
 #include "video_layout.h"
 
+#ifndef FLXTR_VERSION
+#define FLXTR_VERSION "development"
+#endif
 #define W 960
 #define H 540
 #define MAX_TITLES 128
@@ -28,7 +31,9 @@ static SDL_Renderer *renderer;
 static SDL_Window *window;
 static SDL_Texture *posters[VISIBLE];
 static SDL_GameController *pads[4];
-static pid_t player_pid;
+static pid_t player_pid, update_pid;
+static int restart_shell, coverflow=1;
+static float flow_position;
 static int stopping_player;
 static int viewing=VIEW_FIT;
 static Uint32 stop_time;
@@ -151,6 +156,7 @@ static void finish_catalog(void){
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
 }
 static void next_catalog_page(int direction){
+    if(!browse.mode){int page=selection/VISIBLE+direction;if(page>=0&&page*VISIBLE<total)selection=page*VISIBLE;return;}
     Browse next=browse;next.page+=direction;next.selected=direction<0?5:0;
     if(next.mode&&next.page>=1&&next.page<=listing_pages)request_catalog(next,0,0);
 }
@@ -169,7 +175,7 @@ static SDL_Texture *load_poster(const char *path) {
 }
 static void cache_page(int page) {
     if(cached_page==page)return;
-    clear_posters();cached_page=page;
+    clear_posters();cached_page=page;flow_position=(float)selection;
     for(int i=0;i<VISIBLE && page*VISIBLE+i<total;i++)posters[i]=load_poster(titles[visible[page*VISIBLE+i]].poster);
 }
 static void placeholder(int x,int y,int w,int h,int seed) {
@@ -177,6 +183,49 @@ static void placeholder(int x,int y,int w,int h,int seed) {
     for(int i=0;i<6;i++)rect(x+8+i*9,y+h/2-i*7,w-16-i*18,3,b,1);
     text(x+10,y+12,"NO ART",1,dim,12);
     char code[16];snprintf(code,sizeof(code),"%03d",seed+1);text(x+10,y+h-28,code,2,green,5);
+}
+/* Six textures, depth ordering and mirrored reflections; no 3D context. */
+static void draw_coverflow(void) {
+    int page=selection/VISIBLE;cache_page(page);
+    float delta=(float)selection-flow_position;
+    flow_position+=delta*0.24f;
+    if(delta<0.02f&&delta> -0.02f)flow_position=(float)selection;
+    SDL_Rect clip={184,118,746,296};SDL_RenderSetClipRect(renderer,&clip);
+    /* Farthest cards first so the centered cover stays in front. */
+    for(int depth=6;depth>=0;depth--)for(int slot=0;slot<VISIBLE&&page*VISIBLE+slot<total;slot++) {
+        int index=page*VISIBLE+slot;float d=(float)index-flow_position,a=d<0?-d:d;
+        if((int)(a+0.5f)!=depth)continue;
+        float scale=1.0f/(1.0f+a*0.27f);
+        int h=(int)(236*scale),w=(int)(158*scale/(1+a*0.28f));
+        int center=554+(int)(d*132);
+        SDL_Rect dst={center-w/2,151+(236-h)/2,w,h};
+        Uint8 light=(Uint8)(255/(1+a*0.45f));
+        rect(dst.x-3,dst.y-3,w+6,h+6,index==selection?green:dim,0);
+        if(posters[slot]) {
+            SDL_SetTextureColorMod(posters[slot],light,light,light);
+            SDL_SetTextureBlendMode(posters[slot],SDL_BLENDMODE_BLEND);
+            SDL_SetTextureAlphaMod(posters[slot],255);
+            SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
+            SDL_Rect reflection={dst.x,dst.y+h+8,w,h};
+            SDL_SetTextureAlphaMod(posters[slot],40);
+            SDL_RenderCopyEx(renderer,posters[slot],NULL,&reflection,0,NULL,SDL_FLIP_VERTICAL);
+            SDL_SetTextureAlphaMod(posters[slot],255);SDL_SetTextureColorMod(posters[slot],255,255,255);
+        }else {rect(dst.x,dst.y,w,h,(SDL_Color){8,23,14,255},1);text(dst.x+6,dst.y+h/2,"FLXTR",1,dim,w/6-1);}
+    }
+    SDL_RenderSetClipRect(renderer,NULL);
+    Title *t=&titles[visible[selection]];
+    text(194,95,browse.name[0]?browse.name:browse_labels[browse.mode],2,dim,60);
+    text(194,427,t->title,2,green,60);text(194,454,t->meta,1,white,78);
+    char line[90];snprintf(line,sizeof(line),"PAGE %d / %d   A OPEN   UP/DOWN PAGE   VIEW: %s",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6,view_names[viewing]);
+    text(194,475,line,1,dim,120);
+}
+static int flow_animating(void){return coverflow&&!about&&!search_on&&browse.mode<5&&total&&flow_position!=(float)selection;}
+static void start_update(void) {
+    if(access("./update.sh",R_OK)){snprintf(status,sizeof(status),"UPDATER NOT INSTALLED");return;}
+    update_pid=fork();
+    if(!update_pid){int log=open("update.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./update.sh",(char*)NULL);_exit(127);}
+    if(update_pid<0){update_pid=0;snprintf(status,sizeof(status),"COULD NOT START UPDATER");return;}
+    snprintf(status,sizeof(status),"CHECKING GITHUB FOR A SHELL UPDATE...");
 }
 static void draw(Uint32 tick) {
     SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
@@ -193,7 +242,7 @@ static void draw(Uint32 tick) {
     text(30,145,root_mode==1?"> MOVIES":"  MOVIES",1,root_mode==1?green:dim,20);
     text(30,166,root_mode>=2?"> SERIES":"  SERIES",1,root_mode>=2?green:dim,20);
     char num[64];snprintf(num,sizeof(num),"%d TITLES",browse.mode?listing_total:total);text(30,201,num,1,white,20);
-    text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
+    text(30,379,"[SELECT] UI",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
     if(search_on){
         text(194,100,"SEARCH",3,green,30);text(194,150,search_text,2,white,60);
         for(int i=0;i<40;i++){
@@ -206,7 +255,8 @@ static void draw(Uint32 tick) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
         wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. BLACK SPACE, GREEN PIXELS, AND A FEW DISTANT STARS.",53,4,white);
         wrap(194,260,"C + SDL2. SIX POSTERS IN MEMORY. NO BROWSER. NO WEB UI. DIRECT VIDEO PLAYBACK USES A SEPARATE PLAYER.",53,5,dim);
-        text(194,419,"B / ESC TO RETURN",2,green,30);
+        text(194,390,"A CHECK FOR UPDATE / B RETURN",2,green,50);
+        text(194,429,"BUILD " FLXTR_VERSION,1,dim,70);
     } else if(!total) {
         text(194,143,"NOTHING HERE YET",3,green,40);
         wrap(194,195,browse.mode>=5?"THE PROVIDER RETURNED NO SOURCES. B RETURNS TO THE PREVIOUS SCREEN.":"NO MATCHING TITLES. X CHANGES LIBRARY. START OPENS SEARCH.",48,5,white);
@@ -218,6 +268,8 @@ static void draw(Uint32 tick) {
             text(204,y,t->title,2,i==selection?green:white,35);text(652,y,t->meta,1,dim,39);
         }
         text(194,460,browse.mode==6?"A PLAY / B CHANGE SERVER":"A SELECT SERVER / B RETURN",1,green,70);
+    } else if(coverflow) {
+        draw_coverflow();
     } else {
         int page=selection/VISIBLE;cache_page(page);
         for(int slot=0;slot<VISIBLE && page*VISIBLE+slot<total;slot++) {
@@ -270,6 +322,7 @@ static void play(void) {
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
 }
 static void action(SDL_Keycode key) {
+    if(update_pid)return;
     if(player_pid) {
         if(key==SDLK_y||key==SDLK_v||key==SDLK_i)kill(player_pid,SIGUSR1);
         if((key==SDLK_ESCAPE||key==SDLK_BACKSPACE) && !stopping_player){kill(player_pid,SIGTERM);stopping_player=1;stop_time=SDL_GetTicks();}
@@ -288,6 +341,9 @@ static void action(SDL_Keycode key) {
         else if(key==SDLK_RETURN||key==SDLK_F3){Browse next=browse;next.page=1;next.selected=0;strcpy(next.query,search_text);search_on=0;SDL_StopTextInput();request_catalog(next,0,0);}
         return;
     }
+    if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){start_update();return;}
+    if(key==SDLK_u){start_update();return;}
+    if(key==SDLK_F5){coverflow=!coverflow;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){Browse next={browse.mode==0?1:browse.mode==1?2:0,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);}
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
@@ -300,6 +356,7 @@ static void action(SDL_Keycode key) {
     else if(!about&&total){
         if(key==SDLK_RIGHT){if(selection+1<total)selection++;else next_catalog_page(1);}
         if(key==SDLK_LEFT){if(selection>0)selection--;else next_catalog_page(-1);}
+        if(coverflow&&browse.mode<5&&(key==SDLK_UP||key==SDLK_DOWN)){next_catalog_page(key==SDLK_UP?-1:1);return;}
         int step=browse.mode>=5?1:3;
         if(key==SDLK_DOWN && selection+step<total)selection+=step;
         else if(key==SDLK_DOWN)next_catalog_page(1);
@@ -319,7 +376,9 @@ static void add_pad(int device) {
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
     for(int i=1;i<argc;i++) {
-        if(!strcmp(argv[i],"--catalog")&&i+1<argc)catalog=argv[++i];
+        if(!strcmp(argv[i],"--version")){puts(FLXTR_VERSION);return 0;}
+        else if(!strcmp(argv[i],"--grid"))coverflow=0;
+        else if(!strcmp(argv[i],"--catalog")&&i+1<argc)catalog=argv[++i];
         else if(!strcmp(argv[i],"--screenshot")&&i+1<argc)shot=argv[++i];
         else if(!strcmp(argv[i],"--frames")&&i+1<argc)frames=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--no-stars"))stars_on=0;
@@ -336,7 +395,7 @@ int main(int argc,char **argv) {
     if(initial_library){Browse next={initial_library,1,0,0,0,0,"",""};request_catalog(next,0,0);}
     while(running) {
         SDL_Event event;
-        if(SDL_WaitEventTimeout(&event,stars_on?33:250)) do {
+        if(SDL_WaitEventTimeout(&event,(stars_on||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT)running=0;
             else if(event.type==SDL_KEYDOWN)action(event.key.keysym.sym);
@@ -349,6 +408,7 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_B:action(search_on?SDLK_BACKSPACE:SDLK_ESCAPE);break;
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
+                    case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(player_pid?SDLK_i:SDLK_F3);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(SDLK_v);break;
@@ -359,6 +419,8 @@ int main(int argc,char **argv) {
                 }
             }
         } while(SDL_PollEvent(&event));
+        if(update_pid){int code;pid_t done=waitpid(update_pid,&code,WNOHANG);
+            if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
         if(player_pid){int code;pid_t p=waitpid(player_pid,&code,WNOHANG);
             if(p==player_pid){player_pid=0;stopping_player=0;if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;}snprintf(status,sizeof(status),WIFEXITED(code)&&WEXITSTATUS(code)==0?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");dirty=1;}
@@ -366,7 +428,7 @@ int main(int argc,char **argv) {
             SDL_Delay(30);continue;
         }
         Uint32 now=SDL_GetTicks();
-        if(dirty||(stars_on&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+        if(dirty||((stars_on||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;
@@ -375,5 +437,6 @@ int main(int argc,char **argv) {
     if(player_pid){kill(player_pid,SIGKILL);waitpid(player_pid,NULL,0);}
     if(catalog_pid){kill(catalog_pid,SIGTERM);waitpid(catalog_pid,NULL,0);}
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
-    SDL_Quit();return 0;
+    if(update_pid)waitpid(update_pid,NULL,0);
+    SDL_Quit();return restart_shell?42:0;
 }

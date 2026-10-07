@@ -233,4 +233,43 @@ materials; source-only publication is separate from binary distribution.
 The compiled resolver includes the Apache-2.0 WABT runtime; its license is included
 in the local package. The upstream decoder is fetched from its original host at
 build time. This repository publishes original source and build scripts, not
-upstream module files or compiled binary releases.
+upstream module files. Public shell-only releases exclude the player and resolver.
+
+
+## Coverflow and shell updates
+
+The library now opens in a lightweight coverflow view: left/right selects covers,
+up/down changes pages. SELECT (keyboard F5) switches between coverflow and the
+original grid. Six poster textures stay in memory; depth and reflections use SDL2.
+Playback still releases the menu's graphics resources before opening video.
+
+The installed launcher checks the latest public GitHub shell release at startup.
+It uses verified HTTPS, a required SHA-256, a bounded download and an executable
+version check before an atomic replacement. No GitHub token is stored on the box.
+Offline or invalid updates leave the existing executable installed. The previous
+shell remains at `greenlink.previous`; catalogs, player and resolver are untouched.
+To check manually, open ABOUT (START in LOCAL), then A; keyboard U works from the
+library. A successful check restarts the shell. Create `.no-auto-update` in the app
+directory to disable startup checks. Interrupted updates can leave `.update-lock`;
+remove that empty directory only after confirming no updater is running.
+
+The updater/launcher must first be installed through the normal local package or
+SSH deployment. These shell-only releases update an existing installation, not a
+bare Steam Link. Future changes to helpers or the updater itself need a local
+package deployment. To roll back, disable startup checks and copy
+`greenlink.previous` to `greenlink.restore`, chmod 755 it, then rename it to
+`greenlink` while the app is closed.
+
+Inside the SDK Docker container:
+
+```sh
+autocompile --shell-only --publish
+```
+
+Publication requires `GH_TOKEN` in the build environment or a token passed on stdin.
+The script requires a clean checkout and a matching build manifest. It creates an
+immutable commit-tagged draft release, uploads `greenlink` and
+`shell-manifest.txt`, then publishes it as latest only after both uploads succeed.
+A failed upload leaves a draft for inspection; existing releases are not overwritten.
+The public executable is only the original SDL2 shell, dynamically linked to system
+SDL2. FFmpeg/player and decoder/resolver binaries remain local.

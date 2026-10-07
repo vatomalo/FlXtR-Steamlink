@@ -36,6 +36,9 @@ int main(void) {
     SDL_setenv("SDL_VIDEODRIVER","dummy",1);
     assert(open_ui()==0);selection=1;draw(0);
     assert(cached_page==0);
+    assert(coverflow);action(SDLK_F5);assert(!coverflow);draw(0);
+    action(SDLK_F5);assert(coverflow);action(SDLK_LEFT);draw(33);
+    assert(flow_position>0&&flow_position<1);selection=1;
     close_ui();assert(!window&&!renderer&&cached_page==-1);
     assert(!(SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO));
     assert(SDL_WasInit(SDL_INIT_TIMER)&SDL_INIT_TIMER);

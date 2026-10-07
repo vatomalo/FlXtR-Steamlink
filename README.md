@@ -219,13 +219,13 @@ No passwords, generated upstream module code, or playback links are committed.
 
 The controller flow is title, season/episode for TV, then automatic playback.
 The shell tries each returned server once, skipping failed lookups and retrying
-when the player exits with an error. It selects AUTO quality (best compatible
-H.264 stream), without server or quality menus. B cancels lookup or stops playback
+when the player exits with an error. It selects the best compatible H.264 stream
+up to the saved quality limit (720p by default), without server or quality menus. B cancels lookup or stops playback
 without retrying; normal completion returns to the original library selection.
 If every server fails, A retries the title. A playback error after video has begun
 may restart the title on another server; playback positions are not preserved.
 The application operates with the PC off. Provider changes, expiring links,
-unsupported codecs and failed servers remain possible. Pause, seeking, subtitles,
+unsupported codecs and failed servers remain possible. Pause, seeking,
 resume positions and automatic next-episode playback are not implemented yet.
 
 ## Licensing
@@ -245,8 +245,8 @@ upstream module files. Public shell-only releases exclude the player and resolve
 ## Coverflow and shell updates
 
 The library now opens in a lightweight coverflow view: left/right selects covers,
-up/down changes pages. SELECT (keyboard F5) switches between coverflow and the
-original grid. Six poster textures stay in memory; depth and reflections use SDL2.
+up/down changes pages. SELECT (keyboard F5) opens Settings, where Library View switches between
+coverflow and the optional six-cover wall. Six poster textures stay in memory; depth and reflections use SDL2.
 Playback still releases the menu's graphics resources before opening video.
 
 The installed launcher checks the latest public GitHub shell release at startup.
@@ -305,3 +305,33 @@ with the video, downmixes to stereo, and rejects sources with no usable audio.
 If video is running but no audio samples decode within 20 seconds, it exits with
 an error so automatic server fallback can continue. This cannot detect an audio
 track whose encoded samples are themselves silent.
+
+
+## Playback buffer and subtitle settings
+
+SELECT / F5 opens persistent Settings. Defaults are 720p, a 15-second prebuffer,
+a 128 MiB disk limit, coverflow and subtitles off. Available limits are
+480/720/1080p, 5/15/30 seconds and 64/128/256 MiB. A source with no compatible
+video at or below the chosen resolution is skipped; there is no transcoding.
+
+A network demux thread reads ahead into a bounded rolling file under
+`playback-cache`. Compressed packets and their side data are read from disk by
+the hardware player. The file is immediately unlinked but stays open during
+playback, so stopping, crashing or changing server releases it automatically.
+This is a temporary playback buffer, not a saved playable movie download.
+The player requires the selected buffer capacity plus 32 MiB of free space.
+It waits for the selected prebuffer duration (or EOF/full buffer), and re-fills
+if the queue empties. A slow server can still exhaust the buffer. There is no
+seek/resume support yet. Metadata and at most one packet per worker stay in RAM;
+the compressed read-ahead payload stays on disk.
+
+Subtitle settings: Off, Automatic, English or Norwegian; Normal/Large text;
+and -5 to +5 seconds delay (positive delays subtitle display). Text tracks included
+in the stream are decoded (SubRip, WebVTT, mov_text and ASS/SSA) and shown in an
+SLVideo overlay. Separate subtitle URLs from the provider are not resolved yet.
+Bitmap subtitles, full ASS styling and non-ASCII glyphs are not supported; unknown
+characters display as question marks. Settings apply to the next playback.
+
+`greenlink-player --probe-buffer URL` checks demux and disk-buffer operation on
+the device without claiming the display/audio hardware. Host tests additionally
+need the libavformat/libavcodec/libavutil development packages.

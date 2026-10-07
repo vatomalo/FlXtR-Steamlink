@@ -1,5 +1,5 @@
 /* Direct H.264 player. Video stays compressed until Valve SLVideo decodes it.
- * Prototype: sequential playback/stop only; seeking/subtitles are not implemented.
+ * Prototype: sequential playback/stop only; seeking is not implemented; text subtitles use a small overlay.
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
 #include "hardware_layout.h"
 #include "font.h"
 
@@ -29,6 +30,9 @@ static Uint32 overlay_until;
 static int64_t deadline;
 static const char *ca_file;
 static uint64_t audio_samples;
+static int64_t origin=AV_NOPTS_VALUE,clock_start;
+#include "disk_buffer.h"
+#include "subtitles.h"
 static void stop(int sig) { (void)sig;stopped=1; }
 static void next_view(int sig) { (void)sig;change_view=1; }
 static void show_view(const char *label) {
@@ -64,6 +68,7 @@ static void apply_view(int notify) {
     }
 }
 static void playback_controls(void) {
+    subtitle_draw();
     if(change_view&&view_context){change_view=0;viewing=(viewing+1)%VIEW_COUNT;apply_view(1);}
     if(overlay_until&&(Sint32)(SDL_GetTicks()-overlay_until)>=0){SLVideo_HideOverlay(view_overlay);overlay_until=0;}
 }
@@ -101,13 +106,15 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
     return rc==AVERROR(EAGAIN)||rc==AVERROR_EOF?0:rc;
 }
 int main(int argc,char **argv) {
-    AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL;AVBSFContext *bsf=NULL;
+    DiskBuffer *buffer=NULL;
+    AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL,*sub_decoder=NULL;AVBSFContext *bsf=NULL;
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;
     CSLVideoContext *context=NULL;CSLVideoStream *video=NULL;
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
-    int64_t origin=AV_NOPTS_VALUE,clock_start=0;unsigned frames=0;double limit=0;int height_limit=1080;
+    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=128,si=-1;const char *sub_language="off";
     if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
-    int probe=!strcmp(argv[1],"--probe");
+    int buffer_probe=!strcmp(argv[1],"--probe-buffer");
+    int probe=!strcmp(argv[1],"--probe")||buffer_probe;
     if(probe&&argc!=3)return 2;
     const char *url=probe?argv[2]:argv[1];
     ca_file=access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem";
@@ -118,7 +125,12 @@ int main(int argc,char **argv) {
             else if(!strcmp(v,"stretch"))viewing=VIEW_STRETCH;
             else if(!strcmp(v,"pixel"))viewing=VIEW_PIXEL;
             else return 2;
-        }else if(!strcmp(argv[i],"--height")&&i+1<argc){char *end;long h=strtol(argv[++i],&end,10);if(*end||h<0||h>1080)return 2;height_limit=h?(int)h:1080;}
+        }else if(!strcmp(argv[i],"--height")&&i+1<argc){char *end;long h=strtol(argv[++i],&end,10);if(*end||h<0||h>1080)return 2;height_limit=h?(int)h:720;}
+        else if(!strcmp(argv[i],"--buffer-seconds")&&i+1<argc){buffer_secs=atoi(argv[++i]);if(buffer_secs!=5&&buffer_secs!=15&&buffer_secs!=30)return 2;}
+        else if(!strcmp(argv[i],"--buffer-mb")&&i+1<argc){buffer_mb=atoi(argv[++i]);if(buffer_mb!=64&&buffer_mb!=128&&buffer_mb!=256)return 2;}
+        else if(!strcmp(argv[i],"--subtitles")&&i+1<argc){sub_language=argv[++i];if(strcmp(sub_language,"off")&&strcmp(sub_language,"auto")&&strcmp(sub_language,"eng")&&strcmp(sub_language,"nor"))return 2;}
+        else if(!strcmp(argv[i],"--subtitle-size")&&i+1<argc){subtitle_size=atoi(argv[++i]);if(subtitle_size<2||subtitle_size>3)return 2;}
+        else if(!strcmp(argv[i],"--subtitle-delay")&&i+1<argc){subtitle_delay=atoi(argv[++i]);if(subtitle_delay< -5||subtitle_delay>5)return 2;}
         else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
     }
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
@@ -137,7 +149,7 @@ int main(int argc,char **argv) {
     int best_pixels=0;
     for(unsigned i=0;i<fmt->nb_streams;i++){
         AVCodecParameters *v=fmt->streams[i]->codecpar;const AVPixFmtDescriptor *p=av_pix_fmt_desc_get(v->format);
-        if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>1920||v->height>height_limit)continue;
+        if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>(height_limit<=480?854:height_limit<=720?1280:1920)||v->height>height_limit)continue;
         if(p&&(p->comp[0].depth>8||p->log2_chroma_w!=1||p->log2_chroma_h!=1))continue;
         if(v->width*v->height>best_pixels){best_pixels=v->width*v->height;vi=(int)i;}
     }
@@ -147,7 +159,19 @@ int main(int argc,char **argv) {
     if(ai<0){fprintf(stderr,"No decodable audio track; try another server\n");goto done;}
     AVCodecParameters *sound=fmt->streams[ai]->codecpar;
     fprintf(stderr,"Audio: %s; %d channels; %d Hz\n",avcodec_get_name(sound->codec_id),sound->channels,sound->sample_rate);
-    for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
+    if(strcmp(sub_language,"off"))for(unsigned i=0;i<fmt->nb_streams;i++){
+        AVCodecParameters *sp=fmt->streams[i]->codecpar;
+        if(sp->codec_type!=AVMEDIA_TYPE_SUBTITLE||!(sp->codec_id==AV_CODEC_ID_SUBRIP||sp->codec_id==AV_CODEC_ID_WEBVTT||sp->codec_id==AV_CODEC_ID_MOV_TEXT||sp->codec_id==AV_CODEC_ID_ASS||sp->codec_id==AV_CODEC_ID_SSA))continue;
+        AVDictionaryEntry *language=av_dict_get(fmt->streams[i]->metadata,"language",NULL,0);
+        const char *lang=language?language->value:"";
+        if(strcmp(sub_language,"auto")&&strcmp(lang,sub_language)&&!( !strcmp(sub_language,"eng")&&!strcmp(lang,"en"))&&!( !strcmp(sub_language,"nor")&&(!strcmp(lang,"nb")||!strcmp(lang,"nob")||!strcmp(lang,"no"))))continue;
+        const AVCodec *codec=avcodec_find_decoder(sp->codec_id);if(!codec)continue;
+        sub_decoder=avcodec_alloc_context3(codec);if(!sub_decoder)break;
+        if(avcodec_parameters_to_context(sub_decoder,sp)<0||avcodec_open2(sub_decoder,codec,NULL)<0){avcodec_free_context(&sub_decoder);continue;}
+        sub_decoder->pkt_timebase=fmt->streams[i]->time_base;si=(int)i;break;
+    }
+    fprintf(stderr,"Subtitle track: %d\n",si);
+    for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai||(int)i==si)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
     AVStream *vs=fmt->streams[vi];AVCodecParameters *vp=vs->codecpar;
     const AVPixFmtDescriptor *pix=av_pix_fmt_desc_get(vp->format);
     if(vp->codec_id!=AV_CODEC_ID_H264||vp->width>1920||vp->height>1080||
@@ -155,7 +179,16 @@ int main(int argc,char **argv) {
         fprintf(stderr,"Requires 8-bit 4:2:0 H.264, at most 1920x1080\n");goto done;
     }
     fprintf(stderr,"Video: H.264 %dx%d; audio track %d\n",vp->width,vp->height,ai);
-    if(probe){result=0;goto done;}
+    if(probe){
+        if(buffer_probe){
+            deadline=0;buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
+            packet=av_packet_alloc();if(!packet)goto done;int video_packets=0,audio_packets=0;
+            for(int i=0;i<200;i++){rc=disk_packet(buffer,packet);if(rc<0)break;if(packet->stream_index==vi)video_packets++;if(packet->stream_index==ai)audio_packets++;av_packet_unref(packet);}
+            fprintf(stderr,"Buffered packet test: %d video / %d audio\n",video_packets,audio_packets);
+            if(!video_packets||!audio_packets)goto done;
+        }
+        result=0;goto done;
+    }
     context=SLVideo_CreateContext();if(!context){fprintf(stderr,"SLVideo context unavailable\n");goto done;}
     /* Normal mode supports B-frames, unlike Moonlight's low-latency mode. */
     video=SLVideo_CreateStream(context,k_ESLVideoFormatH264,0);
@@ -185,11 +218,19 @@ int main(int argc,char **argv) {
     packet=av_packet_alloc();filtered=av_packet_alloc();frame=av_frame_alloc();
     if(!packet||!filtered||!frame)goto done;
     deadline=0;
+    buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);
+    if(!buffer){fprintf(stderr,"Disk buffer unavailable or insufficient free space\n");goto done;}
+    fprintf(stderr,"Disk buffer: %d MiB / %d seconds prefill\n",buffer_mb,buffer_secs);
+    show_view("BUFFERING...");
     while(!stopped) {
         playback_controls();
-        deadline=av_gettime_relative()+15000000;rc=av_read_frame(fmt,packet);deadline=0;
+        int64_t wait_start=av_gettime_relative();rc=disk_packet(buffer,packet);
+        int64_t waited=av_gettime_relative()-wait_start;
+        if(clock_start&&waited>100000)clock_start+=waited;
+        if(overlay_until&&frames==0){SLVideo_HideOverlay(view_overlay);overlay_until=0;}
         if(rc<0)break;
         int track=packet->stream_index;
+        if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);continue;}
         if(track!=vi&&track!=ai){av_packet_unref(packet);continue;}
         int64_t ts=packet->dts!=AV_NOPTS_VALUE?packet->dts:packet->pts;
         if(ts!=AV_NOPTS_VALUE){
@@ -227,6 +268,9 @@ int main(int argc,char **argv) {
     result=(stopped||rc==AVERROR_EOF)?0:1;
     fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
 done:
+    disk_close(buffer);
+    if(subtitle_overlay){SLVideo_HideOverlay(subtitle_overlay);SLVideo_FreeOverlay(subtitle_overlay);subtitle_overlay=NULL;}
+    avcodec_free_context(&sub_decoder);
     fprintf(stderr,"Audio samples queued: %llu\n",(unsigned long long)audio_samples);
     if(view_overlay){SLVideo_HideOverlay(view_overlay);SLVideo_FreeOverlay(view_overlay);view_overlay=NULL;}
     restore_viewport();view_context=NULL;

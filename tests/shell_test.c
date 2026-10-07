@@ -36,8 +36,11 @@ int main(void) {
     SDL_setenv("SDL_VIDEODRIVER","dummy",1);
     assert(open_ui()==0);selection=1;draw(0);
     assert(cached_page==0);
-    assert(coverflow);action(SDLK_F5);assert(!coverflow);draw(0);
-    action(SDLK_F5);assert(coverflow);action(SDLK_LEFT);draw(33);
+    assert(quality_setting==1&&qualities[quality_setting]==720);
+    assert(coverflow);action(SDLK_F5);assert(settings_on);settings_row=3;action(SDLK_RIGHT);assert(!coverflow);draw(0);
+    action(SDLK_RIGHT);assert(coverflow);action(SDLK_ESCAPE);assert(!settings_on);
+    quality_setting=2;load_settings();assert(quality_setting==1);unlink("settings.cfg");
+    action(SDLK_LEFT);draw(33);
     assert(flow_position>0&&flow_position<1);selection=1;
     close_ui();assert(!window&&!renderer&&cached_page==-1);
     assert(!(SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO));

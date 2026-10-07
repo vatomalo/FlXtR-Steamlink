@@ -33,6 +33,26 @@ static SDL_Texture *posters[VISIBLE];
 static SDL_GameController *pads[4];
 static pid_t player_pid, update_pid;
 static int restart_shell, coverflow=1;
+static int settings_on,settings_row,quality_setting=1,buffer_setting=1,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
+static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
+static const char *const subtitle_languages[]={"off","auto","eng","nor"};
+static void save_settings(void){
+    FILE *f=fopen("settings.cfg.next","w");if(!f)return;
+    fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
+    if(fclose(f)==0)rename("settings.cfg.next","settings.cfg");
+}
+static void load_settings(void){
+    FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
+    while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
+        if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
+        else if(!strcmp(key,"buffer")&&value>=0&&value<3)buffer_setting=value;
+        else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
+        else if(!strcmp(key,"coverflow")&&(value==0||value==1))coverflow=value;
+        else if(!strcmp(key,"subtitles")&&value>=0&&value<4)subtitle_setting=value;
+        else if(!strcmp(key,"scale")&&value>=2&&value<=3)subtitle_scale=value;
+        else if(!strcmp(key,"delay")&&value>=-5&&value<=5)subtitle_delay=value;
+    }fclose(f);
+}
 static float flow_position;
 static int stopping_player;
 static int viewing=VIEW_FIT;
@@ -300,7 +320,7 @@ static void draw_coverflow(void) {
     char line[90];snprintf(line,sizeof(line),"PAGE %d / %d   A OPEN   UP/DOWN PAGE   VIEW: %s",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6,view_names[viewing]);
     text(194,475,line,1,dim,120);
 }
-static int flow_animating(void){return coverflow&&!about&&!search_on&&browse.mode<5&&total&&flow_position!=(float)selection;}
+static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&browse.mode<5&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
     if(access("./update.sh",R_OK)){snprintf(status,sizeof(status),"UPDATER NOT INSTALLED");return;}
     update_pid=fork();
@@ -323,8 +343,17 @@ static void draw(Uint32 tick) {
     text(30,145,root_mode==1?"> MOVIES":"  MOVIES",1,root_mode==1?green:dim,20);
     text(30,166,root_mode>=2?"> SERIES":"  SERIES",1,root_mode>=2?green:dim,20);
     char num[64];snprintf(num,sizeof(num),"%d TITLES",browse.mode?listing_total:total);text(30,201,num,1,white,20);
-    text(30,379,"[SELECT] UI",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
-    if(search_on){
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
+    if(settings_on){
+        const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY"};
+        char values[7][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
+        const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
+        text(194,94,"SETTINGS",3,green,40);
+        for(int i=0;i<7;i++){int y=151+i*41;rect(190,y-9,724,34,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
+        text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
+        text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
+    }else if(search_on){
         text(194,100,"SEARCH",3,green,30);text(194,150,search_text,2,white,60);
         for(int i=0;i<40;i++){
             int x=194+(i%10)*64,y=202+(i/10)*48;char ch[2]={search_keys[i],0};
@@ -379,7 +408,7 @@ static void draw(Uint32 tick) {
     SDL_RenderPresent(renderer);
 }
 static void play(void) {
-    if(about||!total||player_pid)return;
+    if(settings_on||about||!total||player_pid)return;
     Title *t=&titles[visible[selection]];
     if(!t->url[0]&&t->kind[0]){
         Browse next={0,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
@@ -395,6 +424,7 @@ static void play(void) {
     launch_player(t);
 }
 static void launch_player(const Title *t) {
+    if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}prefetch_left=0;
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
     close_ui();
     player_pid=fork();
@@ -403,8 +433,10 @@ static void launch_player(const Title *t) {
         int log=open("player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
         const char *modes[]={"fit","stretch","pixel"};
-        char height[16];snprintf(height,sizeof(height),"%d",t->height);
-        execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,(char*)NULL);_exit(127);
+        char height[16],buffer[16],disk[16],scale[16],delay[16];snprintf(height,sizeof(height),"%d",t->height?t->height:qualities[quality_setting]);
+        snprintf(buffer,sizeof(buffer),"%d",buffer_seconds[buffer_setting]);snprintf(disk,sizeof(disk),"%d",disk_megabytes[disk_setting]);
+        snprintf(scale,sizeof(scale),"%d",subtitle_scale);snprintf(delay,sizeof(delay),"%d",subtitle_delay);
+        execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)NULL);_exit(127);
     }
     if(player_pid<0){player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
@@ -437,9 +469,26 @@ static void action(SDL_Keycode key) {
         else if(key==SDLK_RETURN||key==SDLK_F3){Browse next=browse;next.page=1;next.selected=0;strcpy(next.query,search_text);search_on=0;SDL_StopTextInput();request_catalog(next,0,0);}
         return;
     }
+    if(settings_on){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
+        if(key==SDLK_UP&&settings_row>0)settings_row--;
+        if(key==SDLK_DOWN&&settings_row<6)settings_row++;
+        int step=key==SDLK_LEFT?-1:1;
+        if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
+            switch(settings_row){
+                case 0:quality_setting=(quality_setting+step+3)%3;break;
+                case 1:buffer_setting=(buffer_setting+step+3)%3;break;
+                case 2:disk_setting=(disk_setting+step+3)%3;break;
+                case 3:coverflow=!coverflow;break;
+                case 4:subtitle_setting=(subtitle_setting+step+4)%4;break;
+                case 5:subtitle_scale=subtitle_scale==2?3:2;break;
+                case 6:subtitle_delay+=step;if(subtitle_delay>5)subtitle_delay=-5;if(subtitle_delay< -5)subtitle_delay=5;break;
+            }save_settings();
+        }return;
+    }
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){start_update();return;}
     if(key==SDLK_u){start_update();return;}
-    if(key==SDLK_F5){coverflow=!coverflow;return;}
+    if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){Browse next={browse.mode==0?1:browse.mode==1?2:0,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);}
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
@@ -472,9 +521,11 @@ static void add_pad(int device) {
 }
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
+    load_settings();
     for(int i=1;i<argc;i++) {
         if(!strcmp(argv[i],"--version")){puts(FLXTR_VERSION);return 0;}
         else if(!strcmp(argv[i],"--grid"))coverflow=0;
+        else if(!strcmp(argv[i],"--settings"))settings_on=1;
         else if(!strcmp(argv[i],"--catalog")&&i+1<argc)catalog=argv[++i];
         else if(!strcmp(argv[i],"--screenshot")&&i+1<argc)shot=argv[++i];
         else if(!strcmp(argv[i],"--frames")&&i+1<argc)frames=atoi(argv[++i]);

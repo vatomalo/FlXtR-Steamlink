@@ -16,6 +16,10 @@ test: all
 	./build/shell-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/auto_server_test.c -o build/auto-server-test $(SDL_LIBS)
 	./build/auto-server-test
+	$(CC) $(CFLAGS) tests/disk_buffer_test.c -o build/disk-buffer-test $$(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
+	./build/disk-buffer-test
+	$(CC) $(CFLAGS) tests/subtitle_text_test.c -o build/subtitle-text-test
+	./build/subtitle-text-test
 	python3 tests/catalog_test.py
 	python3 tests/update_test.py
 	$(CC) $(CFLAGS) tests/resolver_test.c -o build/resolver-test -lcurl -ljson-c -lcrypto

@@ -32,7 +32,7 @@ int main(void){
         "fi\n");
     script("greenlink-player",
         "#!/bin/sh\n"
-        "[ \"$1\" = https://example.org/gamma ] && [ \"$5\" = 0 ] && [ \"$TEST_FAIL\" != 1 ]\n");
+        "[ \"$1\" = https://example.org/gamma ] && [ \"$5\" = 720 ] && [ \"$TEST_FAIL\" != 1 ]\n");
     SDL_setenv("SDL_VIDEODRIVER","dummy",1);assert(!SDL_Init(SDL_INIT_TIMER));assert(!open_ui());
     count=total=1;visible[0]=selection=0;browse.mode=4;history_size=2;
     titles[0]=(Title){.title="EPISODE TWO",.kind="episode",.id=1396,.season=1,.episode=2};

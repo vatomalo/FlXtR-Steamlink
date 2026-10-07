@@ -7,3 +7,6 @@ sources.local.tsv
 catalog-cache/
 posters/
 __pycache__/
+
+settings.cfg*
+playback-cache/

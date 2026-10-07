@@ -217,7 +217,13 @@ episode links on the Steam Link, and the native player probed both successfully.
 This is not a guarantee that every title/server is available or compatible.
 No passwords, generated upstream module code, or playback links are committed.
 
-The controller flow is title, season/episode for TV, source/quality, then playback.
+The controller flow is title, season/episode for TV, then automatic playback.
+The shell tries each returned server once, skipping failed lookups and retrying
+when the player exits with an error. It selects AUTO quality (best compatible
+H.264 stream), without server or quality menus. B cancels lookup or stops playback
+without retrying; normal completion returns to the original library selection.
+If every server fails, A retries the title. A playback error after video has begun
+may restart the title on another server; playback positions are not preserved.
 The application operates with the PC off. Provider changes, expiring links,
 unsupported codecs and failed servers remain possible. Pause, seeking, subtitles,
 resume positions and automatic next-episode playback are not implemented yet.
@@ -273,3 +279,29 @@ immutable commit-tagged draft release, uploads `greenlink` and
 A failed upload leaves a draft for inspection; existing releases are not overwritten.
 The public executable is only the original SDL2 shell, dynamically linked to system
 SDL2. FFmpeg/player and decoder/resolver binaries remain local.
+
+
+## Library cache and controller sleep
+
+Three on-disk JSON page slots retain metadata and up to eighteen small BMP covers
+(roughly 4 MiB at the maximum poster dimensions). Upcoming pages prefetch in a
+separate worker; navigation cancels prefetch so the requested page takes priority.
+Only six textures are decoded by the shell at once. Cache keys distinguish
+library, search, series/season and page, include the local catalog timestamp and
+size, and expire after 24 hours. Incomplete caches rebuild automatically. Playback
+URLs and server results are never cached by this layer.
+
+After five minutes without controller button/meaningful stick activity, the app
+asks BlueZ to disconnect connected Bluetooth DS4 controllers (Sony 05c4/09cc).
+This releases their Bluetooth connection so they can power down. Press PS to
+reconnect. The timer also runs during playback. Other controllers, USB devices,
+Bluetooth keyboards and the adapter itself are not disconnected. Physical power
+state depends on controller firmware; the app does not unpair the controller.
+
+
+The player now includes AAC/LATM, MP2/MP3, AC3/EAC3, DTS, Opus, Vorbis,
+FLAC and 16/24-bit PCM audio decoders. It selects a decodable track associated
+with the video, downmixes to stereo, and rejects sources with no usable audio.
+If video is running but no audio samples decode within 20 seconds, it exits with
+an error so automatic server fallback can continue. This cannot detect an audio
+track whose encoded samples are themselves silent.

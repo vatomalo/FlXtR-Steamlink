@@ -11,12 +11,14 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
 #define PAGE_SIZE 6
 typedef struct {char title[80],meta[96],poster[128],url[2048],kind[16];int id,season,episode;} Entry;
 typedef struct {char *data;size_t length,limit;} Buffer;
 static Entry entries[PAGE_SIZE];
-static int used,total;
+static int used,total,cache_slot;
+static char cache_key[256],cache_file[80];
 static size_t receive(void *data,size_t size,size_t count,void *opaque){
     Buffer *b=opaque;
     if(size&&count>SIZE_MAX/size)return 0;
@@ -138,6 +140,43 @@ static int sources(int page,int id,int season,int episode){
         strcpy(e->url,p[6]);strcpy(e->kind,"source");e->id=id;e->season=season;e->episode=episode;
     }fclose(f);return 0;
 }
+/* Three disk slots. A full key and snapshot stamp prevent cross-library hits. */
+static void cache_identity(const char *kind,int page,const char *query,int id,int season){
+    struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
+    cache_slot=page%3;snprintf(cache_file,sizeof(cache_file),"catalog-cache/page-%d.json",cache_slot);
+    snprintf(cache_key,sizeof(cache_key),"%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+}
+static int cache_load(void){
+    struct stat st;if(stat(cache_file,&st)||st.st_size>65536||st.st_size<2||time(NULL)-st.st_mtime>86400)return 0;
+    json_object *root=json_object_from_file(cache_file);if(!root)return 0;
+    json_object *rows=field(root,"entries");int n=rows&&json_object_is_type(rows,json_type_array)?(int)json_object_array_length(rows):-1;
+    int ok=!strcmp(string(root,"key"),cache_key)&&n>=0&&n<=PAGE_SIZE&&number(root,"total")>=0;
+    if(ok)for(int i=0;i<n;i++){
+        json_object *o=json_object_array_get_idx(rows,i);Entry *e=&entries[i];
+        clean(e->title,sizeof(e->title),string(o,"title"));clean(e->meta,sizeof(e->meta),string(o,"meta"));
+        clean(e->poster,sizeof(e->poster),string(o,"poster"));clean(e->kind,sizeof(e->kind),string(o,"kind"));
+        e->id=number(o,"id");e->season=number(o,"season");e->episode=number(o,"episode");
+        char expected[80];snprintf(expected,sizeof(expected),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,i);
+        if(!e->title[0]||e->id<1||(e->poster[0]&&(strcmp(e->poster,expected)||access(expected,R_OK))))ok=0;
+    }
+    if(ok){used=n;total=number(root,"total");}
+    else {used=total=0;memset(entries,0,sizeof(entries));}
+    json_object_put(root);return ok;
+}
+static void cache_save(void){
+    json_object *root=json_object_new_object(),*rows=json_object_new_array();
+    json_object_object_add(root,"key",json_object_new_string(cache_key));json_object_object_add(root,"total",json_object_new_int(total));
+    json_object_object_add(root,"entries",rows);
+    for(int i=0;i<used;i++){
+        Entry *e=&entries[i];json_object *o=json_object_new_object();json_object_array_add(rows,o);
+        json_object_object_add(o,"title",json_object_new_string(e->title));json_object_object_add(o,"meta",json_object_new_string(e->meta));
+        json_object_object_add(o,"poster",json_object_new_string(e->poster));json_object_object_add(o,"kind",json_object_new_string(e->kind));
+        json_object_object_add(o,"id",json_object_new_int(e->id));json_object_object_add(o,"season",json_object_new_int(e->season));json_object_object_add(o,"episode",json_object_new_int(e->episode));
+    }
+    char temp[96];snprintf(temp,sizeof(temp),"%s.next",cache_file);
+    if(!json_object_to_file(temp,root))rename(temp,cache_file);
+    json_object_put(root);
+}
 static void poster(Entry *e,int slot){
     char path[128];strcpy(path,e->poster);e->poster[0]=0;
     if(path[0]!='/')return;
@@ -161,8 +200,8 @@ static void poster(Entry *e,int slot){
             }pos+=len;
         }
         if(ok){SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);SDL_Surface *s=rw?IMG_Load_RW(rw,1):NULL;
-            if(s){char file[80];snprintf(file,sizeof(file),"catalog-cache/poster-%d.next.bmp",slot);
-                if(!SDL_SaveBMP(s,file))snprintf(e->poster,sizeof(e->poster),"catalog-cache/poster-%d.bmp",slot);
+            if(s){char file[80];snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+                if(!SDL_SaveBMP(s,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
                 SDL_FreeSurface(s);
             }
         }
@@ -179,12 +218,18 @@ int main(int argc,char **argv){
     }
     if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
     mkdir("catalog-cache",0700);
+    int cacheable=strcmp(kind,"source")&&strcmp(kind,"quality");
+    if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
     int rc;
     if(!strcmp(kind,"source"))rc=sources(page,id,season,episode);
     else if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&!*argv[3]&&!local_list(kind,page,argv[3]))rc=0;
     else rc=remote_list(kind,page,argv[3],id,season);
     if(rc){curl_global_cleanup();return 1;}
-    for(int i=0;i<used;i++)if(!getenv("FLXTR_NO_ART"))poster(&entries[i],i);
+    /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
+    if(cacheable)unlink(cache_file);
+    for(int i=0;i<used;i++){if(!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
+    if(cacheable)cache_save();
+output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);
     for(int i=0;i<used;i++){Entry *e=&entries[i];printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode);}
     curl_global_cleanup();return ferror(stdout)?1:0;

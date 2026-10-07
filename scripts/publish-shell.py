@@ -33,7 +33,7 @@ def request(url, data, content_type='application/json', method='POST'):
 release = request(api + '/releases', json.dumps({
     'tag_name': 'shell-' + version, 'target_commitish': version,
     'name': 'Steam Link shell ' + version[:8], 'draft': True,
-    'body': 'Native ARM shell update. Includes coverflow and executable version reporting. '
+    'body': 'Native ARM shell update. Includes automatic server fallback and coverflow. '
             'Requires the existing FlXtR installation; player, resolver and private catalogs stay installed. '
             'The launcher checks this release over HTTPS and verifies SHA-256 before replacement.'
 }).encode())

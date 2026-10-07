@@ -14,6 +14,8 @@ build/greenlink: src/shell.c src/font.h src/video_layout.h
 test: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/shell_test.c -o build/shell-test $(SDL_LIBS)
 	./build/shell-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/auto_server_test.c -o build/auto-server-test $(SDL_LIBS)
+	./build/auto-server-test
 	python3 tests/catalog_test.py
 	python3 tests/update_test.py
 	$(CC) $(CFLAGS) tests/resolver_test.c -o build/resolver-test -lcurl -ljson-c -lcrypto

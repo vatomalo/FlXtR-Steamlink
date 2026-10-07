@@ -28,6 +28,7 @@ static CSLVideoOverlay *view_overlay;
 static Uint32 overlay_until;
 static int64_t deadline;
 static const char *ca_file;
+static uint64_t audio_samples;
 static void stop(int sig) { (void)sig;stopped=1; }
 static void next_view(int sig) { (void)sig;change_view=1; }
 static void show_view(const char *label) {
@@ -90,6 +91,7 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
         int samples=swr_convert(swr,&pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
             while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(5);}
+            audio_samples+=(unsigned)samples;
             if(!stopped&&SDL_QueueAudio(device,pcm,samples*4)<0){av_freep(&pcm);av_frame_unref(frame);return AVERROR(EIO);}
         }
         av_freep(&pcm);av_frame_unref(frame);
@@ -139,8 +141,12 @@ int main(int argc,char **argv) {
         if(p&&(p->comp[0].depth>8||p->log2_chroma_w!=1||p->log2_chroma_h!=1))continue;
         if(v->width*v->height>best_pixels){best_pixels=v->width*v->height;vi=(int)i;}
     }
-    ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,NULL,0);
+    AVCodec *audio_decoder=NULL;
+    ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,&audio_decoder,0);
     if(vi<0){fprintf(stderr,"No compatible H.264 track at selected quality\n");goto done;}
+    if(ai<0){fprintf(stderr,"No decodable audio track; try another server\n");goto done;}
+    AVCodecParameters *sound=fmt->streams[ai]->codecpar;
+    fprintf(stderr,"Audio: %s; %d channels; %d Hz\n",avcodec_get_name(sound->codec_id),sound->channels,sound->sample_rate);
     for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
     AVStream *vs=fmt->streams[vi];AVCodecParameters *vp=vs->codecpar;
     const AVPixFmtDescriptor *pix=av_pix_fmt_desc_get(vp->format);
@@ -209,6 +215,9 @@ int main(int argc,char **argv) {
             if(device)SDL_PauseAudioDevice(device,0);
         }
         av_packet_unref(packet);if(rc<0)break;
+        if(frames>200&&clock_start&&av_gettime_relative()-clock_start>20000000&&!audio_samples){
+            fprintf(stderr,"No audio decoded after 20 seconds; try another server\n");goto done;
+        }
     }
     if(rc==AVERROR_EOF&&!stopped){
         if(audio&&queue_audio(audio,swr,NULL,frame,device)<0)goto done;
@@ -218,6 +227,7 @@ int main(int argc,char **argv) {
     result=(stopped||rc==AVERROR_EOF)?0:1;
     fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
 done:
+    fprintf(stderr,"Audio samples queued: %llu\n",(unsigned long long)audio_samples);
     if(view_overlay){SLVideo_HideOverlay(view_overlay);SLVideo_FreeOverlay(view_overlay);view_overlay=NULL;}
     restore_viewport();view_context=NULL;
     if(device)SDL_CloseAudioDevice(device);

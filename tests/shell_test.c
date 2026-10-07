@@ -58,6 +58,9 @@ int main(void) {
     f=fopen("build/quality.tsv","w");assert(f);
     fputs("720P\tALPHA\t\thttps://example.org/master.m3u8\tsource\t1396\t1\t2\t720\n",f);fclose(f);
     count=0;read_catalog("build/quality.tsv");assert(count==1&&titles[0].height==720&&titles[0].episode==2);
+    controller_slept=0;controller_activity=SDL_GetTicks()-299999;controller_idle();assert(!controller_slept);
+    controller_activity=SDL_GetTicks()-300001;controller_idle();assert(controller_slept&&!idle_pid);
+    controller_used();assert(!controller_slept);
     browse.mode=0;history_size=0;
     close_ui();
     action(SDLK_ESCAPE);assert(!running);

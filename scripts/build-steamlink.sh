@@ -22,7 +22,7 @@ cp build/cacert.pem "$app/certs/cacert.pem"
 cp packaging/CERTIFICATES.txt "$app/certs/NOTICE.txt"
 cp build/greenlink-arm "$app/greenlink"
 cp build/greenlink-catalog-arm "$app/greenlink-catalog"
-cp packaging/greenlink.sh packaging/update.sh packaging/toc.txt "$app/"
+cp packaging/greenlink.sh packaging/update.sh packaging/controller-idle.sh packaging/toc.txt "$app/"
 cp catalog.tsv "$app/catalog.tsv"
 if [ -d assets ]; then cp -R assets "$app/"; fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi

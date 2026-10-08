@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Linux beta download/build/install entry point. Run as your normal login user.
+set -euo pipefail
+download=0
+install_app=0
+build=0
+deps=0
+for arg in "$@"; do
+    case "$arg" in
+        --download) download=1 ;;
+        --install) install_app=1 ;;
+        --build) build=1 ;;
+        --deps) deps=1 ;;
+        -h|--help)
+            cat <<'HELP'
+Usage: autobuild [--download | --build] [--install] [--deps]
+  --download  Download the latest Linux beta executable package (default).
+  --build     Compile the native Linux package from this checkout instead.
+  --install   Install into your user directory and use sudo for /usr/local/bin/flxtr.
+  --deps      Install Debian/Ubuntu build/runtime dependencies using sudo apt-get.
+
+Run as your normal user, not sudo. Only the launcher/dependency steps use sudo.
+FLXTR_INSTALL_DIR overrides ~/.local/share/flxtr.
+FLXTR_DOWNLOAD_DIR overrides this checkout's dist/linux-downloads.
+Linux only; this does not install a PSP EBOOT or a Steam Link executable.
+HELP
+            exit 0 ;;
+        *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    esac
+done
+[ "$(uname -s)" = Linux ] || { echo 'Run this script on Linux or WSL.' >&2; exit 1; }
+[ "$EUID" -ne 0 ] || { echo 'Run as your normal user; --install invokes sudo only where needed.' >&2; exit 1; }
+(( !build || !download )) || { echo 'Choose --build or --download.' >&2; exit 2; }
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ ! -f "$script_dir/linux-install.py" ]; then
+    checkout="${XDG_CACHE_HOME:-$HOME/.cache}/flxtr-source"
+    if [ ! -e "$checkout" ]; then git clone --branch main --single-branch https://github.com/vatomalo/FlXtR-Steamlink.git "$checkout"; fi
+    [ -f "$checkout/scripts/linux-install.py" ] || { echo "Missing helper in $checkout" >&2; exit 1; }
+    exec bash "$checkout/scripts/autobuild" "$@"
+fi
+cd "$script_dir/.."
+if (( deps )); then
+    sudo apt-get update
+    sudo apt-get install -y build-essential cmake pkg-config wget python3 git \
+        libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev
+fi
+args=()
+if (( build )); then bash scripts/build-linux.sh; args+=(--local); fi
+if (( install_app )); then args+=(--install); fi
+exec python3 scripts/linux-install.py "${args[@]}"

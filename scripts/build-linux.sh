@@ -30,5 +30,6 @@ ln -sfn "releases/$version" "$root/current"
 tar -C "$app" -czf "dist/$target.tgz" .
 sha=$(sha256sum "dist/$target.tgz" | cut -d' ' -f1)
 printf '{"platform":"%s","version":"%s","build":%s,"sha256":"%s"}\n' "$target" "$version" "$build" "$sha" > "dist/$target.json"
-tar -C dist -czf "dist/FlXtR-$target-install.tgz" "FlXtR-$target"
+tar -C dist -czf "dist/FlXtR-$target-install.tgz" \
+    "FlXtR-$target/FlXtR.sh" "FlXtR-$target/current" "FlXtR-$target/releases/$version"
 echo "Built $root/FlXtR.sh"

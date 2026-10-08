@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Build the public source inside a Steam Link SDK container. No deployment secrets.
 set -euo pipefail
+# Linux download/install mode is separate from the original SDK build path.
+if [[ " ${*} " == *" --download "* || " ${*} " == *" --install "* || " ${*} " == *" --linux "* ]]; then
+    linux_args=()
+    for arg in "$@"; do [[ "$arg" = --linux ]] || linux_args+=("$arg"); done
+    helper="$(dirname "$(readlink -f "$0")")/autobuild"
+    if [[ ! -f "$helper" ]]; then helper="${FLXTR_SOURCE_DIR:-/opt/FlXtR-Steamlink}/scripts/autobuild"; fi
+    [[ -f "$helper" ]] || { echo 'Install scripts/autobuild beside autocompile, or run it from the checkout.' >&2; exit 1; }
+    exec bash "$helper" "${linux_args[@]}"
+fi
 repo=https://github.com/vatomalo/FlXtR-Steamlink.git
 source_dir=${FLXTR_SOURCE_DIR:-/opt/FlXtR-Steamlink}
 export GREENLINK_BUILD_CACHE=${GREENLINK_BUILD_CACHE:-/var/cache/flxtr-steamlink}
@@ -11,6 +20,7 @@ publish=0
 usage() {
     cat <<'HELP'
 Usage: autocompile [--shell-only] [--no-update] [--publish]
+       autocompile --linux [--download | --build] [--install] [--deps]
 
 Clone/update vatomalo/FlXtR-Steamlink and build an installable Steam Link package.
   --shell-only  Build the UI without compiling the video player.

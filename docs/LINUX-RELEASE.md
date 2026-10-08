@@ -7,6 +7,12 @@ Download `FlXtR-linux-x86_64-install.tgz`, extract it into a writable directory,
 and run `./FlXtR.sh` from inside the extracted folder. The other `.tgz` is an
 updater payload, not a standalone installation.
 
+From the source checkout you can instead run
+`bash scripts/autobuild --download --install`. It downloads and verifies the
+executable package, installs it under your user account, and uses sudo only to
+add `/usr/local/bin/flxtr`. Run the script as your normal user; it prompts for sudo
+when needed. `--build --install` builds locally; `--deps` installs dependencies.
+
 This binary was built on Debian 13 x86_64. Install runtime dependencies:
 `sudo apt install libsdl2-2.0-0 libsdl2-image-2.0-0 libcurl4t64 libjson-c5 libssl3t64 libmpv2 python3 ca-certificates`.
 For another distribution or ARM64, build from source using `docs/LINUX.md`.

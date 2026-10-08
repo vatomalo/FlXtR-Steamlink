@@ -99,6 +99,7 @@ int main(int argc,char **argv){
     signal(SIGTERM,signal_stop);signal(SIGINT,signal_stop);
     mpv=mpv_create();if(!mpv)return 1;
     mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"terminal","yes");
+    mpv_set_option_string(mpv,"term-status-msg","");
     mpv_set_option_string(mpv,"ytdl","no");mpv_set_option_string(mpv,"input-default-bindings","yes");
     mpv_set_option_string(mpv,"input-vo-keyboard","yes");mpv_set_option_string(mpv,"osc","no");
     mpv_set_option_string(mpv,"scripts","./linux-controls.lua");
@@ -109,6 +110,7 @@ int main(int argc,char **argv){
     char value[160];snprintf(value,sizeof(value),"%d",buffer);mpv_set_option_string(mpv,"cache-secs",value);
     mpv_set_option_string(mpv,"cache-pause-initial","yes");mpv_set_option_string(mpv,"cache-pause-wait",value);
     snprintf(value,sizeof(value),"%d",mb*1024*1024);mpv_set_option_string(mpv,"demuxer-max-bytes",value);
+    mpv_set_option_string(mpv,"demuxer-max-back-bytes","0");
     snprintf(value,sizeof(value),"%.3f",start);mpv_set_option_string(mpv,"start",value);
     snprintf(value,sizeof(value),"%d",delay);mpv_set_option_string(mpv,"sub-delay",value);
     mpv_set_option_string(mpv,"sub-scale",scale==3?"1.5":"1");
@@ -127,9 +129,15 @@ int main(int argc,char **argv){
     command("loadfile",argv[1],NULL);
     while(!stop){
         char keys[32];ssize_t n;while(fd>=0&&(n=read(fd,keys,sizeof(keys)))>0)for(ssize_t i=0;i<n;i++)key(keys[i]);
+        if(stop)break;
         mpv_event *e=mpv_wait_event(mpv,0.02);
         if(e->event_id==MPV_EVENT_CLIENT_MESSAGE){mpv_event_client_message *m=e->data;if(m->num_args==2&&!strcmp(m->args[0],"flxtr"))key(m->args[1][0]);}
-        if(e->event_id==MPV_EVENT_END_FILE){mpv_event_end_file *end=e->data;result=end->reason==MPV_END_FILE_REASON_EOF?0:1;break;}
+        if(e->event_id==MPV_EVENT_END_FILE){
+            mpv_event_end_file *end=e->data;
+            if(end->reason==MPV_END_FILE_REASON_EOF)result=0;
+            else if(end->reason!=MPV_END_FILE_REASON_ERROR)request(7,position());
+            break;
+        }
         if(e->event_id==MPV_EVENT_SHUTDOWN){request(7,position());break;}
     }
     if(stop&&result==1)result=0;

@@ -17,7 +17,7 @@ repo=vatomalo/FlXtR-Steamlink
 tag=$target-$version
 gh release create "$tag" --repo "$repo" --target "$version" --draft --prerelease \
     --title "FlXtR Linux beta ${version:0:8}" --notes-file docs/LINUX-RELEASE.md \
-    "dist/$target.tgz" "dist/$target.json" "dist/FlXtR-$target-install.tgz"
+    "dist/$target.tgz" "dist/$target.json" "dist/FlXtR-$target-install.tgz" scripts/autobuild
 gh release edit "$tag" --repo "$repo" --draft=false --prerelease
 channel=$target-latest
 if ! gh release view "$channel" --repo "$repo" >/dev/null 2>&1; then
@@ -25,5 +25,5 @@ if ! gh release view "$channel" --repo "$repo" >/dev/null 2>&1; then
         --title "FlXtR $target beta update channel" \
         --notes 'Platform-specific manifest. Install the full Linux beta package from its versioned release.'
 fi
-gh release upload "$channel" "dist/$target.json" --repo "$repo" --clobber
+gh release upload "$channel" "dist/$target.json" scripts/autobuild --repo "$repo" --clobber
 echo "https://github.com/$repo/releases/tag/$tag"

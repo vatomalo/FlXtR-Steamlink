@@ -1,5 +1,23 @@
 # Linux beta
 
+Download and install the prebuilt beta, without compiling:
+
+```sh
+bash scripts/autobuild --download
+bash scripts/autobuild --download --install
+```
+
+Run as your normal user. `--install` verifies the package, installs the app under
+`~/.local/share/flxtr`, then invokes `sudo install` for `/usr/local/bin/flxtr`.
+Launch it with `flxtr`. Automatic updates remain user-owned and never prompt for
+sudo. Existing settings are preserved. `autocompile --linux --install` is an alias.
+The original Steam Link `autocompile` behavior is unchanged without Linux flags.
+
+Use `--deps` to install Debian/Ubuntu dependencies with sudo, and `--build --install`
+to compile locally instead of downloading. `FLXTR_INSTALL_DIR` and
+`FLXTR_DOWNLOAD_DIR` override the app and download locations. A system-wide launcher
+points to the installing user's app; this is not a shared multi-user installation.
+
 Build on the Linux machine that will run it:
 
 ```sh

@@ -72,8 +72,8 @@ static Uint32 catalog_started;
 static void launch_player(const Title *t);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -169,7 +169,7 @@ static void request_catalog(Browse next,int push,int pop){
         if(out<0||log<0)_exit(126);
         dup2(out,STDOUT_FILENO);dup2(log,STDERR_FILENO);close(out);close(log);
         char pg[16],id[16],sn[16],ep[16];snprintf(pg,sizeof(pg),"%d",next.page);snprintf(id,sizeof(id),"%d",next.id);snprintf(sn,sizeof(sn),"%d",next.season);snprintf(ep,sizeof(ep),"%d",next.episode);
-        execl("./greenlink-catalog","greenlink-catalog",browse_kinds[next.mode],pg,next.query,id,sn,ep,next.mode==6?next.query:"",(char*)NULL);_exit(127);
+        execl("./greenlink-catalog","greenlink-catalog",auto_active&&!strcmp(auto_title.kind,"kiss-episode")?(next.mode==5?"kiss-source":"kiss-quality"):browse_kinds[next.mode],pg,next.query,id,sn,ep,next.mode==6?next.query:"",(char*)NULL);_exit(127);
     }
     if(catalog_pid<0){catalog_pid=0;snprintf(status,sizeof(status),"COULD NOT LOAD CATALOG");}
     else snprintf(status,sizeof(status),"LOADING %s - B TO CANCEL",browse_labels[next.mode]);
@@ -228,8 +228,8 @@ static void finish_catalog(void){
     if(pending_pop&&history_size)history_size--;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
-    if(browse.mode<5){prefetch_browse=browse;prefetch_left=browse.page==1?2:1;}
-    if(browse.mode>=5&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
+    if((browse.mode<5||browse.mode>=7)){prefetch_browse=browse;prefetch_left=browse.page==1?2:1;}
+    if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
 }
 static void prefetch_pages(void){
@@ -320,7 +320,7 @@ static void draw_coverflow(void) {
     char line[90];snprintf(line,sizeof(line),"PAGE %d / %d   A OPEN   UP/DOWN PAGE   VIEW: %s",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6,view_names[viewing]);
     text(194,475,line,1,dim,120);
 }
-static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&browse.mode<5&&total&&flow_position!=(float)selection;}
+static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
     if(access("./update.sh",R_OK)){snprintf(status,sizeof(status),"UPDATER NOT INSTALLED");return;}
     update_pid=fork();
@@ -341,9 +341,10 @@ static void draw(Uint32 tick) {
     text(30,124,browse.mode==0?"> LOCAL":"  LOCAL",1,browse.mode==0?green:dim,20);
     int root_mode=history_size?history[0].mode:browse.mode;
     text(30,145,root_mode==1?"> MOVIES":"  MOVIES",1,root_mode==1?green:dim,20);
-    text(30,166,root_mode>=2?"> SERIES":"  SERIES",1,root_mode>=2?green:dim,20);
-    char num[64];snprintf(num,sizeof(num),"%d TITLES",browse.mode?listing_total:total);text(30,201,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
+    text(30,166,root_mode==2?"> SERIES":"  SERIES",1,root_mode==2?green:dim,20);
+    text(30,187,root_mode==7?"> KISSANIME":"  KISSANIME",1,root_mode==7?green:dim,20);
+    char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,222,num,1,white,20);
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
     if(settings_on){
         const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY"};
         char values[7][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
@@ -369,8 +370,8 @@ static void draw(Uint32 tick) {
         text(194,429,"BUILD " FLXTR_VERSION,1,dim,70);
     } else if(!total) {
         text(194,143,"NOTHING HERE YET",3,green,40);
-        wrap(194,195,browse.mode>=5?"THE PROVIDER RETURNED NO SOURCES. B RETURNS TO THE PREVIOUS SCREEN.":"NO MATCHING TITLES. X CHANGES LIBRARY. START OPENS SEARCH.",48,5,white);
-    } else if(browse.mode>=5){
+        wrap(194,195,(browse.mode==5||browse.mode==6)?"THE PROVIDER RETURNED NO SOURCES. B RETURNS TO THE PREVIOUS SCREEN.":"NO MATCHING TITLES. X CHANGES LIBRARY. START OPENS SEARCH.",48,5,white);
+    } else if((browse.mode==5||browse.mode==6)){
         text(194,96,browse_labels[browse.mode],3,green,35);text(194,136,browse.name,1,white,78);
         for(int i=0;i<total;i++){
             int y=180+i*43;Title *t=&titles[visible[i]];
@@ -392,7 +393,7 @@ static void draw(Uint32 tick) {
                 SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
             } else placeholder(dst.x,dst.y,dst.w,dst.h,visible[index]);
             text(x,y+162,t->title,1,index==selection?green:white,22);
-            const char *label=!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
+            const char *label=!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
             text(x,y+177,label,1,dim,22);
         }
         Title *t=&titles[visible[selection]];
@@ -412,7 +413,7 @@ static void play(void) {
     Title *t=&titles[visible[selection]];
     if(!t->url[0]&&t->kind[0]){
         Browse next={0,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
-        next.mode=!strcmp(t->kind,"tv")?3:!strcmp(t->kind,"season")?4:!strcmp(t->kind,"server")?6:5;
+        next.mode=!strcmp(t->kind,"kiss")?8:!strcmp(t->kind,"tv")?3:!strcmp(t->kind,"season")?4:!strcmp(t->kind,"server")?6:5;
         if(next.mode==6){snprintf(next.query,sizeof(next.query),"%.31s",t->title);snprintf(next.name,sizeof(next.name),"%s",browse.name);}
         if(next.mode==5){
             if(access("./greenlink-player",X_OK)){snprintf(status,sizeof(status),"PLAYER NOT INSTALLED");return;}
@@ -490,8 +491,8 @@ static void action(SDL_Keycode key) {
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
-    else if(key==SDLK_F2){Browse next={browse.mode==0?1:browse.mode==1?2:0,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);}
-    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
+    else if(key==SDLK_F2){Browse next={browse.mode==0?1:browse.mode==1?2:browse.mode==2?7:0,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);}
+    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
     else if(key==SDLK_y)stars_on=!stars_on;
@@ -501,8 +502,8 @@ static void action(SDL_Keycode key) {
     else if(!about&&total){
         if(key==SDLK_RIGHT){if(selection+1<total)selection++;else next_catalog_page(1);}
         if(key==SDLK_LEFT){if(selection>0)selection--;else next_catalog_page(-1);}
-        if(coverflow&&browse.mode<5&&(key==SDLK_UP||key==SDLK_DOWN)){next_catalog_page(key==SDLK_UP?-1:1);return;}
-        int step=browse.mode>=5?1:3;
+        if(coverflow&&(browse.mode<5||browse.mode>=7)&&(key==SDLK_UP||key==SDLK_DOWN)){next_catalog_page(key==SDLK_UP?-1:1);return;}
+        int step=(browse.mode==5||browse.mode==6)?1:3;
         if(key==SDLK_DOWN && selection+step<total)selection+=step;
         else if(key==SDLK_DOWN)next_catalog_page(1);
         if(key==SDLK_UP && selection>=step)selection-=step;
@@ -530,7 +531,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--screenshot")&&i+1<argc)shot=argv[++i];
         else if(!strcmp(argv[i],"--frames")&&i+1<argc)frames=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--no-stars"))stars_on=0;
-        else if(!strcmp(argv[i],"--library")&&i+1<argc){const char *v=argv[++i];initial_library=!strcmp(v,"movies")?1:!strcmp(v,"series")?2:0;if(!initial_library)return 2;}
+        else if(!strcmp(argv[i],"--library")&&i+1<argc){const char *v=argv[++i];initial_library=!strcmp(v,"movies")?1:!strcmp(v,"series")?2:!strcmp(v,"anime")?7:0;if(!initial_library)return 2;}
         else {fprintf(stderr,"Usage: %s [--catalog file] [--screenshot file.bmp] [--frames N] [--no-stars]\n",argv[0]);return 2;}
     }
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");

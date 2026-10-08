@@ -21,7 +21,7 @@ int main(void){
         "#!/bin/sh\n"
         "[ \"$4:$5:$6\" = '1396:1:2' ] || exit 9\n"
         "[ \"$TEST_SLOW\" != 1 ] || exec sleep 10\n"
-        "if [ \"$1\" = source ]; then\n"
+        "if [ \"$1\" = source ] || [ \"$1\" = kiss-source ]; then\n"
         " echo '# pages=2 total=3'\n"
         " if [ \"$2\" = 1 ]; then names='alpha beta alpha'; else names=gamma; fi\n"
         " for n in $names; do printf '%s\\tSERVER\\t\\t\\tserver\\t1396\\t1\\t2\\t0\\n' \"$n\"; done\n"
@@ -42,6 +42,7 @@ int main(void){
     assert(browse.mode==4&&history_size==2&&selection==0&&!strcmp(titles[0].title,"EPISODE TWO"));
     FILE *f=fopen("attempts","r");char buf[80]={0};assert(f);fread(buf,1,sizeof(buf)-1,f);fclose(f);
     assert(!strcmp(buf,"alpha\nbeta\ngamma\n"));
+    strcpy(titles[0].kind,"kiss-episode");play();assert(!strcmp(auto_title.kind,"kiss-episode"));pump();assert(!strcmp(status,"PLAYBACK FINISHED"));
     SDL_setenv("TEST_FAIL","1",1);play();pump();assert(!auto_active&&strstr(status,"NO WORKING SERVER"));
     SDL_setenv("TEST_SLOW","1",1);play();action(SDLK_ESCAPE);assert(!catalog_pid&&!auto_active&&strstr(status,"CANCELLED"));
     /* A timeout advances/fails cleanly; it cannot strand the input lock. */

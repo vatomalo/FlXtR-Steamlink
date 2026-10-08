@@ -335,3 +335,20 @@ characters display as question marks. Settings apply to the next playback.
 `greenlink-player --probe-buffer URL` checks demux and disk-buffer operation on
 the device without claiming the display/audio hardware. Host tests additionally
 need the libavformat/libavcodec/libavutil development packages.
+
+
+## KissAnime library
+
+X cycles LOCAL / MOVIES / SERIES / KISSANIME. START searches the selected
+catalog; A opens an anime's episode list, then starts automatic SUB/DUB source
+lookup. Episodes are sorted in ascending order. This adapter runs entirely on
+the Steam Link using bounded HTML requests, the existing three-page JSON cache
+and resized poster thumbnails. The anime directory exposes next-page links,
+so its displayed title count is a lower bound marked with `+`.
+
+KissAnime currently embeds GogoAnime/MegaPlay. The adapter follows those known
+embed hosts and accepts plain HTTPS MP4/HLS source links; it does not run page
+JavaScript or advertising. Tested One Piece episode embeds returned MegaPlay's
+file-unavailable response, so successful catalog browsing does not establish
+working video playback. Missing files and unsupported embeds fail cleanly through
+automatic source fallback. No browser or PC-side helper is required.

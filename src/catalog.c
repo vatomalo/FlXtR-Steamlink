@@ -14,7 +14,7 @@
 #include <time.h>
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
 #define PAGE_SIZE 6
-typedef struct {char title[80],meta[96],poster[128],url[2048],kind[16];int id,season,episode;} Entry;
+typedef struct {char title[80],meta[96],poster[512],url[2048],kind[16];int id,season,episode;} Entry;
 typedef struct {char *data;size_t length,limit;} Buffer;
 static Entry entries[PAGE_SIZE];
 static int used,total,cache_slot;
@@ -29,6 +29,7 @@ static size_t receive(void *data,size_t size,size_t count,void *opaque){
 static int fetch(const char *url,Buffer *b){
     CURL *c=curl_easy_init();if(!c)return -1;
     curl_easy_setopt(c,CURLOPT_URL,url);
+    curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);curl_easy_setopt(c,CURLOPT_MAXREDIRS,3L);
     curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,receive);curl_easy_setopt(c,CURLOPT_WRITEDATA,b);
     curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,5L);curl_easy_setopt(c,CURLOPT_TIMEOUT,12L);
     curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);curl_easy_setopt(c,CURLOPT_FAILONERROR,1L);
@@ -36,9 +37,9 @@ static int fetch(const char *url,Buffer *b){
     curl_easy_setopt(c,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
     curl_easy_setopt(c,CURLOPT_USERAGENT,"FlXtR-Steamlink/0.2");
 #if LIBCURL_VERSION_NUM >= 0x075500
-    curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"https");
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"https");curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"https");
 #else
-    curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
 #endif
     CURLcode rc=curl_easy_perform(c);long code=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);
     curl_easy_cleanup(c);
@@ -140,11 +141,12 @@ static int sources(int page,int id,int season,int episode){
         strcpy(e->url,p[6]);strcpy(e->kind,"source");e->id=id;e->season=season;e->episode=episode;
     }fclose(f);return 0;
 }
+#include "kissanime.h"
 /* Three disk slots. A full key and snapshot stamp prevent cross-library hits. */
 static void cache_identity(const char *kind,int page,const char *query,int id,int season){
     struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
     cache_slot=page%3;snprintf(cache_file,sizeof(cache_file),"catalog-cache/page-%d.json",cache_slot);
-    snprintf(cache_key,sizeof(cache_key),"%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    snprintf(cache_key,sizeof(cache_key),"v2|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
 }
 static int cache_load(void){
     struct stat st;if(stat(cache_file,&st)||st.st_size>65536||st.st_size<2||time(NULL)-st.st_mtime>86400)return 0;
@@ -178,12 +180,13 @@ static void cache_save(void){
     json_object_put(root);
 }
 static void poster(Entry *e,int slot){
-    char path[128];strcpy(path,e->poster);e->poster[0]=0;
-    if(path[0]!='/')return;
-    for(size_t i=1;path[i];i++)if(!isalnum((unsigned char)path[i])&&path[i]!='.'&&path[i]!='_'&&path[i]!='-')return;
+    char path[512];strcpy(path,e->poster);e->poster[0]=0;
+    int kiss=!strncmp(path,KISS "/wp-content/uploads/",sizeof(KISS "/wp-content/uploads/")-1);
+    if(!kiss&&path[0]!='/')return;
+    for(size_t i=kiss?sizeof(KISS)-1:1;path[i];i++)if(!isalnum((unsigned char)path[i])&&path[i]!='.'&&path[i]!='_'&&path[i]!='-'&&!(kiss&&path[i]=='/'))return;
     if(strstr(path,".."))return;
-    char url[256];snprintf(url,sizeof(url),"https://image.tmdb.org/t/p/w154%s",path);
-    Buffer b={NULL,0,128*1024};
+    char url[768];if(kiss)snprintf(url,sizeof(url),"%s",path);else snprintf(url,sizeof(url),"https://image.tmdb.org/t/p/w154%s",path);
+    Buffer b={NULL,0,kiss?512*1024:128*1024};
     if(!fetch(url,&b)){
         /* JPEG dimensions are checked before decoding; reject other formats. */
         int ok=0;size_t pos=2;
@@ -196,11 +199,16 @@ static void poster(Entry *e,int slot){
             if((marker==0xc0||marker==0xc1||marker==0xc2)&&len>=8){
                 int h=((unsigned char)b.data[pos+3]<<8)|(unsigned char)b.data[pos+4];
                 int w=((unsigned char)b.data[pos+5]<<8)|(unsigned char)b.data[pos+6];
-                ok=w>0&&w<=192&&h>0&&h<=288;break;
+                ok=w>0&&w<=(kiss?1024:192)&&h>0&&h<=(kiss?1536:288);break;
             }pos+=len;
         }
         if(ok){SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);SDL_Surface *s=rw?IMG_Load_RW(rw,1):NULL;
-            if(s){char file[80];snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+            if(s){
+                if(s->w>192||s->h>288){float scale=154.0f/s->w;if(s->h*scale>231)scale=231.0f/s->h;
+                    SDL_Surface *small=SDL_CreateRGBSurfaceWithFormat(0,(int)(s->w*scale),(int)(s->h*scale),32,SDL_PIXELFORMAT_ARGB8888);
+                    if(!small||SDL_BlitScaled(s,NULL,small,NULL)){SDL_FreeSurface(small);SDL_FreeSurface(s);free(b.data);return;}
+                    SDL_FreeSurface(s);s=small;
+                }char file[80];snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
                 if(!SDL_SaveBMP(s,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
                 SDL_FreeSurface(s);
             }
@@ -211,17 +219,21 @@ int main(int argc,char **argv){
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);
     if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>64)return 2;
-    if(strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality"))return 2;
+    if(strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality"))return 2;
     if((!strcmp(kind,"source")||!strcmp(kind,"quality"))&&!getenv("FLXTR_NO_NETWORK")&&!access("./greenlink-resolver",X_OK)){
         int quality=!strcmp(kind,"quality");if(quality&&argc!=8)return 2;
         execl("./greenlink-resolver","greenlink-resolver",quality?"source":"servers",episode?"tv":"movie",argv[4],argv[5],argv[6],quality?argv[7]:"",argv[2],(char*)NULL);return 1;
     }
     if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
     mkdir("catalog-cache",0700);
-    int cacheable=strcmp(kind,"source")&&strcmp(kind,"quality");
+    int cacheable=strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
     if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
     int rc;
-    if(!strcmp(kind,"source"))rc=sources(page,id,season,episode);
+    if(!strcmp(kind,"kiss"))rc=kiss_list(page,argv[3]);
+    else if(!strcmp(kind,"kiss-episodes"))rc=kiss_episodes(id,page);
+    else if(!strcmp(kind,"kiss-source"))rc=kiss_source(id,episode,"");
+    else if(!strcmp(kind,"kiss-quality"))rc=kiss_source(id,episode,argc==8?argv[7]:"");
+    else if(!strcmp(kind,"source"))rc=sources(page,id,season,episode);
     else if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&!*argv[3]&&!local_list(kind,page,argv[3]))rc=0;
     else rc=remote_list(kind,page,argv[3],id,season);
     if(rc){curl_global_cleanup();return 1;}

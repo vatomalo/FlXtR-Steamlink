@@ -205,7 +205,7 @@ static void auto_request(Browse next){
     if(!catalog_pid)auto_active=0;
 }
 static void auto_next(void){
-    if(auto_index>=auto_count){auto_active=0;snprintf(status,sizeof(status),"NO WORKING SERVER FOUND - A TO RETRY / B BACK");return;}
+    if(auto_index>=auto_count){auto_active=0;snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
     Browse next={6,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
     strcpy(next.query,auto_servers[auto_index]);auto_request(next);
     if(auto_active)snprintf(status,sizeof(status),"TRYING SERVER %d OF %d - B TO CANCEL",auto_index+1,auto_count);
@@ -213,7 +213,7 @@ static void auto_next(void){
 static void auto_result(int success){
     if(!success){
         if(pending.mode==6){auto_index++;auto_next();}
-        else {auto_active=0;snprintf(status,sizeof(status),"SERVER LOOKUP FAILED - A TO RETRY");}
+        else {auto_active=0;snprintf(status,sizeof(status),"SERVER DISCOVERY FAILED - SEE CATALOG.LOG");}
         return;
     }
     FILE *f=fopen("catalog-cache/result.tsv","r");char line[2600];int pages=1;
@@ -236,6 +236,7 @@ static void auto_result(int success){
         }
     }fclose(f);}
     if(source.url[0]){launch_player(&source);if(!player_pid)auto_active=0;return;}
+    if(pending.mode==6)fprintf(stderr,"Source lookup returned no usable URL for server %s\n",pending.query);
     if(pending.mode==5){
         if(pending.page<pages&&auto_count<40){Browse next=pending;next.page++;auto_request(next);}
         else {auto_index=0;auto_next();}

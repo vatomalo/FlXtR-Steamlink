@@ -33,7 +33,7 @@ def request(url, data, content_type='application/json', method='POST'):
 release = request(api + '/releases', json.dumps({
     'tag_name': 'shell-' + version, 'target_commitish': version,
     'name': 'Steam Link shell ' + version[:8], 'draft': True,
-    'body': 'Native ARM shell update. Adds Internet Archive video browsing and search with the matching catalog helper from the local package. Direct MP4 candidates use the existing hardware player. KissAnime browsing now notes its unavailable-host limitation. '
+    'body': 'Native ARM shell update. Adds scheduled TV mode with seven editable Oslo-time genre blocks, episode completion history and automatic source selection. Requires the matching catalog helper from the local package. Includes Internet Archive video browsing. '
             'Requires the existing FlXtR installation; player, resolver and private catalogs stay installed. '
             'The launcher checks this release over HTTPS and verifies SHA-256 before replacement.'
 }).encode())

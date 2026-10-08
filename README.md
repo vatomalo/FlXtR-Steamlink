@@ -41,7 +41,7 @@ No browser, Node, Python, or Docker runs on the box. WSL/Docker are build tools.
 | Submit search | Start or the > key | Enter |
 | Delete search character | B or the < key | Backspace |
 | Next / previous catalog page | Move beyond grid edge | Page Down / Page Up |
-| All / playable filter in local catalog | — | Tab |
+| All / playable filter in local catalog | â€” | Tab |
 | Toggle stars | Y | Y |
 | About outside movie/series root | Start | I |
 | Select viewing mode in library | LB / RB | V |
@@ -360,7 +360,7 @@ Shell-only GitHub updates remain compatible with the previous player; the comple
 
 ## White metallic theme
 
-The library uses a generated silver-white water-drop background, dark green accents and charcoal text. One 960�540 texture uses approximately 2 MiB at 32-bit texture depth and is freed before playback. The background is static; stars do not animate over it. The full local package contains the asset; shell-only updates on older installations retain the dark fallback until `assets/white-metal-droplets.bmp` is installed. Generation details and prompt are in [assets/BACKGROUND.md](assets/BACKGROUND.md).
+The library uses a generated silver-white water-drop background, dark green accents and charcoal text. One 960×540 texture uses approximately 2 MiB at 32-bit texture depth and is freed before playback. The background is static; stars do not animate over it. The full local package contains the asset; shell-only updates on older installations retain the dark fallback until `assets/white-metal-droplets.bmp` is installed. Generation details and prompt are in [assets/BACKGROUND.md](assets/BACKGROUND.md).
 
 ## Internet Archive videos
 
@@ -369,3 +369,21 @@ Press X to cycle to ARCHIVE; Start searches public video items. Open an item wit
 Uses the public Advanced Search and metadata APIs directly on the Steam Link, without a PC or API key. Six items per page use the existing three-page JSON cache. Public item/download URLs are retained in this cache; provider stream URLs remain uncached. `--library archive` opens this library directly.
 
 KissAnime status: catalog and episode browsing work. The current native adapter only extracts plain media URLs; MegaPlay can require browser JavaScript and request headers, so an embed may load in a browser while native playback fails. This clone has Sub/Dub options on the sampled pages; a separate Server 2 was not confirmed. KissAnime playback remains unverified.
+
+## Scheduled TV mode
+
+Press X to reach TV MODE, then A to start continuous episode playback. The schedule uses Oslo time, including daylight saving. It is a personal scheduled playlist, not live broadcasts or a wall-clock seek into an already-running channel. Start begins a full episode; each episode finishes before the current clock selects the next genre block.
+
+| Hours | Default genre |
+|---|---|
+| 00-06 | Sci-fi |
+| 06-10 | Animation |
+| 10-15 | Comedy |
+| 15-17 | Crime / detective / drama |
+| 17-19 | Action / adventure |
+| 19-22 | Alternating sci-fi and Adult Swim animation |
+| 22-24 | Mystery |
+
+Settings > TV Schedule edits all seven blocks. Up/down selects a row, A switches between start hour and genre, left/right changes the selected value, and B saves and returns. The midnight start is fixed; other starts stay between neighboring rows so every hour belongs to one block. Change a block's genre to Mixed Shows for a general lineup. Settings persist in `settings.cfg`.
+
+TV mode discovers shows by TMDB genre (and Adult Swim network for that evening choice), selects the next episode remembered for each show, and uses the existing automatic server retries. Completed episodes update bounded `tv-progress.tsv` history; failures and explicit stops do not. If five show attempts fail, TV mode stops instead of retrying indefinitely. B closes the playback menu; B outside it stops TV mode. Sources still depend on the provider; a matching show is not a guarantee of playable media. Internet Archive remains a separate video library.

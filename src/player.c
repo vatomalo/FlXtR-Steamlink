@@ -256,7 +256,12 @@ int main(int argc,char **argv) {
         int64_t waited=av_gettime_relative()-wait_start;
         if(clock_start&&waited>100000)clock_start+=waited;
         if(overlay_until&&frames==0){SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
-        if(rc<0)break;
+        if(rc<0){
+            char message[AV_ERROR_MAX_STRING_SIZE];
+            av_strerror(rc,message,sizeof(message));
+            fprintf(stderr,"Disk packet read stopped: %d (%s), video frames=%u\n",rc,message,frames);
+            break;
+        }
         int track=packet->stream_index;
         if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);continue;}
         if(track!=vi&&track!=ai){av_packet_unref(packet);continue;}

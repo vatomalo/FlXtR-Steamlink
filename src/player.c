@@ -145,6 +145,8 @@ int main(int argc,char **argv) {
         else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
     }
     megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
+    /* Faster startup for short-lived anime HLS URLs; retain disk buffering. */
+    if(megaplay&&buffer_secs>5){fprintf(stderr,"MegaPlay: reducing initial prebuffer from %d to 5 seconds\n",buffer_secs);buffer_secs=5;}
     menu_height=height_limit;for(int i=0;i<4;i++)if(!strcmp(sub_language,(const char*[]){"off","auto","eng","nor"}[i]))menu_subtitles=i;
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}

@@ -146,14 +146,22 @@ static int sources(int page,int id,int season,int episode){
 #include "kissanime.h"
 #include "archive.h"
 #include "tv_catalog.h"
-/* Three disk slots. A full key and snapshot stamp prevent cross-library hits. */
+/* Keep previously visited title pages on disk, not only the last three.
+ * Hashing the complete identity spreads different libraries, searches and pages
+ * over a bounded 32-slot cache. Full key validation handles hash collisions. */
+#define CATALOG_CACHE_SLOTS 32
+#define CATALOG_CACHE_TTL (7 * 24 * 60 * 60)
 static void cache_identity(const char *kind,int page,const char *query,int id,int season){
     struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
-    cache_slot=page%3;snprintf(cache_file,sizeof(cache_file),"catalog-cache/page-%d.json",cache_slot);
-    snprintf(cache_key,sizeof(cache_key),"v3|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    snprintf(cache_key,sizeof(cache_key),"v4|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    unsigned long hash=2166136261UL;
+    for(const unsigned char *p=(const unsigned char *)cache_key;*p;p++)
+        hash=((hash^(unsigned long)*p)*16777619UL)&0xffffffffUL;
+    cache_slot=(int)(hash%CATALOG_CACHE_SLOTS);
+    snprintf(cache_file,sizeof(cache_file),"catalog-cache/page-%d.json",cache_slot);
 }
 static int cache_load(void){
-    struct stat st;if(stat(cache_file,&st)||st.st_size>65536||st.st_size<2||time(NULL)-st.st_mtime>86400)return 0;
+    struct stat st;if(stat(cache_file,&st)||st.st_size>65536||st.st_size<2||time(NULL)-st.st_mtime>CATALOG_CACHE_TTL)return 0;
     json_object *root=json_object_from_file(cache_file);if(!root)return 0;
     json_object *rows=field(root,"entries");int n=rows&&json_object_is_type(rows,json_type_array)?(int)json_object_array_length(rows):-1;
     int ok=!strcmp(string(root,"key"),cache_key)&&n>=0&&n<=PAGE_SIZE&&number(root,"total")>=0;

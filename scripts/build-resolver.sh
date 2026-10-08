@@ -28,9 +28,16 @@ fi
 echo "6942482ff310cee739b250cb9eeee7bc373121fb1580c598405899ca61b2e4e5  $wasm" | sha256sum -c -
 "$cache/wabt-host/wasm2c" "$wasm" -o build/resolver/img_data.c --module-name img_data
 python3 tools/resolver_imports.py build/resolver/img_data.h build/resolver/resolver_imports.inc
-set +u
-source "$sdk/setenv.sh"
-set -u
+output=build/greenlink-resolver-arm
+if [ "${FLXTR_BUILD_PLATFORM:-steamlink}" = linux ]; then
+    CC=cc
+    STRIP=strip
+    output=build/greenlink-resolver-linux
+else
+    set +u
+    source "$sdk/setenv.sh"
+    set -u
+fi
 runtime="$cache/wabt-1.0.36/wasm2c"
 flags=(-Os -std=c11 -D_POSIX_C_SOURCE=200809L -DNDEBUG -DWASM_RT_USE_MMAP=0 -DWASM_RT_MEMCHECK_BOUNDS_CHECK=1 -Ibuild/resolver -Isrc -I"$runtime")
 $CC "${flags[@]}" -c build/resolver/img_data.c -o build/resolver/module.o
@@ -38,8 +45,8 @@ $CC "${flags[@]}" -Wall -Wextra -Werror -c src/resolver_bridge.c -o build/resolv
 $CC "${flags[@]}" -c "$runtime/wasm-rt-impl.c" -o build/resolver/runtime.o
 $CC "${flags[@]}" -c "$runtime/wasm-rt-mem-impl.c" -o build/resolver/memory.o
 $CC "${flags[@]}" -Wall -Wextra -Werror -c src/resolver.c -o build/resolver/client.o
-$CC build/resolver/{module,bridge,runtime,memory,client}.o -o build/greenlink-resolver-arm -lcurl -ljson-c -lcrypto -lm -lpthread
-$STRIP build/greenlink-resolver-arm
+$CC build/resolver/{module,bridge,runtime,memory,client}.o -o "$output" -lcurl -ljson-c -lcrypto -lm -lpthread
+$STRIP "$output"
 cp "$cache/wabt-1.0.36/LICENSE" build/resolver/WABT-LICENSE.txt
-file build/greenlink-resolver-arm
-wc -c build/greenlink-resolver-arm
+if command -v file >/dev/null; then file "$output"; fi
+wc -c "$output"

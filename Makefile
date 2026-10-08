@@ -35,3 +35,11 @@ test: all
 	SDL_VIDEODRIVER=dummy ./build/greenlink --screenshot build/preview.bmp
 
 .PHONY: all test
+
+linux:
+	bash scripts/build-linux.sh
+
+test-linux:
+	python3 tests/linux_update_test.py
+
+.PHONY: linux test-linux

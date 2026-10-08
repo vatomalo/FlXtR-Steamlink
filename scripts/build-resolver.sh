@@ -17,10 +17,27 @@ if [ ! -f "$pico" ]; then
     wget -q https://raw.githubusercontent.com/okdshin/PicoSHA2/27fcf6979298949e8a462e16d09a0351c18fcaf2/picosha2.h -O "$pico"
 fi
 echo "8f183eaae529cd9d6a3d4843c7559e2a3e3d68b6caaa223e7c24c3c899b3d988  $pico" | sha256sum -c -
-if [ ! -x "$cache/wabt-host/wasm2c" ]; then
-    cmake -S "$cache/wabt-1.0.36" -B "$cache/wabt-host" -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release >"$cache/wabt-cmake.log" 2>&1
-    cmake --build "$cache/wabt-host" --target wasm2c -j"${JOBS:-4}" >"$cache/wabt-make.log" 2>&1 || { tail -50 "$cache/wabt-make.log"; exit 1; }
+# WABT runs on the build host, not on the Steam Link. SDK environment variables
+# may cause CMake to produce an ARM utility, which cannot execute in x86 Docker.
+# Keep this host build separate from the cross-compiled resolver below.
+host_wasm2c="$cache/wabt-host/wasm2c"
+if [ -x "$host_wasm2c" ] && ! "$host_wasm2c" --version >/dev/null 2>&1; then
+    echo "Discarding incompatible cached host wasm2c" >&2
+    rm -rf "$cache/wabt-host"
 fi
+if [ ! -x "$host_wasm2c" ]; then
+    (
+        unset CC CXX AR AS LD STRIP CROSS CROSS_COMPILE CFLAGS CXXFLAGS LDFLAGS
+        unset CMAKE_TOOLCHAIN_FILE CMAKE_C_COMPILER CMAKE_CXX_COMPILER
+        cmake -S "$cache/wabt-1.0.36" -B "$cache/wabt-host" \
+            -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=/usr/bin/cc -DCMAKE_CXX_COMPILER=/usr/bin/c++ \
+            >"$cache/wabt-cmake.log" 2>&1
+        cmake --build "$cache/wabt-host" --target wasm2c -j"${JOBS:-4}" \
+            >"$cache/wabt-make.log" 2>&1 || { tail -50 "$cache/wabt-make.log"; exit 1; }
+    )
+fi
+"$host_wasm2c" --version >/dev/null
 wasm="$cache/img_data-6942482f.wasm"
 if [ ! -f "$wasm" ]; then
     wget -q https://plsdontscrapemelove.flixer.gd/assets/wasm/img_data_bg.wasm -O "$wasm"

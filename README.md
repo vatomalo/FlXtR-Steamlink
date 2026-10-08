@@ -361,3 +361,11 @@ Shell-only GitHub updates remain compatible with the previous player; the comple
 ## White metallic theme
 
 The library uses a generated silver-white water-drop background, dark green accents and charcoal text. One 960×540 texture uses approximately 2 MiB at 32-bit texture depth and is freed before playback. The background is static; stars do not animate over it. The full local package contains the asset; shell-only updates on older installations retain the dark fallback until `assets/white-metal-droplets.bmp` is installed. Generation details and prompt are in [assets/BACKGROUND.md](assets/BACKGROUND.md).
+
+## Internet Archive videos
+
+Press X to cycle to ARCHIVE; Start searches public video items. Open an item with A, choose a video file, then A plays it through the existing hardware player and disk buffer. Only public MP4 candidates labelled H.264 or MPEG4 are listed; audio, books, pictures and private files are excluded. A format label is not a codec guarantee: the player still requires compatible H.264 video at the chosen resolution and decodable audio. Some indexed items have no matching files or unavailable downloads. This does not bypass restricted items.
+
+Uses the public Advanced Search and metadata APIs directly on the Steam Link, without a PC or API key. Six items per page use the existing three-page JSON cache. Public item/download URLs are retained in this cache; provider stream URLs remain uncached. `--library archive` opens this library directly.
+
+KissAnime status: catalog and episode browsing work. The current native adapter only extracts plain media URLs; MegaPlay can require browser JavaScript and request headers, so an embed may load in a browser while native playback fails. This clone has Sub/Dub options on the sampled pages; a separate Server 2 was not confirmed. KissAnime playback remains unverified.

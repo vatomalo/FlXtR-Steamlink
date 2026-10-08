@@ -43,7 +43,7 @@ static int tv_active,tv_attempts,tv_cursor,tv_schedule_on,tv_row,tv_column;
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
-static int settings_on,settings_row,quality_setting=1,buffer_setting=1,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
+static int settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor"};
 static void save_settings(void){

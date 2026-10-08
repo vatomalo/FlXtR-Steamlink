@@ -33,3 +33,22 @@ printf '{"platform":"%s","version":"%s","build":%s,"sha256":"%s"}\n' "$target" "
 tar -C dist -czf "dist/FlXtR-$target-install.tgz" \
     "FlXtR-$target/FlXtR.sh" "FlXtR-$target/current" "FlXtR-$target/releases/$version"
 echo "Built $root/FlXtR.sh"
+if [ -n "${FLXTR_LINUX_OUTPUT_DIR:-}" ]; then
+    output=$FLXTR_LINUX_OUTPUT_DIR
+    if [ ! -d "$output" ] && [ ! -w "$(dirname "$output")" ]; then
+        sudo install -d -o "$(id -u)" -g "$(id -g)" "$output"
+    fi
+    mkdir -p "$output/releases"
+    [ -w "$output" ] || { echo "Output directory is not writable: $output" >&2; exit 1; }
+    stage=$(mktemp -d "$output/releases/$version.XXXXXX")
+    cp -R "$app/." "$stage/"
+    # Switch all matching helpers together; never overwrite a running ELF file.
+    ln -s "releases/$(basename "$stage")" "$output/.current-next-$$"
+    mv -Tf "$output/.current-next-$$" "$output/current"
+    cp packaging/flxtr-linux.sh "$output/FlXtR.sh"
+    chmod +x "$output/FlXtR.sh"
+    for item in greenlink greenlink-catalog greenlink-player greenlink-resolver; do
+        ln -sfn "current/$item" "$output/$item"
+    done
+    printf 'Linux executable: %s/greenlink\nRun the complete app: %s/FlXtR.sh\n' "$output" "$output"
+fi

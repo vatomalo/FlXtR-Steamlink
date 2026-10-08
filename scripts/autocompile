@@ -5,6 +5,10 @@ set -euo pipefail
 if [[ " ${*} " == *" --download "* || " ${*} " == *" --install "* || " ${*} " == *" --linux "* ]]; then
     linux_args=()
     for arg in "$@"; do [[ "$arg" = --linux ]] || linux_args+=("$arg"); done
+    if [[ " ${*} " == *" --linux "* ]]; then
+        export FLXTR_LINUX_OUTPUT_DIR=${FLXTR_LINUX_OUTPUT_DIR:-/build}
+        if [[ " ${*} " != *" --download "* && " ${*} " != *" --build "* ]]; then linux_args+=(--build); fi
+    fi
     helper="$(dirname "$(readlink -f "$0")")/autobuild"
     if [[ ! -f "$helper" ]]; then helper="${FLXTR_SOURCE_DIR:-/opt/FlXtR-Steamlink}/scripts/autobuild"; fi
     [[ -f "$helper" ]] || { echo 'Install scripts/autobuild beside autocompile, or run it from the checkout.' >&2; exit 1; }
@@ -21,6 +25,9 @@ usage() {
     cat <<'HELP'
 Usage: autocompile [--shell-only] [--no-update] [--publish]
        autocompile --linux [--download | --build] [--install] [--deps]
+
+--linux compiles by default and leaves /build/greenlink plus /build/FlXtR.sh.
+Override /build with FLXTR_LINUX_OUTPUT_DIR. --download skips compilation.
 
 Clone/update vatomalo/FlXtR-Steamlink and build an installable Steam Link package.
   --shell-only  Build the UI without compiling the video player.

@@ -29,7 +29,9 @@ HELP
     esac
 done
 [ "$(uname -s)" = Linux ] || { echo 'Run this script on Linux or WSL.' >&2; exit 1; }
-[ "$EUID" -ne 0 ] || { echo 'Run as your normal user; --install invokes sudo only where needed.' >&2; exit 1; }
+if (( EUID == 0 && install_app )); then
+    echo 'Run --install as your normal user; only the launcher needs sudo.' >&2; exit 1
+fi
 (( !build || !download )) || { echo 'Choose --build or --download.' >&2; exit 2; }
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ ! -f "$script_dir/linux-install.py" ]; then
@@ -40,8 +42,9 @@ if [ ! -f "$script_dir/linux-install.py" ]; then
 fi
 cd "$script_dir/.."
 if (( deps )); then
-    sudo apt-get update
-    sudo apt-get install -y build-essential cmake pkg-config wget python3 git \
+    elevate=(); if (( EUID != 0 )); then elevate=(sudo); fi
+    "${elevate[@]}" apt-get update
+    "${elevate[@]}" apt-get install -y build-essential cmake pkg-config wget python3 git \
         libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev
 fi
 args=()

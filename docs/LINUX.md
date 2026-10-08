@@ -13,6 +13,20 @@ Launch it with `flxtr`. Automatic updates remain user-owned and never prompt for
 sudo. Existing settings are preserved. `autocompile --linux --install` is an alias.
 The original Steam Link `autocompile` behavior is unchanged without Linux flags.
 
+To compile and leave the executable in `/build`:
+
+```sh
+bash scripts/autocompile --linux
+/build/FlXtR.sh
+```
+
+The native ELF is `/build/greenlink`; matching player/catalog/resolver executables
+are also placed there. Launch with `FlXtR.sh` to set up data, helpers and updates.
+Linux mode now compiles by default; use `--download` for download-only mode.
+If `/build` does not exist and requires root permission, the script uses sudo to
+create it owned by your account. Set `FLXTR_LINUX_OUTPUT_DIR` for another location.
+Root builds inside Docker are allowed; `--install` must run as a normal user.
+
 Use `--deps` to install Debian/Ubuntu dependencies with sudo, and `--build --install`
 to compile locally instead of downloading. `FLXTR_INSTALL_DIR` and
 `FLXTR_DOWNLOAD_DIR` override the app and download locations. A system-wide launcher

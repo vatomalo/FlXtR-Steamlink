@@ -3,6 +3,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 project=$PWD
 sdk=${STEAMLINK_SDK_PATH:-/opt/steamlink-sdk}
+if [[ ! -f "$sdk/setenv.sh" ]]; then
+    printf 'This script builds the Steam Link player and requires the SDK inside its container.\n' >&2
+    printf 'For the complete native Linux app, run: bash scripts/autocompile --linux\n' >&2
+    if command -v steamlinkSDK >/dev/null 2>&1; then
+        printf 'Enter the Steam Link SDK container with: steamlinkSDK\n' >&2
+    fi
+    exit 1
+fi
 set +u
 source "$sdk/setenv.sh"
 set -u

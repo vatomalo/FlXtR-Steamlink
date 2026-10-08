@@ -12,6 +12,12 @@ Run as your normal user. `--install` verifies the package, installs the app unde
 Launch it with `flxtr`. Automatic updates remain user-owned and never prompt for
 sudo. Existing settings are preserved. `autocompile --linux --install` is an alias.
 The original Steam Link `autocompile` behavior is unchanged without Linux flags.
+Use `autocompile --steamlink` to select that target explicitly. If your
+`steamlinkSDK` command opens Docker, its SDK is only available inside that
+container. Running the host script with sudo does not expose the container's SDK.
+`scripts/build-player.sh` is also Steam Link-specific; the complete Linux build
+below includes its own libmpv player. Plain `make` builds development shell/catalog
+binaries only, not the complete runnable Linux package.
 
 To compile and leave the executable in `/build`:
 

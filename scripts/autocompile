@@ -3,6 +3,10 @@
 set -euo pipefail
 # Linux download/install mode is separate from the original SDK build path.
 if [[ " ${*} " == *" --download "* || " ${*} " == *" --install "* || " ${*} " == *" --linux "* ]]; then
+    if [[ " ${*} " == *" --steamlink "* ]]; then
+        echo 'Choose --steamlink or Linux build/download/install options, not both.' >&2
+        exit 2
+    fi
     linux_args=()
     for arg in "$@"; do [[ "$arg" = --linux ]] || linux_args+=("$arg"); done
     if [[ " ${*} " == *" --linux "* ]]; then
@@ -23,13 +27,14 @@ update=1
 publish=0
 usage() {
     cat <<'HELP'
-Usage: autocompile [--shell-only] [--no-update] [--publish]
+Usage: autocompile [--steamlink] [--shell-only] [--no-update] [--publish]
        autocompile --linux [--download | --build] [--install] [--deps]
 
 --linux compiles by default and leaves /build/greenlink plus /build/FlXtR.sh.
 Override /build with FLXTR_LINUX_OUTPUT_DIR. --download skips compilation.
 
 Clone/update vatomalo/FlXtR-Steamlink and build an installable Steam Link package.
+  --steamlink   Explicitly select the default Steam Link SDK build.
   --shell-only  Build the UI without compiling the video player.
   --publish     Upload shell executable as a GitHub release (GH_TOKEN or token on stdin).
   --no-update   Use the current checkout without fetching GitHub changes.
@@ -48,6 +53,7 @@ HELP
 }
 for arg in "$@"; do
     case "$arg" in
+        --steamlink) ;;
         --shell-only) shell_only=1 ;;
         --no-update) update=0 ;;
         --publish) publish=1 ;;
@@ -56,7 +62,14 @@ for arg in "$@"; do
     esac
 done
 if [[ ! -f "$STEAMLINK_SDK_PATH/setenv.sh" ]]; then
-    printf 'Steam Link SDK missing: %s\n' "$STEAMLINK_SDK_PATH" >&2; exit 1
+    printf 'Steam Link SDK is not available in this shell: %s\n' "$STEAMLINK_SDK_PATH" >&2
+    printf 'For native Linux and /build/FlXtR.sh, run: %s --linux\n' "$0" >&2
+    if command -v steamlinkSDK >/dev/null 2>&1; then
+        printf 'For Steam Link, enter your SDK container with steamlinkSDK, then run autocompile there.\n' >&2
+    else
+        printf 'For Steam Link, run inside your SDK container or set STEAMLINK_SDK_PATH.\n' >&2
+    fi
+    exit 1
 fi
 if [[ ! -e "$source_dir" ]]; then
     git clone --branch main --single-branch "$repo" "$source_dir"

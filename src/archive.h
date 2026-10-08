@@ -16,7 +16,7 @@ static int archive_cards(json_object *root){
     json_object *response=field(root,"response"),*docs=field(response,"docs");
     if(!docs||!json_object_is_type(docs,json_type_array))return -1;
     total=number(response,"numFound");if(total<0)total=0;if(total>12000)total=12000;
-    for(size_t i=0;i<json_object_array_length(docs)&&used<PAGE_SIZE;i++){
+    for(size_t i=0;i<(size_t)json_object_array_length(docs)&&used<PAGE_SIZE;i++){
         json_object *o=json_object_array_get_idx(docs,i);const char *id=string(o,"identifier");
         if(!archive_identifier(id))continue;
         Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(o,"title"));if(!e->title[0])clean(e->title,sizeof(e->title),id);
@@ -43,7 +43,7 @@ static int archive_video(json_object *f){
 }
 static int archive_files_json(json_object *root,const char *id,int page){
     json_object *files=field(root,"files");if(!files||!json_object_is_type(files,json_type_array))return -1;
-    for(size_t i=0;i<json_object_array_length(files);i++){
+    for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
         json_object *f=json_object_array_get_idx(files,i);if(!archive_video(f))continue;
         if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;
         char *name=curl_easy_escape(NULL,string(f,"name"),0);if(!name)return -1;

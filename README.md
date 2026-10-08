@@ -61,9 +61,7 @@ does not establish visual scaling on every firmware. Unsupported modes report
 `VIEW MODE UNAVAILABLE`. Keyboard events during playback are unavailable while
 the library's video subsystem is released; controller input remains active.
 
-The player currently supports sequential playback and stop. Seeking, pause,
-subtitles, network retry, and a robust audio-master synchronization loop remain work
-in progress. Do not mistake a successful frame-submission test for verified lip sync.
+The player supports buffered seeking, pause and embedded text subtitles through the in-video menu described below. A successful frame-submission test does not establish lip-sync accuracy on every stream.
 
 Press X to choose Series, A on a show, then A on a season and episode. B retraces
 those screens and restores the previous selection. Source choices show a compact
@@ -225,8 +223,7 @@ without retrying; normal completion returns to the original library selection.
 If every server fails, A retries the title. A playback error after video has begun
 may restart the title on another server; playback positions are not preserved.
 The application operates with the PC off. Provider changes, expiring links,
-unsupported codecs and failed servers remain possible. Pause, seeking,
-resume positions and automatic next-episode playback are not implemented yet.
+unsupported codecs and failed servers remain possible. Persistent resume bookmarks and automatic next-episode playback are not implemented yet.
 
 ## Licensing
 
@@ -321,8 +318,8 @@ playback, so stopping, crashing or changing server releases it automatically.
 This is a temporary playback buffer, not a saved playable movie download.
 The player requires the selected buffer capacity plus 32 MiB of free space.
 It waits for the selected prebuffer duration (or EOF/full buffer), and re-fills
-if the queue empties. A slow server can still exhaust the buffer. There is no
-seek/resume support yet. Metadata and at most one packet per worker stay in RAM;
+if the queue empties. A slow server can still exhaust the buffer. Seeking reopens
+and prebuffers at a keyframe. Metadata and at most one packet per worker stay in RAM;
 the compressed read-ahead payload stays on disk.
 
 Subtitle settings: Off, Automatic, English or Norwegian; Normal/Large text;
@@ -352,3 +349,11 @@ JavaScript or advertising. Tested One Piece episode embeds returned MegaPlay's
 file-unavailable response, so successful catalog browsing does not establish
 working video playback. Missing files and unsupported embeds fail cleanly through
 automatic source fallback. No browser or PC-side helper is required.
+
+## In-video controls
+
+With the matching player installed, Options/Start opens a black/green hardware overlay. D-pad selects controls; Cross/A changes them; Circle/B closes the menu (or stops playback when the menu is closed). L1/R1 or left/right outside the menu skip ten seconds backward/forward. Seeking is a keyframe seek, not reverse video playback: the player reopens the same stream at the requested timestamp, resets hardware/audio state, and refills the configured disk buffer. Unsupported seeking returns to the library with an error rather than silently starting at zero.
+
+The menu includes pause/resume, subtitle language/off, size and offset, fit/stretch/1:1, 480/720/1080p limit, next server, and previous/next episode. Episode navigation crosses catalog pages within the current season; it does not cross seasons. Server and episode actions are disabled for local videos. Subtitle language and quality changes reopen and rebuffer at the current position; a server must expose a compatible track. Embedded text subtitles only are supported. Quality is a stream-selection limit, not transcoding. Pause stops feeding video and pauses audio; already queued hardware frames can briefly drain.
+
+Shell-only GitHub updates remain compatible with the previous player; the complete local package installs `player-menu-v1` alongside the new player to enable these controls. See [ROADMAP.md](ROADMAP.md) for the future optional-dub investigation.

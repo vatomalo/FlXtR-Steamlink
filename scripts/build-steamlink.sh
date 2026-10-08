@@ -30,6 +30,7 @@ if [ -f build/greenlink-resolver-arm ]; then
     cp build/greenlink-resolver-arm "$app/greenlink-resolver"
     cp build/resolver/WABT-LICENSE.txt "$app/WABT-LICENSE.txt"
 fi
+if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi
 chmod +x "$app/greenlink" "$app/greenlink.sh"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink
 file build/greenlink-arm

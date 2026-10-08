@@ -40,3 +40,5 @@ $CC build/player-arm.o -o build/greenlink-player-arm \
 $STRIP build/greenlink-player-arm
 file build/greenlink-player-arm
 wc -c build/greenlink-player-arm
+
+printf "1\n" > build/player-menu-v1

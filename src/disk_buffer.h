@@ -5,6 +5,9 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <errno.h>
+#ifndef DISK_POLL
+#define DISK_POLL() ((void)0)
+#endif
 #define DISK_SLOTS 4096
 typedef struct {int size,stream,flags,sides;int64_t pts,dts,duration,pos;} DiskHeader;
 typedef struct {uint32_t size,type;} DiskSide;
@@ -89,7 +92,9 @@ static DiskBuffer *disk_start(AVFormatContext *fmt,int vi,int ai,int si,int seco
 static int disk_packet(DiskBuffer *q,AVPacket *p){
     pthread_mutex_lock(&q->mutex);
     if(!q->count)q->primed=0;
-    while(!stopped&&!q->quit&&!q->done&&(!q->count||!q->primed))disk_wait(q);
+    while(!stopped&&!q->quit&&!q->done&&(!q->count||!q->primed)){
+        disk_wait(q);pthread_mutex_unlock(&q->mutex);DISK_POLL();pthread_mutex_lock(&q->mutex);
+    }
     if(stopped||q->quit){pthread_mutex_unlock(&q->mutex);return AVERROR_EXIT;}
     if(!q->count){int rc=q->result;pthread_mutex_unlock(&q->mutex);return rc;}
     DiskRecord record=q->records[q->head];uint64_t at=record.offset;DiskHeader h;

@@ -10,3 +10,5 @@ __pycache__/
 
 settings.cfg*
 playback-cache/
+
+playback-request*

@@ -50,6 +50,28 @@ int main(void){
     /* Explicit stop never triggers another server, even on a nonzero exit. */
     auto_active=1;auto_index=0;stopping_player=1;close_ui();finish_player(256);
     assert(!auto_active&&!catalog_pid&&!strcmp(status,"PLAYBACK STOPPED"));
+    /* Matching player receives a control pipe and restarts at the requested time. */
+    script("player-menu-v1","1\n");
+    script("greenlink-player",
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$@\" >> launch-args\n"
+        "if [ ! -f requested ]; then touch requested; echo '1 12.5 0 1 3 2' > playback-request; exit 40; fi\n"
+        "exit 0\n");
+    browse.mode=0;auto_active=0;restart_position=0;
+    Title direct={.title="TEST",.url="https://example.org/video.mp4"};
+    launch_player(&direct);assert(player_menu&&player_control>=0);pump();
+    assert(!strcmp(status,"PLAYBACK FINISHED")&&subtitle_setting==1&&subtitle_scale==3&&subtitle_delay==2);
+    f=fopen("launch-args","r");assert(f);char args[2048]={0};fread(args,1,sizeof(args)-1,f);fclose(f);
+    assert(strstr(args,"--control-fd\n")&&strstr(args,"--start\n12.500\n"));
+    /* A requested stop must not fall through to automatic server retry. */
+    f=fopen("playback-request","w");assert(f);fputs("7 12 0 0 2 0\n",f);fclose(f);
+    auto_active=1;close_ui();finish_player(40<<8);assert(!auto_active&&!catalog_pid&&!strcmp(status,"PLAYBACK STOPPED"));
+    script("greenlink-catalog","#!/bin/sh\necho '# pages=2 total=7'\nprintf 'EPISODE SEVEN\\tTEST\\t\\thttps://example.org/seven.mp4\\tsource\\t1396\\t1\\t7\\t0\\n'\n");
+    browse.mode=4;browse.page=1;selection=0;total=1;listing_pages=2;
+    f=fopen("playback-request","w");assert(f);fputs("6 0 0 0 2 0\n",f);fclose(f);
+    close_ui();finish_player(40<<8);assert(catalog_pid&&play_after_load);pump();
+    assert(browse.page==2&&!play_after_load&&!strcmp(playing_title.title,"EPISODE SEVEN"));
+    unlink("player-menu-v1");unlink("requested");unlink("launch-args");unlink("settings.cfg");
     close_ui();SDL_Quit();
     unlink("greenlink-catalog");unlink("greenlink-player");unlink("attempts");unlink("player.log");unlink("catalog.log");
     unlink("catalog-cache/result.tsv");rmdir("catalog-cache");assert(!chdir("/tmp"));rmdir(temp);

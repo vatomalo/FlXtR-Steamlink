@@ -43,3 +43,11 @@ test-linux:
 	python3 tests/linux_update_test.py
 
 .PHONY: linux test-linux
+
+psp:
+	bash scripts/build-psp.sh
+
+test-psp:
+	bash scripts/test-psp-host.sh
+
+.PHONY: psp test-psp

@@ -11,6 +11,14 @@ No browser, Node, Python, or Docker runs on the box. WSL/Docker are build tools.
 
 ![Native shell](preview.png)
 
+## PSP device-test beta
+
+`bash scripts/autocompile --psp` builds a separate native EBOOT using the existing
+`garden-gaiden-psp-sdk` Docker image. It includes direct MP4 range streaming,
+firmware AVC/AAC decoding, a text menu and PSP-specific update support.
+It has not been tested on a PSP or emulator; KissAnime/HLS and the full catalog
+UI are not ported yet. See [PSP installation and test status](docs/PSP-STATUS.md).
+
 ## Footprint
 
 - C99 + the Steam Link's existing SDL2 library; built-in 5x7 pixel font.

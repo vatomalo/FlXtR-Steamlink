@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Build the public source inside a Steam Link SDK container. No deployment secrets.
 set -euo pipefail
+if [[ ${1:-} == --psp ]]; then
+    shift
+    helper="$(dirname "$(readlink -f "$0")")/build-psp.sh"
+    [[ -f "$helper" ]] || helper="${FLXTR_SOURCE_DIR:-/opt/FlXtR-Steamlink}/scripts/build-psp.sh"
+    exec bash "$helper" "$@"
+fi
 # Linux download/install mode is separate from the original SDK build path.
 if [[ " ${*} " == *" --download "* || " ${*} " == *" --install "* || " ${*} " == *" --linux "* ]]; then
     if [[ " ${*} " == *" --steamlink "* ]]; then
@@ -29,6 +35,7 @@ usage() {
     cat <<'HELP'
 Usage: autocompile [--steamlink] [--shell-only] [--no-update] [--publish]
        autocompile --linux [--download | --build] [--install] [--deps]
+       autocompile --psp
 
 --linux compiles by default and leaves /build/greenlink plus /build/FlXtR.sh.
 Override /build with FLXTR_LINUX_OUTPUT_DIR. --download skips compilation.

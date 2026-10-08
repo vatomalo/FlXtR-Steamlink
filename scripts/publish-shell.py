@@ -33,7 +33,7 @@ def request(url, data, content_type='application/json', method='POST'):
 release = request(api + '/releases', json.dumps({
     'tag_name': 'shell-' + version, 'target_commitish': version,
     'name': 'Steam Link shell ' + version[:8], 'draft': True,
-    'body': 'Native ARM shell update. Adds playback-menu controls with the matching local player package, plus KissAnime browsing with the matching catalog helper. Seeking reopens and prebuffers at a keyframe. KissAnime playback depends on an available supported embed. '
+    'body': 'Native ARM shell update. Adds a white metallic water-drop theme when the new background asset is installed from the local package. Falls back to the original dark theme if the asset is absent. '
             'Requires the existing FlXtR installation; player, resolver and private catalogs stay installed. '
             'The launcher checks this release over HTTPS and verifies SHA-256 before replacement.'
 }).encode())

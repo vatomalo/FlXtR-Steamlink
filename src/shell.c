@@ -29,7 +29,7 @@ static int count, selection, ready_only, about, stars_on=1, running=1;
 static int visible[MAX_TITLES], total, cached_page=-1;
 static SDL_Renderer *renderer;
 static SDL_Window *window;
-static SDL_Texture *posters[VISIBLE];
+static SDL_Texture *posters[VISIBLE],*background;
 static SDL_GameController *pads[4];
 static pid_t player_pid, update_pid;
 static int restart_shell, coverflow=1;
@@ -83,7 +83,7 @@ static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
 static char status[100]="SELECT A TITLE TO BEGIN";
 static unsigned char star_x[STARS], star_y[STARS], star_speed[STARS];
-static const SDL_Color green={116,255,132,255}, dim={66,126,77,255}, white={212,226,214,255};
+static SDL_Color green={116,255,132,255}, dim={66,126,77,255}, white={212,226,214,255};
 
 static void color(SDL_Color c) { SDL_SetRenderDrawColor(renderer,c.r,c.g,c.b,c.a); }
 static void rect(int x,int y,int w,int h,SDL_Color c,int fill) {
@@ -119,6 +119,7 @@ static void clear_posters(void) {
  * on Steam Link. Release the graphics backend before handing over to SLVideo. */
 static void close_ui(void) {
     clear_posters();
+    SDL_DestroyTexture(background);background=NULL;
     SDL_DestroyRenderer(renderer);renderer=NULL;
     SDL_DestroyWindow(window);window=NULL;
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
@@ -130,6 +131,13 @@ static int open_ui(void) {
     if(window&&!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
     if(!renderer){close_ui();return -1;}
     SDL_RenderSetLogicalSize(renderer,W,H);SDL_ShowCursor(SDL_DISABLE);
+    green=(SDL_Color){116,255,132,255};dim=(SDL_Color){66,126,77,255};white=(SDL_Color){212,226,214,255};
+    struct stat bg_info;
+    if(!stat("assets/white-metal-droplets.bmp",&bg_info)&&bg_info.st_size==1555254){
+        SDL_Surface *surface=SDL_LoadBMP("assets/white-metal-droplets.bmp");
+        if(surface){if(surface->w==W&&surface->h==H)background=SDL_CreateTextureFromSurface(renderer,surface);SDL_FreeSurface(surface);}
+    }
+    if(background){green=(SDL_Color){18,91,56,255};dim=(SDL_Color){62,74,72,255};white=(SDL_Color){24,32,30,255};}
     return 0;
 }
 static void filter(void) {
@@ -287,8 +295,8 @@ static void cache_page(int page) {
 static void placeholder(int x,int y,int w,int h,int seed) {
     SDL_Color a={10,23,16,255}, b={23,57,35,255};rect(x,y,w,h,a,1);
     for(int i=0;i<6;i++)rect(x+8+i*9,y+h/2-i*7,w-16-i*18,3,b,1);
-    text(x+10,y+12,"NO ART",1,dim,12);
-    char code[16];snprintf(code,sizeof(code),"%03d",seed+1);text(x+10,y+h-28,code,2,green,5);
+    text(x+10,y+12,"NO ART",1,(SDL_Color){150,190,160,255},12);
+    char code[16];snprintf(code,sizeof(code),"%03d",seed+1);text(x+10,y+h-28,code,2,(SDL_Color){116,255,132,255},5);
 }
 /* Six textures, depth ordering and mirrored reflections; no 3D context. */
 static void draw_coverflow(void) {
@@ -316,7 +324,7 @@ static void draw_coverflow(void) {
             SDL_SetTextureAlphaMod(posters[slot],40);
             SDL_RenderCopyEx(renderer,posters[slot],NULL,&reflection,0,NULL,SDL_FLIP_VERTICAL);
             SDL_SetTextureAlphaMod(posters[slot],255);SDL_SetTextureColorMod(posters[slot],255,255,255);
-        }else {rect(dst.x,dst.y,w,h,(SDL_Color){8,23,14,255},1);text(dst.x+6,dst.y+h/2,"FLXTR",1,dim,w/6-1);}
+        }else {rect(dst.x,dst.y,w,h,(SDL_Color){8,23,14,255},1);text(dst.x+6,dst.y+h/2,"FLXTR",1,(SDL_Color){150,190,160,255},w/6-1);}
     }
     SDL_RenderSetClipRect(renderer,NULL);
     Title *t=&titles[visible[selection]];
@@ -335,7 +343,17 @@ static void start_update(void) {
 }
 static void draw(Uint32 tick) {
     SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
-    if(stars_on)for(int i=0;i<STARS;i++) {
+    if(background){
+        SDL_RenderCopy(renderer,background,NULL,NULL);
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+        rect(20,16,920,55,(SDL_Color){255,255,255,180},1);
+        rect(20,80,155,400,(SDL_Color){255,255,255,208},1);
+        rect(20,483,920,43,(SDL_Color){255,255,255,224},1);
+        rect(184,419,746,63,(SDL_Color){255,255,255,208},1);
+        if(settings_on||search_on||about)rect(184,80,746,339,(SDL_Color){255,255,255,200},1);
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
+    }
+    if(stars_on&&!background)for(int i=0;i<STARS;i++) {
         int x=star_x[i]*W/256, y=(star_y[i]*H/256+(tick/100)*star_speed[i]/8)%H;
         SDL_Color c={145+(i%3)*40,145+(i%3)*40,145+(i%3)*40,255};rect(x,y,1+(i%9==0),1+(i%9==0),c,1);
     }
@@ -349,7 +367,7 @@ static void draw(Uint32 tick) {
     text(30,166,root_mode==2?"> SERIES":"  SERIES",1,root_mode==2?green:dim,20);
     text(30,187,root_mode==7?"> KISSANIME":"  KISSANIME",1,root_mode==7?green:dim,20);
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,222,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7?"[START] SEARCH":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
     if(settings_on){
         const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY"};
         char values[7][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
@@ -369,7 +387,7 @@ static void draw(Uint32 tick) {
         text(194,460,"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
     }else if(about) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
-        wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. BLACK SPACE, GREEN PIXELS, AND A FEW DISTANT STARS.",53,4,white);
+        wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. WHITE METAL, WATER DROPS, AND GREEN PIXELS.",53,4,white);
         wrap(194,260,"C + SDL2. SIX POSTERS IN MEMORY. NO BROWSER. NO WEB UI. DIRECT VIDEO PLAYBACK USES A SEPARATE PLAYER.",53,5,dim);
         text(194,390,"A CHECK FOR UPDATE / B RETURN",2,green,50);
         text(194,429,"BUILD " FLXTR_VERSION,1,dim,70);
@@ -409,7 +427,7 @@ static void draw(Uint32 tick) {
         text(690,416,view_names[viewing],1,green,25);
         snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
     }
-    if(catalog_pid){rect(190,227,680,70,(SDL_Color){0,0,0,255},1);rect(190,227,680,70,green,0);text(212,250,auto_active?"FINDING A WORKING SERVER... B CANCEL":"LOADING... B TO CANCEL",2,green,50);}
+    if(catalog_pid){rect(190,227,680,70,background?(SDL_Color){248,250,249,255}:(SDL_Color){0,0,0,255},1);rect(190,227,680,70,green,0);text(212,250,auto_active?"FINDING A WORKING SERVER... B CANCEL":"LOADING... B TO CANCEL",2,green,50);}
     rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(713,509,"DPAD MOVE / B BACK",1,green,30);
     SDL_RenderPresent(renderer);
 }
@@ -588,7 +606,7 @@ int main(int argc,char **argv) {
     if(initial_library){Browse next={initial_library,1,0,0,0,0,"",""};request_catalog(next,0,0);}
     while(running) {
         SDL_Event event;
-        if(SDL_WaitEventTimeout(&event,(stars_on||flow_animating())?33:250)) do {
+        if(SDL_WaitEventTimeout(&event,((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT)running=0;
             else if(event.type==SDL_KEYDOWN)action(event.key.keysym.sym);
@@ -625,7 +643,7 @@ int main(int argc,char **argv) {
             SDL_Delay(30);continue;
         }
         Uint32 now=SDL_GetTicks();
-        if(dirty||((stars_on||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+        if(dirty||(((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;

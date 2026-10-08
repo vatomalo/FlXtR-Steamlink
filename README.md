@@ -357,3 +357,7 @@ With the matching player installed, Options/Start opens a black/green hardware o
 The menu includes pause/resume, subtitle language/off, size and offset, fit/stretch/1:1, 480/720/1080p limit, next server, and previous/next episode. Episode navigation crosses catalog pages within the current season; it does not cross seasons. Server and episode actions are disabled for local videos. Subtitle language and quality changes reopen and rebuffer at the current position; a server must expose a compatible track. Embedded text subtitles only are supported. Quality is a stream-selection limit, not transcoding. Pause stops feeding video and pauses audio; already queued hardware frames can briefly drain.
 
 Shell-only GitHub updates remain compatible with the previous player; the complete local package installs `player-menu-v1` alongside the new player to enable these controls. See [ROADMAP.md](ROADMAP.md) for the future optional-dub investigation.
+
+## White metallic theme
+
+The library uses a generated silver-white water-drop background, dark green accents and charcoal text. One 960×540 texture uses approximately 2 MiB at 32-bit texture depth and is freed before playback. The background is static; stars do not animate over it. The full local package contains the asset; shell-only updates on older installations retain the dark fallback until `assets/white-metal-droplets.bmp` is installed. Generation details and prompt are in [assets/BACKGROUND.md](assets/BACKGROUND.md).

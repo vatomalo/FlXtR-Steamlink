@@ -26,7 +26,7 @@ static void menu_draw(void){
     if(view_overlay)SLVideo_HideOverlay(view_overlay);
     if(subtitle_overlay)SLVideo_HideOverlay(subtitle_overlay);
     overlay_until=0;subtitle_visible=-2;
-    SLVideo_HideOverlay(menu_overlay);
+    /* Keep the overlay visible while repainting to avoid a blank-frame flash. */
     uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(menu_overlay,&pixels,&pitch);
     if(!pixels||pitch<740*4)return;
     for(int y=0;y<416;y++)for(int x=0;x<740;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xe8000000;
@@ -46,7 +46,7 @@ static void menu_draw(void){
     menu_text(pixels,pitch,16,heading,0xff74ff84);
     for(int i=0;i<11;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,54+i*29,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
     menu_text(pixels,pitch,386,"DPAD SELECT / A CHANGE / B CLOSE",0xff74ff84);
-    SLVideo_SetOverlayDisplayArea(menu_overlay,0.115f,0.10f,0.77f,0.77f);SLVideo_ShowOverlay(menu_overlay);
+    SLVideo_SetOverlayDisplayArea(menu_overlay,0.0f,0.0f,1.0f,1.0f);SLVideo_ShowOverlay(menu_overlay);
 }
 static void menu_restart(int action,double position){
     if(position<0)position=0;

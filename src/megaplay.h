@@ -67,13 +67,15 @@ static int mega_media(json_object *root,char *url,size_t cap,time_t now){
 }
 static int mega_source(const char *html,const char *referer,char *url,size_t cap){
     const char *player=strstr(html,"id=\"megaplay-player\"");char id[32];
-    if(!player)return 0;
+    if(!player){fprintf(stderr,"MegaPlay: player element missing\n");return 0;}
     while(player>html&&*player!='<')player--;
-    if(!kiss_attr(player,"data-id",id,sizeof(id))||positive(id,0)<1)return 0;
+    if(!kiss_attr(player,"data-id",id,sizeof(id))||positive(id,0)<1){fprintf(stderr,"MegaPlay: numeric data-id missing\n");return 0;}
     char endpoint[160];snprintf(endpoint,sizeof(endpoint),"https://megaplay.buzz/stream/getSourcesNew?id=%s&platform=OTHER",id);
-    Buffer response={NULL,0,65536};if(fetch_referred(endpoint,&response,referer)){free(response.data);return 0;}
+    Buffer response={NULL,0,65536};if(fetch_referred(endpoint,&response,referer)){fprintf(stderr,"MegaPlay: source endpoint request failed\n");free(response.data);return 0;}
     json_tokener *tok=json_tokener_new_ex(16);if(!tok){free(response.data);return 0;}
     json_object *root=json_tokener_parse_ex(tok,response.data,(int)response.length);
-    int ok=json_tokener_get_error(tok)==json_tokener_success&&mega_media(root,url,cap,time(NULL));
+    int parsed=json_tokener_get_error(tok)==json_tokener_success;
+    int ok=parsed&&mega_media(root,url,cap,time(NULL));
+    if(!ok)fprintf(stderr,"MegaPlay: %s\n",parsed?"unsupported or invalid media response":"invalid source JSON");
     json_object_put(root);json_tokener_free(tok);free(response.data);return ok;
 }

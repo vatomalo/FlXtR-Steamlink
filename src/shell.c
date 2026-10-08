@@ -516,6 +516,8 @@ static void launch_player(const Title *t) {
         int log=open("player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
         const char *modes[]={"fit","stretch","pixel"};
+        if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
+        else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
         snprintf(control,sizeof(control),"%d",controls[0]);snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",t->height?t->height:qualities[quality_setting]);
         snprintf(buffer,sizeof(buffer),"%d",buffer_seconds[buffer_setting]);snprintf(disk,sizeof(disk),"%d",disk_megabytes[disk_setting]);
@@ -543,7 +545,10 @@ static void finish_player(int code){
         if(command==7){tv_active=0;auto_active=0;snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
         if(command<=3){
             if(command>1){quality_setting=(quality_setting+(command==2?1:2))%3;playing_title.height=0;save_settings();}
-            restart_position=auto_resume=position;launch_player(&playing_title);return;
+            restart_position=auto_resume=position;
+            if(auto_active&&!strcmp(playing_title.kind,"kiss-episode"))auto_next();
+            else launch_player(&playing_title);
+            return;
         }
         if(command==4){if(auto_active){restart_position=auto_resume=position;auto_index++;auto_next();}else snprintf(status,sizeof(status),"NO ALTERNATE SERVER FOR LOCAL VIDEO");return;}
         if(tv_active&&(command==5||command==6)){auto_active=0;tv_attempts=0;tv_next_at=0;return;}

@@ -26,7 +26,7 @@ static size_t receive(void *data,size_t size,size_t count,void *opaque){
     char *p=realloc(b->data,b->length+n+1);if(!p)return 0;
     b->data=p;memcpy(p+b->length,data,n);b->length+=n;p[b->length]=0;return n;
 }
-static int fetch(const char *url,Buffer *b){
+static int fetch_referred(const char *url,Buffer *b,const char *referer){
     CURL *c=curl_easy_init();if(!c)return -1;
     curl_easy_setopt(c,CURLOPT_URL,url);
     curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);curl_easy_setopt(c,CURLOPT_MAXREDIRS,3L);
@@ -36,6 +36,7 @@ static int fetch(const char *url,Buffer *b){
     curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L);
     curl_easy_setopt(c,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
     curl_easy_setopt(c,CURLOPT_USERAGENT,"FlXtR-Steamlink/0.2");
+    if(referer&&*referer)curl_easy_setopt(c,CURLOPT_REFERER,referer);
 #if LIBCURL_VERSION_NUM >= 0x075500
     curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"https");curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"https");
 #else
@@ -46,6 +47,7 @@ static int fetch(const char *url,Buffer *b){
     if(rc!=CURLE_OK||code!=200){fprintf(stderr,"Catalog HTTP %ld / error %d\n",code,(int)rc);return -1;}
     return 0;
 }
+static int fetch(const char *url,Buffer *b){return fetch_referred(url,b,NULL);}
 static json_object *get_json(const char *path){
     char url[1024];Buffer b={NULL,0,2*1024*1024};
     if(snprintf(url,sizeof(url),API"%s",path)>=(int)sizeof(url))return NULL;

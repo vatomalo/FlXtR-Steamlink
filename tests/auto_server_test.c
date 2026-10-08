@@ -63,6 +63,14 @@ int main(void){
     assert(!strcmp(status,"PLAYBACK FINISHED")&&subtitle_setting==1&&subtitle_scale==3&&subtitle_delay==2);
     f=fopen("launch-args","r");assert(f);char args[2048]={0};fread(args,1,sizeof(args)-1,f);fclose(f);
     assert(strstr(args,"--control-fd\n")&&strstr(args,"--start\n12.500\n"));
+    /* Expiring anime URLs must be resolved again before a seek restart. */
+    unsetenv("TEST_SLOW");unsetenv("TEST_FAIL");
+    playing_title=auto_title;auto_active=1;auto_index=0;auto_count=1;strcpy(auto_servers[0],"gamma");
+    f=fopen("playback-request","w");assert(f);fputs("1 75 0 0 2 0\n",f);fclose(f);
+    close_ui();finish_player(40<<8);assert(catalog_pid&&!player_pid&&auto_resume==75);
+    pump();assert(!strcmp(status,"PLAYBACK FINISHED"));
+    f=fopen("launch-args","r");assert(f);memset(args,0,sizeof(args));fread(args,1,sizeof(args)-1,f);fclose(f);
+    assert(strstr(args,"--start\n75.000\n"));
     /* A requested stop must not fall through to automatic server retry. */
     f=fopen("playback-request","w");assert(f);fputs("7 12 0 0 2 0\n",f);fclose(f);
     auto_active=1;close_ui();finish_player(40<<8);assert(!auto_active&&!catalog_pid&&!strcmp(status,"PLAYBACK STOPPED"));

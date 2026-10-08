@@ -10,7 +10,7 @@ mkdir -p build dist/steamlink/apps/greenlink
 version=$(git rev-parse HEAD)
 $CC -Os -std=c99 -Wall -Wextra -Werror -DFLXTR_VERSION=\"$version\" $(pkg-config --cflags sdl2) src/shell.c -o build/greenlink-arm $(pkg-config --libs sdl2)
 $STRIP build/greenlink-arm
-$CC -Os -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) src/catalog.c -o build/greenlink-catalog-arm -lcurl -ljson-c -lSDL2_image $(pkg-config --libs sdl2)
+$CC -Os -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) src/catalog.c -o build/greenlink-catalog-arm -lcurl -ljson-c -lcrypto -lSDL2_image $(pkg-config --libs sdl2)
 $STRIP build/greenlink-catalog-arm
 app=dist/steamlink/apps/greenlink
 if [ ! -f build/cacert.pem ]; then

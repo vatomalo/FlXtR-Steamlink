@@ -30,6 +30,7 @@ static CSLVideoOverlay *view_overlay;
 static Uint32 overlay_until;
 static int64_t deadline;
 static const char *ca_file;
+static int megaplay;
 static uint64_t audio_samples;
 static int64_t origin=AV_NOPTS_VALUE,clock_start;
 static void playback_controls(void);
@@ -81,6 +82,7 @@ static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&
 /* Apply TLS verification to every HLS playlist, key and segment, not only the
  * top-level URL. Never permit a remote playlist to read local files. */
 static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int flags,AVDictionary **opts) {
+    if(megaplay){av_dict_set(opts,"referer","https://megaplay.buzz/",0);av_dict_set(opts,"user_agent","FlXtR-Steamlink/0.2",0);}
     av_dict_set(opts,"tls_verify","1",0);
     av_dict_set(opts,"ca_file",ca_file,0);
     av_dict_set(opts,"rw_timeout","15000000",0);
@@ -142,6 +144,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--subtitle-delay")&&i+1<argc){subtitle_delay=atoi(argv[++i]);if(subtitle_delay< -5||subtitle_delay>5)return 2;}
         else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
     }
+    megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
     menu_height=height_limit;for(int i=0;i<4;i++)if(!strcmp(sub_language,(const char*[]){"off","auto","eng","nor"}[i]))menu_subtitles=i;
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
@@ -151,6 +154,12 @@ int main(int argc,char **argv) {
     av_dict_set(&opts,"tls_verify","1",0);
     av_dict_set(&opts,"ca_file",ca_file,0);
     av_dict_set(&opts,"protocol_whitelist","http,https,tcp,tls,crypto",0);
+    if(megaplay){
+        av_dict_set(&opts,"referer","https://megaplay.buzz/",0);av_dict_set(&opts,"user_agent","FlXtR-Steamlink/0.2",0);
+        /* This host serves MPEG-TS segments with .jpg names. Protocol restrictions
+         * still apply to every playlist, key and segment. */
+        av_dict_set(&opts,"allowed_extensions","m3u8,ts,m4s,mp4,aac,key,jpg",0);
+    }
     av_dict_set(&opts,"probesize","2097152",0);av_dict_set(&opts,"analyzeduration","3000000",0);
     deadline=av_gettime_relative()+20000000;
     rc=avformat_open_input(&fmt,url,NULL,&opts);av_dict_free(&opts);

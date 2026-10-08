@@ -19,7 +19,24 @@ int main(void){
     assert(!strcmp(url,"https://media.example/video.mp4"));
     assert(!kiss_direct("<source src='file:///etc/passwd'>",url,sizeof(url)));
     assert(!kiss_direct("<h1>File unavailable</h1><script src='https://ads.example/ad.js'></script>",url,sizeof(url)));
+    json_object *response=json_tokener_parse("{\"enc\":\"wdeBruh3qqn_i5wUNnyaPXE9vrvRetOe_eCsTM_CyaSDXrJbydon6awZjDd3oT-H\"}");
+    assert(mega_media(response,url,sizeof(url),1000));
+    assert(!strcmp(url,"https://media.example/video.m3u8"));json_object_put(response);
+    response=json_tokener_parse("{\"enc\":\"invalid!\"}");
+    assert(!mega_media(response,url,sizeof(url),1000));json_object_put(response);
+    response=json_tokener_parse("{\"sources\":{\"file\":\"file:///etc/passwd\"}}");
+    assert(!mega_media(response,url,sizeof(url),1000));json_object_put(response);
+    response=json_tokener_parse("{\"error\":\"unavailable\"}");
+    assert(!mega_media(response,url,sizeof(url),1000));json_object_put(response);
+    strcpy(url,"https://media.example/anime/0123456789abcdef0123456789abcdef/abcdef0123456789abcdef0123456789/master.m3u8");
+    assert(mega_token(url,sizeof(url),1000));assert(strstr(url,"?token="));
+    char signed_url[2048];strcpy(signed_url,url);
+    assert(mega_token(url,sizeof(url),2000)&&!strcmp(url,signed_url));
+    unsigned char decoded[256];const char *token=strstr(url,"?token=")+7;char payload[256];
+    size_t len=(size_t)(strchr(token,'.')-token);memcpy(payload,token,len);payload[len]=0;
+    int bytes=mega_decode(payload,decoded,sizeof(decoded));assert(bytes>0);decoded[bytes]=0;
+    assert(!strcmp((char*)decoded,"1090|0123456789abcdef0123456789abcdef/abcdef0123456789abcdef0123456789"));
     KissEpisode episodes[]={{12,2},{11,1}};qsort(episodes,2,sizeof(*episodes),kiss_episode_compare);assert(episodes[0].number==1);
-    puts("PASS: bounded KissAnime attributes, catalog filtering, episode ordering, direct media parsing and unavailable hosts");
+    puts("PASS: KissAnime parsing, MegaPlay encrypted source response, token expiry and malformed input rejection");
     return 0;
 }

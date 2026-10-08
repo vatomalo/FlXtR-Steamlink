@@ -4,9 +4,9 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
 all: build/greenlink build/greenlink-catalog
-build/greenlink-catalog: src/catalog.c src/kissanime.h src/archive.h src/tv_catalog.h src/tv_progress.h
+build/greenlink-catalog: src/catalog.c src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_progress.h
 	mkdir -p build
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 build/greenlink: src/shell.c src/font.h src/video_layout.h src/tv_schedule.h src/tv_progress.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS)
@@ -14,7 +14,7 @@ build/greenlink: src/shell.c src/font.h src/video_layout.h src/tv_schedule.h src
 test: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/tv_test.c -o build/tv-test $(SDL_LIBS)
 	./build/tv-test
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/archive_test.c -o build/archive-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/archive_test.c -o build/archive-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 	./build/archive-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/playback_menu_test.c -o build/playback-menu-test $(SDL_LIBS)
 	./build/playback-menu-test
@@ -26,7 +26,7 @@ test: all
 	./build/disk-buffer-test
 	$(CC) $(CFLAGS) tests/subtitle_text_test.c -o build/subtitle-text-test
 	./build/subtitle-text-test
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/kissanime_test.c -o build/kissanime-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/kissanime_test.c -o build/kissanime-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 	./build/kissanime-test
 	python3 tests/catalog_test.py
 	python3 tests/update_test.py

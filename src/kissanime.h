@@ -82,6 +82,7 @@ static int kiss_direct(const char *html,char *out,size_t cap){
         if(!strncmp(url,"https://",8)&&(strstr(url,".m3u8")||strstr(url,".mp4"))){snprintf(out,cap,"%s",url);return 1;}
     }}return 0;
 }
+#include "megaplay.h"
 static int kiss_source(int id,int episode,const char *server){
     char url[2048];snprintf(url,sizeof(url),KISS"/?p=%d",id);char *html=kiss_fetch(url);if(!html)return -1;
     char *embed=strstr(html,"id=\"pembed\"");embed=embed?strstr(embed,"<iframe"):NULL;
@@ -94,14 +95,25 @@ static int kiss_source(int id,int episode,const char *server){
     }
     free(html);
     if(strcmp(server,"SUB")&&strcmp(server,"DUB"))return -1;
+    char referer[2048];snprintf(referer,sizeof(referer),KISS"/?p=%d",id);
     if(!strncmp(url,"https://gogoanime.com.by/streaming.php?ep=",sizeof("https://gogoanime.com.by/streaming.php?ep=")-1)){
         char *type=strstr(url,"&type=");if(type)snprintf(type,(size_t)(url+sizeof(url)-type),"&type=%s",!strcmp(server,"DUB")?"dub":"sub");
     }
     for(int hop=0;hop<3;hop++){
         if(strncmp(url,"https://gogoanime.com.by/",sizeof("https://gogoanime.com.by/")-1)&&strncmp(url,"https://megaplay.buzz/",sizeof("https://megaplay.buzz/")-1)){fprintf(stderr,"Unsupported KissAnime embed host\n");return -1;}
-        html=kiss_fetch(url);if(!html)return -1;
-        char direct[2048];if(kiss_direct(html,direct,sizeof(direct))){Entry *e=&entries[used++];strcpy(e->title,"AUTO");strcpy(e->meta,"KISSANIME");strcpy(e->kind,"source");strcpy(e->url,direct);e->id=id;e->episode=episode;total=1;free(html);return 0;}
+        Buffer b={NULL,0,2*1024*1024};
+        if(fetch_referred(url,&b,referer)){free(b.data);return -1;}
+        html=b.data;if(!html)return -1;
+        snprintf(referer,sizeof(referer),"%s",url);
+        char direct[2048];
+        int resolved=kiss_direct(html,direct,sizeof(direct));
+        if(!resolved&&!strncmp(url,"https://megaplay.buzz/",22))resolved=mega_source(html,referer,direct,sizeof(direct));
+        if(resolved){Entry *e=&entries[used++];strcpy(e->title,"AUTO");strcpy(e->meta,"KISSANIME");strcpy(e->kind,"source");strcpy(e->url,direct);e->id=id;e->episode=episode;total=1;free(html);return 0;}
+        if(strstr(html,"id=\"megaplay-player\"")&&strstr(html,"data-realid=")){
+            fprintf(stderr,"KissAnime: MegaPlay source API failed or returned an unsupported response\n");
+            free(html);return -1;
+        }
         embed=strstr(html,"<iframe");ok=embed&&kiss_attr(embed,"src",url,sizeof(url));free(html);if(!ok)break;
     }
-    fprintf(stderr,"KissAnime host returned no direct playable stream (file may be unavailable)\n");return -1;
+    fprintf(stderr,"KissAnime: no supported media URL found in embed HTML; this does not establish that the video is unavailable\n");return -1;
 }

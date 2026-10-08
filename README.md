@@ -343,12 +343,21 @@ the Steam Link using bounded HTML requests, the existing three-page JSON cache
 and resized poster thumbnails. The anime directory exposes next-page links,
 so its displayed title count is a lower bound marked with `+`.
 
-KissAnime currently embeds GogoAnime/MegaPlay. The adapter follows those known
-embed hosts and accepts plain HTTPS MP4/HLS source links; it does not run page
-JavaScript or advertising. Tested One Piece episode embeds returned MegaPlay's
-file-unavailable response, so successful catalog browsing does not establish
-working video playback. Missing files and unsupported embeds fail cleanly through
-automatic source fallback. No browser or PC-side helper is required.
+KissAnime currently embeds GogoAnime/MegaPlay. The native adapter follows those
+known embed hosts with the parent referral header, requests MegaPlay's public
+source endpoint, decodes its encrypted JSON response, and creates the short-lived
+CDN token used by the site's player. No downloaded JavaScript is executed.
+Source URLs are resolved afresh on playback and on seek/quality restarts rather
+than cached. The player supplies the required referral header and accepts this
+host's MPEG-TS segments named `.jpg`, retaining the network protocol restrictions.
+
+The earlier file-unavailable diagnosis was incorrect: MegaPlay returned an error
+page when the referral header was missing. Live checks on 2026-10-08 resolved
+One Piece episode 1180 through the native catalog and FFmpeg detected H.264/AAC
+at 1080p, 720p and 480p. The 720p default still applies. Hardware playback of this
+fix is not yet verified; the Steam Link was unreachable during testing. Provider
+protocol changes can require adapter updates. Sub/Dub are language choices, not
+two independent servers. The alternate clone domains are not integrated.
 
 ## In-video controls
 
@@ -368,7 +377,7 @@ Press X to cycle to ARCHIVE; Start searches public video items. Open an item wit
 
 Uses the public Advanced Search and metadata APIs directly on the Steam Link, without a PC or API key. Six items per page use the existing three-page JSON cache. Public item/download URLs are retained in this cache; provider stream URLs remain uncached. `--library archive` opens this library directly.
 
-KissAnime status: catalog and episode browsing work. The current native adapter only extracts plain media URLs; MegaPlay can require browser JavaScript and request headers, so an embed may load in a browser while native playback fails. This clone has Sub/Dub options on the sampled pages; a separate Server 2 was not confirmed. KissAnime playback remains unverified.
+KissAnime status: native MegaPlay source resolution and desktop FFmpeg media probing pass; Steam Link hardware playback still needs verification. See the KissAnime library section above.
 
 ## Scheduled TV mode
 

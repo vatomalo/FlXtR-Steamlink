@@ -29,9 +29,12 @@ if [ ! -x "$host_wasm2c" ]; then
     (
         unset CC CXX AR AS LD STRIP CROSS CROSS_COMPILE CFLAGS CXXFLAGS LDFLAGS
         unset CMAKE_TOOLCHAIN_FILE CMAKE_C_COMPILER CMAKE_CXX_COMPILER
+        unset CMAKE_GENERATOR CMAKE_PROJECT_TOP_LEVEL_INCLUDES CMAKE_PROJECT_INCLUDE CMAKE_PROJECT_INCLUDE_BEFORE
         cmake -S "$cache/wabt-1.0.36" -B "$cache/wabt-host" \
+            -U CMAKE_TOOLCHAIN_FILE -U CMAKE_C_COMPILER -U CMAKE_CXX_COMPILER \
             -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=/usr/bin/cc -DCMAKE_CXX_COMPILER=/usr/bin/c++ \
+            -DCMAKE_TOOLCHAIN_FILE:FILEPATH= \
+            -DCMAKE_C_COMPILER:FILEPATH=/usr/bin/cc -DCMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++ \
             >"$cache/wabt-cmake.log" 2>&1
         cmake --build "$cache/wabt-host" --target wasm2c -j"${JOBS:-4}" \
             >"$cache/wabt-make.log" 2>&1 || { tail -50 "$cache/wabt-make.log"; exit 1; }

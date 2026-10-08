@@ -696,6 +696,14 @@ int main(int argc,char **argv) {
             else if(event.type==SDL_CONTROLLERAXISMOTION){int v=event.caxis.value;if((event.caxis.axis<4&&(v>8000||v< -8000))||(event.caxis.axis>=4&&v>8000))controller_used();}
             else if(event.type==SDL_CONTROLLERBUTTONUP)controller_used();
             else if(event.type==SDL_CONTROLLERBUTTONDOWN) {
+                /* Suppress duplicate controller button-down bursts during playback.
+                 * Distinct buttons remain independent for normal navigation. */
+                static Uint32 last_play_button[32];
+                unsigned button=(unsigned)event.cbutton.button;
+                Uint32 pressed_at=SDL_GetTicks();
+                if(player_pid&&button<32&&last_play_button[button]&&
+                   pressed_at-last_play_button[button]<120)continue;
+                if(player_pid&&button<32)last_play_button[button]=pressed_at;
                 controller_used();
                 switch(event.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_A:action(search_on?SDLK_F4:SDLK_RETURN);break;

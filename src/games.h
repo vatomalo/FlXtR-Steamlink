@@ -89,7 +89,6 @@ static json_object *games_import(void){
     return games;
 }
 static const char *const local_folders[]={"NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","NEO GEO","ARCADE","OTHER"};
-static const char *const local_cores[]={"fceumm","snes9x","gambatte","gambatte","gpsp","pcsx_rearmed","ppsspp","fbneo","mame",""};
 static int local_category(const char *core,const char *rom){
     if(strstr(core,"fceumm"))return 1;
     if(strstr(core,"snes9x"))return 2;

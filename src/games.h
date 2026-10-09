@@ -88,14 +88,47 @@ static json_object *games_import(void){
     if(!json_object_to_file("games.json.next",games))rename("games.json.next","games.json");
     return games;
 }
-static int games_list(int page,int refresh){
+static const char *const local_folders[]={"NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","NEO GEO","ARCADE","OTHER"};
+static const char *const local_cores[]={"fceumm","snes9x","gambatte","gambatte","gpsp","pcsx_rearmed","ppsspp","fbneo","mame",""};
+static int local_category(const char *core,const char *rom){
+    if(strstr(core,"fceumm"))return 1;
+    if(strstr(core,"snes9x"))return 2;
+    if(strstr(core,"gambatte"))return strcasestr(rom,".gbc")?4:3;
+    if(strstr(core,"gpsp"))return 5;
+    if(strstr(core,"pcsx_rearmed"))return 6;
+    if(strstr(core,"ppsspp"))return 7;
+    if(strstr(core,"fbneo")||strcasestr(rom,"/neogeo/"))return 8;
+    if(strstr(core,"mame"))return 9;
+    return 10;
+}
+static int games_folders(int page){
+    total=10;
+    for(int i=(page-1)*PAGE_SIZE;i<10&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",local_folders[i]);
+        snprintf(e->meta,sizeof(e->meta),"[ %s ] / A OPEN FOLDER",local_folders[i]);
+        strcpy(e->kind,"game-folder");e->id=i+1;
+    }
+    return 0;
+}
+static int games_list_filtered(int page,int refresh,int folder){
+
     json_object *games=refresh?NULL:games_read("games.json");
     if(games&&!json_object_is_type(games,json_type_array)){json_object_put(games);games=NULL;}
     if(!games)games=games_import();
     if(!games)return -1;
-    total=(int)json_object_array_length(games);if(total>GAME_LIMIT)total=GAME_LIMIT;
-    for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){
-        json_object *g=json_object_array_get_idx(games,i);Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
+    int count=(int)json_object_array_length(games),matched=0;
+    if(count>GAME_LIMIT)count=GAME_LIMIT;
+    for(int i=0;i<count;i++){
+        json_object *g=json_object_array_get_idx(games,i);
+        if(folder&&local_category(string(g,"core"),string(g,"rom"))!=folder)continue;
+        matched++;
+    }
+    total=matched;int skipped=0;
+    for(int i=0;i<count&&used<PAGE_SIZE;i++){
+        json_object *g=json_object_array_get_idx(games,i);
+        if(folder&&local_category(string(g,"core"),string(g,"rom"))!=folder)continue;
+        if(skipped++<(page-1)*PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
         const char *core=string(g,"core"),*base=strrchr(core,'/');clean(e->meta,sizeof(e->meta),base?base+1:core);strcpy(e->kind,"game");e->id=i+1;
         /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
         const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
@@ -119,6 +152,8 @@ static int games_list(int page,int refresh){
         }
     }json_object_put(games);return 0;
 }
+static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
+static int games_system(int page,int folder){return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;}
 static int games_run(void){
     int id=0,back=-1,start=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
     int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<1||id>GAME_LIMIT)return 2;

@@ -481,7 +481,7 @@ static void draw(Uint32 tick) {
         text(204,180,filter_row==0?"> GENRE":"  GENRE",2,green,30);text(500,180,genre,2,white,30);
         text(204,240,filter_row==1?"> SECTION":"  SECTION",2,green,30);text(500,240,browse_orders[browse.season],2,white,30);
         text(194,350,"UP/DOWN ROW / LEFT/RIGHT CHANGE",2,green,60);
-        text(194,400,"A APPLY / B CANCEL",2,green,60);
+        text(194,400,"A APPLY / B OR X SKIP",2,green,60);
     }else if(tv_schedule_on||(browse.mode==11&&!settings_on&&!about)){
         text(194,94,tv_schedule_on?"EDIT TV SCHEDULE":"TV MODE / OSLO TIME",2,green,55);
         int active=tv_block_at(tv_blocks,tv_hour());
@@ -768,7 +768,7 @@ static void action(SDL_Keycode key) {
             if(filter_row)browse.season=(browse.season+step+BROWSE_ORDERS)%BROWSE_ORDERS;
             else do {browse.id=(browse.id+step+BROWSE_GENRES)%BROWSE_GENRES;}while(browse.mode==2&&series_genres[browse.id]<0);
         }
-        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){filters_on=0;browse.id=filter_original_genre;browse.season=filter_original_order;}
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){filters_on=0;browse.id=filter_original_genre;browse.season=filter_original_order;return;}
         if(key==SDLK_RETURN){filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);}
         return;
     }

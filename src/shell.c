@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <SDL.h>
+#include <curl/curl.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -160,14 +161,38 @@ static int bios_archive_download(const Title *item){
     char dest[96],temp[128];snprintf(dest,sizeof(dest),"system/%s",name);snprintf(temp,sizeof(temp),"system/.%s.partial",name);
     if(access(dest,F_OK)==0)return 4;
     unlink(temp);
-    pid_t pid=fork();if(pid<0)return 3;
-    if(!pid){
-        execlp("curl","curl","-fLsS","--proto","=https","--proto-redir","=https",
-            "--connect-timeout","10","--max-time","120","--max-filesize","16777216",
-            "--cacert","certs/cacert.pem","-o",temp,item->url,(char*)NULL);
-        _exit(127);
+    FILE *output=fopen(temp,"wb");if(!output)return 3;
+    CURL *curl=curl_easy_init();if(!curl){fclose(output);unlink(temp);return 3;}
+    curl_easy_setopt(curl,CURLOPT_URL,item->url);
+    curl_easy_setopt(curl,CURLOPT_FOLLOWLOCATION,1L);
+    curl_easy_setopt(curl,CURLOPT_MAXREDIRS,4L);
+    curl_easy_setopt(curl,CURLOPT_WRITEDATA,output);
+    curl_easy_setopt(curl,CURLOPT_FAILONERROR,1L);
+    curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,10L);
+    curl_easy_setopt(curl,CURLOPT_TIMEOUT,120L);
+    curl_easy_setopt(curl,CURLOPT_LOW_SPEED_LIMIT,1024L);
+    curl_easy_setopt(curl,CURLOPT_LOW_SPEED_TIME,45L);
+    curl_easy_setopt(curl,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
+    curl_easy_setopt(curl,CURLOPT_SSL_VERIFYPEER,1L);
+    curl_easy_setopt(curl,CURLOPT_SSL_VERIFYHOST,2L);
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(curl,CURLOPT_PROTOCOLS_STR,"https");
+    curl_easy_setopt(curl,CURLOPT_REDIR_PROTOCOLS_STR,"https");
+#else
+    curl_easy_setopt(curl,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);
+    curl_easy_setopt(curl,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
+#endif
+    CURLcode result=curl_easy_perform(curl);long http=0;
+    curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&http);
+    curl_easy_cleanup(curl);
+    int output_error=fclose(output)!=0;
+    struct stat downloaded;
+    if(result!=CURLE_OK||http!=200||output_error||stat(temp,&downloaded)||
+       downloaded.st_size<=0||downloaded.st_size>16777216){
+        fprintf(stderr,"BIOS Archive transfer failed: HTTP %ld / curl %d\\n",http,(int)result);
+        unlink(temp);return 5;
     }
-    int code=0;if(waitpid(pid,&code,0)!=pid||!WIFEXITED(code)||WEXITSTATUS(code)){unlink(temp);return 5;}
+    pid_t pid;int code=0;
     FILE *f=fopen("bios-archive-check.txt","w");if(!f){unlink(temp);return 3;}
     fprintf(f,"%s  %s\n",item->meta+5,temp);fclose(f);
     pid=fork();if(pid<0){unlink(temp);unlink("bios-archive-check.txt");return 3;}

@@ -15,5 +15,8 @@ int main(void){
     cache_identity("archive-files",1,"example",0,0);for(int i=0;i<used;i++)entries[i].poster[0]=0;cache_save();
     used=total=0;memset(entries,0,sizeof(entries));assert(cache_load()&&used==2&&strstr(entries[0].url,"a%20video.mp4"));
     unlink(cache_file);rmdir("catalog-cache");assert(!chdir("/tmp"));rmdir(temp);
+    used=total=0;
+    root=json_tokener_parse("{\"files\":[{\"name\":\"movie.mp4\",\"length\":\"3600\"},{\"name\":\"secret.mp4\",\"length\":\"30\",\"private\":true},{\"name\":\"broken.mp4\",\"length\":\"nan\"},{\"name\":\"ad.mp4\",\"length\":\"30.5\"}]}");
+    assert(!archive_commercial_json(root,"example")&&used==1&&strstr(entries[0].url,"ad.mp4")&&!strcmp(entries[0].kind,"tv-break"));json_object_put(root);
     puts("PASS: Archive identifiers, video-only filtering, private files, URL encoding and cached direct URLs");return 0;
 }

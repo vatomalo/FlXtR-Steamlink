@@ -403,4 +403,13 @@ Press X to reach TV MODE, then A to start continuous episode playback. The sched
 
 Settings > TV Schedule edits all seven blocks. Up/down selects a row, A switches between start hour and genre, left/right changes the selected value, and B saves and returns. The midnight start is fixed; other starts stay between neighboring rows so every hour belongs to one block. Change a block's genre to Mixed Shows for a general lineup. Settings persist in `settings.cfg`.
 
-TV mode discovers shows by TMDB genre (and Adult Swim network for that evening choice), selects the next episode remembered for each show, and uses the existing automatic server retries. Completed episodes update bounded `tv-progress.tsv` history; failures and explicit stops do not. If five show attempts fail, TV mode stops instead of retrying indefinitely. B closes the playback menu; B outside it stops TV mode. Sources still depend on the provider; a matching show is not a guarantee of playable media. Internet Archive remains a separate video library.
+TV mode discovers shows by TMDB genre (and Adult Swim network for that evening choice), selects the next episode remembered for each show, and uses the existing automatic server retries. Completed episodes update bounded `tv-progress.tsv` history; failures and explicit stops do not. If twelve show attempts fail, TV mode stops instead of retrying indefinitely. B closes the playback menu; B outside it stops TV mode. Sources still depend on the provider; a matching show is not a guarantee of playable media. Internet Archive remains a separate video library.
+
+
+### TV rotation, commercials and browse filters
+
+TV selection persists its cursor and the last 32 selected episodes in `tv-sequence.txt` and `tv-recent.tsv`. It avoids the last six selected shows, excludes recently attempted episodes, and browses up to ten popular-result pages (two for Adult Swim). Selection is recorded before playback; episode progress advances only after successful completion.
+
+Settings > TV Commercials enables a rotating Internet Archive commercial between completed programs (on by default). The initial rotation has three curated vintage ads: Kellogg's Frosted Flakes, DuMont television sets and UNIVAC. Metadata must identify a public MP4 lasting 5-120 seconds. Unavailable ads are skipped and commercials do not modify episode progress. The next scheduled genre is chosen after the break.
+
+The shell starts fullscreen. In Movies, Series or KissAnime, press **Y / Triangle** (keyboard **F6**) to choose **Genre** and **Section** independently. Sections are Most Popular, Top Rated, Latest and Title A-Z. Up/down selects a row, left/right changes it, A applies and B cancels. Applying filters resets the page and clears text search; changing genre keeps the chosen section. Provider genre availability differs.

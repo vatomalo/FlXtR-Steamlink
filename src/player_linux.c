@@ -81,6 +81,7 @@ int main(int argc,char **argv){
         if(!strcmp(a,"--episodes")){episodes=1;continue;}
         if(!strcmp(a,"--servers")){servers=1;continue;}
         if(!strcmp(a,"--headless")){headless=1;continue;}
+        if(a[0]>='0'&&a[0]<='9'){char *end;duration=strtod(a,&end);if(*end||duration<=0||duration>86400)return 2;continue;}
         if(i+1==argc)return 2;
         const char *v=argv[++i];
         if(!strcmp(a,"--height"))height=atoi(v);

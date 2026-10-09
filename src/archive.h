@@ -61,3 +61,24 @@ static int archive_files(int page,const char *id){
     json_object *root=archive_json(url);if(!root)return -1;
     int rc=archive_files_json(root,id,page);json_object_put(root);return rc;
 }
+/* A small curated rotation avoids entire films mislabeled as commercials. */
+static int archive_commercial_json(json_object *root,const char *id){
+    json_object *files=field(root,"files");int rc=-1;
+    if(files&&json_object_is_type(files,json_type_array))for(size_t i=0;i<json_object_array_length(files);i++){
+        json_object *f=json_object_array_get_idx(files,i);const char *name=string(f,"name");size_t n=strlen(name);
+        double seconds=atof(string(f,"length"));
+        if(n<5||n>=1024||strcasecmp(name+n-4,".mp4")||!(seconds>=5&&seconds<=120)||field(f,"private"))continue;
+        char *escaped=curl_easy_escape(NULL,name,0);if(!escaped)break;
+        Entry *e=&entries[used++];snprintf(e->url,sizeof(e->url),ARCHIVE "/download/%s/%s",id,escaped);curl_free(escaped);
+        clean(e->title,sizeof(e->title),string(field(root,"metadata"),"title"));strcpy(e->kind,"tv-break");
+        snprintf(e->meta,sizeof(e->meta),"VINTAGE COMMERCIAL / %.0f SEC / INTERNET ARCHIVE",seconds);
+        total=1;rc=0;break;
+    }return rc;
+}
+static int archive_commercial(int seed){
+    static const char *const ids[]={"KelloggsSugarFrostedFlakesCereal1976","DuMont_Set_Commercial","UNIVAC-AD-2"};
+    if(seed<0)return -1;
+    const char *id=ids[seed%3];char url[256];snprintf(url,sizeof(url),ARCHIVE "/metadata/%s",id);
+    json_object *root=archive_json(url);if(!root)return -1;
+    int rc=archive_commercial_json(root,id);json_object_put(root);return rc;
+}

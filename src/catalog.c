@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
+#include "browse_filters.h"
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
 #define PAGE_SIZE 6
 typedef struct {char title[80],meta[96],poster[512],url[2048],kind[16];int id,season,episode;} Entry;
@@ -114,6 +115,15 @@ static int remote_list(const char *kind,int page,const char *query,int id,int se
     int last=(first+PAGE_SIZE-1)/20+1;
     for(int remote=first/20+1;remote<=last;remote++){
         if(*query)snprintf(path,sizeof(path),"/search/%s?query=%s&page=%d",kind,escaped,remote);
+        else if(id||season){
+            if(id<0||id>=BROWSE_GENRES||season<0||season>=BROWSE_ORDERS){curl_free(escaped);return -1;}
+            int genre=!strcmp(kind,"movie")?movie_genres[id]:series_genres[id];
+            if(genre<0){curl_free(escaped);return -1;}
+            const char *sorts[]={"popularity.desc","vote_average.desc","primary_release_date.desc","original_title.asc"};
+            const char *sort=sorts[season];if(!strcmp(kind,"tv")&&season==2)sort="first_air_date.desc";if(!strcmp(kind,"tv")&&season==3)sort="name.asc";
+            snprintf(path,sizeof(path),"/discover/%s?sort_by=%s&include_adult=false&vote_count.gte=20&page=%d",kind,sort,remote);
+            if(genre){size_t len=strlen(path);snprintf(path+len,sizeof(path)-len,"&with_genres=%d",genre);}
+        }
         else snprintf(path,sizeof(path),"/%s/popular?page=%d",kind,remote);
         json_object *root=get_json(path);if(!root){curl_free(escaped);return -1;}
         json_object *array=field(root,"results");
@@ -238,30 +248,31 @@ int main(int argc,char **argv){
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);
     if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>(!strcmp(kind,"archive-files")?128:64))return 2;
-    if(strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick"))return 2;
+    if(strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
     if((!strcmp(kind,"source")||!strcmp(kind,"quality"))&&!getenv("FLXTR_NO_NETWORK")&&!access("./greenlink-resolver",X_OK)){
         int quality=!strcmp(kind,"quality");if(quality&&argc!=8)return 2;
         execl("./greenlink-resolver","greenlink-resolver",quality?"source":"servers",episode?"tv":"movie",argv[4],argv[5],argv[6],quality?argv[7]:"",argv[2],(char*)NULL);return 1;
     }
     if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
     mkdir("catalog-cache",0700);
-    int cacheable=strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
+    int cacheable=strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
     if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
     int rc;
-    if(!strcmp(kind,"tv-pick"))rc=tv_pick(positive(argv[3],1),id);
+    if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);
+    else if(!strcmp(kind,"tv-pick"))rc=tv_pick(positive(argv[3],1),id);
     else if(!strcmp(kind,"archive"))rc=archive_list(page,argv[3]);
     else if(!strcmp(kind,"archive-files"))rc=archive_files(page,argv[3]);
-    else if(!strcmp(kind,"kiss"))rc=kiss_list(page,argv[3]);
+    else if(!strcmp(kind,"kiss"))rc=kiss_list_filtered(page,argv[3],id,season);
     else if(!strcmp(kind,"kiss-episodes"))rc=kiss_episodes(id,page);
     else if(!strcmp(kind,"kiss-source"))rc=kiss_source(id,episode,"");
     else if(!strcmp(kind,"kiss-quality"))rc=kiss_source(id,episode,argc==8?argv[7]:"");
     else if(!strcmp(kind,"source"))rc=sources(page,id,season,episode);
-    else if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&!*argv[3]&&!local_list(kind,page,argv[3]))rc=0;
+    else if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&!*argv[3]&&!id&&!season&&!local_list(kind,page,argv[3]))rc=0;
     else rc=remote_list(kind,page,argv[3],id,season);
     if(rc){curl_global_cleanup();return 1;}
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
-    for(int i=0;i<used;i++){if(strcmp(kind,"tv-pick")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
+    for(int i=0;i<used;i++){if(strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
     if(cacheable)cache_save();
 output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);

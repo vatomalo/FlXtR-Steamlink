@@ -43,10 +43,10 @@ int main(void){
     FILE *f=fopen("attempts","r");char buf[80]={0};assert(f);fread(buf,1,sizeof(buf)-1,f);fclose(f);
     assert(!strcmp(buf,"alpha\nbeta\ngamma\n"));
     strcpy(titles[0].kind,"kiss-episode");play();assert(!strcmp(auto_title.kind,"kiss-episode"));pump();assert(!strcmp(status,"PLAYBACK FINISHED"));
-    SDL_setenv("TEST_FAIL","1",1);play();pump();assert(!auto_active&&strstr(status,"NO WORKING SERVER"));
+    SDL_setenv("TEST_FAIL","1",1);play();pump();assert(!auto_active&&strstr(status,"ALL SOURCES FAILED"));
     SDL_setenv("TEST_SLOW","1",1);play();action(SDLK_ESCAPE);assert(!catalog_pid&&!auto_active&&strstr(status,"CANCELLED"));
     /* A timeout advances/fails cleanly; it cannot strand the input lock. */
-    play();catalog_started=SDL_GetTicks()-70001;pump();assert(!auto_active&&strstr(status,"LOOKUP FAILED"));
+    play();catalog_started=SDL_GetTicks()-70001;pump();assert(!auto_active&&strstr(status,"SERVER DISCOVERY FAILED"));
     /* Explicit stop never triggers another server, even on a nonzero exit. */
     auto_active=1;auto_index=0;stopping_player=1;close_ui();finish_player(256);
     assert(!auto_active&&!catalog_pid&&!strcmp(status,"PLAYBACK STOPPED"));

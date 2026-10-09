@@ -39,11 +39,12 @@ static int kiss_cards(char *html,int first){
         }p=stop+10;
     }return n;
 }
-static int kiss_list(int page,const char *query){
+static int kiss_list_filtered(int page,const char *query,int genre,int order){
+    if(genre<0||genre>=BROWSE_GENRES||order<0||order>=BROWSE_ORDERS)return -1;
     int first=(page-1)*PAGE_SIZE,last=(first+PAGE_SIZE-1)/20+1;char *escaped=curl_easy_escape(NULL,query,0);if(!escaped)return -1;
     for(int remote=first/20+1;remote<=last;remote++){
         char url[768];if(*query)snprintf(url,sizeof(url),KISS"/page/%d/?s=%s",remote,escaped);
-        else snprintf(url,sizeof(url),KISS"/anime/?page=%d",remote);
+        else snprintf(url,sizeof(url),KISS"/anime/?page=%d&order=%s%s%s",remote,kiss_orders[order],genre?"&genre%5B%5D=":"",kiss_genres[genre]);
         char *html=kiss_fetch(url);if(!html){curl_free(escaped);return -1;}
         int n=kiss_cards(html,first>(remote-1)*20?first-(remote-1)*20:0);
         int more=strstr(html,">Next")||strstr(html,"Next <i");free(html);
@@ -51,6 +52,8 @@ static int kiss_list(int page,const char *query){
         total=(remote-1)*20+n+(more?1:0);if(!more)break;
     }curl_free(escaped);return 0;
 }
+static inline int kiss_list(int page,const char *query){return kiss_list_filtered(page,query,0,0);}
+
 typedef struct {int id,number;} KissEpisode;
 static int kiss_episode_compare(const void *a,const void *b){return ((const KissEpisode*)a)->number-((const KissEpisode*)b)->number;}
 static int kiss_episodes(int id,int page){

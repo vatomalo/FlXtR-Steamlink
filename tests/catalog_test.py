@@ -24,19 +24,21 @@ with tempfile.TemporaryDirectory() as folder:
         return result.stdout.splitlines()
     first = run("movie")
     assert len(first) == 7
-    cached = root / "catalog-cache/page-1.json"
+    cached = next((root / "catalog-cache").glob("page-*.json"))
     stamp = cached.stat().st_mtime_ns
     assert len(json.loads(cached.read_text())["entries"]) == 6
     assert run("movie") == first and cached.stat().st_mtime_ns == stamp
     cached.write_text("{truncated")
     assert run("movie") == first  # corrupt cache rebuilds
-    os.utime(cached, (time.time()-90000, time.time()-90000))
+    os.utime(cached, (time.time()-8*86400, time.time()-8*86400))
     assert run("movie") == first and cached.stat().st_mtime > time.time()-10
     # A cache from another library cannot masquerade as this page.
     assert run("tv")[1].startswith("#A Show\t")
     assert run("movie") == first
     for page in range(1, 7): run("movie", page)
-    assert len(list((root / "catalog-cache").glob("page-*.json"))) == 3
+    assert len(list((root / "catalog-cache").glob("page-*.json"))) > 3
+    for page in range(7, 70): run("movie", page)
+    assert len(list((root / "catalog-cache").glob("page-*.json"))) <= 32
     assert run("movie", 2)[0] == "# pages=2 total=7"
     assert run("movie", 2)[1].startswith("Movie 7\t")
     assert run("tv")[1].startswith("#A Show\t")

@@ -219,7 +219,7 @@ static int games_platforms(int page){
  * A search result is not evidence of a lawful or compatible firmware download. */
 static int games_bios_search(int page,int bios_id,const char *query){
     if(bios_id<1||bios_id>5)return -1;
-    const char *const defaults[]={"Neo Geo open source BIOS","PlayStation open source BIOS","PlayStation open source BIOS","PlayStation open source BIOS","Game Boy Advance open source BIOS"};
+    const char *const defaults[]={"Neo Geo BIOS","PlayStation BIOS","PlayStation BIOS","PlayStation BIOS","Game Boy Advance BIOS"};
     const char *term=*query?query:defaults[bios_id-1];
     char clean_term[128];size_t n=0;
     for(size_t i=0;term[i]&&n+1<sizeof(clean_term);i++)
@@ -280,9 +280,11 @@ static int games_bios_files(int page,const char *identifier,int bios_id){
     for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
         json_object *f=json_object_array_get_idx(files,i);
         const char *name=string(f,"name"),*digest=string(f,"sha1");
-        const char *ext=strrchr(name,'.');
-        int container=ext&&!strcasecmp(ext,".zip")&&strlen(name)<140&&strcasestr(name,"bios")!=NULL;
-        if((strcasecmp(name,names[bios_id-1])&&!container)||strlen(digest)!=40)continue;
+        const char *base=strrchr(name,'/');base=base?base+1:name;
+        const char *ext=strrchr(base,'.');
+        int container=ext&&!strcasecmp(ext,".zip")&&strlen(name)<140&&strcasestr(base,"bios")!=NULL;
+        if(strlen(name)>160||strchr(name,'\\')||strstr(name,"..")||
+           (strcasecmp(base,names[bios_id-1])&&!container)||strlen(digest)!=40)continue;
         int good=1;for(int k=0;k<40;k++)if(!isxdigit((unsigned char)digest[k]))good=0;
         if(!good)continue;
         if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;

@@ -93,8 +93,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -254,7 +254,7 @@ static void request_catalog(Browse next,int push,int pop){
         execl("./greenlink-catalog","greenlink-catalog",auto_active&&!strcmp(auto_title.kind,"kiss-episode")?(next.mode==5?"kiss-source":"kiss-quality"):browse_kinds[next.mode],pg,next.query,id,sn,ep,next.mode==6?next.query:"",(char*)NULL);_exit(127);
     }
     if(catalog_pid<0){catalog_pid=0;snprintf(status,sizeof(status),"COULD NOT LOAD CATALOG");}
-    else snprintf(status,sizeof(status),"LOADING %s - B TO CANCEL",browse_labels[next.mode]);
+    else snprintf(status,sizeof(status),"LOADING %s - X SKIP / B CANCEL",browse_labels[next.mode]);
 }
 /* Automatic lookup uses its own small queue and leaves the visible library intact. */
 static void auto_request(Browse next){
@@ -578,7 +578,17 @@ static void play(void) {
     if(settings_on||about||!total||player_pid)return;
     restart_position=auto_resume=0;
     Title *t=&titles[visible[selection]];
-    if(!strcmp(t->kind,"bios-item")){snprintf(status,sizeof(status),"SOURCE NOT VERIFIED / NO AUTOMATIC BIOS INSTALL");return;}
+    if(!strcmp(t->kind,"bios-item")){
+        const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
+        if(strncmp(t->url,prefix,n)||strlen(t->url+n)>=129){snprintf(status,sizeof(status),"INVALID BIOS ARCHIVE ITEM");return;}
+        Browse next={24,1,t->id,0,0,0,"",""};
+        snprintf(next.query,sizeof(next.query),"%s",t->url+n);
+        snprintf(next.name,sizeof(next.name),"%s",t->title);
+        request_catalog(next,1,0);return;
+    }
+    if(!strcmp(t->kind,"bios-file")){
+        snprintf(status,sizeof(status),"BIOS FILE LISTED / CHECK SOURCE AND LICENSE");return;
+    }
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;

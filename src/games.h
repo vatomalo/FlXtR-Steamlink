@@ -280,7 +280,9 @@ static int games_bios_files(int page,const char *identifier,int bios_id){
     for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
         json_object *f=json_object_array_get_idx(files,i);
         const char *name=string(f,"name"),*digest=string(f,"sha1");
-        if(strcasecmp(name,names[bios_id-1])||strlen(digest)!=40)continue;
+        const char *ext=strrchr(name,'.');
+        int container=ext&&!strcasecmp(ext,".zip")&&strlen(name)<140&&strcasestr(name,"bios")!=NULL;
+        if((strcasecmp(name,names[bios_id-1])&&!container)||strlen(digest)!=40)continue;
         int good=1;for(int k=0;k<40;k++)if(!isxdigit((unsigned char)digest[k]))good=0;
         if(!good)continue;
         if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;
@@ -288,7 +290,7 @@ static int games_bios_files(int page,const char *identifier,int bios_id){
         snprintf(e->meta,sizeof(e->meta),"SHA1:%s",digest);
         char *escaped=curl_easy_escape(NULL,name,0);
         if(escaped){snprintf(e->url,sizeof(e->url),ARCHIVE "/download/%s/%s",identifier,escaped);curl_free(escaped);}
-        strcpy(e->kind,"bios-file");e->id=bios_id;
+        strcpy(e->kind,container?"bios-zip":"bios-file");e->id=bios_id;
     }
     json_object_put(root);return 0;
 }

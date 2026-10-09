@@ -46,7 +46,7 @@ static int tv_breaks=1,tv_break_due,tv_in_break,filters_on,filter_row,filter_ori
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
-static int monochrome_menu,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
+static int bios_on,monochrome_menu,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor"};
 static void save_settings(void){
@@ -105,6 +105,17 @@ static SDL_Color green={116,255,132,255}, dim={66,126,77,255}, white={212,226,21
 static void apply_menu_theme(void) {
     if(background&&!monochrome_menu){green=(SDL_Color){18,91,56,255};dim=(SDL_Color){62,74,72,255};white=(SDL_Color){24,32,30,255};}
     else {green=(SDL_Color){116,255,132,255};dim=(SDL_Color){66,126,77,255};white=(SDL_Color){212,226,214,255};}
+}
+static int bios_present(const char *filename) {
+    char path[256];
+    const char *dirs[]={"roms/NeoGeo","roms/neogeo","roms","system",
+        "retroarch/system","../retroarch/system","../retroarch/roms/NeoGeo",
+        "../retroarch/roms/neogeo","/home/apps/retroarch/system"};
+    for(size_t i=0;i<sizeof(dirs)/sizeof(dirs[0]);i++) {
+        if(snprintf(path,sizeof(path),"%s/%s",dirs[i],filename)>=(int)sizeof(path))continue;
+        if(access(path,R_OK)==0)return 1;
+    }
+    return 0;
 }
 static void color(SDL_Color c) { SDL_SetRenderDrawColor(renderer,c.r,c.g,c.b,c.a); }
 static void rect(int x,int y,int w,int h,SDL_Color c,int fill) {
@@ -401,7 +412,7 @@ static void draw(Uint32 tick) {
         rect(20,80,155,400,(SDL_Color){255,255,255,208},1);
         rect(20,483,920,43,(SDL_Color){255,255,255,224},1);
         rect(184,419,746,63,(SDL_Color){255,255,255,208},1);
-        if(settings_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,(SDL_Color){255,255,255,200},1);
+        if(settings_on||bios_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,(SDL_Color){255,255,255,200},1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
     if(stars_on&&(!background||monochrome_menu))for(int i=0;i<STARS;i++) {
@@ -439,18 +450,32 @@ static void draw(Uint32 tick) {
         }
         text(194,430,tv_schedule_on?(tv_column?"EDIT GENRE: LEFT/RIGHT / A EDIT HOUR":"EDIT START HOUR: LEFT/RIGHT / A EDIT GENRE"):"A START TV / SELECT EDIT SCHEDULE",1,green,90);
         text(194,455,tv_schedule_on?"UP/DOWN ROW / B SAVE":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
+    }else if(bios_on){
+        text(194,94,"GAME BIOS STATUS",3,green,40);
+        const char *files[]={"neogeo.zip","scph5500.bin","scph5501.bin","scph5502.bin","gba_bios.bin"};
+        const char *labels[]={"NEO GEO","PLAYSTATION JP","PLAYSTATION US","PLAYSTATION EU","GAME BOY ADVANCE"};
+        for(int i=0;i<5;i++){
+            int y=155+i*43;
+            text(205,y,labels[i],2,white,24);
+            text(545,y,bios_present(files[i])?"FOUND":"NOT FOUND",2,bios_present(files[i])?green:dim,12);
+            text(205,y+19,files[i],1,dim,40);
+        }
+        text(194,389,"COPY LEGALLY OBTAINED BIOS FILES TO:",1,green,80);
+        text(194,412,"/HOME/APPS/GREENLINK/SYSTEM/",1,white,80);
+        text(194,452,"NEO GEO ALSO SUPPORTS BIOS BESIDE GAME ZIP",1,dim,80);
+        text(194,474,"B RETURN / STATUS REFRESHES AUTOMATICALLY",1,green,80);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME"};
+        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS"};
 #else
-        const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME"};
+        const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS"};
 #endif
-        char values[10][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[11][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
-        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",monochrome_menu?"CLASSIC MONOCHROME":"WHITE METAL");
+        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",monochrome_menu?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");
         text(194,94,"SETTINGS",3,green,40);
-        for(int i=0;i<10;i++){int y=139+i*30;rect(190,y-9,724,34,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
+        for(int i=0;i<11;i++){int y=134+i*27;rect(190,y-9,724,34,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
         text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
         text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
     }else if(search_on){
@@ -704,10 +729,11 @@ static void action(SDL_Keycode key) {
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&(key==SDLK_y||key==SDLK_F6)){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
     if(!settings_on&&!about&&(key==SDLK_F6||key==SDLK_y)&&(browse.mode==1||browse.mode==2||browse.mode==7)){filters_on=1;filter_row=0;filter_original_genre=browse.id;filter_original_order=browse.season;return;}
+    if(bios_on){if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5||key==SDLK_RETURN){bios_on=0;}return;}
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
         if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<9)settings_row++;
+        if(key==SDLK_DOWN&&settings_row<10)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
@@ -719,6 +745,7 @@ static void action(SDL_Keycode key) {
                 case 5:subtitle_scale=subtitle_scale==2?3:2;break;
                 case 8:tv_breaks=!tv_breaks;break;
                 case 9:monochrome_menu=!monochrome_menu;apply_menu_theme();break;
+                case 10:bios_on=1;break;
                 case 7:tv_schedule_on=1;tv_row=0;tv_column=1;break;
                 case 6:subtitle_delay+=step;if(subtitle_delay>5)subtitle_delay=-5;if(subtitle_delay< -5)subtitle_delay=5;break;
             }save_settings();

@@ -267,6 +267,56 @@ static int read_catalog(const char *path) {
     }
     fclose(f); filter();return count;
 }
+/* A small RAM-only LRU catalog. Reuse loaded pages until process restart.
+ * We never cache playback sources or actions that mutate downloaded files. */
+#define LIBRARY_RAM_CACHE 16
+typedef struct {
+    int valid,count,pages,items;
+    Browse key;
+    Title rows[VISIBLE];
+} LibraryPage;
+static LibraryPage library_pages[LIBRARY_RAM_CACHE];
+static unsigned library_cache_cursor;
+static int library_cacheable(int mode){
+    return mode==1||mode==2||mode==3||mode==4||mode==7||mode==8||
+        mode==9||mode==10||mode==14||mode==15||mode==17||mode==18||
+        mode==20||mode==21||mode==22||mode==23||mode==24;
+}
+static int library_page_equals(const Browse *a,const Browse *b){
+    return a->mode==b->mode&&a->page==b->page&&a->id==b->id&&
+        a->season==b->season&&a->episode==b->episode&&
+        !strcmp(a->query,b->query);
+}
+static void library_cache_store(const Browse *key){
+    if(!library_cacheable(key->mode)||count>VISIBLE)return;
+    LibraryPage *p=NULL;
+    for(int i=0;i<LIBRARY_RAM_CACHE;i++)
+        if(library_pages[i].valid&&library_page_equals(&library_pages[i].key,key)){
+            p=&library_pages[i];break;
+        }
+    if(!p)p=&library_pages[library_cache_cursor++%LIBRARY_RAM_CACHE];
+    p->valid=1;p->key=*key;p->count=count;
+    p->pages=listing_pages;p->items=listing_total;
+    memcpy(p->rows,titles,(size_t)count*sizeof(Title));
+}
+static int library_cache_restore(Browse next,int push,int pop){
+    if(!library_cacheable(next.mode))return 0;
+    for(int i=0;i<LIBRARY_RAM_CACHE;i++){
+        LibraryPage *p=&library_pages[i];
+        if(!p->valid||!library_page_equals(&p->key,&next))continue;
+        if(push&&history_size<4)history[history_size++]=browse;
+        if(pop&&history_size)history_size--;
+        browse=next;count=p->count;listing_pages=p->pages;listing_total=p->items;
+        ready_only=0;about=0;memset(titles,0,sizeof(titles));
+        memcpy(titles,p->rows,(size_t)count*sizeof(Title));
+        filter();
+        if(next.selected>=0&&next.selected<total)selection=next.selected;
+        snprintf(status,sizeof(status),"%s / CACHED PAGE %d OF %d",
+            browse_labels[next.mode],next.page,listing_pages);
+        return 1;
+    }
+    return 0;
+}
 static void request_catalog(Browse next,int push,int pop){
     if(next.mode!=5&&next.mode!=6&&next.mode!=12&&next.mode!=13)tv_active=0;
     if(next.mode==11){browse=next;history_size=0;about=0;total=count=0;prefetch_left=0;snprintf(status,sizeof(status),"A START TV / SELECT SETTINGS / OSLO TIME");return;}
@@ -275,6 +325,7 @@ static void request_catalog(Browse next,int push,int pop){
     if(!next.mode){
         browse=next;history_size=0;count=0;ready_only=0;listing_pages=1;memset(titles,0,sizeof(titles));read_catalog(local_catalog);return;
     }
+    if(!auto_active&&library_cache_restore(next,push,pop))return;
     if(access("./greenlink-catalog",X_OK)){snprintf(status,sizeof(status),"CATALOG WORKER NOT INSTALLED");return;}
     mkdir("catalog-cache",0700);
     for(int i=0;i<VISIBLE;i++){char path[80];snprintf(path,sizeof(path),"catalog-cache/poster-%d.next.bmp",i);unlink(path);}
@@ -360,6 +411,7 @@ static void finish_catalog(void){
     if(pending.mode==14)pending.id=0;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
+    library_cache_store(&browse);
     if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24){prefetch_browse=browse;prefetch_left=browse.page==1?2:1;}
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);

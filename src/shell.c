@@ -720,7 +720,7 @@ static void action(SDL_Keycode key) {
         if(command&&player_control>=0){ssize_t sent=write(player_control,&command,1);(void)sent;}
         return;
     }
-    if(catalog_pid){if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;auto_active=0;tv_active=0;snprintf(status,sizeof(status),"LOAD CANCELLED");}return;}
+    if(catalog_pid){if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;auto_active=0;tv_active=0;snprintf(status,sizeof(status),key==SDLK_F2?"ARCHIVE LOAD SKIPPED":"LOAD CANCELLED");}return;}
     if(search_on){
         size_t n=strlen(search_text);
         if(key==SDLK_ESCAPE){search_on=0;SDL_StopTextInput();}
@@ -760,7 +760,7 @@ static void action(SDL_Keycode key) {
     if(!settings_on&&!about&&(key==SDLK_F6||key==SDLK_y)&&(browse.mode==1||browse.mode==2||browse.mode==7)){filters_on=1;filter_row=0;filter_original_genre=browse.id;filter_original_order=browse.season;return;}
     if(bios_on){
         if(bios_confirm){
-            if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){bios_confirm=0;return;}
+            if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){bios_confirm=0;return;}
             if(key==SDLK_RETURN){
                 bios_confirm=0;
                 int result=bios_download();
@@ -774,7 +774,7 @@ static void action(SDL_Keycode key) {
             if(bios_present(bios_files[bios_selected]))snprintf(status,sizeof(status),"BIOS ALREADY PRESENT");
             else {bios_confirm=1;snprintf(status,sizeof(status),"ONLY CONFIRM IF YOU HAVE DOWNLOAD RIGHTS");}
         }
-        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5)bios_on=0;
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5||key==SDLK_F2)bios_on=0;
         return;
     }
     if(settings_on){

@@ -92,8 +92,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE GAMES","IMPORTING GAME"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-archive","games-download"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -272,11 +272,11 @@ static void finish_catalog(void){
         else snprintf(status,sizeof(status),"TV: NO EPISODE FOUND / TRYING ANOTHER SHOW");
         tv_next_at=SDL_GetTicks()+10000;return;
     }
-    if(!WIFEXITED(code)||WEXITSTATUS(code)){play_after_load=0;snprintf(status,sizeof(status),pending.mode==16?"ROM DOWNLOAD FAILED - SEE CATALOG.LOG":pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
+    if(!WIFEXITED(code)||WEXITSTATUS(code)){play_after_load=0;snprintf(status,sizeof(status),(pending.mode==16||pending.mode==19)?"ROM DOWNLOAD FAILED - SEE CATALOG.LOG":pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
     for(int i=0;i<VISIBLE;i++){char src[80],dst[80];snprintf(src,sizeof(src),"catalog-cache/poster-%d.next.bmp",i);snprintf(dst,sizeof(dst),"catalog-cache/poster-%d.bmp",i);rename(src,dst);}
     if(pending_push&&history_size<4)history[history_size++]=browse;
     if(pending_pop&&history_size)history_size--;
-    if(pending.mode==16)pending.mode=14;
+    if(pending.mode==16||pending.mode==19)pending.mode=14;
     if(pending.mode==14)pending.id=0;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
@@ -285,7 +285,8 @@ static void finish_catalog(void){
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
     if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"KISSANIME: BROWSING WORKS / SOME VIDEO HOSTS ARE NOT SUPPORTED");
     if(browse.mode==14)snprintf(status,sizeof(status),"Y IMPORT / START LICENSED DOWNLOADS / SHARE+OPTIONS EXIT GAME");
-    if(browse.mode==15&&!total)snprintf(status,sizeof(status),"NO VERIFIED HOMEBREW DOWNLOADS CONFIGURED");
+    if(browse.mode==17&&!total)snprintf(status,sizeof(status),"NO ARCHIVE TITLES FOUND - TRY ANOTHER PLATFORM");
+    if(browse.mode==18&&!total)snprintf(status,sizeof(status),"NO SUPPORTED ROM FILES IN THIS ARCHIVE ITEM");
     if(browse.mode==14){FILE *f=fopen("game-exit-status","r");int code=0;if(f){int got=fscanf(f,"%d",&code);fclose(f);unlink("game-exit-status");if(got==1&&code)snprintf(status,sizeof(status),"GAME COULD NOT START / SEE GAME.LOG / Y REIMPORT");}}
     if(browse.mode==10&&!total)snprintf(status,sizeof(status),"NO PUBLIC H.264 / MPEG4 FILES IN THIS ITEM");
     if(play_after_load){play_after_load=0;if(total)play();}
@@ -505,6 +506,34 @@ static void play(void) {
     if(settings_on||about||!total||player_pid)return;
     restart_position=auto_resume=0;
     Title *t=&titles[visible[selection]];
+    if(!strcmp(t->kind,"game-platform")){
+        Browse next={17,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
+        request_catalog(next,1,0);return;
+    }
+    if(!strcmp(t->kind,"game-item")){
+        const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
+        if(strncmp(t->url,prefix,n)||strlen(t->url+n)>=129){snprintf(status,sizeof(status),"INVALID ARCHIVE ITEM");return;}
+        Browse next={18,1,t->id,0,0,0,"",""};snprintf(next.query,sizeof(next.query),"%s",t->url+n);
+        snprintf(next.name,sizeof(next.name),"%s",t->title);request_catalog(next,1,0);return;
+    }
+    if(!strcmp(t->kind,"game-rom")){
+        const char *prefix="https://archive.org/download/";size_t n=strlen(prefix);
+        if(strncmp(t->url,prefix,n)){snprintf(status,sizeof(status),"INVALID ROM LINK");return;}
+        const char *slash=strchr(t->url+n,'/');if(!slash){snprintf(status,sizeof(status),"INVALID ROM LINK");return;}
+        char item[129];size_t ilen=(size_t)(slash-(t->url+n));
+        if(ilen<1||ilen>=sizeof(item)){snprintf(status,sizeof(status),"INVALID ARCHIVE ID");return;}
+        memcpy(item,t->url+n,ilen);item[ilen]=0;
+        char name[161];int ni=0;const char *p=slash+1;
+        while(*p&&ni<160){
+            if(*p=='%'&&isxdigit((unsigned char)p[1])&&isxdigit((unsigned char)p[2])){
+                char hex[3]={p[1],p[2],0};name[ni++]=(char)strtol(hex,NULL,16);p+=3;
+            }else name[ni++]=*p++;
+        }name[ni]=0;
+        Browse next={19,1,0,0,0,0,"",""};
+        int written=snprintf(next.query,sizeof(next.query),"%s|%s",item,name);
+        if(written<0||written>=(int)sizeof(next.query)){snprintf(status,sizeof(status),"ROM FILENAME TOO LONG");return;}
+        request_catalog(next,0,0);return;
+    }
     if(!strcmp(t->kind,"archive-game")){Browse next={16,1,t->id,0,0,0,"",""};request_catalog(next,0,0);return;}
     if(!strcmp(t->kind,"game")){
         int back=-1,start=-1;

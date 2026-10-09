@@ -387,10 +387,10 @@ static int games_archive_download(int id){
     if(!rc){
         if(github){
             /* Git blob SHA-1 authenticates exact file contents at the pinned revision. */
-            EVP_MD_CTX *ctx=EVP_MD_CTX_new();char header[64];int h=snprintf(header,sizeof(header),"blob %zu",data.length);
+            EVP_MD_CTX *ctx=EVP_MD_CTX_create();char header[64];int h=snprintf(header,sizeof(header),"blob %zu",data.length);
             if(!ctx||!EVP_DigestInit_ex(ctx,EVP_sha1(),NULL)||!EVP_DigestUpdate(ctx,header,(size_t)h+1)||
-               !EVP_DigestUpdate(ctx,data.data,data.length)||!EVP_DigestFinal_ex(ctx,digest,NULL)){EVP_MD_CTX_free(ctx);free(data.data);return -1;}
-            EVP_MD_CTX_free(ctx);
+               !EVP_DigestUpdate(ctx,data.data,data.length)||!EVP_DigestFinal_ex(ctx,digest,NULL)){EVP_MD_CTX_destroy(ctx);free(data.data);return -1;}
+            EVP_MD_CTX_destroy(ctx);
             for(int i=0;i<20;i++)snprintf(hex+2*i,3,"%02x",digest[i]);
             if(strcasecmp(hex,blob))rc=-1;
         }else{

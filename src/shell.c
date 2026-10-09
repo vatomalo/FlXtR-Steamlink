@@ -163,9 +163,10 @@ static int bios_archive_download(const Title *item){
     if(!decoded)return 2;
     const char *base=strrchr(decoded,'/');
     base=base?base+1:decoded;
+    const char *extension=strrchr(base,'.');
     int valid=decoded_len>0&&(size_t)decoded_len==strlen(decoded)&&
         !strstr(decoded,"..")&&!strchr(decoded,'\\')&&
-        (is_zip?(item->id!=1&&strcasestr(base,".zip")!=NULL):!strcasecmp(base,name));
+        (is_zip?(item->id!=1&&extension&&!strcasecmp(extension,".zip")):!strcasecmp(base,name));
     curl_free(decoded);
     if(!valid)return 2;
     if(mkdir("system",0700)<0&&errno!=EEXIST)return 3;

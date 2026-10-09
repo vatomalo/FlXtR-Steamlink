@@ -1,5 +1,17 @@
 #!/bin/sh
 cd "$(dirname "$0")" || exit 1
+# The box has no reliable clock after some cold boots. Keep HTTPS validation on.
+if [ "$(date +%Y)" -lt 2024 ] && command -v ntpd >/dev/null 2>&1; then
+    ntpd -n -q -p pool.ntp.org >clock.log 2>&1 &
+    clock_pid=$!
+    tries=0
+    while [ "$tries" -lt 10 ] && [ "$(date +%Y)" -lt 2024 ]; do
+        sleep 1
+        tries=$((tries + 1))
+    done
+    kill "$clock_pid" 2>/dev/null || true
+    wait "$clock_pid" 2>/dev/null || true
+fi
 export SDL_GAMECONTROLLERCONFIG="${SDL_GAMECONTROLLERCONFIG:-}"
 if [ "$#" -eq 0 ] && [ -f catalog.local.tsv ]; then
     set -- --catalog catalog.local.tsv

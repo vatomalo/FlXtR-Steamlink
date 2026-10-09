@@ -97,6 +97,19 @@ static int games_list(int page,int refresh){
     for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){
         json_object *g=json_object_array_get_idx(games,i);Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
         const char *core=string(g,"core"),*base=strrchr(core,'/');clean(e->meta,sizeof(e->meta),base?base+1:core);strcpy(e->kind,"game");e->id=i+1;
+        /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
+        const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
+        const char *systems[]={"Nintendo - Nintendo Entertainment System","Nintendo - Super Nintendo Entertainment System","Nintendo - Game Boy Advance","Nintendo - Game Boy Color","Nintendo - Game Boy","Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo"};
+        const char *needle[]={"fceumm","snes9x","gpsp","gambatte","gambatte","pcsx_rearmed","ppsspp","fbneo"};
+        const char *system=NULL;
+        for(int k=0;k<8;k++)if(strstr(core,needle[k])){system=systems[k];break;}
+        if(system){
+            char stem[128];snprintf(stem,sizeof(stem),"%s",e->title);
+            char thumb[PATH_MAX];
+            snprintf(thumb,sizeof(thumb),"%s/.home/.config/retroarch/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
+            if(!game_file(thumb))snprintf(thumb,sizeof(thumb),"%s/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
+            if(game_file(thumb))snprintf(e->poster,sizeof(e->poster),"localthumb:%s",thumb);
+        }
     }json_object_put(games);return 0;
 }
 static int games_run(void){
@@ -143,6 +156,9 @@ static int games_archive_list(int page){
     for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){
         json_object *g=json_object_array_get_idx(list,i);Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
         clean(e->meta,sizeof(e->meta),string(g,"description"));strcpy(e->kind,"archive-game");e->id=i+1;
+        const char *archive_id=string(g,"identifier");
+        if(!*string(g,"git_blob_sha1")&&archive_identifier(archive_id))
+            snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",archive_id);
     }json_object_put(list);return 0;
 }
 static int games_archive_download(int id){

@@ -166,11 +166,11 @@ static const char *game_platforms[]={"nes","snes","gba","psx","psp","arcade"};
 static const char *game_platform_names[]={"NES","SNES","GAME BOY ADVANCE","PLAYSTATION","PSP","ARCADE"};
 static const char *game_platform_queries[]={"NES Nintendo ROM","SNES Super Nintendo ROM","Game Boy Advance GBA ROM","PlayStation PSX game","PSP PlayStation Portable game","Arcade MAME game"};
 static int games_platforms(int page){
-    total=6;
-    for(int i=(page-1)*PAGE_SIZE;i<6&&used<PAGE_SIZE;i++){
-        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",game_platform_names[i]);
-        strcpy(e->kind,"game-platform");e->id=i+1;
-        strcpy(e->meta,"INTERNET ARCHIVE / BROWSE TITLES / A OPEN");
+    total=7;
+    for(int i=(page-1)*PAGE_SIZE;i<7&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==6?"VERIFIED HOMEBREW":game_platform_names[i]);
+        strcpy(e->kind,i==6?"game-curated":"game-platform");e->id=i+1;
+        strcpy(e->meta,i==6?"LICENSED DOWNLOADS / A OPEN":"INTERNET ARCHIVE / BROWSE TITLES / A OPEN");
     }return 0;
 }
 static int games_archive_search(int page,int platform,const char *query){

@@ -9,7 +9,7 @@ static json_object *games_read(const char *path){struct stat st;if(stat(path,&st
 static const char *game_core(const char *path){
     const char *ext=strrchr(path,'.');if(!ext)return NULL;ext++;
     if(!strcasecmp(ext,"nes"))return "fceumm";
-    if(!strcasecmp(ext,"sfc")||!strcasecmp(ext,"smc"))return "snes9x2005_plus";
+    if(!strcasecmp(ext,"sfc")||!strcasecmp(ext,"smc"))return "snes9x2005";
     if(!strcasecmp(ext,"gba"))return "gpsp";
     if(!strcasecmp(ext,"gb")||!strcasecmp(ext,"gbc"))return "gambatte";
     if(!strcasecmp(ext,"md")||!strcasecmp(ext,"gen")||!strcasecmp(ext,"smd")||!strcasecmp(ext,"sms")||!strcasecmp(ext,"gg"))return "picodrive";
@@ -23,7 +23,7 @@ static const char *game_core(const char *path){
         if(strcasestr(path,"/neogeo/")||strcasestr(path,"/neo-geo/"))return "fbneo";
         if(strcasestr(path,"/mame/"))return "mame2003_plus";
         if(strcasestr(path,"/nes/"))return "fceumm";
-        if(strcasestr(path,"/snes/"))return "snes9x2005_plus";
+        if(strcasestr(path,"/snes/"))return "snes9x2005";
         if(strcasestr(path,"/gba/"))return "gpsp";
     }return NULL;
 }

@@ -272,7 +272,7 @@ static void finish_catalog(void){
         else snprintf(status,sizeof(status),"TV: NO EPISODE FOUND / TRYING ANOTHER SHOW");
         tv_next_at=SDL_GetTicks()+10000;return;
     }
-    if(!WIFEXITED(code)||WEXITSTATUS(code)){play_after_load=0;snprintf(status,sizeof(status),pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
+    if(!WIFEXITED(code)||WEXITSTATUS(code)){play_after_load=0;snprintf(status,sizeof(status),pending.mode==16?"ROM DOWNLOAD FAILED - SEE CATALOG.LOG":pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
     for(int i=0;i<VISIBLE;i++){char src[80],dst[80];snprintf(src,sizeof(src),"catalog-cache/poster-%d.next.bmp",i);snprintf(dst,sizeof(dst),"catalog-cache/poster-%d.bmp",i);rename(src,dst);}
     if(pending_push&&history_size<4)history[history_size++]=browse;
     if(pending_pop&&history_size)history_size--;
@@ -284,7 +284,8 @@ static void finish_catalog(void){
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
     if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"KISSANIME: BROWSING WORKS / SOME VIDEO HOSTS ARE NOT SUPPORTED");
-    if(browse.mode==14)snprintf(status,sizeof(status),"Y IMPORT / START ARCHIVE GAMES / SHARE+OPTIONS EXIT GAME");
+    if(browse.mode==14)snprintf(status,sizeof(status),"Y IMPORT / START LICENSED DOWNLOADS / SHARE+OPTIONS EXIT GAME");
+    if(browse.mode==15&&!total)snprintf(status,sizeof(status),"NO VERIFIED HOMEBREW DOWNLOADS CONFIGURED");
     if(browse.mode==14){FILE *f=fopen("game-exit-status","r");int code=0;if(f){int got=fscanf(f,"%d",&code);fclose(f);unlink("game-exit-status");if(got==1&&code)snprintf(status,sizeof(status),"GAME COULD NOT START / SEE GAME.LOG / Y REIMPORT");}}
     if(browse.mode==10&&!total)snprintf(status,sizeof(status),"NO PUBLIC H.264 / MPEG4 FILES IN THIS ITEM");
     if(play_after_load){play_after_load=0;if(total)play();}

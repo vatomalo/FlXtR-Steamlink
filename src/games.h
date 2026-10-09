@@ -269,6 +269,29 @@ static int games_archive_search(int page,int platform,const char *query){
     }
     json_object_put(root);return 0;
 }
+static int games_bios_files(int page,const char *identifier,int bios_id){
+    if(!archive_identifier(identifier)||bios_id<1||bios_id>5)return -1;
+    char url[256];snprintf(url,sizeof(url),ARCHIVE "/metadata/%s",identifier);
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *files=field(root,"files");
+    if(!files||!json_object_is_type(files,json_type_array)){json_object_put(root);return -1;}
+    const char *names[]={"neogeo.zip","scph5500.bin","scph5501.bin","scph5502.bin","gba_bios.bin"};
+    total=0;
+    for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
+        json_object *f=json_object_array_get_idx(files,i);
+        const char *name=string(f,"name"),*digest=string(f,"sha1");
+        if(strcasecmp(name,names[bios_id-1])||strlen(digest)!=40)continue;
+        int good=1;for(int k=0;k<40;k++)if(!isxdigit((unsigned char)digest[k]))good=0;
+        if(!good)continue;
+        if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),name);
+        snprintf(e->meta,sizeof(e->meta),"SHA1 VERIFIED METADATA / A INSPECT");
+        char *escaped=curl_easy_escape(NULL,name,0);
+        if(escaped){snprintf(e->url,sizeof(e->url),ARCHIVE "/download/%s/%s",identifier,escaped);curl_free(escaped);}
+        strcpy(e->kind,"bios-file");e->id=bios_id;
+    }
+    json_object_put(root);return 0;
+}
 static int games_archive_files(int page,const char *identifier,int platform){
     if(!archive_identifier(identifier)||platform<1||platform>6)return -1;
     char url[256];snprintf(url,sizeof(url),ARCHIVE "/metadata/%s",identifier);

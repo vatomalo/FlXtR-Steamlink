@@ -180,12 +180,17 @@ int main(int argc,char **argv) {
     if(ai<0){fprintf(stderr,"No decodable audio track; try another server\n");goto done;}
     AVCodecParameters *sound=fmt->streams[ai]->codecpar;
     fprintf(stderr,"Audio: %s; %d channels; %d Hz\n",avcodec_get_name(sound->codec_id),sound->channels,sound->sample_rate);
-    if(strcmp(sub_language,"off"))for(unsigned i=0;i<fmt->nb_streams;i++){
+    /* Prefer requested language, but use unlabelled tracks when hosts omit metadata. */
+    if(strcmp(sub_language,"off"))for(int pass=0;pass<2&&si<0;pass++)for(unsigned i=0;i<fmt->nb_streams;i++){
         AVCodecParameters *sp=fmt->streams[i]->codecpar;
         if(sp->codec_type!=AVMEDIA_TYPE_SUBTITLE||!(sp->codec_id==AV_CODEC_ID_SUBRIP||sp->codec_id==AV_CODEC_ID_WEBVTT||sp->codec_id==AV_CODEC_ID_MOV_TEXT||sp->codec_id==AV_CODEC_ID_ASS||sp->codec_id==AV_CODEC_ID_SSA))continue;
         AVDictionaryEntry *language=av_dict_get(fmt->streams[i]->metadata,"language",NULL,0);
         const char *lang=language?language->value:"";
-        if(strcmp(sub_language,"auto")&&strcmp(lang,sub_language)&&!( !strcmp(sub_language,"eng")&&!strcmp(lang,"en"))&&!( !strcmp(sub_language,"nor")&&(!strcmp(lang,"nb")||!strcmp(lang,"nob")||!strcmp(lang,"no"))))continue;
+        int matching=!strcmp(sub_language,"auto")||!strcmp(lang,sub_language)||
+            (!strcmp(sub_language,"eng")&&(!strcmp(lang,"en")||!strcmp(lang,"en-US")||!strcmp(lang,"en-GB")))||
+            (!strcmp(sub_language,"nor")&&(!strcmp(lang,"nb")||!strcmp(lang,"nob")||!strcmp(lang,"no")||!strcmp(lang,"nn")));
+        if(pass==0&&!matching)continue;
+        if(pass==1&&(*lang||!strcmp(sub_language,"auto")))continue;
         const AVCodec *codec=avcodec_find_decoder(sp->codec_id);if(!codec)continue;
         sub_decoder=avcodec_alloc_context3(codec);if(!sub_decoder)break;
         if(avcodec_parameters_to_context(sub_decoder,sp)<0||avcodec_open2(sub_decoder,codec,NULL)<0){avcodec_free_context(&sub_decoder);continue;}

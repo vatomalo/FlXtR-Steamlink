@@ -9,7 +9,7 @@ build/greenlink-catalog: src/catalog.c src/games.h src/kissanime.h src/megaplay.
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 build/greenlink: src/shell.c src/font.h src/video_layout.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lcurl
 
 test: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/tv_test.c -o build/tv-test $(SDL_LIBS)

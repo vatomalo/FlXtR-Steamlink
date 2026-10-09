@@ -85,6 +85,7 @@ static int kiss_direct(const char *html,char *out,size_t cap){
         if(!strncmp(url,"https://",8)&&(strstr(url,".m3u8")||strstr(url,".mp4"))){snprintf(out,cap,"%s",url);return 1;}
     }}return 0;
 }
+#include "subtitle_manifest.h"
 #include "megaplay.h"
 static int kiss_source(int id,int episode,const char *server){
     char url[2048];snprintf(url,sizeof(url),KISS"/?p=%d",id);char *html=kiss_fetch(url);if(!html)return -1;

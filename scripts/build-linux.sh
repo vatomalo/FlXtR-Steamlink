@@ -10,7 +10,7 @@ root=dist/FlXtR-$target
 app=$root/releases/$version
 mkdir -p "$app" build
 flags=(-Os -std=c99 -Wall -Wextra -Werror -DFLXTR_DESKTOP "-DFLXTR_VERSION=\"$version\"")
-cc "${flags[@]}" $(pkg-config --cflags sdl2) src/shell.c -o "$app/greenlink" $(pkg-config --libs sdl2)
+cc "${flags[@]}" $(pkg-config --cflags sdl2) src/shell.c -o "$app/greenlink" $(pkg-config --libs sdl2 libcurl)
 cc "${flags[@]}" src/catalog.c -o "$app/greenlink-catalog" $(pkg-config --cflags --libs sdl2 SDL2_image libcurl json-c openssl)
 cc "${flags[@]}" src/player_linux.c -o "$app/greenlink-player" $(pkg-config --cflags --libs mpv)
 strip "$app/greenlink" "$app/greenlink-catalog" "$app/greenlink-player"

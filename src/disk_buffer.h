@@ -8,6 +8,15 @@
 #ifndef DISK_POLL
 #define DISK_POLL() ((void)0)
 #endif
+#ifndef DISK_CANCEL
+#define DISK_CANCEL() 0
+#endif
+#ifndef DISK_ABORT
+#define DISK_ABORT() (stopped=1)
+#endif
+#ifndef DISK_BUFFERING
+#define DISK_BUFFERING(active) ((void)(active))
+#endif
 #define DISK_SLOTS 4096
 typedef struct {int size,stream,flags,sides;int64_t pts,dts,duration,pos;} DiskHeader;
 typedef struct {uint32_t size,type;} DiskSide;
@@ -92,9 +101,13 @@ static DiskBuffer *disk_start(AVFormatContext *fmt,int vi,int ai,int si,int seco
 static int disk_packet(DiskBuffer *q,AVPacket *p){
     pthread_mutex_lock(&q->mutex);
     if(!q->count)q->primed=0;
-    while(!stopped&&!q->quit&&!q->done&&(!q->count||!q->primed)){
+    int buffering=!q->done&&(!q->count||!q->primed);
+    if(buffering){pthread_mutex_unlock(&q->mutex);DISK_BUFFERING(1);pthread_mutex_lock(&q->mutex);}
+    while(!stopped&&!DISK_CANCEL()&&!q->quit&&!q->done&&(!q->count||!q->primed)){
         disk_wait(q);pthread_mutex_unlock(&q->mutex);DISK_POLL();pthread_mutex_lock(&q->mutex);
     }
+    if(buffering){pthread_mutex_unlock(&q->mutex);DISK_BUFFERING(0);pthread_mutex_lock(&q->mutex);}
+    if(DISK_CANCEL()){pthread_mutex_unlock(&q->mutex);return AVERROR(EAGAIN);}
     if(stopped||q->quit){pthread_mutex_unlock(&q->mutex);return AVERROR_EXIT;}
     if(!q->count){int rc=q->result;pthread_mutex_unlock(&q->mutex);return rc;}
     DiskRecord record=q->records[q->head];uint64_t at=record.offset;DiskHeader h;
@@ -114,8 +127,11 @@ static int disk_packet(DiskBuffer *q,AVPacket *p){
     pthread_cond_broadcast(&q->changed);pthread_mutex_unlock(&q->mutex);
     if(error){av_packet_unref(p);return AVERROR(EIO);}return 0;
 }
-static void disk_close(DiskBuffer *q){
+static void disk_finish(DiskBuffer *q,int cancel_io){
     if(!q)return;
     pthread_mutex_lock(&q->mutex);q->quit=1;pthread_cond_broadcast(&q->changed);pthread_mutex_unlock(&q->mutex);
-    stopped=1;pthread_join(q->thread,NULL);close(q->fd);pthread_cond_destroy(&q->changed);pthread_mutex_destroy(&q->mutex);free(q);
+    if(cancel_io)DISK_ABORT();
+    pthread_join(q->thread,NULL);close(q->fd);pthread_cond_destroy(&q->changed);pthread_mutex_destroy(&q->mutex);free(q);
 }
+
+static void disk_close(DiskBuffer *q){disk_finish(q,1);}

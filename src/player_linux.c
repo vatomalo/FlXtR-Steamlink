@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
+#include "subtitle_source.h"
 #ifndef FLXTR_VERSION
 #define FLXTR_VERSION "development"
 #endif
@@ -47,18 +49,21 @@ static void draw(void){
     for(int i=0;i<11;i++)n+=(size_t)snprintf(text+n,sizeof(text)-n,"%c %s\n",row==i?'>':' ',lines[i]);
     command("show-text",text,"60000");
 }
+static void seek_relative(int seconds){
+    char value[32];snprintf(value,sizeof(value),"%d",seconds);command("seek",value,"relative+keyframes");
+}
 static void key(char c){
     if(c=='m'||(c=='b'&&menu)){menu=!menu;if(menu)draw();else command("show-text","","0");return;}
     if(c=='b'){request(7,position());return;}
     if(c=='v'){view=(view+1)%3;sizing();}
-    if(!menu){if(c=='l'||c=='r')request(1,position()+(c=='l'?-10:10));return;}
+    if(!menu){if(c=='l'||c=='r')seek_relative(c=='l'?-10:10);return;}
     if(c=='u')row=(row+10)%11;
     if(c=='d')row=(row+1)%11;
     if(c=='a'||c=='l'||c=='r'){
         int d=c=='l'?-1:1;char value[32];
         switch(row){
         case 0:command("cycle","pause",NULL);break;
-        case 1:request(1,position()+d*10);break;
+        case 1:seek_relative(d*10);break;
         case 2:subs=(subs+d+4)%4;request(1,position());break;
         case 3:scale=scale==2?3:2;property("sub-scale",scale==2?"1":"1.5");break;
         case 4:delay+=d;if(delay>5)delay=5;if(delay< -5)delay=-5;snprintf(value,sizeof(value),"%d",delay);property("sub-delay",value);break;
@@ -75,7 +80,7 @@ static void key(char c){
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc<2)return 2;
-    int buffer=15,mb=128,headless=0;double duration=0;
+    int buffer=15,mb=128,headless=0;double duration=0;const char *sub_file=NULL;
     for(int i=2;i<argc;i++){
         const char *a=argv[i];
         if(!strcmp(a,"--episodes")){episodes=1;continue;}
@@ -90,6 +95,7 @@ int main(int argc,char **argv){
         else if(!strcmp(a,"--control-fd"))fd=atoi(v);
         else if(!strcmp(a,"--buffer-seconds"))buffer=atoi(v);
         else if(!strcmp(a,"--buffer-mb"))mb=atoi(v);
+        else if(!strcmp(a,"--subtitle-file"))sub_file=v;
         else if(!strcmp(a,"--subtitle-size"))scale=atoi(v);
         else if(!strcmp(a,"--subtitle-delay"))delay=atoi(v);
         else if(!strcmp(a,"--view")){if(!strcmp(v,"stretch"))view=1;else if(!strcmp(v,"pixel"))view=2;}
@@ -111,7 +117,7 @@ int main(int argc,char **argv){
     char value[160];snprintf(value,sizeof(value),"%d",buffer);mpv_set_option_string(mpv,"cache-secs",value);
     mpv_set_option_string(mpv,"cache-pause-initial","yes");mpv_set_option_string(mpv,"cache-pause-wait",value);
     snprintf(value,sizeof(value),"%d",mb*1024*1024);mpv_set_option_string(mpv,"demuxer-max-bytes",value);
-    mpv_set_option_string(mpv,"demuxer-max-back-bytes","0");
+    snprintf(value,sizeof(value),"%d",mb*1024*1024/4);mpv_set_option_string(mpv,"demuxer-max-back-bytes",value);
     snprintf(value,sizeof(value),"%.3f",start);mpv_set_option_string(mpv,"start",value);
     snprintf(value,sizeof(value),"%d",delay);mpv_set_option_string(mpv,"sub-delay",value);
     mpv_set_option_string(mpv,"sub-scale",scale==3?"1.5":"1");
@@ -125,6 +131,11 @@ int main(int argc,char **argv){
     }
     if(headless){mpv_set_option_string(mpv,"vo","null");mpv_set_option_string(mpv,"ao","null");}
     if(duration>0){snprintf(value,sizeof(value),"%.3f",duration);mpv_set_option_string(mpv,"length",value);}
+    char external_path[4096];
+    if(subs){
+        if(!sub_file&&subtitle_source(argv[1],languages[subs],external_path,sizeof(external_path)))sub_file=external_path;
+        if(sub_file)mpv_set_option_string(mpv,"sub-file",sub_file);
+    }
     if(mpv_initialize(mpv)<0){mpv_terminate_destroy(mpv);return 1;}
     sizing();if(fd>=0)fcntl(fd,F_SETFL,fcntl(fd,F_GETFL)|O_NONBLOCK);
     command("loadfile",argv[1],NULL);

@@ -13,5 +13,11 @@ if [ "$#" -eq 0 ] && [ -f catalog.local.tsv ]; then set -- --catalog catalog.loc
 while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
+    if [ "$code" -eq 43 ]; then
+        ./greenlink-catalog --run-game >game.log 2>&1
+        printf '%d\n' "$?" >game-exit-status
+        set -- --library games
+        continue
+    fi
     [ "$code" -eq 42 ] || exit "$code"
 done

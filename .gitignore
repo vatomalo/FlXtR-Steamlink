@@ -13,3 +13,14 @@ playback-cache/
 
 playback-request*
 tv-progress.tsv*
+
+tv-recent.tsv*
+tv-sequence.txt*
+tv-break-sequence.txt*
+games.json*
+games-paths.txt
+game-request
+game-runtime.cfg
+roms/
+archive-games.local.json
+game-exit-status

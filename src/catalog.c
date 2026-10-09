@@ -156,6 +156,7 @@ static int sources(int page,int id,int season,int episode){
 #include "kissanime.h"
 #include "archive.h"
 #include "tv_catalog.h"
+#include "games.h"
 /* Keep previously visited title pages on disk, not only the last three.
  * Hashing the complete identity spreads different libraries, searches and pages
  * over a bounded 32-slot cache. Full key validation handles hash collisions. */
@@ -245,20 +246,24 @@ static void poster(Entry *e,int slot){
     }free(b.data);
 }
 int main(int argc,char **argv){
+    if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);
     if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>(!strcmp(kind,"archive-files")?128:64))return 2;
-    if(strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
+    if(strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
     if((!strcmp(kind,"source")||!strcmp(kind,"quality"))&&!getenv("FLXTR_NO_NETWORK")&&!access("./greenlink-resolver",X_OK)){
         int quality=!strcmp(kind,"quality");if(quality&&argc!=8)return 2;
         execl("./greenlink-resolver","greenlink-resolver",quality?"source":"servers",episode?"tv":"movie",argv[4],argv[5],argv[6],quality?argv[7]:"",argv[2],(char*)NULL);return 1;
     }
     if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
     mkdir("catalog-cache",0700);
-    int cacheable=strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
+    int cacheable=strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
     if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
     int rc;
-    if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);
+    if(!strcmp(kind,"games-archive"))rc=games_archive_list(page);
+    else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);
+    else if(!strcmp(kind,"games"))rc=games_list(page,id);
+    else if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);
     else if(!strcmp(kind,"tv-pick"))rc=tv_pick(positive(argv[3],1),id);
     else if(!strcmp(kind,"archive"))rc=archive_list(page,argv[3]);
     else if(!strcmp(kind,"archive-files"))rc=archive_files(page,argv[3]);
@@ -272,7 +277,7 @@ int main(int argc,char **argv){
     if(rc){curl_global_cleanup();return 1;}
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
-    for(int i=0;i<used;i++){if(strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
+    for(int i=0;i<used;i++){if(strncmp(kind,"games",5)&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
     if(cacheable)cache_save();
 output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);

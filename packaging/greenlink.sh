@@ -9,5 +9,11 @@ if [ ! -f .no-auto-update ]; then sh ./update.sh >update.log 2>&1 || true; fi
 while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
+    if [ "$code" -eq 43 ]; then
+        ./greenlink-catalog --run-game >game.log 2>&1
+        printf '%d\n' "$?" >game-exit-status
+        set -- --library games
+        continue
+    fi
     [ "$code" -eq 42 ] || exit "$code"
 done

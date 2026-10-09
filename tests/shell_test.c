@@ -64,6 +64,9 @@ int main(void) {
     controller_slept=0;controller_activity=SDL_GetTicks()-299999;controller_idle();assert(!controller_slept);
     controller_activity=SDL_GetTicks()-300001;controller_idle();assert(controller_slept&&!idle_pid);
     controller_used();assert(!controller_slept);
+    browse.mode=14;total=count=1;visible[0]=selection=0;running=1;
+    titles[0]=(Title){.title="GAME",.kind="game",.id=7};play();assert(game_exit&&!running&&!player_pid);
+    f=fopen("game-request","r");assert(f);int game_id=0;assert(fscanf(f,"%d",&game_id)==1&&game_id==7);fclose(f);unlink("game-request");game_exit=0;running=1;
     browse.mode=0;history_size=0;
     close_ui();
     action(SDLK_ESCAPE);assert(!running);

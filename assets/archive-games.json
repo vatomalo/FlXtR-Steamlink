@@ -1,0 +1,11 @@
+[
+  {
+    "title": "2048 - Game Boy",
+    "description": "SANQUI / HOMEBREW / ZLIB LICENSE / A DOWNLOAD",
+    "identifier": "2048_gb_2",
+    "file": "2048.gb",
+    "sha256": "3ea2376b15b34bd26b10e6b31d2753bf8b086098dbdb5ee84d9c0f03d66d3d7f",
+    "source": "https://github.com/Sanqui/2048-gb",
+    "license": "2048-gb-LICENSE.txt"
+  }
+]

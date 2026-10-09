@@ -165,6 +165,8 @@ static int bios_archive_download(const Title *item){
     unlink(temp);
     FILE *output=fopen(temp,"wb");if(!output)return 3;
     CURL *curl=curl_easy_init();if(!curl){fclose(output);unlink(temp);return 3;}
+    char curl_error[CURL_ERROR_SIZE]={0};
+    curl_easy_setopt(curl,CURLOPT_ERRORBUFFER,curl_error);
     curl_easy_setopt(curl,CURLOPT_URL,item->url);
     curl_easy_setopt(curl,CURLOPT_FOLLOWLOCATION,1L);
     curl_easy_setopt(curl,CURLOPT_MAXREDIRS,4L);
@@ -191,7 +193,7 @@ static int bios_archive_download(const Title *item){
     struct stat downloaded;
     if(result!=CURLE_OK||http!=200||output_error||stat(temp,&downloaded)||
        downloaded.st_size<=0||downloaded.st_size>16777216){
-        fprintf(stderr,"BIOS Archive transfer failed: HTTP %ld / curl %d\\n",http,(int)result);
+        fprintf(stderr,"BIOS Archive transfer failed: HTTP %ld / curl %d / %s / URL %s\\n",http,(int)result,curl_error[0]?curl_error:curl_easy_strerror(result),item->url);
         unlink(temp);return 5;
     }
     pid_t pid;int code=0;
@@ -990,9 +992,14 @@ static void action(SDL_Keycode key) {
             request_catalog(next,1,0);return;
         }
         if(key==SDLK_y){
-            if(bios_present(bios_files[bios_selected]))snprintf(status,sizeof(status),"BIOS ALREADY PRESENT");
-            else if(access("bios-sources.tsv",R_OK))snprintf(status,sizeof(status),"NO SOURCES: ADD BIOS-SOURCES.TSV");
-            else {bios_confirm=1;snprintf(status,sizeof(status),"ONLY CONFIRM IF YOU HAVE DOWNLOAD RIGHTS");}
+            if(bios_present(bios_files[bios_selected])){
+                snprintf(status,sizeof(status),"BIOS ALREADY PRESENT");
+            }else{
+                bios_on=0;
+                Browse next={23,1,bios_selected+1,0,0,0,"",""};
+                request_catalog(next,1,0);
+            }
+            return;
         }
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5||key==SDLK_F2)bios_on=0;
         return;

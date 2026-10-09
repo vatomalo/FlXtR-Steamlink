@@ -156,7 +156,9 @@ static int bios_archive_download(const Title *item){
     const char *names[]={"neogeo.zip","scph5500.bin","scph5501.bin","scph5502.bin","gba_bios.bin"};
     const char *name=names[item->id-1];
     const char *slash=strrchr(item->url,'/');
-    if(!slash||strcmp(slash+1,name))return 2;
+    int is_zip=!strcmp(item->kind,"bios-zip");
+    if(!slash||(!is_zip&&strcmp(slash+1,name)))return 2;
+    if(is_zip&&(item->id==1||!strstr(slash+1,".zip")))return 2;
     if(mkdir("system",0700)<0&&errno!=EEXIST)return 3;
     char dest[96],temp[128];snprintf(dest,sizeof(dest),"system/%s",name);snprintf(temp,sizeof(temp),"system/.%s.partial",name);
     if(access(dest,F_OK)==0)return 4;
@@ -203,6 +205,45 @@ static int bios_archive_download(const Title *item){
     code=0;int verified=waitpid(pid,&code,0)==pid&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
     unlink("bios-archive-check.txt");
     if(!verified){unlink(temp);return 6;}
+    if(is_zip){
+        /* Archive checksum has already been checked. Inspect members without extracting paths. */
+        int pipes[2];if(pipe(pipes)<0){unlink(temp);return 3;}
+        pid=fork();if(pid<0){close(pipes[0]);close(pipes[1]);unlink(temp);return 3;}
+        if(!pid){
+            dup2(pipes[1],STDOUT_FILENO);close(pipes[0]);close(pipes[1]);
+            execlp("unzip","unzip","-Z","-1",temp,(char*)NULL);_exit(127);
+        }
+        close(pipes[1]);
+        FILE *listing=fdopen(pipes[0],"r");char line[512],member[512]="";
+        if(listing){
+            while(fgets(line,sizeof(line),listing)){
+                size_t n=strcspn(line,"\\r\\n");if(line[n]!='\\n'&&line[n]!='\\r'&&!feof(listing))continue;
+                line[n]=0;const char *base=strrchr(line,'/');base=base?base+1:line;
+                if(!strcmp(base,name)&&!strstr(line,"..")&&!strchr(line,'\\\\')){
+                    snprintf(member,sizeof(member),"%s",line);break;
+                }
+            }
+            fclose(listing);
+        }else close(pipes[0]);
+        int listcode=0;waitpid(pid,&listcode,0);
+        if(!member[0]||!WIFEXITED(listcode)||WEXITSTATUS(listcode)!=0){unlink(temp);return 7;}
+        char extracted[128];snprintf(extracted,sizeof(extracted),"system/.%s.extracted",name);
+        int fd=open(extracted,O_WRONLY|O_CREAT|O_EXCL,0600);
+        if(fd<0){unlink(temp);return 3;}
+        pid=fork();if(pid<0){close(fd);unlink(extracted);unlink(temp);return 3;}
+        if(!pid){
+            dup2(fd,STDOUT_FILENO);close(fd);
+            execlp("unzip","unzip","-p",temp,member,(char*)NULL);_exit(127);
+        }
+        close(fd);int extractcode=0;waitpid(pid,&extractcode,0);
+        struct stat contents;
+        int good=WIFEXITED(extractcode)&&WEXITSTATUS(extractcode)==0&&
+            !stat(extracted,&contents)&&contents.st_size==((item->id==5)?16384:524288);
+        unlink(temp);
+        if(!good){unlink(extracted);return 7;}
+        if(link(extracted,dest)<0){unlink(extracted);return 4;}
+        unlink(extracted);return 0;
+    }
     if(link(temp,dest)<0){unlink(temp);return 4;}
     unlink(temp);return 0;
 }
@@ -699,7 +740,7 @@ static void play(void) {
         snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
     }
-    if(!strcmp(t->kind,"bios-file")){
+    if(!strcmp(t->kind,"bios-file")||!strcmp(t->kind,"bios-zip")){
         bios_archive_title=*t;bios_archive_confirm=1;
         snprintf(status,sizeof(status),"ARCHIVE BIOS: VERIFY RIGHTS / A CONFIRM / B CANCEL");return;
     }
@@ -856,7 +897,7 @@ static void action(SDL_Keycode key) {
             bios_archive_confirm=0;int result=bios_archive_download(&bios_archive_title);
             snprintf(status,sizeof(status),"%s",result==0?"ARCHIVE BIOS INSTALLED AND VERIFIED":
                 result==2?"INVALID BIOS SOURCE":result==4?"BIOS EXISTS: NOT REPLACED":
-                result==5?"ARCHIVE DOWNLOAD FAILED":result==6?"SHA1 MISMATCH: DOWNLOAD DISCARDED":"BIOS INSTALL ERROR");
+                result==5?"ARCHIVE DOWNLOAD FAILED":result==6?"SHA1 MISMATCH: DOWNLOAD DISCARDED":result==7?"ZIP HAS NO VALID MATCHING BIOS":"BIOS INSTALL ERROR");
         }
         return;
     }

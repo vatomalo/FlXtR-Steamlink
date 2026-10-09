@@ -108,7 +108,8 @@ static int games_list(int page,int refresh){
             char thumb[PATH_MAX];
             snprintf(thumb,sizeof(thumb),"%s/.home/.config/retroarch/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
             if(!game_file(thumb))snprintf(thumb,sizeof(thumb),"%s/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
-            if(game_file(thumb))snprintf(e->poster,sizeof(e->poster),"localthumb:%s",thumb);
+            if(game_file(thumb)&&strlen(thumb)+sizeof("localthumb:")<=sizeof(e->poster))
+                snprintf(e->poster,sizeof(e->poster),"localthumb:%s",thumb);
         }
     }json_object_put(games);return 0;
 }
@@ -162,7 +163,6 @@ static int games_archive_list(int page){
     }json_object_put(list);return 0;
 }
 /* Archive catalog: discovery is metadata-only. Download remains user initiated. */
-static const char *game_platforms[]={"nes","snes","gba","psx","psp","arcade"};
 static const char *game_platform_names[]={"NES","SNES","GAME BOY ADVANCE","PLAYSTATION","PSP","ARCADE"};
 static const char *game_platform_queries[]={"NES Nintendo ROM","SNES Super Nintendo ROM","Game Boy Advance GBA ROM","PlayStation PSX game","PSP PlayStation Portable game","Arcade MAME game"};
 static int games_platforms(int page){
@@ -186,7 +186,7 @@ static int games_archive_search(int page,int platform,const char *query){
     json_object *response=field(root,"response"),*docs=field(response,"docs");
     if(!docs||!json_object_is_type(docs,json_type_array)){json_object_put(root);return -1;}
     total=number(response,"numFound");if(total<0)total=0;if(total>12000)total=12000;
-    for(size_t i=0;i<json_object_array_length(docs)&&used<PAGE_SIZE;i++){
+    for(size_t i=0;i<(size_t)json_object_array_length(docs)&&used<PAGE_SIZE;i++){
         json_object *doc=json_object_array_get_idx(docs,i);const char *identifier=string(doc,"identifier");
         if(!archive_identifier(identifier))continue;
         Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(doc,"title"));
@@ -205,7 +205,7 @@ static int games_archive_files(int page,const char *identifier,int platform){
     json_object *files=field(root,"files");
     if(!files||!json_object_is_type(files,json_type_array)){json_object_put(root);return -1;}
     total=0;
-    for(size_t i=0;i<json_object_array_length(files);i++){
+    for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
         json_object *f=json_object_array_get_idx(files,i);
         const char *name=string(f,"name"),*ext=strrchr(name,'.');
         if(!ext||strchr(name,'/')||strchr(name,'\\')||strlen(name)>160||strlen(name)<5)continue;
@@ -259,7 +259,7 @@ static int games_archive_file_download(const char *item,const char *name){
 #endif
     CURLcode rc=curl_easy_perform(c);long http=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&http);
     curl_easy_cleanup(c);int failed=fclose(f)!=0||rc!=CURLE_OK||http!=200;
-    struct stat st;if(stat(tmp,&st)||st.st_size<=0||st.st_size>2147483647LL)failed=1;
+    struct stat st;if(stat(tmp,&st)||st.st_size<=0)failed=1;
     if(!failed&&rename(tmp,target))failed=1;
     if(failed){unlink(tmp);fprintf(stderr,"Archive ROM download failed: HTTP %ld, curl %d\n",http,(int)rc);return -1;}
     fprintf(stderr,"Archive ROM downloaded: %s\n",target);

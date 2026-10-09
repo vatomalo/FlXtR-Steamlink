@@ -217,10 +217,10 @@ static int bios_archive_download(const Title *item){
         FILE *listing=fdopen(pipes[0],"r");char line[512],member[512]="";
         if(listing){
             while(fgets(line,sizeof(line),listing)){
-                size_t n=strcspn(line,"\\r\\n");if(line[n]!='\\n'&&line[n]!='\\r'&&!feof(listing))continue;
+                size_t n=strcspn(line,"\r\n");if(line[n]!='\n'&&line[n]!='\r'&&!feof(listing))continue;
                 line[n]=0;const char *base=strrchr(line,'/');base=base?base+1:line;
-                if(!strcmp(base,name)&&!strstr(line,"..")&&!strchr(line,'\\\\')){
-                    snprintf(member,sizeof(member),"%s",line);break;
+                if(!strcmp(base,name)&&!strstr(line,"..")&&!strchr(line,'\\')){
+                    snprintf(member,sizeof(member),"%s",line);
                 }
             }
             fclose(listing);
@@ -228,6 +228,7 @@ static int bios_archive_download(const Title *item){
         int listcode=0;waitpid(pid,&listcode,0);
         if(!member[0]||!WIFEXITED(listcode)||WEXITSTATUS(listcode)!=0){unlink(temp);return 7;}
         char extracted[128];snprintf(extracted,sizeof(extracted),"system/.%s.extracted",name);
+        unlink(extracted);
         int fd=open(extracted,O_WRONLY|O_CREAT|O_EXCL,0600);
         if(fd<0){unlink(temp);return 3;}
         pid=fork();if(pid<0){close(fd);unlink(extracted);unlink(temp);return 3;}

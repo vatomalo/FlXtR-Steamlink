@@ -281,6 +281,7 @@ int main(int argc,char **argv){
     if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
     int rc;
     if(!strcmp(kind,"games-platforms"))rc=games_platforms(page);
+    else if(!strcmp(kind,"games-archive"))rc=games_archive_list(page);
     else if(!strcmp(kind,"games-archive-search"))rc=games_archive_search(page,id,argv[3]);
     else if(!strcmp(kind,"games-archive-files"))rc=games_archive_files(page,argv[3],id);
     else if(!strcmp(kind,"games-file-download")){
@@ -288,7 +289,6 @@ int main(int argc,char **argv){
         if(!separator||separator-argv[3]>=sizeof(item)||strlen(separator+1)>=sizeof(name))rc=-1;
         else{memcpy(item,argv[3],(size_t)(separator-argv[3]));item[separator-argv[3]]=0;snprintf(name,sizeof(name),"%s",separator+1);rc=games_archive_file_download(item,name);}
     }
-    else if(!strcmp(kind,"games-archive"))rc=games_archive_list(page);
     else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);
     else if(!strcmp(kind,"games"))rc=games_list(page,id);
     else if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);

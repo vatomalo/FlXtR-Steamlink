@@ -31,9 +31,10 @@ export STEAMLINK_SDK_PATH=${STEAMLINK_SDK_PATH:-/opt/steamlink-sdk}
 shell_only=0
 update=1
 publish=0
+publish_package=0
 usage() {
     cat <<'HELP'
-Usage: autocompile [--steamlink] [--shell-only] [--no-update] [--publish]
+Usage: autocompile [--steamlink] [--shell-only] [--no-update] [--publish | --publish-package]
        autocompile --linux [--download | --build] [--install] [--deps]
        autocompile --psp
 
@@ -44,6 +45,7 @@ Clone/update vatomalo/FlXtR-Steamlink and build an installable Steam Link packag
   --steamlink   Explicitly select the default Steam Link SDK build.
   --shell-only  Build the UI without compiling the video player.
   --publish     Upload shell executable as a GitHub release (GH_TOKEN or token on stdin).
+  --publish-package Upload the complete Steam Link package as a GitHub release.
   --no-update   Use the current checkout without fetching GitHub changes.
   -h, --help    Show this help.
 
@@ -64,6 +66,7 @@ for arg in "$@"; do
         --shell-only) shell_only=1 ;;
         --no-update) update=0 ;;
         --publish) publish=1 ;;
+        --publish-package) publish_package=1 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$arg" >&2; usage >&2; exit 2 ;;
     esac
@@ -110,3 +113,4 @@ printf '\nBuild ready: %s/dist/greenlink.tgz\n' "$source_dir"
 printf 'Manifest:    %s/dist/build-info.txt\n' "$source_dir"
 
 if (( publish )); then python3 scripts/publish-shell.py; fi
+if (( publish_package )); then python3 scripts/publish-package.py; fi

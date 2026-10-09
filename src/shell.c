@@ -38,7 +38,7 @@ static SDL_GameController *pads[4];
 static pid_t player_pid, update_pid;
 static int restart_shell,game_exit, coverflow=1;
 static int player_control=-1,play_after_load,player_menu;
-static Title playing_title;
+static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
 static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column;
@@ -46,7 +46,7 @@ static int tv_breaks=1,tv_break_due,tv_in_break,filters_on,filter_row,filter_ori
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
-static int bios_selected,bios_confirm,bios_on,monochrome_menu,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
+static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor"};
 static void save_settings(void){
@@ -145,6 +145,41 @@ static int bios_download(void){
     unlink("bios-check.txt");if(!ok){unlink(tmp);return 6;}
     if(link(tmp,target)<0){unlink(tmp);return 4;}
     unlink(tmp);return 0;
+}
+static int bios_archive_download(const Title *item){
+    if(item->id<1||item->id>5)return 2;
+    if(strncmp(item->meta,"SHA1:",5)||strlen(item->meta+5)!=40)return 2;
+    for(int i=5;i<45;i++)if(!isxdigit((unsigned char)item->meta[i]))return 2;
+    const char *prefix="https://archive.org/download/";
+    if(strncmp(item->url,prefix,strlen(prefix)))return 2;
+    const char *names[]={"neogeo.zip","scph5500.bin","scph5501.bin","scph5502.bin","gba_bios.bin"};
+    const char *name=names[item->id-1];
+    const char *slash=strrchr(item->url,'/');
+    if(!slash||strcmp(slash+1,name))return 2;
+    if(mkdir("system",0700)<0&&errno!=EEXIST)return 3;
+    char dest[96],temp[128];snprintf(dest,sizeof(dest),"system/%s",name);snprintf(temp,sizeof(temp),"system/.%s.partial",name);
+    if(access(dest,F_OK)==0)return 4;
+    unlink(temp);
+    pid_t pid=fork();if(pid<0)return 3;
+    if(!pid){
+        execlp("curl","curl","-fLsS","--proto","=https","--proto-redir","=https",
+            "--connect-timeout","10","--max-time","120","--max-filesize","16777216",
+            "--cacert","certs/cacert.pem","-o",temp,item->url,(char*)NULL);
+        _exit(127);
+    }
+    int code=0;if(waitpid(pid,&code,0)!=pid||!WIFEXITED(code)||WEXITSTATUS(code)){unlink(temp);return 5;}
+    FILE *f=fopen("bios-archive-check.txt","w");if(!f){unlink(temp);return 3;}
+    fprintf(f,"%s  %s\n",item->meta+5,temp);fclose(f);
+    pid=fork();if(pid<0){unlink(temp);unlink("bios-archive-check.txt");return 3;}
+    if(!pid){
+        int fd=open("/dev/null",O_WRONLY);if(fd>=0){dup2(fd,STDOUT_FILENO);close(fd);}
+        execlp("sha1sum","sha1sum","-c","bios-archive-check.txt",(char*)NULL);_exit(127);
+    }
+    code=0;int verified=waitpid(pid,&code,0)==pid&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
+    unlink("bios-archive-check.txt");
+    if(!verified){unlink(temp);return 6;}
+    if(link(temp,dest)<0){unlink(temp);return 4;}
+    unlink(temp);return 0;
 }
 static void color(SDL_Color c) { SDL_SetRenderDrawColor(renderer,c.r,c.g,c.b,c.a); }
 static void rect(int x,int y,int w,int h,SDL_Color c,int fill) {
@@ -570,6 +605,7 @@ static void draw(Uint32 tick) {
         text(690,416,view_names[viewing],1,green,25);
         snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
     }
+    if(bios_archive_confirm){rect(190,210,680,110,green,0);text(207,225,"ARCHIVE BIOS / COPYRIGHT WARNING",2,green,45);text(207,259,"CONFIRM RIGHTS AND SOURCE BEFORE INSTALL",1,white,75);text(207,289,"A DOWNLOAD / B OR X CANCEL",2,green,42);}
     if(catalog_pid){rect(190,227,680,70,background?(SDL_Color){248,250,249,255}:(SDL_Color){0,0,0,255},1);rect(190,227,680,70,green,0);text(212,250,auto_active?"FINDING A WORKING SERVER... B CANCEL":"LOADING... B TO CANCEL",2,green,50);}
     rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(713,509,"DPAD MOVE / B BACK",1,green,30);
     SDL_RenderPresent(renderer);
@@ -587,7 +623,8 @@ static void play(void) {
         request_catalog(next,1,0);return;
     }
     if(!strcmp(t->kind,"bios-file")){
-        snprintf(status,sizeof(status),"BIOS FILE LISTED / CHECK SOURCE AND LICENSE");return;
+        bios_archive_title=*t;bios_archive_confirm=1;
+        snprintf(status,sizeof(status),"ARCHIVE BIOS: VERIFY RIGHTS / A CONFIRM / B CANCEL");return;
     }
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
@@ -736,6 +773,16 @@ static void finish_player(int code){
     snprintf(status,sizeof(status),cancelled?"PLAYBACK STOPPED":WIFEXITED(code)&&!WEXITSTATUS(code)?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");
 }
 static void action(SDL_Keycode key) {
+    if(bios_archive_confirm){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){bios_archive_confirm=0;return;}
+        if(key==SDLK_RETURN){
+            bios_archive_confirm=0;int result=bios_archive_download(&bios_archive_title);
+            snprintf(status,sizeof(status),"%s",result==0?"ARCHIVE BIOS INSTALLED AND VERIFIED":
+                result==2?"INVALID BIOS SOURCE":result==4?"BIOS EXISTS: NOT REPLACED":
+                result==5?"ARCHIVE DOWNLOAD FAILED":result==6?"SHA1 MISMATCH: DOWNLOAD DISCARDED":"BIOS INSTALL ERROR");
+        }
+        return;
+    }
     if(update_pid)return;
     if(player_pid) {
         if(!player_menu){

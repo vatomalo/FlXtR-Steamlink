@@ -206,22 +206,29 @@ static int bios_archive_download(const Title *item){
     unlink("bios-archive-check.txt");
     if(!verified){unlink(temp);return 6;}
     if(is_zip){
-        /* Archive checksum has already been checked. Inspect members without extracting paths. */
+        /* BusyBox unzip supports -l, not Info-ZIP's -Z -1.
+         * Parse only properly formatted listing rows and extract one exact member. */
         int pipes[2];if(pipe(pipes)<0){unlink(temp);return 3;}
         pid=fork();if(pid<0){close(pipes[0]);close(pipes[1]);unlink(temp);return 3;}
         if(!pid){
             dup2(pipes[1],STDOUT_FILENO);close(pipes[0]);close(pipes[1]);
-            execlp("unzip","unzip","-Z","-1",temp,(char*)NULL);_exit(127);
+            execlp("unzip","unzip","-l",temp,(char*)NULL);_exit(127);
         }
         close(pipes[1]);
         FILE *listing=fdopen(pipes[0],"r");char line[512],member[512]="";
         if(listing){
             while(fgets(line,sizeof(line),listing)){
-                size_t n=strcspn(line,"\r\n");if(line[n]!='\n'&&line[n]!='\r'&&!feof(listing))continue;
-                line[n]=0;const char *base=strrchr(line,'/');base=base?base+1:line;
-                if(!strcmp(base,name)&&!strstr(line,"..")&&!strchr(line,'\\')){
-                    snprintf(member,sizeof(member),"%s",line);
-                }
+                size_t n=strcspn(line,"\r\n");
+                if(n>=sizeof(line)-1)continue;
+                line[n]=0;
+                unsigned long length=0;char date[24],clock[24];int offset=0;
+                if(sscanf(line," %lu %23s %23s %n",&length,date,clock,&offset)!=3||offset<=0)continue;
+                const char *path=line+offset;
+                while(*path==' '||*path=='\t')path++;
+                if(!*path||strlen(path)>=sizeof(member)||strstr(path,"..")||strchr(path,'\\'))continue;
+                const char *base=strrchr(path,'/');base=base?base+1:path;
+                if(!strcmp(base,name)&&length==((item->id==5)?16384UL:524288UL))
+                    snprintf(member,sizeof(member),"%s",path);
             }
             fclose(listing);
         }else close(pipes[0]);

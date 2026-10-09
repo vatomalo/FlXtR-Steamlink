@@ -64,7 +64,7 @@ static int archive_files(int page,const char *id){
 /* A small curated rotation avoids entire films mislabeled as commercials. */
 static int archive_commercial_json(json_object *root,const char *id){
     json_object *files=field(root,"files");int rc=-1;
-    if(files&&json_object_is_type(files,json_type_array))for(size_t i=0;i<json_object_array_length(files);i++){
+    if(files&&json_object_is_type(files,json_type_array))for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
         json_object *f=json_object_array_get_idx(files,i);const char *name=string(f,"name");size_t n=strlen(name);
         double seconds=atof(string(f,"length"));
         if(n<5||n>=1024||strcasecmp(name+n-4,".mp4")||!(seconds>=5&&seconds<=120)||field(f,"private"))continue;

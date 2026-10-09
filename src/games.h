@@ -108,8 +108,14 @@ static int games_list(int page,int refresh){
             char thumb[PATH_MAX];
             snprintf(thumb,sizeof(thumb),"%s/.home/.config/retroarch/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
             if(!game_file(thumb))snprintf(thumb,sizeof(thumb),"%s/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
-            if(game_file(thumb)&&strlen(thumb)+sizeof("localthumb:")<=sizeof(e->poster))
-                snprintf(e->poster,sizeof(e->poster),"localthumb:%s",thumb);
+            if(game_file(thumb)){
+                const char prefix[]="localthumb:";
+                size_t length=strlen(thumb);
+                if(length<sizeof(e->poster)-sizeof(prefix)){
+                    memcpy(e->poster,prefix,sizeof(prefix)-1);
+                    memcpy(e->poster+sizeof(prefix)-1,thumb,length+1);
+                }
+            }
         }
     }json_object_put(games);return 0;
 }

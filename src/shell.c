@@ -461,7 +461,7 @@ static void draw(Uint32 tick) {
     text(30,229,root_mode==11?"> TV MODE":"  TV MODE",1,root_mode==11?green:dim,20);
     text(30,250,root_mode==14?"> GAMES":"  GAMES",1,root_mode==14?green:dim,20);
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,287,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] IMPORT GAMES":browse.mode==21?"[A] SELECT SYSTEM":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[A] OPEN FOLDER":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] ROM FOLDERS":browse.mode==21?"[A] SELECT SYSTEM":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[A] OPEN FOLDER":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
     if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
         const char *genre=browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
@@ -759,9 +759,9 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_RETURN){filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);}
         return;
     }
-    if(!settings_on&&!about&&browse.mode==14&&key==SDLK_SLASH){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
+    if(!settings_on&&!about&&browse.mode==14&&(key==SDLK_y||key==SDLK_SLASH)){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
-    if(!settings_on&&!about&&browse.mode==14&&(key==SDLK_y||key==SDLK_F6)){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
+    if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F6){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
     if(!settings_on&&!about&&(key==SDLK_F6||key==SDLK_y)&&(browse.mode==1||browse.mode==2||browse.mode==7)){filters_on=1;filter_row=0;filter_original_genre=browse.id;filter_original_order=browse.season;return;}
     if(bios_on){
         if(bios_confirm){

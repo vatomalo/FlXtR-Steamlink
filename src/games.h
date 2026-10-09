@@ -215,6 +215,35 @@ static int games_platforms(int page){
         strcpy(e->meta,i==6?"LICENSED DOWNLOADS / A OPEN":"INTERNET ARCHIVE / BROWSE TITLES / A OPEN");
     }return 0;
 }
+/* BIOS discovery is intentionally separate from the game installer.
+ * A search result is not evidence of a lawful or compatible firmware download. */
+static int games_bios_search(int page,int bios_id,const char *query){
+    if(bios_id<1||bios_id>5)return -1;
+    const char *const defaults[]={"Neo Geo open source BIOS","PlayStation open source BIOS","PlayStation open source BIOS","PlayStation open source BIOS","Game Boy Advance open source BIOS"};
+    const char *term=*query?query:defaults[bios_id-1];
+    char clean_term[128];size_t n=0;
+    for(size_t i=0;term[i]&&n+1<sizeof(clean_term);i++)
+        if(isalnum((unsigned char)term[i])||term[i]==' '||term[i]=='-')clean_term[n++]=term[i];
+    clean_term[n]=0;
+    char *escaped=curl_easy_escape(NULL,clean_term,0);if(!escaped)return -1;
+    char url[1024];int len=snprintf(url,sizeof(url),ARCHIVE "/advancedsearch.php?q=mediatype%%3Asoftware%%20AND%%20%%28%s%%29%%20AND%%20-access-restricted-item%%3Atrue&fl%%5B%%5D=identifier&fl%%5B%%5D=title&rows=6&page=%d&output=json",escaped,page);
+    curl_free(escaped);if(len<0||len>=(int)sizeof(url))return -1;
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *response=field(root,"response"),*docs=field(response,"docs");
+    if(!docs||!json_object_is_type(docs,json_type_array)){json_object_put(root);return -1;}
+    total=number(response,"numFound");if(total<0)total=0;if(total>12000)total=12000;
+    for(size_t i=0;i<(size_t)json_object_array_length(docs)&&used<PAGE_SIZE;i++){
+        json_object *doc=json_object_array_get_idx(docs,i);const char *identifier=string(doc,"identifier");
+        if(!archive_identifier(identifier))continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(doc,"title"));
+        if(!*e->title)clean(e->title,sizeof(e->title),identifier);
+        snprintf(e->url,sizeof(e->url),ARCHIVE "/details/%s",identifier);
+        snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",identifier);
+        snprintf(e->meta,sizeof(e->meta),"ARCHIVE RESULT / SOURCE UNVERIFIED");
+        strcpy(e->kind,"bios-item");e->id=bios_id;
+    }
+    json_object_put(root);return 0;
+}
 static int games_archive_search(int page,int platform,const char *query){
     if(platform<1||platform>6)return -1;
     char term[128];size_t n=0;const char *base=*query?query:game_platform_queries[platform-1];

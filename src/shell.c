@@ -384,6 +384,19 @@ static void cache_page(int page) {
     for(int i=0;i<VISIBLE && page*VISIBLE+i<total;i++)posters[i]=load_poster(titles[visible[page*VISIBLE+i]].poster);
 }
 static void placeholder(int x,int y,int w,int h,int seed) {
+    if(browse.mode==21){
+        SDL_Color ink={116,255,132,255},fill={24,62,39,255};
+        rect(x,y,w,h,fill,1);
+        int bx=x+w/7,by=y+h/3,bw=w*5/7,bh=h/3;
+        rect(bx,by,bw/3,7,ink,1);
+        rect(bx,by+7,bw,bh,ink,0);
+        rect(bx+3,by+10,bw-6,bh-6,fill,1);
+        if(seed>=0&&seed<MAX_TITLES){
+            const char *name=titles[seed].title;
+            text(x+8,y+h*3/4,name,1,ink,18);
+        }
+        return;
+    }
     SDL_Color a={10,23,16,255}, b={23,57,35,255};rect(x,y,w,h,a,1);
     for(int i=0;i<6;i++)rect(x+8+i*9,y+h/2-i*7,w-16-i*18,3,b,1);
     text(x+10,y+12,"NO ART",1,(SDL_Color){150,190,160,255},12);

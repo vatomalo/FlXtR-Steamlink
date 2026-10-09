@@ -772,6 +772,7 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_DOWN&&bios_selected<4)bios_selected++;
         if(key==SDLK_y){
             if(bios_present(bios_files[bios_selected]))snprintf(status,sizeof(status),"BIOS ALREADY PRESENT");
+            else if(access("bios-sources.tsv",R_OK))snprintf(status,sizeof(status),"NO SOURCES: ADD BIOS-SOURCES.TSV");
             else {bios_confirm=1;snprintf(status,sizeof(status),"ONLY CONFIRM IF YOU HAVE DOWNLOAD RIGHTS");}
         }
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5||key==SDLK_F2)bios_on=0;

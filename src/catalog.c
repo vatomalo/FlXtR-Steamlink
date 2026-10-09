@@ -209,6 +209,26 @@ static void cache_save(void){
 }
 static void poster(Entry *e,int slot){
     char path[512];strcpy(path,e->poster);e->poster[0]=0;
+    if(!strncmp(path,"localthumb:",11)){
+        const char *source=path+11;
+        const char *home=games_home();size_t hlen=strlen(home);
+        struct stat st;
+        /* Only readable thumbnails beneath RetroArch's configured home. */
+        if(strncmp(source,home,hlen)||source[hlen]!='/'||strstr(source,"..")||
+           stat(source,&st)||!S_ISREG(st.st_mode)||st.st_size>2*1024*1024)return;
+        SDL_Surface *art=IMG_Load(source);
+        if(!art)return;
+        if(art->w<1||art->h<1||art->w>2048||art->h>2048){SDL_FreeSurface(art);return;}
+        float scale=154.0f/art->w;if(art->h*scale>231)scale=231.0f/art->h;
+        int w=(int)(art->w*scale),h=(int)(art->h*scale);
+        if(w<1||h<1){SDL_FreeSurface(art);return;}
+        SDL_Surface *small=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
+        if(small&&!SDL_BlitScaled(art,NULL,small,NULL)){
+            char file[80];snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+            if(!SDL_SaveBMP(small,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
+        }
+        SDL_FreeSurface(small);SDL_FreeSurface(art);return;
+    }
     int kiss=!strncmp(path,KISS "/wp-content/uploads/",sizeof(KISS "/wp-content/uploads/")-1);
     int archive=!strncmp(path,ARCHIVE "/services/img/",sizeof(ARCHIVE "/services/img/")-1);
     if(archive&&!archive_identifier(path+sizeof(ARCHIVE "/services/img/")-1))return;

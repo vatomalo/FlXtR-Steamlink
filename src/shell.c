@@ -157,8 +157,17 @@ static int bios_archive_download(const Title *item){
     const char *name=names[item->id-1];
     const char *slash=strrchr(item->url,'/');
     int is_zip=!strcmp(item->kind,"bios-zip");
-    if(!slash||(!is_zip&&strcmp(slash+1,name)))return 2;
-    if(is_zip&&(item->id==1||!strstr(slash+1,".zip")))return 2;
+    if(!slash)return 2;
+    int decoded_len=0;
+    char *decoded=curl_easy_unescape(NULL,slash+1,0,&decoded_len);
+    if(!decoded)return 2;
+    const char *base=strrchr(decoded,'/');
+    base=base?base+1:decoded;
+    int valid=decoded_len>0&&(size_t)decoded_len==strlen(decoded)&&
+        !strstr(decoded,"..")&&!strchr(decoded,'\\')&&
+        (is_zip?(item->id!=1&&strcasestr(base,".zip")!=NULL):!strcasecmp(base,name));
+    curl_free(decoded);
+    if(!valid)return 2;
     if(mkdir("system",0700)<0&&errno!=EEXIST)return 3;
     char dest[96],temp[128];snprintf(dest,sizeof(dest),"system/%s",name);snprintf(temp,sizeof(temp),"system/.%s.partial",name);
     if(access(dest,F_OK)==0)return 4;

@@ -146,18 +146,47 @@ static int games_archive_list(int page){
     }json_object_put(list);return 0;
 }
 static int games_archive_download(int id){
-    json_object *list=games_archive_manifest();if(!list||!json_object_is_type(list,json_type_array)||id<1||id>(int)json_object_array_length(list)){json_object_put(list);return -1;}
-    json_object *g=json_object_array_get_idx(list,id-1);const char *item=string(g,"identifier"),*name=string(g,"file"),*sha=string(g,"sha256");
-    if(!archive_identifier(item)||!game_core(name)||strlen(name)>160||strchr(name,'/')||strchr(name,'\\')||strchr(name,'\n')||strchr(name,'\t')||strlen(sha)!=64){json_object_put(list);return -1;}
-    char *escaped=curl_easy_escape(NULL,name,0);if(!escaped){json_object_put(list);return -1;}
-    char url[1024];snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
+    json_object *list=games_archive_manifest();
+    if(!list||!json_object_is_type(list,json_type_array)||id<1||id>(int)json_object_array_length(list)){json_object_put(list);return -1;}
+    json_object *g=json_object_array_get_idx(list,id-1);
+    const char *item=string(g,"identifier"),*name=string(g,"file"),*sha=string(g,"sha256");
+    const char *blob=string(g,"git_blob_sha1");
+    const char *revision="50293559a496a3e20382fbf6a2e84b70ec622f88";
+    int github=*blob!=0;
+    if(!archive_identifier(item)||!game_core(name)||strlen(name)>160||strchr(name,'/')||strchr(name,'\\')||strchr(name,'\n')||strchr(name,'\t')||
+       (github?strlen(blob)!=40:strlen(sha)!=64)){json_object_put(list);return -1;}
+    for(const char *p=github?blob:sha;*p;p++)if(!isxdigit((unsigned char)*p)){json_object_put(list);return -1;}
+    char url[1024];
+    if(github){
+        /* Only fetch pinned, redistributable Homebrew Hub database artifacts.
+         * Caller-controlled URLs are deliberately not accepted. */
+        if(snprintf(url,sizeof(url),"https://raw.githubusercontent.com/gbdev/database/%s/entries/%s/%s",revision,item,name)>=(int)sizeof(url)){json_object_put(list);return -1;}
+    }else{
+        char *escaped=curl_easy_escape(NULL,name,0);if(!escaped){json_object_put(list);return -1;}
+        int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
+        if(n<0||n>=(int)sizeof(url)){json_object_put(list);return -1;}
+    }
     Buffer data={NULL,0,16*1024*1024};int rc=fetch(url,&data);
-    unsigned char digest[32];char hex[65];if(!rc){SHA256((unsigned char*)data.data,data.length,digest);for(int i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",digest[i]);if(strcmp(hex,sha))rc=-1;}
+    unsigned char digest[32];char hex[65];
+    if(!rc){
+        if(github){
+            /* Git blob SHA-1 authenticates exact file contents at the pinned revision. */
+            SHA_CTX ctx;char header[64];int h=snprintf(header,sizeof(header),"blob %zu",data.length);
+            SHA1_Init(&ctx);SHA1_Update(&ctx,header,(size_t)h+1);
+            SHA1_Update(&ctx,data.data,data.length);SHA1_Final(digest,&ctx);
+            for(int i=0;i<20;i++)snprintf(hex+2*i,3,"%02x",digest[i]);
+            if(strcasecmp(hex,blob))rc=-1;
+        }else{
+            SHA256((unsigned char*)data.data,data.length,digest);
+            for(int i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",digest[i]);
+            if(strcasecmp(hex,sha))rc=-1;
+        }
+    }
     if(!rc){
         mkdir("roms",0700);char path[400],tmp[420];snprintf(path,sizeof(path),"roms/%s-%s",item,name);snprintf(tmp,sizeof(tmp),"%s.next",path);
         FILE *f=fopen(tmp,"wb");if(!f)rc=-1;else{if(fwrite(data.data,1,data.length,f)!=data.length)rc=-1;if(fclose(f))rc=-1;if(!rc&&rename(tmp,path))rc=-1;if(rc)unlink(tmp);}
     }
-    if(rc)fprintf(stderr,"Game download failed (HTTP, checksum, destination or size limit); item %d\n",id);
+    if(rc)fprintf(stderr,"Game download failed (HTTP, integrity verification, destination or size limit); item %d\n",id);
     else fprintf(stderr,"Game downloaded and verified; refresh local games to see playable ROMs (a matching RetroArch core is required)\n");
     free(data.data);json_object_put(list);return rc?rc:games_list(1,1);
 }

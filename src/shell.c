@@ -737,7 +737,20 @@ static void action(SDL_Keycode key) {
         if(command&&player_control>=0){ssize_t sent=write(player_control,&command,1);(void)sent;}
         return;
     }
-    if(catalog_pid){if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;auto_active=0;tv_active=0;snprintf(status,sizeof(status),key==SDLK_F2?"ARCHIVE LOAD SKIPPED":"LOAD CANCELLED");}return;}
+    if(catalog_pid){
+        if(key==SDLK_F2&&auto_active){
+            kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
+            if(pending.mode==6){auto_index++;auto_next();}
+            else {auto_active=0;snprintf(status,sizeof(status),"SERVER DISCOVERY SKIPPED");}
+            return;
+        }
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){
+            kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
+            auto_active=0;tv_active=0;
+            snprintf(status,sizeof(status),key==SDLK_F2?"LOAD SKIPPED":"LOAD CANCELLED");
+        }
+        return;
+    }
     if(search_on){
         size_t n=strlen(search_text);
         if(key==SDLK_ESCAPE){search_on=0;SDL_StopTextInput();}

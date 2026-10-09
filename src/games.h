@@ -140,6 +140,8 @@ static int games_run(void){
     f=fopen(extra,"w");if(!f)return 2;
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
     if(back>=0&&back<64&&start>=0&&start<64&&back!=start)fprintf(f,"input_enable_hotkey_btn = \"%d\"\ninput_exit_emulator_btn = \"%d\"\n",back,start);
+    /* Shared BIOS directory: the UI checks this same location. */
+    fprintf(f,"system_directory = \"%.*s/system\"\n",(int)n,extra);
     if(fclose(f))return 2;
     snprintf(config,sizeof(config),"%s/.home/.config/retroarch/retroarch.cfg",games_home());
     snprintf(runtime,sizeof(runtime),"%s/retroarch.exec",games_home());

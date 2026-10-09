@@ -16,6 +16,11 @@ static const char *game_core(const char *path){
     if(!strcasecmp(ext,"cue")||!strcasecmp(ext,"pbp")||!strcasecmp(ext,"chd")||!strcasecmp(ext,"m3u"))return "pcsx_rearmed";
     if(!strcasecmp(ext,"a26"))return "stella";
     if(!strcasecmp(ext,"zip")){
+        /* Neo Geo uses a shared BIOS ZIP alongside game ZIPs. Never launch
+         * neogeo.zip itself as a game. Prefer FBNeo when installed. */
+        const char *base=strrchr(path,'/');base=base?base+1:path;
+        if(!strcasecmp(base,"neogeo.zip"))return NULL;
+        if(strcasestr(path,"/neogeo/")||strcasestr(path,"/neo-geo/"))return "fbneo";
         if(strcasestr(path,"/mame/"))return "mame2003_plus";
         if(strcasestr(path,"/nes/"))return "fceumm";
         if(strcasestr(path,"/snes/"))return "snes9x2005_plus";
@@ -34,6 +39,11 @@ static void game_infer(json_object *games,const char *rom,const char *label){
     const char *name=game_core(rom);if(!name)return;char core[PATH_MAX];
     snprintf(core,sizeof(core),"%s/cores/%s_libretro.so",games_home(),name);
     if(!game_file(core))snprintf(core,sizeof(core),"%s/.home/.config/retroarch/cores/%s_libretro.so",games_home(),name);
+    /* Steam Link RetroArch installations may ship MAME instead of FBNeo. */
+    if(!game_file(core)&&!strcmp(name,"fbneo")){
+        snprintf(core,sizeof(core),"%s/cores/mame2003_plus_libretro.so",games_home());
+        if(!game_file(core))snprintf(core,sizeof(core),"%s/.home/.config/retroarch/cores/mame2003_plus_libretro.so",games_home());
+    }
     game_add(games,rom,core,label);
 }
 static void game_playlist(json_object *games,const char *path){
@@ -95,7 +105,15 @@ static int games_run(void){
     json_object *games=games_read("games.json");
     if(!games||!json_object_is_type(games,json_type_array)||id>(int)json_object_array_length(games)){json_object_put(games);return 2;}
     json_object *g=json_object_array_get_idx(games,id-1);const char *rom=string(g,"rom"),*core=string(g,"core");
-    if(!game_file(rom)||!game_file(core)){json_object_put(games);return 2;}
+    if(!game_file(rom)||!game_file(core)){fprintf(stderr,"Game launch: missing ROM or RetroArch core\n");json_object_put(games);return 2;}
+    if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
+        char bios[PATH_MAX];snprintf(bios,sizeof(bios),"%s",rom);
+        char *slash=strrchr(bios,'/');if(slash)strcpy(slash+1,"neogeo.zip");
+        if(!game_file(bios)){
+            fprintf(stderr,"Neo Geo requires a legally obtained neogeo.zip BIOS in the ROM directory or a core-supported system directory\n");
+            /* Do not block: a configured RetroArch system directory may have BIOS. */
+        }
+    }
     char config[PATH_MAX],extra[PATH_MAX],runtime[PATH_MAX],home[PATH_MAX];
     if(!getcwd(extra,sizeof(extra)))return 2;
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
@@ -139,5 +157,7 @@ static int games_archive_download(int id){
         mkdir("roms",0700);char path[400],tmp[420];snprintf(path,sizeof(path),"roms/%s-%s",item,name);snprintf(tmp,sizeof(tmp),"%s.next",path);
         FILE *f=fopen(tmp,"wb");if(!f)rc=-1;else{if(fwrite(data.data,1,data.length,f)!=data.length)rc=-1;if(fclose(f))rc=-1;if(!rc&&rename(tmp,path))rc=-1;if(rc)unlink(tmp);}
     }
+    if(rc)fprintf(stderr,"Game download failed (HTTP, checksum, destination or size limit); item %d\n",id);
+    else fprintf(stderr,"Game downloaded and verified; refresh local games to see playable ROMs (a matching RetroArch core is required)\n");
     free(data.data);json_object_put(list);return rc?rc:games_list(1,1);
 }

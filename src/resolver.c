@@ -103,13 +103,15 @@ static void add_variants(char *manifest,const char *url,const char *server){
         }
     }
 }
+#include "subtitle_manifest.h"
 static int qualities(json_object *root,const char *server){
-    json_object *list=field(root,"sources");const char *url="";
+    json_object *list=field(root,"sources"),*selected=NULL;const char *url="";
     if(list&&json_object_is_type(list,json_type_array))for(size_t i=0;i<(size_t)json_object_array_length(list);i++){
-        json_object *s=json_object_array_get_idx(list,i);if(!strcmp(string(s,"server"),server)){url=string(s,"url");break;}
+        json_object *s=json_object_array_get_idx(list,i);if(!strcmp(string(s,"server"),server)){selected=s;url=string(s,"url");break;}
     }
     else if(list&&json_object_is_type(list,json_type_object)){url=string(list,"file");if(!*url)url=string(list,"url");}
     if(!valid_url(url)){fprintf(stderr,"Selected server has no compatible direct link\n");return -1;}
+    subtitle_manifest(root,selected?selected:list,url);
     strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);count=1;
     char *manifest=request(url,NULL,1);if(!manifest)return 0;
     add_variants(manifest,url,server);free(manifest);return 0;

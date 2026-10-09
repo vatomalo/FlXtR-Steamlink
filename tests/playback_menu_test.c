@@ -33,9 +33,10 @@ int main(void){
     char temp[]="/tmp/flxtr-menu-XXXXXX";assert(mkdtemp(temp));assert(!chdir(temp));
     VideoRect rect;assert(!video_rect(VIEW_FIT,640,360,1,1,1920,1080,&rect));assert(view_names[0]);
     media_duration=100;assert(playback_position()==10);
-    menu_command('l');assert(request(1)==0);
-    menu_command('r');assert(request(1)==20);
-    media_duration=15;menu_command('r');assert(request(1)==14);media_duration=100;
+    menu_command('l');assert(seek_pending&&seek_target==0&&!stopped);seek_pending=0;
+    menu_command('r');assert(seek_pending&&seek_target==20&&!stopped);menu_command('r');assert(seek_target==30);seek_pending=0;
+    media_duration=15;menu_command('r');assert(seek_target==14);seek_pending=0;media_duration=100;
+    media_start=5;assert(playback_position()==5);media_start=0;
     menu_command('m');assert(menu_open);menu_command('a');assert(paused);
     now+=5000000;assert(playback_position()==10);menu_command('a');assert(!paused&&playback_position()==10);
     menu_row=7;menu_command('a');assert(!stopped);menu_servers=1;menu_command('a');assert(request(4)==10);

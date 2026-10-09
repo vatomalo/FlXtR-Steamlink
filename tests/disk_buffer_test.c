@@ -8,7 +8,8 @@
 #include <dirent.h>
 static volatile sig_atomic_t stopped;
 static int64_t deadline;
-static int generated,fail_at_end;
+static int generated,fail_at_end,cancel_seek;
+#define DISK_CANCEL() cancel_seek
 static int fake_read(AVFormatContext *fmt,AVPacket *p){
     (void)fmt;
     if(generated==2200)return fail_at_end?AVERROR(EIO):AVERROR_EOF;
@@ -38,7 +39,9 @@ int main(void){
         disk_close(q);av_packet_free(&p);
     }
     stopped=0;generated=0;DiskBuffer *q=disk_start(fmt,0,1,-1,30,64);assert(q);
-    av_usleep(100000);disk_close(q); /* also wakes a producer blocked on a full ring */
+    av_usleep(100000);
+    AVPacket *cancelled=av_packet_alloc();cancel_seek=1;assert(disk_packet(q,cancelled)==AVERROR(EAGAIN));cancel_seek=0;
+    assert(!disk_packet(q,cancelled));av_packet_free(&cancelled);disk_close(q); /* also wakes a producer blocked on a full ring */
     DIR *d=opendir("playback-cache");assert(d);struct dirent *entry;int files=0;
     while((entry=readdir(d)))if(entry->d_name[0]!='.')files++;
     closedir(d);assert(!files);

@@ -1,14 +1,23 @@
 /* Single hardware overlay plane: the menu owns it while visible. */
 static int control_fd=-1,menu_open,menu_row,paused,requested_action;
-static int menu_height=720,menu_subtitles,menu_episodes,menu_servers;
-static double playback_start,media_duration;
+static int menu_height=720,menu_subtitles,menu_episodes,menu_servers,menu_subtitle_available;
+static double playback_start,media_duration,media_start,seek_target;
+static int seek_pending;
+static int64_t seek_at;
+static double playback_position(void);
+static void menu_seek(double delta){
+    seek_target=(seek_pending?seek_target:playback_position())+delta;
+    if(seek_target<0)seek_target=0;
+    if(media_duration>1&&seek_target>=media_duration)seek_target=media_duration-1;
+    seek_pending=1;seek_at=av_gettime_relative()+250000;
+}
 static SDL_AudioDeviceID menu_audio;
 static CSLVideoOverlay *menu_overlay;
 static int64_t pause_started;
 static double playback_position(void){
     if(origin==AV_NOPTS_VALUE||!clock_start)return playback_start;
     double p=(origin+(paused?pause_started:av_gettime_relative())-clock_start)/(double)AV_TIME_BASE;
-    return p<0?0:p;
+    p-=media_start;return p<0?0:p;
 }
 static void menu_text(uint32_t *pixels,int pitch,int y,const char *label,uint32_t color){
     for(int n=0;label[n]&&n<58;n++){
@@ -34,7 +43,7 @@ static void menu_draw(void){
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"SEEK: LEFT -10S / RIGHT +10S");
-    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN"}[menu_subtitles]);
+    snprintf(rows[2],80,"SUBTITLES: %s%s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN"}[menu_subtitles],menu_subtitles&&!menu_subtitle_available?" / NONE FOUND":"");
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
     snprintf(rows[5],80,"VIDEO SIZE: %s",view_names[viewing]);
@@ -65,7 +74,7 @@ static void menu_command(char c){
     }
     if(c=='b'){menu_restart(7,playback_position());return;}
     if(c=='v'){viewing=(viewing+1)%VIEW_COUNT;apply_view(!menu_open);}
-    if(!menu_open){if(c=='l'||c=='r')menu_restart(1,playback_position()+(c=='l'?-10:10));return;}
+    if(!menu_open){if(c=='l'||c=='r')menu_seek(c=='l'?-10:10);return;}
     if(c=='u')menu_row=(menu_row+10)%11;
     if(c=='d')menu_row=(menu_row+1)%11;
     if(c=='a'||c=='l'||c=='r'){
@@ -76,7 +85,7 @@ static void menu_command(char c){
             else {if(clock_start)clock_start+=av_gettime_relative()-pause_started;paused=0;}
             if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
             break;
-        case 1:menu_restart(1,playback_position()+direction*10);break;
+        case 1:menu_seek(direction*10);break;
         case 2:menu_subtitles=(menu_subtitles+direction+4)%4;menu_restart(1,playback_position());break;
         case 3:subtitle_size=subtitle_size==2?3:2;subtitle_visible=-2;break;
         case 4:subtitle_delay+=direction;if(subtitle_delay>5)subtitle_delay=5;if(subtitle_delay< -5)subtitle_delay=-5;subtitle_visible=-2;break;
@@ -96,5 +105,5 @@ static void menu_poll(void){
         while(control_fd>=0&&(n=read(control_fd,commands,sizeof(commands)))>0)
             for(ssize_t i=0;i<n&&!stopped;i++)menu_command(commands[i]);
         if(paused&&!stopped)SDL_Delay(20);
-    }while(paused&&!stopped);
+    }while(paused&&!stopped&&!seek_pending);
 }

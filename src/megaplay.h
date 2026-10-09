@@ -76,6 +76,7 @@ static int mega_source(const char *html,const char *referer,char *url,size_t cap
     json_object *root=json_tokener_parse_ex(tok,response.data,(int)response.length);
     int parsed=json_tokener_get_error(tok)==json_tokener_success;
     int ok=parsed&&mega_media(root,url,cap,time(NULL));
+    if(ok)subtitle_manifest(root,NULL,url);
     if(!ok)fprintf(stderr,"MegaPlay: %s\n",parsed?"unsupported or invalid media response":"invalid source JSON");
     json_object_put(root);json_tokener_free(tok);free(response.data);return ok;
 }

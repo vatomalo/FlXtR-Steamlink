@@ -93,8 +93,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -502,7 +502,7 @@ static void draw(Uint32 tick) {
             text(545,y,bios_present(files[i])?"FOUND":"NOT FOUND",2,bios_present(files[i])?green:dim,12);
             text(205,y+19,files[i],1,dim,40);
         }
-        text(194,389,bios_confirm?"WARNING: ONLY DOWNLOAD LICENSED BIOS":"Y DOWNLOAD / UP DOWN SELECT / B BACK",1,green,80);
+        text(194,389,bios_confirm?"WARNING: ONLY DOWNLOAD LICENSED BIOS":"Y SOURCE DOWNLOAD / START ARCHIVE SEARCH",1,green,80);
         text(194,412,bios_confirm?"A CONFIRM / B CANCEL":"/HOME/APPS/GREENLINK/SYSTEM/",1,white,80);
         text(194,452,"CONFIGURE HTTPS URL AND SHA256 IN BIOS-SOURCES.TSV",1,dim,80);
         text(194,474,status,1,green,86);
@@ -578,6 +578,7 @@ static void play(void) {
     if(settings_on||about||!total||player_pid)return;
     restart_position=auto_resume=0;
     Title *t=&titles[visible[selection]];
+    if(!strcmp(t->kind,"bios-item")){snprintf(status,sizeof(status),"SOURCE NOT VERIFIED / NO AUTOMATIC BIOS INSTALL");return;}
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
@@ -801,6 +802,10 @@ static void action(SDL_Keycode key) {
         }
         if(key==SDLK_UP&&bios_selected>0)bios_selected--;
         if(key==SDLK_DOWN&&bios_selected<4)bios_selected++;
+        if(key==SDLK_F3){
+            bios_on=0;Browse next={23,1,bios_selected+1,0,0,0,"",""};
+            request_catalog(next,1,0);return;
+        }
         if(key==SDLK_y){
             if(bios_present(bios_files[bios_selected]))snprintf(status,sizeof(status),"BIOS ALREADY PRESENT");
             else if(access("bios-sources.tsv",R_OK))snprintf(status,sizeof(status),"NO SOURCES: ADD BIOS-SOURCES.TSV");
@@ -836,7 +841,7 @@ static void action(SDL_Keycode key) {
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){Browse next={browse.mode==0?1:browse.mode==1?2:browse.mode==2?7:browse.mode==7?9:browse.mode==9?11:browse.mode==11?14:0,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);}
-    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
+    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
     else if(key==SDLK_y)stars_on=!stars_on;

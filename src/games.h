@@ -161,6 +161,69 @@ static int games_archive_list(int page){
             snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",archive_id);
     }json_object_put(list);return 0;
 }
+/* Archive catalog: discovery is metadata-only. Download remains user initiated. */
+static const char *game_platforms[]={"nes","snes","gba","psx","psp","arcade"};
+static const char *game_platform_names[]={"NES","SNES","GAME BOY ADVANCE","PLAYSTATION","PSP","ARCADE"};
+static const char *game_platform_queries[]={"NES Nintendo ROM","SNES Super Nintendo ROM","Game Boy Advance GBA ROM","PlayStation PSX game","PSP PlayStation Portable game","Arcade MAME game"};
+static int games_platforms(int page){
+    total=6;
+    for(int i=(page-1)*PAGE_SIZE;i<6&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",game_platform_names[i]);
+        strcpy(e->kind,"game-platform");e->id=i+1;
+        strcpy(e->meta,"INTERNET ARCHIVE / BROWSE TITLES / A OPEN");
+    }return 0;
+}
+static int games_archive_search(int page,int platform,const char *query){
+    if(platform<1||platform>6)return -1;
+    char term[128];size_t n=0;const char *base=*query?query:game_platform_queries[platform-1];
+    for(size_t i=0;base[i]&&n+1<sizeof(term);i++)
+        if(isalnum((unsigned char)base[i])||base[i]==' '||base[i]=='-')term[n++]=base[i];
+    term[n]=0;
+    char *q=curl_easy_escape(NULL,term,0);if(!q)return -1;
+    char url[1024];int len=snprintf(url,sizeof(url),ARCHIVE "/advancedsearch.php?q=mediatype%%3Asoftware%%20AND%%20%%28%s%%29%%20AND%%20-access-restricted-item%%3Atrue&fl%%5B%%5D=identifier&fl%%5B%%5D=title&rows=6&page=%d&output=json",q,page);
+    curl_free(q);if(len<0||len>=(int)sizeof(url))return -1;
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *response=field(root,"response"),*docs=field(response,"docs");
+    if(!docs||!json_object_is_type(docs,json_type_array)){json_object_put(root);return -1;}
+    total=number(response,"numFound");if(total<0)total=0;if(total>12000)total=12000;
+    for(size_t i=0;i<json_object_array_length(docs)&&used<PAGE_SIZE;i++){
+        json_object *doc=json_object_array_get_idx(docs,i);const char *identifier=string(doc,"identifier");
+        if(!archive_identifier(identifier))continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(doc,"title"));
+        if(!*e->title)clean(e->title,sizeof(e->title),identifier);
+        snprintf(e->url,sizeof(e->url),ARCHIVE "/details/%s",identifier);
+        snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",identifier);
+        snprintf(e->meta,sizeof(e->meta),"%s / A VIEW FILES",game_platform_names[platform-1]);
+        strcpy(e->kind,"game-item");e->id=platform;
+    }
+    json_object_put(root);return 0;
+}
+static int games_archive_files(int page,const char *identifier,int platform){
+    if(!archive_identifier(identifier)||platform<1||platform>6)return -1;
+    char url[256];snprintf(url,sizeof(url),ARCHIVE "/metadata/%s",identifier);
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *files=field(root,"files");
+    if(!files||!json_object_is_type(files,json_type_array)){json_object_put(root);return -1;}
+    total=0;
+    for(size_t i=0;i<json_object_array_length(files);i++){
+        json_object *f=json_object_array_get_idx(files,i);
+        const char *name=string(f,"name"),*ext=strrchr(name,'.');
+        if(!ext||strchr(name,'/')||strchr(name,'\\')||strlen(name)>160||strlen(name)<5)continue;
+        if(strcasecmp(ext,".zip")&&strcasecmp(ext,".nes")&&strcasecmp(ext,".sfc")&&strcasecmp(ext,".smc")&&
+           strcasecmp(ext,".gba")&&strcasecmp(ext,".gb")&&strcasecmp(ext,".gbc")&&
+           strcasecmp(ext,".chd")&&strcasecmp(ext,".pbp")&&strcasecmp(ext,".iso"))continue;
+        if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),name);
+        strcpy(e->kind,"game-rom");snprintf(e->meta,sizeof(e->meta),"ARCHIVE FILE / A DOWNLOAD");
+        char *escaped=curl_easy_escape(NULL,name,0);if(escaped){
+            snprintf(e->url,sizeof(e->url),ARCHIVE "/download/%s/%s",identifier,escaped);
+            curl_free(escaped);
+        }
+        snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",identifier);
+        e->id=platform;
+    }
+    json_object_put(root);return 0;
+}
 static int games_archive_download(int id){
     json_object *list=games_archive_manifest();
     if(!list||!json_object_is_type(list,json_type_array)||id<1||id>(int)json_object_array_length(list)){json_object_put(list);return -1;}

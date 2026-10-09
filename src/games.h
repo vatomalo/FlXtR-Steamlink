@@ -285,7 +285,7 @@ static int games_bios_files(int page,const char *identifier,int bios_id){
         if(!good)continue;
         if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;
         Entry *e=&entries[used++];clean(e->title,sizeof(e->title),name);
-        snprintf(e->meta,sizeof(e->meta),"SHA1 VERIFIED METADATA / A INSPECT");
+        snprintf(e->meta,sizeof(e->meta),"SHA1:%s",digest);
         char *escaped=curl_easy_escape(NULL,name,0);
         if(escaped){snprintf(e->url,sizeof(e->url),ARCHIVE "/download/%s/%s",identifier,escaped);curl_free(escaped);}
         strcpy(e->kind,"bios-file");e->id=bios_id;

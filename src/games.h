@@ -224,6 +224,47 @@ static int games_archive_files(int page,const char *identifier,int platform){
     }
     json_object_put(root);return 0;
 }
+/* Stream large disc images to disk instead of the 16 MiB metadata buffer. */
+static size_t game_write(void *ptr,size_t size,size_t count,void *opaque){
+    FILE *f=opaque;return fwrite(ptr,size,count,f)*size;
+}
+static int games_archive_file_download(const char *item,const char *name){
+    if(!archive_identifier(item)||!name||!*name||strlen(name)>160||
+       strchr(name,'/')||strchr(name,'\\')||strstr(name,"..")||strpbrk(name,"\r\n\t"))return -1;
+    const char *extension=strrchr(name,'.');
+    if(!extension|| (strcasecmp(extension,".zip")&&strcasecmp(extension,".nes")&&
+        strcasecmp(extension,".sfc")&&strcasecmp(extension,".smc")&&
+        strcasecmp(extension,".gba")&&strcasecmp(extension,".gb")&&
+        strcasecmp(extension,".gbc")&&strcasecmp(extension,".chd")&&
+        strcasecmp(extension,".pbp")&&strcasecmp(extension,".iso")))return -1;
+    char *escaped=curl_easy_escape(NULL,name,0);if(!escaped)return -1;
+    char url[1024];int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
+    if(n<0||n>=(int)sizeof(url))return -1;
+    mkdir("roms",0700);
+    char target[400],tmp[420];snprintf(target,sizeof(target),"roms/%s-%s",item,name);
+    snprintf(tmp,sizeof(tmp),"%s.next",target);
+    FILE *f=fopen(tmp,"wb");if(!f)return -1;
+    CURL *c=curl_easy_init();if(!c){fclose(f);unlink(tmp);return -1;}
+    curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);
+    curl_easy_setopt(c,CURLOPT_MAXREDIRS,4L);curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,game_write);
+    curl_easy_setopt(c,CURLOPT_WRITEDATA,f);curl_easy_setopt(c,CURLOPT_FAILONERROR,1L);
+    curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,10L);curl_easy_setopt(c,CURLOPT_LOW_SPEED_LIMIT,1024L);
+    curl_easy_setopt(c,CURLOPT_LOW_SPEED_TIME,45L);
+    curl_easy_setopt(c,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
+    curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L);
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"https");curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"https");
+#else
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
+#endif
+    CURLcode rc=curl_easy_perform(c);long http=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&http);
+    curl_easy_cleanup(c);int failed=fclose(f)!=0||rc!=CURLE_OK||http!=200;
+    struct stat st;if(stat(tmp,&st)||st.st_size<=0||st.st_size>2147483647LL)failed=1;
+    if(!failed&&rename(tmp,target))failed=1;
+    if(failed){unlink(tmp);fprintf(stderr,"Archive ROM download failed: HTTP %ld, curl %d\n",http,(int)rc);return -1;}
+    fprintf(stderr,"Archive ROM downloaded: %s\n",target);
+    return games_list(1,1);
+}
 static int games_archive_download(int id){
     json_object *list=games_archive_manifest();
     if(!list||!json_object_is_type(list,json_type_array)||id<1||id>(int)json_object_array_length(list)){json_object_put(list);return -1;}

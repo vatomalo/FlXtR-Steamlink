@@ -940,7 +940,7 @@ static void play(void) {
                 char hex[3]={p[1],p[2],0};name[ni++]=(char)strtol(hex,NULL,16);p+=3;
             }else name[ni++]=*p++;
         }name[ni]=0;
-        Browse next={19,1,0,0,0,0,"",""};
+        Browse next={19,1,t->id,0,0,0,"",""};
         int written=snprintf(next.query,sizeof(next.query),"%s|%s",item,name);
         if(written<0||written>=(int)sizeof(next.query)){snprintf(status,sizeof(status),"ROM FILENAME TOO LONG");return;}
         request_catalog(next,0,0);return;

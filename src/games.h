@@ -170,6 +170,22 @@ static int games_run(void){
     json_object *games=games_read("games.json");
     if(!games||!json_object_is_type(games,json_type_array)||id>(int)json_object_array_length(games)){json_object_put(games);return 2;}
     json_object *g=json_object_array_get_idx(games,id-1);const char *rom=string(g,"rom"),*core=string(g,"core");
+    /* A per-ROM selection is opt-in and does not ask before every launch.
+     * Validate the selected core and restrict SNES cores to SNES content. */
+    char selected_core[PATH_MAX]={0};
+    FILE *choices=fopen("game-cores.tsv","r");
+    if(choices){
+        char row[256],title[80],name[48];int selected_id;
+        while(fgets(row,sizeof(row),choices)){
+            if(sscanf(row,"%d\t%79[^\t]\t%47[^\n]",&selected_id,title,name)!=3)continue;
+            if(selected_id!=id||strcmp(title,string(g,"title")))continue;
+            if(strncmp(name,"snes9x",6)||!game_core(rom)||strncmp(game_core(rom),"snes9x",6))continue;
+            snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro.so",games_home(),name);
+            if(!game_file(selected_core))
+                snprintf(selected_core,sizeof(selected_core),"%s/.home/.config/retroarch/cores/%s_libretro.so",games_home(),name);
+            if(game_file(selected_core))core=selected_core;
+        }fclose(choices);
+    }
     if(!game_file(rom)||!game_file(core)){fprintf(stderr,"Game launch: missing ROM or RetroArch core\n");json_object_put(games);return 2;}
     if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
         char bios[PATH_MAX];snprintf(bios,sizeof(bios),"%s",rom);

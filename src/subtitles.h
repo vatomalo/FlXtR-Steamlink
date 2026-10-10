@@ -48,23 +48,19 @@ static void subtitle_draw(void){
      * the screen before the next line when the dialogue is continuous. */
     /* Most polls occur within the current cue. Avoid scanning all 4096
      * slots on every controller tick while that cue remains valid. */
+    /* Check every candidate when cues overlap: the newest starting cue wins.
+     * The previous fast path could keep an older cue on screen, then flash
+     * the following line for only its remaining fraction of a second. */
     int selected=-1;
-    if(subtitle_visible>=0&&subtitle_visible<SUBTITLE_MAX_CUES){
-        const SubtitleCue *current=&subtitle_cues[subtitle_visible];
-        if(current->text[0]&&now>=current->start&&now<current->end)
-            selected=subtitle_visible;
-    }
-    if(selected<0){
-        int64_t best_start=INT64_MIN;
-        for(int i=0;i<SUBTITLE_MAX_CUES;i++){
-            const SubtitleCue *cue=&subtitle_cues[i];
-            if(!cue->text[0]||now<cue->start)continue;
-            int64_t end=cue->end;
-            if(subtitle_external&&end>cue->start&&end<=now&&now-end<700000)
-                end+=700000;
-            if(now<end&&cue->start>=best_start){
-                best_start=cue->start;selected=i;
-            }
+    int64_t best_start=INT64_MIN;
+    for(int i=0;i<SUBTITLE_MAX_CUES;i++){
+        const SubtitleCue *cue=&subtitle_cues[i];
+        if(!cue->text[0]||now<cue->start)continue;
+        int64_t end=cue->end;
+        if(subtitle_external&&end>cue->start&&now>=end&&now-end<700000)
+            end+=700000;
+        if(now<end&&cue->start>=best_start){
+            best_start=cue->start;selected=i;
         }
     }
     if(selected==subtitle_visible)return;
@@ -77,7 +73,8 @@ static void subtitle_draw(void){
     if(selected<0){subtitle_visible=-1;if(subtitle_overlay)SLVideo_HideOverlay(subtitle_overlay);return;}
     if(!subtitle_overlay)subtitle_overlay=SLVideo_CreateOverlay(view_context,960,144);
     if(!subtitle_overlay)return;
-    uint32_t *pixels=NULL;int pitch=0;SLVideo_HideOverlay(subtitle_overlay);SLVideo_GetOverlayPixels(subtitle_overlay,&pixels,&pitch);
+    /* Repaint the existing overlay without forcing a blank video frame. */
+    uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(subtitle_overlay,&pixels,&pitch);
     if(!pixels||pitch<960*4)return;
     subtitle_visible=selected;
     for(int y=0;y<144;y++)for(int x=0;x<960;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xa0000000;

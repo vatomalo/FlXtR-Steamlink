@@ -109,9 +109,10 @@ static int kiss_source(int id,int episode,const char *server){
         html=b.data;if(!html)return -1;
         snprintf(referer,sizeof(referer),"%s",url);
         char direct[2048];
+        char sub_en[1024]={0},sub_no[1024]={0};
         int resolved=kiss_direct(html,direct,sizeof(direct));
-        if(!resolved&&!strncmp(url,"https://megaplay.buzz/",22))resolved=mega_source(html,referer,direct,sizeof(direct));
-        if(resolved){Entry *e=&entries[used++];strcpy(e->title,"AUTO");strcpy(e->meta,"KISSANIME");strcpy(e->kind,"source");strcpy(e->url,direct);e->id=id;e->episode=episode;total=1;free(html);return 0;}
+        if(!resolved&&!strncmp(url,"https://megaplay.buzz/",22))resolved=mega_source(html,referer,direct,sizeof(direct),sub_en,sub_no);
+        if(resolved){Entry *e=&entries[used++];strcpy(e->title,"AUTO");strcpy(e->meta,"KISSANIME");strcpy(e->kind,"source");strcpy(e->url,direct);strcpy(e->subs_eng,sub_en);strcpy(e->subs_nor,sub_no);e->id=id;e->episode=episode;total=1;free(html);return 0;}
         if(strstr(html,"id=\"megaplay-player\"")&&strstr(html,"data-realid=")){
             fprintf(stderr,"KissAnime: MegaPlay source API failed or returned an unsupported response\n");
             free(html);return -1;

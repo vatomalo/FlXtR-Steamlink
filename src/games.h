@@ -439,6 +439,23 @@ static int zip_members(const char *path,int page,int extract_index){
     }
     return games_list(1,1);
 }
+/* Progress is written independently of the catalog result stream. */
+static int game_download_progress(void *ctx,curl_off_t total,curl_off_t done,
+                                  curl_off_t upload_total,curl_off_t upload_done){
+    (void)ctx;(void)upload_total;(void)upload_done;
+    static curl_off_t last_done=-1;
+    static time_t last_time;
+    time_t now=time(NULL);
+    if(done==last_done&&now==last_time)return 0;
+    if(now==last_time&&total>0&&done<total)return 0;
+    FILE *f=fopen("catalog-cache/download-progress.next","w");
+    if(f){
+        fprintf(f,"%lld %lld\n",(long long)done,(long long)total);
+        if(!fclose(f))rename("catalog-cache/download-progress.next","catalog-cache/download-progress");
+    }
+    last_done=done;last_time=now;
+    return 0;
+}
 static int games_archive_file_download(const char *item,const char *name,int platform){
     fprintf(stderr,"Archive ROM request: item=%.128s filename=%.180s platform=%d\n",item?item:"(null)",name?name:"(null)",platform);
     if(!archive_identifier(item)||!name||!*name||strlen(name)>512||
@@ -475,6 +492,9 @@ static int games_archive_file_download(const char *item,const char *name,int pla
     if(n<0||n>=(int)sizeof(tmp))return -1;
     FILE *f=fopen(tmp,"wb");if(!f){fprintf(stderr,"Archive ROM file open failed: %s (%s)\n",tmp,strerror(errno));return -1;}
     CURL *c=curl_easy_init();if(!c){fclose(f);unlink(tmp);return -1;}
+    curl_easy_setopt(c,CURLOPT_NOPROGRESS,0L);
+    curl_easy_setopt(c,CURLOPT_XFERINFOFUNCTION,game_download_progress);
+    curl_easy_setopt(c,CURLOPT_XFERINFODATA,NULL);
     curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);
     curl_easy_setopt(c,CURLOPT_MAXREDIRS,4L);curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,game_write);
     curl_easy_setopt(c,CURLOPT_WRITEDATA,f);curl_easy_setopt(c,CURLOPT_FAILONERROR,1L);

@@ -113,6 +113,54 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
     }
     return rc==AVERROR(EAGAIN)||rc==AVERROR_EOF?0:rc;
 }
+/* Load a bounded HTTPS text subtitle track before playback. FFmpeg handles
+ * SubRip/WebVTT timestamp parsing; compressed video remains hardware-decoded.
+ * Never allow file:, http:, or nested local protocols from provider metadata. */
+static int load_external_subtitles(const char *url){
+    if(!url||strncmp(url,"https://",8)||strlen(url)>1023||strpbrk(url,"\\r\\n\\t"))return -1;
+    AVFormatContext *subfmt=avformat_alloc_context();
+    if(!subfmt)return -1;
+    subfmt->interrupt_callback.callback=interrupt_io;
+    AVDictionary *options=NULL;
+    av_dict_set(&options,"tls_verify","1",0);
+    av_dict_set(&options,"ca_file",ca_file,0);
+    av_dict_set(&options,"protocol_whitelist","https,tls,tcp,crypto",0);
+    av_dict_set(&options,"rw_timeout","12000000",0);
+    int rc=avformat_open_input(&subfmt,url,NULL,&options);
+    av_dict_free(&options);
+    if(rc<0){fprintf(stderr,"External subtitle URL could not be opened: %d\\n",rc);avformat_free_context(subfmt);return -1;}
+    rc=avformat_find_stream_info(subfmt,NULL);
+    int stream=-1;
+    if(rc>=0)for(unsigned i=0;i<subfmt->nb_streams;i++){
+        AVCodecID codec=subfmt->streams[i]->codecpar->codec_id;
+        if(codec==AV_CODEC_ID_SUBRIP||codec==AV_CODEC_ID_WEBVTT){stream=(int)i;break;}
+    }
+    if(stream<0){fprintf(stderr,"External subtitle has no SRT/WebVTT stream\\n");avformat_close_input(&subfmt);return -1;}
+    AVCodecParameters *parameters=subfmt->streams[stream]->codecpar;
+    const AVCodec *decoder=avcodec_find_decoder(parameters->codec_id);
+    AVCodecContext *context=decoder?avcodec_alloc_context3(decoder):NULL;
+    if(!context||avcodec_parameters_to_context(context,parameters)<0||avcodec_open2(context,decoder,NULL)<0){
+        avcodec_free_context(&context);avformat_close_input(&subfmt);return -1;
+    }
+    context->pkt_timebase=subfmt->streams[stream]->time_base;
+    AVPacket *packet=av_packet_alloc();int packets=0;
+    if(packet){
+        /* Cap downloads to avoid untrusted subtitle playlists or endless streams. */
+        int64_t start=av_gettime_relative();
+        while(packets<4096&&av_gettime_relative()-start<12000000&&!stopped){
+            rc=av_read_frame(subfmt,packet);
+            if(rc<0)break;
+            if(packet->stream_index==stream){subtitle_decode(context,subfmt->streams[stream],packet);packets++;}
+            av_packet_unref(packet);
+        }
+        av_packet_free(&packet);
+    }
+    avcodec_free_context(&context);avformat_close_input(&subfmt);
+    if(!packets)return -1;
+    subtitle_external=1;
+    fprintf(stderr,"External subtitle loaded: %d packets\\n",packets);
+    return 0;
+}
 int main(int argc,char **argv) {
     DiskBuffer *buffer=NULL;
     AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL,*sub_decoder=NULL;AVBSFContext *bsf=NULL;
@@ -198,6 +246,22 @@ int main(int argc,char **argv) {
         sub_decoder->pkt_timebase=fmt->streams[i]->time_base;si=(int)i;break;
     }
     fprintf(stderr,"Subtitle mode: %s, selected track: %d%s\n",sub_language,si,si<0?" (no supported embedded text subtitle track)":"");
+    /* Prefer a requested external language track, otherwise use embedded text. */
+    const char *english=getenv("FLXTR_SUBTITLE_ENGLISH");
+    const char *norwegian=getenv("FLXTR_SUBTITLE_NORWEGIAN");
+    const char *external=NULL;
+    if(strcmp(sub_language,"off")){
+        if(!strcmp(sub_language,"nor"))external=norwegian;
+        else external=english;
+        if((!external||!*external)&&!strcmp(sub_language,"auto"))external=norwegian;
+    }
+    if(external&&*external){
+        if(load_external_subtitles(external)==0){
+            avcodec_free_context(&sub_decoder);si=-1;
+            subtitle_seek_us=(int64_t)(playback_start*AV_TIME_BASE);
+        }else fprintf(stderr,"External subtitles failed, falling back to embedded track\\n");
+    }
+
     for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai||(int)i==si)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
     AVStream *vs=fmt->streams[vi];AVCodecParameters *vp=vs->codecpar;
     const AVPixFmtDescriptor *pix=av_pix_fmt_desc_get(vp->format);

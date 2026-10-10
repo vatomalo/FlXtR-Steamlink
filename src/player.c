@@ -77,6 +77,22 @@ static void apply_view(int notify) {
 #include "playback_menu.h"
 static void playback_controls(void) {
     menu_poll();
+    /* Atomic, rate-limited position checkpoint for TV resume. */
+    static Uint32 last_checkpoint;
+    Uint32 tick=SDL_GetTicks();
+    if(!stopped&&origin!=AV_NOPTS_VALUE&&clock_start&&
+       (Uint32)(tick-last_checkpoint)>=10000){
+        last_checkpoint=tick;
+        double position=playback_position();
+        if(position>=0&&position<86400){
+            FILE *f=fopen("playback-position.next","w");
+            if(f){
+                fprintf(f,"%.3f\n",position);
+                if(!fclose(f))rename("playback-position.next","playback-position");
+                else unlink("playback-position.next");
+            }
+        }
+    }
     /* Refresh the playback timeline once per second while the menu is open. */
     static Uint32 menu_next_refresh;
     Uint32 menu_now=SDL_GetTicks();

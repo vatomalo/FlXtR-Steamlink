@@ -128,7 +128,12 @@ static int games_list_filtered(int page,int refresh,int folder){
         if(folder&&local_category(string(g,"core"),string(g,"rom"))!=folder)continue;
         if(skipped++<(page-1)*PAGE_SIZE)continue;
         Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
-        const char *core=string(g,"core"),*base=strrchr(core,'/');clean(e->meta,sizeof(e->meta),base?base+1:core);strcpy(e->kind,"game");e->id=i+1;
+        const char *core=string(g,"core"),*base=strrchr(core,'/');clean(e->meta,sizeof(e->meta),base?base+1:core);
+        const char *rom_path=string(g,"rom");size_t rom_len=strlen(rom_path);
+        int browse_zip=rom_len>=4&&!strcasecmp(rom_path+rom_len-4,".zip")&&
+            !strcasestr(rom_path,"/neogeo/")&&!strcasestr(rom_path,"/neo-geo/")&&
+            !strcasestr(rom_path,"/mame/");
+        strcpy(e->kind,browse_zip?"game-zip":"game");e->id=i+1;
         /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
         const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
         const char *systems[]={"Nintendo - Nintendo Entertainment System","Nintendo - Super Nintendo Entertainment System","Nintendo - Game Boy Advance","Nintendo - Game Boy Color","Nintendo - Game Boy","Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo"};
@@ -360,6 +365,20 @@ static size_t game_write(void *ptr,size_t size,size_t count,void *opaque){
 }
 /* BusyBox unzip -l archive browser. All member lookups are by index, so UI
  * never constructs a shell command from archive-controlled filenames. */
+static int zip_members(const char *path,int page,int extract_index);
+static int zip_game_by_id(int game_id,int page,int member_id){
+    json_object *games=games_read("games.json");
+    if(!games||!json_object_is_type(games,json_type_array)||
+       game_id<1||game_id>(int)json_object_array_length(games)){
+        json_object_put(games);return -1;
+    }
+    const char *source=string(json_object_array_get_idx(games,game_id-1),"rom");
+    char path[PATH_MAX];
+    int n=snprintf(path,sizeof(path),"%s",source);
+    json_object_put(games);
+    if(n<0||n>=(int)sizeof(path))return -1;
+    return zip_members(path,page,member_id);
+}
 static int zip_members(const char *path,int page,int extract_index){
     if(!path||path[0]!='/'||!game_file(path)||strcasecmp(path+strlen(path)-4,".zip"))return -1;
     int pipes[2];if(pipe(pipes))return -1;

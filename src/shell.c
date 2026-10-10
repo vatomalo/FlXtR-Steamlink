@@ -2,6 +2,7 @@
 #include <SDL.h>
 #include <curl/curl.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -30,27 +31,59 @@
 #define VISIBLE 6
 #define STARS 56
 typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode,height; } Title;
-static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count;
-static char rom_core_title[80],rom_core_names[8][48];
-static const char *const rom_core_candidates[]={"snes9x2002_flxtr","snes9x2002","snes9x2005","snes9x2005_plus","snes9x_next","snes9x2010"};
-static void rom_core_open(const Title *t){
-    if(strcmp(t->kind,"game")||!strstr(t->meta,"snes9x"))return;
-    rom_core_id=t->id;snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
-    rom_core_count=rom_core_selected=0;
-    for(size_t i=0;i<sizeof(rom_core_candidates)/sizeof(rom_core_candidates[0]);i++){
-        char path[256];snprintf(path,sizeof(path),"/home/apps/retroarch/cores/%s_libretro.so",rom_core_candidates[i]);
-        if(access(path,R_OK))snprintf(path,sizeof(path),"/home/apps/retroarch/.home/.config/retroarch/cores/%s_libretro.so",rom_core_candidates[i]);
-        if(!access(path,R_OK)&&rom_core_count<8)snprintf(rom_core_names[rom_core_count++],48,"%s",rom_core_candidates[i]);
+/* Every ROM can select any locally installed Libretro core. */
+#define ROM_CORE_LIMIT 64
+static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count,rom_core_first;
+static char rom_core_title[80],rom_core_names[ROM_CORE_LIMIT][96];
+static void rom_core_scan(const char *dir){
+    DIR *d=opendir(dir);
+    if(!d)return;
+    struct dirent *e;
+    while((e=readdir(d))&&rom_core_count<ROM_CORE_LIMIT){
+        size_t len=strlen(e->d_name);
+        const char suffix[]="_libretro.so";
+        if(len<=sizeof(suffix)-1||strcmp(e->d_name+len-(sizeof(suffix)-1),suffix))continue;
+        len-=sizeof(suffix)-1;
+        if(!len||len>=sizeof(rom_core_names[0]))continue;
+        char name[96];memcpy(name,e->d_name,len);name[len]=0;
+        int duplicate=0;
+        for(int i=0;i<rom_core_count;i++)if(!strcmp(rom_core_names[i],name))duplicate=1;
+        if(duplicate)continue;
+        char path[256];
+        if(snprintf(path,sizeof(path),"%s/%s",dir,e->d_name)>=(int)sizeof(path)||access(path,R_OK))continue;
+        snprintf(rom_core_names[rom_core_count++],sizeof(rom_core_names[0]),"%s",name);
     }
+    closedir(d);
+}
+static void rom_core_open(const Title *t){
+    if(strcmp(t->kind,"game"))return;
+    rom_core_id=t->id;
+    snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
+    rom_core_count=rom_core_selected=rom_core_first=0;
+    rom_core_scan("/home/apps/retroarch/cores");
+    rom_core_scan("/home/apps/retroarch/.home/.config/retroarch/cores");
+    /* Open on the previously chosen core, if any. */
+    FILE *f=fopen("game-cores.tsv","r");
+    if(f){char line[256],title[80],core[96];int id;
+        while(fgets(line,sizeof(line),f)){
+            if(sscanf(line,"%d\t%79[^\t]\t%95[^\n]",&id,title,core)!=3)continue;
+            if(id==rom_core_id&&!strcmp(title,rom_core_title))
+                for(int i=0;i<rom_core_count;i++)
+                    if(!strcmp(core,rom_core_names[i]))rom_core_selected=i;
+        }
+        fclose(f);
+    }
+    rom_core_first=rom_core_selected>3?rom_core_selected-3:0;
     if(rom_core_count)rom_core_menu=1;
 }
 static void rom_core_save(void){
     FILE *in=fopen("game-cores.tsv","r"),*out=fopen("game-cores.tsv.next","w");
     if(!out){if(in)fclose(in);return;}
-    if(in){char line[256],title[80],core[48];int id;
+    if(in){char line[256],title[80],core[96];int id;
         while(fgets(line,sizeof(line),in)){
-            if(sscanf(line,"%d\t%79[^\t]\t%47[^\n]",&id,title,core)!=3)continue;
-            if(id!=rom_core_id||strcmp(title,rom_core_title))fprintf(out,"%d\t%s\t%s\n",id,title,core);
+            if(sscanf(line,"%d\t%79[^\t]\t%95[^\n]",&id,title,core)!=3)continue;
+            if(id!=rom_core_id||strcmp(title,rom_core_title))
+                fprintf(out,"%d\t%s\t%s\n",id,title,core);
         }fclose(in);
     }
     fprintf(out,"%d\t%s\t%s\n",rom_core_id,rom_core_title,rom_core_names[rom_core_selected]);
@@ -738,9 +771,9 @@ static void draw(Uint32 tick) {
         rect(184,80,746,339,(SDL_Color){0,0,0,235},1);
         text(200,95,"CORE OPTIONS / ROM",2,green,50);
         text(200,125,rom_core_title,1,white,70);
-        for(int i=0;i<rom_core_count;i++){
-            char line[72];snprintf(line,sizeof(line),"%c %s",i==rom_core_selected?'>':' ',rom_core_names[i]);
-            text(206,161+i*32,line,2,i==rom_core_selected?green:white,55);
+        for(int i=rom_core_first;i<rom_core_count&&i<rom_core_first+7;i++){
+            char line[112];snprintf(line,sizeof(line),"%c %s",i==rom_core_selected?'>':' ',rom_core_names[i]);
+            text(206,161+(i-rom_core_first)*32,line,2,i==rom_core_selected?green:white,55);
         }
         text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
         SDL_RenderPresent(renderer);return;
@@ -1034,6 +1067,8 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){rom_core_menu=0;return;}
         if(key==SDLK_UP&&rom_core_selected>0)rom_core_selected--;
         if(key==SDLK_DOWN&&rom_core_selected+1<rom_core_count)rom_core_selected++;
+        if(rom_core_selected<rom_core_first)rom_core_first=rom_core_selected;
+        if(rom_core_selected>=rom_core_first+7)rom_core_first=rom_core_selected-6;
         if(key==SDLK_RETURN){rom_core_save();rom_core_menu=0;snprintf(status,sizeof(status),"ROM CORE SAVED");}
         return;
     }

@@ -105,8 +105,9 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
         if(av_samples_alloc(&pcm,NULL,2,out_count,AV_SAMPLE_FMT_S16,0)<0){av_frame_unref(frame);return AVERROR(ENOMEM);}
         int samples=swr_convert(swr,&pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
-            /* Keep SDL audio latency bounded: 250 ms rather than 500 ms. */
-            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/4){playback_controls();SDL_Delay(5);}
+            /* Keep enough audio headroom for brief demux / H.264 submission stalls.
+             * 250 ms caused the multiplexed video loop to block frequently. */
+            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(2);}
             audio_samples+=(unsigned)samples;
             if(!stopped&&SDL_QueueAudio(device,pcm,samples*4)<0){av_freep(&pcm);av_frame_unref(frame);return AVERROR(EIO);}
         }
@@ -380,7 +381,7 @@ int main(int argc,char **argv) {
              * to pass through the hardware decoder. Queue both ahead of
              * presentation instead of treating packet submission as display. */
             const int64_t audio_lead_us=120000;
-            const int64_t video_lead_us=40000;
+            const int64_t video_lead_us=100000;
             int64_t lead=track==ai?audio_lead_us:video_lead_us;
             if(elapsed>=0 && elapsed<86400LL*AV_TIME_BASE)
                 wait_until(clock_start+elapsed-lead);

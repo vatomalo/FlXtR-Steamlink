@@ -165,7 +165,7 @@ static int sources(int page,int id,int season,int episode){
 #define CATALOG_CACHE_TTL (7 * 24 * 60 * 60)
 static void cache_identity(const char *kind,int page,const char *query,int id,int season){
     struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
-    snprintf(cache_key,sizeof(cache_key),"v6|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    snprintf(cache_key,sizeof(cache_key),"v7|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
     unsigned long hash=2166136261UL;
     for(const unsigned char *p=(const unsigned char *)cache_key;*p;p++)
         hash=((hash^(unsigned long)*p)*16777619UL)&0xffffffffUL;
@@ -285,7 +285,7 @@ int main(int argc,char **argv){
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);
     if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>(!strcmp(kind,"archive-files")||!strcmp(kind,"games-archive-files")||!strcmp(kind,"games-file-download")||!strcmp(kind,"games-zip-list")||!strcmp(kind,"games-zip-extract")?2047:64))return 2;
-    if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-archive-search")&&strcmp(kind,"games-archive-files")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"games-folders")&&strcmp(kind,"games-system")&&strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
+    if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-archive-search")&&strcmp(kind,"games-archive-files")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"games-folders")&&strcmp(kind,"games-system")&&strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-folders")&&strcmp(kind,"archive-category")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
     if((!strcmp(kind,"source")||!strcmp(kind,"quality"))&&!getenv("FLXTR_NO_NETWORK")&&!access("./greenlink-resolver",X_OK)){
         int quality=!strcmp(kind,"quality");if(quality&&argc!=8)return 2;
         execl("./greenlink-resolver","greenlink-resolver",quality?"source":"servers",episode?"tv":"movie",argv[4],argv[5],argv[6],quality?argv[7]:"",argv[2],(char*)NULL);return 1;
@@ -316,6 +316,8 @@ int main(int argc,char **argv){
     else if(!strcmp(kind,"games-system"))rc=games_system(page,id);
     else if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);
     else if(!strcmp(kind,"tv-pick"))rc=tv_pick(positive(argv[3],1),id);
+    else if(!strcmp(kind,"archive-folders"))rc=archive_folders(page);
+    else if(!strcmp(kind,"archive-category"))rc=archive_category_list(page,id,argv[3]);
     else if(!strcmp(kind,"archive"))rc=archive_list(page,argv[3]);
     else if(!strcmp(kind,"archive-files"))rc=archive_files(page,argv[3]);
     else if(!strcmp(kind,"kiss"))rc=kiss_list_filtered(page,argv[3],id,season);

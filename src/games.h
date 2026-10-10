@@ -358,7 +358,7 @@ static int games_archive_files(int page,const char *identifier,int platform){
 static size_t game_write(void *ptr,size_t size,size_t count,void *opaque){
     FILE *f=opaque;return fwrite(ptr,size,count,f)*size;
 }
-static int games_archive_file_download(const char *item,const char *name){
+static int games_archive_file_download(const char *item,const char *name,int platform){
     if(!archive_identifier(item)||!name||!*name||strlen(name)>512||
        strchr(name,'/')||strchr(name,'\\')||strstr(name,"..")||strpbrk(name,"\r\n\t"))return -1;
     const char *extension=strrchr(name,'.');
@@ -371,6 +371,10 @@ static int games_archive_file_download(const char *item,const char *name){
     char url[1024];int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
     if(n<0||n>=(int)sizeof(url))return -1;
     mkdir("roms",0700);
+    const char *folder[]={"","NES","SNES","GBA","PlayStation","PSP","MAME"};
+    if(platform<1||platform>6)return -1;
+    char rom_dir[80];snprintf(rom_dir,sizeof(rom_dir),"roms/%s",folder[platform]);
+    mkdir(rom_dir,0700);
     /* Archive names may exceed the filesystem's 255-byte component limit.
      * Keep a recognizable prefix and extension, plus a stable full-name hash. */
     unsigned long hash=2166136261UL;
@@ -383,7 +387,7 @@ static int games_archive_file_download(const char *item,const char *name){
     }
     prefix[j]=0;
     char target[400],tmp[420];
-    n=snprintf(target,sizeof(target),"roms/%.64s-%s-%08lx%s",item,prefix,hash,extension);
+    n=snprintf(target,sizeof(target),"%s/%.64s-%s-%08lx%s",rom_dir,item,prefix,hash,extension);
     if(n<0||n>=(int)sizeof(target))return -1;
     n=snprintf(tmp,sizeof(tmp),"%s.next",target);
     if(n<0||n>=(int)sizeof(tmp))return -1;

@@ -45,6 +45,30 @@ static void menu_draw(void){
     snprintf(rows[10],80,"STOP PLAYBACK");
     menu_text(pixels,pitch,16,heading,0xff74ff84);
     for(int i=0;i<11;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,54+i*29,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
+    /* Native overlay progress timeline. Clamp to the known duration;
+     * unknown-length live streams show elapsed time without a false percentage. */
+    double position=playback_position();
+    if(position<0)position=0;
+    double fraction=media_duration>0?position/media_duration:0;
+    if(fraction<0)fraction=0;
+    if(fraction>1)fraction=1;
+    const int bar_left=18,bar_top=359,bar_width=704,bar_height=9;
+    int filled=(int)(fraction*bar_width);
+    for(int y=bar_top;y<bar_top+bar_height;y++){
+        uint32_t *line=(uint32_t*)((char*)pixels+y*pitch);
+        for(int x=bar_left;x<bar_left+bar_width;x++)
+            line[x]=x<bar_left+filled?0xff74ff84:0xff394d42;
+    }
+    char timeline[80];
+    int elapsed=(int)position;
+    if(media_duration>0){
+        int length=(int)media_duration;
+        snprintf(timeline,sizeof(timeline),"%02d:%02d:%02d / %02d:%02d:%02d",
+            elapsed/3600,elapsed/60%60,elapsed%60,
+            length/3600,length/60%60,length%60);
+    }else snprintf(timeline,sizeof(timeline),"%02d:%02d:%02d / LIVE OR UNKNOWN",
+        elapsed/3600,elapsed/60%60,elapsed%60);
+    menu_text(pixels,pitch,371,timeline,0xffd4e2d6);
     menu_text(pixels,pitch,386,"DPAD SELECT / A CHANGE / B CLOSE",0xff74ff84);
     SLVideo_SetOverlayDisplayArea(menu_overlay,0.0f,0.0f,1.0f,1.0f);SLVideo_ShowOverlay(menu_overlay);
 }

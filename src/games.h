@@ -408,8 +408,10 @@ static int downloaded_zip_delete(int id){
 }
 static int zip_members(const char *path,int page,int extract_index);
 static int zip_game_by_id(int game_id,int page,int member_id){
-    if(game_id<0){char path[PATH_MAX];if(downloaded_zip_path(-game_id,path,sizeof(path)))return -1;
-        /* zip_members is declared above. */
+    if(game_id<0){char relative[PATH_MAX],path[PATH_MAX],cwd[PATH_MAX];
+        if(downloaded_zip_path(-game_id,relative,sizeof(relative))||!getcwd(cwd,sizeof(cwd)))return -1;
+        int n=snprintf(path,sizeof(path),"%s/%s",cwd,relative);
+        if(n<0||n>=(int)sizeof(path))return -1;
         return zip_members(path,page,member_id);
     }
     json_object *games=games_read("games.json");

@@ -8,6 +8,7 @@
 #include <dirent.h>
 static volatile sig_atomic_t stopped;
 static int64_t deadline;
+static unsigned disk_read_wait_count;
 static int generated,fail_at_end;
 static int fake_read(AVFormatContext *fmt,AVPacket *p){
     (void)fmt;

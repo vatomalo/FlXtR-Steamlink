@@ -12,7 +12,7 @@ int main(void){
         "<article><a href=\"https://elsewhere.invalid/ad\" rel=\"9\" title=\"Ad\"></a></article><div class=\"hpage\">Next</div>";
     assert(kiss_cards(html,0)==1&&used==1&&entries[0].id==42&&!strcmp(entries[0].kind,"kiss"));
     used=0;assert(kiss_cards(html,1)==1&&!used);
-    char url[2048];
+    char url[2048],en[2048]={0},no[2048]={0},es[2048]={0};
     assert(kiss_direct("<source src='https://media.example/video.m3u8?x=1&amp;y=2'>",url,sizeof(url)));
     assert(!strcmp(url,"https://media.example/video.m3u8?x=1&y=2"));
     assert(kiss_direct("{\"file\":\"https:\\/\\/media.example\\/video.mp4\"}",url,sizeof(url)));
@@ -20,14 +20,14 @@ int main(void){
     assert(!kiss_direct("<source src='file:///etc/passwd'>",url,sizeof(url)));
     assert(!kiss_direct("<h1>File unavailable</h1><script src='https://ads.example/ad.js'></script>",url,sizeof(url)));
     json_object *response=json_tokener_parse("{\"enc\":\"wdeBruh3qqn_i5wUNnyaPXE9vrvRetOe_eCsTM_CyaSDXrJbydon6awZjDd3oT-H\"}");
-    assert(mega_media(response,url,sizeof(url),1000));
+    assert(mega_media(response,url,sizeof(url),1000,en,no,es));
     assert(!strcmp(url,"https://media.example/video.m3u8"));json_object_put(response);
     response=json_tokener_parse("{\"enc\":\"invalid!\"}");
-    assert(!mega_media(response,url,sizeof(url),1000));json_object_put(response);
+    assert(!mega_media(response,url,sizeof(url),1000,en,no,es));json_object_put(response);
     response=json_tokener_parse("{\"sources\":{\"file\":\"file:///etc/passwd\"}}");
-    assert(!mega_media(response,url,sizeof(url),1000));json_object_put(response);
+    assert(!mega_media(response,url,sizeof(url),1000,en,no,es));json_object_put(response);
     response=json_tokener_parse("{\"error\":\"unavailable\"}");
-    assert(!mega_media(response,url,sizeof(url),1000));json_object_put(response);
+    assert(!mega_media(response,url,sizeof(url),1000,en,no,es));json_object_put(response);
     strcpy(url,"https://media.example/anime/0123456789abcdef0123456789abcdef/abcdef0123456789abcdef0123456789/master.m3u8");
     assert(mega_token(url,sizeof(url),1000));assert(strstr(url,"?token="));
     char signed_url[2048];strcpy(signed_url,url);

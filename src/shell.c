@@ -87,7 +87,7 @@ static float flow_position;
 static int stopping_player;
 static int viewing=VIEW_FIT;
 static Uint32 stop_time;
-typedef struct {int mode,page,id,season,episode,selected;char query[129],name[80];} Browse;
+typedef struct {int mode,page,id,season,episode,selected;char query[2048],name[80];} Browse;
 static Browse browse={0,1,0,0,0,0,"",""},pending,history[4];
 static int history_size,pending_push,pending_pop,listing_pages=1,listing_total;
 static pid_t catalog_pid,prefetch_pid,idle_pid;
@@ -103,8 +103,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","ZIP CONTENTS"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","games-zip-files"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -378,7 +378,7 @@ static unsigned library_cache_cursor;
 static int library_cacheable(int mode){
     return mode==1||mode==2||mode==3||mode==4||mode==7||mode==8||
         mode==9||mode==10||mode==14||mode==15||mode==17||mode==18||
-        mode==20||mode==21||mode==22||mode==23||mode==24;
+        mode==20||mode==21||mode==22||mode==23||mode==24||mode==25;
 }
 static int library_page_equals(const Browse *a,const Browse *b){
     return a->mode==b->mode&&a->page==b->page&&a->id==b->id&&
@@ -513,7 +513,7 @@ static void finish_catalog(void){
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
     library_cache_store(&browse);
-    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
+    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24&&browse.mode!=25){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
     if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"KISSANIME: BROWSING WORKS / SOME VIDEO HOSTS ARE NOT SUPPORTED");
@@ -815,23 +815,12 @@ static void play(void) {
         Browse next={18,1,t->id,0,0,0,"",""};snprintf(next.query,sizeof(next.query),"%s",t->url+n);
         snprintf(next.name,sizeof(next.name),"%s",t->title);request_catalog(next,1,0);return;
     }
-    if(!strcmp(t->kind,"game-rom")){
-        const char *prefix="https://archive.org/download/";size_t n=strlen(prefix);
-        if(strncmp(t->url,prefix,n)){snprintf(status,sizeof(status),"INVALID ROM LINK");return;}
-        const char *slash=strchr(t->url+n,'/');if(!slash){snprintf(status,sizeof(status),"INVALID ROM LINK");return;}
-        char item[129];size_t ilen=(size_t)(slash-(t->url+n));
-        if(ilen<1||ilen>=sizeof(item)){snprintf(status,sizeof(status),"INVALID ARCHIVE ID");return;}
-        memcpy(item,t->url+n,ilen);item[ilen]=0;
-        char name[161];int ni=0;const char *p=slash+1;
-        while(*p&&ni<160){
-            if(*p=='%'&&isxdigit((unsigned char)p[1])&&isxdigit((unsigned char)p[2])){
-                char hex[3]={p[1],p[2],0};name[ni++]=(char)strtol(hex,NULL,16);p+=3;
-            }else name[ni++]=*p++;
-        }name[ni]=0;
-        Browse next={19,1,0,0,0,0,"",""};
-        int written=snprintf(next.query,sizeof(next.query),"%s|%s",item,name);
-        if(written<0||written>=(int)sizeof(next.query)){snprintf(status,sizeof(status),"ROM FILENAME TOO LONG");return;}
-        request_catalog(next,0,0);return;
+    if(!strcmp(t->kind,"game-rom")||!strcmp(t->kind,"game-zip")){
+        const char *prefix="https://archive.org/download/";
+        if(strncmp(t->url,prefix,strlen(prefix))){snprintf(status,sizeof(status),"INVALID ROM LINK");return;}
+        Browse next={!strcmp(t->kind,"game-zip")?25:19,1,t->id,0,0,0,"",""};
+        snprintf(next.query,sizeof(next.query),"%s",t->url);snprintf(next.name,sizeof(next.name),"%s",t->title);
+        request_catalog(next,next.mode==25,0);return;
     }
     if(!strcmp(t->kind,"archive-game")){Browse next={16,1,t->id,0,0,0,"",""};request_catalog(next,0,0);return;}
     if(!strcmp(t->kind,"game")){

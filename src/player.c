@@ -117,7 +117,7 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
  * SubRip/WebVTT timestamp parsing; compressed video remains hardware-decoded.
  * Never allow file:, http:, or nested local protocols from provider metadata. */
 static int load_external_subtitles(const char *url){
-    if(!url||strncmp(url,"https://",8)||strlen(url)>1023||strpbrk(url,"\\r\\n\\t"))return -1;
+    if(!url||strncmp(url,"https://",8)||strlen(url)>1023||strpbrk(url,"\r\n\t"))return -1;
     AVFormatContext *subfmt=avformat_alloc_context();
     if(!subfmt)return -1;
     subfmt->interrupt_callback.callback=interrupt_io;

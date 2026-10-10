@@ -34,7 +34,7 @@ static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count;
 static char rom_core_title[80],rom_core_names[8][48];
 static const char *const rom_core_candidates[]={"snes9x2002_flxtr","snes9x2002","snes9x2005","snes9x2005_plus","snes9x_next","snes9x2010"};
 static void rom_core_open(const Title *t){
-    if(strcmp(t->kind,"game"))return;
+    if(strcmp(t->kind,"game")||!strstr(t->meta,"snes9x"))return;
     rom_core_id=t->id;snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
     rom_core_count=rom_core_selected=0;
     for(size_t i=0;i<sizeof(rom_core_candidates)/sizeof(rom_core_candidates[0]);i++){

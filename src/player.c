@@ -34,6 +34,8 @@ static const char *ca_file;
 static int megaplay;
 static uint64_t audio_samples;
 static int64_t origin=AV_NOPTS_VALUE,clock_start;
+/* Disk prefill and rebuffering must not advance subtitle presentation. */
+static int subtitle_buffering,disk_read_wait_count;
 static void playback_controls(void);
 #define DISK_POLL() playback_controls()
 #include "disk_buffer.h"
@@ -351,9 +353,14 @@ int main(int argc,char **argv) {
     show_view("BUFFERING...");
     while(!stopped) {
         playback_controls();
+        disk_read_wait_count=0;
+        subtitle_buffering=1;
         int64_t wait_start=av_gettime_relative();rc=disk_packet(buffer,packet);
         int64_t waited=av_gettime_relative()-wait_start;
-        if(clock_start&&waited>100000)clock_start+=waited;
+        /* Only genuine FIFO starvation pauses the presentation clock.
+         * Short disk reads must not accumulate arbitrary subtitle drift. */
+        if(clock_start&&disk_read_wait_count>0)clock_start+=waited;
+        subtitle_buffering=0;
         if(overlay_until&&frames==0){SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
         if(rc<0){
             char message[AV_ERROR_MAX_STRING_SIZE];

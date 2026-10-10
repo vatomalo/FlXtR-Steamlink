@@ -29,7 +29,7 @@
 #define MAX_TITLES 128
 #define VISIBLE 6
 #define STARS 56
-typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],kind[16];int id,season,episode,height; } Title;
+typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode,height; } Title;
 static Title titles[MAX_TITLES];
 static int count, selection, ready_only, about, stars_on=1, running=1;
 static int visible[MAX_TITLES], total, cached_page=-1;
@@ -50,7 +50,7 @@ static void tv_candidate(void);
 static void tv_tick(void);
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
-static const char *const subtitle_languages[]={"off","auto","eng","nor"};
+static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
 static void subtitle_route_log(const char *route,const Title *t){
     FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
     fprintf(f,"%lu shell route=%s kind=%s video=%s english=%s norwegian=%s\n",
@@ -76,7 +76,7 @@ static void load_settings(void){
         else if(!strcmp(key,"buffer")&&value>=0&&value<3)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
         else if(!strcmp(key,"coverflow")&&(value==0||value==1))coverflow=value;
-        else if(!strcmp(key,"subtitles")&&value>=0&&value<4)subtitle_setting=value;
+        else if(!strcmp(key,"subtitles")&&value>=0&&value<5)subtitle_setting=value;
         else if(!strcmp(key,"scale")&&value>=2&&value<=3)subtitle_scale=value;
         else if(!strcmp(key,"delay")&&value>=-5&&value<=5)subtitle_delay=value;
         else if(!strncmp(key,"tv_hour_",8)&&strlen(key)==9&&key[8]>='0'&&key[8]<'0'+TV_BLOCKS)tv_blocks[key[8]-'0'].hour=value;
@@ -346,21 +346,22 @@ static int read_catalog(const char *path) {
     FILE *f=fopen(path,"r"); char line[6000];
     if(!f) { snprintf(status,sizeof(status),"CATALOG NOT FOUND - ADD CATALOG.TSV");return 0; }
     while(fgets(line,sizeof(line),f) && count<MAX_TITLES) {
-        char *fields[11],*p=line; int nf=0;
+        char *fields[12],*p=line; int nf=0;
         if(line[0]=='#'&&!strchr(line,'\t')){int pages,items;if(sscanf(line,"# pages=%d total=%d",&pages,&items)==2&&pages>0&&pages<=2000&&items>=0){listing_pages=pages;listing_total=items;}continue;}
         if(line[0]=='\n')continue;
         if(!strchr(line,'\n')&&!feof(f)) { int ch; while((ch=fgetc(f))!=EOF&&ch!='\n'){} continue; }
         line[strcspn(line,"\r\n")]=0;
-        while(nf<11){fields[nf++]=p;char *tab=strchr(p,'\t');if(!tab||nf==11)break;*tab=0;p=tab+1;}
-        if((nf!=4&&nf!=8&&nf!=9&&nf!=11)||!fields[0][0]||strchr(fields[nf-1],'\t'))continue;
+        while(nf<12){fields[nf++]=p;char *tab=strchr(p,'\t');if(!tab||nf==12)break;*tab=0;p=tab+1;}
+        if((nf!=4&&nf!=8&&nf!=9&&nf!=11&&nf!=12)||!fields[0][0]||strchr(fields[nf-1],'\t'))continue;
         Title *t=&titles[count];
         if(strlen(fields[0])>=sizeof(t->title)||strlen(fields[1])>=sizeof(t->meta)||strlen(fields[2])>=sizeof(t->poster)||strlen(fields[3])>=sizeof(t->url))continue;
         if(fields[3][0] && strncmp(fields[3],"https://",8) && strncmp(fields[3],"http://",7))continue;
         strcpy(t->title,fields[0]);strcpy(t->meta,fields[1]);strcpy(t->poster,fields[2]);strcpy(t->url,fields[3]);count++;
         if(nf>=8){snprintf(t->kind,sizeof(t->kind),"%s",fields[4]);t->id=atoi(fields[5]);t->season=atoi(fields[6]);t->episode=atoi(fields[7]);}
         if(nf>=9){t->height=atoi(fields[8]);if(t->height<0||t->height>1080)t->height=0;}
-        if(nf==11){if(strlen(fields[9])<sizeof(t->subs_eng))strcpy(t->subs_eng,fields[9]);
+        if(nf>=11){if(strlen(fields[9])<sizeof(t->subs_eng))strcpy(t->subs_eng,fields[9]);
             if(strlen(fields[10])<sizeof(t->subs_nor))strcpy(t->subs_nor,fields[10]);}
+        if(nf==12&&strlen(fields[11])<sizeof(t->subs_spa))strcpy(t->subs_spa,fields[11]);
     }
     fclose(f); filter();return count;
 }
@@ -461,8 +462,8 @@ static void auto_result(int success){
     if(f){while(fgets(line,sizeof(line),f)){
         if(line[0]=='#'&&!strchr(line,'\t')){int n;if(sscanf(line,"# pages=%d",&n)==1&&n>=1&&n<=7)pages=n;continue;}
         if(!strchr(line,'\n')&&!feof(f)){int ch;while((ch=fgetc(f))!=EOF&&ch!='\n'){}continue;}
-        line[strcspn(line,"\r\n")]=0;char *field[11],*part=line;int nf=0;
-        while(nf<11){field[nf++]=part;char *tab=strchr(part,'\t');if(!tab)break;*tab=0;part=tab+1;}
+        line[strcspn(line,"\r\n")]=0;char *field[12],*part=line;int nf=0;
+        while(nf<12){field[nf++]=part;char *tab=strchr(part,'\t');if(!tab)break;*tab=0;part=tab+1;}
         if(nf<8||atoi(field[5])!=auto_title.id||atoi(field[6])!=auto_title.season||atoi(field[7])!=auto_title.episode)continue;
         if(pending.mode==5&&!strcmp(field[4],"server")){
             size_t len=strlen(field[0]);int valid=len>0&&len<32;
@@ -473,8 +474,9 @@ static void auto_result(int success){
                  (!strncmp(field[3],"https://",8)||!strncmp(field[3],"http://",7))){
             /* First row is AUTO: player chooses the best compatible H.264 stream. */
             strcpy(source.url,field[3]);
-            if(nf==11){if(strlen(field[9])<sizeof(source.subs_eng))strcpy(source.subs_eng,field[9]);
+            if(nf>=11){if(strlen(field[9])<sizeof(source.subs_eng))strcpy(source.subs_eng,field[9]);
                 if(strlen(field[10])<sizeof(source.subs_nor))strcpy(source.subs_nor,field[10]);}
+            if(nf==12&&strlen(field[11])<sizeof(source.subs_spa))strcpy(source.subs_spa,field[11]);
         }
     }fclose(f);}
     if(source.url[0]){subtitle_route_log("auto-result",&source);launch_player(&source);if(!player_pid)auto_active=0;return;}
@@ -721,7 +723,7 @@ static void draw(Uint32 tick) {
 #endif
         char values[11][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
-        const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
+        const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",monochrome_menu?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");
         text(194,94,"SETTINGS",3,green,40);
         for(int i=0;i<11;i++){int y=134+i*27;rect(190,y-9,724,34,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
@@ -895,6 +897,8 @@ static void launch_player(const Title *t) {
          * The player chooses a track according to the subtitle setting. */
         if(t->subs_eng[0])setenv("FLXTR_SUBTITLE_ENGLISH",t->subs_eng,1);
         else unsetenv("FLXTR_SUBTITLE_ENGLISH");
+        if(t->subs_spa[0])setenv("FLXTR_SUBTITLE_SPANISH",t->subs_spa,1);
+        else unsetenv("FLXTR_SUBTITLE_SPANISH");
         if(t->subs_nor[0])setenv("FLXTR_SUBTITLE_NORWEGIAN",t->subs_nor,1);
         else unsetenv("FLXTR_SUBTITLE_NORWEGIAN");
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
@@ -1066,7 +1070,7 @@ static void action(SDL_Keycode key) {
                 case 1:buffer_setting=(buffer_setting+step+3)%3;break;
                 case 2:disk_setting=(disk_setting+step+3)%3;break;
                 case 3:coverflow=!coverflow;break;
-                case 4:subtitle_setting=(subtitle_setting+step+4)%4;break;
+                case 4:subtitle_setting=(subtitle_setting+step+5)%5;break;
                 case 5:subtitle_scale=subtitle_scale==2?3:2;break;
                 case 8:tv_breaks=!tv_breaks;break;
                 case 9:monochrome_menu=!monochrome_menu;apply_menu_theme();break;

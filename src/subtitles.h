@@ -25,7 +25,11 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
     }avsubtitle_free(&sub);
 }
 static void subtitle_draw(void){
+    static Uint32 next_poll;
     if(!view_context||origin==AV_NOPTS_VALUE||!clock_start)return;
+    Uint32 ticks=SDL_GetTicks();
+    if((Sint32)(ticks-next_poll)<0)return;
+    next_poll=ticks+40;
     int64_t now=(subtitle_external?subtitle_seek_us:origin)+av_gettime_relative()-clock_start-(int64_t)subtitle_delay*AV_TIME_BASE;
     int selected=-1;for(int i=0;i<SUBTITLE_MAX_CUES;i++)if(subtitle_cues[i].text[0]&&now>=subtitle_cues[i].start&&now<subtitle_cues[i].end)selected=i;
     if(selected==subtitle_visible)return;

@@ -13,7 +13,7 @@ runtime="$home/retroarch.exec"
 config="$home/.home/.config/retroarch/retroarch.cfg"
 [ -x "$runtime" ] && [ -r "$config" ] || { echo "RetroArch binary/config missing" >&2; exit 2; }
 tmp=$(mktemp -d /tmp/flxtr-snes-bench.XXXXXX)
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' 0 1 2 15
 # Uncap rendering, retaining the same settings for each core.
 cat > "$tmp/benchmark.cfg" <<'EOF'
 config_save_on_exit = "false"

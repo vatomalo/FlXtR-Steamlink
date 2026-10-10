@@ -1,6 +1,10 @@
 /* Small text-only subtitle renderer on SLVideo's overlay plane. */
 typedef struct {int64_t start,end;char text[512];} SubtitleCue;
-static SubtitleCue subtitle_cues[64];
+/* External text subtitle tracks may contain a complete episode of cues. */
+#define SUBTITLE_MAX_CUES 4096
+static SubtitleCue subtitle_cues[SUBTITLE_MAX_CUES];
+static int subtitle_external;
+static int64_t subtitle_seek_us;
 static CSLVideoOverlay *subtitle_overlay;
 static int subtitle_size=2,subtitle_delay,subtitle_visible=-1;
 #include "subtitle_text.h"
@@ -14,7 +18,7 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
     for(unsigned i=0;i<sub.num_rects;i++){
         const char *text=sub.rects[i]->text?sub.rects[i]->text:sub.rects[i]->ass;
         if(!text)continue;
-        int slot=0;for(int j=1;j<64;j++)if(subtitle_cues[j].end<subtitle_cues[slot].end)slot=j;
+        int slot=0;for(int j=1;j<SUBTITLE_MAX_CUES;j++)if(subtitle_cues[j].end<subtitle_cues[slot].end)slot=j;
         subtitle_cues[slot].start=start;subtitle_cues[slot].end=start+duration;
         subtitle_text(subtitle_cues[slot].text,sizeof(subtitle_cues[slot].text),text,!sub.rects[i]->text);
         if(subtitle_visible==slot)subtitle_visible=-2;
@@ -22,8 +26,8 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
 }
 static void subtitle_draw(void){
     if(!view_context||origin==AV_NOPTS_VALUE||!clock_start)return;
-    int64_t now=origin+av_gettime_relative()-clock_start-(int64_t)subtitle_delay*AV_TIME_BASE;
-    int selected=-1;for(int i=0;i<64;i++)if(subtitle_cues[i].text[0]&&now>=subtitle_cues[i].start&&now<subtitle_cues[i].end)selected=i;
+    int64_t now=(subtitle_external?subtitle_seek_us:origin)+av_gettime_relative()-clock_start-(int64_t)subtitle_delay*AV_TIME_BASE;
+    int selected=-1;for(int i=0;i<SUBTITLE_MAX_CUES;i++)if(subtitle_cues[i].text[0]&&now>=subtitle_cues[i].start&&now<subtitle_cues[i].end)selected=i;
     if(selected==subtitle_visible)return;
     if(selected<0){subtitle_visible=-1;if(subtitle_overlay)SLVideo_HideOverlay(subtitle_overlay);return;}
     if(!subtitle_overlay)subtitle_overlay=SLVideo_CreateOverlay(view_context,960,144);

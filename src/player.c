@@ -131,6 +131,11 @@ static int load_external_subtitles(const char *url){
     if(!subfmt)return -1;
     subfmt->interrupt_callback.callback=interrupt_io;
     AVDictionary *options=NULL;
+    /* MegaPlay caption endpoints enforce the same origin headers as video. */
+    if(megaplay){
+        av_dict_set(&options,"referer","https://megaplay.buzz/",0);
+        av_dict_set(&options,"user_agent","FlXtR-Steamlink/0.2",0);
+    }
     av_dict_set(&options,"tls_verify","1",0);
     av_dict_set(&options,"ca_file",ca_file,0);
     /* FFmpeg's HLS demuxer opens WebVTT segments through nested HTTPS. */
@@ -140,7 +145,7 @@ static int load_external_subtitles(const char *url){
     fprintf(stderr,"External subtitle: attempting HTTPS track\n");
     int rc=avformat_open_input(&subfmt,url,NULL,&options);
     av_dict_free(&options);
-    if(rc<0){fprintf(stderr,"External subtitle URL could not be opened: %d\n",rc);avformat_free_context(subfmt);return -1;}
+    if(rc<0){char reason[128];av_strerror(rc,reason,sizeof(reason));fprintf(stderr,"External subtitle URL could not be opened: %s (%d)\n",reason,rc);avformat_free_context(subfmt);return -1;}
     rc=avformat_find_stream_info(subfmt,NULL);
     int stream=-1;
     if(rc>=0)for(unsigned i=0;i<subfmt->nb_streams;i++){

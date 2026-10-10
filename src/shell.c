@@ -1076,6 +1076,7 @@ static void finish_player(int code){
         unlink("playback-request");
         if(!valid||command<1||command>8||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
         viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings();
+        if(tv_active&&!tv_in_break&&(command==7||command==8))tv_resume_save(&auto_title);
         if(command==7){tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
         if(command==8){
             auto_active=0;tv_active=0;

@@ -166,8 +166,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -440,7 +440,7 @@ static LibraryPage library_pages[LIBRARY_RAM_CACHE];
 static unsigned library_cache_cursor;
 static int library_cacheable(int mode){
     return mode==1||mode==2||mode==3||mode==4||mode==7||mode==8||
-        mode==9||mode==10||mode==14||mode==15||mode==17||mode==18||
+        mode==9||mode==10||mode==14||mode==15||mode==17||mode==18||mode==30||mode==31||
         mode==20||mode==21||mode==22||mode==23||mode==24;
 }
 static int library_page_equals(const Browse *a,const Browse *b){
@@ -793,14 +793,15 @@ static void draw(Uint32 tick) {
     text(30,92,"LIBRARY",2,green,12);
     int root_mode=history_size?history[0].mode:browse.mode;
     if(root_mode==14||root_mode==22)root_mode=21;
-    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,21,9,0};
+    if(root_mode==9||root_mode==10||root_mode==31)root_mode=30;
+    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,21,30,0};
     const char *const menu_names[]={"TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","LOCAL"};
     for(int i=0;i<8;i++){
         char line[32];snprintf(line,sizeof(line),"%c %s",root_mode==menu_modes[i]?'>':' ',menu_names[i]);
         text(30,124+i*21,line,1,root_mode==menu_modes[i]?green:dim,18);
     }
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[L3] ROM FOLDERS":browse.mode==28?"[Y] DELETE ZIP":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L3 ROM FOLDERS":"B BACK / L3 FAVORITE",1,dim,22);
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[L3] ROM FOLDERS":browse.mode==28?"[Y] DELETE ZIP":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L3 ROM FOLDERS":"B BACK / L3 FAVORITE",1,dim,22);
     if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
         const char *genre=browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
@@ -941,6 +942,11 @@ static void play(void) {
     }
     if(!strcmp(t->kind,"downloads-folder")){Browse next={28,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!strcmp(t->kind,"download-zip")){Browse next={26,1,t->id,1,0,0,"",""};request_catalog(next,1,0);return;}
+    if(!strcmp(t->kind,"archive-folder")){
+        Browse next={t->id==8?9:31,1,t->id,0,0,0,"",""};
+        snprintf(next.name,sizeof(next.name),"%s",t->title);
+        request_catalog(next,1,0);return;
+    }
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
@@ -1321,14 +1327,15 @@ static void action(SDL_Keycode key) {
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){
-        const int modes[]={11,FAVORITES_MODE,1,2,7,21,9,0};
+        const int modes[]={11,FAVORITES_MODE,1,2,7,21,30,0};
         int current=history_size?history[0].mode:browse.mode,index=0;
         if(current==14||current==22)current=21;
+        if(current==9||current==10||current==31)current=30;
         for(int i=0;i<8;i++)if(modes[i]==current){index=i;break;}
         Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%8];
         history_size=0;request_catalog(next,0,0);
     }
-    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
+    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
     else if(key==SDLK_y)stars_on=!stars_on;

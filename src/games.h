@@ -170,16 +170,20 @@ static int games_run(void){
     json_object *games=games_read("games.json");
     if(!games||!json_object_is_type(games,json_type_array)||id>(int)json_object_array_length(games)){json_object_put(games);return 2;}
     json_object *g=json_object_array_get_idx(games,id-1);const char *rom=string(g,"rom"),*core=string(g,"core");
-    /* A per-ROM selection is opt-in and does not ask before every launch.
-     * Validate the selected core and restrict SNES cores to SNES content. */
+    /* ROM-specific core selection overrides inferred or playlist defaults.
+     * Accept names only, never paths from the TSV, and require an installed
+     * readable Libretro shared object. */
     char selected_core[PATH_MAX]={0};
     FILE *choices=fopen("game-cores.tsv","r");
     if(choices){
-        char row[256],title[80],name[48];int selected_id;
+        char row[256],title[80],name[96];int selected_id;
         while(fgets(row,sizeof(row),choices)){
-            if(sscanf(row,"%d\t%79[^\t]\t%47[^\n]",&selected_id,title,name)!=3)continue;
+            if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,title,name)!=3)continue;
             if(selected_id!=id||strcmp(title,string(g,"title")))continue;
-            if(strncmp(name,"snes9x",6)||!game_core(rom)||strncmp(game_core(rom),"snes9x",6))continue;
+            size_t len=strlen(name);int valid=len>0&&len<80;
+            for(size_t j=0;j<len;j++)
+                if(!isalnum((unsigned char)name[j])&&name[j]!='_'&&name[j]!='-')valid=0;
+            if(!valid)continue;
             snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro.so",games_home(),name);
             if(!game_file(selected_core))
                 snprintf(selected_core,sizeof(selected_core),"%s/.home/.config/retroarch/cores/%s_libretro.so",games_home(),name);

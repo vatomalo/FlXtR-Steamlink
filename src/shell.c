@@ -28,7 +28,7 @@
 #define MAX_TITLES 128
 #define VISIBLE 6
 #define STARS 56
-typedef struct { char title[80],meta[96],poster[192],url[2048],kind[16];int id,season,episode,height; } Title;
+typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],kind[16];int id,season,episode,height; } Title;
 static Title titles[MAX_TITLES];
 static int count, selection, ready_only, about, stars_on=1, running=1;
 static int visible[MAX_TITLES], total, cached_page=-1;
@@ -337,19 +337,21 @@ static int read_catalog(const char *path) {
     FILE *f=fopen(path,"r"); char line[2600];
     if(!f) { snprintf(status,sizeof(status),"CATALOG NOT FOUND - ADD CATALOG.TSV");return 0; }
     while(fgets(line,sizeof(line),f) && count<MAX_TITLES) {
-        char *fields[9],*p=line; int nf=0;
+        char *fields[11],*p=line; int nf=0;
         if(line[0]=='#'&&!strchr(line,'\t')){int pages,items;if(sscanf(line,"# pages=%d total=%d",&pages,&items)==2&&pages>0&&pages<=2000&&items>=0){listing_pages=pages;listing_total=items;}continue;}
         if(line[0]=='\n')continue;
         if(!strchr(line,'\n')&&!feof(f)) { int ch; while((ch=fgetc(f))!=EOF&&ch!='\n'){} continue; }
         line[strcspn(line,"\r\n")]=0;
-        while(nf<9){fields[nf++]=p;char *tab=strchr(p,'\t');if(!tab||nf==9)break;*tab=0;p=tab+1;}
-        if((nf!=4&&nf!=8&&nf!=9)||!fields[0][0]||strchr(fields[nf-1],'\t'))continue;
+        while(nf<11){fields[nf++]=p;char *tab=strchr(p,'\t');if(!tab||nf==11)break;*tab=0;p=tab+1;}
+        if((nf!=4&&nf!=8&&nf!=9&&nf!=11)||!fields[0][0]||strchr(fields[nf-1],'\t'))continue;
         Title *t=&titles[count];
         if(strlen(fields[0])>=sizeof(t->title)||strlen(fields[1])>=sizeof(t->meta)||strlen(fields[2])>=sizeof(t->poster)||strlen(fields[3])>=sizeof(t->url))continue;
         if(fields[3][0] && strncmp(fields[3],"https://",8) && strncmp(fields[3],"http://",7))continue;
         strcpy(t->title,fields[0]);strcpy(t->meta,fields[1]);strcpy(t->poster,fields[2]);strcpy(t->url,fields[3]);count++;
         if(nf>=8){snprintf(t->kind,sizeof(t->kind),"%s",fields[4]);t->id=atoi(fields[5]);t->season=atoi(fields[6]);t->episode=atoi(fields[7]);}
-        if(nf==9){t->height=atoi(fields[8]);if(t->height<0||t->height>1080)t->height=0;}
+        if(nf>=9){t->height=atoi(fields[8]);if(t->height<0||t->height>1080)t->height=0;}
+        if(nf==11){if(strlen(fields[9])<sizeof(t->subs_eng))strcpy(t->subs_eng,fields[9]);
+            if(strlen(fields[10])<sizeof(t->subs_nor))strcpy(t->subs_nor,fields[10]);}
     }
     fclose(f); filter();return count;
 }
@@ -450,8 +452,8 @@ static void auto_result(int success){
     if(f){while(fgets(line,sizeof(line),f)){
         if(line[0]=='#'&&!strchr(line,'\t')){int n;if(sscanf(line,"# pages=%d",&n)==1&&n>=1&&n<=7)pages=n;continue;}
         if(!strchr(line,'\n')&&!feof(f)){int ch;while((ch=fgetc(f))!=EOF&&ch!='\n'){}continue;}
-        line[strcspn(line,"\r\n")]=0;char *field[9],*part=line;int nf=0;
-        while(nf<9){field[nf++]=part;char *tab=strchr(part,'\t');if(!tab)break;*tab=0;part=tab+1;}
+        line[strcspn(line,"\r\n")]=0;char *field[11],*part=line;int nf=0;
+        while(nf<11){field[nf++]=part;char *tab=strchr(part,'\t');if(!tab)break;*tab=0;part=tab+1;}
         if(nf<8||atoi(field[5])!=auto_title.id||atoi(field[6])!=auto_title.season||atoi(field[7])!=auto_title.episode)continue;
         if(pending.mode==5&&!strcmp(field[4],"server")){
             size_t len=strlen(field[0]);int valid=len>0&&len<32;
@@ -462,6 +464,8 @@ static void auto_result(int success){
                  (!strncmp(field[3],"https://",8)||!strncmp(field[3],"http://",7))){
             /* First row is AUTO: player chooses the best compatible H.264 stream. */
             strcpy(source.url,field[3]);
+            if(nf==11){if(strlen(field[9])<sizeof(source.subs_eng))strcpy(source.subs_eng,field[9]);
+                if(strlen(field[10])<sizeof(source.subs_nor))strcpy(source.subs_nor,field[10]);}
         }
     }fclose(f);}
     if(source.url[0]){launch_player(&source);if(!player_pid)auto_active=0;return;}
@@ -856,6 +860,12 @@ static void launch_player(const Title *t) {
         int log=open("player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
         const char *modes[]={"fit","stretch","pixel"};
+        /* Keep externally supplied caption URLs separate from media URLs.
+         * The player chooses a track according to the subtitle setting. */
+        if(t->subs_eng[0])setenv("FLXTR_SUBTITLE_ENGLISH",t->subs_eng,1);
+        else unsetenv("FLXTR_SUBTITLE_ENGLISH");
+        if(t->subs_nor[0])setenv("FLXTR_SUBTITLE_NORWEGIAN",t->subs_nor,1);
+        else unsetenv("FLXTR_SUBTITLE_NORWEGIAN");
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];

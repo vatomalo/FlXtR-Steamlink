@@ -12,8 +12,18 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
     AVSubtitle sub={0};int got=0;
     if(avcodec_decode_subtitle2(decoder,&sub,&got,packet)<0||!got){avsubtitle_free(&sub);return;}
     int64_t start=packet->pts==AV_NOPTS_VALUE?0:av_rescale_q(packet->pts,stream->time_base,AV_TIME_BASE_Q);
-    int64_t duration=sub.end_display_time>sub.start_display_time?(int64_t)(sub.end_display_time-sub.start_display_time)*1000:
-        packet->duration>0?av_rescale_q(packet->duration,stream->time_base,AV_TIME_BASE_Q):5000000;
+    /* WebVTT and SRT demuxers provide the actual cue span in packet.duration.
+     * Decoder display times can be rounded or shortened, cutting off lines
+     * even when their starting timestamps are perfectly synchronized. */
+    int64_t packet_duration=packet->duration>0?
+        av_rescale_q(packet->duration,stream->time_base,AV_TIME_BASE_Q):0;
+    int64_t decoder_duration=sub.end_display_time>sub.start_display_time?
+        (int64_t)(sub.end_display_time-sub.start_display_time)*1000:0;
+    int64_t duration=(stream->codecpar->codec_id==AV_CODEC_ID_WEBVTT||
+                      stream->codecpar->codec_id==AV_CODEC_ID_SUBRIP)?
+        (packet_duration>0?packet_duration:decoder_duration):
+        (decoder_duration>0?decoder_duration:packet_duration);
+    if(duration<=0)duration=5000000;
     start+=(int64_t)sub.start_display_time*1000;
     for(unsigned i=0;i<sub.num_rects;i++){
         const char *text=sub.rects[i]->text?sub.rects[i]->text:sub.rects[i]->ass;

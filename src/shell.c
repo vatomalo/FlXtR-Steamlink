@@ -905,7 +905,8 @@ static void draw(Uint32 tick) {
             if(progress){if(fscanf(progress,"%lld %lld",&done,&size)!=2){done=0;size=0;}fclose(progress);}
             char label[112];
             if(size>0){
-                if(done<0)done=0;if(done>size)done=size;
+                if(done<0)done=0;
+                if(done>size)done=size;
                 snprintf(label,sizeof(label),"DOWNLOADING %d%%  %lld / %lld KB",(int)(done*100/size),done/1024,size/1024);
                 rect(210,259,636,14,dim,1);
                 rect(210,259,(int)(636*done/size),14,green,1);

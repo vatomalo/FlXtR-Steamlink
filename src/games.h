@@ -39,6 +39,17 @@ static void game_infer(json_object *games,const char *rom,const char *label){
     const char *name=game_core(rom);if(!name)return;char core[PATH_MAX];
     snprintf(core,sizeof(core),"%s/cores/%s_libretro.so",games_home(),name);
     if(!game_file(core))snprintf(core,sizeof(core),"%s/.home/.config/retroarch/cores/%s_libretro.so",games_home(),name);
+    /* SNES9x 2002 is significantly lighter than 2005 on the single-core
+     * Cortex-A9. Prefer it only for inferred ROMs when already installed;
+     * explicit playlist core choices remain untouched. Games requiring
+     * newer emulation features still fall back to SNES9x 2005. */
+    if(!strcmp(name,"snes9x2005")){
+        char faster[PATH_MAX];
+        snprintf(faster,sizeof(faster),"%s/cores/snes9x2002_libretro.so",games_home());
+        if(!game_file(faster))
+            snprintf(faster,sizeof(faster),"%s/.home/.config/retroarch/cores/snes9x2002_libretro.so",games_home());
+        if(game_file(faster))snprintf(core,sizeof(core),"%s",faster);
+    }
     /* Steam Link RetroArch installations may ship MAME instead of FBNeo. */
     if(!game_file(core)&&!strcmp(name,"fbneo")){
         snprintf(core,sizeof(core),"%s/cores/mame2003_plus_libretro.so",games_home());

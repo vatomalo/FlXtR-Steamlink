@@ -15,7 +15,7 @@
 #include "browse_filters.h"
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
 #define PAGE_SIZE 6
-typedef struct {char title[80],meta[96],poster[512],url[2048],kind[16];int id,season,episode;} Entry;
+typedef struct {char title[80],meta[96],poster[512],url[2048],subs_eng[1024],subs_nor[1024],kind[16];int id,season,episode;} Entry;
 typedef struct {char *data;size_t length,limit;} Buffer;
 static Entry entries[PAGE_SIZE];
 static int used,total,cache_slot;
@@ -313,6 +313,8 @@ int main(int argc,char **argv){
     if(cacheable)cache_save();
 output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);
-    for(int i=0;i<used;i++){Entry *e=&entries[i];printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode);}
+    for(int i=0;i<used;i++){Entry *e=&entries[i];if(!strcmp(e->kind,"source")&&(e->subs_eng[0]||e->subs_nor[0]))
+            printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t0\t%s\t%s\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode,e->subs_eng,e->subs_nor);
+        else printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode);}
     curl_global_cleanup();return ferror(stdout)?1:0;
 }

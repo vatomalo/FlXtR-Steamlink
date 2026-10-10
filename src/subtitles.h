@@ -46,25 +46,27 @@ static void subtitle_draw(void){
     /* Select by cue start time, not array slot. FFmpeg can deliver overlapping
      * cues in a different order, and a short WebVTT duration must not blank
      * the screen before the next line when the dialogue is continuous. */
-    int selected=-1,next=-1;
-    int64_t best_start=INT64_MIN,next_start=INT64_MAX;
-    for(int i=0;i<SUBTITLE_MAX_CUES;i++){
-        const SubtitleCue *cue=&subtitle_cues[i];
-        if(!cue->text[0])continue;
-        if(cue->start>now){
-            if(cue->start<next_start){next_start=cue->start;next=i;}
-            continue;
-        }
-        if(cue->start>=best_start){
+    /* Most polls occur within the current cue. Avoid scanning all 4096
+     * slots on every controller tick while that cue remains valid. */
+    int selected=-1;
+    if(subtitle_visible>=0&&subtitle_visible<SUBTITLE_MAX_CUES){
+        const SubtitleCue *current=&subtitle_cues[subtitle_visible];
+        if(current->text[0]&&now>=current->start&&now<current->end)
+            selected=subtitle_visible;
+    }
+    if(selected<0){
+        int64_t best_start=INT64_MIN;
+        for(int i=0;i<SUBTITLE_MAX_CUES;i++){
+            const SubtitleCue *cue=&subtitle_cues[i];
+            if(!cue->text[0]||now<cue->start)continue;
             int64_t end=cue->end;
-            /* Small presentation grace for truncated cue durations. Never
-             * overlap a later subtitle or hold a line through a long pause. */
             if(subtitle_external&&end>cue->start&&end<=now&&now-end<700000)
                 end+=700000;
-            if(now<end){best_start=cue->start;selected=i;}
+            if(now<end&&cue->start>=best_start){
+                best_start=cue->start;selected=i;
+            }
         }
     }
-    (void)next;
     if(selected==subtitle_visible)return;
     if(subtitle_external&&subtitle_visible>=0&&selected<0){
         const SubtitleCue *previous=&subtitle_cues[subtitle_visible];

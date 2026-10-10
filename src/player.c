@@ -401,6 +401,7 @@ int main(int argc,char **argv) {
         if(track==vi){
             rc=av_bsf_send_packet(bsf,packet);if(rc<0)break;
             while((rc=av_bsf_receive_packet(bsf,filtered))>=0){
+                int64_t handoff_start=av_gettime_relative();
                 if(filtered->size>8*1024*1024||SLVideo_BeginFrame(video,filtered->size)<0||
                    SLVideo_WriteFrameData(video,filtered->data,filtered->size)<0||SLVideo_SubmitFrame(video)<0){
                     fprintf(stderr,"Hardware decoder rejected frame %u\n",frames);av_packet_unref(filtered);goto done;
@@ -408,9 +409,9 @@ int main(int argc,char **argv) {
                 static unsigned slow_submissions;
                 /* Time the hardware handoff, not just CPU utilization. */
                 int64_t submitted_at=av_gettime_relative();
-                if(submitted_at-wait_start>150000&&slow_submissions++<30)
-                    fprintf(stderr,"Video packet processing delay: %.1f ms frame=%u\n",
-                        (submitted_at-wait_start)/1000.0,frames);
+                if(submitted_at-handoff_start>20000&&slow_submissions++<30)
+                    fprintf(stderr,"Hardware frame submission delay: %.1f ms frame=%u\n",
+                        (submitted_at-handoff_start)/1000.0,frames);
                 frames++;av_packet_unref(filtered);
             }
             if(rc==AVERROR(EAGAIN)||rc==AVERROR_EOF)rc=0;

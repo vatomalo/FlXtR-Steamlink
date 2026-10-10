@@ -49,4 +49,23 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'input_enable_hotkey_btn = "4"' in (root/'game-runtime.cfg').read_text()
     (root/'game-request').write_text('99999 4 6\n')
     assert subprocess.run([str(worker),'--run-game'],cwd=root,env=env).returncode==2
+    import zipfile
+    modern=home/'roms/MAME/lastblad.zip'
+    modern.parent.mkdir(exist_ok=True)
+    with zipfile.ZipFile(modern,'w') as z:
+        z.writestr('234-p1.p1',b'program')
+        z.writestr('234-c1.c1',b'graphics')
+    (home/'cores/fbalpha2012_neogeo_libretro.so').write_bytes(b'core fixture')
+    (home/'cores/fbneo_libretro.so').unlink()
+    (root/'system').mkdir()
+    (root/'system/neogeo.zip').write_bytes(b'user BIOS fixture')
+    run(refresh=1)
+    games=json.loads((root/'games.json').read_text())
+    index=next(i for i,g in enumerate(games,1) if g['rom']==str(modern))
+    assert games[index-1]['core'].endswith('fbalpha2012_neogeo_libretro.so')
+    (root/'game-request').write_text(f'{index} 4 6\n')
+    subprocess.run([str(worker),'--run-game'],cwd=root,env=env,check=True)
+    assert (modern.parent/'neogeo.zip').is_symlink()
+    assert (modern.parent/'neogeo.zip').resolve()==root/'system/neogeo.zip'
+
 print('PASS: JSON/legacy import, deduplication, bounded paging, unknown core exclusion, exact argv and exit hotkeys')

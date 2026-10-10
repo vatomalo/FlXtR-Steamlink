@@ -139,26 +139,31 @@ static int hls_attribute(const char *line,const char *key,char *out,size_t cap){
     return 0;
 }
 static int hls_resolve_uri(const char *base,const char *uri,char *out,size_t size){
+    if(!base||strncmp(base,"https://",8)||!uri||!out||!size)return 0;
+    size_t length=strlen(uri);
+    if(!length||strchr(uri,'\\')||strpbrk(uri,"\r\n\t")||
+       strstr(uri,"../")||!strncmp(uri,"//",2))return 0;
     if(!strncmp(uri,"https://",8)){
-        if(strlen(uri)>=size)return 0;
-        strcpy(out,uri);return 1;
+        if(length>=size)return 0;
+        memcpy(out,uri,length+1);return 1;
     }
-    if(!*uri||uri[0]=='/'&&uri[1]=='/'||strchr(uri,'\\')||strpbrk(uri,"\r\n\t")||
-       strstr(uri,"../")||!strncmp(uri,"http:",5)||!strncmp(uri,"file:",5))return 0;
-    if(!strncmp(uri,"/",1)){
+    if(strstr(uri,"://")||!strncmp(uri,"http:",5)||!strncmp(uri,"file:",5))return 0;
+    size_t prefix=0;
+    if(uri[0]=='/'){
         const char *host=strchr(base+8,'/');
-        size_t origin=host?(size_t)(host-base):strlen(base);
-        if(origin+strlen(uri)>=size)return 0;
-        snprintf(out,size,"%.*s%s",(int)origin,base,uri);return 1;
+        prefix=host?(size_t)(host-base):strlen(base);
+    }else{
+        const char *query=strchr(base,'?');
+        size_t limit=query?(size_t)(query-base):strlen(base);
+        const char *slash=NULL;
+        for(size_t i=8;i<limit;i++)if(base[i]=='/')slash=base+i;
+        if(!slash)return 0;
+        prefix=(size_t)(slash-base)+1;
     }
-    const char *query=strchr(base,'?');
-    size_t limit=query?(size_t)(query-base):strlen(base);
-    const char *slash=NULL;
-    for(size_t i=8;i<limit;i++)if(base[i]=='/')slash=base+i;
-    if(!slash)return 0;
-    size_t prefix=(size_t)(slash-base)+1;
-    if(prefix+strlen(uri)>=size)return 0;
-    snprintf(out,size,"%.*s%s",(int)prefix,base,uri);return 1;
+    if(prefix>=size||length>=size-prefix)return 0;
+    memcpy(out,base,prefix);
+    memcpy(out+prefix,uri,length+1);
+    return 1;
 }
 static void hls_subtitles(char *manifest,const char *base,char *eng,char *nor){
     if(strncmp(manifest,"#EXTM3U",7))return;

@@ -104,11 +104,11 @@ static int local_category(const char *core,const char *rom){
     return 10;
 }
 static int games_folders(int page){
-    total=11;
-    for(int i=(page-1)*PAGE_SIZE;i<11&&used<PAGE_SIZE;i++){
-        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==10?"DOWNLOADS":local_folders[i]);
+    total=12;
+    for(int i=(page-1)*PAGE_SIZE;i<12&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==10?"DOWNLOADS":i==11?"SCUMMVM":local_folders[i]);
         snprintf(e->meta,sizeof(e->meta),"[ %s ] / A OPEN FOLDER",i==10?"DOWNLOADS":local_folders[i]);
-        strcpy(e->kind,i==10?"downloads-folder":"game-folder");e->id=i+1;
+        strcpy(e->kind,i==10?"downloads-folder":i==11?"scummvm-launch":"game-folder");e->id=i+1;
     }
     return 0;
 }
@@ -163,7 +163,21 @@ static int games_list(int page,int refresh){return games_list_filtered(page,refr
 static int games_system(int page,int folder){return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;}
 static int games_run(void){
     int id=0,back=-1,start=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
-    int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<1||id>GAME_LIMIT)return 2;
+    int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
+    if(id==0){
+        /* Launch the installed ScummVM frontend and its configured games. */
+        const char *paths[]={"/home/apps/scummvm/scummvm.exec",
+            "/home/apps/scummvm/scummvm","/home/apps/scummvm/bin/scummvm",
+            "/usr/local/bin/scummvm","/usr/bin/scummvm"};
+        for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
+            if(access(paths[i],X_OK)==0){
+                execl(paths[i],paths[i],(char*)NULL);
+                fprintf(stderr,"ScummVM launch failed: %s (%s)\n",paths[i],strerror(errno));
+            }
+        }
+        fprintf(stderr,"ScummVM executable not found in known installation locations\n");
+        return 2;
+    }
     json_object *games=games_read("games.json");
     if(!games||!json_object_is_type(games,json_type_array)||id>(int)json_object_array_length(games)){json_object_put(games);return 2;}
     json_object *g=json_object_array_get_idx(games,id-1);const char *rom=string(g,"rom"),*core=string(g,"core");

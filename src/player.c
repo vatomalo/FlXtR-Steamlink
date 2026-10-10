@@ -77,6 +77,13 @@ static void apply_view(int notify) {
 #include "playback_menu.h"
 static void playback_controls(void) {
     menu_poll();
+    /* Refresh the playback timeline once per second while the menu is open. */
+    static Uint32 menu_next_refresh;
+    Uint32 menu_now=SDL_GetTicks();
+    if(menu_open&&(Sint32)(menu_now-menu_next_refresh)>=0){
+        menu_next_refresh=menu_now+1000;
+        menu_draw();
+    }
     if(!menu_open&&!overlay_until)subtitle_draw();
     if(change_view&&view_context){change_view=0;viewing=(viewing+1)%VIEW_COUNT;apply_view(1);}
     if(overlay_until&&(Sint32)(SDL_GetTicks()-overlay_until)>=0){SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}

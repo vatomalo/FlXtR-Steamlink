@@ -161,6 +161,7 @@ static int auto_active,auto_count,auto_index;
 static char auto_servers[40][32];
 static Title auto_title;
 static Uint32 catalog_started;
+static int download_background;
 static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
@@ -498,6 +499,8 @@ static void request_catalog(Browse next,int push,int pop){
     for(int i=0;i<VISIBLE;i++){char path[80];snprintf(path,sizeof(path),"catalog-cache/poster-%d.next.bmp",i);unlink(path);}
     browse.selected=selection;pending=next;pending_push=push;pending_pop=pop;
     catalog_started=SDL_GetTicks();
+    download_background=0;
+    if(next.mode==19||next.mode==16)unlink("catalog-cache/download-progress");
     catalog_pid=fork();
     if(!catalog_pid){
         int out=open("catalog-cache/result.tsv",O_WRONLY|O_CREAT|O_TRUNC,0600),log=open("catalog.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
@@ -560,6 +563,7 @@ static void finish_catalog(void){
     if(auto_active&&SDL_GetTicks()-catalog_started>70000)kill(catalog_pid,SIGKILL);
     int code;pid_t p=waitpid(catalog_pid,&code,WNOHANG);if(p!=catalog_pid)return;
     catalog_pid=0;
+    download_background=0;
     if(auto_active){auto_result(WIFEXITED(code)&&!WEXITSTATUS(code));return;}
     if(pending.mode==13){
         if(tv_active&&WIFEXITED(code)&&!WEXITSTATUS(code)){
@@ -891,7 +895,28 @@ static void draw(Uint32 tick) {
         snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
     }
     if(bios_archive_confirm){rect(190,210,680,110,green,0);text(207,225,"ARCHIVE BIOS / COPYRIGHT WARNING",2,green,45);text(207,259,"CONFIRM RIGHTS AND SOURCE BEFORE INSTALL",1,white,75);text(207,289,"A DOWNLOAD / B OR X CANCEL",2,green,42);}
-    if(catalog_pid){rect(190,227,680,70,background?(SDL_Color){248,250,249,255}:(SDL_Color){0,0,0,255},1);rect(190,227,680,70,green,0);text(212,250,auto_active?"FINDING A WORKING SERVER... B CANCEL":"LOADING... B TO CANCEL",2,green,50);}
+    if(catalog_pid&&!download_background){
+        int transfer=pending.mode==19||pending.mode==16;
+        rect(190,209,680,112,background?(SDL_Color){248,250,249,255}:(SDL_Color){0,0,0,255},1);
+        rect(190,209,680,112,green,0);
+        if(transfer){
+            long long done=0,size=0;
+            FILE *progress=fopen("catalog-cache/download-progress","r");
+            if(progress){if(fscanf(progress,"%lld %lld",&done,&size)!=2){done=0;size=0;}fclose(progress);}
+            char label[112];
+            if(size>0){
+                if(done<0)done=0;if(done>size)done=size;
+                snprintf(label,sizeof(label),"DOWNLOADING %d%%  %lld / %lld KB",(int)(done*100/size),done/1024,size/1024);
+                rect(210,259,636,14,dim,1);
+                rect(210,259,(int)(636*done/size),14,green,1);
+            }else{
+                snprintf(label,sizeof(label),"DOWNLOADING  %lld KB / SIZE UNKNOWN",done/1024);
+                rect(210,259,636,14,dim,0);
+            }
+            text(212,226,label,2,green,70);
+            text(212,287,"X HIDE PROGRESS / B CANCEL",1,green,65);
+        }else text(212,250,auto_active?"FINDING A WORKING SERVER... B CANCEL":"LOADING... B TO CANCEL",2,green,50);
+    }
     rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(713,509,"DPAD MOVE / B BACK",1,green,30);
     SDL_RenderPresent(renderer);
 }
@@ -1170,6 +1195,7 @@ static void action(SDL_Keycode key) {
         return;
     }
     if(catalog_pid){
+        if(key==SDLK_F2&&(pending.mode==19||pending.mode==16)){download_background=1;snprintf(status,sizeof(status),"DOWNLOAD RUNNING / B CANCEL");return;}
         if(key==SDLK_F2&&auto_active){
             kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
             if(pending.mode==6){auto_index++;auto_next();}

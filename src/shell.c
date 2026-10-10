@@ -104,10 +104,11 @@ static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
 static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column;
-static int tv_breaks=1,tv_break_due,tv_in_break,filters_on,filter_row,filter_original_genre,filter_original_order;
+static int tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
+static void tv_prepare_next(void);
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
@@ -564,6 +565,8 @@ static void finish_catalog(void){
             count=total=0;selection=0;read_catalog("catalog-cache/result.tsv");
             if(total&&!strcmp(titles[visible[0]].kind,"tv-break")){tv_in_break=1;launch_player(&titles[visible[0]]);if(!player_pid)tv_in_break=0;}
         }
+        if(!tv_in_break)fprintf(stderr,"TV commercial unavailable; continuing without a break\n");
+        else tv_prepare_next();
         tv_next_at=0;return;
     }
     if(pending.mode==12){
@@ -971,8 +974,17 @@ static void tv_candidate(void){
     Title *t=&titles[visible[0]];if(strcmp(t->kind,"episode")||t->id<1)return;
     tv_recent_add(t->id,t->season,t->episode);
     fprintf(stderr,"TV selected %d S%d E%d: %s\n",t->id,t->season,t->episode,t->title);
-    auto_title=*t;auto_active=1;auto_count=auto_index=0;auto_resume=restart_position=0;
+    auto_title=*t;auto_count=auto_index=0;auto_resume=restart_position=0;
+    if(tv_in_break){tv_prepared=1;fprintf(stderr,"TV prepared during commercial: %d S%d E%d\n",t->id,t->season,t->episode);return;}
+    auto_active=1;
     Browse next={5,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);auto_request(next);
+}
+static void tv_prepare_next(void){
+    if(!tv_active||catalog_pid||tv_prepared)return;
+    int block=tv_block_at(tv_blocks,tv_hour());
+    Browse next={12,1,tv_sequence("tv-sequence.txt"),0,0,0,"",""};
+    snprintf(next.query,sizeof(next.query),"%d",tv_blocks[block].genre);
+    request_catalog(next,0,0);
 }
 static void tv_tick(void){
     if(!tv_active||catalog_pid||player_pid||auto_active||settings_on||tv_schedule_on||(Sint32)(SDL_GetTicks()-tv_next_at)<0)return;
@@ -1059,7 +1071,18 @@ static void finish_player(int code){
         if(page>=1&&page<=listing_pages){play_after_load=1;next_catalog_page(direction);return;}
         snprintf(status,sizeof(status),"NO MORE EPISODES IN THIS SEASON");return;
     }
-    if(tv_in_break){tv_in_break=0;tv_attempts=0;tv_next_at=0;if(cancelled)tv_active=0;snprintf(status,sizeof(status),"BACK TO TV / SELECTING NEXT PROGRAM");return;}
+    if(tv_in_break){
+        tv_in_break=0;tv_attempts=0;tv_next_at=0;
+        if(cancelled){tv_active=0;tv_prepared=0;return;}
+        if(tv_prepared){
+            tv_prepared=0;auto_active=1;auto_count=auto_index=0;
+            Browse next={5,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
+            snprintf(next.name,sizeof(next.name),"%s",auto_title.title);
+            auto_request(next);
+            return;
+        }
+        snprintf(status,sizeof(status),"BACK TO TV / SELECTING NEXT PROGRAM");return;
+    }
     if(WIFEXITED(code)&&WEXITSTATUS(code)==44){auto_active=0;snprintf(status,sizeof(status),"SERVER CANNOT SEEK - SELECT TITLE TO RESTART");return;}
     if(auto_active&&!cancelled&&(!WIFEXITED(code)||WEXITSTATUS(code))){auto_index++;auto_next();return;}
     auto_active=0;
@@ -1208,7 +1231,7 @@ static void action(SDL_Keycode key) {
             }save_settings();
         }return;
     }
-    if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=0;tv_tick();return;}
+    if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=tv_prepared=0;tv_tick();return;}
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){start_update();return;}
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}

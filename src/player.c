@@ -128,14 +128,14 @@ static int load_external_subtitles(const char *url){
     av_dict_set(&options,"rw_timeout","12000000",0);
     int rc=avformat_open_input(&subfmt,url,NULL,&options);
     av_dict_free(&options);
-    if(rc<0){fprintf(stderr,"External subtitle URL could not be opened: %d\\n",rc);avformat_free_context(subfmt);return -1;}
+    if(rc<0){fprintf(stderr,"External subtitle URL could not be opened: %d\n",rc);avformat_free_context(subfmt);return -1;}
     rc=avformat_find_stream_info(subfmt,NULL);
     int stream=-1;
     if(rc>=0)for(unsigned i=0;i<subfmt->nb_streams;i++){
         enum AVCodecID codec=subfmt->streams[i]->codecpar->codec_id;
         if(codec==AV_CODEC_ID_SUBRIP||codec==AV_CODEC_ID_WEBVTT){stream=(int)i;break;}
     }
-    if(stream<0){fprintf(stderr,"External subtitle has no SRT/WebVTT stream\\n");avformat_close_input(&subfmt);return -1;}
+    if(stream<0){fprintf(stderr,"External subtitle has no SRT/WebVTT stream\n");avformat_close_input(&subfmt);return -1;}
     AVCodecParameters *parameters=subfmt->streams[stream]->codecpar;
     const AVCodec *decoder=avcodec_find_decoder(parameters->codec_id);
     AVCodecContext *context=decoder?avcodec_alloc_context3(decoder):NULL;
@@ -158,7 +158,7 @@ static int load_external_subtitles(const char *url){
     avcodec_free_context(&context);avformat_close_input(&subfmt);
     if(!packets)return -1;
     subtitle_external=1;
-    fprintf(stderr,"External subtitle loaded: %d packets\\n",packets);
+    fprintf(stderr,"External subtitle loaded: %d packets\n",packets);
     return 0;
 }
 int main(int argc,char **argv) {

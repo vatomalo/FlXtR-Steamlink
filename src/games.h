@@ -428,7 +428,7 @@ static int zip_members(const char *path,int page,int extract_index){
         label[j++]=isalnum(*p)||*p=='_'||*p=='-'?(char)*p:'_';
     label[j]=0;
     snprintf(dest,sizeof(dest),"roms/Extracted/%s-%08lx%s",label,hash,ext);
-    snprintf(tmp,sizeof(tmp),"%s.next",dest);
+    if(snprintf(tmp,sizeof(tmp),"%s.next",dest)>=(int)sizeof(tmp))return -1;
     if(access(dest,F_OK)==0)return games_list(1,1);
     int fd=open(tmp,O_WRONLY|O_CREAT|O_EXCL,0600);if(fd<0)return -1;
     pid=fork();if(pid<0){close(fd);unlink(tmp);return -1;}

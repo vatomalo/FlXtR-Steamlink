@@ -195,9 +195,13 @@ static int games_run(void){
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
     /* FlXtR setting is opt-in; do not change the user's global RetroArch config. */
     { FILE *settings=fopen("settings.cfg","r");int enabled=0;
-      if(settings){char line[96];while(fgets(line,sizeof(line),settings))
-          if(sscanf(line,"game_autostate=%d",&enabled)==1)break;
-          fclose(settings);}
+      if(settings){
+          char line[96];
+          while(fgets(line,sizeof(line),settings)){
+              if(sscanf(line,"game_autostate=%d",&enabled)==1)break;
+          }
+          fclose(settings);
+      }
       fprintf(f,"savestate_auto_save = \"%s\"\nsavestate_auto_load = \"%s\"\n",
           enabled==1?"true":"false",enabled==1?"true":"false");
     }

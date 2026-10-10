@@ -165,7 +165,7 @@ static int sources(int page,int id,int season,int episode){
 #define CATALOG_CACHE_TTL (7 * 24 * 60 * 60)
 static void cache_identity(const char *kind,int page,const char *query,int id,int season){
     struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
-    snprintf(cache_key,sizeof(cache_key),"v4|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    snprintf(cache_key,sizeof(cache_key),"v5|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
     unsigned long hash=2166136261UL;
     for(const unsigned char *p=(const unsigned char *)cache_key;*p;p++)
         hash=((hash^(unsigned long)*p)*16777619UL)&0xffffffffUL;
@@ -201,7 +201,7 @@ static void cache_save(void){
         Entry *e=&entries[i];json_object *o=json_object_new_object();json_object_array_add(rows,o);
         json_object_object_add(o,"title",json_object_new_string(e->title));json_object_object_add(o,"meta",json_object_new_string(e->meta));
         json_object_object_add(o,"poster",json_object_new_string(e->poster));json_object_object_add(o,"kind",json_object_new_string(e->kind));
-        if(!strcmp(e->kind,"archive")||!strcmp(e->kind,"archive-file"))json_object_object_add(o,"url",json_object_new_string(e->url));
+        if(e->url[0])json_object_object_add(o,"url",json_object_new_string(e->url));
         json_object_object_add(o,"id",json_object_new_int(e->id));json_object_object_add(o,"season",json_object_new_int(e->season));json_object_object_add(o,"episode",json_object_new_int(e->episode));
     }
     char temp[96];snprintf(temp,sizeof(temp),"%s.next",cache_file);

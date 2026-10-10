@@ -193,6 +193,14 @@ static int games_run(void){
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
     f=fopen(extra,"w");if(!f)return 2;
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
+    /* FlXtR setting is opt-in; do not change the user's global RetroArch config. */
+    { FILE *settings=fopen("settings.cfg","r");int enabled=0;
+      if(settings){char line[96];while(fgets(line,sizeof(line),settings))
+          if(sscanf(line,"game_autostate=%d",&enabled)==1)break;
+          fclose(settings);}
+      fprintf(f,"savestate_auto_save = \"%s\"\nsavestate_auto_load = \"%s\"\n",
+          enabled==1?"true":"false",enabled==1?"true":"false");
+    }
     if(back>=0&&back<64&&start>=0&&start<64&&back!=start)fprintf(f,"input_enable_hotkey_btn = \"%d\"\ninput_exit_emulator_btn = \"%d\"\n",back,start);
     /* Shared BIOS directory: the UI checks this same location. */
     fprintf(f,"system_directory = \"%.*s/system\"\n",(int)n,extra);

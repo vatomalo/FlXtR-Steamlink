@@ -35,6 +35,8 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
     }avsubtitle_free(&sub);
 }
 static void subtitle_draw(void){
+    /* Keep the last visible cue while the decoder waits for more media. */
+    if(subtitle_buffering)return;
     static Uint32 next_poll;
     if(!view_context||origin==AV_NOPTS_VALUE||!clock_start)return;
     Uint32 ticks=SDL_GetTicks();

@@ -358,6 +358,65 @@ static int games_archive_files(int page,const char *identifier,int platform){
 static size_t game_write(void *ptr,size_t size,size_t count,void *opaque){
     FILE *f=opaque;return fwrite(ptr,size,count,f)*size;
 }
+/* BusyBox unzip -l archive browser. All member lookups are by index, so UI
+ * never constructs a shell command from archive-controlled filenames. */
+static int zip_members(const char *path,int page,int extract_index){
+    if(!path||path[0]!='/'||!game_file(path)||strcasecmp(path+strlen(path)-4,".zip"))return -1;
+    int pipes[2];if(pipe(pipes))return -1;
+    pid_t pid=fork();
+    if(pid<0){close(pipes[0]);close(pipes[1]);return -1;}
+    if(pid==0){close(pipes[0]);dup2(pipes[1],STDOUT_FILENO);close(pipes[1]);
+        execlp("unzip","unzip","-l",path,(char*)NULL);_exit(127);}
+    close(pipes[1]);FILE *in=fdopen(pipes[0],"r");
+    if(!in){close(pipes[0]);waitpid(pid,NULL,0);return -1;}
+    char line[2048],member[1024];int index=0,found=0;total=0;
+    while(fgets(line,sizeof(line),in)){
+        unsigned long long size=0;char date[32],timepart[32];
+        if(sscanf(line," %llu %31s %31s %1023[^\n]",&size,date,timepart,member)!=4)continue;
+        const char *ext=strrchr(member,'.');
+        if(!ext||member[0]=='/'||strstr(member,"..")||strchr(member,'\\')||strpbrk(member,"\r\t")||
+            (strcasecmp(ext,".nes")&&strcasecmp(ext,".sfc")&&strcasecmp(ext,".smc")&&
+             strcasecmp(ext,".gba")&&strcasecmp(ext,".gb")&&strcasecmp(ext,".gbc")&&
+             strcasecmp(ext,".md")&&strcasecmp(ext,".gen")&&strcasecmp(ext,".bin")&&
+             strcasecmp(ext,".a26")&&strcasecmp(ext,".cue")))continue;
+        if(size==0||size>128ULL*1024*1024)continue;
+        index++;total++;
+        if(extract_index){
+            if(index!=extract_index)continue;
+            found=1;break;
+        }
+        if(total<=(page-1)*PAGE_SIZE||used>=PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),member);
+        strcpy(e->kind,"zip-member");e->id=index;
+        snprintf(e->meta,sizeof(e->meta),"ZIP ROM / %llu BYTES / A EXTRACT",size);
+    }
+    fclose(in);int code=0;waitpid(pid,&code,0);
+    if(extract_index&&!found)return -1;
+    if(!extract_index)return WIFEXITED(code)&&WEXITSTATUS(code)==0?0:-1;
+    /* Select member is validated above. Extract only this entry to a new,
+     * bounded file in the local ROM collection. */
+    mkdir("roms",0700);mkdir("roms/Extracted",0700);
+    const char *ext=strrchr(member,'.');
+    unsigned long hash=2166136261UL;
+    for(const unsigned char *p=(const unsigned char*)member;*p;p++)hash=((hash^*p)*16777619UL)&0xffffffffUL;
+    char dest[PATH_MAX],tmp[PATH_MAX];
+    const char *base=strrchr(member,'/');base=base?base+1:member;
+    char label[49];size_t j=0;
+    for(const unsigned char *p=(const unsigned char*)base;*p&&*p!='.'&&j<40;p++)
+        label[j++]=isalnum(*p)||*p=='_'||*p=='-'?(char)*p:'_';
+    label[j]=0;
+    snprintf(dest,sizeof(dest),"roms/Extracted/%s-%08lx%s",label,hash,ext);
+    snprintf(tmp,sizeof(tmp),"%s.next",dest);
+    if(access(dest,F_OK)==0)return games_list(1,1);
+    int fd=open(tmp,O_WRONLY|O_CREAT|O_EXCL,0600);if(fd<0)return -1;
+    pid=fork();if(pid<0){close(fd);unlink(tmp);return -1;}
+    if(pid==0){dup2(fd,STDOUT_FILENO);close(fd);execlp("unzip","unzip","-p",path,member,(char*)NULL);_exit(127);}
+    close(fd);waitpid(pid,&code,0);struct stat st;
+    if(!WIFEXITED(code)||WEXITSTATUS(code)!=0||stat(tmp,&st)||st.st_size==0||st.st_size>128*1024*1024||rename(tmp,dest)){
+        unlink(tmp);return -1;
+    }
+    return games_list(1,1);
+}
 static int games_archive_file_download(const char *item,const char *name,int platform){
     if(!archive_identifier(item)||!name||!*name||strlen(name)>512||
        strchr(name,'/')||strchr(name,'\\')||strstr(name,"..")||strpbrk(name,"\r\n\t"))return -1;

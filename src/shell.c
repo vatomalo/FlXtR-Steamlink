@@ -502,7 +502,7 @@ static void finish_catalog(void){
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
     library_cache_store(&browse);
-    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24){prefetch_browse=browse;prefetch_left=browse.page==1?2:1;}
+    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
     if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"KISSANIME: BROWSING WORKS / SOME VIDEO HOSTS ARE NOT SUPPORTED");
@@ -513,19 +513,40 @@ static void finish_catalog(void){
     if(browse.mode==10&&!total)snprintf(status,sizeof(status),"NO PUBLIC H.264 / MPEG4 FILES IN THIS ITEM");
     if(play_after_load){play_after_load=0;if(total)play();}
 }
+/* Warm catalog.c's bounded on-disk page cache only while browsing is quiet.
+ * Catalog workers remain separate; foreground requests always cancel prefetch. */
 static void prefetch_pages(void){
-    if(prefetch_pid){if(waitpid(prefetch_pid,NULL,WNOHANG)==prefetch_pid)prefetch_pid=0;else return;}
-    if(!prefetch_left||catalog_pid||player_pid||auto_active)return;
-    prefetch_browse.page++;prefetch_left--;
-    if(prefetch_browse.page>listing_pages){prefetch_left=0;return;}
+    static Uint32 next_prefetch_at;
+    if(prefetch_pid){
+        int code;pid_t done=waitpid(prefetch_pid,&code,WNOHANG);
+        if(done==0)return;
+        prefetch_pid=0;
+        next_prefetch_at=SDL_GetTicks()+1500;
+    }
+    if(!prefetch_left||catalog_pid||player_pid||auto_active||update_pid||
+       settings_on||about||search_on||tv_active||browse.mode!=prefetch_browse.mode||
+       browse.id!=prefetch_browse.id||browse.season!=prefetch_browse.season||
+       browse.episode!=prefetch_browse.episode||strcmp(browse.query,prefetch_browse.query))return;
+    Uint32 now=SDL_GetTicks();
+    if((Sint32)(now-controller_activity)<1200||(Sint32)(now-next_prefetch_at)<0)return;
+    if(!library_cacheable(browse.mode)){prefetch_left=0;return;}
+    if(prefetch_browse.page>=listing_pages){prefetch_left=0;return;}
+    Browse target=prefetch_browse;target.page++;
     prefetch_pid=fork();
     if(!prefetch_pid){
-        int out=open("/dev/null",O_WRONLY);if(out>=0){dup2(out,1);dup2(out,2);close(out);}
-        char pg[16],id[16],sn[16],ep[16];snprintf(pg,sizeof(pg),"%d",prefetch_browse.page);snprintf(id,sizeof(id),"%d",browse.id);
-        snprintf(sn,sizeof(sn),"%d",browse.season);snprintf(ep,sizeof(ep),"%d",browse.episode);
-        execl("./greenlink-catalog","greenlink-catalog",browse_kinds[browse.mode],pg,browse.query,id,sn,ep,"",(char*)NULL);_exit(127);
+        int out=open("/dev/null",O_WRONLY);if(out>=0){dup2(out,STDOUT_FILENO);dup2(out,STDERR_FILENO);close(out);}
+        char pg[16],id[16],sn[16],ep[16];
+        snprintf(pg,sizeof(pg),"%d",target.page);
+        snprintf(id,sizeof(id),"%d",target.id);
+        snprintf(sn,sizeof(sn),"%d",target.season);
+        snprintf(ep,sizeof(ep),"%d",target.episode);
+        execl("./greenlink-catalog","greenlink-catalog",browse_kinds[target.mode],
+              pg,target.query,id,sn,ep,"",(char*)NULL);
+        _exit(127);
     }
-    if(prefetch_pid<0){prefetch_pid=0;prefetch_left=0;}
+    if(prefetch_pid<0){prefetch_pid=0;prefetch_left=0;return;}
+    prefetch_browse.page=target.page;
+    prefetch_left--;
 }
 static void controller_used(void){controller_activity=SDL_GetTicks();controller_slept=0;}
 static void controller_idle(void){

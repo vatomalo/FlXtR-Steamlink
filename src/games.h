@@ -415,28 +415,49 @@ static int zip_members(const char *path,int page,int extract_index){
     fclose(in);int code=0;waitpid(pid,&code,0);
     if(extract_index&&!found)return -1;
     if(!extract_index)return WIFEXITED(code)&&WEXITSTATUS(code)==0?0:-1;
-    /* Select member is validated above. Extract only this entry to a new,
-     * bounded file in the local ROM collection. */
-    mkdir("roms",0700);mkdir("roms/Extracted",0700);
+    /* Route ROMs by their extension, retaining their actual filename.
+     * Ambiguous .bin entries use the parent ZIP's console directory. */
     const char *ext=strrchr(member,'.');
-    unsigned long hash=2166136261UL;
-    for(const unsigned char *p=(const unsigned char*)member;*p;p++)hash=((hash^*p)*16777619UL)&0xffffffffUL;
-    char dest[PATH_MAX],tmp[PATH_MAX];
+    const char *folder=NULL;
+    if(!strcasecmp(ext,".nes"))folder="NES";
+    else if(!strcasecmp(ext,".sfc")||!strcasecmp(ext,".smc"))folder="SNES";
+    else if(!strcasecmp(ext,".gba"))folder="GBA";
+    else if(!strcasecmp(ext,".gb"))folder="GB";
+    else if(!strcasecmp(ext,".gbc"))folder="GBC";
+    else if(!strcasecmp(ext,".md")||!strcasecmp(ext,".gen"))folder="MegaDrive";
+    else if(!strcasecmp(ext,".a26"))folder="Atari2600";
+    else if(!strcasecmp(ext,".cue")||!strcasecmp(ext,".bin"))folder="PlayStation";
+    if(!folder)return -1;
     const char *base=strrchr(member,'/');base=base?base+1:member;
-    char label[49];size_t j=0;
-    for(const unsigned char *p=(const unsigned char*)base;*p&&*p!='.'&&j<40;p++)
-        label[j++]=isalnum(*p)||*p=='_'||*p=='-'?(char)*p:'_';
-    label[j]=0;
-    snprintf(dest,sizeof(dest),"roms/Extracted/%s-%08lx%s",label,hash,ext);
-    if(snprintf(tmp,sizeof(tmp),"%s.next",dest)>=(int)sizeof(tmp))return -1;
-    if(access(dest,F_OK)==0)return games_list(1,1);
+    if(!*base||strlen(base)>240||base[0]=='.')return -1;
+    for(const unsigned char *p=(const unsigned char*)base;*p;p++)
+        if(*p<32||*p==127||*p=='/'||*p=='\\')return -1;
+    /* Save under the RetroArch ROM tree that the importer already scans. */
+    char directory[PATH_MAX],dest[PATH_MAX],tmp[PATH_MAX];
+    int n=snprintf(directory,sizeof(directory),"%s/roms/%s",games_home(),folder);
+    if(n<0||n>=(int)sizeof(directory))return -1;
+    char root[PATH_MAX];
+    n=snprintf(root,sizeof(root),"%s/roms",games_home());
+    if(n<0||n>=(int)sizeof(root))return -1;
+    if(mkdir(root,0700)&&errno!=EEXIST)return -1;
+    if(mkdir(directory,0700)&&errno!=EEXIST)return -1;
+    n=snprintf(dest,sizeof(dest),"%s/%s",directory,base);
+    if(n<0||n>=(int)sizeof(dest))return -1;
+    n=snprintf(tmp,sizeof(tmp),"%s.next",dest);
+    if(n<0||n>=(int)sizeof(tmp))return -1;
+    if(access(dest,F_OK)==0){
+        fprintf(stderr,"ZIP ROM already exists, refusing overwrite: %s\\n",dest);
+        return games_list(1,1);
+    }
     int fd=open(tmp,O_WRONLY|O_CREAT|O_EXCL,0600);if(fd<0)return -1;
     pid=fork();if(pid<0){close(fd);unlink(tmp);return -1;}
     if(pid==0){dup2(fd,STDOUT_FILENO);close(fd);execlp("unzip","unzip","-p",path,member,(char*)NULL);_exit(127);}
     close(fd);waitpid(pid,&code,0);struct stat st;
-    if(!WIFEXITED(code)||WEXITSTATUS(code)!=0||stat(tmp,&st)||st.st_size==0||st.st_size>128*1024*1024||rename(tmp,dest)){
+    if(!WIFEXITED(code)||WEXITSTATUS(code)!=0||stat(tmp,&st)||st.st_size==0||st.st_size>128*1024*1024||link(tmp,dest)){
         unlink(tmp);return -1;
     }
+    unlink(tmp);
+    fprintf(stderr,"ZIP ROM extracted: %s\\n",dest);
     return games_list(1,1);
 }
 /* Progress is written independently of the catalog result stream. */

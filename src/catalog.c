@@ -308,8 +308,8 @@ int main(int argc,char **argv){
     }
     else if(!strcmp(kind,"games-downloads-list"))rc=downloaded_zip_list(page);
     else if(!strcmp(kind,"games-downloads-delete"))rc=downloaded_zip_delete(id);
-    else if(!strcmp(kind,"games-zip-list"))rc=zip_game_by_id(id,page,0);
-    else if(!strcmp(kind,"games-zip-extract"))rc=zip_game_by_id(id,1,episode);
+    else if(!strcmp(kind,"games-zip-list"))rc=zip_game_by_id(season? -id:id,page,0);
+    else if(!strcmp(kind,"games-zip-extract"))rc=zip_game_by_id(season? -id:id,1,episode);
     else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);
     else if(!strcmp(kind,"games"))rc=games_list(page,id);
     else if(!strcmp(kind,"games-folders"))rc=games_folders(page);

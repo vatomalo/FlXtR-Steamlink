@@ -34,7 +34,7 @@ static void menu_draw(void){
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"SEEK: LEFT -10S / RIGHT +10S");
-    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN"}[menu_subtitles]);
+    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN","SPANISH"}[menu_subtitles]);
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
     snprintf(rows[5],80,"VIDEO SIZE: %s",view_names[viewing]);
@@ -77,7 +77,7 @@ static void menu_command(char c){
             if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
             break;
         case 1:menu_restart(1,playback_position()+direction*10);break;
-        case 2:menu_subtitles=(menu_subtitles+direction+4)%4;menu_restart(1,playback_position());break;
+        case 2:menu_subtitles=(menu_subtitles+direction+5)%5;menu_restart(1,playback_position());break;
         case 3:subtitle_size=subtitle_size==2?3:2;subtitle_visible=-2;break;
         case 4:subtitle_delay+=direction;if(subtitle_delay>5)subtitle_delay=5;if(subtitle_delay< -5)subtitle_delay=-5;subtitle_visible=-2;break;
         case 5:viewing=(viewing+direction+VIEW_COUNT)%VIEW_COUNT;apply_view(0);break;

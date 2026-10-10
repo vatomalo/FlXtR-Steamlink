@@ -165,7 +165,7 @@ static int sources(int page,int id,int season,int episode){
 #define CATALOG_CACHE_TTL (7 * 24 * 60 * 60)
 static void cache_identity(const char *kind,int page,const char *query,int id,int season){
     struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
-    snprintf(cache_key,sizeof(cache_key),"v5|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    snprintf(cache_key,sizeof(cache_key),"v6|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
     unsigned long hash=2166136261UL;
     for(const unsigned char *p=(const unsigned char *)cache_key;*p;p++)
         hash=((hash^(unsigned long)*p)*16777619UL)&0xffffffffUL;

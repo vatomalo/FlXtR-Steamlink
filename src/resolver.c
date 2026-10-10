@@ -249,5 +249,8 @@ int main(int argc,char **argv){
         rc=ferror(stdout)?1:0;
     }
 done:subtitle_log("completed mode=%s success=%s rows=%d",resolving?"source":"servers",rc==0?"yes":"no",count);
-    if(root)json_object_put(root);resolver_free();curl_global_cleanup();return rc;
+    if(root)json_object_put(root);
+    resolver_free();
+    curl_global_cleanup();
+    return rc;
 }

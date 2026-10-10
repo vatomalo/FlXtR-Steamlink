@@ -104,11 +104,11 @@ static int local_category(const char *core,const char *rom){
     return 10;
 }
 static int games_folders(int page){
-    total=10;
-    for(int i=(page-1)*PAGE_SIZE;i<10&&used<PAGE_SIZE;i++){
-        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",local_folders[i]);
-        snprintf(e->meta,sizeof(e->meta),"[ %s ] / A OPEN FOLDER",local_folders[i]);
-        strcpy(e->kind,"game-folder");e->id=i+1;
+    total=11;
+    for(int i=(page-1)*PAGE_SIZE;i<11&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==10?"DOWNLOADS":local_folders[i]);
+        snprintf(e->meta,sizeof(e->meta),"[ %s ] / A OPEN FOLDER",i==10?"DOWNLOADS":local_folders[i]);
+        strcpy(e->kind,i==10?"downloads-folder":"game-folder");e->id=i+1;
     }
     return 0;
 }

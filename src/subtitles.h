@@ -43,7 +43,28 @@ static void subtitle_draw(void){
     if((Sint32)(ticks-next_poll)<0)return;
     next_poll=ticks+40;
     int64_t now=(subtitle_external?subtitle_seek_us:origin)+av_gettime_relative()-clock_start-(int64_t)subtitle_delay*AV_TIME_BASE;
-    int selected=-1;for(int i=0;i<SUBTITLE_MAX_CUES;i++)if(subtitle_cues[i].text[0]&&now>=subtitle_cues[i].start&&now<subtitle_cues[i].end)selected=i;
+    /* Select by cue start time, not array slot. FFmpeg can deliver overlapping
+     * cues in a different order, and a short WebVTT duration must not blank
+     * the screen before the next line when the dialogue is continuous. */
+    int selected=-1,next=-1;
+    int64_t best_start=INT64_MIN,next_start=INT64_MAX;
+    for(int i=0;i<SUBTITLE_MAX_CUES;i++){
+        const SubtitleCue *cue=&subtitle_cues[i];
+        if(!cue->text[0])continue;
+        if(cue->start>now){
+            if(cue->start<next_start){next_start=cue->start;next=i;}
+            continue;
+        }
+        if(cue->start>=best_start){
+            int64_t end=cue->end;
+            /* Small presentation grace for truncated cue durations. Never
+             * overlap a later subtitle or hold a line through a long pause. */
+            if(subtitle_external&&end>cue->start&&end<=now&&now-end<700000)
+                end+=700000;
+            if(now<end){best_start=cue->start;selected=i;}
+        }
+    }
+    (void)next;
     if(selected==subtitle_visible)return;
     if(selected<0){subtitle_visible=-1;if(subtitle_overlay)SLVideo_HideOverlay(subtitle_overlay);return;}
     if(!subtitle_overlay)subtitle_overlay=SLVideo_CreateOverlay(view_context,960,144);

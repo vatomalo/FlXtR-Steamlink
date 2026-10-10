@@ -1394,7 +1394,17 @@ int main(int argc,char **argv) {
             else if(event.type==SDL_TEXTINPUT&&search_on){for(const char *p=event.text.text;*p;p++){size_t n=strlen(search_text);if(n<64&&(isalnum((unsigned char)*p)||*p==' '||*p=='-')){search_text[n]=(char)toupper((unsigned char)*p);search_text[n+1]=0;}}}
             else if(event.type==SDL_CONTROLLERDEVICEADDED)add_pad(event.cdevice.which);
             else if(event.type==SDL_CONTROLLERDEVICEREMOVED){for(int i=0;i<4;i++)if(pads[i]&&SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i]))==event.cdevice.which){SDL_GameControllerClose(pads[i]);pads[i]=NULL;}}
-            else if(event.type==SDL_CONTROLLERAXISMOTION){int v=event.caxis.value;if((event.caxis.axis<4&&(v>8000||v< -8000))||(event.caxis.axis>=4&&v>8000))controller_used();}
+            else if(event.type==SDL_CONTROLLERAXISMOTION){
+                int value=event.caxis.value;
+                if((event.caxis.axis<4&&(value>8000||value< -8000))||
+                   (event.caxis.axis>=4&&value>8000))controller_used();
+                if(event.caxis.axis==SDL_CONTROLLER_AXIS_TRIGGERLEFT){
+                    static int left_trigger_pressed;
+                    if(value>20000&&!left_trigger_pressed){
+                        left_trigger_pressed=1;action(SDLK_F8);
+                    }else if(value<8000)left_trigger_pressed=0;
+                }
+            }
             else if(event.type==SDL_CONTROLLERBUTTONUP)controller_used();
             else if(event.type==SDL_CONTROLLERBUTTONDOWN) {
                 /* Suppress duplicate controller button-down bursts during playback.
@@ -1412,7 +1422,6 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
-                    case SDL_CONTROLLER_BUTTON_LEFTTRIGGER:action(SDLK_F8);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(player_pid?SDLK_i:SDLK_F3);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;

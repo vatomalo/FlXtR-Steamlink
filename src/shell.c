@@ -579,7 +579,7 @@ static void finish_catalog(void){
     for(int i=0;i<VISIBLE;i++){char src[80],dst[80];snprintf(src,sizeof(src),"catalog-cache/poster-%d.next.bmp",i);snprintf(dst,sizeof(dst),"catalog-cache/poster-%d.bmp",i);rename(src,dst);}
     if(pending_push&&history_size<4)history[history_size++]=browse;
     if(pending_pop&&history_size)history_size--;
-    if(pending.mode==16||pending.mode==19)pending.mode=14;
+    if(pending.mode==16||pending.mode==19||pending.mode==27)pending.mode=14;
     if(pending.mode==14)pending.id=0;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
@@ -922,7 +922,7 @@ static void play(void) {
     }
     if(!strcmp(t->kind,"game-item")){
         const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
-        if(strncmp(t->url,prefix,n)||strlen(t->url+n)>=129){snprintf(status,sizeof(status),"INVALID ARCHIVE ITEM");return;}
+        if(strncmp(t->url,prefix,n)||strlen(t->url+n)>128){fprintf(stderr,"Archive game item URL invalid: %.180s\n",t->url);snprintf(status,sizeof(status),"INVALID ARCHIVE ITEM - SEE GREENLINK.LOG");return;}
         Browse next={18,1,t->id,0,0,0,"",""};snprintf(next.query,sizeof(next.query),"%s",t->url+n);
         snprintf(next.name,sizeof(next.name),"%s",t->title);request_catalog(next,1,0);return;
     }
@@ -974,7 +974,7 @@ static void play(void) {
     }
     if(!strcmp(t->kind,"archive")){
         const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
-        if(strncmp(t->url,prefix,n)||strlen(t->url+n)>128){snprintf(status,sizeof(status),"INVALID ARCHIVE ITEM");return;}
+        if(strncmp(t->url,prefix,n)||strlen(t->url+n)>128){fprintf(stderr,"Archive video item URL invalid: %.180s\n",t->url);snprintf(status,sizeof(status),"INVALID ARCHIVE ITEM - SEE GREENLINK.LOG");return;}
         Browse next={10,1,0,0,0,0,"",""};strcpy(next.query,t->url+n);snprintf(next.name,sizeof(next.name),"%s",t->title);request_catalog(next,1,0);return;
     }
     if(!t->url[0]&&t->kind[0]){

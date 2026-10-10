@@ -107,7 +107,7 @@ static json_object *games_import(void){
     snprintf(path,sizeof(path),"%s/roms",games_home());game_scan(games,path,0,0);
     if(getcwd(path,sizeof(path))){size_t n=strlen(path);if(n+6<sizeof(path)){strcpy(path+n,"/roms");game_scan(games,path,0,0);}}
     json_object *labels=games_read("game-download-labels.json");
-    if(labels&&json_object_is_type(labels,json_type_object))for(size_t i=0;i<json_object_array_length(games);i++){
+    if(labels&&json_object_is_type(labels,json_type_object))for(size_t i=0;i<(size_t)json_object_array_length(games);i++){
         json_object *g=json_object_array_get_idx(games,i),*label=field(labels,string(g,"rom"));
         if(label&&json_object_is_type(label,json_type_string))json_object_object_add(g,"title",json_object_new_string(json_object_get_string(label)));
     }

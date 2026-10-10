@@ -291,7 +291,7 @@ static int games_archive_search(int page,int platform,const char *query){
         if(isalnum((unsigned char)base[i])||base[i]==' '||base[i]=='-')term[n++]=base[i];
     term[n]=0;
     char *q=curl_easy_escape(NULL,term,0);if(!q)return -1;
-    char url[1024];int len=snprintf(url,sizeof(url),ARCHIVE "/advancedsearch.php?q=mediatype%%3Asoftware%%20AND%%20%%28%s%%29%%20AND%%20-access-restricted-item%%3Atrue&fl%%5B%%5D=identifier&fl%%5B%%5D=title&rows=6&page=%d&output=json",q,page);
+    char url[1024];int len=snprintf(url,sizeof(url),ARCHIVE "/advancedsearch.php?q=mediatype%%3Asoftware%%20AND%%20%%28%s%%29%%20AND%%20-access-restricted-item%%3Atrue&fl%%5B%%5D=identifier&fl%%5B%%5D=title&sort%%5B%%5D=downloads%%20desc&rows=6&page=%d&output=json",q,page);
     curl_free(q);if(len<0||len>=(int)sizeof(url))return -1;
     json_object *root=archive_json(url);if(!root)return -1;
     json_object *response=field(root,"response"),*docs=field(response,"docs");

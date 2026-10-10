@@ -220,7 +220,8 @@ static int qualities(json_object *root,const char *server){
     char *manifest=request(url,NULL,1);
     if(!manifest){subtitle_log("HLS manifest fetch failed source=%s",server);fprintf(stderr,"Subtitle discovery for %s: manifest unavailable (English %s, Norwegian %s)\n",server,choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");return 0;}
     /* strtok_r mutates playlists; inspect renditions before variants. */
-    hls_subtitles(manifest,url,choices[0].subs_eng,choices[0].subs_nor);
+    char *subtitle_manifest=strdup(manifest);
+    if(subtitle_manifest){hls_subtitles(subtitle_manifest,url,choices[0].subs_eng,choices[0].subs_nor);free(subtitle_manifest);}
     subtitle_log("HLS manifest=%s source=%s english=%s norwegian=%s",!strncmp(manifest,"#EXTM3U",7)?"yes":"no",server,choices[0].subs_eng[0]?"yes":"no",choices[0].subs_nor[0]?"yes":"no");
     fprintf(stderr,"Subtitle discovery for %s: English %s, Norwegian %s\n",server,
         choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");

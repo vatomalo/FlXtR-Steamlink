@@ -405,8 +405,10 @@ static int games_archive_file_download(const char *item,const char *name){
     curl_easy_cleanup(c);int failed=fclose(f)!=0||rc!=CURLE_OK||http!=200;
     struct stat st;if(stat(tmp,&st)||st.st_size<=0)failed=1;
     if(!failed&&rename(tmp,target))failed=1;
-    if(failed){unlink(tmp);fprintf(stderr,"Archive ROM download failed: HTTP %ld, curl %d\n",http,(int)rc);return -1;}
+    if(failed){unlink(tmp);fprintf(stderr,"Archive ROM download failed: HTTP %ld, curl %d (%s), file %s\n",http,(int)rc,curl_easy_strerror(rc),name);return -1;}
     fprintf(stderr,"Archive ROM downloaded: %s\n",target);
+    /* Download completion is not contingent on a compatible installed core.
+     * The user can choose a core later; the archive transfer itself succeeded. */
     return games_list(1,1);
 }
 static int games_archive_download(int id){

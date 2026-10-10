@@ -334,7 +334,7 @@ static void filter(void) {
     selection=0; clear_posters();
 }
 static int read_catalog(const char *path) {
-    FILE *f=fopen(path,"r"); char line[2600];
+    FILE *f=fopen(path,"r"); char line[6000];
     if(!f) { snprintf(status,sizeof(status),"CATALOG NOT FOUND - ADD CATALOG.TSV");return 0; }
     while(fgets(line,sizeof(line),f) && count<MAX_TITLES) {
         char *fields[11],*p=line; int nf=0;
@@ -447,7 +447,7 @@ static void auto_result(int success){
         else {auto_active=0;snprintf(status,sizeof(status),"SERVER DISCOVERY FAILED - SEE CATALOG.LOG");}
         return;
     }
-    FILE *f=fopen("catalog-cache/result.tsv","r");char line[2600];int pages=1;
+    FILE *f=fopen("catalog-cache/result.tsv","r");char line[6000];int pages=1;
     Title source=auto_title;source.url[0]=0;source.height=0;
     if(f){while(fgets(line,sizeof(line),f)){
         if(line[0]=='#'&&!strchr(line,'\t')){int n;if(sscanf(line,"# pages=%d",&n)==1&&n>=1&&n<=7)pages=n;continue;}

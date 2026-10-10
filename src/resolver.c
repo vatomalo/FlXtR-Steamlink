@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
@@ -114,8 +115,8 @@ static void select_subtitles(json_object *list,char *eng,char *nor){
     }
 }
 static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor){
-    select_subtitles(field(source,"subtitles"),eng,nor);
-    select_subtitles(field(source,"tracks"),eng,nor);
+    if(source){select_subtitles(field(source,"subtitles"),eng,nor);
+        select_subtitles(field(source,"tracks"),eng,nor);}
     select_subtitles(field(root,"subtitles"),eng,nor);
     select_subtitles(field(root,"tracks"),eng,nor);
 }

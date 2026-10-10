@@ -30,6 +30,32 @@
 #define VISIBLE 6
 #define STARS 56
 typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode,height; } Title;
+static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count;
+static char rom_core_title[80],rom_core_names[8][48];
+static const char *const rom_core_candidates[]={"snes9x2002_flxtr","snes9x2002","snes9x2005","snes9x2005_plus","snes9x_next","snes9x2010"};
+static void rom_core_open(const Title *t){
+    if(strcmp(t->kind,"game"))return;
+    rom_core_id=t->id;snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
+    rom_core_count=rom_core_selected=0;
+    for(size_t i=0;i<sizeof(rom_core_candidates)/sizeof(rom_core_candidates[0]);i++){
+        char path[256];snprintf(path,sizeof(path),"/home/apps/retroarch/cores/%s_libretro.so",rom_core_candidates[i]);
+        if(access(path,R_OK))snprintf(path,sizeof(path),"/home/apps/retroarch/.home/.config/retroarch/cores/%s_libretro.so",rom_core_candidates[i]);
+        if(!access(path,R_OK)&&rom_core_count<8)snprintf(rom_core_names[rom_core_count++],48,"%s",rom_core_candidates[i]);
+    }
+    if(rom_core_count)rom_core_menu=1;
+}
+static void rom_core_save(void){
+    FILE *in=fopen("game-cores.tsv","r"),*out=fopen("game-cores.tsv.next","w");
+    if(!out){if(in)fclose(in);return;}
+    if(in){char line[256],title[80],core[48];int id;
+        while(fgets(line,sizeof(line),in)){
+            if(sscanf(line,"%d\t%79[^\t]\t%47[^\n]",&id,title,core)!=3)continue;
+            if(id!=rom_core_id||strcmp(title,rom_core_title))fprintf(out,"%d\t%s\t%s\n",id,title,core);
+        }fclose(in);
+    }
+    fprintf(out,"%d\t%s\t%s\n",rom_core_id,rom_core_title,rom_core_names[rom_core_selected]);
+    if(fclose(out)==0)rename("game-cores.tsv.next","game-cores.tsv");
+}
 static Title titles[MAX_TITLES];
 static int count, selection, ready_only, about, stars_on=1, running=1;
 static int visible[MAX_TITLES], total, cached_page=-1;
@@ -956,6 +982,13 @@ static void finish_player(int code){
     snprintf(status,sizeof(status),cancelled?"PLAYBACK STOPPED":WIFEXITED(code)&&!WEXITSTATUS(code)?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");
 }
 static void action(SDL_Keycode key) {
+    if(rom_core_menu){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){rom_core_menu=0;return;}
+        if(key==SDLK_UP&&rom_core_selected>0)rom_core_selected--;
+        if(key==SDLK_DOWN&&rom_core_selected+1<rom_core_count)rom_core_selected++;
+        if(key==SDLK_RETURN){rom_core_save();rom_core_menu=0;snprintf(status,sizeof(status),"ROM CORE SAVED");}
+        return;
+    }
     if(bios_archive_confirm){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){bios_archive_confirm=0;return;}
         if(key==SDLK_RETURN){
@@ -1026,6 +1059,10 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_RETURN){filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);}
         return;
     }
+    if(!settings_on&&!about&&browse.mode==14&&key==SDLK_y&&total&&
+       !strcmp(titles[visible[selection]].kind,"game")){
+        rom_core_open(&titles[visible[selection]]);return;
+    }
     if(!settings_on&&!about&&browse.mode==14&&(key==SDLK_y||key==SDLK_SLASH)){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F6){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
@@ -1058,6 +1095,17 @@ static void action(SDL_Keycode key) {
         }
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5||key==SDLK_F2)bios_on=0;
         return;
+    }
+    if(rom_core_menu){
+        rect(184,80,746,339,(SDL_Color){0,0,0,235},1);
+        text(200,95,"CORE OPTIONS / ROM",2,green,50);
+        text(200,125,rom_core_title,1,white,70);
+        for(int i=0;i<rom_core_count;i++){
+            char line[72];snprintf(line,sizeof(line),"%c %s",i==rom_core_selected?'>':' ',rom_core_names[i]);
+            text(206,161+i*32,line,2,i==rom_core_selected?green:white,55);
+        }
+        text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
+        SDL_RenderPresent(renderer);return;
     }
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}

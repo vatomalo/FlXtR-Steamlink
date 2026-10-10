@@ -93,6 +93,7 @@ static int disk_packet(DiskBuffer *q,AVPacket *p){
     pthread_mutex_lock(&q->mutex);
     if(!q->count)q->primed=0;
     while(!stopped&&!q->quit&&!q->done&&(!q->count||!q->primed)){
+        disk_read_wait_count++;
         disk_wait(q);pthread_mutex_unlock(&q->mutex);DISK_POLL();pthread_mutex_lock(&q->mutex);
     }
     if(stopped||q->quit){pthread_mutex_unlock(&q->mutex);return AVERROR_EXIT;}

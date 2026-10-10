@@ -129,8 +129,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -443,6 +443,13 @@ static int library_cache_restore(Browse next,int push,int pop){
 }
 static void request_catalog(Browse next,int push,int pop){
     if(next.mode!=5&&next.mode!=6&&next.mode!=12&&next.mode!=13)tv_active=0;
+    if(next.mode==FAVORITES_MODE){
+        browse=next;history_size=0;count=0;selection=0;ready_only=0;
+        listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));
+        if(access("favorites.tsv",R_OK)==0)read_catalog("favorites.tsv");
+        else {filter();snprintf(status,sizeof(status),"FAVORITES EMPTY / L3 TO ADD");}
+        return;
+    }
     if(next.mode==11){browse=next;history_size=0;about=0;total=count=0;prefetch_left=0;snprintf(status,sizeof(status),"A START TV / SELECT SETTINGS / OSLO TIME");return;}
     if(catalog_pid)return;
     if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}prefetch_left=0;
@@ -595,6 +602,37 @@ static void controller_idle(void){
     if(!idle_pid){int log=open("controller.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./controller-idle.sh",(char*)NULL);_exit(127);}
     if(idle_pid<0)idle_pid=0;
 }
+/* User-curated mixed library. Store the same bounded TSV fields used by
+ * the catalog; no account or remote service is required. */
+#define FAVORITES_MODE 25
+static void favorites_toggle(void){
+    if(!total)return;
+    const Title *t=&titles[visible[selection]];
+    if(!strcmp(t->kind,"source")||!strcmp(t->kind,"quality")||!strcmp(t->kind,"server"))return;
+    FILE *in=fopen("favorites.tsv","r"),*out=fopen("favorites.tsv.next","w");
+    if(!out){if(in)fclose(in);return;}
+    char row[6000];int found=0;
+    if(in){while(fgets(row,sizeof(row),in)){
+        char copy[6000];snprintf(copy,sizeof(copy),"%s",row);
+        char *a=strchr(copy,'\t');if(!a)continue;*a=0;
+        /* Match kind, title, id, season and episode using saved columns. */
+        char *cols[12],*q=row;int n=0;
+        while(n<12){cols[n++]=q;char *tab=strchr(q,'\t');if(!tab)break;*tab=0;q=tab+1;}
+        if(n>=8&&!strcmp(cols[0],t->title)&&!strcmp(cols[4],t->kind)&&
+           atoi(cols[5])==t->id&&atoi(cols[6])==t->season&&atoi(cols[7])==t->episode){
+            found=1;continue;
+        }
+        for(int i=0;i<n;i++)fprintf(out,"%s%s",cols[i],i+1==n?"\n":"\t");
+    }fclose(in);}
+    if(!found){
+        fprintf(out,"%s\t%s\t\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",
+            t->title,t->meta,t->url,t->kind,t->id,t->season,t->episode,t->height,
+            t->subs_eng,t->subs_nor,t->subs_spa);
+    }
+    if(fclose(out)){unlink("favorites.tsv.next");return;}
+    if(rename("favorites.tsv.next","favorites.tsv"))return;
+    snprintf(status,sizeof(status),found?"REMOVED FROM FAVORITES":"ADDED TO FAVORITES");
+}
 static void next_catalog_page(int direction){
     if(!browse.mode){int page=selection/VISIBLE+direction;if(page>=0&&page*VISIBLE<total)selection=page*VISIBLE;return;}
     Browse next=browse;next.page+=direction;next.selected=direction<0?5:0;
@@ -711,16 +749,15 @@ static void draw(Uint32 tick) {
     text(737,32,"NATIVE / MINIMAL",2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
-    text(30,124,browse.mode==0?"> LOCAL":"  LOCAL",1,browse.mode==0?green:dim,20);
     int root_mode=history_size?history[0].mode:browse.mode;
-    text(30,145,root_mode==1?"> MOVIES":"  MOVIES",1,root_mode==1?green:dim,20);
-    text(30,166,root_mode==2?"> SERIES":"  SERIES",1,root_mode==2?green:dim,20);
-    text(30,187,root_mode==7?"> KISSANIME":"  KISSANIME",1,root_mode==7?green:dim,20);
-    text(30,208,root_mode==9?"> ARCHIVE":"  ARCHIVE",1,root_mode==9?green:dim,20);
-    text(30,229,root_mode==11?"> TV MODE":"  TV MODE",1,root_mode==11?green:dim,20);
-    text(30,250,root_mode==14?"> GAMES":"  GAMES",1,root_mode==14?green:dim,20);
-    char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,287,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] ROM FOLDERS":browse.mode==21?"[A] SELECT SYSTEM":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[A] OPEN FOLDER":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
+    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,14,9,0};
+    const char *const menu_names[]={"TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","LOCAL"};
+    for(int i=0;i<8;i++){
+        char line[32];snprintf(line,sizeof(line),"%c %s",root_mode==menu_modes[i]?'>':' ',menu_names[i]);
+        text(30,124+i*21,line,1,root_mode==menu_modes[i]?green:dim,18);
+    }
+    char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] ROM FOLDERS":browse.mode==21?"[A] SELECT SYSTEM":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[A] OPEN FOLDER":"[START] ABOUT",1,dim,22);text(30,459,"B BACK / L3 FAVORITE",1,dim,22);
     if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
         const char *genre=browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
@@ -1074,6 +1111,7 @@ static void action(SDL_Keycode key) {
        !strcmp(titles[visible[selection]].kind,"game")){
         rom_core_open(&titles[visible[selection]]);return;
     }
+    if(!settings_on&&!about&&(key==SDLK_f||key==SDLK_F7)){favorites_toggle();return;}
     if(!settings_on&&!about&&browse.mode==14&&(key==SDLK_y||key==SDLK_SLASH)){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F6){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
@@ -1133,7 +1171,13 @@ static void action(SDL_Keycode key) {
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
-    else if(key==SDLK_F2){Browse next={browse.mode==0?1:browse.mode==1?2:browse.mode==2?7:browse.mode==7?9:browse.mode==9?11:browse.mode==11?14:0,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);}
+    else if(key==SDLK_F2){
+        const int modes[]={11,FAVORITES_MODE,1,2,7,14,9,0};
+        int current=history_size?history[0].mode:browse.mode,index=0;
+        for(int i=0;i<8;i++)if(modes[i]==current){index=i;break;}
+        Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%8];
+        history_size=0;request_catalog(next,0,0);
+    }
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
@@ -1209,7 +1253,7 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_A:action(search_on?SDLK_F4:SDLK_RETURN);break;
                     case SDL_CONTROLLER_BUTTON_B:action(search_on?SDLK_BACKSPACE:SDLK_ESCAPE);break;
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
-                    case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
+                    case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;\n                    case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(player_pid?SDLK_i:SDLK_F3);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;

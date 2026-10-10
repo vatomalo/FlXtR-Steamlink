@@ -2,6 +2,9 @@
 #include <dirent.h>
 #include <limits.h>
 #include <openssl/sha.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <errno.h>
 #define GAME_LIMIT 2048
 static const char *games_home(void){const char *p=getenv("FLXTR_RETROARCH_HOME");return p&&p[0]=='/'?p:"/home/apps/retroarch";}
 static int game_file(const char *p){struct stat st;return p&&p[0]=='/'&&!stat(p,&st)&&S_ISREG(st.st_mode)&&!access(p,R_OK);}

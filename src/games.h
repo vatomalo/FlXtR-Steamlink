@@ -418,6 +418,7 @@ static int zip_members(const char *path,int page,int extract_index){
     return games_list(1,1);
 }
 static int games_archive_file_download(const char *item,const char *name,int platform){
+    fprintf(stderr,"Archive ROM request: item=%.128s filename=%.180s platform=%d\n",item?item:"(null)",name?name:"(null)",platform);
     if(!archive_identifier(item)||!name||!*name||strlen(name)>512||
        strchr(name,'/')||strchr(name,'\\')||strstr(name,"..")||strpbrk(name,"\r\n\t"))return -1;
     const char *extension=strrchr(name,'.');
@@ -428,7 +429,7 @@ static int games_archive_file_download(const char *item,const char *name,int pla
         strcasecmp(extension,".pbp")&&strcasecmp(extension,".iso")))return -1;
     char *escaped=curl_easy_escape(NULL,name,0);if(!escaped)return -1;
     char url[1024];int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
-    if(n<0||n>=(int)sizeof(url))return -1;
+    if(n<0||n>=(int)sizeof(url)){fprintf(stderr,"Archive download URL exceeds buffer\n");return -1;}
     mkdir("roms",0700);
     const char *folder[]={"","NES","SNES","GBA","PlayStation","PSP","MAME"};
     if(platform<1||platform>6)return -1;
@@ -450,7 +451,7 @@ static int games_archive_file_download(const char *item,const char *name,int pla
     if(n<0||n>=(int)sizeof(target))return -1;
     n=snprintf(tmp,sizeof(tmp),"%s.next",target);
     if(n<0||n>=(int)sizeof(tmp))return -1;
-    FILE *f=fopen(tmp,"wb");if(!f)return -1;
+    FILE *f=fopen(tmp,"wb");if(!f){fprintf(stderr,"Archive ROM file open failed: %s (%s)\n",tmp,strerror(errno));return -1;}
     CURL *c=curl_easy_init();if(!c){fclose(f);unlink(tmp);return -1;}
     curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);
     curl_easy_setopt(c,CURLOPT_MAXREDIRS,4L);curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,game_write);
@@ -464,6 +465,7 @@ static int games_archive_file_download(const char *item,const char *name,int pla
 #else
     curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
 #endif
+    fprintf(stderr,"Archive ROM starting HTTPS transfer to %s\n",target);
     CURLcode rc=curl_easy_perform(c);long http=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&http);
     curl_easy_cleanup(c);int failed=fclose(f)!=0||rc!=CURLE_OK||http!=200;
     struct stat st;if(stat(tmp,&st)||st.st_size<=0)failed=1;

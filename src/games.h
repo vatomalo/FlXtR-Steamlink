@@ -338,7 +338,7 @@ static int games_archive_files(int page,const char *identifier,int platform){
     for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
         json_object *f=json_object_array_get_idx(files,i);
         const char *name=string(f,"name"),*ext=strrchr(name,'.');
-        if(!ext||strchr(name,'/')||strchr(name,'\\')||strlen(name)>160||strlen(name)<5)continue;
+        if(!ext||strchr(name,'/')||strchr(name,'\\')||strlen(name)>512||strlen(name)<5)continue;
         if(strcasecmp(ext,".zip")&&strcasecmp(ext,".nes")&&strcasecmp(ext,".sfc")&&strcasecmp(ext,".smc")&&
            strcasecmp(ext,".gba")&&strcasecmp(ext,".gb")&&strcasecmp(ext,".gbc")&&
            strcasecmp(ext,".chd")&&strcasecmp(ext,".pbp")&&strcasecmp(ext,".iso"))continue;
@@ -359,7 +359,7 @@ static size_t game_write(void *ptr,size_t size,size_t count,void *opaque){
     FILE *f=opaque;return fwrite(ptr,size,count,f)*size;
 }
 static int games_archive_file_download(const char *item,const char *name){
-    if(!archive_identifier(item)||!name||!*name||strlen(name)>160||
+    if(!archive_identifier(item)||!name||!*name||strlen(name)>512||
        strchr(name,'/')||strchr(name,'\\')||strstr(name,"..")||strpbrk(name,"\r\n\t"))return -1;
     const char *extension=strrchr(name,'.');
     if(!extension|| (strcasecmp(extension,".zip")&&strcasecmp(extension,".nes")&&
@@ -371,8 +371,22 @@ static int games_archive_file_download(const char *item,const char *name){
     char url[1024];int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
     if(n<0||n>=(int)sizeof(url))return -1;
     mkdir("roms",0700);
-    char target[400],tmp[420];snprintf(target,sizeof(target),"roms/%s-%s",item,name);
-    snprintf(tmp,sizeof(tmp),"%s.next",target);
+    /* Archive names may exceed the filesystem's 255-byte component limit.
+     * Keep a recognizable prefix and extension, plus a stable full-name hash. */
+    unsigned long hash=2166136261UL;
+    for(const unsigned char *p=(const unsigned char*)name;*p;p++)
+        hash=((hash^*p)*16777619UL)&0xffffffffUL;
+    char prefix[65];size_t j=0;
+    for(const unsigned char *p=(const unsigned char*)name;*p&&j<60;p++){
+        unsigned char c=*p;
+        prefix[j++]=(isalnum(c)||c=='-'||c=='_')?(char)c:'_';
+    }
+    prefix[j]=0;
+    char target[400],tmp[420];
+    n=snprintf(target,sizeof(target),"roms/%.64s-%s-%08lx%s",item,prefix,hash,extension);
+    if(n<0||n>=(int)sizeof(target))return -1;
+    n=snprintf(tmp,sizeof(tmp),"%s.next",target);
+    if(n<0||n>=(int)sizeof(tmp))return -1;
     FILE *f=fopen(tmp,"wb");if(!f)return -1;
     CURL *c=curl_easy_init();if(!c){fclose(f);unlink(tmp);return -1;}
     curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);

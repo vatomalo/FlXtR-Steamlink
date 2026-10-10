@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 #include "hardware_layout.h"
 #include "font.h"
 
@@ -116,6 +117,14 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
 /* Load a bounded HTTPS text subtitle track before playback. FFmpeg handles
  * SubRip/WebVTT timestamp parsing; compressed video remains hardware-decoded.
  * Never allow file:, http:, or nested local protocols from provider metadata. */
+static void player_subtitle_log(const char *phase,const char *english,const char *norwegian,const char *selected){
+    FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
+    fprintf(f,"%lu player phase=%s english=%s norwegian=%s selected=%s\n",
+        (unsigned long)time(NULL),phase,
+        english&&*english?"yes":"no",norwegian&&*norwegian?"yes":"no",
+        selected&&*selected?"yes":"no");
+    fclose(f);
+}
 static int load_external_subtitles(const char *url){
     if(!url||strncmp(url,"https://",8)||strlen(url)>1023||strpbrk(url,"\r\n\t"))return -1;
     AVFormatContext *subfmt=avformat_alloc_context();
@@ -261,11 +270,14 @@ int main(int argc,char **argv) {
     fprintf(stderr,"External subtitle handoff: English %s, Norwegian %s, selected %s\n",
         english&&*english?"available":"absent",norwegian&&*norwegian?"available":"absent",
         external&&*external?"available":"absent");
+    player_subtitle_log("handoff",english,norwegian,external);
     if(external&&*external){
         if(load_external_subtitles(external)==0){
+            player_subtitle_log("loaded",english,norwegian,external);
             avcodec_free_context(&sub_decoder);si=-1;
             subtitle_seek_us=(int64_t)(playback_start*AV_TIME_BASE);
-        }else fprintf(stderr,"External subtitles failed, falling back to embedded track\\n");
+        }else {player_subtitle_log("download-failed",english,norwegian,external);
+            fprintf(stderr,"External subtitles failed, falling back to embedded track\\n");}
     }
 
     for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai||(int)i==si)?AVDISCARD_DEFAULT:AVDISCARD_ALL;

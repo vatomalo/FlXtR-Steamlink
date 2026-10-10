@@ -446,7 +446,7 @@ static int zip_members(const char *path,int page,int extract_index){
     n=snprintf(tmp,sizeof(tmp),"%s.next",dest);
     if(n<0||n>=(int)sizeof(tmp))return -1;
     if(access(dest,F_OK)==0){
-        fprintf(stderr,"ZIP ROM already exists, refusing overwrite: %s\\n",dest);
+        fprintf(stderr,"ZIP ROM already exists, refusing overwrite: %s\n",dest);
         return games_list(1,1);
     }
     int fd=open(tmp,O_WRONLY|O_CREAT|O_EXCL,0600);if(fd<0)return -1;
@@ -457,7 +457,7 @@ static int zip_members(const char *path,int page,int extract_index){
         unlink(tmp);return -1;
     }
     unlink(tmp);
-    fprintf(stderr,"ZIP ROM extracted: %s\\n",dest);
+    fprintf(stderr,"ZIP ROM extracted: %s\n",dest);
     return games_list(1,1);
 }
 /* Progress is written independently of the catalog result stream. */

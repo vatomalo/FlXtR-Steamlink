@@ -368,8 +368,50 @@ static size_t game_write(void *ptr,size_t size,size_t count,void *opaque){
 }
 /* BusyBox unzip -l archive browser. All member lookups are by index, so UI
  * never constructs a shell command from archive-controlled filenames. */
+/* Downloaded ZIP library: only regular ZIP files inside the dedicated directory. */
+static int downloaded_zip_path(int id,char *out,size_t cap){
+    DIR *dir=opendir("downloads");if(!dir)return -1;
+    struct dirent *entry;int count=0,found=-1;
+    while((entry=readdir(dir))){
+        const char *name=entry->d_name;size_t len=strlen(name);
+        if(len<5||strcasecmp(name+len-4,".zip")||strchr(name,'/'))continue;
+        char path[PATH_MAX];int n=snprintf(path,sizeof(path),"downloads/%s",name);
+        struct stat st;
+        if(n<0||n>=(int)sizeof(path)||lstat(path,&st)||!S_ISREG(st.st_mode))continue;
+        if(++count==id){if(snprintf(out,cap,"%s",path)<(int)cap)found=0;break;}
+    }
+    closedir(dir);return found;
+}
+static int downloaded_zip_list(int page){
+    DIR *dir=opendir("downloads");if(!dir)return 0;
+    struct dirent *entry;int index=0;total=0;
+    while((entry=readdir(dir))){
+        const char *name=entry->d_name;size_t len=strlen(name);
+        if(len<5||strcasecmp(name+len-4,".zip"))continue;
+        char path[PATH_MAX];int n=snprintf(path,sizeof(path),"downloads/%s",name);
+        struct stat st;
+        if(n<0||n>=(int)sizeof(path)||lstat(path,&st)||!S_ISREG(st.st_mode))continue;
+        index++;total++;
+        if(total<=(page-1)*PAGE_SIZE||used>=PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),name);
+        snprintf(e->meta,sizeof(e->meta),"DOWNLOADED ZIP / A BROWSE / Y DELETE");
+        strcpy(e->kind,"download-zip");e->id=index;
+    }
+    closedir(dir);return 0;
+}
+static int downloaded_zip_delete(int id){
+    char path[PATH_MAX];
+    if(downloaded_zip_path(id,path,sizeof(path)))return -1;
+    if(unlink(path))return -1;
+    fprintf(stderr,"Deleted downloaded ZIP: %s\n",path);
+    return downloaded_zip_list(1);
+}
 static int zip_members(const char *path,int page,int extract_index);
 static int zip_game_by_id(int game_id,int page,int member_id){
+    if(game_id<0){char path[PATH_MAX];if(downloaded_zip_path(-game_id,path,sizeof(path)))return -1;
+        /* zip_members is declared above. */
+        return zip_members(path,page,member_id);
+    }
     json_object *games=games_read("games.json");
     if(!games||!json_object_is_type(games,json_type_array)||
        game_id<1||game_id>(int)json_object_array_length(games)){
@@ -491,9 +533,11 @@ static int games_archive_file_download(const char *item,const char *name,int pla
     char url[1024];int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
     if(n<0||n>=(int)sizeof(url)){fprintf(stderr,"Archive download URL exceeds buffer\n");return -1;}
     mkdir("roms",0700);
+    mkdir("downloads",0700);
     const char *folder[]={"","NES","SNES","GBA","PlayStation","PSP","MAME"};
     if(platform<1||platform>6)return -1;
-    char rom_dir[80];snprintf(rom_dir,sizeof(rom_dir),"roms/%s",folder[platform]);
+    char rom_dir[80];snprintf(rom_dir,sizeof(rom_dir),"%s",!strcasecmp(extension,".zip")?"downloads":"roms");
+    if(strcasecmp(extension,".zip"))snprintf(rom_dir,sizeof(rom_dir),"roms/%s",folder[platform]);
     mkdir(rom_dir,0700);
     /* Archive names may exceed the filesystem's 255-byte component limit.
      * Keep a recognizable prefix and extension, plus a stable full-name hash. */

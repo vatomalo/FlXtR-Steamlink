@@ -17,7 +17,7 @@
 #include <time.h>
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
-typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024];int height;} Choice;
+typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024];int height;} Choice;
 static Choice choices[40];static int count;
 /* Append-only diagnostics survive the catalog worker's truncated catalog.log.
  * Record presence and route only: never media URLs, tokens or headers. */
@@ -107,7 +107,7 @@ static void servers(json_object *root){
 }
 /* External captions are separate HTTPS resources in many provider responses.
  * Never treat subtitle URLs as video sources or trust local protocols. */
-static void select_subtitles(json_object *list,char *eng,char *nor){
+static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
     if(!list||!json_object_is_type(list,json_type_array))return;
     for(size_t i=0;i<(size_t)json_object_array_length(list);i++){
         json_object *track=json_object_array_get_idx(list,i);
@@ -123,14 +123,15 @@ static void select_subtitles(json_object *list,char *eng,char *nor){
             !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);
         if(english&&!*eng)snprintf(eng,1024,"%s",url);
         if(norwegian&&!*nor)snprintf(nor,1024,"%s",url);
+        if((!strncasecmp(lang,"es",2)||!strncasecmp(lang,"spanish",7))&&!*spa)snprintf(spa,1024,"%s",url);
     }
 }
-static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor){
+static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor,char *spa){
     subtitle_log("JSON fields: selected=%s root.subtitles=%s root.tracks=%s source.subtitles=%s source.tracks=%s",source?"yes":"no",field(root,"subtitles")?"yes":"no",field(root,"tracks")?"yes":"no",source&&field(source,"subtitles")?"yes":"no",source&&field(source,"tracks")?"yes":"no");
-    if(source){select_subtitles(field(source,"subtitles"),eng,nor);
-        select_subtitles(field(source,"tracks"),eng,nor);}
-    select_subtitles(field(root,"subtitles"),eng,nor);
-    select_subtitles(field(root,"tracks"),eng,nor);
+    if(source){select_subtitles(field(source,"subtitles"),eng,nor,spa);
+        select_subtitles(field(source,"tracks"),eng,nor,spa);}
+    select_subtitles(field(root,"subtitles"),eng,nor,spa);
+    select_subtitles(field(root,"tracks"),eng,nor,spa);
 }
 /* Read HLS master playlist subtitle renditions without touching video variants. */
 static int hls_attribute(const char *line,const char *key,char *out,size_t cap){
@@ -177,7 +178,7 @@ static int hls_resolve_uri(const char *base,const char *uri,char *out,size_t siz
     memcpy(out+prefix,uri,length+1);
     return 1;
 }
-static void hls_subtitles(char *manifest,const char *base,char *eng,char *nor){
+static void hls_subtitles(char *manifest,const char *base,char *eng,char *nor,char *spa){
     if(strncmp(manifest,"#EXTM3U",7))return;
     char *save=NULL;
     for(char *line=strtok_r(manifest,"\r\n",&save);line;line=strtok_r(NULL,"\r\n",&save)){
@@ -192,10 +193,12 @@ static void hls_subtitles(char *manifest,const char *base,char *eng,char *nor){
         int english=!strncasecmp(language,"en",2)||!strncasecmp(language,"english",7);
         int norwegian=!strncasecmp(language,"no",2)||!strncasecmp(language,"nb",2)||
                       !strncasecmp(language,"nn",2)||!strncasecmp(language,"norwegian",9);
-        if(!(english&&!*eng)&&!(norwegian&&!*nor))continue;
+        int spanish=!strncasecmp(language,"es",2)||!strncasecmp(language,"spanish",7);
+        if(!(english&&!*eng)&&!(norwegian&&!*nor)&&!(spanish&&!*spa))continue;
         if(!hls_resolve_uri(base,uri,resolved,sizeof(resolved)))continue;
         if(english&&!*eng)snprintf(eng,1024,"%s",resolved);
         if(norwegian&&!*nor)snprintf(nor,1024,"%s",resolved);
+        if(spanish&&!*spa)snprintf(spa,1024,"%s",resolved);
     }
 }
 static void add_variants(char *manifest,const char *url,const char *server){
@@ -215,13 +218,13 @@ static int qualities(json_object *root,const char *server){
     }
     else if(list&&json_object_is_type(list,json_type_object)){selected=list;url=string(list,"file");if(!*url)url=string(list,"url");}
     if(!valid_url(url)){fprintf(stderr,"Selected server has no compatible direct link\n");return -1;}
-    strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);source_subtitles(root,selected,choices[0].subs_eng,choices[0].subs_nor);count=1;
+    strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);source_subtitles(root,selected,choices[0].subs_eng,choices[0].subs_nor,choices[0].subs_spa);count=1;
     subtitle_log("source=%s JSON english=%s norwegian=%s",server,choices[0].subs_eng[0]?"yes":"no",choices[0].subs_nor[0]?"yes":"no");
     char *manifest=request(url,NULL,1);
     if(!manifest){subtitle_log("HLS manifest fetch failed source=%s",server);fprintf(stderr,"Subtitle discovery for %s: manifest unavailable (English %s, Norwegian %s)\n",server,choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");return 0;}
     /* strtok_r mutates playlists; inspect renditions before variants. */
     char *subtitle_manifest=strdup(manifest);
-    if(subtitle_manifest){hls_subtitles(subtitle_manifest,url,choices[0].subs_eng,choices[0].subs_nor);free(subtitle_manifest);}
+    if(subtitle_manifest){hls_subtitles(subtitle_manifest,url,choices[0].subs_eng,choices[0].subs_nor,choices[0].subs_spa);free(subtitle_manifest);}
     subtitle_log("HLS manifest=%s source=%s english=%s norwegian=%s",!strncmp(manifest,"#EXTM3U",7)?"yes":"no",server,choices[0].subs_eng[0]?"yes":"no",choices[0].subs_nor[0]?"yes":"no");
     fprintf(stderr,"Subtitle discovery for %s: English %s, Norwegian %s\n",server,
         choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");
@@ -229,6 +232,7 @@ static int qualities(json_object *root,const char *server){
     for(int i=1;i<count;i++){
         snprintf(choices[i].subs_eng,sizeof(choices[i].subs_eng),"%s",choices[0].subs_eng);
         snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);
+        snprintf(choices[i].subs_spa,sizeof(choices[i].subs_spa),"%s",choices[0].subs_spa);
     }
     free(manifest);return 0;
 }
@@ -244,7 +248,7 @@ int main(int argc,char **argv){
     json_object *root=lookup(path,resolving?argv[6]:"");int rc=1;
     if(root){if(resolving){if(qualities(root,argv[6]))goto done;}else servers(root);
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
-        for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor);
+        for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor,c->subs_spa);
             else printf("%s\t%s\t\t%s\tserver\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,id,season,episode,c->height);}
         rc=ferror(stdout)?1:0;
     }

@@ -979,6 +979,27 @@ static void tv_candidate(void){
     auto_active=1;
     Browse next={5,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);auto_request(next);
 }
+/* Single unfinished TV episode checkpoint, kept separately from completed progress. */
+static int tv_resume_read(Title *out,double *seconds){
+    FILE *f=fopen("tv-resume.tsv","r");if(!f)return 0;
+    int id,season,episode;double position;
+    int ok=fscanf(f,"%d %d %d %lf",&id,&season,&episode,&position)==4;
+    fclose(f);
+    if(!ok||id<1||season<1||episode<1||position<10||position>86400)return 0;
+    memset(out,0,sizeof(*out));
+    out->id=id;out->season=season;out->episode=episode;
+    strcpy(out->kind,"episode");*seconds=position;
+    return 1;
+}
+static void tv_resume_save(const Title *t){
+    FILE *f=fopen("playback-position","r");double position=0;
+    if(!f)return;
+    int ok=fscanf(f,"%lf",&position)==1;fclose(f);
+    if(!ok||position<10||position>86400)return;
+    f=fopen("tv-resume.tsv.next","w");if(!f)return;
+    fprintf(f,"%d %d %d %.3f\n",t->id,t->season,t->episode,position);
+    if(!fclose(f))rename("tv-resume.tsv.next","tv-resume.tsv");
+}
 static void tv_prepare_next(void){
     if(!tv_active||catalog_pid||tv_prepared)return;
     int block=tv_block_at(tv_blocks,tv_hour());
@@ -990,6 +1011,15 @@ static void tv_tick(void){
     if(!tv_active||catalog_pid||player_pid||auto_active||settings_on||tv_schedule_on||(Sint32)(SDL_GetTicks()-tv_next_at)<0)return;
     if(tv_break_due&&tv_breaks){tv_break_due=0;Browse ad={13,1,tv_sequence("tv-break-sequence.txt"),0,0,0,"",""};request_catalog(ad,0,0);return;}
     tv_break_due=0;
+    if(!tv_attempts){
+        Title resume;double position=0;
+        if(tv_resume_read(&resume,&position)){
+            auto_title=resume;auto_active=1;auto_count=auto_index=0;
+            auto_resume=restart_position=position;
+            Browse next={5,1,resume.id,resume.season,resume.episode,0,"",""};
+            auto_request(next);tv_attempts=1;return;
+        }
+    }
     if(tv_attempts++>=12){tv_active=0;snprintf(status,sizeof(status),"TV: NO WORKING SOURCES / A RETRY");return;}
     int block=tv_block_at(tv_blocks,tv_hour());
     Browse next={12,1,tv_sequence("tv-sequence.txt"),0,0,0,"",""};snprintf(next.query,sizeof(next.query),"%d",tv_blocks[block].genre);
@@ -1000,7 +1030,7 @@ static void launch_player(const Title *t) {
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
     int controls[2];if(pipe(controls)){snprintf(status,sizeof(status),"PLAYER CONTROL PIPE FAILED");return;}
     fcntl(controls[1],F_SETFL,O_NONBLOCK);fcntl(controls[1],F_SETFD,FD_CLOEXEC);
-    signal(SIGPIPE,SIG_IGN);unlink("playback-request");
+    signal(SIGPIPE,SIG_IGN);unlink("playback-request");unlink("playback-position");
     if(auto_active)restart_position=auto_resume;
     playing_title=*t;player_menu=access("player-menu-v1",F_OK)==0;
     subtitle_route_log("launch-player",t);
@@ -1071,6 +1101,10 @@ static void finish_player(int code){
         if(page>=1&&page<=listing_pages){play_after_load=1;next_catalog_page(direction);return;}
         snprintf(status,sizeof(status),"NO MORE EPISODES IN THIS SEASON");return;
     }
+    if(tv_active&&!tv_in_break&&auto_title.id>0&&
+       !cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code))unlink("tv-resume.tsv");
+    else if(tv_active&&!tv_in_break&&auto_title.id>0)
+        tv_resume_save(&auto_title);
     if(tv_in_break){
         tv_in_break=0;tv_attempts=0;tv_next_at=0;
         if(cancelled){tv_active=0;tv_prepared=0;return;}
@@ -1087,7 +1121,7 @@ static void finish_player(int code){
     if(auto_active&&!cancelled&&(!WIFEXITED(code)||WEXITSTATUS(code))){auto_index++;auto_next();return;}
     auto_active=0;
     if(tv_active&&!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)){
-        tv_progress_save(auto_title.id,auto_title.season,auto_title.episode);tv_attempts=0;tv_next_at=0;tv_break_due=tv_breaks;
+        tv_progress_save(auto_title.id,auto_title.season,auto_title.episode);unlink("tv-resume.tsv");tv_attempts=0;tv_next_at=0;tv_break_due=tv_breaks;
         fprintf(stderr,"TV completed %d S%d E%d\n",auto_title.id,auto_title.season,auto_title.episode);
     }
     snprintf(status,sizeof(status),cancelled?"PLAYBACK STOPPED":WIFEXITED(code)&&!WEXITSTATUS(code)?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");

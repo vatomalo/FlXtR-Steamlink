@@ -879,7 +879,7 @@ static void draw(Uint32 tick) {
                 SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
             } else placeholder(dst.x,dst.y,dst.w,dst.h,visible[index]);
             text(x,y+162,t->title,1,index==selection?green:white,22);
-            const char *label=!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"game")?"A PLAY GAME":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
+            const char *label=!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A PLAY GAME":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
             text(x,y+177,label,1,dim,22);
         }
         Title *t=&titles[visible[selection]];

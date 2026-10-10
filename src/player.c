@@ -128,9 +128,9 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
         if(av_samples_alloc(&pcm,NULL,2,out_count,AV_SAMPLE_FMT_S16,0)<0){av_frame_unref(frame);return AVERROR(ENOMEM);}
         int samples=swr_convert(swr,&pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
-            /* Keep enough audio headroom for brief demux / H.264 submission stalls.
-             * 250 ms caused the multiplexed video loop to block frequently. */
-            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(2);}
+            /* Bound SDL audio latency near 250 ms instead of 500 ms.
+             * Excess queued audio otherwise trails the video clock. */
+            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/4){playback_controls();SDL_Delay(2);}
             audio_samples+=(unsigned)samples;
             if(!stopped&&SDL_QueueAudio(device,pcm,samples*4)<0){av_freep(&pcm);av_frame_unref(frame);return AVERROR(EIO);}
         }
@@ -413,7 +413,7 @@ int main(int argc,char **argv) {
             /* Audio needs time to reach the output device; video needs time
              * to pass through the hardware decoder. Queue both ahead of
              * presentation instead of treating packet submission as display. */
-            const int64_t audio_lead_us=120000;
+            const int64_t audio_lead_us=180000;
             const int64_t video_lead_us=100000;
             int64_t lead=track==ai?audio_lead_us:video_lead_us;
             if(elapsed>=0 && elapsed<86400LL*AV_TIME_BASE)
@@ -441,6 +441,25 @@ int main(int argc,char **argv) {
         }else {
             rc=queue_audio(audio,swr,packet,frame,device);
             if(device)SDL_PauseAudioDevice(device,0);
+            /* Compare the queued audio tail with its expected media position.
+             * Apply small bounded corrections rather than allowing seconds of
+             * audio latency to silently accumulate after stalls. */
+            if(device&&ts!=AV_NOPTS_VALUE&&origin!=AV_NOPTS_VALUE&&clock_start){
+                static int64_t last_sync;
+                int64_t now=av_gettime_relative();
+                if(now-last_sync>500000){
+                    last_sync=now;
+                    int64_t queued_us=(int64_t)SDL_GetQueuedAudioSize(device)*1000000LL/(48000*4);
+                    int64_t media_us=ts-origin-queued_us;
+                    int64_t wall_us=now-clock_start;
+                    int64_t error=media_us-wall_us;
+                    if(error>80000||error< -80000){
+                        if(error>20000)error=20000;
+                        if(error< -20000)error=-20000;
+                        clock_start-=error;
+                    }
+                }
+            }
         }
         av_packet_unref(packet);if(rc<0)break;
         if(frames>200&&clock_start&&av_gettime_relative()-clock_start>20000000&&!audio_samples){

@@ -165,8 +165,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -946,7 +946,27 @@ static void play(void) {
         request_catalog(next,0,0);return;
     }
     if(!strcmp(t->kind,"archive-game")){Browse next={16,1,t->id,0,0,0,"",""};request_catalog(next,0,0);return;}
+    if(!strcmp(t->kind,"zip-member")){
+        Browse next={27,1,t->id,0,0,0,"",""};
+        snprintf(next.query,sizeof(next.query),"%s",browse.query);
+        request_catalog(next,0,0);return;
+    }
     if(!strcmp(t->kind,"game")){
+        /* Local ZIPs can be explored from the Games library. Other systems
+         * retain direct ZIP launching via the Triangle-selected core. */
+        json_object *installed=games_read("games.json");
+        if(installed&&json_object_is_type(installed,json_type_array)&&
+           t->id>0&&t->id<=(int)json_object_array_length(installed)){
+            json_object *entry=json_object_array_get_idx(installed,t->id-1);
+            const char *path=string(entry,"rom");size_t len=strlen(path);
+            if(len>=4&&!strcasecmp(path+len-4,".zip")&&strstr(path,"/roms/")&&
+               !strcasestr(path,"/neogeo/")&&!strcasestr(path,"/mame/")){
+                Browse next={26,1,0,0,0,0,"",""};
+                snprintf(next.query,sizeof(next.query),"%s",path);
+                json_object_put(installed);request_catalog(next,1,0);return;
+            }
+        }
+        json_object_put(installed);
         int back=-1,start=-1;
         for(int i=0;i<4;i++)if(pads[i]){SDL_GameControllerButtonBind b=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_BACK),a=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_START);if(b.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON&&a.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON){back=b.value.button;start=a.value.button;break;}}
         FILE *f=fopen("game-request","w");if(!f){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}

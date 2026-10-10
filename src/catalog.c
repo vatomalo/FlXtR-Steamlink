@@ -292,8 +292,8 @@ int main(int argc,char **argv){
         if(!separator||(size_t)(separator-argv[3])>=sizeof(item)||strlen(separator+1)>=sizeof(name))rc=-1;
         else{memcpy(item,argv[3],(size_t)(separator-argv[3]));item[separator-argv[3]]=0;snprintf(name,sizeof(name),"%s",separator+1);rc=games_archive_file_download(item,name,id);}
     }
-    else if(!strcmp(kind,"games-zip-list"))rc=zip_members(argv[3],page,0);
-    else if(!strcmp(kind,"games-zip-extract"))rc=zip_members(argv[3],1,id);
+    else if(!strcmp(kind,"games-zip-list"))rc=zip_game_by_id(id,page,0);
+    else if(!strcmp(kind,"games-zip-extract"))rc=zip_game_by_id(id,1,episode);
     else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);
     else if(!strcmp(kind,"games"))rc=games_list(page,id);
     else if(!strcmp(kind,"games-folders"))rc=games_folders(page);

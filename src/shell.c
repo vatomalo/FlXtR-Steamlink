@@ -104,7 +104,7 @@ static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
 static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column;
-static int tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
+static int game_autostate,tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
@@ -123,7 +123,7 @@ static void subtitle_route_log(const char *route,const Title *t){
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
-    fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\n",tv_breaks,monochrome_menu);
+    fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
     for(int i=0;i<TV_BLOCKS;i++)fprintf(f,"tv_hour_%d=%d\ntv_genre_%d=%d\n",i,tv_blocks[i].hour,i,tv_blocks[i].genre);
     if(fclose(f)==0)rename("settings.cfg.next","settings.cfg");
 }
@@ -131,7 +131,8 @@ static void load_settings(void){
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
-        if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
+        if(!strcmp(key,"game_autostate")&&(value==0||value==1))game_autostate=value;
+        else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"menu_monochrome")&&(value==0||value==1))monochrome_menu=value;
         else if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
         else if(!strcmp(key,"buffer")&&value>=0&&value<3)buffer_setting=value;
@@ -827,16 +828,16 @@ static void draw(Uint32 tick) {
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS"};
+        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME"};
 #else
         const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS"};
 #endif
-        char values[11][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[12][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
-        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",monochrome_menu?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");
+        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",monochrome_menu?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
         text(194,94,"SETTINGS",3,green,40);
-        for(int i=0;i<11;i++){int y=134+i*27;rect(190,y-9,724,34,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
+        for(int i=0;i<12;i++){int y=128+i*25;rect(190,y-9,724,34,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
         text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
         text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
     }else if(search_on){
@@ -1248,7 +1249,7 @@ static void action(SDL_Keycode key) {
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
         if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<10)settings_row++;
+        if(key==SDLK_DOWN&&settings_row<11)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
@@ -1261,6 +1262,7 @@ static void action(SDL_Keycode key) {
                 case 8:tv_breaks=!tv_breaks;break;
                 case 9:monochrome_menu=!monochrome_menu;apply_menu_theme();break;
                 case 10:bios_on=1;break;
+                case 11:game_autostate=!game_autostate;break;
                 case 7:tv_schedule_on=1;tv_row=0;tv_column=1;break;
                 case 6:subtitle_delay+=step;if(subtitle_delay>5)subtitle_delay=-5;if(subtitle_delay< -5)subtitle_delay=5;break;
             }save_settings();

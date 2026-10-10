@@ -696,6 +696,17 @@ static void draw(Uint32 tick) {
         int x=star_x[i]*W/256, y=(star_y[i]*H/256+(tick/100)*star_speed[i]/8)%H;
         SDL_Color c={145+(i%3)*40,145+(i%3)*40,145+(i%3)*40,255};rect(x,y,1+(i%9==0),1+(i%9==0),c,1);
     }
+    if(rom_core_menu){
+        rect(184,80,746,339,(SDL_Color){0,0,0,235},1);
+        text(200,95,"CORE OPTIONS / ROM",2,green,50);
+        text(200,125,rom_core_title,1,white,70);
+        for(int i=0;i<rom_core_count;i++){
+            char line[72];snprintf(line,sizeof(line),"%c %s",i==rom_core_selected?'>':' ',rom_core_names[i]);
+            text(206,161+i*32,line,2,i==rom_core_selected?green:white,55);
+        }
+        text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
+        SDL_RenderPresent(renderer);return;
+    }
     text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
     text(737,32,"NATIVE / MINIMAL",2,dim,17);
     rect(30,65,900,1,dim,1);
@@ -1095,17 +1106,6 @@ static void action(SDL_Keycode key) {
         }
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5||key==SDLK_F2)bios_on=0;
         return;
-    }
-    if(rom_core_menu){
-        rect(184,80,746,339,(SDL_Color){0,0,0,235},1);
-        text(200,95,"CORE OPTIONS / ROM",2,green,50);
-        text(200,125,rom_core_title,1,white,70);
-        for(int i=0;i<rom_core_count;i++){
-            char line[72];snprintf(line,sizeof(line),"%c %s",i==rom_core_selected?'>':' ',rom_core_names[i]);
-            text(206,161+i*32,line,2,i==rom_core_selected?green:white,55);
-        }
-        text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
-        SDL_RenderPresent(renderer);return;
     }
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}

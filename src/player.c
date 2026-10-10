@@ -200,7 +200,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--start")&&i+1<argc){char *end;playback_start=strtod(argv[++i],&end);if(*end||!isfinite(playback_start)||playback_start<0||playback_start>86400)return 2;}
         else if(!strcmp(argv[i],"--buffer-seconds")&&i+1<argc){buffer_secs=atoi(argv[++i]);if(buffer_secs!=5&&buffer_secs!=15&&buffer_secs!=30)return 2;}
         else if(!strcmp(argv[i],"--buffer-mb")&&i+1<argc){buffer_mb=atoi(argv[++i]);if(buffer_mb!=64&&buffer_mb!=128&&buffer_mb!=256)return 2;}
-        else if(!strcmp(argv[i],"--subtitles")&&i+1<argc){sub_language=argv[++i];if(strcmp(sub_language,"off")&&strcmp(sub_language,"auto")&&strcmp(sub_language,"eng")&&strcmp(sub_language,"nor"))return 2;}
+        else if(!strcmp(argv[i],"--subtitles")&&i+1<argc){sub_language=argv[++i];if(strcmp(sub_language,"off")&&strcmp(sub_language,"auto")&&strcmp(sub_language,"eng")&&strcmp(sub_language,"nor")&&strcmp(sub_language,"spa"))return 2;}
         else if(!strcmp(argv[i],"--subtitle-size")&&i+1<argc){subtitle_size=atoi(argv[++i]);if(subtitle_size<2||subtitle_size>3)return 2;}
         else if(!strcmp(argv[i],"--subtitle-delay")&&i+1<argc){subtitle_delay=atoi(argv[++i]);if(subtitle_delay< -5||subtitle_delay>5)return 2;}
         else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
@@ -208,7 +208,7 @@ int main(int argc,char **argv) {
     megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
     /* Faster startup for short-lived anime HLS URLs; retain disk buffering. */
     if(megaplay&&buffer_secs>5){fprintf(stderr,"MegaPlay: reducing initial prebuffer from %d to 5 seconds\n",buffer_secs);buffer_secs=5;}
-    menu_height=height_limit;for(int i=0;i<4;i++)if(!strcmp(sub_language,(const char*[]){"off","auto","eng","nor"}[i]))menu_subtitles=i;
+    menu_height=height_limit;for(int i=0;i<5;i++)if(!strcmp(sub_language,(const char*[]){"off","auto","eng","nor","spa"}[i]))menu_subtitles=i;
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
     fmt=avformat_alloc_context();if(!fmt)goto done;
@@ -249,7 +249,8 @@ int main(int argc,char **argv) {
         const char *lang=language?language->value:"";
         int matching=!strcmp(sub_language,"auto")||!strcmp(lang,sub_language)||
             (!strcmp(sub_language,"eng")&&(!strcmp(lang,"en")||!strcmp(lang,"en-US")||!strcmp(lang,"en-GB")))||
-            (!strcmp(sub_language,"nor")&&(!strcmp(lang,"nb")||!strcmp(lang,"nob")||!strcmp(lang,"no")||!strcmp(lang,"nn")));
+            (!strcmp(sub_language,"nor")&&(!strcmp(lang,"nb")||!strcmp(lang,"nob")||!strcmp(lang,"no")||!strcmp(lang,"nn")))||
+            (!strcmp(sub_language,"spa")&&(!strcmp(lang,"es")||!strcmp(lang,"spa")||!strncmp(lang,"es-",3)));
         if(pass==0&&!matching)continue;
         if(pass==1&&(*lang||!strcmp(sub_language,"auto")))continue;
         const AVCodec *codec=avcodec_find_decoder(sp->codec_id);if(!codec)continue;
@@ -261,11 +262,14 @@ int main(int argc,char **argv) {
     /* Prefer a requested external language track, otherwise use embedded text. */
     const char *english=getenv("FLXTR_SUBTITLE_ENGLISH");
     const char *norwegian=getenv("FLXTR_SUBTITLE_NORWEGIAN");
+    const char *spanish=getenv("FLXTR_SUBTITLE_SPANISH");
     const char *external=NULL;
     if(strcmp(sub_language,"off")){
         if(!strcmp(sub_language,"nor"))external=norwegian;
+        else if(!strcmp(sub_language,"spa"))external=spanish;
         else external=english;
         if((!external||!*external)&&!strcmp(sub_language,"auto"))external=norwegian;
+        if((!external||!*external)&&!strcmp(sub_language,"auto"))external=spanish;
     }
     fprintf(stderr,"External subtitle handoff: English %s, Norwegian %s, selected %s\n",
         english&&*english?"available":"absent",norwegian&&*norwegian?"available":"absent",

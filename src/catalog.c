@@ -285,14 +285,14 @@ int main(int argc,char **argv){
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);
     if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>(!strcmp(kind,"archive-files")||!strcmp(kind,"games-archive-files")||!strcmp(kind,"games-file-download")||!strcmp(kind,"games-zip-list")||!strcmp(kind,"games-zip-extract")?2047:64))return 2;
-    if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-archive-search")&&strcmp(kind,"games-archive-files")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"games-folders")&&strcmp(kind,"games-system")&&strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
+    if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-archive-search")&&strcmp(kind,"games-archive-files")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"games-folders")&&strcmp(kind,"games-system")&&strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
     if((!strcmp(kind,"source")||!strcmp(kind,"quality"))&&!getenv("FLXTR_NO_NETWORK")&&!access("./greenlink-resolver",X_OK)){
         int quality=!strcmp(kind,"quality");if(quality&&argc!=8)return 2;
         execl("./greenlink-resolver","greenlink-resolver",quality?"source":"servers",episode?"tv":"movie",argv[4],argv[5],argv[6],quality?argv[7]:"",argv[2],(char*)NULL);return 1;
     }
     if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
     mkdir("catalog-cache",0700);
-    int cacheable=strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
+    int cacheable=strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
     if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
     int rc;
     if(!strcmp(kind,"games-platforms"))rc=games_platforms(page);
@@ -306,6 +306,8 @@ int main(int argc,char **argv){
         if(!separator||(size_t)(separator-argv[3])>=sizeof(item)||strlen(separator+1)>=sizeof(name))rc=-1;
         else{memcpy(item,argv[3],(size_t)(separator-argv[3]));item[separator-argv[3]]=0;snprintf(name,sizeof(name),"%s",separator+1);rc=games_archive_file_download(item,name,id);}
     }
+    else if(!strcmp(kind,"games-downloads-list"))rc=downloaded_zip_list(page);
+    else if(!strcmp(kind,"games-downloads-delete"))rc=downloaded_zip_delete(id);
     else if(!strcmp(kind,"games-zip-list"))rc=zip_game_by_id(id,page,0);
     else if(!strcmp(kind,"games-zip-extract"))rc=zip_game_by_id(id,1,episode);
     else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);

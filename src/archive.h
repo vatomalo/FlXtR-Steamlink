@@ -35,6 +35,55 @@ static int archive_list(int page,const char *query){
     json_object *root=archive_json(url);if(!root)return -1;
     int rc=archive_cards(root);json_object_put(root);return rc;
 }
+/* Folder-first Internet Archive discovery. Ranking is provided by Archive
+ * download counts, with format filtering to emphasize playable videos. */
+static const char *const archive_folder_titles[]={
+    "CLASSIC FILMS","ANIMATION","DOCUMENTARIES","SCI-FI / HORROR",
+    "COMEDY","MUSIC / CONCERTS","EDUCATIONAL","ALL VIDEOS"
+};
+static const char *const archive_folder_filters[]={
+    "(subject:classic OR subject:feature_films OR collection:feature_films)",
+    "(subject:animation OR subject:cartoons OR collection:classic_cartoons)",
+    "(subject:documentary OR subject:documentaries)",
+    "(subject:science_fiction OR subject:horror OR subject:sci-fi)",
+    "(subject:comedy OR subject:humor OR subject:stand_up)",
+    "(subject:concert OR subject:music OR subject:performance)",
+    "(subject:education OR subject:educational OR subject:instructional)",
+    ""
+};
+static int archive_folders(int page){
+    total=8;
+    for(int i=(page-1)*PAGE_SIZE;i<8&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];
+        clean(e->title,sizeof(e->title),archive_folder_titles[i]);
+        snprintf(e->meta,sizeof(e->meta),"POPULAR PUBLIC VIDEOS / A OPEN");
+        strcpy(e->kind,"archive-folder");e->id=i+1;
+    }
+    return 0;
+}
+static int archive_category_list(int page,int category,const char *query){
+    if(category<1||category>8)return -1;
+    char term[128];size_t n=0;
+    for(size_t i=0;query[i]&&n+1<sizeof(term);i++)
+        if(isalnum((unsigned char)query[i])||query[i]==' '||query[i]=='-')
+            term[n++]=query[i];
+    term[n]=0;
+    char expression[512];
+    int written=snprintf(expression,sizeof(expression),
+        "mediatype:movies AND (format:\"h.264\" OR format:\"MPEG4\") AND -access-restricted-item:true%s%s%s%s",
+        category==8?"":" AND ",archive_folder_filters[category-1],
+        n?" AND ":"",term);
+    if(written<0||written>=(int)sizeof(expression))return -1;
+    char *escaped=curl_easy_escape(NULL,expression,0);if(!escaped)return -1;
+    char url[2048];
+    written=snprintf(url,sizeof(url),
+        ARCHIVE "/advancedsearch.php?q=%s&fl%%5B%%5D=identifier&fl%%5B%%5D=title&sort%%5B%%5D=downloads%%20desc&rows=6&page=%d&output=json",
+        escaped,page);
+    curl_free(escaped);
+    if(written<0||written>=(int)sizeof(url))return -1;
+    json_object *root=archive_json(url);if(!root)return -1;
+    int rc=archive_cards(root);json_object_put(root);return rc;
+}
 static int archive_video(json_object *f){
     const char *name=string(f,"name"),*format=string(f,"format");size_t n=strlen(name);
     json_object *private=field(f,"private");

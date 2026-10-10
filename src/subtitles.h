@@ -66,6 +66,12 @@ static void subtitle_draw(void){
     }
     (void)next;
     if(selected==subtitle_visible)return;
+    if(subtitle_external&&subtitle_visible>=0&&selected<0){
+        const SubtitleCue *previous=&subtitle_cues[subtitle_visible];
+        fprintf(stderr,"Subtitle cue ended: start=%.3f end=%.3f clock=%.3f duration=%.3f\n",
+            previous->start/1000000.0,previous->end/1000000.0,
+            now/1000000.0,(previous->end-previous->start)/1000000.0);
+    }
     if(selected<0){subtitle_visible=-1;if(subtitle_overlay)SLVideo_HideOverlay(subtitle_overlay);return;}
     if(!subtitle_overlay)subtitle_overlay=SLVideo_CreateOverlay(view_context,960,144);
     if(!subtitle_overlay)return;

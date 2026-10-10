@@ -372,6 +372,16 @@ int main(int argc,char **argv) {
         int track=packet->stream_index;
         if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);subtitle_draw();continue;}
         if(track!=vi&&track!=ai){av_packet_unref(packet);continue;}
+        /* Log anomalous decode/presentation timestamp separation without
+         * changing decode-order submission to the H.264 hardware. */
+        if(track==vi&&packet->dts!=AV_NOPTS_VALUE&&packet->pts!=AV_NOPTS_VALUE){
+            int64_t delta=av_rescale_q(packet->pts-packet->dts,
+                fmt->streams[vi]->time_base,AV_TIME_BASE_Q);
+            static unsigned pts_reports;
+            if((delta>250000||delta< -250000)&&pts_reports++<20)
+                fprintf(stderr,"Video PTS-DTS difference: %.3f s frame=%u\n",
+                    delta/1000000.0,frames);
+        }
         int64_t ts=packet->dts!=AV_NOPTS_VALUE?packet->dts:packet->pts;
         if(ts!=AV_NOPTS_VALUE){
             ts=av_rescale_q(ts,fmt->streams[track]->time_base,AV_TIME_BASE_Q);
@@ -395,6 +405,12 @@ int main(int argc,char **argv) {
                    SLVideo_WriteFrameData(video,filtered->data,filtered->size)<0||SLVideo_SubmitFrame(video)<0){
                     fprintf(stderr,"Hardware decoder rejected frame %u\n",frames);av_packet_unref(filtered);goto done;
                 }
+                static unsigned slow_submissions;
+                /* Time the hardware handoff, not just CPU utilization. */
+                int64_t submitted_at=av_gettime_relative();
+                if(submitted_at-wait_start>150000&&slow_submissions++<30)
+                    fprintf(stderr,"Video packet processing delay: %.1f ms frame=%u\n",
+                        (submitted_at-wait_start)/1000.0,frames);
                 frames++;av_packet_unref(filtered);
             }
             if(rc==AVERROR(EAGAIN)||rc==AVERROR_EOF)rc=0;

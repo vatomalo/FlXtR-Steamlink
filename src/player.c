@@ -119,7 +119,7 @@ int main(int argc,char **argv) {
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;
     CSLVideoContext *context=NULL;CSLVideoStream *video=NULL;
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
-    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=128,si=-1;const char *sub_language="off";
+    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=128,si=-1;const char *sub_language="auto";
     if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
     int buffer_probe=!strcmp(argv[1],"--probe-buffer");
     int probe=!strcmp(argv[1],"--probe")||buffer_probe;
@@ -197,7 +197,7 @@ int main(int argc,char **argv) {
         if(avcodec_parameters_to_context(sub_decoder,sp)<0||avcodec_open2(sub_decoder,codec,NULL)<0){avcodec_free_context(&sub_decoder);continue;}
         sub_decoder->pkt_timebase=fmt->streams[i]->time_base;si=(int)i;break;
     }
-    fprintf(stderr,"Subtitle track: %d\n",si);
+    fprintf(stderr,"Subtitle mode: %s, selected track: %d%s\n",sub_language,si,si<0?" (no supported embedded text subtitle track)":"");
     for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai||(int)i==si)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
     AVStream *vs=fmt->streams[vi];AVCodecParameters *vp=vs->codecpar;
     const AVPixFmtDescriptor *pix=av_pix_fmt_desc_get(vp->format);
@@ -271,7 +271,7 @@ int main(int argc,char **argv) {
             break;
         }
         int track=packet->stream_index;
-        if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);continue;}
+        if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);subtitle_draw();continue;}
         if(track!=vi&&track!=ai){av_packet_unref(packet);continue;}
         int64_t ts=packet->dts!=AV_NOPTS_VALUE?packet->dts:packet->pts;
         if(ts!=AV_NOPTS_VALUE){

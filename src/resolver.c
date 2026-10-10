@@ -14,7 +14,7 @@
 #include <unistd.h>
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
-typedef struct {char label[80],meta[96],url[2048];int height;} Choice;
+typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024];int height;} Choice;
 static Choice choices[40];static int count;
 static size_t receive(void *ptr,size_t size,size_t nmemb,void *opaque){
     Buffer *b=opaque;if(size&&nmemb>SIZE_MAX/size)return 0;
@@ -93,6 +93,32 @@ static void servers(json_object *root){
     if(map&&json_object_is_type(map,json_type_object)){json_object_object_foreach(map,key,val){(void)val;server_choice(key);}}
     qsort(choices,(size_t)count,sizeof(choices[0]),compare_choices);
 }
+/* External captions are separate HTTPS resources in many provider responses.
+ * Never treat subtitle URLs as video sources or trust local protocols. */
+static void select_subtitles(json_object *list,char *eng,char *nor){
+    if(!list||!json_object_is_type(list,json_type_array))return;
+    for(size_t i=0;i<(size_t)json_object_array_length(list);i++){
+        json_object *track=json_object_array_get_idx(list,i);
+        const char *url=string(track,"url");
+        if(!*url)url=string(track,"file");
+        if(!*url)url=string(track,"src");
+        const char *lang=string(track,"lang");
+        if(!*lang)lang=string(track,"language");
+        if(!*lang)lang=string(track,"label");
+        if(strncmp(url,"https://",8)||strlen(url)>=1024||strpbrk(url,"\\r\\n\\t"))continue;
+        int english=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
+        int norwegian=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
+            !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);
+        if(english&&!*eng)snprintf(eng,1024,"%s",url);
+        if(norwegian&&!*nor)snprintf(nor,1024,"%s",url);
+    }
+}
+static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor){
+    select_subtitles(field(source,"subtitles"),eng,nor);
+    select_subtitles(field(source,"tracks"),eng,nor);
+    select_subtitles(field(root,"subtitles"),eng,nor);
+    select_subtitles(field(root,"tracks"),eng,nor);
+}
 static void add_variants(char *manifest,const char *url,const char *server){
     if(!strncmp(manifest,"#EXTM3U",7)){
         char *save=NULL;for(char *line=strtok_r(manifest,"\r\n",&save);line&&count<40;line=strtok_r(NULL,"\r\n",&save)){
@@ -104,15 +130,20 @@ static void add_variants(char *manifest,const char *url,const char *server){
     }
 }
 static int qualities(json_object *root,const char *server){
-    json_object *list=field(root,"sources");const char *url="";
+    json_object *list=field(root,"sources");const char *url="";json_object *selected=NULL;
     if(list&&json_object_is_type(list,json_type_array))for(size_t i=0;i<(size_t)json_object_array_length(list);i++){
-        json_object *s=json_object_array_get_idx(list,i);if(!strcmp(string(s,"server"),server)){url=string(s,"url");break;}
+        json_object *s=json_object_array_get_idx(list,i);if(!strcmp(string(s,"server"),server)){url=string(s,"url");selected=s;break;}
     }
-    else if(list&&json_object_is_type(list,json_type_object)){url=string(list,"file");if(!*url)url=string(list,"url");}
+    else if(list&&json_object_is_type(list,json_type_object)){selected=list;url=string(list,"file");if(!*url)url=string(list,"url");}
     if(!valid_url(url)){fprintf(stderr,"Selected server has no compatible direct link\n");return -1;}
-    strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);count=1;
+    strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);source_subtitles(root,selected,choices[0].subs_eng,choices[0].subs_nor);count=1;
     char *manifest=request(url,NULL,1);if(!manifest)return 0;
-    add_variants(manifest,url,server);free(manifest);return 0;
+    add_variants(manifest,url,server);
+    for(int i=1;i<count;i++){
+        snprintf(choices[i].subs_eng,sizeof(choices[i].subs_eng),"%s",choices[0].subs_eng);
+        snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);
+    }
+    free(manifest);return 0;
 }
 int main(int argc,char **argv){
     if(argc!=8|| (strcmp(argv[1],"servers")&&strcmp(argv[1],"source")) ||(strcmp(argv[2],"movie")&&strcmp(argv[2],"tv")))return 2;
@@ -125,7 +156,8 @@ int main(int argc,char **argv){
     json_object *root=lookup(path,resolving?argv[6]:"");int rc=1;
     if(root){if(resolving){if(qualities(root,argv[6]))goto done;}else servers(root);
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
-        for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];printf("%s\t%s\t\t%s\t%s\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,resolving?"source":"server",id,season,episode,c->height);}
+        for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor);
+            else printf("%s\t%s\t\t%s\tserver\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,id,season,episode,c->height);}
         rc=ferror(stdout)?1:0;
     }
 done:json_object_put(root);resolver_free();curl_global_cleanup();return rc;

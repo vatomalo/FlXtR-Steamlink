@@ -106,7 +106,7 @@ static void select_subtitles(json_object *list,char *eng,char *nor){
         const char *lang=string(track,"lang");
         if(!*lang)lang=string(track,"language");
         if(!*lang)lang=string(track,"label");
-        if(strncmp(url,"https://",8)||strlen(url)>=1024||strpbrk(url,"\\r\\n\\t"))continue;
+        if(strncmp(url,"https://",8)||strlen(url)>=1024||strpbrk(url,"\r\n\t"))continue;
         int english=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
         int norwegian=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
             !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);

@@ -947,6 +947,13 @@ static void play(void) {
         snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
     }
+    if(!strcmp(t->kind,"scummvm-launch")){
+        FILE *f=fopen("game-request","w");
+        if(!f){snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");return;}
+        fprintf(f,"0 -1 -1\n");
+        if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");return;}
+        game_exit=1;running=0;return;
+    }
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;

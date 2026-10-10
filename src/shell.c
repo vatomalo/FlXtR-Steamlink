@@ -149,7 +149,7 @@ static float flow_position;
 static int stopping_player;
 static int viewing=VIEW_FIT;
 static Uint32 stop_time;
-typedef struct {int mode,page,id,season,episode,selected;char query[129],name[80];} Browse;
+typedef struct {int mode,page,id,season,episode,selected;char query[2048],name[80];} Browse;
 static Browse browse={0,1,0,0,0,0,"",""},pending,history[4];
 static int history_size,pending_push,pending_pop,listing_pages=1,listing_total;
 static pid_t catalog_pid,prefetch_pid,idle_pid;
@@ -933,8 +933,9 @@ static void play(void) {
         char item[129];size_t ilen=(size_t)(slash-(t->url+n));
         if(ilen<1||ilen>=sizeof(item)){snprintf(status,sizeof(status),"INVALID ARCHIVE ID");return;}
         memcpy(item,t->url+n,ilen);item[ilen]=0;
-        char name[161];int ni=0;const char *p=slash+1;
-        while(*p&&ni<160){
+        char name[513];size_t ni=0;const char *p=slash+1;
+        while(*p){
+            if(ni+1>=sizeof(name)){snprintf(status,sizeof(status),"ARCHIVE FILENAME EXCEEDS 512 BYTES");return;}
             if(*p=='%'&&isxdigit((unsigned char)p[1])&&isxdigit((unsigned char)p[2])){
                 char hex[3]={p[1],p[2],0};name[ni++]=(char)strtol(hex,NULL,16);p+=3;
             }else name[ni++]=*p++;

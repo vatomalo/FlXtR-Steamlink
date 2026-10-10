@@ -120,6 +120,67 @@ static void source_subtitles(json_object *root,json_object *source,char *eng,cha
     select_subtitles(field(root,"subtitles"),eng,nor);
     select_subtitles(field(root,"tracks"),eng,nor);
 }
+/* Read HLS master playlist subtitle renditions without touching video variants. */
+static int hls_attribute(const char *line,const char *key,char *out,size_t cap){
+    char needle[48];snprintf(needle,sizeof(needle),"%s=",key);
+    const char *p=line;
+    while((p=strstr(p,needle))){
+        if(p==line||p[-1]==','||p[-1]==':'){
+            p+=strlen(needle);
+            int quoted=*p=='"';if(quoted)p++;
+            const char *end=p;
+            while(*end&&(quoted?*end!='"':*end!=','))end++;
+            size_t n=(size_t)(end-p);
+            if(n>=cap)return 0;
+            memcpy(out,p,n);out[n]=0;return n>0;
+        }
+        p+=strlen(needle);
+    }
+    return 0;
+}
+static int hls_resolve_uri(const char *base,const char *uri,char *out,size_t size){
+    if(!strncmp(uri,"https://",8)){
+        if(strlen(uri)>=size)return 0;
+        strcpy(out,uri);return 1;
+    }
+    if(!*uri||uri[0]=='/'&&uri[1]=='/'||strchr(uri,'\\')||strpbrk(uri,"\\r\\n\\t")||
+       strstr(uri,"../")||!strncmp(uri,"http:",5)||!strncmp(uri,"file:",5))return 0;
+    if(!strncmp(uri,"/",1)){
+        const char *host=strchr(base+8,'/');
+        size_t origin=host?(size_t)(host-base):strlen(base);
+        if(origin+strlen(uri)>=size)return 0;
+        snprintf(out,size,"%.*s%s",(int)origin,base,uri);return 1;
+    }
+    const char *query=strchr(base,'?');
+    size_t limit=query?(size_t)(query-base):strlen(base);
+    const char *slash=NULL;
+    for(size_t i=8;i<limit;i++)if(base[i]=='/')slash=base+i;
+    if(!slash)return 0;
+    size_t prefix=(size_t)(slash-base)+1;
+    if(prefix+strlen(uri)>=size)return 0;
+    snprintf(out,size,"%.*s%s",(int)prefix,base,uri);return 1;
+}
+static void hls_subtitles(char *manifest,const char *base,char *eng,char *nor){
+    if(strncmp(manifest,"#EXTM3U",7))return;
+    char *save=NULL;
+    for(char *line=strtok_r(manifest,"\\r\\n",&save);line;line=strtok_r(NULL,"\\r\\n",&save)){
+        if(strncmp(line,"#EXT-X-MEDIA:",13))continue;
+        char type[32],uri[1024],lang[64],label[64],resolved[1024];
+        if(!hls_attribute(line,"TYPE",type,sizeof(type))||strcmp(type,"SUBTITLES")||
+           !hls_attribute(line,"URI",uri,sizeof(uri)))continue;
+        lang[0]=label[0]=0;
+        hls_attribute(line,"LANGUAGE",lang,sizeof(lang));
+        hls_attribute(line,"NAME",label,sizeof(label));
+        const char *language=*lang?lang:label;
+        int english=!strncasecmp(language,"en",2)||!strncasecmp(language,"english",7);
+        int norwegian=!strncasecmp(language,"no",2)||!strncasecmp(language,"nb",2)||
+                      !strncasecmp(language,"nn",2)||!strncasecmp(language,"norwegian",9);
+        if(!(english&&!*eng)&&!(norwegian&&!*nor))continue;
+        if(!hls_resolve_uri(base,uri,resolved,sizeof(resolved)))continue;
+        if(english&&!*eng)snprintf(eng,1024,"%s",resolved);
+        if(norwegian&&!*nor)snprintf(nor,1024,"%s",resolved);
+    }
+}
 static void add_variants(char *manifest,const char *url,const char *server){
     if(!strncmp(manifest,"#EXTM3U",7)){
         char *save=NULL;for(char *line=strtok_r(manifest,"\r\n",&save);line&&count<40;line=strtok_r(NULL,"\r\n",&save)){
@@ -138,7 +199,12 @@ static int qualities(json_object *root,const char *server){
     else if(list&&json_object_is_type(list,json_type_object)){selected=list;url=string(list,"file");if(!*url)url=string(list,"url");}
     if(!valid_url(url)){fprintf(stderr,"Selected server has no compatible direct link\n");return -1;}
     strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);source_subtitles(root,selected,choices[0].subs_eng,choices[0].subs_nor);count=1;
-    char *manifest=request(url,NULL,1);if(!manifest)return 0;
+    char *manifest=request(url,NULL,1);
+    if(!manifest){fprintf(stderr,"Subtitle discovery for %s: manifest unavailable (English %s, Norwegian %s)\\n",server,choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");return 0;}
+    /* strtok_r mutates playlists; inspect renditions before variants. */
+    hls_subtitles(manifest,url,choices[0].subs_eng,choices[0].subs_nor);
+    fprintf(stderr,"Subtitle discovery for %s: English %s, Norwegian %s\\n",server,
+        choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");
     add_variants(manifest,url,server);
     for(int i=1;i<count;i++){
         snprintf(choices[i].subs_eng,sizeof(choices[i].subs_eng),"%s",choices[0].subs_eng);

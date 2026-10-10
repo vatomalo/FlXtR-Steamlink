@@ -132,7 +132,7 @@ static int load_external_subtitles(const char *url){
     rc=avformat_find_stream_info(subfmt,NULL);
     int stream=-1;
     if(rc>=0)for(unsigned i=0;i<subfmt->nb_streams;i++){
-        AVCodecID codec=subfmt->streams[i]->codecpar->codec_id;
+        enum AVCodecID codec=subfmt->streams[i]->codecpar->codec_id;
         if(codec==AV_CODEC_ID_SUBRIP||codec==AV_CODEC_ID_WEBVTT){stream=(int)i;break;}
     }
     if(stream<0){fprintf(stderr,"External subtitle has no SRT/WebVTT stream\\n");avformat_close_input(&subfmt);return -1;}

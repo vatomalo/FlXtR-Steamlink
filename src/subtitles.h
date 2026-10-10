@@ -25,12 +25,12 @@ static void subtitle_draw(void){
     int64_t now=origin+av_gettime_relative()-clock_start-(int64_t)subtitle_delay*AV_TIME_BASE;
     int selected=-1;for(int i=0;i<64;i++)if(subtitle_cues[i].text[0]&&now>=subtitle_cues[i].start&&now<subtitle_cues[i].end)selected=i;
     if(selected==subtitle_visible)return;
-    subtitle_visible=selected;
-    if(selected<0){if(subtitle_overlay)SLVideo_HideOverlay(subtitle_overlay);return;}
+    if(selected<0){subtitle_visible=-1;if(subtitle_overlay)SLVideo_HideOverlay(subtitle_overlay);return;}
     if(!subtitle_overlay)subtitle_overlay=SLVideo_CreateOverlay(view_context,960,144);
     if(!subtitle_overlay)return;
     uint32_t *pixels=NULL;int pitch=0;SLVideo_HideOverlay(subtitle_overlay);SLVideo_GetOverlayPixels(subtitle_overlay,&pixels,&pitch);
     if(!pixels||pitch<960*4)return;
+    subtitle_visible=selected;
     for(int y=0;y<144;y++)for(int x=0;x<960;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xa0000000;
     const char *input=subtitle_cues[selected].text;int cols=900/(6*subtitle_size);
     for(int row=0;row<3&&*input;row++){

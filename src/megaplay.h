@@ -46,7 +46,7 @@ static int mega_token(char *url,size_t cap,time_t now){
 }
 /* MegaPlay responses can publish caption tracks separately from their video.
  * Only pass bounded HTTPS references to the player, never access tokens in logs. */
-static void mega_subtitle_list(json_object *tracks,char *english,char *norwegian){
+static void mega_subtitle_list(json_object *tracks,char *english,char *norwegian,char *spanish){
     if(!tracks||!json_object_is_type(tracks,json_type_array))return;
     for(size_t i=0;i<(size_t)json_object_array_length(tracks);i++){
         json_object *item=json_object_array_get_idx(tracks,i);
@@ -62,15 +62,16 @@ static void mega_subtitle_list(json_object *tracks,char *english,char *norwegian
             !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);
         if(en&&!*english)strcpy(english,link);
         if(no&&!*norwegian)strcpy(norwegian,link);
+        if((!strncasecmp(lang,"es",2)||!strncasecmp(lang,"spanish",7))&&!*spanish)strcpy(spanish,link);
     }
 }
-static void mega_find_subtitles(json_object *root,char *en,char *no){
+static void mega_find_subtitles(json_object *root,char *en,char *no,char *es){
     if(!root)return;
-    mega_subtitle_list(field(root,"tracks"),en,no);
-    mega_subtitle_list(field(root,"subtitles"),en,no);
-    mega_subtitle_list(field(root,"captions"),en,no);
+    mega_subtitle_list(field(root,"tracks"),en,no,es);
+    mega_subtitle_list(field(root,"subtitles"),en,no,es);
+    mega_subtitle_list(field(root,"captions"),en,no,es);
 }
-static int mega_media(json_object *root,char *url,size_t cap,time_t now,char *en,char *no){
+static int mega_media(json_object *root,char *url,size_t cap,time_t now,char *en,char *no,char *es){
     json_object *decoded=NULL,*source=field(root,"sources");
     const char *enc=string(root,"enc");
     if(*enc){
@@ -86,14 +87,14 @@ static int mega_media(json_object *root,char *url,size_t cap,time_t now,char *en
         ok=json_tokener_get_error(tok)==json_tokener_success;json_tokener_free(tok);
         if(!ok){json_object_put(decoded);return 0;}source=decoded;
     }
-    mega_find_subtitles(root,en,no);
-    mega_find_subtitles(source,en,no);
+    mega_find_subtitles(root,en,no,es);
+    mega_find_subtitles(source,en,no,es);
     const char *file=source&&json_object_is_type(source,json_type_string)?json_object_get_string(source):string(source,"file");
     int ok=!strncmp(file,"https://",8)&&strlen(file)<cap&&!strpbrk(file,"\r\n\t ")&&(strstr(file,".m3u8")||strstr(file,".mp4"));
     if(ok){strcpy(url,file);ok=mega_token(url,cap,now);}
     json_object_put(decoded);return ok;
 }
-static int mega_source(const char *html,const char *referer,char *url,size_t cap,char *en,char *no){
+static int mega_source(const char *html,const char *referer,char *url,size_t cap,char *en,char *no,char *es){
     const char *player=strstr(html,"id=\"megaplay-player\"");char id[32];
     if(!player){fprintf(stderr,"MegaPlay: player element missing\n");return 0;}
     while(player>html&&*player!='<')player--;
@@ -103,7 +104,7 @@ static int mega_source(const char *html,const char *referer,char *url,size_t cap
     json_tokener *tok=json_tokener_new_ex(16);if(!tok){free(response.data);return 0;}
     json_object *root=json_tokener_parse_ex(tok,response.data,(int)response.length);
     int parsed=json_tokener_get_error(tok)==json_tokener_success;
-    int ok=parsed&&mega_media(root,url,cap,time(NULL),en,no);
+    int ok=parsed&&mega_media(root,url,cap,time(NULL),en,no,es);
     if(!ok)fprintf(stderr,"MegaPlay: %s\n",parsed?"unsupported or invalid media response":"invalid source JSON");
     else fprintf(stderr,"MegaPlay captions: English %s, Norwegian %s\n",*en?"available":"absent",*no?"available":"absent");
     json_object_put(root);json_tokener_free(tok);free(response.data);return ok;

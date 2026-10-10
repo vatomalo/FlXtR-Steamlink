@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <time.h>
 #include "font.h"
 #include "video_layout.h"
 #include "tv_schedule.h"
@@ -50,6 +51,14 @@ static void tv_tick(void);
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor"};
+static void subtitle_route_log(const char *route,const Title *t){
+    FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
+    fprintf(f,"%lu shell route=%s kind=%s video=%s english=%s norwegian=%s\n",
+        (unsigned long)time(NULL),route,t->kind,t->url[0]?"yes":"no",
+        t->subs_eng[0]?"yes":"no",t->subs_nor[0]?"yes":"no");
+    fclose(f);
+}
+
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
@@ -468,7 +477,7 @@ static void auto_result(int success){
                 if(strlen(field[10])<sizeof(source.subs_nor))strcpy(source.subs_nor,field[10]);}
         }
     }fclose(f);}
-    if(source.url[0]){launch_player(&source);if(!player_pid)auto_active=0;return;}
+    if(source.url[0]){subtitle_route_log("auto-result",&source);launch_player(&source);if(!player_pid)auto_active=0;return;}
     if(pending.mode==6)fprintf(stderr,"Source lookup returned no usable URL for server %s\n",pending.query);
     if(pending.mode==5){
         if(pending.page<pages&&auto_count<40){Browse next=pending;next.page++;auto_request(next);}
@@ -873,6 +882,7 @@ static void launch_player(const Title *t) {
     signal(SIGPIPE,SIG_IGN);unlink("playback-request");
     if(auto_active)restart_position=auto_resume;
     playing_title=*t;player_menu=access("player-menu-v1",F_OK)==0;
+    subtitle_route_log("launch-player",t);
     close_ui();
     player_pid=fork();
     if(player_pid==0) {

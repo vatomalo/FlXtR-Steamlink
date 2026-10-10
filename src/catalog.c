@@ -290,7 +290,7 @@ int main(int argc,char **argv){
     else if(!strcmp(kind,"games-file-download")){
         char item[129],name[513];const char *separator=strchr(argv[3],'|');
         if(!separator||(size_t)(separator-argv[3])>=sizeof(item)||strlen(separator+1)>=sizeof(name))rc=-1;
-        else{memcpy(item,argv[3],(size_t)(separator-argv[3]));item[separator-argv[3]]=0;snprintf(name,sizeof(name),"%s",separator+1);rc=games_archive_file_download(item,name);}
+        else{memcpy(item,argv[3],(size_t)(separator-argv[3]));item[separator-argv[3]]=0;snprintf(name,sizeof(name),"%s",separator+1);rc=games_archive_file_download(item,name,id);}
     }
     else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);
     else if(!strcmp(kind,"games"))rc=games_list(page,id);

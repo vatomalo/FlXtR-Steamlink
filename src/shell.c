@@ -791,14 +791,15 @@ static void draw(Uint32 tick) {
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
     int root_mode=history_size?history[0].mode:browse.mode;
-    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,14,9,0};
+    if(root_mode==14||root_mode==22)root_mode=21;
+    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,21,9,0};
     const char *const menu_names[]={"TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","LOCAL"};
     for(int i=0;i<8;i++){
         char line[32];snprintf(line,sizeof(line),"%c %s",root_mode==menu_modes[i]?'>':' ',menu_names[i]);
         text(30,124+i*21,line,1,root_mode==menu_modes[i]?green:dim,18);
     }
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] ROM FOLDERS":browse.mode==21?"[A] SELECT SYSTEM":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[A] OPEN FOLDER":"[START] ABOUT",1,dim,22);text(30,459,"B BACK / L3 FAVORITE",1,dim,22);
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] ROM FOLDERS":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[A] OPEN FOLDER":"[START] ABOUT",1,dim,22);text(30,459,"B BACK / L3 FAVORITE",1,dim,22);
     if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
         const char *genre=browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
@@ -1249,6 +1250,7 @@ static void action(SDL_Keycode key) {
         rom_core_open(&titles[visible[selection]]);return;
     }
     if(!settings_on&&!about&&(key==SDLK_f||key==SDLK_F7)){favorites_toggle();return;}
+    if(!settings_on&&!about&&browse.mode==21&&key==SDLK_y){Browse next={14,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&(key==SDLK_y||key==SDLK_SLASH)){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F6){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
@@ -1310,8 +1312,9 @@ static void action(SDL_Keycode key) {
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){
-        const int modes[]={11,FAVORITES_MODE,1,2,7,14,9,0};
+        const int modes[]={11,FAVORITES_MODE,1,2,7,21,9,0};
         int current=history_size?history[0].mode:browse.mode,index=0;
+        if(current==14||current==22)current=21;
         for(int i=0;i<8;i++)if(modes[i]==current){index=i;break;}
         Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%8];
         history_size=0;request_catalog(next,0,0);

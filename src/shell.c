@@ -480,7 +480,7 @@ static void request_catalog(Browse next,int push,int pop){
     if(next.mode==FAVORITES_MODE){
         browse=next;history_size=0;count=0;selection=0;ready_only=0;
         listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));
-        if(access("favorites.tsv",R_OK)==0)read_catalog("favorites.tsv");
+        if(access("favorites.tsv",R_OK)==0){read_catalog("favorites.tsv");listing_total=total;}
         else {filter();snprintf(status,sizeof(status),"FAVORITES EMPTY / L3 TO ADD");}
         return;
     }
@@ -664,6 +664,7 @@ static void favorites_toggle(void){
     if(fclose(out)){unlink("favorites.tsv.next");return;}
     if(rename("favorites.tsv.next","favorites.tsv"))return;
     snprintf(status,sizeof(status),found?"REMOVED FROM FAVORITES":"ADDED TO FAVORITES");
+    if(browse.mode==FAVORITES_MODE){Browse next=browse;request_catalog(next,0,0);}
 }
 static void next_catalog_page(int direction){
     if(!browse.mode){int page=selection/VISIBLE+direction;if(page>=0&&page*VISIBLE<total)selection=page*VISIBLE;return;}

@@ -182,9 +182,23 @@ static int cache_load(void){
         clean(e->title,sizeof(e->title),string(o,"title"));clean(e->meta,sizeof(e->meta),string(o,"meta"));
         clean(e->poster,sizeof(e->poster),string(o,"poster"));clean(e->kind,sizeof(e->kind),string(o,"kind"));
         e->id=number(o,"id");e->season=number(o,"season");e->episode=number(o,"episode");
-        if(!strcmp(e->kind,"archive")||!strcmp(e->kind,"archive-file")){
-            const char *url=string(o,"url"),*prefix=!strcmp(e->kind,"archive")?ARCHIVE "/details/":ARCHIVE "/download/";
-            if(strncmp(url,prefix,strlen(prefix))||strlen(url)>=sizeof(e->url))ok=0;else clean(e->url,sizeof(e->url),url);
+        /* Restore the URL for every URL-bearing cached entry. In particular,
+         * game-item and game-rom need theirs to browse or download. */
+        const char *cached_url=string(o,"url");
+        if(*cached_url){
+            if(strlen(cached_url)>=sizeof(e->url)||
+               (strncmp(cached_url,"https://",8)&&strncmp(cached_url,"http://",7)))ok=0;
+            else snprintf(e->url,sizeof(e->url),"%s",cached_url);
+        }
+        if(!strcmp(e->kind,"archive")||!strcmp(e->kind,"archive-file")||
+           !strcmp(e->kind,"game-item")||!strcmp(e->kind,"game-rom")||
+           !strcmp(e->kind,"bios-item")||!strcmp(e->kind,"bios-file")||
+           !strcmp(e->kind,"bios-zip")){
+            const char *prefix=(!strcmp(e->kind,"archive")||
+                                !strcmp(e->kind,"game-item")||
+                                !strcmp(e->kind,"bios-item"))?
+                               ARCHIVE "/details/":ARCHIVE "/download/";
+            if(strncmp(e->url,prefix,strlen(prefix)))ok=0;
         }
         char expected[80];snprintf(expected,sizeof(expected),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,i);
         if(!e->title[0]||((strcmp(e->kind,"archive")&&strcmp(e->kind,"archive-file"))&&e->id<1)||(e->poster[0]&&(strcmp(e->poster,expected)||access(expected,R_OK))))ok=0;

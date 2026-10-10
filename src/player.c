@@ -124,8 +124,11 @@ static int load_external_subtitles(const char *url){
     AVDictionary *options=NULL;
     av_dict_set(&options,"tls_verify","1",0);
     av_dict_set(&options,"ca_file",ca_file,0);
+    /* FFmpeg's HLS demuxer opens WebVTT segments through nested HTTPS. */
     av_dict_set(&options,"protocol_whitelist","https,tls,tcp,crypto",0);
+    av_dict_set(&options,"allowed_extensions","vtt,webvtt,m3u8",0);
     av_dict_set(&options,"rw_timeout","12000000",0);
+    fprintf(stderr,"External subtitle: attempting HTTPS track\n");
     int rc=avformat_open_input(&subfmt,url,NULL,&options);
     av_dict_free(&options);
     if(rc<0){fprintf(stderr,"External subtitle URL could not be opened: %d\n",rc);avformat_free_context(subfmt);return -1;}
@@ -255,6 +258,9 @@ int main(int argc,char **argv) {
         else external=english;
         if((!external||!*external)&&!strcmp(sub_language,"auto"))external=norwegian;
     }
+    fprintf(stderr,"External subtitle handoff: English %s, Norwegian %s, selected %s\n",
+        english&&*english?"available":"absent",norwegian&&*norwegian?"available":"absent",
+        external&&*external?"available":"absent");
     if(external&&*external){
         if(load_external_subtitles(external)==0){
             avcodec_free_context(&sub_decoder);si=-1;

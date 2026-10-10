@@ -13,10 +13,21 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <stdarg.h>
+#include <time.h>
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
 typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024];int height;} Choice;
 static Choice choices[40];static int count;
+/* Append-only diagnostics survive the catalog worker's truncated catalog.log.
+ * Record presence and route only: never media URLs, tokens or headers. */
+static void subtitle_log(const char *format,...){
+    FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
+    time_t now=time(NULL);fprintf(f,"%lld resolver ",(long long)now);
+    va_list args;va_start(args,format);vfprintf(f,format,args);va_end(args);
+    fputc('\n',f);fclose(f);
+}
+
 static size_t receive(void *ptr,size_t size,size_t nmemb,void *opaque){
     Buffer *b=opaque;if(size&&nmemb>SIZE_MAX/size)return 0;
     size_t n=size*nmemb;if(n>b->limit-b->length)return 0;
@@ -115,6 +126,7 @@ static void select_subtitles(json_object *list,char *eng,char *nor){
     }
 }
 static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor){
+    subtitle_log("JSON fields: selected=%s root.subtitles=%s root.tracks=%s source.subtitles=%s source.tracks=%s",source?"yes":"no",field(root,"subtitles")?"yes":"no",field(root,"tracks")?"yes":"no",source&&field(source,"subtitles")?"yes":"no",source&&field(source,"tracks")?"yes":"no");
     if(source){select_subtitles(field(source,"subtitles"),eng,nor);
         select_subtitles(field(source,"tracks"),eng,nor);}
     select_subtitles(field(root,"subtitles"),eng,nor);
@@ -204,10 +216,12 @@ static int qualities(json_object *root,const char *server){
     else if(list&&json_object_is_type(list,json_type_object)){selected=list;url=string(list,"file");if(!*url)url=string(list,"url");}
     if(!valid_url(url)){fprintf(stderr,"Selected server has no compatible direct link\n");return -1;}
     strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);source_subtitles(root,selected,choices[0].subs_eng,choices[0].subs_nor);count=1;
+    subtitle_log("source=%s JSON english=%s norwegian=%s",server,choices[0].subs_eng[0]?"yes":"no",choices[0].subs_nor[0]?"yes":"no");
     char *manifest=request(url,NULL,1);
-    if(!manifest){fprintf(stderr,"Subtitle discovery for %s: manifest unavailable (English %s, Norwegian %s)\n",server,choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");return 0;}
+    if(!manifest){subtitle_log("HLS manifest fetch failed source=%s",server);fprintf(stderr,"Subtitle discovery for %s: manifest unavailable (English %s, Norwegian %s)\n",server,choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");return 0;}
     /* strtok_r mutates playlists; inspect renditions before variants. */
     hls_subtitles(manifest,url,choices[0].subs_eng,choices[0].subs_nor);
+    subtitle_log("HLS manifest=%s source=%s english=%s norwegian=%s",!strncmp(manifest,"#EXTM3U",7)?"yes":"no",server,choices[0].subs_eng[0]?"yes":"no",choices[0].subs_nor[0]?"yes":"no");
     fprintf(stderr,"Subtitle discovery for %s: English %s, Norwegian %s\n",server,
         choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");
     add_variants(manifest,url,server);
@@ -222,6 +236,7 @@ int main(int argc,char **argv){
     int id=atoi(argv[3]),season=atoi(argv[4]),episode=atoi(argv[5]),page=atoi(argv[7]);
     if(id<=0||season<0||episode<0||page<1||page>7)return 2;
     int resolving=!strcmp(argv[1],"source");if(resolving&&!valid_server(argv[6]))return 2;
+    subtitle_log("invoke mode=%s media=%s",resolving?"source":"servers",argv[2]);
     char path[256];if(!strcmp(argv[2],"movie"))snprintf(path,sizeof(path),"/api/tmdb/movie/%d/images",id);
     else {if(!episode)return 2;snprintf(path,sizeof(path),"/api/tmdb/tv/%d/season/%d/episode/%d/images",id,season,episode);}
     if(curl_global_init(CURL_GLOBAL_DEFAULT)||resolver_init())return 1;
@@ -232,5 +247,6 @@ int main(int argc,char **argv){
             else printf("%s\t%s\t\t%s\tserver\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,id,season,episode,c->height);}
         rc=ferror(stdout)?1:0;
     }
-done:json_object_put(root);resolver_free();curl_global_cleanup();return rc;
+done:subtitle_log("completed mode=%s success=%s rows=%d",resolving?"source":"servers",rc==0?"yes":"no",count);
+    if(root)json_object_put(root);resolver_free();curl_global_cleanup();return rc;
 }

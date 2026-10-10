@@ -28,6 +28,7 @@
 #define W 960
 #define H 540
 #define MAX_TITLES 128
+#define FAVORITES_MODE 25
 #define VISIBLE 6
 #define STARS 56
 typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode,height; } Title;
@@ -637,7 +638,6 @@ static void controller_idle(void){
 }
 /* User-curated mixed library. Store the same bounded TSV fields used by
  * the catalog; no account or remote service is required. */
-#define FAVORITES_MODE 25
 static void favorites_toggle(void){
     if(!total)return;
     const Title *t=&titles[visible[selection]];
@@ -646,8 +646,7 @@ static void favorites_toggle(void){
     if(!out){if(in)fclose(in);return;}
     char row[6000];int found=0;
     if(in){while(fgets(row,sizeof(row),in)){
-        char copy[6000];snprintf(copy,sizeof(copy),"%s",row);
-        char *a=strchr(copy,'\t');if(!a)continue;*a=0;
+        row[strcspn(row,"\r\n")]=0;
         /* Match kind, title, id, season and episode using saved columns. */
         char *cols[12],*q=row;int n=0;
         while(n<12){cols[n++]=q;char *tab=strchr(q,'\t');if(!tab)break;*tab=0;q=tab+1;}
@@ -1142,7 +1141,7 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_RETURN){filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);}
         return;
     }
-    if(!settings_on&&!about&&browse.mode==14&&key==SDLK_y&&total&&
+    if(!settings_on&&!about&&(browse.mode==14||browse.mode==22||browse.mode==FAVORITES_MODE)&&key==SDLK_y&&total&&
        !strcmp(titles[visible[selection]].kind,"game")){
         rom_core_open(&titles[visible[selection]]);return;
     }

@@ -296,6 +296,7 @@ static void poster(Entry *e,int slot){
             }
         }
 
+        fprintf(stderr,"FlXtR game art request: %s\n",url);
         if(!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8)){
             SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);
             SDL_Surface *art=rw?IMG_Load_RW(rw,1):NULL;
@@ -368,6 +369,7 @@ int main(int argc,char **argv){
     mkdir("catalog-cache",0700);
     int cacheable=strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
     if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
+    if(!strncmp(kind,"games",5))fprintf(stderr,"FlXtR game art enabled=%d; catalog kind=%s\n",!getenv("FLXTR_NO_ART"),kind);
     int rc;
     if(!strcmp(kind,"games-platforms"))rc=games_platforms(page);
     else if(!strcmp(kind,"games-archive"))rc=games_archive_list(page);

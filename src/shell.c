@@ -721,7 +721,7 @@ static void favorites_toggle(void){
             if(dst&&fclose(dst))good=0;
             if(!good){unlink(saved_art);saved_art[0]=0;}
         }
-        fprintf(out,"%s\\t%s\\t%s\\t%s\\t%s\\t%d\\t%d\\t%d\\t%d\\t%s\\t%s\\t%s\\n",
+        fprintf(out,"%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",
             t->title,t->meta,saved_art,t->url,t->kind,t->id,t->season,t->episode,t->height,
             t->subs_eng,t->subs_nor,t->subs_spa);
     }

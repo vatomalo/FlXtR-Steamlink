@@ -1,6 +1,8 @@
 /* Single hardware overlay plane: the menu owns it while visible. */
 static int control_fd=-1,menu_open,menu_row,paused,requested_action;
 static int menu_height=720,menu_subtitles,menu_episodes,menu_servers;
+static int seek_scrubbing,seek_was_paused;
+static double seek_target;
 static double playback_start,media_duration;
 static SDL_AudioDeviceID menu_audio;
 static CSLVideoOverlay *menu_overlay;
@@ -30,10 +32,10 @@ static void menu_draw(void){
     uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(menu_overlay,&pixels,&pitch);
     if(!pixels||pitch<740*4)return;
     for(int y=0;y<416;y++)for(int x=0;x<740;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xe8000000;
-    char rows[12][80],heading[80];int seconds=(int)playback_position();
+    char rows[12][80],heading[80];int seconds=(int)(seek_scrubbing?seek_target:playback_position());
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
-    snprintf(rows[1],80,"SEEK: LEFT -10S / RIGHT +10S");
+    snprintf(rows[1],80,"%s",seek_scrubbing?"SEEK PREVIEW: LEFT/RIGHT / A PLAY / B CANCEL":"SEEK: LEFT/RIGHT PREVIEW / A PLAY");
     snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN","SPANISH"}[menu_subtitles]);
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
@@ -48,7 +50,7 @@ static void menu_draw(void){
     for(int i=0;i<12;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,49+i*25,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
     /* Native overlay progress timeline. Clamp to the known duration;
      * unknown-length live streams show elapsed time without a false percentage. */
-    double position=playback_position();
+    double position=seek_scrubbing?seek_target:playback_position();
     if(position<0)position=0;
     double fraction=media_duration>0?position/media_duration:0;
     if(fraction<0)fraction=0;
@@ -82,7 +84,17 @@ static void menu_restart(int action,double position){
     if(fclose(f)||rename("playback-request.next","playback-request")){show_view("CONTROL REQUEST FAILED");return;}
     requested_action=40;stopped=1;
 }
+static void seek_cancel(void){
+    if(!seek_scrubbing)return;
+    seek_scrubbing=0;
+    if(!seek_was_paused){
+        if(clock_start)clock_start+=av_gettime_relative()-pause_started;
+        paused=0;
+        if(menu_audio)SDL_PauseAudioDevice(menu_audio,0);
+    }
+}
 static void menu_command(char c){
+    if(seek_scrubbing&&(c=='b'||c=='m')){seek_cancel();menu_draw();return;}
     if(c=='m'||(c=='b'&&menu_open)){
         menu_open=!menu_open;
         if(!menu_open){if(menu_overlay)SLVideo_HideOverlay(menu_overlay);subtitle_visible=-2;}else menu_draw();
@@ -91,8 +103,8 @@ static void menu_command(char c){
     if(c=='b'){menu_restart(7,playback_position());return;}
     if(c=='v'){viewing=(viewing+1)%VIEW_COUNT;apply_view(!menu_open);}
     if(!menu_open){if(c=='l'||c=='r')menu_restart(1,playback_position()+(c=='l'?-10:10));return;}
-    if(c=='u')menu_row=(menu_row+11)%12;
-    if(c=='d')menu_row=(menu_row+1)%12;
+    if(c=='u'&&!seek_scrubbing)menu_row=(menu_row+11)%12;
+    if(c=='d'&&!seek_scrubbing)menu_row=(menu_row+1)%12;
     if(c=='a'||c=='l'||c=='r'){
         int direction=c=='l'?-1:1;
         switch(menu_row){
@@ -101,7 +113,23 @@ static void menu_command(char c){
             else {if(clock_start)clock_start+=av_gettime_relative()-pause_started;paused=0;}
             if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
             break;
-        case 1:menu_restart(1,playback_position()+direction*10);break;
+        case 1:
+            if(!seek_scrubbing){
+                seek_target=playback_position();
+                seek_was_paused=paused;
+                seek_scrubbing=1;
+                if(!paused){
+                    paused=1;pause_started=av_gettime_relative();
+                    if(menu_audio)SDL_PauseAudioDevice(menu_audio,1);
+                }
+            }
+            if(c=='a')menu_restart(1,seek_target);
+            else{
+                seek_target+=direction*10;
+                if(seek_target<0)seek_target=0;
+                if(media_duration>1&&seek_target>=media_duration)seek_target=media_duration-1;
+            }
+            break;
         case 2:menu_subtitles=(menu_subtitles+direction+5)%5;menu_restart(1,playback_position());break;
         case 3:subtitle_size=subtitle_size==2?3:2;subtitle_visible=-2;break;
         case 4:subtitle_delay+=direction;if(subtitle_delay>5)subtitle_delay=5;if(subtitle_delay< -5)subtitle_delay=-5;subtitle_visible=-2;break;

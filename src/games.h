@@ -246,6 +246,18 @@ static int games_list_filtered(int page,int refresh,int folder){
             else if(strstr(system,"Mega Drive"))platform="SEGA GENESIS";
             const char *core_file=strrchr(core,'/');core_file=core_file?core_file+1:core;
             char core_name[64];snprintf(core_name,sizeof(core_name),"%s",core_file);
+            FILE *selected=fopen("game-cores.tsv","r");
+            if(selected){
+                char row[256],saved_title[80],saved_core[96];int selected_id;
+                while(fgets(row,sizeof(row),selected)){
+                    if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,saved_title,saved_core)!=3)continue;
+                    if(selected_id==e->id){
+                        snprintf(core_name,sizeof(core_name),"%s",saved_core);
+                        break;
+                    }
+                }
+                fclose(selected);
+            }
             char *core_suffix=strstr(core_name,"_libretro.so");if(core_suffix)*core_suffix=0;
             snprintf(e->meta,sizeof(e->meta),"%s / CORE: %.48s",platform,core_name);
         }
@@ -300,7 +312,7 @@ static int games_run(void){
         char row[256],title[80],name[96];int selected_id;
         while(fgets(row,sizeof(row),choices)){
             if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,title,name)!=3)continue;
-            if(selected_id!=id||strcmp(title,string(g,"title")))continue;
+            if(selected_id!=id)continue;
             size_t len=strlen(name);int valid=len>0&&len<80;
             for(size_t j=0;j<len;j++)
                 if(!isalnum((unsigned char)name[j])&&name[j]!='_'&&name[j]!='-')valid=0;

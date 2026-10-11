@@ -1,9 +1,9 @@
 #include <time.h>
 #define TV_BLOCKS 7
-#define TV_GENRES 8
+#define TV_GENRES 16
 typedef struct {int hour,genre;} TvBlock;
 static const TvBlock tv_defaults[TV_BLOCKS]={{0,3},{6,4},{10,1},{15,2},{17,5},{19,7},{22,6}};
-static const char *const tv_genres[TV_GENRES]={"MIXED SHOWS","COMEDY","CRIME / DRAMA","SCI-FI","ANIMATION","ACTION / ADVENTURE","MYSTERY","SCI-FI / ADULT ANIMATION"};
+static const char *const tv_genres[TV_GENRES]={"MIXED SHOWS","COMEDY","CRIME / DRAMA","SCI-FI","ANIMATION","ACTION / ADVENTURE","MYSTERY","SCI-FI / ADULT ANIMATION","DOCUMENTARY","FAMILY","REALITY","KIDS","SOAP","WAR / POLITICS","WESTERN","TALK SHOW"};
 static inline int tv_valid(const TvBlock *blocks){
     if(blocks[0].hour)return 0;
     for(int i=0;i<TV_BLOCKS;i++)if(blocks[i].hour<0||blocks[i].hour>23||blocks[i].genre<0||blocks[i].genre>=TV_GENRES||(i&&blocks[i].hour<=blocks[i-1].hour))return 0;

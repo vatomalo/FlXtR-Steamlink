@@ -109,6 +109,8 @@ static int games_folders(int page){
         Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==10?"DOWNLOADS":i==11?"SCUMMVM":local_folders[i]);
         snprintf(e->meta,sizeof(e->meta),"[ %s ] / A OPEN FOLDER",i==10?"DOWNLOADS":local_folders[i]);
         strcpy(e->kind,i==10?"downloads-folder":i==11?"scummvm-launch":"game-folder");e->id=i+1;
+        const char *icons[]={"FC","SFC","GB","GBC","GBA","PS","PSP","NEOGEO","ARCADE","MAME","ARCADE","SCUMMVM"};
+        snprintf(e->poster,sizeof(e->poster),"gameart:FlXtR Console|%s",icons[i]);
     }
     return 0;
 }

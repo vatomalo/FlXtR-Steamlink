@@ -694,8 +694,35 @@ static void favorites_toggle(void){
         for(int i=0;i<n;i++)fprintf(out,"%s%s",cols[i],i+1==n?"\n":"\t");
     }fclose(in);}
     if(!found){
-        fprintf(out,"%s\t%s\t\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",
-            t->title,t->meta,t->url,t->kind,t->id,t->season,t->episode,t->height,
+        /* Persist a bounded copy of the original poster. Catalog cache files
+         * are page-scoped and can be overwritten by unrelated browsing. */
+        char saved_art[192]="";
+        struct stat art_stat;
+        if(!strncmp(t->poster,"catalog-cache/",14)&&!strstr(t->poster,"..")&&
+           !stat(t->poster,&art_stat)&&S_ISREG(art_stat.st_mode)&&
+           art_stat.st_size>=54&&art_stat.st_size<=192*288*4+4096){
+            unsigned long hash=2166136261UL;
+            const char *parts[]={t->kind,t->title,t->url};
+            for(size_t k=0;k<sizeof(parts)/sizeof(parts[0]);k++)
+                for(const unsigned char *p=(const unsigned char *)parts[k];*p;p++)
+                    hash=(hash^*p)*16777619UL;
+            hash=(hash^(unsigned)t->id)*16777619UL;
+            hash=(hash^(unsigned)t->season)*16777619UL;
+            mkdir("favorites-art",0700);
+            snprintf(saved_art,sizeof(saved_art),"favorites-art/%08lx.bmp",hash&0xffffffffUL);
+            FILE *src=fopen(t->poster,"rb"),*dst=src?fopen(saved_art,"wb"):NULL;
+            int good=src&&dst;unsigned char bytes[4096];size_t n;
+            if(good){
+                while((n=fread(bytes,1,sizeof(bytes),src))>0)
+                    if(fwrite(bytes,1,n,dst)!=n){good=0;break;}
+                if(ferror(src))good=0;
+            }
+            if(src)fclose(src);
+            if(dst&&fclose(dst))good=0;
+            if(!good){unlink(saved_art);saved_art[0]=0;}
+        }
+        fprintf(out,"%s\\t%s\\t%s\\t%s\\t%s\\t%d\\t%d\\t%d\\t%d\\t%s\\t%s\\t%s\\n",
+            t->title,t->meta,saved_art,t->url,t->kind,t->id,t->season,t->episode,t->height,
             t->subs_eng,t->subs_nor,t->subs_spa);
     }
     if(fclose(out)){unlink("favorites.tsv.next");return;}

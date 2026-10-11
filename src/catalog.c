@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <time.h>
 #include "browse_filters.h"
+#include "game_metadata.h"
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
 #define PAGE_SIZE 6
 typedef struct {char title[80],meta[96],poster[512],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode;} Entry;
@@ -524,6 +525,70 @@ static void game_art_prefetch(void){
     }
 }
 
+/* Optional TheGamesDB lookups run after the listing is emitted, in a
+ * detached worker; absent key means no network traffic. Never commit the key. */
+static void game_info_prefetch(void){
+    char key[160]="";
+    FILE *keyfile=fopen("thegamesdb.key","r");
+    if(!keyfile)return;
+    if(!fgets(key,sizeof(key),keyfile)){fclose(keyfile);return;}
+    fclose(keyfile);
+    key[strcspn(key,"\r\n")]=0;
+    size_t keylen=strlen(key);
+    if(keylen<8||keylen>120)return;
+    for(size_t i=0;i<keylen;i++)
+        if(!isalnum((unsigned char)key[i])&&key[i]!='-'&&key[i]!='_')return;
+    pid_t pid=fork();
+    if(pid<0)return;
+    if(pid>0){waitpid(pid,NULL,0);return;}
+    pid_t detached=fork();
+    if(detached!=0)_exit(0);
+    int nullfd=open("/dev/null",O_RDWR);
+    if(nullfd>=0){dup2(nullfd,0);dup2(nullfd,1);dup2(nullfd,2);if(nullfd>2)close(nullfd);}
+    mkdir("media-info-cache",0700);
+    for(int i=0;i<used;i++){
+        Entry *e=&entries[i];
+        if(strcmp(e->kind,"game")&&strcmp(e->kind,"game-zip"))continue;
+        char output[96];game_info_path(e->title,output,sizeof(output));
+        if(!access(output,R_OK))continue;
+        char *name=curl_easy_escape(NULL,e->title,0);
+        if(!name)continue;
+        char url[1024];
+        int n=snprintf(url,sizeof(url),
+            "https://api.thegamesdb.net/v1.1/Games/ByGameName?apikey=%s&name=%s&fields=overview",key,name);
+        curl_free(name);
+        if(n<0||n>=(int)sizeof(url))continue;
+        Buffer buffer={NULL,0,256*1024};
+        if(fetch(url,&buffer)){free(buffer.data);continue;}
+        json_object *root=json_tokener_parse(buffer.data?buffer.data:"");
+        free(buffer.data);
+        if(!root)continue;
+        json_object *data=field(root,"data"),*games=data?field(data,"games"):NULL;
+        const char *overview=NULL;
+        if(games&&json_object_is_type(games,json_type_array)){
+            size_t len=json_object_array_length(games);
+            for(size_t j=0;j<len;j++){
+                json_object *item=json_object_array_get_idx(games,j);
+                const char *title=string(item,"game_title");
+                if(!strcasecmp(title,e->title)){
+                    const char *candidate=string(item,"overview");
+                    if(strlen(candidate)>40){overview=candidate;break;}
+                }
+            }
+        }
+        if(overview){
+            char description[400],tmp[112];
+            clean(description,sizeof(description),overview);
+            snprintf(tmp,sizeof(tmp),"%s.next",output);
+            FILE *f=fopen(tmp,"w");
+            if(f){fprintf(f,"%s\n",description);
+                if(!fclose(f))rename(tmp,output);else unlink(tmp);
+            }
+        }
+        json_object_put(root);
+    }
+    _exit(0);
+}
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
@@ -576,6 +641,7 @@ int main(int argc,char **argv){
     else if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&!*argv[3]&&!id&&!season&&!local_list(kind,page,argv[3]))rc=0;
     else rc=remote_list(kind,page,argv[3],id,season);
     if(rc){curl_global_cleanup();return 1;}
+    if(!strcmp(kind,"games")||!strcmp(kind,"games-system"))game_info_prefetch();
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
     if(!getenv("FLXTR_NO_ART")&&(!strcmp(kind,"games")||!strcmp(kind,"games-system")||!strcmp(kind,"games-folders")))game_art_prefetch();

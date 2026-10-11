@@ -9,9 +9,40 @@ static int tv_pick(int genre,int seed){
     json_object *root=get_json(path);if(!root)return -1;
     json_object *shows=field(root,"results");int n=shows&&json_object_is_type(shows,json_type_array)?(int)json_object_array_length(shows):0;
     if(!n){json_object_put(root);return -1;}
-    int pick=-1;
-    for(int i=0;i<n;i++){int at=(seed/10+i)%n;json_object *candidate=json_object_array_get_idx(shows,at);
-        if(!tv_recent_has(number(candidate,"id"),0,0,1)){pick=at;break;}}
+    /* User-adjustable TV gambits. Rating is always part of the score. */
+    int wr=5,wp=2,wv=4;
+    FILE *gambits=fopen("tv-gambits.cfg","r");
+    if(gambits){
+        char line[80],key[32];int value;
+        while(fgets(line,sizeof(line),gambits))
+            if(sscanf(line,"%31[^=]=%d",key,&value)==2&&value>=0&&value<=5){
+                if(!strcmp(key,"rating"))wr=value;
+                else if(!strcmp(key,"popularity"))wp=value;
+                else if(!strcmp(key,"variety"))wv=value;
+            }
+        fclose(gambits);
+    }
+    if(wr<1)wr=1; /* Never ignore ratings entirely. */
+    int pick=-1;double best=-1e30;
+    for(int i=0;i<n;i++){
+        json_object *candidate=json_object_array_get_idx(shows,i);
+        int candidate_id=number(candidate,"id");
+        if(candidate_id<1||tv_recent_has(candidate_id,0,0,1))continue;
+        double rating=0,popularity=0;
+        json_object *value=field(candidate,"vote_average");
+        if(value)rating=json_object_get_double(value);
+        value=field(candidate,"popularity");
+        if(value)popularity=json_object_get_double(value);
+        int votes=number(candidate,"vote_count");
+        /* Bayesian rating avoids treating a handful of perfect votes as a hit. */
+        double reliable=(rating*votes+6.5*100.0)/(votes+100.0);
+        double pop=popularity/(popularity+50.0)*10.0;
+        unsigned hash=(unsigned)candidate_id*2654435761u^(unsigned)seed*2246822519u;
+        hash^=hash>>16;hash*=2246822519u;hash^=hash>>13;
+        double novelty=(hash%10000)/1000.0;
+        double score=wr*reliable+wp*pop+wv*novelty;
+        if(score>best){best=score;pick=i;}
+    }
     if(pick<0){json_object_put(root);return -1;}
     json_object *show=json_object_array_get_idx(shows,pick);int id=number(show,"id");char title[80],art[512];
     clean(title,sizeof(title),string(show,"name"));clean(art,sizeof(art),string(show,"poster_path"));json_object_put(root);if(id<1)return -1;

@@ -257,7 +257,7 @@ static void game_poster(Entry *e,int slot){
     char cached[96];snprintf(cached,sizeof(cached),"catalog-cache/game-%08lx.bmp",hash);
     if(!access(cached,R_OK)){snprintf(e->poster,sizeof(e->poster),"%s",cached);return;}
     CURL *curl=curl_easy_init();if(!curl)return;
-    char query[200];snprintf(query,sizeof(query),"title:\\"%s\\" AND mediatype:software",e->title);
+    char query[200];snprintf(query,sizeof(query),"title:%s AND mediatype:software",e->title);
     char *escaped=curl_easy_escape(curl,query,0);
     if(!escaped){curl_easy_cleanup(curl);return;}
     char url[768];snprintf(url,sizeof(url),"https://archive.org/advancedsearch.php?q=%s&fl%%5B%%5D=identifier&fl%%5B%%5D=title&rows=5&output=json",escaped);

@@ -289,7 +289,7 @@ static void poster(Entry *e,int slot){
                 snprintf(directory,sizeof(directory),
                     "https://thumbnails.libretro.com/%s/Named_Boxarts/",encoded);
                 curl_free(encoded);
-                Buffer listing={NULL,0,512*1024};
+                Buffer listing={NULL,0,4*1024*1024};
                 if(!fetch(directory,&listing)){
                     for(char *p=listing.data;(p=strstr(p,"href=\""))!=NULL;p+=6){
                         char *first=p+6,*last=strchr(first,'"');

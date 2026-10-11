@@ -142,7 +142,7 @@ static int games_list_filtered(int page,int refresh,int folder){
         const char *systems[]={"Nintendo - Nintendo Entertainment System","Nintendo - Super Nintendo Entertainment System","Nintendo - Game Boy Advance","Nintendo - Game Boy Color","Nintendo - Game Boy","Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo"};
         const char *needle[]={"fceumm","snes9x","gpsp","gambatte","gambatte","pcsx_rearmed","ppsspp","fbneo"};
         const char *system=NULL;
-        if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")||strstr(core,"fbalpha2012")||strstr(core,"mame2003_plus"))system="SNK - Neo Geo";
+        if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")||strstr(core,"fbneo")||strstr(core,"fbalpha2012")||(!strcasecmp(e->title,"mslug5")||!strcasecmp(e->title,"lastbld2")||!strncasecmp(e->title,"Samurai Shodown",14)||!strncasecmp(e->title,"Garou",5)||!strncasecmp(e->title,"kof",3)))system="SNK - Neo Geo";
         else for(int k=0;k<8;k++)if(strstr(core,needle[k])){system=systems[k];break;}
         if(system){
             char stem[128];snprintf(stem,sizeof(stem),"%s",e->title);

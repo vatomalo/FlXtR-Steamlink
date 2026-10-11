@@ -289,7 +289,15 @@ static void poster(Entry *e,int slot){
         int ok=0;
         for(size_t k=0;k<sizeof(allowed)/sizeof(allowed[0]);k++)
             if(!strcmp(system,allowed[k])){ok=1;break;}
-        if(!ok)return;
+        int console_icon=!strcmp(system,"FlXtR Console");
+        if(!ok&&!console_icon)return;
+        if(console_icon){
+            const char *ids[]={"FC","SFC","GB","GBC","GBA","PS","PSP","NEOGEO","ARCADE","MAME","SCUMMVM"};
+            int valid=0;
+            for(size_t k=0;k<sizeof(ids)/sizeof(ids[0]);k++)
+                if(!strcmp(sep,ids[k])){valid=1;break;}
+            if(!valid)return;
+        }
         char *sys=curl_easy_escape(NULL,system,0),*name=curl_easy_escape(NULL,sep,0);
         if(!sys||!name){curl_free(sys);curl_free(name);return;}
         char url[1024];
@@ -297,9 +305,14 @@ static void poster(Entry *e,int slot){
         curl_free(sys);curl_free(name);
         if(len<0||len>=(int)sizeof(url))return;
         Buffer b={NULL,0,4*1024*1024};
+        if(console_icon){
+            int n=snprintf(url,sizeof(url),
+                "https://raw.githubusercontent.com/KyleBing/retro-game-console-icons/main/series_trimui/300w%%401x/%s.png",sep);
+            if(n<0||n>=(int)sizeof(url))return;
+        }
         /* Libretro Neo Geo boxart filenames include revisions and subtitles.
          * Resolve the real filename from the official directory listing. */
-        if(1){
+        if(!console_icon){
             char *encoded=curl_easy_escape(NULL,system,0);
             if(encoded){
                 char directory[512];
@@ -339,7 +352,7 @@ static void poster(Entry *e,int slot){
         fprintf(stderr,"FlXtR game art request: %s\n",url);
         int got_png=!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8);
         /* Look up canonical names separately for title screens and snaps. */
-        for(int alt=0;alt<2&&!got_png;alt++){
+        for(int alt=0;alt<2&&!got_png&&!console_icon;alt++){
             char *encoded=curl_easy_escape(NULL,system,0);
             char *title=curl_easy_escape(NULL,sep,0);
             if(!encoded||!title){curl_free(encoded);curl_free(title);break;}

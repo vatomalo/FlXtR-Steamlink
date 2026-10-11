@@ -210,6 +210,39 @@ static int games_list_filtered(int page,int refresh,int folder){
                 }
             }
         }
+        /* Game information panel: platform instead of internal .so filename.
+         * Keep the original ROM/core mapping and poster key unchanged. */
+        if(system){
+            const char *platform="RETRO GAME";
+            if(strstr(system,"Super Nintendo"))platform="SUPER NINTENDO";
+            else if(strstr(system,"Nintendo Entertainment System"))platform="NINTENDO NES";
+            else if(strstr(system,"Game Boy Advance"))platform="GAME BOY ADVANCE";
+            else if(strstr(system,"Game Boy Color"))platform="GAME BOY COLOR";
+            else if(strstr(system,"Game Boy"))platform="GAME BOY";
+            else if(strstr(system,"PlayStation Portable"))platform="PLAYSTATION PORTABLE";
+            else if(strstr(system,"PlayStation"))platform="PLAYSTATION";
+            else if(strstr(system,"Neo Geo"))platform="NEO GEO";
+            else if(strstr(system,"Mega Drive"))platform="SEGA GENESIS";
+            snprintf(e->meta,sizeof(e->meta),"%s / RETROARCH",platform);
+        }
+        char *suffix=strrchr(e->title,'.');
+        if(suffix&&(!strcasecmp(suffix,".sfc")||!strcasecmp(suffix,".smc")||
+                    !strcasecmp(suffix,".nes")||!strcasecmp(suffix,".gba")||
+                    !strcasecmp(suffix,".gb")||!strcasecmp(suffix,".gbc")||
+                    !strcasecmp(suffix,".iso")||!strcasecmp(suffix,".cue")))
+            *suffix=0;
+        /* Canonicalize only obvious ROM aliases, never rewrite launch IDs. */
+        const char *aliases[][2]={
+            {"CHRONOTRIGGER","Chrono Trigger"},
+            {"FINALFANTASYIII","Final Fantasy III"},
+            {"SUPER MARIO BROS 2","Super Mario Bros. 2"},
+            {"SecretofMana","Secret of Mana"},
+            {"SecretofMana2","Seiken Densetsu 3"}
+        };
+        for(size_t k=0;k<sizeof(aliases)/sizeof(aliases[0]);k++)
+            if(!strcasecmp(e->title,aliases[k][0])){
+                snprintf(e->title,sizeof(e->title),"%s",aliases[k][1]);break;
+            }
     }json_object_put(games);return 0;
 }
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}

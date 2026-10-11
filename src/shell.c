@@ -70,7 +70,7 @@ static void rom_core_open(const Title *t){
     if(f){char line[256],title[80],core[96];int id;
         while(fgets(line,sizeof(line),f)){
             if(sscanf(line,"%d\t%79[^\t]\t%95[^\n]",&id,title,core)!=3)continue;
-            if(id==rom_core_id&&!strcmp(title,rom_core_title))
+            if(id==rom_core_id)
                 for(int i=0;i<rom_core_count;i++)
                     if(!strcmp(core,rom_core_names[i]))rom_core_selected=i;
         }
@@ -85,7 +85,7 @@ static void rom_core_save(void){
     if(in){char line[256],title[80],core[96];int id;
         while(fgets(line,sizeof(line),in)){
             if(sscanf(line,"%d\t%79[^\t]\t%95[^\n]",&id,title,core)!=3)continue;
-            if(id!=rom_core_id||strcmp(title,rom_core_title))
+            if(id!=rom_core_id)
                 fprintf(out,"%d\t%s\t%s\n",id,title,core);
         }fclose(in);
     }

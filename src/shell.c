@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <SDL.h>
+#include <SDL_image.h>
 #include <curl/curl.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -201,15 +202,14 @@ static void load_menu_background(void){
     SDL_DestroyTexture(background);background=NULL;
     if(menu_theme==1){apply_menu_theme();return;}
     const char *path=menu_theme==2?
-        "assets/backgrounds/romantic_crimson_skulls.bmp":
+        "assets/backgrounds/romantic_crimson_skulls.png":
         "assets/white-metal-droplets.bmp";
-    SDL_Surface *surface=SDL_LoadBMP(path);
+    SDL_Surface *surface=menu_theme==2?IMG_Load(path):SDL_LoadBMP(path);
     if(surface){
-        if(surface->w==W&&surface->h==H)
-            background=SDL_CreateTextureFromSurface(renderer,surface);
+        background=SDL_CreateTextureFromSurface(renderer,surface);
         SDL_FreeSurface(surface);
     }
-    if(!background)fprintf(stderr,"Menu background unavailable (needs %dx%d BMP): %s\n",W,H,path);
+    if(!background)fprintf(stderr,"Menu background unavailable: %s (%s)\n",path,menu_theme==2?IMG_GetError():SDL_GetError());
     apply_menu_theme();
 }
 static int bios_present(const char *filename) {

@@ -109,6 +109,7 @@ static int kiss_list_filtered(int page,const char *query,int genre,int order){
     }curl_free(escaped);
     /* Fetch missing anime summaries separately, never blocking catalog navigation.
      * Use a detached worker so page selection stays instantaneous. */
+    if(getenv("FLXTR_ENABLE_ANIME_INFO")){
     pid_t worker=fork();
     if(worker==0){
         pid_t detached=fork();
@@ -132,6 +133,7 @@ static int kiss_list_filtered(int page,const char *query,int genre,int order){
         _exit(0);
     }
     if(worker>0)waitpid(worker,NULL,0);
+    }
     return 0;
 }
 static inline int kiss_list(int page,const char *query){return kiss_list_filtered(page,query,0,0);}

@@ -312,7 +312,9 @@ static int games_run(void){
         char row[256],title[80],name[96];int selected_id;
         while(fgets(row,sizeof(row),choices)){
             if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,title,name)!=3)continue;
-            if(selected_id!=id)continue;
+            /* IDs can change when imports are rebuilt; never use a saved core
+             * for an unrelated ROM merely because its numeric slot matches. */
+            if(selected_id!=id||strcmp(title,string(g,"title")))continue;
             size_t len=strlen(name);int valid=len>0&&len<80;
             for(size_t j=0;j<len;j++)
                 if(!isalnum((unsigned char)name[j])&&name[j]!='_'&&name[j]!='-')valid=0;
@@ -336,7 +338,7 @@ static int games_run(void){
     if(!getcwd(extra,sizeof(extra)))return 2;
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
     f=fopen(extra,"w");if(!f)return 2;
-    fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
+    fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nkiosk_mode_enable = \"true\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
     /* FlXtR setting is opt-in; do not change the user's global RetroArch config. */
     { FILE *settings=fopen("settings.cfg","r");int enabled=0;
       if(settings){

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Build and publish the complete FlXtR Steam Link release from the feature-rich branch.
+set -Eeuo pipefail
+
+repo="${FLXTR_SOURCE_DIR:-/opt/FlXtR-Steamlink}"
+expected_branch="fix/neogeo-rom-import-20261009"
+cd "$repo"
+
+[[ -d .git ]] || { echo "Not a Git checkout: $repo" >&2; exit 1; }
+[[ -f "${STEAMLINK_SDK_PATH:-/opt/steamlink-sdk}/setenv.sh" ]] || {
+  echo "Run this inside the Steam Link SDK container." >&2; exit 1;
+}
+[[ -z "$(git status --porcelain)" ]] || {
+  echo "Dirty checkout. Commit or stash changes first; nothing has been changed." >&2; git status --short >&2; exit 1;
+}
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+[[ "$branch" == "$expected_branch" ]] || {
+  echo "Wrong branch: ${branch:-detached HEAD}. Expected $expected_branch." >&2; exit 1;
+}
+remote="$(git remote get-url origin)"
+[[ "${remote%.git}" == "https://github.com/vatomalo/FlXtR-Steamlink" ]] || {
+  echo "Unexpected origin: $remote" >&2; exit 1;
+}
+git fetch origin "$expected_branch"
+git merge --ff-only "origin/$expected_branch"
+[[ -z "$(git status --porcelain)" ]] || { echo "Working tree became dirty; stopping." >&2; exit 1; }
+sha="$(git rev-parse HEAD)"
+echo "Compiling complete FlXtR from $branch at $sha"
+if [[ -z "${GH_TOKEN:-}" ]]; then
+  echo "GH_TOKEN is not set. The publisher can read a token from stdin, or set GH_TOKEN first." >&2
+fi
+bash scripts/autocompile --steamlink --no-update --publish-package
+echo "Complete package publication finished for $sha"

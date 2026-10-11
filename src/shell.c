@@ -111,7 +111,7 @@ static void tv_candidate(void);
 static void tv_tick(void);
 static void tv_prepare_next(void);
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
-static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
+static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30,45,60,128},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
 static void subtitle_route_log(const char *route,const Title *t){
     FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
@@ -139,7 +139,7 @@ static void load_settings(void){
         else if(!strcmp(key,"menu_monochrome")&&(value==0||value==1))monochrome_menu=value;
         else if(!strcmp(key,"menu_theme")&&value>=0&&value<=2){menu_theme=value;theme_found=1;}
         else if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
-        else if(!strcmp(key,"buffer")&&value>=0&&value<3)buffer_setting=value;
+        else if(!strcmp(key,"buffer")&&value>=0&&value<6)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
         else if(!strcmp(key,"coverflow")&&(value==0||value==1))coverflow=value;
         else if(!strcmp(key,"subtitles")&&value>=0&&value<5)subtitle_setting=value;
@@ -1345,7 +1345,7 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
                 case 0:quality_setting=(quality_setting+step+3)%3;break;
-                case 1:buffer_setting=(buffer_setting+step+3)%3;break;
+                case 1:buffer_setting=(buffer_setting+step+6)%6;break;
                 case 2:disk_setting=(disk_setting+step+3)%3;break;
                 case 3:coverflow=!coverflow;break;
                 case 4:subtitle_setting=(subtitle_setting+step+5)%5;break;

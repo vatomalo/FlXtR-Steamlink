@@ -229,7 +229,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--episodes")){menu_episodes=1;}
         else if(!strcmp(argv[i],"--servers")){menu_servers=1;}
         else if(!strcmp(argv[i],"--start")&&i+1<argc){char *end;playback_start=strtod(argv[++i],&end);if(*end||!isfinite(playback_start)||playback_start<0||playback_start>86400)return 2;}
-        else if(!strcmp(argv[i],"--buffer-seconds")&&i+1<argc){buffer_secs=atoi(argv[++i]);if(buffer_secs!=5&&buffer_secs!=15&&buffer_secs!=30)return 2;}
+        else if(!strcmp(argv[i],"--buffer-seconds")&&i+1<argc){buffer_secs=atoi(argv[++i]);if(buffer_secs!=5&&buffer_secs!=15&&buffer_secs!=30&&buffer_secs!=45&&buffer_secs!=60&&buffer_secs!=128)return 2;}
         else if(!strcmp(argv[i],"--buffer-mb")&&i+1<argc){buffer_mb=atoi(argv[++i]);if(buffer_mb!=64&&buffer_mb!=128&&buffer_mb!=256)return 2;}
         else if(!strcmp(argv[i],"--subtitles")&&i+1<argc){sub_language=argv[++i];if(strcmp(sub_language,"off")&&strcmp(sub_language,"auto")&&strcmp(sub_language,"eng")&&strcmp(sub_language,"nor")&&strcmp(sub_language,"spa"))return 2;}
         else if(!strcmp(argv[i],"--subtitle-size")&&i+1<argc){subtitle_size=atoi(argv[++i]);if(subtitle_size<2||subtitle_size>3)return 2;}

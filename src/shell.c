@@ -406,6 +406,19 @@ static void wrap(int x,int y,const char *str,int cols,int lines,SDL_Color c) {
         str+=n; while(*str==' ')str++;
     }
 }
+/* Narrow right panel: six-pixel glyphs and fourteen-pixel baselines.
+ * Unlike wrap() this is designed to fit the 224-pixel detail column. */
+static void wrap_detail(int x,int y,const char *str,int lines,SDL_Color ink){
+    const int cols=35;
+    for(int row=0;*str&&row<lines;row++){
+        char line[40];size_t n=strlen(str);
+        if(n>(size_t)cols){n=cols;while(n>1&&str[n]!=' ')n--;}
+        if(!n)break;
+        memcpy(line,str,n);line[n]=0;
+        text(x,y+row*15,line,1,ink,cols);
+        str+=n;while(*str==' ')str++;
+    }
+}
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
@@ -800,6 +813,18 @@ static void cache_page(int page) {
     for(int i=0;i<VISIBLE && page*VISIBLE+i<total;i++)posters[i]=load_poster(titles[visible[page*VISIBLE+i]].poster);
 }
 static void placeholder(int x,int y,int w,int h,int seed) {
+    if(seed>=0&&seed<MAX_TITLES&&!strcmp(titles[seed].kind,"game-folder")){
+        /* Platform badge, not a generic missing-art placeholder. */
+        const char *label=titles[seed].title;
+        SDL_Color ink={235,231,227,255},shadow={67,25,37,255},accent={190,40,62,255};
+        rect(x,y,w,h,shadow,1);
+        rect(x+8,y+8,w-16,h-16,accent,0);
+        rect(x+18,y+27,w-36,64,ink,0);
+        rect(x+25,y+36,w-50,46,shadow,1);
+        text(x+30,y+52,"FLXTR",2,ink,8);
+        text(x+14,y+h-39,label,1,ink,19);
+        return;
+    }
     if(browse.mode==21){
         SDL_Color ink={116,255,132,255},fill={24,62,39,255};
         rect(x,y,w,h,fill,1);
@@ -996,7 +1021,7 @@ static void draw(Uint32 tick) {
         }
         Title *t=&titles[visible[selection]];
         rect(665,94,1,378,dim,1);text(690,97,"NOW SELECTED",1,dim,30);
-        wrap(690,126,t->title,19,4,green);
+        wrap_detail(690,126,t->title,4,green);
         /* PSP-style detail pane: consume only local metadata, never wait for web. */
         char detail[400]="",detail_path[128];
         if((!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv"))&&t->id>0){
@@ -1021,11 +1046,11 @@ static void draw(Uint32 tick) {
             }
         }
         detail[strcspn(detail,"\r\n")]=0;
-        wrap(690,222,t->meta,19,2,white);
-        if(detail[0])wrap(690,274,detail,22,4,white);
+        wrap_detail(690,205,t->meta,2,white);
+        if(detail[0])wrap_detail(690,250,detail,6,white);
         else if(!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv")||
                 !strcmp(t->kind,"game")||!strcmp(t->kind,"kiss"))
-            text(690,280,"DESCRIPTION NOT CACHED",1,dim,28);
+            text(690,260,"DESCRIPTION NOT CACHED",1,dim,28);
         text(690,354,t->url[0]?"[A] PLAY":t->kind[0]?"[A] OPEN":"NO STREAM YET",2,t->kind[0]||t->url[0]?green:dim,20);
         text(690,395,"[LB/RB] VIEW",1,dim,25);
         text(690,416,view_names[viewing],1,green,25);

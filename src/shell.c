@@ -161,9 +161,14 @@ static int open_ui(void) {
     SDL_DestroyTexture(background);background=NULL;
     if(menu_theme==1){
         SDL_Surface *surface=IMG_Load("assets/backgrounds/romantic_crimson_skulls.png");
+        if(!surface){
+            /* SDL_LoadBMP works even when the device lacks the PNG decoder. */
+            surface=SDL_LoadBMP("assets/backgrounds/romantic_crimson_skulls.bmp");
+            if(surface)fprintf(stderr,"RomanticCrimsonSkulls: using BMP fallback\\n");
+        }
         if(!surface)fprintf(stderr,"RomanticCrimsonSkulls load failed: %s\\n",IMG_GetError());
         if(surface){
-            if(surface->w==W&&surface->h==H)background=SDL_CreateTextureFromSurface(renderer,surface);
+            if(surface->w==W&&surface->h==H){background=SDL_CreateTextureFromSurface(renderer,surface);if(!background)fprintf(stderr,"RomanticCrimsonSkulls texture failed: %s\\n",SDL_GetError());}
             else fprintf(stderr,"RomanticCrimsonSkulls dimensions %dx%d, expected %dx%d\\n",surface->w,surface->h,W,H);
             SDL_FreeSurface(surface);
         }

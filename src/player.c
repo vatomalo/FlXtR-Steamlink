@@ -268,7 +268,7 @@ int main(int argc,char **argv) {
     }
     AVCodec *audio_decoder=NULL;
     ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,&audio_decoder,0);
-    if(vi<0){fprintf(stderr,"No compatible H.264 track at selected quality\n");goto done;}
+    if(vi<0){fprintf(stderr,"No compatible H.264 track at selected quality (%dp); requesting higher-resolution retry\n",height_limit);result=45;goto done;}
     if(ai<0){fprintf(stderr,"No decodable audio track; try another server\n");goto done;}
     AVCodecParameters *sound=fmt->streams[ai]->codecpar;
     fprintf(stderr,"Audio: %s; %d channels; %d Hz\n",avcodec_get_name(sound->codec_id),sound->channels,sound->sample_rate);

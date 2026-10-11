@@ -254,7 +254,7 @@ static void poster(Entry *e,int slot){
         if(!*sep||strlen(sep)>120)return;
         const char *allowed[]={"Nintendo - Nintendo Entertainment System","Nintendo - Super Nintendo Entertainment System",
             "Nintendo - Game Boy Advance","Nintendo - Game Boy Color","Nintendo - Game Boy",
-            "Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo"};
+            "Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo","Sega - Mega Drive - Genesis"};
         int ok=0;
         for(size_t k=0;k<sizeof(allowed)/sizeof(allowed[0]);k++)
             if(!strcmp(system,allowed[k])){ok=1;break;}
@@ -268,7 +268,7 @@ static void poster(Entry *e,int slot){
         Buffer b={NULL,0,768*1024};
         /* Libretro Neo Geo boxart filenames include revisions and subtitles.
          * Resolve the real filename from the official directory listing. */
-        if(!strcmp(system,"SNK - Neo Geo")){
+        if(1){
             char *encoded=curl_easy_escape(NULL,system,0);
             if(encoded){
                 char directory[512];

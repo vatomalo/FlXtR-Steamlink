@@ -1151,7 +1151,7 @@ static void launch_player(const Title *t) {
     fcntl(controls[1],F_SETFL,O_NONBLOCK);fcntl(controls[1],F_SETFD,FD_CLOEXEC);
     signal(SIGPIPE,SIG_IGN);unlink("playback-request");unlink("playback-position");
     if(auto_active)restart_position=auto_resume;
-    playing_title=*t;player_menu=access("player-menu-v1",F_OK)==0;
+    playing_title=*t;player_menu=1; /* Native controller menu is always available. */
     subtitle_route_log("launch-player",t);
     close_ui();
     player_pid=fork();

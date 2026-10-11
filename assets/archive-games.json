@@ -7,5 +7,23 @@
     "sha256": "3ea2376b15b34bd26b10e6b31d2753bf8b086098dbdb5ee84d9c0f03d66d3d7f",
     "source": "https://github.com/Sanqui/2048-gb",
     "license": "2048-gb-LICENSE.txt"
+  },
+  {
+    "title": "Flooder - Game Boy Color",
+    "description": "OLIVER BALFOUR / MIT / PUZZLE / A DOWNLOAD",
+    "identifier": "flooder",
+    "file": "flooder.gb",
+    "git_blob_sha1": "6deb06283fca3f1ac5ebbba9714cde5cc7bd19c1",
+    "source": "https://github.com/Obalfour/Flooder",
+    "license": "MIT"
+  },
+  {
+    "title": "Tobu Tobu Girl Deluxe - Game Boy",
+    "description": "TANGRAM GAMES / MIT / ACTION / A DOWNLOAD",
+    "identifier": "tobutobugirldeluxe",
+    "file": "tobudx.gb",
+    "git_blob_sha1": "2e6ba8fbd1a1bd54da52f2cf80f78654c1914643",
+    "source": "https://github.com/SimonLarsen/tobutobugirl-dx",
+    "license": "MIT"
   }
 ]

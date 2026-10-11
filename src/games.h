@@ -2,6 +2,9 @@
 #include <dirent.h>
 #include <limits.h>
 #include <openssl/sha.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <errno.h>
 #define GAME_LIMIT 2048
 static const char *games_home(void){const char *p=getenv("FLXTR_RETROARCH_HOME");return p&&p[0]=='/'?p:"/home/apps/retroarch";}
 static int game_file(const char *p){struct stat st;return p&&p[0]=='/'&&!stat(p,&st)&&S_ISREG(st.st_mode)&&!access(p,R_OK);}
@@ -9,16 +12,21 @@ static json_object *games_read(const char *path){struct stat st;if(stat(path,&st
 static const char *game_core(const char *path){
     const char *ext=strrchr(path,'.');if(!ext)return NULL;ext++;
     if(!strcasecmp(ext,"nes"))return "fceumm";
-    if(!strcasecmp(ext,"sfc")||!strcasecmp(ext,"smc"))return "snes9x2005_plus";
+    if(!strcasecmp(ext,"sfc")||!strcasecmp(ext,"smc"))return "snes9x2005";
     if(!strcasecmp(ext,"gba"))return "gpsp";
     if(!strcasecmp(ext,"gb")||!strcasecmp(ext,"gbc"))return "gambatte";
     if(!strcasecmp(ext,"md")||!strcasecmp(ext,"gen")||!strcasecmp(ext,"smd")||!strcasecmp(ext,"sms")||!strcasecmp(ext,"gg"))return "picodrive";
     if(!strcasecmp(ext,"cue")||!strcasecmp(ext,"pbp")||!strcasecmp(ext,"chd")||!strcasecmp(ext,"m3u"))return "pcsx_rearmed";
     if(!strcasecmp(ext,"a26"))return "stella";
     if(!strcasecmp(ext,"zip")){
+        /* Neo Geo uses a shared BIOS ZIP alongside game ZIPs. Never launch
+         * neogeo.zip itself as a game. Prefer FBNeo when installed. */
+        const char *base=strrchr(path,'/');base=base?base+1:path;
+        if(!strcasecmp(base,"neogeo.zip"))return NULL;
+        if(strcasestr(path,"/neogeo/")||strcasestr(path,"/neo-geo/"))return "fbneo";
         if(strcasestr(path,"/mame/"))return "mame2003_plus";
         if(strcasestr(path,"/nes/"))return "fceumm";
-        if(strcasestr(path,"/snes/"))return "snes9x2005_plus";
+        if(strcasestr(path,"/snes/"))return "snes9x2005";
         if(strcasestr(path,"/gba/"))return "gpsp";
     }return NULL;
 }
@@ -34,6 +42,11 @@ static void game_infer(json_object *games,const char *rom,const char *label){
     const char *name=game_core(rom);if(!name)return;char core[PATH_MAX];
     snprintf(core,sizeof(core),"%s/cores/%s_libretro.so",games_home(),name);
     if(!game_file(core))snprintf(core,sizeof(core),"%s/.home/.config/retroarch/cores/%s_libretro.so",games_home(),name);
+    /* Steam Link RetroArch installations may ship MAME instead of FBNeo. */
+    if(!game_file(core)&&!strcmp(name,"fbneo")){
+        snprintf(core,sizeof(core),"%s/cores/mame2003_plus_libretro.so",games_home());
+        if(!game_file(core))snprintf(core,sizeof(core),"%s/.home/.config/retroarch/cores/mame2003_plus_libretro.so",games_home());
+    }
     game_add(games,rom,core,label);
 }
 static void game_playlist(json_object *games,const char *path){
@@ -78,30 +91,145 @@ static json_object *games_import(void){
     if(!json_object_to_file("games.json.next",games))rename("games.json.next","games.json");
     return games;
 }
-static int games_list(int page,int refresh){
+static const char *const local_folders[]={"NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","NEO GEO","ARCADE","OTHER"};
+static int local_category(const char *core,const char *rom){
+    if(strstr(core,"fceumm"))return 1;
+    if(strstr(core,"snes9x"))return 2;
+    if(strstr(core,"gambatte"))return strcasestr(rom,".gbc")?4:3;
+    if(strstr(core,"gpsp"))return 5;
+    if(strstr(core,"pcsx_rearmed"))return 6;
+    if(strstr(core,"ppsspp"))return 7;
+    if(strstr(core,"fbneo")||strcasestr(rom,"/neogeo/"))return 8;
+    if(strstr(core,"mame"))return 9;
+    return 10;
+}
+static int games_folders(int page){
+    total=12;
+    for(int i=(page-1)*PAGE_SIZE;i<12&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==10?"DOWNLOADS":i==11?"SCUMMVM":local_folders[i]);
+        snprintf(e->meta,sizeof(e->meta),"[ %s ] / A OPEN FOLDER",i==10?"DOWNLOADS":local_folders[i]);
+        strcpy(e->kind,i==10?"downloads-folder":i==11?"scummvm-launch":"game-folder");e->id=i+1;
+    }
+    return 0;
+}
+static int games_list_filtered(int page,int refresh,int folder){
+
     json_object *games=refresh?NULL:games_read("games.json");
     if(games&&!json_object_is_type(games,json_type_array)){json_object_put(games);games=NULL;}
     if(!games)games=games_import();
     if(!games)return -1;
-    total=(int)json_object_array_length(games);if(total>GAME_LIMIT)total=GAME_LIMIT;
-    for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){
-        json_object *g=json_object_array_get_idx(games,i);Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
-        const char *core=string(g,"core"),*base=strrchr(core,'/');clean(e->meta,sizeof(e->meta),base?base+1:core);strcpy(e->kind,"game");e->id=i+1;
+    int count=(int)json_object_array_length(games),matched=0;
+    if(count>GAME_LIMIT)count=GAME_LIMIT;
+    for(int i=0;i<count;i++){
+        json_object *g=json_object_array_get_idx(games,i);
+        if(folder&&local_category(string(g,"core"),string(g,"rom"))!=folder)continue;
+        matched++;
+    }
+    total=matched;int skipped=0;
+    for(int i=0;i<count&&used<PAGE_SIZE;i++){
+        json_object *g=json_object_array_get_idx(games,i);
+        if(folder&&local_category(string(g,"core"),string(g,"rom"))!=folder)continue;
+        if(skipped++<(page-1)*PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
+        const char *core=string(g,"core"),*base=strrchr(core,'/');clean(e->meta,sizeof(e->meta),base?base+1:core);
+        const char *rom_path=string(g,"rom");size_t rom_len=strlen(rom_path);
+        int browse_zip=rom_len>=4&&!strcasecmp(rom_path+rom_len-4,".zip")&&
+            !strcasestr(rom_path,"/neogeo/")&&!strcasestr(rom_path,"/neo-geo/")&&
+            !strcasestr(rom_path,"/mame/");
+        strcpy(e->kind,browse_zip?"game-zip":"game");e->id=i+1;
+        /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
+        const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
+        const char *systems[]={"Nintendo - Nintendo Entertainment System","Nintendo - Super Nintendo Entertainment System","Nintendo - Game Boy Advance","Nintendo - Game Boy Color","Nintendo - Game Boy","Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo"};
+        const char *needle[]={"fceumm","snes9x","gpsp","gambatte","gambatte","pcsx_rearmed","ppsspp","fbneo"};
+        const char *system=NULL;
+        for(int k=0;k<8;k++)if(strstr(core,needle[k])){system=systems[k];break;}
+        if(system){
+            char stem[128];snprintf(stem,sizeof(stem),"%s",e->title);
+            char thumb[PATH_MAX];
+            snprintf(thumb,sizeof(thumb),"%s/.home/.config/retroarch/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
+            if(!game_file(thumb))snprintf(thumb,sizeof(thumb),"%s/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
+            if(game_file(thumb)){
+                const char prefix[]="localthumb:";
+                size_t length=strlen(thumb);
+                if(length<sizeof(e->poster)-sizeof(prefix)){
+                    memcpy(e->poster,prefix,sizeof(prefix)-1);
+                    memcpy(e->poster+sizeof(prefix)-1,thumb,length+1);
+                }
+            }
+        }
     }json_object_put(games);return 0;
 }
+static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
+static int games_system(int page,int folder){return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;}
 static int games_run(void){
     int id=0,back=-1,start=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
-    int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<1||id>GAME_LIMIT)return 2;
+    int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
+    if(id==0){
+        /* Launch the installed ScummVM frontend and its configured games. */
+        const char *paths[]={"/home/apps/scummvm/scummvm.exec",
+            "/home/apps/scummvm/scummvm","/home/apps/scummvm/bin/scummvm",
+            "/usr/local/bin/scummvm","/usr/bin/scummvm"};
+        for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
+            if(access(paths[i],X_OK)==0){
+                execl(paths[i],paths[i],(char*)NULL);
+                fprintf(stderr,"ScummVM launch failed: %s (%s)\n",paths[i],strerror(errno));
+            }
+        }
+        fprintf(stderr,"ScummVM executable not found in known installation locations\n");
+        return 2;
+    }
     json_object *games=games_read("games.json");
     if(!games||!json_object_is_type(games,json_type_array)||id>(int)json_object_array_length(games)){json_object_put(games);return 2;}
     json_object *g=json_object_array_get_idx(games,id-1);const char *rom=string(g,"rom"),*core=string(g,"core");
-    if(!game_file(rom)||!game_file(core)){json_object_put(games);return 2;}
+    /* ROM-specific core selection overrides inferred or playlist defaults.
+     * Accept names only, never paths from the TSV, and require an installed
+     * readable Libretro shared object. */
+    char selected_core[PATH_MAX]={0};
+    FILE *choices=fopen("game-cores.tsv","r");
+    if(choices){
+        char row[256],title[80],name[96];int selected_id;
+        while(fgets(row,sizeof(row),choices)){
+            if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,title,name)!=3)continue;
+            if(selected_id!=id||strcmp(title,string(g,"title")))continue;
+            size_t len=strlen(name);int valid=len>0&&len<80;
+            for(size_t j=0;j<len;j++)
+                if(!isalnum((unsigned char)name[j])&&name[j]!='_'&&name[j]!='-')valid=0;
+            if(!valid)continue;
+            snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro.so",games_home(),name);
+            if(!game_file(selected_core))
+                snprintf(selected_core,sizeof(selected_core),"%s/.home/.config/retroarch/cores/%s_libretro.so",games_home(),name);
+            if(game_file(selected_core))core=selected_core;
+        }fclose(choices);
+    }
+    if(!game_file(rom)||!game_file(core)){fprintf(stderr,"Game launch: missing ROM or RetroArch core\n");json_object_put(games);return 2;}
+    if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
+        char bios[PATH_MAX];snprintf(bios,sizeof(bios),"%s",rom);
+        char *slash=strrchr(bios,'/');if(slash)strcpy(slash+1,"neogeo.zip");
+        if(!game_file(bios)){
+            fprintf(stderr,"Neo Geo requires a legally obtained neogeo.zip BIOS in the ROM directory or a core-supported system directory\n");
+            /* Do not block: a configured RetroArch system directory may have BIOS. */
+        }
+    }
     char config[PATH_MAX],extra[PATH_MAX],runtime[PATH_MAX],home[PATH_MAX];
     if(!getcwd(extra,sizeof(extra)))return 2;
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
     f=fopen(extra,"w");if(!f)return 2;
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
+    /* FlXtR setting is opt-in; do not change the user's global RetroArch config. */
+    { FILE *settings=fopen("settings.cfg","r");int enabled=0;
+      if(settings){
+          char line[96];
+          while(fgets(line,sizeof(line),settings)){
+              if(sscanf(line,"game_autostate=%d",&enabled)==1)break;
+          }
+          fclose(settings);
+      }
+      fprintf(f,"savestate_auto_save = \"%s\"\nsavestate_auto_load = \"%s\"\n",
+          enabled==1?"true":"false",enabled==1?"true":"false");
+    }
     if(back>=0&&back<64&&start>=0&&start<64&&back!=start)fprintf(f,"input_enable_hotkey_btn = \"%d\"\ninput_exit_emulator_btn = \"%d\"\n",back,start);
+    /* Shared BIOS directory: the UI checks this same location. */
+    fprintf(f,"system_directory = \"%.*s/system\"\n",(int)n,extra);
     if(fclose(f))return 2;
     snprintf(config,sizeof(config),"%s/.home/.config/retroarch/retroarch.cfg",games_home());
     snprintf(runtime,sizeof(runtime),"%s/retroarch.exec",games_home());
@@ -125,19 +253,394 @@ static int games_archive_list(int page){
     for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){
         json_object *g=json_object_array_get_idx(list,i);Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
         clean(e->meta,sizeof(e->meta),string(g,"description"));strcpy(e->kind,"archive-game");e->id=i+1;
+        const char *archive_id=string(g,"identifier");
+        if(!*string(g,"git_blob_sha1")&&archive_identifier(archive_id))
+            snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",archive_id);
     }json_object_put(list);return 0;
 }
+/* Archive catalog: discovery is metadata-only. Download remains user initiated. */
+static const char *game_platform_names[]={"NES","SNES","GAME BOY ADVANCE","PLAYSTATION","PSP","ARCADE"};
+static const char *game_platform_queries[]={"NES Nintendo ROM","SNES Super Nintendo ROM","Game Boy Advance GBA ROM","PlayStation PSX game","PSP PlayStation Portable game","Arcade MAME game"};
+static int games_platforms(int page){
+    total=7;
+    for(int i=(page-1)*PAGE_SIZE;i<7&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==6?"VERIFIED HOMEBREW":game_platform_names[i]);
+        strcpy(e->kind,i==6?"game-curated":"game-platform");e->id=i+1;
+        strcpy(e->meta,i==6?"LICENSED DOWNLOADS / A OPEN":"INTERNET ARCHIVE / BROWSE TITLES / A OPEN");
+    }return 0;
+}
+/* BIOS discovery is intentionally separate from the game installer.
+ * A search result is not evidence of a lawful or compatible firmware download. */
+static int games_bios_search(int page,int bios_id,const char *query){
+    if(bios_id<1||bios_id>5)return -1;
+    const char *const defaults[]={"Neo Geo BIOS","PlayStation BIOS","PlayStation BIOS","PlayStation BIOS","Game Boy Advance BIOS"};
+    const char *term=*query?query:defaults[bios_id-1];
+    char clean_term[128];size_t n=0;
+    for(size_t i=0;term[i]&&n+1<sizeof(clean_term);i++)
+        if(isalnum((unsigned char)term[i])||term[i]==' '||term[i]=='-')clean_term[n++]=term[i];
+    clean_term[n]=0;
+    char *escaped=curl_easy_escape(NULL,clean_term,0);if(!escaped)return -1;
+    char url[1024];int len=snprintf(url,sizeof(url),ARCHIVE "/advancedsearch.php?q=mediatype%%3Asoftware%%20AND%%20%%28%s%%29%%20AND%%20-access-restricted-item%%3Atrue&fl%%5B%%5D=identifier&fl%%5B%%5D=title&rows=6&page=%d&output=json",escaped,page);
+    curl_free(escaped);if(len<0||len>=(int)sizeof(url))return -1;
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *response=field(root,"response"),*docs=field(response,"docs");
+    if(!docs||!json_object_is_type(docs,json_type_array)){json_object_put(root);return -1;}
+    total=number(response,"numFound");if(total<0)total=0;if(total>12000)total=12000;
+    for(size_t i=0;i<(size_t)json_object_array_length(docs)&&used<PAGE_SIZE;i++){
+        json_object *doc=json_object_array_get_idx(docs,i);const char *identifier=string(doc,"identifier");
+        if(!archive_identifier(identifier))continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(doc,"title"));
+        if(!*e->title)clean(e->title,sizeof(e->title),identifier);
+        snprintf(e->url,sizeof(e->url),ARCHIVE "/details/%s",identifier);
+        snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",identifier);
+        snprintf(e->meta,sizeof(e->meta),"ARCHIVE RESULT / SOURCE UNVERIFIED");
+        strcpy(e->kind,"bios-item");e->id=bios_id;
+    }
+    json_object_put(root);return 0;
+}
+static int games_archive_search(int page,int platform,const char *query){
+    if(platform<1||platform>6)return -1;
+    char term[128];size_t n=0;const char *base=*query?query:game_platform_queries[platform-1];
+    for(size_t i=0;base[i]&&n+1<sizeof(term);i++)
+        if(isalnum((unsigned char)base[i])||base[i]==' '||base[i]=='-')term[n++]=base[i];
+    term[n]=0;
+    char *q=curl_easy_escape(NULL,term,0);if(!q)return -1;
+    char url[1024];int len=snprintf(url,sizeof(url),ARCHIVE "/advancedsearch.php?q=mediatype%%3Asoftware%%20AND%%20%%28%s%%29%%20AND%%20-access-restricted-item%%3Atrue&fl%%5B%%5D=identifier&fl%%5B%%5D=title&sort%%5B%%5D=downloads%%20desc&rows=6&page=%d&output=json",q,page);
+    curl_free(q);if(len<0||len>=(int)sizeof(url))return -1;
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *response=field(root,"response"),*docs=field(response,"docs");
+    if(!docs||!json_object_is_type(docs,json_type_array)){json_object_put(root);return -1;}
+    total=number(response,"numFound");if(total<0)total=0;if(total>12000)total=12000;
+    for(size_t i=0;i<(size_t)json_object_array_length(docs)&&used<PAGE_SIZE;i++){
+        json_object *doc=json_object_array_get_idx(docs,i);const char *identifier=string(doc,"identifier");
+        if(!archive_identifier(identifier))continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(doc,"title"));
+        if(!*e->title)clean(e->title,sizeof(e->title),identifier);
+        snprintf(e->url,sizeof(e->url),ARCHIVE "/details/%s",identifier);
+        snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",identifier);
+        snprintf(e->meta,sizeof(e->meta),"%s / A VIEW FILES",game_platform_names[platform-1]);
+        strcpy(e->kind,"game-item");e->id=platform;
+    }
+    json_object_put(root);return 0;
+}
+static int games_bios_files(int page,const char *identifier,int bios_id){
+    if(!archive_identifier(identifier)||bios_id<1||bios_id>5)return -1;
+    char url[256];snprintf(url,sizeof(url),ARCHIVE "/metadata/%s",identifier);
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *files=field(root,"files");
+    if(!files||!json_object_is_type(files,json_type_array)){json_object_put(root);return -1;}
+    const char *names[]={"neogeo.zip","scph5500.bin","scph5501.bin","scph5502.bin","gba_bios.bin"};
+    total=0;
+    for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
+        json_object *f=json_object_array_get_idx(files,i);
+        const char *name=string(f,"name"),*digest=string(f,"sha1");
+        const char *base=strrchr(name,'/');base=base?base+1:name;
+        const char *ext=strrchr(base,'.');
+        int container=ext&&!strcasecmp(ext,".zip")&&strlen(name)<140&&strcasestr(base,"bios")!=NULL;
+        if(strlen(name)>160||strchr(name,'\\')||strstr(name,"..")||
+           (strcasecmp(base,names[bios_id-1])&&!container)||strlen(digest)!=40)continue;
+        int good=1;for(int k=0;k<40;k++)if(!isxdigit((unsigned char)digest[k]))good=0;
+        if(!good)continue;
+        if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),name);
+        snprintf(e->meta,sizeof(e->meta),"SHA1:%s",digest);
+        char *escaped=curl_easy_escape(NULL,name,0);
+        if(escaped){snprintf(e->url,sizeof(e->url),ARCHIVE "/download/%s/%s",identifier,escaped);curl_free(escaped);}
+        strcpy(e->kind,container?"bios-zip":"bios-file");e->id=bios_id;
+    }
+    json_object_put(root);return 0;
+}
+static int games_archive_files(int page,const char *identifier,int platform){
+    if(!archive_identifier(identifier)||platform<1||platform>6)return -1;
+    char url[256];snprintf(url,sizeof(url),ARCHIVE "/metadata/%s",identifier);
+    json_object *root=archive_json(url);if(!root)return -1;
+    json_object *files=field(root,"files");
+    if(!files||!json_object_is_type(files,json_type_array)){json_object_put(root);return -1;}
+    total=0;
+    for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
+        json_object *f=json_object_array_get_idx(files,i);
+        const char *name=string(f,"name"),*ext=strrchr(name,'.');
+        if(!ext||strchr(name,'/')||strchr(name,'\\')||strlen(name)>512||strlen(name)<5)continue;
+        if(strcasecmp(ext,".zip")&&strcasecmp(ext,".nes")&&strcasecmp(ext,".sfc")&&strcasecmp(ext,".smc")&&
+           strcasecmp(ext,".gba")&&strcasecmp(ext,".gb")&&strcasecmp(ext,".gbc")&&
+           strcasecmp(ext,".chd")&&strcasecmp(ext,".pbp")&&strcasecmp(ext,".iso"))continue;
+        if(total++<(page-1)*PAGE_SIZE||used==PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),name);
+        strcpy(e->kind,"game-rom");snprintf(e->meta,sizeof(e->meta),"ARCHIVE FILE / A DOWNLOAD");
+        char *escaped=curl_easy_escape(NULL,name,0);if(escaped){
+            snprintf(e->url,sizeof(e->url),ARCHIVE "/download/%s/%s",identifier,escaped);
+            curl_free(escaped);
+        }
+        snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",identifier);
+        e->id=platform;
+    }
+    json_object_put(root);return 0;
+}
+/* Stream large disc images to disk instead of the 16 MiB metadata buffer. */
+static size_t game_write(void *ptr,size_t size,size_t count,void *opaque){
+    FILE *f=opaque;return fwrite(ptr,size,count,f)*size;
+}
+/* BusyBox unzip -l archive browser. All member lookups are by index, so UI
+ * never constructs a shell command from archive-controlled filenames. */
+/* Downloaded ZIP library: only regular ZIP files inside the dedicated directory. */
+static int downloaded_zip_path(int id,char *out,size_t cap){
+    DIR *dir=opendir("downloads");if(!dir)return -1;
+    struct dirent *entry;int count=0,found=-1;
+    while((entry=readdir(dir))){
+        const char *name=entry->d_name;size_t len=strlen(name);
+        if(len<5||strcasecmp(name+len-4,".zip")||strchr(name,'/'))continue;
+        char path[PATH_MAX];int n=snprintf(path,sizeof(path),"downloads/%s",name);
+        struct stat st;
+        if(n<0||n>=(int)sizeof(path)||lstat(path,&st)||!S_ISREG(st.st_mode))continue;
+        if(++count==id){if(snprintf(out,cap,"%s",path)<(int)cap)found=0;break;}
+    }
+    closedir(dir);return found;
+}
+static int downloaded_zip_list(int page){
+    DIR *dir=opendir("downloads");if(!dir)return 0;
+    struct dirent *entry;int index=0;total=0;
+    while((entry=readdir(dir))){
+        const char *name=entry->d_name;size_t len=strlen(name);
+        if(len<5||strcasecmp(name+len-4,".zip"))continue;
+        char path[PATH_MAX];int n=snprintf(path,sizeof(path),"downloads/%s",name);
+        struct stat st;
+        if(n<0||n>=(int)sizeof(path)||lstat(path,&st)||!S_ISREG(st.st_mode))continue;
+        index++;total++;
+        if(total<=(page-1)*PAGE_SIZE||used>=PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),name);
+        snprintf(e->meta,sizeof(e->meta),"DOWNLOADED ZIP / A BROWSE / Y DELETE");
+        strcpy(e->kind,"download-zip");e->id=index;
+    }
+    closedir(dir);return 0;
+}
+static int downloaded_zip_delete(int id){
+    char path[PATH_MAX];
+    if(downloaded_zip_path(id,path,sizeof(path)))return -1;
+    if(unlink(path))return -1;
+    fprintf(stderr,"Deleted downloaded ZIP: %s\n",path);
+    return downloaded_zip_list(1);
+}
+static int zip_members(const char *path,int page,int extract_index);
+static int zip_game_by_id(int game_id,int page,int member_id){
+    if(game_id<0){char relative[PATH_MAX],path[PATH_MAX],cwd[PATH_MAX];
+        if(downloaded_zip_path(-game_id,relative,sizeof(relative))||!getcwd(cwd,sizeof(cwd)))return -1;
+        int n=snprintf(path,sizeof(path),"%s/%s",cwd,relative);
+        if(n<0||n>=(int)sizeof(path))return -1;
+        return zip_members(path,page,member_id);
+    }
+    json_object *games=games_read("games.json");
+    if(!games||!json_object_is_type(games,json_type_array)||
+       game_id<1||game_id>(int)json_object_array_length(games)){
+        json_object_put(games);return -1;
+    }
+    const char *source=string(json_object_array_get_idx(games,game_id-1),"rom");
+    char path[PATH_MAX];
+    int n=snprintf(path,sizeof(path),"%s",source);
+    json_object_put(games);
+    if(n<0||n>=(int)sizeof(path))return -1;
+    return zip_members(path,page,member_id);
+}
+static int zip_members(const char *path,int page,int extract_index){
+    if(!path||path[0]!='/'||!game_file(path)||strcasecmp(path+strlen(path)-4,".zip"))return -1;
+    int pipes[2];if(pipe(pipes))return -1;
+    pid_t pid=fork();
+    if(pid<0){close(pipes[0]);close(pipes[1]);return -1;}
+    if(pid==0){close(pipes[0]);dup2(pipes[1],STDOUT_FILENO);close(pipes[1]);
+        execlp("unzip","unzip","-l",path,(char*)NULL);_exit(127);}
+    close(pipes[1]);FILE *in=fdopen(pipes[0],"r");
+    if(!in){close(pipes[0]);waitpid(pid,NULL,0);return -1;}
+    char line[2048],member[1024];int index=0,found=0;total=0;
+    while(fgets(line,sizeof(line),in)){
+        unsigned long long size=0;char date[32],timepart[32];
+        if(sscanf(line," %llu %31s %31s %1023[^\n]",&size,date,timepart,member)!=4)continue;
+        const char *ext=strrchr(member,'.');
+        if(!ext||member[0]=='/'||strstr(member,"..")||strchr(member,'\\')||strpbrk(member,"\r\t")||
+            (strcasecmp(ext,".nes")&&strcasecmp(ext,".sfc")&&strcasecmp(ext,".smc")&&
+             strcasecmp(ext,".gba")&&strcasecmp(ext,".gb")&&strcasecmp(ext,".gbc")&&
+             strcasecmp(ext,".md")&&strcasecmp(ext,".gen")&&strcasecmp(ext,".bin")&&
+             strcasecmp(ext,".a26")&&strcasecmp(ext,".cue")))continue;
+        if(size==0||size>128ULL*1024*1024)continue;
+        index++;total++;
+        if(extract_index){
+            if(index!=extract_index)continue;
+            found=1;break;
+        }
+        if(total<=(page-1)*PAGE_SIZE||used>=PAGE_SIZE)continue;
+        Entry *e=&entries[used++];clean(e->title,sizeof(e->title),member);
+        strcpy(e->kind,"zip-member");e->id=index;
+        snprintf(e->meta,sizeof(e->meta),"ZIP ROM / %llu BYTES / A EXTRACT",size);
+    }
+    fclose(in);int code=0;waitpid(pid,&code,0);
+    if(extract_index&&!found)return -1;
+    if(!extract_index)return WIFEXITED(code)&&WEXITSTATUS(code)==0?0:-1;
+    /* Route ROMs by their extension, retaining their actual filename.
+     * Ambiguous .bin entries use the parent ZIP's console directory. */
+    const char *ext=strrchr(member,'.');
+    const char *folder=NULL;
+    if(!strcasecmp(ext,".nes"))folder="NES";
+    else if(!strcasecmp(ext,".sfc")||!strcasecmp(ext,".smc"))folder="SNES";
+    else if(!strcasecmp(ext,".gba"))folder="GBA";
+    else if(!strcasecmp(ext,".gb"))folder="GB";
+    else if(!strcasecmp(ext,".gbc"))folder="GBC";
+    else if(!strcasecmp(ext,".md")||!strcasecmp(ext,".gen"))folder="MegaDrive";
+    else if(!strcasecmp(ext,".a26"))folder="Atari2600";
+    else if(!strcasecmp(ext,".cue")||!strcasecmp(ext,".bin"))folder="PlayStation";
+    if(!folder)return -1;
+    const char *base=strrchr(member,'/');base=base?base+1:member;
+    if(!*base||strlen(base)>240||base[0]=='.')return -1;
+    for(const unsigned char *p=(const unsigned char*)base;*p;p++)
+        if(*p<32||*p==127||*p=='/'||*p=='\\')return -1;
+    /* Save under the RetroArch ROM tree that the importer already scans. */
+    char directory[PATH_MAX],dest[PATH_MAX],tmp[PATH_MAX];
+    int n=snprintf(directory,sizeof(directory),"%s/roms/%s",games_home(),folder);
+    if(n<0||n>=(int)sizeof(directory))return -1;
+    char root[PATH_MAX];
+    n=snprintf(root,sizeof(root),"%s/roms",games_home());
+    if(n<0||n>=(int)sizeof(root))return -1;
+    if(mkdir(root,0700)&&errno!=EEXIST)return -1;
+    if(mkdir(directory,0700)&&errno!=EEXIST)return -1;
+    n=snprintf(dest,sizeof(dest),"%s/%s",directory,base);
+    if(n<0||n>=(int)sizeof(dest))return -1;
+    n=snprintf(tmp,sizeof(tmp),"%s.next",dest);
+    if(n<0||n>=(int)sizeof(tmp))return -1;
+    if(access(dest,F_OK)==0){
+        fprintf(stderr,"ZIP ROM already exists, refusing overwrite: %s\n",dest);
+        return games_list(1,1);
+    }
+    int fd=open(tmp,O_WRONLY|O_CREAT|O_EXCL,0600);if(fd<0)return -1;
+    pid=fork();if(pid<0){close(fd);unlink(tmp);return -1;}
+    if(pid==0){dup2(fd,STDOUT_FILENO);close(fd);execlp("unzip","unzip","-p",path,member,(char*)NULL);_exit(127);}
+    close(fd);waitpid(pid,&code,0);struct stat st;
+    if(!WIFEXITED(code)||WEXITSTATUS(code)!=0||stat(tmp,&st)||st.st_size==0||st.st_size>128*1024*1024||link(tmp,dest)){
+        unlink(tmp);return -1;
+    }
+    unlink(tmp);
+    fprintf(stderr,"ZIP ROM extracted: %s\n",dest);
+    return games_list(1,1);
+}
+/* Progress is written independently of the catalog result stream. */
+static int game_download_progress(void *ctx,double total,double done,
+                                  double upload_total,double upload_done){
+    (void)ctx;(void)upload_total;(void)upload_done;
+    static double last_done=-1;
+    static time_t last_time;
+    time_t now=time(NULL);
+    if(done==last_done&&now==last_time)return 0;
+    if(now==last_time&&total>0&&done<total)return 0;
+    FILE *f=fopen("catalog-cache/download-progress.next","w");
+    if(f){
+        fprintf(f,"%lld %lld\n",(long long)done,(long long)total);
+        if(!fclose(f))rename("catalog-cache/download-progress.next","catalog-cache/download-progress");
+    }
+    last_done=done;last_time=now;
+    return 0;
+}
+static int games_archive_file_download(const char *item,const char *name,int platform){
+    fprintf(stderr,"Archive ROM request: item=%.128s filename=%.180s platform=%d\n",item?item:"(null)",name?name:"(null)",platform);
+    if(!archive_identifier(item)||!name||!*name||strlen(name)>512||
+       strchr(name,'/')||strchr(name,'\\')||strstr(name,"..")||strpbrk(name,"\r\n\t"))return -1;
+    const char *extension=strrchr(name,'.');
+    if(!extension|| (strcasecmp(extension,".zip")&&strcasecmp(extension,".nes")&&
+        strcasecmp(extension,".sfc")&&strcasecmp(extension,".smc")&&
+        strcasecmp(extension,".gba")&&strcasecmp(extension,".gb")&&
+        strcasecmp(extension,".gbc")&&strcasecmp(extension,".chd")&&
+        strcasecmp(extension,".pbp")&&strcasecmp(extension,".iso")))return -1;
+    char *escaped=curl_easy_escape(NULL,name,0);if(!escaped)return -1;
+    char url[1024];int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
+    if(n<0||n>=(int)sizeof(url)){fprintf(stderr,"Archive download URL exceeds buffer\n");return -1;}
+    mkdir("roms",0700);
+    mkdir("downloads",0700);
+    const char *folder[]={"","NES","SNES","GBA","PlayStation","PSP","MAME"};
+    if(platform<1||platform>6)return -1;
+    char rom_dir[80];snprintf(rom_dir,sizeof(rom_dir),"%s",!strcasecmp(extension,".zip")?"downloads":"roms");
+    if(strcasecmp(extension,".zip"))snprintf(rom_dir,sizeof(rom_dir),"roms/%s",folder[platform]);
+    mkdir(rom_dir,0700);
+    /* Archive names may exceed the filesystem's 255-byte component limit.
+     * Keep a recognizable prefix and extension, plus a stable full-name hash. */
+    unsigned long hash=2166136261UL;
+    for(const unsigned char *p=(const unsigned char*)name;*p;p++)
+        hash=((hash^*p)*16777619UL)&0xffffffffUL;
+    char prefix[65];size_t j=0;
+    for(const unsigned char *p=(const unsigned char*)name;*p&&j<60;p++){
+        unsigned char c=*p;
+        prefix[j++]=(isalnum(c)||c=='-'||c=='_')?(char)c:'_';
+    }
+    prefix[j]=0;
+    char target[400],tmp[420];
+    n=snprintf(target,sizeof(target),"%s/%.64s-%s-%08lx%s",rom_dir,item,prefix,hash,extension);
+    if(n<0||n>=(int)sizeof(target))return -1;
+    n=snprintf(tmp,sizeof(tmp),"%s.next",target);
+    if(n<0||n>=(int)sizeof(tmp))return -1;
+    FILE *f=fopen(tmp,"wb");if(!f){fprintf(stderr,"Archive ROM file open failed: %s (%s)\n",tmp,strerror(errno));return -1;}
+    CURL *c=curl_easy_init();if(!c){fclose(f);unlink(tmp);return -1;}
+    curl_easy_setopt(c,CURLOPT_NOPROGRESS,0L);
+    curl_easy_setopt(c,CURLOPT_PROGRESSFUNCTION,game_download_progress);
+    curl_easy_setopt(c,CURLOPT_PROGRESSDATA,NULL);
+    curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);
+    curl_easy_setopt(c,CURLOPT_MAXREDIRS,4L);curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,game_write);
+    curl_easy_setopt(c,CURLOPT_WRITEDATA,f);curl_easy_setopt(c,CURLOPT_FAILONERROR,1L);
+    curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,10L);curl_easy_setopt(c,CURLOPT_LOW_SPEED_LIMIT,1024L);
+    curl_easy_setopt(c,CURLOPT_LOW_SPEED_TIME,45L);
+    curl_easy_setopt(c,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
+    curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L);
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"https");curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"https");
+#else
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
+#endif
+    fprintf(stderr,"Archive ROM starting HTTPS transfer to %s\n",target);
+    CURLcode rc=curl_easy_perform(c);long http=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&http);
+    curl_easy_cleanup(c);int failed=fclose(f)!=0||rc!=CURLE_OK||http!=200;
+    struct stat st;if(stat(tmp,&st)||st.st_size<=0)failed=1;
+    if(!failed&&rename(tmp,target))failed=1;
+    if(failed){unlink(tmp);fprintf(stderr,"Archive ROM download failed: HTTP %ld, curl %d (%s), file %s\n",http,(int)rc,curl_easy_strerror(rc),name);return -1;}
+    fprintf(stderr,"Archive ROM downloaded: %s\n",target);
+    /* Download completion is not contingent on a compatible installed core.
+     * The user can choose a core later; the archive transfer itself succeeded. */
+    return games_list(1,1);
+}
 static int games_archive_download(int id){
-    json_object *list=games_archive_manifest();if(!list||!json_object_is_type(list,json_type_array)||id<1||id>(int)json_object_array_length(list)){json_object_put(list);return -1;}
-    json_object *g=json_object_array_get_idx(list,id-1);const char *item=string(g,"identifier"),*name=string(g,"file"),*sha=string(g,"sha256");
-    if(!archive_identifier(item)||!game_core(name)||strlen(name)>160||strchr(name,'/')||strchr(name,'\\')||strchr(name,'\n')||strchr(name,'\t')||strlen(sha)!=64){json_object_put(list);return -1;}
-    char *escaped=curl_easy_escape(NULL,name,0);if(!escaped){json_object_put(list);return -1;}
-    char url[1024];snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
+    json_object *list=games_archive_manifest();
+    if(!list||!json_object_is_type(list,json_type_array)||id<1||id>(int)json_object_array_length(list)){json_object_put(list);return -1;}
+    json_object *g=json_object_array_get_idx(list,id-1);
+    const char *item=string(g,"identifier"),*name=string(g,"file"),*sha=string(g,"sha256");
+    const char *blob=string(g,"git_blob_sha1");
+    const char *revision="50293559a496a3e20382fbf6a2e84b70ec622f88";
+    int github=*blob!=0;
+    if(!archive_identifier(item)||!game_core(name)||strlen(name)>160||strchr(name,'/')||strchr(name,'\\')||strchr(name,'\n')||strchr(name,'\t')||
+       (github?strlen(blob)!=40:strlen(sha)!=64)){json_object_put(list);return -1;}
+    for(const char *p=github?blob:sha;*p;p++)if(!isxdigit((unsigned char)*p)){json_object_put(list);return -1;}
+    char url[1024];
+    if(github){
+        /* Only fetch pinned, redistributable Homebrew Hub database artifacts.
+         * Caller-controlled URLs are deliberately not accepted. */
+        if(snprintf(url,sizeof(url),"https://raw.githubusercontent.com/gbdev/database/%s/entries/%s/%s",revision,item,name)>=(int)sizeof(url)){json_object_put(list);return -1;}
+    }else{
+        char *escaped=curl_easy_escape(NULL,name,0);if(!escaped){json_object_put(list);return -1;}
+        int n=snprintf(url,sizeof(url),ARCHIVE "/download/%s/%s",item,escaped);curl_free(escaped);
+        if(n<0||n>=(int)sizeof(url)){json_object_put(list);return -1;}
+    }
     Buffer data={NULL,0,16*1024*1024};int rc=fetch(url,&data);
-    unsigned char digest[32];char hex[65];if(!rc){SHA256((unsigned char*)data.data,data.length,digest);for(int i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",digest[i]);if(strcmp(hex,sha))rc=-1;}
+    unsigned char digest[32];char hex[65];
+    if(!rc){
+        if(github){
+            /* Git blob SHA-1 authenticates exact file contents at the pinned revision. */
+            SHA_CTX ctx;char header[64];int h=snprintf(header,sizeof(header),"blob %zu",data.length);
+            SHA1_Init(&ctx);SHA1_Update(&ctx,header,(size_t)h+1);
+            SHA1_Update(&ctx,data.data,data.length);SHA1_Final(digest,&ctx);
+            for(int i=0;i<20;i++)snprintf(hex+2*i,3,"%02x",digest[i]);
+            if(strcasecmp(hex,blob))rc=-1;
+        }else{
+            SHA256((unsigned char*)data.data,data.length,digest);
+            for(int i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",digest[i]);
+            if(strcasecmp(hex,sha))rc=-1;
+        }
+    }
     if(!rc){
         mkdir("roms",0700);char path[400],tmp[420];snprintf(path,sizeof(path),"roms/%s-%s",item,name);snprintf(tmp,sizeof(tmp),"%s.next",path);
         FILE *f=fopen(tmp,"wb");if(!f)rc=-1;else{if(fwrite(data.data,1,data.length,f)!=data.length)rc=-1;if(fclose(f))rc=-1;if(!rc&&rename(tmp,path))rc=-1;if(rc)unlink(tmp);}
     }
+    if(rc)fprintf(stderr,"Game download failed (HTTP, integrity verification, destination or size limit); item %d\n",id);
+    else fprintf(stderr,"Game downloaded and verified; refresh local games to see playable ROMs (a matching RetroArch core is required)\n");
     free(data.data);json_object_put(list);return rc?rc:games_list(1,1);
 }

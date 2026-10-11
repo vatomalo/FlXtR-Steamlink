@@ -44,7 +44,34 @@ static int mega_token(char *url,size_t cap,time_t now){
     }
     return 1; /* The public player leaves paths without this key pattern alone. */
 }
-static int mega_media(json_object *root,char *url,size_t cap,time_t now){
+/* MegaPlay responses can publish caption tracks separately from their video.
+ * Only pass bounded HTTPS references to the player, never access tokens in logs. */
+static void mega_subtitle_list(json_object *tracks,char *english,char *norwegian,char *spanish){
+    if(!tracks||!json_object_is_type(tracks,json_type_array))return;
+    for(size_t i=0;i<(size_t)json_object_array_length(tracks);i++){
+        json_object *item=json_object_array_get_idx(tracks,i);
+        const char *link=string(item,"file");
+        if(!*link)link=string(item,"url");
+        if(!*link)link=string(item,"src");
+        const char *lang=string(item,"label");
+        if(!*lang)lang=string(item,"lang");
+        if(!*lang)lang=string(item,"language");
+        if(strncmp(link,"https://",8)||strlen(link)>=1024||strpbrk(link,"\r\n\t "))continue;
+        int en=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
+        int no=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
+            !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);
+        if(en&&!*english)strcpy(english,link);
+        if(no&&!*norwegian)strcpy(norwegian,link);
+        if((!strncasecmp(lang,"es",2)||!strncasecmp(lang,"spanish",7))&&!*spanish)strcpy(spanish,link);
+    }
+}
+static void mega_find_subtitles(json_object *root,char *en,char *no,char *es){
+    if(!root)return;
+    mega_subtitle_list(field(root,"tracks"),en,no,es);
+    mega_subtitle_list(field(root,"subtitles"),en,no,es);
+    mega_subtitle_list(field(root,"captions"),en,no,es);
+}
+static int mega_media(json_object *root,char *url,size_t cap,time_t now,char *en,char *no,char *es){
     json_object *decoded=NULL,*source=field(root,"sources");
     const char *enc=string(root,"enc");
     if(*enc){
@@ -60,22 +87,53 @@ static int mega_media(json_object *root,char *url,size_t cap,time_t now){
         ok=json_tokener_get_error(tok)==json_tokener_success;json_tokener_free(tok);
         if(!ok){json_object_put(decoded);return 0;}source=decoded;
     }
+    mega_find_subtitles(root,en,no,es);
+    mega_find_subtitles(source,en,no,es);
     const char *file=source&&json_object_is_type(source,json_type_string)?json_object_get_string(source):string(source,"file");
     int ok=!strncmp(file,"https://",8)&&strlen(file)<cap&&!strpbrk(file,"\r\n\t ")&&(strstr(file,".m3u8")||strstr(file,".mp4"));
     if(ok){strcpy(url,file);ok=mega_token(url,cap,now);}
     json_object_put(decoded);return ok;
 }
-static int mega_source(const char *html,const char *referer,char *url,size_t cap){
+static int mega_source(const char *html,const char *referer,char *url,size_t cap,char *en,char *no,char *es){
     const char *player=strstr(html,"id=\"megaplay-player\"");char id[32];
     if(!player){fprintf(stderr,"MegaPlay: player element missing\n");return 0;}
     while(player>html&&*player!='<')player--;
-    if(!kiss_attr(player,"data-id",id,sizeof(id))||positive(id,0)<1){fprintf(stderr,"MegaPlay: numeric data-id missing\n");return 0;}
-    char endpoint[160];snprintf(endpoint,sizeof(endpoint),"https://megaplay.buzz/stream/getSourcesNew?id=%s&platform=OTHER",id);
-    Buffer response={NULL,0,65536};if(fetch_referred(endpoint,&response,referer)){fprintf(stderr,"MegaPlay: source endpoint request failed\n");free(response.data);return 0;}
-    json_tokener *tok=json_tokener_new_ex(16);if(!tok){free(response.data);return 0;}
-    json_object *root=json_tokener_parse_ex(tok,response.data,(int)response.length);
-    int parsed=json_tokener_get_error(tok)==json_tokener_success;
-    int ok=parsed&&mega_media(root,url,cap,time(NULL));
-    if(!ok)fprintf(stderr,"MegaPlay: %s\n",parsed?"unsupported or invalid media response":"invalid source JSON");
-    json_object_put(root);json_tokener_free(tok);free(response.data);return ok;
+    if(!kiss_attr(player,"data-id",id,sizeof(id))||positive(id,0)<1){
+        fprintf(stderr,"MegaPlay: numeric data-id missing\n");return 0;
+    }
+    /* The legacy getSources response includes separate 'tracks' captions.
+     * Retain the existing getSourcesNew video resolver, then inspect the
+     * documented caption-bearing endpoint if captions weren't returned. */
+    const char *routes[]={"getSourcesNew","getSources"};
+    int video_ok=0;
+    for(int attempt=0;attempt<2;attempt++){
+        if(attempt&&*en&&*no&&*es)break;
+        char endpoint[192];
+        snprintf(endpoint,sizeof(endpoint),
+            attempt?"https://megaplay.buzz/stream/%s?id=%s":
+                    "https://megaplay.buzz/stream/%s?id=%s&platform=OTHER",
+            routes[attempt],id);
+        Buffer response={NULL,0,65536};
+        if(fetch_referred(endpoint,&response,referer)){
+            fprintf(stderr,"MegaPlay: %s metadata fetch failed\n",routes[attempt]);
+            free(response.data);continue;
+        }
+        json_tokener *tok=json_tokener_new_ex(16);
+        if(!tok){free(response.data);continue;}
+        json_object *root=json_tokener_parse_ex(tok,response.data,(int)response.length);
+        int parsed=json_tokener_get_error(tok)==json_tokener_success;
+        if(parsed&&root){
+            mega_find_subtitles(root,en,no,es);
+            json_object *sources=field(root,"sources");
+            mega_find_subtitles(sources,en,no,es);
+            if(!video_ok)video_ok=mega_media(root,url,cap,time(NULL),en,no,es);
+            fprintf(stderr,"MegaPlay: %s tracks=%s captions: EN=%s NO=%s ES=%s\n",
+                routes[attempt],field(root,"tracks")?"present":"absent",
+                *en?"yes":"no",*no?"yes":"no",*es?"yes":"no");
+        }else fprintf(stderr,"MegaPlay: %s invalid JSON\n",routes[attempt]);
+        if(root)json_object_put(root);
+        json_tokener_free(tok);free(response.data);
+    }
+    if(!video_ok)fprintf(stderr,"MegaPlay: no compatible video source from either endpoint\n");
+    return video_ok;
 }

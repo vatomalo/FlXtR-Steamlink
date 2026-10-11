@@ -24,3 +24,11 @@ game-runtime.cfg
 roms/
 archive-games.local.json
 game-exit-status
+
+game-cores.tsv*
+
+favorites.tsv*
+
+playback-position*
+
+tv-resume.tsv*

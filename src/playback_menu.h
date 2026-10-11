@@ -30,11 +30,11 @@ static void menu_draw(void){
     uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(menu_overlay,&pixels,&pitch);
     if(!pixels||pitch<740*4)return;
     for(int y=0;y<416;y++)for(int x=0;x<740;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xe8000000;
-    char rows[11][80],heading[80];int seconds=(int)playback_position();
+    char rows[12][80],heading[80];int seconds=(int)playback_position();
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"SEEK: LEFT -10S / RIGHT +10S");
-    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN"}[menu_subtitles]);
+    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN","SPANISH"}[menu_subtitles]);
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
     snprintf(rows[5],80,"VIDEO SIZE: %s",view_names[viewing]);
@@ -42,9 +42,34 @@ static void menu_draw(void){
     snprintf(rows[7],80,"%s",menu_servers?"TRY NEXT SERVER":"NEXT SERVER: NOT AVAILABLE");
     snprintf(rows[8],80,"%s",menu_episodes?"PREVIOUS EPISODE":"PREVIOUS EPISODE: NOT AVAILABLE");
     snprintf(rows[9],80,"%s",menu_episodes?"NEXT EPISODE":"NEXT EPISODE: NOT AVAILABLE");
-    snprintf(rows[10],80,"STOP PLAYBACK");
+    snprintf(rows[10],80,"%s",menu_episodes?"[EPISODES] SEASONS / EPISODES":"[EPISODES] NOT AVAILABLE");
+    snprintf(rows[11],80,"STOP PLAYBACK");
     menu_text(pixels,pitch,16,heading,0xff74ff84);
-    for(int i=0;i<11;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,54+i*29,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
+    for(int i=0;i<12;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,49+i*25,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
+    /* Native overlay progress timeline. Clamp to the known duration;
+     * unknown-length live streams show elapsed time without a false percentage. */
+    double position=playback_position();
+    if(position<0)position=0;
+    double fraction=media_duration>0?position/media_duration:0;
+    if(fraction<0)fraction=0;
+    if(fraction>1)fraction=1;
+    const int bar_left=18,bar_top=359,bar_width=704,bar_height=9;
+    int filled=(int)(fraction*bar_width);
+    for(int y=bar_top;y<bar_top+bar_height;y++){
+        uint32_t *line=(uint32_t*)((char*)pixels+y*pitch);
+        for(int x=bar_left;x<bar_left+bar_width;x++)
+            line[x]=x<bar_left+filled?0xff74ff84:0xff394d42;
+    }
+    char timeline[80];
+    int elapsed=(int)position;
+    if(media_duration>0){
+        int length=(int)media_duration;
+        snprintf(timeline,sizeof(timeline),"%02d:%02d:%02d / %02d:%02d:%02d",
+            elapsed/3600,elapsed/60%60,elapsed%60,
+            length/3600,length/60%60,length%60);
+    }else snprintf(timeline,sizeof(timeline),"%02d:%02d:%02d / LIVE OR UNKNOWN",
+        elapsed/3600,elapsed/60%60,elapsed%60);
+    menu_text(pixels,pitch,371,timeline,0xffd4e2d6);
     menu_text(pixels,pitch,386,"DPAD SELECT / A CHANGE / B CLOSE",0xff74ff84);
     SLVideo_SetOverlayDisplayArea(menu_overlay,0.0f,0.0f,1.0f,1.0f);SLVideo_ShowOverlay(menu_overlay);
 }
@@ -66,8 +91,8 @@ static void menu_command(char c){
     if(c=='b'){menu_restart(7,playback_position());return;}
     if(c=='v'){viewing=(viewing+1)%VIEW_COUNT;apply_view(!menu_open);}
     if(!menu_open){if(c=='l'||c=='r')menu_restart(1,playback_position()+(c=='l'?-10:10));return;}
-    if(c=='u')menu_row=(menu_row+10)%11;
-    if(c=='d')menu_row=(menu_row+1)%11;
+    if(c=='u')menu_row=(menu_row+11)%12;
+    if(c=='d')menu_row=(menu_row+1)%12;
     if(c=='a'||c=='l'||c=='r'){
         int direction=c=='l'?-1:1;
         switch(menu_row){
@@ -77,7 +102,7 @@ static void menu_command(char c){
             if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
             break;
         case 1:menu_restart(1,playback_position()+direction*10);break;
-        case 2:menu_subtitles=(menu_subtitles+direction+4)%4;menu_restart(1,playback_position());break;
+        case 2:menu_subtitles=(menu_subtitles+direction+5)%5;menu_restart(1,playback_position());break;
         case 3:subtitle_size=subtitle_size==2?3:2;subtitle_visible=-2;break;
         case 4:subtitle_delay+=direction;if(subtitle_delay>5)subtitle_delay=5;if(subtitle_delay< -5)subtitle_delay=-5;subtitle_visible=-2;break;
         case 5:viewing=(viewing+direction+VIEW_COUNT)%VIEW_COUNT;apply_view(0);break;
@@ -85,7 +110,8 @@ static void menu_command(char c){
         case 7:if(menu_servers)menu_restart(4,playback_position());break;
         case 8:if(menu_episodes)menu_restart(5,0);break;
         case 9:if(menu_episodes)menu_restart(6,0);break;
-        case 10:menu_restart(7,playback_position());break;
+        case 10:if(menu_episodes)menu_restart(8,playback_position());break;
+        case 11:menu_restart(7,playback_position());break;
         }
     }
     if(menu_open&&!stopped)menu_draw();

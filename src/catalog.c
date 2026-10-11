@@ -9,13 +9,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
 #include "browse_filters.h"
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
 #define PAGE_SIZE 6
-typedef struct {char title[80],meta[96],poster[512],url[2048],kind[16];int id,season,episode;} Entry;
+typedef struct {char title[80],meta[96],poster[512],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode;} Entry;
 typedef struct {char *data;size_t length,limit;} Buffer;
 static Entry entries[PAGE_SIZE];
 static int used,total,cache_slot;
@@ -164,7 +165,7 @@ static int sources(int page,int id,int season,int episode){
 #define CATALOG_CACHE_TTL (7 * 24 * 60 * 60)
 static void cache_identity(const char *kind,int page,const char *query,int id,int season){
     struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
-    snprintf(cache_key,sizeof(cache_key),"v4|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    snprintf(cache_key,sizeof(cache_key),"v7|%s|%d|%d|%d|%lld|%lld|%s",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
     unsigned long hash=2166136261UL;
     for(const unsigned char *p=(const unsigned char *)cache_key;*p;p++)
         hash=((hash^(unsigned long)*p)*16777619UL)&0xffffffffUL;
@@ -181,9 +182,23 @@ static int cache_load(void){
         clean(e->title,sizeof(e->title),string(o,"title"));clean(e->meta,sizeof(e->meta),string(o,"meta"));
         clean(e->poster,sizeof(e->poster),string(o,"poster"));clean(e->kind,sizeof(e->kind),string(o,"kind"));
         e->id=number(o,"id");e->season=number(o,"season");e->episode=number(o,"episode");
-        if(!strcmp(e->kind,"archive")||!strcmp(e->kind,"archive-file")){
-            const char *url=string(o,"url"),*prefix=!strcmp(e->kind,"archive")?ARCHIVE "/details/":ARCHIVE "/download/";
-            if(strncmp(url,prefix,strlen(prefix))||strlen(url)>=sizeof(e->url))ok=0;else clean(e->url,sizeof(e->url),url);
+        /* Restore the URL for every URL-bearing cached entry. In particular,
+         * game-item and game-rom need theirs to browse or download. */
+        const char *cached_url=string(o,"url");
+        if(*cached_url){
+            if(strlen(cached_url)>=sizeof(e->url)||
+               (strncmp(cached_url,"https://",8)&&strncmp(cached_url,"http://",7)))ok=0;
+            else snprintf(e->url,sizeof(e->url),"%s",cached_url);
+        }
+        if(!strcmp(e->kind,"archive")||!strcmp(e->kind,"archive-file")||
+           !strcmp(e->kind,"game-item")||!strcmp(e->kind,"game-rom")||
+           !strcmp(e->kind,"bios-item")||!strcmp(e->kind,"bios-file")||
+           !strcmp(e->kind,"bios-zip")){
+            const char *prefix=(!strcmp(e->kind,"archive")||
+                                !strcmp(e->kind,"game-item")||
+                                !strcmp(e->kind,"bios-item"))?
+                               ARCHIVE "/details/":ARCHIVE "/download/";
+            if(strncmp(e->url,prefix,strlen(prefix)))ok=0;
         }
         char expected[80];snprintf(expected,sizeof(expected),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,i);
         if(!e->title[0]||((strcmp(e->kind,"archive")&&strcmp(e->kind,"archive-file"))&&e->id<1)||(e->poster[0]&&(strcmp(e->poster,expected)||access(expected,R_OK))))ok=0;
@@ -200,7 +215,7 @@ static void cache_save(void){
         Entry *e=&entries[i];json_object *o=json_object_new_object();json_object_array_add(rows,o);
         json_object_object_add(o,"title",json_object_new_string(e->title));json_object_object_add(o,"meta",json_object_new_string(e->meta));
         json_object_object_add(o,"poster",json_object_new_string(e->poster));json_object_object_add(o,"kind",json_object_new_string(e->kind));
-        if(!strcmp(e->kind,"archive")||!strcmp(e->kind,"archive-file"))json_object_object_add(o,"url",json_object_new_string(e->url));
+        if(e->url[0])json_object_object_add(o,"url",json_object_new_string(e->url));
         json_object_object_add(o,"id",json_object_new_int(e->id));json_object_object_add(o,"season",json_object_new_int(e->season));json_object_object_add(o,"episode",json_object_new_int(e->episode));
     }
     char temp[96];snprintf(temp,sizeof(temp),"%s.next",cache_file);
@@ -209,6 +224,26 @@ static void cache_save(void){
 }
 static void poster(Entry *e,int slot){
     char path[512];strcpy(path,e->poster);e->poster[0]=0;
+    if(!strncmp(path,"localthumb:",11)){
+        const char *source=path+11;
+        const char *home=games_home();size_t hlen=strlen(home);
+        struct stat st;
+        /* Only readable thumbnails beneath RetroArch's configured home. */
+        if(strncmp(source,home,hlen)||source[hlen]!='/'||strstr(source,"..")||
+           stat(source,&st)||!S_ISREG(st.st_mode)||st.st_size>2*1024*1024)return;
+        SDL_Surface *art=IMG_Load(source);
+        if(!art)return;
+        if(art->w<1||art->h<1||art->w>2048||art->h>2048){SDL_FreeSurface(art);return;}
+        float scale=154.0f/art->w;if(art->h*scale>231)scale=231.0f/art->h;
+        int w=(int)(art->w*scale),h=(int)(art->h*scale);
+        if(w<1||h<1){SDL_FreeSurface(art);return;}
+        SDL_Surface *small=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
+        if(small&&!SDL_BlitScaled(art,NULL,small,NULL)){
+            char file[80];snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+            if(!SDL_SaveBMP(small,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
+        }
+        SDL_FreeSurface(small);SDL_FreeSurface(art);return;
+    }
     int kiss=!strncmp(path,KISS "/wp-content/uploads/",sizeof(KISS "/wp-content/uploads/")-1);
     int archive=!strncmp(path,ARCHIVE "/services/img/",sizeof(ARCHIVE "/services/img/")-1);
     if(archive&&!archive_identifier(path+sizeof(ARCHIVE "/services/img/")-1))return;
@@ -249,22 +284,40 @@ int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);
-    if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>(!strcmp(kind,"archive-files")?128:64))return 2;
-    if(strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
+    if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>(!strcmp(kind,"archive-files")||!strcmp(kind,"games-archive-files")||!strcmp(kind,"games-file-download")||!strcmp(kind,"games-zip-list")||!strcmp(kind,"games-zip-extract")?2047:64))return 2;
+    if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-archive-search")&&strcmp(kind,"games-archive-files")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"games-folders")&&strcmp(kind,"games-system")&&strcmp(kind,"movie")&&strcmp(kind,"tv")&&strcmp(kind,"season")&&strcmp(kind,"episode")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss")&&strcmp(kind,"kiss-episodes")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality")&&strcmp(kind,"archive")&&strcmp(kind,"archive-folders")&&strcmp(kind,"archive-category")&&strcmp(kind,"archive-files")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break"))return 2;
     if((!strcmp(kind,"source")||!strcmp(kind,"quality"))&&!getenv("FLXTR_NO_NETWORK")&&!access("./greenlink-resolver",X_OK)){
         int quality=!strcmp(kind,"quality");if(quality&&argc!=8)return 2;
         execl("./greenlink-resolver","greenlink-resolver",quality?"source":"servers",episode?"tv":"movie",argv[4],argv[5],argv[6],quality?argv[7]:"",argv[2],(char*)NULL);return 1;
     }
     if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
     mkdir("catalog-cache",0700);
-    int cacheable=strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
+    int cacheable=strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
     if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
     int rc;
-    if(!strcmp(kind,"games-archive"))rc=games_archive_list(page);
+    if(!strcmp(kind,"games-platforms"))rc=games_platforms(page);
+    else if(!strcmp(kind,"games-archive"))rc=games_archive_list(page);
+    else if(!strcmp(kind,"games-bios-search"))rc=games_bios_search(page,id,argv[3]);
+    else if(!strcmp(kind,"games-bios-files"))rc=games_bios_files(page,argv[3],id);
+    else if(!strcmp(kind,"games-archive-search"))rc=games_archive_search(page,id,argv[3]);
+    else if(!strcmp(kind,"games-archive-files"))rc=games_archive_files(page,argv[3],id);
+    else if(!strcmp(kind,"games-file-download")){
+        char item[129],name[513];const char *separator=strchr(argv[3],'|');
+        if(!separator||(size_t)(separator-argv[3])>=sizeof(item)||strlen(separator+1)>=sizeof(name))rc=-1;
+        else{memcpy(item,argv[3],(size_t)(separator-argv[3]));item[separator-argv[3]]=0;snprintf(name,sizeof(name),"%s",separator+1);rc=games_archive_file_download(item,name,id);}
+    }
+    else if(!strcmp(kind,"games-downloads-list"))rc=downloaded_zip_list(page);
+    else if(!strcmp(kind,"games-downloads-delete"))rc=downloaded_zip_delete(id);
+    else if(!strcmp(kind,"games-zip-list"))rc=zip_game_by_id(season? -id:id,page,0);
+    else if(!strcmp(kind,"games-zip-extract"))rc=zip_game_by_id(season? -id:id,1,episode);
     else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);
     else if(!strcmp(kind,"games"))rc=games_list(page,id);
+    else if(!strcmp(kind,"games-folders"))rc=games_folders(page);
+    else if(!strcmp(kind,"games-system"))rc=games_system(page,id);
     else if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);
     else if(!strcmp(kind,"tv-pick"))rc=tv_pick(positive(argv[3],1),id);
+    else if(!strcmp(kind,"archive-folders"))rc=archive_folders(page);
+    else if(!strcmp(kind,"archive-category"))rc=archive_category_list(page,id,argv[3]);
     else if(!strcmp(kind,"archive"))rc=archive_list(page,argv[3]);
     else if(!strcmp(kind,"archive-files"))rc=archive_files(page,argv[3]);
     else if(!strcmp(kind,"kiss"))rc=kiss_list_filtered(page,argv[3],id,season);
@@ -277,10 +330,12 @@ int main(int argc,char **argv){
     if(rc){curl_global_cleanup();return 1;}
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
-    for(int i=0;i<used;i++){if(strncmp(kind,"games",5)&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
+    for(int i=0;i<used;i++){if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-download")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
     if(cacheable)cache_save();
 output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);
-    for(int i=0;i<used;i++){Entry *e=&entries[i];printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode);}
+    for(int i=0;i<used;i++){Entry *e=&entries[i];if(!strcmp(e->kind,"source")&&(e->subs_eng[0]||e->subs_nor[0]||e->subs_spa[0]))
+            printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t0\t%s\t%s\t%s\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode,e->subs_eng,e->subs_nor,e->subs_spa);
+        else printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode);}
     curl_global_cleanup();return ferror(stdout)?1:0;
 }

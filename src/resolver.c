@@ -11,11 +11,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
+#include <stdarg.h>
+#include <time.h>
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
-typedef struct {char label[80],meta[96],url[2048];int height;} Choice;
+typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024];int height;} Choice;
 static Choice choices[40];static int count;
+/* Append-only diagnostics survive the catalog worker's truncated catalog.log.
+ * Record presence and route only: never media URLs, tokens or headers. */
+static void subtitle_log(const char *format,...){
+    FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
+    time_t now=time(NULL);fprintf(f,"%lld resolver ",(long long)now);
+    va_list args;va_start(args,format);vfprintf(f,format,args);va_end(args);
+    fputc('\n',f);fclose(f);
+}
+
 static size_t receive(void *ptr,size_t size,size_t nmemb,void *opaque){
     Buffer *b=opaque;if(size&&nmemb>SIZE_MAX/size)return 0;
     size_t n=size*nmemb;if(n>b->limit-b->length)return 0;
@@ -93,6 +105,102 @@ static void servers(json_object *root){
     if(map&&json_object_is_type(map,json_type_object)){json_object_object_foreach(map,key,val){(void)val;server_choice(key);}}
     qsort(choices,(size_t)count,sizeof(choices[0]),compare_choices);
 }
+/* External captions are separate HTTPS resources in many provider responses.
+ * Never treat subtitle URLs as video sources or trust local protocols. */
+static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
+    if(!list||!json_object_is_type(list,json_type_array))return;
+    for(size_t i=0;i<(size_t)json_object_array_length(list);i++){
+        json_object *track=json_object_array_get_idx(list,i);
+        const char *url=string(track,"url");
+        if(!*url)url=string(track,"file");
+        if(!*url)url=string(track,"src");
+        const char *lang=string(track,"lang");
+        if(!*lang)lang=string(track,"language");
+        if(!*lang)lang=string(track,"label");
+        if(strncmp(url,"https://",8)||strlen(url)>=1024||strpbrk(url,"\r\n\t"))continue;
+        int english=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
+        int norwegian=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
+            !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);
+        if(english&&!*eng)snprintf(eng,1024,"%s",url);
+        if(norwegian&&!*nor)snprintf(nor,1024,"%s",url);
+        if((!strncasecmp(lang,"es",2)||!strncasecmp(lang,"spanish",7))&&!*spa)snprintf(spa,1024,"%s",url);
+    }
+}
+static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor,char *spa){
+    subtitle_log("JSON fields: selected=%s root.subtitles=%s root.tracks=%s source.subtitles=%s source.tracks=%s",source?"yes":"no",field(root,"subtitles")?"yes":"no",field(root,"tracks")?"yes":"no",source&&field(source,"subtitles")?"yes":"no",source&&field(source,"tracks")?"yes":"no");
+    if(source){select_subtitles(field(source,"subtitles"),eng,nor,spa);
+        select_subtitles(field(source,"tracks"),eng,nor,spa);}
+    select_subtitles(field(root,"subtitles"),eng,nor,spa);
+    select_subtitles(field(root,"tracks"),eng,nor,spa);
+}
+/* Read HLS master playlist subtitle renditions without touching video variants. */
+static int hls_attribute(const char *line,const char *key,char *out,size_t cap){
+    char needle[48];snprintf(needle,sizeof(needle),"%s=",key);
+    const char *p=line;
+    while((p=strstr(p,needle))){
+        if(p==line||p[-1]==','||p[-1]==':'){
+            p+=strlen(needle);
+            int quoted=*p=='"';if(quoted)p++;
+            const char *end=p;
+            while(*end&&(quoted?*end!='"':*end!=','))end++;
+            size_t n=(size_t)(end-p);
+            if(n>=cap)return 0;
+            memcpy(out,p,n);out[n]=0;return n>0;
+        }
+        p+=strlen(needle);
+    }
+    return 0;
+}
+static int hls_resolve_uri(const char *base,const char *uri,char *out,size_t size){
+    if(!base||strncmp(base,"https://",8)||!uri||!out||!size)return 0;
+    size_t length=strlen(uri);
+    if(!length||strchr(uri,'\\')||strpbrk(uri,"\r\n\t")||
+       strstr(uri,"../")||!strncmp(uri,"//",2))return 0;
+    if(!strncmp(uri,"https://",8)){
+        if(length>=size)return 0;
+        memcpy(out,uri,length+1);return 1;
+    }
+    if(strstr(uri,"://")||!strncmp(uri,"http:",5)||!strncmp(uri,"file:",5))return 0;
+    size_t prefix=0;
+    if(uri[0]=='/'){
+        const char *host=strchr(base+8,'/');
+        prefix=host?(size_t)(host-base):strlen(base);
+    }else{
+        const char *query=strchr(base,'?');
+        size_t limit=query?(size_t)(query-base):strlen(base);
+        const char *slash=NULL;
+        for(size_t i=8;i<limit;i++)if(base[i]=='/')slash=base+i;
+        if(!slash)return 0;
+        prefix=(size_t)(slash-base)+1;
+    }
+    if(prefix>=size||length>=size-prefix)return 0;
+    memcpy(out,base,prefix);
+    memcpy(out+prefix,uri,length+1);
+    return 1;
+}
+static void hls_subtitles(char *manifest,const char *base,char *eng,char *nor,char *spa){
+    if(strncmp(manifest,"#EXTM3U",7))return;
+    char *save=NULL;
+    for(char *line=strtok_r(manifest,"\r\n",&save);line;line=strtok_r(NULL,"\r\n",&save)){
+        if(strncmp(line,"#EXT-X-MEDIA:",13))continue;
+        char type[32],uri[1024],lang[64],label[64],resolved[1024];
+        if(!hls_attribute(line,"TYPE",type,sizeof(type))||strcmp(type,"SUBTITLES")||
+           !hls_attribute(line,"URI",uri,sizeof(uri)))continue;
+        lang[0]=label[0]=0;
+        hls_attribute(line,"LANGUAGE",lang,sizeof(lang));
+        hls_attribute(line,"NAME",label,sizeof(label));
+        const char *language=*lang?lang:label;
+        int english=!strncasecmp(language,"en",2)||!strncasecmp(language,"english",7);
+        int norwegian=!strncasecmp(language,"no",2)||!strncasecmp(language,"nb",2)||
+                      !strncasecmp(language,"nn",2)||!strncasecmp(language,"norwegian",9);
+        int spanish=!strncasecmp(language,"es",2)||!strncasecmp(language,"spanish",7);
+        if(!(english&&!*eng)&&!(norwegian&&!*nor)&&!(spanish&&!*spa))continue;
+        if(!hls_resolve_uri(base,uri,resolved,sizeof(resolved)))continue;
+        if(english&&!*eng)snprintf(eng,1024,"%s",resolved);
+        if(norwegian&&!*nor)snprintf(nor,1024,"%s",resolved);
+        if(spanish&&!*spa)snprintf(spa,1024,"%s",resolved);
+    }
+}
 static void add_variants(char *manifest,const char *url,const char *server){
     if(!strncmp(manifest,"#EXTM3U",7)){
         char *save=NULL;for(char *line=strtok_r(manifest,"\r\n",&save);line&&count<40;line=strtok_r(NULL,"\r\n",&save)){
@@ -104,29 +212,49 @@ static void add_variants(char *manifest,const char *url,const char *server){
     }
 }
 static int qualities(json_object *root,const char *server){
-    json_object *list=field(root,"sources");const char *url="";
+    json_object *list=field(root,"sources");const char *url="";json_object *selected=NULL;
     if(list&&json_object_is_type(list,json_type_array))for(size_t i=0;i<(size_t)json_object_array_length(list);i++){
-        json_object *s=json_object_array_get_idx(list,i);if(!strcmp(string(s,"server"),server)){url=string(s,"url");break;}
+        json_object *s=json_object_array_get_idx(list,i);if(!strcmp(string(s,"server"),server)){url=string(s,"url");selected=s;break;}
     }
-    else if(list&&json_object_is_type(list,json_type_object)){url=string(list,"file");if(!*url)url=string(list,"url");}
+    else if(list&&json_object_is_type(list,json_type_object)){selected=list;url=string(list,"file");if(!*url)url=string(list,"url");}
     if(!valid_url(url)){fprintf(stderr,"Selected server has no compatible direct link\n");return -1;}
-    strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);count=1;
-    char *manifest=request(url,NULL,1);if(!manifest)return 0;
-    add_variants(manifest,url,server);free(manifest);return 0;
+    strcpy(choices[0].label,"AUTO");snprintf(choices[0].meta,sizeof(choices[0].meta),"%s / BEST COMPATIBLE",server);strcpy(choices[0].url,url);source_subtitles(root,selected,choices[0].subs_eng,choices[0].subs_nor,choices[0].subs_spa);count=1;
+    subtitle_log("source=%s JSON english=%s norwegian=%s",server,choices[0].subs_eng[0]?"yes":"no",choices[0].subs_nor[0]?"yes":"no");
+    char *manifest=request(url,NULL,1);
+    if(!manifest){subtitle_log("HLS manifest fetch failed source=%s",server);fprintf(stderr,"Subtitle discovery for %s: manifest unavailable (English %s, Norwegian %s)\n",server,choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");return 0;}
+    /* strtok_r mutates playlists; inspect renditions before variants. */
+    char *subtitle_manifest=strdup(manifest);
+    if(subtitle_manifest){hls_subtitles(subtitle_manifest,url,choices[0].subs_eng,choices[0].subs_nor,choices[0].subs_spa);free(subtitle_manifest);}
+    subtitle_log("HLS manifest=%s source=%s english=%s norwegian=%s",!strncmp(manifest,"#EXTM3U",7)?"yes":"no",server,choices[0].subs_eng[0]?"yes":"no",choices[0].subs_nor[0]?"yes":"no");
+    fprintf(stderr,"Subtitle discovery for %s: English %s, Norwegian %s\n",server,
+        choices[0].subs_eng[0]?"available":"absent",choices[0].subs_nor[0]?"available":"absent");
+    add_variants(manifest,url,server);
+    for(int i=1;i<count;i++){
+        snprintf(choices[i].subs_eng,sizeof(choices[i].subs_eng),"%s",choices[0].subs_eng);
+        snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);
+        snprintf(choices[i].subs_spa,sizeof(choices[i].subs_spa),"%s",choices[0].subs_spa);
+    }
+    free(manifest);return 0;
 }
 int main(int argc,char **argv){
     if(argc!=8|| (strcmp(argv[1],"servers")&&strcmp(argv[1],"source")) ||(strcmp(argv[2],"movie")&&strcmp(argv[2],"tv")))return 2;
     int id=atoi(argv[3]),season=atoi(argv[4]),episode=atoi(argv[5]),page=atoi(argv[7]);
     if(id<=0||season<0||episode<0||page<1||page>7)return 2;
     int resolving=!strcmp(argv[1],"source");if(resolving&&!valid_server(argv[6]))return 2;
+    subtitle_log("invoke mode=%s media=%s",resolving?"source":"servers",argv[2]);
     char path[256];if(!strcmp(argv[2],"movie"))snprintf(path,sizeof(path),"/api/tmdb/movie/%d/images",id);
     else {if(!episode)return 2;snprintf(path,sizeof(path),"/api/tmdb/tv/%d/season/%d/episode/%d/images",id,season,episode);}
     if(curl_global_init(CURL_GLOBAL_DEFAULT)||resolver_init())return 1;
     json_object *root=lookup(path,resolving?argv[6]:"");int rc=1;
     if(root){if(resolving){if(qualities(root,argv[6]))goto done;}else servers(root);
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
-        for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];printf("%s\t%s\t\t%s\t%s\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,resolving?"source":"server",id,season,episode,c->height);}
+        for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor,c->subs_spa);
+            else printf("%s\t%s\t\t%s\tserver\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,id,season,episode,c->height);}
         rc=ferror(stdout)?1:0;
     }
-done:json_object_put(root);resolver_free();curl_global_cleanup();return rc;
+done:subtitle_log("completed mode=%s success=%s rows=%d",resolving?"source":"servers",rc==0?"yes":"no",count);
+    if(root)json_object_put(root);
+    resolver_free();
+    curl_global_cleanup();
+    return rc;
 }

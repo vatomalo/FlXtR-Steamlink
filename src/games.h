@@ -252,7 +252,7 @@ static int games_list_filtered(int page,int refresh,int folder){
                 while(fgets(row,sizeof(row),selected)){
                     if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,saved_title,saved_core)!=3)continue;
                     if(selected_id==e->id){
-                        snprintf(core_name,sizeof(core_name),"%s",saved_core);
+                        snprintf(core_name,sizeof(core_name),"%.63s",saved_core);
                         break;
                     }
                 }

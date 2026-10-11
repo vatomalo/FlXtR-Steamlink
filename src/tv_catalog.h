@@ -1,3 +1,4 @@
+#include "tv_schedule.h"
 #include "tv_progress.h"
 #include "tv_history.h"
 static int tv_pick(int genre,int seed){

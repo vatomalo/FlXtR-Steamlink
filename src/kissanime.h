@@ -25,6 +25,16 @@ static int kiss_attr(const char *tag,const char *name,char *out,size_t cap){
     }return 0;
 }
 static char *kiss_fetch(const char *url){Buffer b={NULL,0,2*1024*1024};if(fetch(url,&b)){free(b.data);return NULL;}return b.data;}
+static int kiss_is_promo(const char *description){
+    if(!description||strlen(description)<45)return 1;
+    return strcasestr(description,"watch and download")!=NULL||
+           strcasestr(description,"watch online")!=NULL||
+           strcasestr(description,"download free")!=NULL||
+           strcasestr(description,"english sub")!=NULL||
+           strcasestr(description,"all episodes")!=NULL||
+           strcasestr(description,"watch anime")!=NULL||
+           strcasestr(description,"free streaming")!=NULL;
+}
 static void kiss_cache_description(int id,const char *html){
     if(id<=0||!html)return;
     char description[400]="";
@@ -37,7 +47,8 @@ static void kiss_cache_description(int id,const char *html){
         kiss_attr(meta,"property",property,sizeof(property));
         if(!strcasecmp(name,"description")||!strcasecmp(property,"og:description")){
             kiss_attr(meta,"content",description,sizeof(description));
-            if(description[0])break;
+            if(description[0]&&!kiss_is_promo(description))break;
+            description[0]=0;
         }
         meta=end+1;
     }
@@ -60,7 +71,7 @@ static void kiss_cache_description(int id,const char *html){
             }
         }
     }
-    if(!description[0])return;
+    if(kiss_is_promo(description))return;
     mkdir("media-info-cache",0700);
     char dest[100],temp[120];
     snprintf(dest,sizeof(dest),"media-info-cache/anime-%d.txt",id);
@@ -109,7 +120,11 @@ static int kiss_list_filtered(int page,const char *query,int genre,int order){
             if(strcmp(entries[i].kind,"kiss")||entries[i].id<=0)continue;
             char cached[100],url[128];
             snprintf(cached,sizeof(cached),"media-info-cache/anime-%d.txt",entries[i].id);
-            if(!access(cached,R_OK))continue;
+            FILE *old=fopen(cached,"r");
+            if(old){char content[400]="";if(!fgets(content,sizeof(content),old))content[0]=0;fclose(old);
+                if(!kiss_is_promo(content))continue;
+                unlink(cached);
+            }
             snprintf(url,sizeof(url),KISS"/?post_type=anime&p=%d",entries[i].id);
             char *html=kiss_fetch(url);
             if(html){kiss_cache_description(entries[i].id,html);free(html);}

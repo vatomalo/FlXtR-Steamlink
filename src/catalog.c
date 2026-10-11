@@ -392,13 +392,13 @@ static void game_art_prefetch(void){
         struct stat st;
         if(stat(file,&st)||st.st_size<54)needed++;
     }
-    if(!needed)return;
+    if(!needed)goto map_paths;
     mkdir("game-art-cache",0700);
     int lock=open("game-art-cache/.worker.lock",O_CREAT|O_RDWR,0600);
-    if(lock<0)return;
-    if(flock(lock,LOCK_EX|LOCK_NB)){close(lock);return;}
+    if(lock<0)goto map_paths;
+    if(flock(lock,LOCK_EX|LOCK_NB)){close(lock);goto map_paths;}
     pid_t child=fork();
-    if(child<0){close(lock);return;}
+    if(child<0){close(lock);goto map_paths;}
     if(child==0){
         /* Do not hold the UI catalog pipe open after its result is printed. */
         int devnull=open("/dev/null",O_RDWR);
@@ -423,6 +423,7 @@ static void game_art_prefetch(void){
         close(lock);_exit(0);
     }
     close(lock);
+map_paths:
     for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
         char file[80];game_art_path(entries[i].poster,file,sizeof(file));
         snprintf(entries[i].poster,sizeof(entries[i].poster),"%s",file);

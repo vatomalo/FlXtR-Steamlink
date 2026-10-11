@@ -996,7 +996,36 @@ static void draw(Uint32 tick) {
         }
         Title *t=&titles[visible[selection]];
         rect(665,94,1,378,dim,1);text(690,97,"NOW SELECTED",1,dim,30);
-        wrap(690,126,t->title,19,4,green);wrap(690,228,t->meta,19,5,white);
+        wrap(690,126,t->title,19,4,green);
+        /* PSP-style detail pane: consume only local metadata, never wait for web. */
+        char detail[400]="",detail_path[128];
+        if((!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv"))&&t->id>0){
+            snprintf(detail_path,sizeof(detail_path),"media-info-cache/%s-%d.txt",t->kind,t->id);
+            FILE *f=fopen(detail_path,"r");
+            if(f){if(!fgets(detail,sizeof(detail),f))detail[0]=0;fclose(f);}
+        }else if(!strcmp(t->kind,"game")||!strcmp(t->kind,"game-zip")||!strcmp(t->kind,"kiss")){
+            /* Optional local game/anime descriptions keyed by title, kept
+             * separate from artwork and launch IDs. No network on selection. */
+            FILE *f=fopen("media-descriptions.tsv","r");
+            if(f){
+                char line[640];
+                const char *kind=!strcmp(t->kind,"kiss")?"anime":"game";
+                while(fgets(line,sizeof(line),f)){
+                    char *first=strchr(line,'\t');if(!first)continue;*first++=0;
+                    char *second=strchr(first,'\t');if(!second)continue;*second++=0;
+                    if(!strcmp(line,kind)&&!strcasecmp(first,t->title)){
+                        snprintf(detail,sizeof(detail),"%s",second);break;
+                    }
+                }
+                fclose(f);
+            }
+        }
+        detail[strcspn(detail,"\r\n")]=0;
+        wrap(690,222,t->meta,19,2,white);
+        if(detail[0])wrap(690,274,detail,22,4,white);
+        else if(!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv")||
+                !strcmp(t->kind,"game")||!strcmp(t->kind,"kiss"))
+            text(690,280,"MORE INFO WHEN AVAILABLE",1,dim,28);
         text(690,354,t->url[0]?"[A] PLAY":t->kind[0]?"[A] OPEN":"NO STREAM YET",2,t->kind[0]||t->url[0]?green:dim,20);
         text(690,395,"[LB/RB] VIEW",1,dim,25);
         text(690,416,view_names[viewing],1,green,25);

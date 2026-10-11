@@ -2,12 +2,24 @@
 #include <dirent.h>
 #include <limits.h>
 #include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <errno.h>
 #define GAME_LIMIT 2048
 static const char *games_home(void){const char *p=getenv("FLXTR_RETROARCH_HOME");return p&&p[0]=='/'?p:"/home/apps/retroarch";}
 static int game_file(const char *p){struct stat st;return p&&p[0]=='/'&&!stat(p,&st)&&S_ISREG(st.st_mode)&&!access(p,R_OK);}
+/* Side-by-side builds: never replace system cores or a per-ROM choice. */
+static int game_bundled_core(const char *current,char *out,size_t cap){
+    if(getenv("FLXTR_USE_SYSTEM_CORES"))return 0;
+    const char *base=strrchr(current,'/');base=base?base+1:current;
+    const char *name=NULL;
+    if(!strcmp(base,"snes9x2005_libretro.so"))name="snes9x2005_flxtr_libretro.so";
+    if(!strcmp(base,"mame2003_plus_libretro.so"))name="mame2003_plus_flxtr_libretro.so";
+    char cwd[PATH_MAX];if(!name||!getcwd(cwd,sizeof(cwd)))return 0;
+    int n=snprintf(out,cap,"%s/cores/%s",cwd,name);
+    return n>0&&n<(int)cap&&game_file(out);
+}
 static json_object *games_read(const char *path){struct stat st;if(stat(path,&st)||st.st_size>8*1024*1024)return NULL;return json_object_from_file(path);}
 static const char *game_core(const char *path){
     const char *ext=strrchr(path,'.');if(!ext)return NULL;ext++;
@@ -244,8 +256,10 @@ static int games_list_filtered(int page,int refresh,int folder){
             else if(strstr(system,"PlayStation"))platform="PLAYSTATION";
             else if(strstr(system,"Neo Geo"))platform="NEO GEO";
             else if(strstr(system,"Mega Drive"))platform="SEGA GENESIS";
-            const char *core_file=strrchr(core,'/');core_file=core_file?core_file+1:core;
-            char core_name[64];snprintf(core_name,sizeof(core_name),"%s",core_file);
+            char bundled[PATH_MAX];const char *shown_core=core;
+            if(game_bundled_core(core,bundled,sizeof(bundled)))shown_core=bundled;
+            const char *core_file=strrchr(shown_core,'/');core_file=core_file?core_file+1:shown_core;
+            char core_name[64];snprintf(core_name,sizeof(core_name),"%.63s",core_file);
             FILE *selected=fopen("game-cores.tsv","r");
             if(selected){
                 char row[256],saved_title[80],saved_core[96];int selected_id;
@@ -306,6 +320,7 @@ static int games_run(void){
     /* ROM-specific core selection overrides inferred or playlist defaults.
      * Accept names only, never paths from the TSV, and require an installed
      * readable Libretro shared object. */
+    char bundled[PATH_MAX];if(game_bundled_core(core,bundled,sizeof(bundled)))core=bundled;
     char selected_core[PATH_MAX]={0};
     FILE *choices=fopen("game-cores.tsv","r");
     if(choices){
@@ -322,6 +337,13 @@ static int games_run(void){
             snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro.so",games_home(),name);
             if(!game_file(selected_core))
                 snprintf(selected_core,sizeof(selected_core),"%s/.home/.config/retroarch/cores/%s_libretro.so",games_home(),name);
+            if(!game_file(selected_core)){
+                char cwd[PATH_MAX];
+                if(getcwd(cwd,sizeof(cwd))){
+                    int n=snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro.so",cwd,name);
+                    if(n<0||n>=(int)sizeof(selected_core))selected_core[0]=0;
+                }
+            }
             if(game_file(selected_core))core=selected_core;
         }fclose(choices);
     }
@@ -339,6 +361,11 @@ static int games_run(void){
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
     f=fopen(extra,"w");if(!f)return 2;
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nkiosk_mode_enable = \"true\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
+    /* Keep Neo Geo and other working systems on their existing configuration. */
+    const char *core_base=strrchr(core,'/');core_base=core_base?core_base+1:core;
+    if(!strncmp(core_base,"snes9x",6)||!strncmp(core_base,"mame2003",8)){
+        fputs("video_shader_enable = \"false\"\nrewind_enable = \"false\"\nrun_ahead_enabled = \"false\"\nvideo_frame_delay = \"0\"\nvideo_hard_sync = \"false\"\n",f);
+    }
     /* FlXtR setting is opt-in; do not change the user's global RetroArch config. */
     { FILE *settings=fopen("settings.cfg","r");int enabled=0;
       if(settings){
@@ -360,11 +387,12 @@ static int games_run(void){
     snprintf(home,sizeof(home),"%s/.home",games_home());
     if(chdir(games_home()))return 2;
     setenv("HOME",home,1);
+    fprintf(stderr,"Game launch: core=%s ROM=%s\n",core,rom);
     /* Argument vectors preserve spaces/metacharacters; never execute a playlist as shell text. */
     const char *test=getenv("FLXTR_GAME_TEST_FRAMES");
     if(test&&positive(test,0)>0&&positive(test,0)<=3600)
-        execl(runtime,runtime,"--config",config,"--appendconfig",extra,"--max-frames",test,"--max-frames-ss","--max-frames-ss-path","/tmp/flxtr-game-test.png","--libretro",core,rom,(char*)NULL);
-    else execl(runtime,runtime,"--config",config,"--appendconfig",extra,"--libretro",core,rom,(char*)NULL);
+        execl(runtime,runtime,"--verbose","--config",config,"--appendconfig",extra,"--max-frames",test,"--max-frames-ss","--max-frames-ss-path","/tmp/flxtr-game-test.png","--libretro",core,rom,(char*)NULL);
+    else execl(runtime,runtime,"--verbose","--config",config,"--appendconfig",extra,"--libretro",core,rom,(char*)NULL);
     perror("RetroArch runtime");json_object_put(games);return 1;
 }
 
@@ -659,6 +687,11 @@ static int game_download_progress(void *ctx,double total,double done,
     last_done=done;last_time=now;
     return 0;
 }
+#if LIBCURL_VERSION_NUM >= 0x072000
+static int game_download_xfer(void *ctx,curl_off_t total,curl_off_t done,curl_off_t ut,curl_off_t ud){
+    return game_download_progress(ctx,(double)total,(double)done,(double)ut,(double)ud);
+}
+#endif
 static int games_archive_file_download(const char *item,const char *name,int platform){
     fprintf(stderr,"Archive ROM request: item=%.128s filename=%.180s platform=%d\n",item?item:"(null)",name?name:"(null)",platform);
     if(!archive_identifier(item)||!name||!*name||strlen(name)>512||
@@ -698,7 +731,11 @@ static int games_archive_file_download(const char *item,const char *name,int pla
     FILE *f=fopen(tmp,"wb");if(!f){fprintf(stderr,"Archive ROM file open failed: %s (%s)\n",tmp,strerror(errno));return -1;}
     CURL *c=curl_easy_init();if(!c){fclose(f);unlink(tmp);return -1;}
     curl_easy_setopt(c,CURLOPT_NOPROGRESS,0L);
+#if LIBCURL_VERSION_NUM >= 0x072000
+    curl_easy_setopt(c,CURLOPT_XFERINFOFUNCTION,game_download_xfer);
+#else
     curl_easy_setopt(c,CURLOPT_PROGRESSFUNCTION,game_download_progress);
+#endif
     curl_easy_setopt(c,CURLOPT_PROGRESSDATA,NULL);
     curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);
     curl_easy_setopt(c,CURLOPT_MAXREDIRS,4L);curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,game_write);
@@ -749,9 +786,13 @@ static int games_archive_download(int id){
     if(!rc){
         if(github){
             /* Git blob SHA-1 authenticates exact file contents at the pinned revision. */
-            SHA_CTX ctx;char header[64];int h=snprintf(header,sizeof(header),"blob %zu",data.length);
-            SHA1_Init(&ctx);SHA1_Update(&ctx,header,(size_t)h+1);
-            SHA1_Update(&ctx,data.data,data.length);SHA1_Final(digest,&ctx);
+            EVP_MD_CTX *ctx=EVP_MD_CTX_create();char header[64];int h=snprintf(header,sizeof(header),"blob %zu",data.length);
+            if(!ctx||!EVP_DigestInit_ex(ctx,EVP_sha1(),NULL)||
+               !EVP_DigestUpdate(ctx,header,(size_t)h+1)||
+               !EVP_DigestUpdate(ctx,data.data,data.length)||!EVP_DigestFinal_ex(ctx,digest,NULL)){
+                EVP_MD_CTX_destroy(ctx);free(data.data);json_object_put(list);return -1;
+            }
+            EVP_MD_CTX_destroy(ctx);
             for(int i=0;i<20;i++)snprintf(hex+2*i,3,"%02x",digest[i]);
             if(strcasecmp(hex,blob))rc=-1;
         }else{

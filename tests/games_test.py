@@ -47,6 +47,28 @@ with tempfile.TemporaryDirectory() as tmp:
     assert args[-3:] == ['--libretro',str(core),str(unsafe_name)] and '--menu' not in args
     assert not (home/'INJECTED').exists() and not (root/'game-request').exists()
     assert 'input_enable_hotkey_btn = "4"' in (root/'game-runtime.cfg').read_text()
+    # Bundled builds never replace system cores; explicit choices take priority.
+    bundled=root/'cores';bundled.mkdir()
+    fast=bundled/'snes9x2005_flxtr_libretro.so';fast.write_bytes(b'fixture')
+    stock=home/'cores/snes9x2005_libretro.so';stock.write_bytes(b'fixture')
+    snes=roms/'Test.sfc';snes.write_bytes(b'fixture')
+    (root/'games.json').write_text(json.dumps([{'title':'Test','rom':str(snes),'core':str(stock)}]))
+    def launch():
+        (root/'game-request').write_text('1 4 6\n')
+        subprocess.run([str(worker),'--run-game'],cwd=root,env=env,check=True)
+        return json.loads((home/'argv.json').read_text())
+    assert launch()[-2]==str(fast)
+    assert 'video_shader_enable = "false"' in (root/'game-runtime.cfg').read_text()
+    (root/'game-cores.tsv').write_text('1\tTest\tsnes9x2005\n')
+    assert launch()[-2]==str(stock)
+    (root/'game-cores.tsv').write_text('1\tTest\tsnes9x2005_flxtr\n')
+    assert launch()[-2]==str(fast)
+    (root/'game-cores.tsv').unlink()
+    fast.unlink();assert launch()[-2]==str(stock)
+    neo_core=home/'cores/fbalpha2012_neogeo_libretro.so';neo_core.write_bytes(b'fixture')
+    (root/'games.json').write_text(json.dumps([{'title':'Neo','rom':str(neo/'mslug.zip'),'core':str(neo_core)}]))
+    assert launch()[-2]==str(neo_core)
+    assert 'video_shader_enable' not in (root/'game-runtime.cfg').read_text()
     (root/'game-request').write_text('99999 4 6\n')
     assert subprocess.run([str(worker),'--run-game'],cwd=root,env=env).returncode==2
 print('PASS: JSON/legacy import, deduplication, bounded paging, unknown core exclusion, exact argv and exit hotkeys')

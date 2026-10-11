@@ -22,7 +22,7 @@ while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
     if [ "$code" -eq 43 ]; then
-        # A broken Steam Link video decoder can trap RetroArch indefinitely,
+        # A broken Steam Link audio/video pipeline can trap RetroArch indefinitely,
         # repeatedly printing MV_PE_InputBufWrite failures and ignoring TERM.
         # Recover ONLY when the same error is actively repeating; normal games
         # have no time limit. The watchdog never touches metadata workers.
@@ -35,14 +35,15 @@ while :; do
                 sleep 4
                 current_size=$(wc -c <game.log 2>/dev/null) || current_size=0
                 if [ "$current_size" -gt "$previous_size" ] &&
-                   [ "$(tail -n 8 game.log 2>/dev/null | grep -c 'MV_PE_InputBufWrite() failed')" -ge 8 ]; then
+                   [ "$(tail -n 64 game.log 2>/dev/null | grep -c 'MV_PE_InputBufWrite() failed')" -ge 8 ]; then
                     consecutive=$((consecutive + 1))
                 else
                     consecutive=0
                 fi
                 previous_size=$current_size
                 if [ "$consecutive" -ge 3 ]; then
-                    printf '%s\n' 'FlXtR watchdog: repeating Steam Link video decoder failure; recovering RetroArch' >>watchdog.log
+                    printf '%s\n' 'FlXtR watchdog: repeating Steam Link media input failure; recovering RetroArch' >>watchdog.log
+                    cp game.log game-failure.log
                     kill -TERM "$game_pid" 2>/dev/null
                     sleep 2
                     kill -KILL "$game_pid" 2>/dev/null

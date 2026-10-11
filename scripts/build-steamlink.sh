@@ -30,6 +30,18 @@ if [ -f build/greenlink-resolver-arm ]; then
     cp build/greenlink-resolver-arm "$app/greenlink-resolver"
     cp build/resolver/WABT-LICENSE.txt "$app/WABT-LICENSE.txt"
 fi
+# Optional side-by-side cores from scripts/build-cores.sh. No system core is replaced.
+for core in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so; do
+    if [ -f "build/cores/$core" ]; then
+        mkdir -p "$app/cores"
+        cp "build/cores/$core" "$app/cores/"
+    fi
+done
+if [ -d "$app/cores" ]; then
+    for notice in SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt; do
+        cp "build/cores/$notice" "$app/cores/"
+    done
+fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi
 chmod +x "$app/greenlink" "$app/greenlink.sh"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink

@@ -63,6 +63,7 @@ static void rom_core_open(const Title *t){
     rom_core_id=t->id;
     snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
     rom_core_count=rom_core_selected=rom_core_first=0;
+    rom_core_scan("cores");
     rom_core_scan("/home/apps/retroarch/cores");
     rom_core_scan("/home/apps/retroarch/.home/.config/retroarch/cores");
     /* Open on the previously chosen core, if any. */
@@ -1510,6 +1511,36 @@ static void add_pad(int device) {
     for(int i=0;i<4;i++)if(pads[i]&&SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i]))==id)return;
     for(int i=0;i<4;i++)if(!pads[i]){pads[i]=SDL_GameControllerOpen(device);break;}
 }
+/* Let hardware-owning children release audio/video before the next app starts.
+ * A network-stalled child still has a bounded deadline. */
+static void shutdown_children(pid_t *children,size_t count){
+    for(size_t i=0;i<count;i++)if(children[i]>0)kill(children[i],SIGTERM);
+    Uint32 deadline=SDL_GetTicks()+3000;
+    for(;;){
+        int pending=0;
+        for(size_t i=0;i<count;i++){
+            if(children[i]<=0)continue;
+            pid_t done=waitpid(children[i],NULL,WNOHANG);
+            if(done==children[i]||(done<0&&errno==ECHILD))children[i]=0;
+            else pending=1;
+        }
+        if(!pending||(Sint32)(SDL_GetTicks()-deadline)>=0)break;
+        SDL_Delay(10);
+    }
+    for(size_t i=0;i<count;i++)if(children[i]>0)kill(children[i],SIGKILL);
+    for(int attempt=0;attempt<25;attempt++){
+        int pending=0;
+        for(size_t i=0;i<count;i++){
+            if(children[i]<=0)continue;
+            pid_t done=waitpid(children[i],NULL,WNOHANG);
+            if(done==children[i]||(done<0&&errno==ECHILD))children[i]=0;
+            else pending=1;
+        }
+        if(!pending)break;
+        SDL_Delay(10);
+    }
+}
+
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
     load_settings();
@@ -1596,19 +1627,8 @@ int main(int argc,char **argv) {
             if(frames>0&&seen>=frames)running=0;
         }
     }
-    /* Never block shutdown on a network request, background helper, or
-     * updater. A stuck child previously kept the whole Steam Link UI alive. */
     pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid};
-    for(size_t i=0;i<sizeof(children)/sizeof(children[0]);i++)
-        if(children[i]>0)kill(children[i],SIGKILL);
-    for(size_t i=0;i<sizeof(children)/sizeof(children[0]);i++){
-        if(children[i]<=0)continue;
-        for(int attempt=0;attempt<25;attempt++){
-            pid_t result=waitpid(children[i],NULL,WNOHANG);
-            if(result==children[i]||result<0)break;
-            SDL_Delay(10);
-        }
-    }
+    shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
     SDL_Quit();return game_exit?43:restart_shell?42:0;
 }

@@ -9,18 +9,18 @@ build/greenlink-catalog: src/catalog.c src/games.h src/kissanime.h src/megaplay.
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 build/greenlink: src/shell.c src/font.h src/video_layout.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lcurl
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl
 
 test: all
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/tv_test.c -o build/tv-test $(SDL_LIBS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/tv_test.c -o build/tv-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/tv-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/archive_test.c -o build/archive-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 	./build/archive-test
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/playback_menu_test.c -o build/playback-menu-test $(SDL_LIBS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/playback_menu_test.c -o build/playback-menu-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/playback-menu-test
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/shell_test.c -o build/shell-test $(SDL_LIBS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/shell_test.c -o build/shell-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/shell-test
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/auto_server_test.c -o build/auto-server-test $(SDL_LIBS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/auto_server_test.c -o build/auto-server-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/auto-server-test
 	$(CC) $(CFLAGS) tests/disk_buffer_test.c -o build/disk-buffer-test $$(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
 	./build/disk-buffer-test
@@ -52,3 +52,11 @@ test-psp:
 	bash scripts/test-psp-host.sh
 
 .PHONY: psp test-psp
+
+# Focused launch/performance tests, independent of legacy playback UI fixtures.
+test-games: all
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/shutdown_test.c -o build/shutdown-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/shutdown-test
+	python3 tests/games_test.py
+	python3 tests/game_watchdog_test.py
+.PHONY: test-games

@@ -188,6 +188,12 @@ static int games_list_filtered(int page,int refresh,int folder){
                     fclose(ids);
                 }
                 if(canonical[0])art_title=canonical;
+                /* Secret of Mana Turbo is a ROM hack: borrow the original
+                 * game's cover without changing the game name or launch path. */
+                if(strstr(system,"Super Nintendo")&&
+                   (!strncasecmp(rom_id,"Secret of Mana Turbo",19)||
+                    !strncasecmp(e->title,"Secret of Mana Turbo",19)))
+                    art_title="Secret of Mana";
                 const char *short_names[]={"kof2002","kof94","lastblad","lastbld2","mslug","mslug2","mslug3","mslug4","mslug5","samsho","samsho2","garou","msword","gng","Pocky&Rocky","SecretofMana","SecretofMana2","SuperMarioAll-Stars+SuperMarioWorld"};
                 const char *full_names[]={"The King of Fighters 2002","The King of Fighters '94","The Last Blade","The Last Blade 2","Metal Slug","Metal Slug 2","Metal Slug 3","Metal Slug 4","Metal Slug 5","Samurai Shodown","Samurai Shodown II","Garou - Mark of the Wolves","Magic Sword","Ghosts'n Goblins","Pocky & Rocky","Secret of Mana","Seiken Densetsu 3","Super Mario All-Stars + Super Mario World"};
                 for(size_t k=0;k<sizeof(short_names)/sizeof(short_names[0]);k++)

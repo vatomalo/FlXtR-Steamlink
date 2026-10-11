@@ -243,6 +243,30 @@ static int qualities(json_object *root,const char *server){
     }
     free(manifest);return 0;
 }
+/* Provider-independent episode caption mappings, keyed by TMDB series ID,
+ * season and episode. Optional: playback continues when no mapping exists.
+ * Format: tmdb_id<TAB>season<TAB>episode<TAB>language<TAB>https_url.
+ * Restrict each entry to HTTPS and exact IDs to prevent cross-episode captions. */
+static void independent_subtitles(int id,int season,int episode,Choice *c){
+    FILE *f=fopen("tv-subtitles.tsv","r");
+    if(!f)return;
+    char line[1800],lang[16],url[1024];int series,s,e;
+    while(fgets(line,sizeof(line),f)){
+        if(line[0]=='#')continue;
+        if(sscanf(line,"%d\t%d\t%d\t%15[^\t]\t%1023[^\r\n]",&series,&s,&e,lang,url)!=5)continue;
+        if(series!=id||s!=season||e!=episode||strncmp(url,"https://",8)||
+           strpbrk(url,"\r\n\t")||strlen(url)>=1024)continue;
+        char *destination=NULL;
+        if(!strcasecmp(lang,"eng")||!strcasecmp(lang,"en"))destination=c->subs_eng;
+        else if(!strcasecmp(lang,"nor")||!strcasecmp(lang,"no")||!strcasecmp(lang,"nb"))destination=c->subs_nor;
+        else if(!strcasecmp(lang,"spa")||!strcasecmp(lang,"es"))destination=c->subs_spa;
+        if(destination&&!*destination)snprintf(destination,1024,"%s",url);
+    }
+    fclose(f);
+    subtitle_log("independent TV subtitles id=%d S%d E%d eng=%s nor=%s spa=%s",
+        id,season,episode,c->subs_eng[0]?"yes":"no",
+        c->subs_nor[0]?"yes":"no",c->subs_spa[0]?"yes":"no");
+}
 int main(int argc,char **argv){
     if(argc!=8|| (strcmp(argv[1],"servers")&&strcmp(argv[1],"source")) ||(strcmp(argv[2],"movie")&&strcmp(argv[2],"tv")))return 2;
     int id=atoi(argv[3]),season=atoi(argv[4]),episode=atoi(argv[5]),page=atoi(argv[7]);
@@ -253,7 +277,16 @@ int main(int argc,char **argv){
     else {if(!episode)return 2;snprintf(path,sizeof(path),"/api/tmdb/tv/%d/season/%d/episode/%d/images",id,season,episode);}
     if(curl_global_init(CURL_GLOBAL_DEFAULT)||resolver_init())return 1;
     json_object *root=lookup(path,resolving?argv[6]:"");int rc=1;
-    if(root){if(resolving){if(qualities(root,argv[6]))goto done;}else servers(root);
+    if(root){if(resolving){if(qualities(root,argv[6]))goto done;
+            if(!strcmp(argv[2],"tv")){
+                independent_subtitles(id,season,episode,&choices[0]);
+                for(int i=1;i<count;i++){
+                    snprintf(choices[i].subs_eng,sizeof(choices[i].subs_eng),"%s",choices[0].subs_eng);
+                    snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);
+                    snprintf(choices[i].subs_spa,sizeof(choices[i].subs_spa),"%s",choices[0].subs_spa);
+                }
+            }
+        }else servers(root);
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
         for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor,c->subs_spa);
             else printf("%s\t%s\t\t%s\tserver\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,id,season,episode,c->height);}

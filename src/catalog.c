@@ -94,6 +94,23 @@ static void from_json(Entry *e,json_object *o,const char *kind,int id,int season
     const char *title=string(o,!strcmp(kind,"movie")?"title":"name");
     clean(e->title,sizeof(e->title),title);clean(e->kind,sizeof(e->kind),kind);
     e->id=id?id:number(o,"id");e->season=season;e->episode=0;
+    /* Reuse descriptions already supplied by TMDB discover/results JSON.
+     * Sidecar writes are local; no additional request delays page loading. */
+    if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&e->id>0){
+        const char *overview=string(o,"overview");
+        if(*overview){
+            mkdir("media-info-cache",0700);
+            char filename[100],temporary[116],description[400];
+            snprintf(filename,sizeof(filename),"media-info-cache/%s-%d.txt",kind,e->id);
+            snprintf(temporary,sizeof(temporary),"%s.next",filename);
+            clean(description,sizeof(description),overview);
+            FILE *info=fopen(temporary,"w");
+            if(info){fprintf(info,"%s\n",description);
+                if(!fclose(info))rename(temporary,filename);
+                else unlink(temporary);
+            }
+        }
+    }
     const char *date=string(o,!strcmp(kind,"movie")?"release_date":"first_air_date");
     clean(e->poster,sizeof(e->poster),string(o,"poster_path"));
     if(!strcmp(kind,"season")){e->season=number(o,"season_number");snprintf(e->meta,sizeof(e->meta),"SEASON %d / %d EPISODES",e->season,number(o,"episode_count"));}

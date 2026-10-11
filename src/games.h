@@ -212,6 +212,25 @@ static int games_list_filtered(int page,int refresh,int folder){
                 }
             }
         }
+        /* A curated ROM ID is a stronger display alias than the filename.
+         * The launch manifest and poster keys stay untouched. */
+        {
+            char rom_id[128];snprintf(rom_id,sizeof(rom_id),"%s",file);
+            char *dot=strrchr(rom_id,'.');if(dot)*dot=0;
+            FILE *names=system?fopen("game-art-ids.tsv","r"):NULL;
+            if(names){
+                char line[512];
+                while(fgets(line,sizeof(line),names)){
+                    char *first=strchr(line,'\t');if(!first)continue;*first++=0;
+                    char *second=strchr(first,'\t');if(!second)continue;*second++=0;
+                    second[strcspn(second,"\r\n")]=0;
+                    if(!strcmp(line,system)&&!strcasecmp(first,rom_id)&&*second){
+                        clean(e->title,sizeof(e->title),second);break;
+                    }
+                }
+                fclose(names);
+            }
+        }
         /* Game information panel: platform instead of internal .so filename.
          * Keep the original ROM/core mapping and poster key unchanged. */
         if(system){
@@ -225,7 +244,10 @@ static int games_list_filtered(int page,int refresh,int folder){
             else if(strstr(system,"PlayStation"))platform="PLAYSTATION";
             else if(strstr(system,"Neo Geo"))platform="NEO GEO";
             else if(strstr(system,"Mega Drive"))platform="SEGA GENESIS";
-            snprintf(e->meta,sizeof(e->meta),"%s / RETROARCH",platform);
+            const char *core_file=strrchr(core,'/');core_file=core_file?core_file+1:core;
+            char core_name[64];snprintf(core_name,sizeof(core_name),"%s",core_file);
+            char *core_suffix=strstr(core_name,"_libretro.so");if(core_suffix)*core_suffix=0;
+            snprintf(e->meta,sizeof(e->meta),"%s / CORE: %.48s",platform,core_name);
         }
         char *suffix=strrchr(e->title,'.');
         if(suffix&&(!strcasecmp(suffix,".sfc")||!strcasecmp(suffix,".smc")||

@@ -114,9 +114,12 @@ static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
         const char *url=string(track,"url");
         if(!*url)url=string(track,"file");
         if(!*url)url=string(track,"src");
+        if(!*url)url=string(track,"link");
         const char *lang=string(track,"lang");
         if(!*lang)lang=string(track,"language");
         if(!*lang)lang=string(track,"label");
+        if(!*lang)lang=string(track,"languageCode");
+        if(!*lang)lang=string(track,"srclang");
         if(strncmp(url,"https://",8)||strlen(url)>=1024||strpbrk(url,"\r\n\t"))continue;
         int english=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
         int norwegian=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
@@ -128,10 +131,14 @@ static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
 }
 static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor,char *spa){
     subtitle_log("JSON fields: selected=%s root.subtitles=%s root.tracks=%s source.subtitles=%s source.tracks=%s",source?"yes":"no",field(root,"subtitles")?"yes":"no",field(root,"tracks")?"yes":"no",source&&field(source,"subtitles")?"yes":"no",source&&field(source,"tracks")?"yes":"no");
-    if(source){select_subtitles(field(source,"subtitles"),eng,nor,spa);
-        select_subtitles(field(source,"tracks"),eng,nor,spa);}
-    select_subtitles(field(root,"subtitles"),eng,nor,spa);
-    select_subtitles(field(root,"tracks"),eng,nor,spa);
+    const char *keys[]={"subtitles","tracks","captions","subtitleTracks","subtitle_tracks"};
+    if(source)for(size_t i=0;i<sizeof(keys)/sizeof(keys[0]);i++)
+        select_subtitles(field(source,keys[i]),eng,nor,spa);
+    for(size_t i=0;i<sizeof(keys)/sizeof(keys[0]);i++)
+        select_subtitles(field(root,keys[i]),eng,nor,spa);
+    json_object *data=field(root,"data");
+    if(data)for(size_t i=0;i<sizeof(keys)/sizeof(keys[0]);i++)
+        select_subtitles(field(data,keys[i]),eng,nor,spa);
 }
 /* Read HLS master playlist subtitle renditions without touching video variants. */
 static int hls_attribute(const char *line,const char *key,char *out,size_t cap){

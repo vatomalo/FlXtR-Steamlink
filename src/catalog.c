@@ -11,6 +11,8 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
 #include "browse_filters.h"
@@ -375,6 +377,57 @@ static void poster(Entry *e,int slot){
         }
     }free(b.data);
 }
+/* Render game pages immediately. A detached worker warms persistent artwork
+ * without delaying controller navigation; repeat views reuse the same BMP. */
+static void game_art_path(const char *key,char *out,size_t capacity){
+    unsigned long hash=2166136261UL;
+    for(const unsigned char *p=(const unsigned char *)key;*p;p++)
+        hash=((hash^*p)*16777619UL)&0xffffffffUL;
+    snprintf(out,capacity,"game-art-cache/%08lx.bmp",hash);
+}
+static void game_art_prefetch(void){
+    int needed=0;
+    for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
+        char file[80];game_art_path(entries[i].poster,file,sizeof(file));
+        struct stat st;
+        if(stat(file,&st)||st.st_size<54)needed++;
+    }
+    if(!needed)return;
+    mkdir("game-art-cache",0700);
+    int lock=open("game-art-cache/.worker.lock",O_CREAT|O_RDWR,0600);
+    if(lock<0)return;
+    if(flock(lock,LOCK_EX|LOCK_NB)){close(lock);return;}
+    pid_t child=fork();
+    if(child<0){close(lock);return;}
+    if(child==0){
+        /* Do not hold the UI catalog pipe open after its result is printed. */
+        int devnull=open("/dev/null",O_RDWR);
+        if(devnull>=0){dup2(devnull,0);dup2(devnull,1);dup2(devnull,2);if(devnull>2)close(devnull);}
+        for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
+            char file[80];game_art_path(entries[i].poster,file,sizeof(file));
+            struct stat st;if(!stat(file,&st)&&st.st_size>=54)continue;
+            Entry copy=entries[i];poster(&copy,i);
+            if(!strncmp(copy.poster,"catalog-cache/",14)){
+                /* Atomic promotion to a cache independent of catalog page slots. */
+                char temp[104];snprintf(temp,sizeof(temp),"%s.tmp.%ld",file,(long)getpid());
+                FILE *in=fopen(copy.poster,"rb"),*out=in?fopen(temp,"wb"):NULL;
+                int good=in&&out;unsigned char buf[4096];size_t n;
+                if(good){while((n=fread(buf,1,sizeof(buf),in))>0)
+                    if(fwrite(buf,1,n,out)!=n){good=0;break;}
+                    if(ferror(in))good=0;}
+                if(in)fclose(in);
+                if(out&&fclose(out))good=0;
+                if(good)rename(temp,file);else unlink(temp);
+            }
+        }
+        close(lock);_exit(0);
+    }
+    close(lock);
+    for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
+        char file[80];game_art_path(entries[i].poster,file,sizeof(file));
+        snprintf(entries[i].poster,sizeof(entries[i].poster),"%s",file);
+    }
+}
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
@@ -426,7 +479,8 @@ int main(int argc,char **argv){
     if(rc){curl_global_cleanup();return 1;}
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
-    for(int i=0;i<used;i++){if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-download")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
+    if(!getenv("FLXTR_NO_ART")&&(!strcmp(kind,"games")||!strcmp(kind,"games-system")))game_art_prefetch();
+    for(int i=0;i<used;i++){if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-download")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART")){if(strncmp(entries[i].poster,"game-art-cache/",15))poster(&entries[i],i);}else entries[i].poster[0]=0;}
     if(cacheable)cache_save();
 output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);

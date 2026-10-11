@@ -34,8 +34,13 @@ while :; do
             while kill -0 "$game_pid" 2>/dev/null; do
                 sleep 4
                 current_size=$(wc -c <game.log 2>/dev/null) || current_size=0
-                if [ "$current_size" -gt "$previous_size" ] &&
-                   [ "$(tail -n 64 game.log 2>/dev/null | grep -c 'MV_PE_InputBufWrite() failed')" -ge 8 ]; then
+                # Count only new output: an old error burst followed by healthy
+                # logging must not look like a continuing media failure.
+                errors=0
+                if [ "$current_size" -gt "$previous_size" ]; then
+                    errors=$(tail -c "+$((previous_size + 1))" game.log 2>/dev/null | tail -n 64 | grep -c 'MV_PE_InputBufWrite() failed')
+                fi
+                if [ "$errors" -ge 8 ]; then
                     consecutive=$((consecutive + 1))
                 else
                     consecutive=0

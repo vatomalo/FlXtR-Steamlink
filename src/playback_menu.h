@@ -102,12 +102,14 @@ static void menu_command(char c){
     }
     if(c=='b'){menu_restart(7,playback_position());return;}
     if(c=='v'){viewing=(viewing+1)%VIEW_COUNT;apply_view(!menu_open);}
-    if(!menu_open){
-        /* Shoulder/D-pad seeking opens a persistent preview instead of
-         * terminating playback on every button press. */
-        if(c=='l'||c=='r'){menu_open=1;menu_row=1;}
-        else return;
+    if(c=='l'||c=='r'){
+        /* Left/right always invokes the same persistent seek preview.
+         * A confirms the target; B cancels without restarting playback.
+         * Other menu options remain changeable with A. */
+        menu_open=1;
+        menu_row=1;
     }
+    if(!menu_open)return;
     if(c=='u'&&!seek_scrubbing)menu_row=(menu_row+11)%12;
     if(c=='d'&&!seek_scrubbing)menu_row=(menu_row+1)%12;
     if(c=='a'||c=='l'||c=='r'){

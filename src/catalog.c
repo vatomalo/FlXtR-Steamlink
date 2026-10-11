@@ -279,7 +279,7 @@ static void poster(Entry *e,int slot){
         int len=snprintf(url,sizeof(url),"https://thumbnails.libretro.com/%s/Named_Boxarts/%s.png",sys,name);
         curl_free(sys);curl_free(name);
         if(len<0||len>=(int)sizeof(url))return;
-        Buffer b={NULL,0,768*1024};
+        Buffer b={NULL,0,4*1024*1024};
         /* Libretro Neo Geo boxart filenames include revisions and subtitles.
          * Resolve the real filename from the official directory listing. */
         if(1){
@@ -289,7 +289,7 @@ static void poster(Entry *e,int slot){
                 snprintf(directory,sizeof(directory),
                     "https://thumbnails.libretro.com/%s/Named_Boxarts/",encoded);
                 curl_free(encoded);
-                Buffer listing={NULL,0,4*1024*1024};
+                Buffer listing={NULL,0,12*1024*1024};
                 if(!fetch(directory,&listing)){
                     for(char *p=listing.data;(p=strstr(p,"href=\""))!=NULL;p+=6){
                         char *first=p+6,*last=strchr(first,'"');

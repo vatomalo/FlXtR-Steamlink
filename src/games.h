@@ -149,6 +149,18 @@ static int games_list_filtered(int page,int refresh,int folder){
             char thumb[PATH_MAX];
             snprintf(thumb,sizeof(thumb),"%s/.home/.config/retroarch/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
             if(!game_file(thumb))snprintf(thumb,sizeof(thumb),"%s/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
+            if(!game_file(thumb)){
+                /* A small built-in name map for arcade filenames; preserve the ROM/title. */
+                const char *art_title=e->title;
+                const char *short_names[]={"kof2002","kof94","lastblad","mslug","mslug2","mslug3","mslug4","mslug5","samsho","samsho2","garou"};
+                const char *full_names[]={"The King of Fighters 2002","The King of Fighters '94","The Last Blade","Metal Slug","Metal Slug 2","Metal Slug 3","Metal Slug 4","Metal Slug 5","Samurai Shodown","Samurai Shodown II","Garou - Mark of the Wolves"};
+                if(!strcmp(system,"SNK - Neo Geo")){
+                    for(size_t k=0;k<sizeof(short_names)/sizeof(short_names[0]);k++)
+                        if(!strcasecmp(e->title,short_names[k])){art_title=full_names[k];break;}
+                }
+                if(strlen(system)+strlen(art_title)+10<sizeof(e->poster))
+                    snprintf(e->poster,sizeof(e->poster),"gameart:%s|%s",system,art_title);
+            }
             if(game_file(thumb)){
                 const char prefix[]="localthumb:";
                 size_t length=strlen(thumb);

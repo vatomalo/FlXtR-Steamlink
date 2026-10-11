@@ -397,7 +397,7 @@ static void game_art_prefetch(void){
                 for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
                     char file[80];game_art_path(entries[i].poster,file,sizeof(file));
                     struct stat st;
-                    if(stat(file,&st)||st.st_size<54)fprintf(out,"%s\\n",entries[i].poster);
+                    if(stat(file,&st)||st.st_size<54)fprintf(out,"%s\n",entries[i].poster);
                 }
                 fclose(out);
             }
@@ -518,9 +518,9 @@ int main(int argc,char **argv){
         if(index){
             for(int i=0;i<used;i++){
                 Entry *e=&entries[i];
-                if(e->poster[0]&&!strchr(e->title,'\\t')&&!strchr(e->title,'\\n')&&
-                   !strchr(e->poster,'\\t')&&!strchr(e->poster,'\\n'))
-                    fprintf(index,"%s\\t%s\\n",e->title,e->poster);
+                if(e->poster[0]&&!strchr(e->title,'\t')&&!strchr(e->title,'\n')&&
+                   !strchr(e->poster,'\t')&&!strchr(e->poster,'\n'))
+                    fprintf(index,"%s\t%s\n",e->title,e->poster);
             }
             fclose(index);
         }

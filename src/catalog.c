@@ -222,6 +222,18 @@ static void cache_save(void){
     if(!json_object_to_file(temp,root))rename(temp,cache_file);
     json_object_put(root);
 }
+/* Match human-readable Libretro filenames despite punctuation, spaces and
+ * region/revision suffixes. Only artwork names are normalized; library titles
+ * and ROM/core selection are never modified. */
+static size_t art_normalize(const char *src,char *dst,size_t cap){
+    size_t n=0;
+    for(;*src&&n+1<cap;src++){
+        unsigned char ch=(unsigned char)*src;
+        if(ch=='('||ch=='[')break;
+        if(isalnum(ch))dst[n++]=(char)tolower(ch);
+    }
+    dst[n]=0;return n;
+}
 static void poster(Entry *e,int slot){
     char path[512];strcpy(path,e->poster);e->poster[0]=0;
     if(!strncmp(path,"localthumb:",11)){
@@ -277,7 +289,6 @@ static void poster(Entry *e,int slot){
                 curl_free(encoded);
                 Buffer listing={NULL,0,512*1024};
                 if(!fetch(directory,&listing)){
-                    size_t want=strlen(sep);
                     for(char *p=listing.data;(p=strstr(p,"href=\""))!=NULL;p+=6){
                         char *first=p+6,*last=strchr(first,'"');
                         if(!last||last-first>600)continue;
@@ -285,8 +296,10 @@ static void poster(Entry *e,int slot){
                         int decoded_len=0;
                         char *decoded=curl_easy_unescape(NULL,href,0,&decoded_len);
                         if(!decoded)continue;
-                        int match=decoded_len>(int)want+4&&!strncasecmp(decoded,sep,want)
-                            &&(decoded[want]==' '||decoded[want]=='_'||decoded[want]=='-'||decoded[want]=='('||decoded[want]=='.')
+                        char normalized_want[160],normalized_file[640];
+                        size_t wn=art_normalize(sep,normalized_want,sizeof(normalized_want));
+                        size_t fn=art_normalize(decoded,normalized_file,sizeof(normalized_file));
+                        int match=wn>=4&&fn>=wn&&!strncmp(normalized_file,normalized_want,wn)
                             &&strstr(decoded,".png")!=NULL;
                         curl_free(decoded);
                         if(match){

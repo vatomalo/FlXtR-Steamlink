@@ -22,6 +22,7 @@
 #include "tv_progress.h"
 #include "tv_history.h"
 #include "browse_filters.h"
+#include "game_metadata.h"
 
 #ifndef FLXTR_VERSION
 #define FLXTR_VERSION "development"
@@ -1030,6 +1031,11 @@ static void draw(Uint32 tick) {
             if(f){if(!fgets(detail,sizeof(detail),f))detail[0]=0;fclose(f);}
         }else if(!strcmp(t->kind,"kiss")&&t->id>0){
             snprintf(detail_path,sizeof(detail_path),"media-info-cache/anime-%d.txt",t->id);
+            FILE *f=fopen(detail_path,"r");
+            if(f){if(!fgets(detail,sizeof(detail),f))detail[0]=0;fclose(f);}
+        }
+        if(!detail[0]&&(!strcmp(t->kind,"game")||!strcmp(t->kind,"game-zip"))){
+            game_info_path(t->title,detail_path,sizeof(detail_path));
             FILE *f=fopen(detail_path,"r");
             if(f){if(!fgets(detail,sizeof(detail),f))detail[0]=0;fclose(f);}
         }

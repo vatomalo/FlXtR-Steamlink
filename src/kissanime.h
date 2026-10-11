@@ -25,37 +25,6 @@ static int kiss_attr(const char *tag,const char *name,char *out,size_t cap){
     }return 0;
 }
 static char *kiss_fetch(const char *url){Buffer b={NULL,0,2*1024*1024};if(fetch(url,&b)){free(b.data);return NULL;}return b.data;}
-static int kiss_cards(char *html,int first){
-    char *p=strstr(html,"class=\"listupd\"");int n=0;if(!p)return -1;
-    char *end=strstr(p,"class=\"hpage\"");if(!end)end=strstr(p,"id=\"sidebar\"");if(!end)end=p+strlen(p);
-    while((p=strstr(p,"<article"))&&p<end){
-        char *stop=strstr(p,"</article>");if(!stop||stop>end)break;
-        char *a=strstr(p,"<a ");char title[80],ident[32],href[512];
-        if(a&&a<stop&&kiss_attr(a,"href",href,sizeof(href))&&!strncmp(href,KISS"/anime/",sizeof(KISS"/anime/")-1)&&
-           kiss_attr(a,"rel",ident,sizeof(ident))&&positive(ident,0)>0&&kiss_attr(a,"title",title,sizeof(title))){
-            if(n>=first&&used<PAGE_SIZE){Entry *e=&entries[used++];strcpy(e->title,title);strcpy(e->kind,"kiss");e->id=positive(ident,0);
-                strcpy(e->meta,"KISSANIME / EPISODES");char *img=strstr(a,"<img ");if(img&&img<stop)kiss_attr(img,"src",e->poster,sizeof(e->poster));}
-            n++;
-        }p=stop+10;
-    }return n;
-}
-static int kiss_list_filtered(int page,const char *query,int genre,int order){
-    if(genre<0||genre>=BROWSE_GENRES||order<0||order>=BROWSE_ORDERS)return -1;
-    int first=(page-1)*PAGE_SIZE,last=(first+PAGE_SIZE-1)/20+1;char *escaped=curl_easy_escape(NULL,query,0);if(!escaped)return -1;
-    for(int remote=first/20+1;remote<=last;remote++){
-        char url[768];if(*query)snprintf(url,sizeof(url),KISS"/page/%d/?s=%s",remote,escaped);
-        else snprintf(url,sizeof(url),KISS"/anime/?page=%d&order=%s%s%s",remote,kiss_orders[order],genre?"&genre%5B%5D=":"",kiss_genres[genre]);
-        char *html=kiss_fetch(url);if(!html){curl_free(escaped);return -1;}
-        int n=kiss_cards(html,first>(remote-1)*20?first-(remote-1)*20:0);
-        int more=strstr(html,">Next")||strstr(html,"Next <i");free(html);
-        if(n<0){curl_free(escaped);return -1;}
-        total=(remote-1)*20+n+(more?1:0);if(!more)break;
-    }curl_free(escaped);return 0;
-}
-static inline int kiss_list(int page,const char *query){return kiss_list_filtered(page,query,0,0);}
-
-/* Cache an anime synopsis while the existing episode-page request is open.
- * No extra network call on browsing, and no scripts or embeds are evaluated. */
 static void kiss_cache_description(int id,const char *html){
     if(id<=0||!html)return;
     char description[400]="";
@@ -101,6 +70,59 @@ static void kiss_cache_description(int id,const char *html){
         if(!fclose(f))rename(temp,dest);else unlink(temp);
     }
 }
+static int kiss_cards(char *html,int first){
+    char *p=strstr(html,"class=\"listupd\"");int n=0;if(!p)return -1;
+    char *end=strstr(p,"class=\"hpage\"");if(!end)end=strstr(p,"id=\"sidebar\"");if(!end)end=p+strlen(p);
+    while((p=strstr(p,"<article"))&&p<end){
+        char *stop=strstr(p,"</article>");if(!stop||stop>end)break;
+        char *a=strstr(p,"<a ");char title[80],ident[32],href[512];
+        if(a&&a<stop&&kiss_attr(a,"href",href,sizeof(href))&&!strncmp(href,KISS"/anime/",sizeof(KISS"/anime/")-1)&&
+           kiss_attr(a,"rel",ident,sizeof(ident))&&positive(ident,0)>0&&kiss_attr(a,"title",title,sizeof(title))){
+            if(n>=first&&used<PAGE_SIZE){Entry *e=&entries[used++];strcpy(e->title,title);strcpy(e->kind,"kiss");e->id=positive(ident,0);
+                strcpy(e->meta,"KISSANIME / EPISODES");char *img=strstr(a,"<img ");if(img&&img<stop)kiss_attr(img,"src",e->poster,sizeof(e->poster));}
+            n++;
+        }p=stop+10;
+    }return n;
+}
+static int kiss_list_filtered(int page,const char *query,int genre,int order){
+    if(genre<0||genre>=BROWSE_GENRES||order<0||order>=BROWSE_ORDERS)return -1;
+    int first=(page-1)*PAGE_SIZE,last=(first+PAGE_SIZE-1)/20+1;char *escaped=curl_easy_escape(NULL,query,0);if(!escaped)return -1;
+    for(int remote=first/20+1;remote<=last;remote++){
+        char url[768];if(*query)snprintf(url,sizeof(url),KISS"/page/%d/?s=%s",remote,escaped);
+        else snprintf(url,sizeof(url),KISS"/anime/?page=%d&order=%s%s%s",remote,kiss_orders[order],genre?"&genre%5B%5D=":"",kiss_genres[genre]);
+        char *html=kiss_fetch(url);if(!html){curl_free(escaped);return -1;}
+        int n=kiss_cards(html,first>(remote-1)*20?first-(remote-1)*20:0);
+        int more=strstr(html,">Next")||strstr(html,"Next <i");free(html);
+        if(n<0){curl_free(escaped);return -1;}
+        total=(remote-1)*20+n+(more?1:0);if(!more)break;
+    }curl_free(escaped);
+    /* Fetch missing anime summaries separately, never blocking catalog navigation.
+     * Use a detached worker so page selection stays instantaneous. */
+    pid_t worker=fork();
+    if(worker==0){
+        pid_t detached=fork();
+        if(detached<0)_exit(0);
+        if(detached>0)_exit(0);
+        int devnull=open("/dev/null",O_RDWR);
+        if(devnull>=0){dup2(devnull,0);dup2(devnull,1);dup2(devnull,2);if(devnull>2)close(devnull);}
+        for(int i=0;i<used;i++){
+            if(strcmp(entries[i].kind,"kiss")||entries[i].id<=0)continue;
+            char cached[100],url[128];
+            snprintf(cached,sizeof(cached),"media-info-cache/anime-%d.txt",entries[i].id);
+            if(!access(cached,R_OK))continue;
+            snprintf(url,sizeof(url),KISS"/?post_type=anime&p=%d",entries[i].id);
+            char *html=kiss_fetch(url);
+            if(html){kiss_cache_description(entries[i].id,html);free(html);}
+        }
+        _exit(0);
+    }
+    if(worker>0)waitpid(worker,NULL,0);
+    return 0;
+}
+static inline int kiss_list(int page,const char *query){return kiss_list_filtered(page,query,0,0);}
+
+/* Cache an anime synopsis while the existing episode-page request is open.
+ * No extra network call on browsing, and no scripts or embeds are evaluated. */
 typedef struct {int id,number;} KissEpisode;
 static int kiss_episode_compare(const void *a,const void *b){return ((const KissEpisode*)a)->number-((const KissEpisode*)b)->number;}
 static int kiss_episodes(int id,int page){

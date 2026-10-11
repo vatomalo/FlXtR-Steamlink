@@ -245,6 +245,46 @@ static void poster(Entry *e,int slot){
         }
     }free(b.data);
 }
+/* Game artwork: query Internet Archive metadata by exact title. Cache only
+ * successfully decoded covers; failed lookups stay nonfatal. */
+static void game_poster(Entry *e,int slot){
+    if(!e->title[0]||getenv("FLXTR_NO_ART"))return;
+    unsigned long hash=2166136261UL;
+    for(const unsigned char *p=(const unsigned char *)e->title;*p;p++)
+        hash=((hash^*p)*16777619UL)&0xffffffffUL;
+    for(const unsigned char *p=(const unsigned char *)e->meta;*p;p++)
+        hash=((hash^*p)*16777619UL)&0xffffffffUL;
+    char cached[96];snprintf(cached,sizeof(cached),"catalog-cache/game-%08lx.bmp",hash);
+    if(!access(cached,R_OK)){snprintf(e->poster,sizeof(e->poster),"%s",cached);return;}
+    CURL *curl=curl_easy_init();if(!curl)return;
+    char query[200];snprintf(query,sizeof(query),"title:\\"%s\\" AND mediatype:software",e->title);
+    char *escaped=curl_easy_escape(curl,query,0);
+    if(!escaped){curl_easy_cleanup(curl);return;}
+    char url[768];snprintf(url,sizeof(url),"https://archive.org/advancedsearch.php?q=%s&fl%%5B%%5D=identifier&fl%%5B%%5D=title&rows=5&output=json",escaped);
+    curl_free(escaped);curl_easy_cleanup(curl);
+    Buffer buf={NULL,0,96*1024};
+    if(fetch(url,&buf)){free(buf.data);return;}
+    json_object *root=json_tokener_parse(buf.data?buf.data:"");free(buf.data);
+    json_object *response=field(root,"response"),*docs=field(response,"docs");
+    if(docs&&json_object_is_type(docs,json_type_array)){
+        size_t n=json_object_array_length(docs);
+        for(size_t i=0;i<n&&i<5;i++){
+            json_object *o=json_object_array_get_idx(docs,i);
+            const char *title=string(o,"title"),*identifier=string(o,"identifier");
+            /* Never attach a random collection cover to an unrelated game. */
+            if(strcasecmp(title,e->title)||!archive_identifier(identifier))continue;
+            snprintf(e->poster,sizeof(e->poster),ARCHIVE "/services/img/%s",identifier);
+            poster(e,slot);
+            if(e->poster[0]){
+                /* Store separately from rotating page slots for persistent reuse. */
+                SDL_Surface *art=SDL_LoadBMP(e->poster);
+                if(art){if(!SDL_SaveBMP(art,cached))snprintf(e->poster,sizeof(e->poster),"%s",cached);SDL_FreeSurface(art);}
+                break;
+            }
+        }
+    }
+    json_object_put(root);
+}
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
@@ -277,7 +317,7 @@ int main(int argc,char **argv){
     if(rc){curl_global_cleanup();return 1;}
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
-    for(int i=0;i<used;i++){if(strncmp(kind,"games",5)&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
+    for(int i=0;i<used;i++){if(!strcmp(kind,"games"))game_poster(&entries[i],i);else if(strncmp(kind,"games",5)&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART"))poster(&entries[i],i);else entries[i].poster[0]=0;}
     if(cacheable)cache_save();
 output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);

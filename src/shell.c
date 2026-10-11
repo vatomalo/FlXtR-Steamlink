@@ -944,12 +944,12 @@ static void draw(Uint32 tick) {
         int active=tv_block_at(tv_blocks,tv_hour());
         for(int i=0;i<TV_BLOCKS;i++){
             char line[80];snprintf(line,sizeof(line),"%c %02d-%02d  %s",i==active?'>':' ',tv_blocks[i].hour,i+1<TV_BLOCKS?tv_blocks[i+1].hour:24,tv_genres[tv_blocks[i].genre]);
-            int y=143+i*37;if(tv_schedule_on&&i==tv_row)rect(190,y-8,724,30,green,0);
+            int y=126+i*29;if(tv_schedule_on&&i==tv_row)rect(190,y-5,724,26,green,0);
             text(202,y,line,2,i==active||i==tv_row?green:white,58);
             if(tv_schedule_on&&i==tv_row)text(840,y,tv_column?"GENRE":"HOUR",1,green,10);
         }
-        text(194,430,tv_schedule_on?(tv_column?"GENRE: LEFT/RIGHT TO CHOOSE  /  A: EDIT START TIME":"START TIME: LEFT/RIGHT TO CHANGE  /  A: EDIT GENRE"):"A START TV / SELECT EDIT SCHEDULE",1,green,90);
-        text(194,455,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
+        text(194,427,tv_schedule_on?(tv_column?"GENRE: LEFT/RIGHT TO CHOOSE  /  A: EDIT START TIME":"START TIME: LEFT/RIGHT TO CHANGE  /  A: EDIT GENRE"):"A START TV / SELECT EDIT SCHEDULE",1,green,90);
+        text(194,452,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
     }else if(bios_on){
         text(194,94,"GAME BIOS STATUS",3,green,40);
         const char *const *files=bios_files;

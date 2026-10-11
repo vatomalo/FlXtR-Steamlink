@@ -251,12 +251,12 @@ static void subdl_subtitles(int id,int season,int episode,Choice *c){
     char local_key[201]={0};
     if(!key||!*key){
         FILE *f=fopen("subdl-api-key.txt","r");
-        if(f){if(fgets(local_key,sizeof(local_key),f))local_key[strcspn(local_key,"\\r\\n")]=0;fclose(f);}
+        if(f){if(fgets(local_key,sizeof(local_key),f))local_key[strcspn(local_key,"\r\n")]=0;fclose(f);}
         key=local_key;
     }
     if(!*key){subtitle_log("SubDL unavailable (API key not configured)");return;}
     size_t len=strlen(key);
-    if(len>200||strpbrk(key,"\\r\\n"))return;
+    if(len>200||strpbrk(key,"\r\n"))return;
     char uri[512];
     snprintf(uri,sizeof(uri),"https://api.subdl.com/api/v1/subtitles?tmdb_id=%d&type=tv&season_number=%d&episode_number=%d&languages=EN,NO,ES&unpack=1&subs_per_page=30&client=custom_integration",id,season,episode);
     char auth[256];
@@ -287,7 +287,7 @@ static void subdl_subtitles(int id,int season,int episode,Choice *c){
                 else if(!strcasecmp(language,"ES")||!strcasecmp(language,"SPA"))dst=c->subs_spa;
                 if(!dst||*dst)continue;
                 const char *url=string(file,"url");
-                if(strncmp(url,"/subtitle/",10)||strlen(url)>900||strpbrk(url,"\\r\\n\\t"))continue;
+                if(strncmp(url,"/subtitle/",10)||strlen(url)>900||strpbrk(url,"\r\n\t"))continue;
                 snprintf(dst,1024,"https://dl.subdl.com%s",url);
             }
         }

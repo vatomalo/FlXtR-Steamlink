@@ -511,7 +511,30 @@ static void request_catalog(Browse next,int push,int pop){
     if(next.mode==FAVORITES_MODE){
         browse=next;history_size=0;count=0;selection=0;ready_only=0;
         listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));
-        if(access("favorites.tsv",R_OK)==0){read_catalog("favorites.tsv");listing_total=total;}
+        if(access("favorites.tsv",R_OK)==0){
+            read_catalog("favorites.tsv");listing_total=total;
+            /* Repair older Favorites with no stored poster using the source
+             * catalog's index, including game covers populated later. */
+            FILE *idx=fopen("favorites-art-index.tsv","r");
+            if(idx){
+                char row[800];
+                while(fgets(row,sizeof(row),idx)){
+                    char *tab=strchr(row,'\\t');if(!tab)continue;
+                    *tab++=0;tab[strcspn(tab,"\\r\\n")]=0;
+                    if(!*tab||strstr(tab,".."))continue;
+                    if(strncmp(tab,"game-art-cache/",15)&&
+                       strncmp(tab,"catalog-cache/",14)&&
+                       strncmp(tab,"favorites-art/",14))continue;
+                    struct stat st;
+                    if(stat(tab,&st)||!S_ISREG(st.st_mode)||st.st_size<54)continue;
+                    for(int i=0;i<count;i++)
+                        if(!titles[i].poster[0]&&!strcmp(titles[i].title,row)&&
+                           strlen(tab)<sizeof(titles[i].poster))
+                            strcpy(titles[i].poster,tab);
+                }
+                fclose(idx);
+            }
+        }
         else {filter();snprintf(status,sizeof(status),"FAVORITES EMPTY / L3 TO ADD");}
         return;
     }

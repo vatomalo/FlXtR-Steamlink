@@ -105,7 +105,7 @@ static int player_control=-1,play_after_load,player_menu;
 static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
-static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column;
+static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column,tv_quality_retry;
 static int game_autostate,tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
 static Uint32 tv_next_at;
 static void tv_candidate(void);
@@ -644,7 +644,7 @@ static void auto_result(int success){
             if(nf==12&&strlen(field[11])<sizeof(source.subs_spa))strcpy(source.subs_spa,field[11]);
         }
     }fclose(f);}
-    if(source.url[0]){subtitle_route_log("auto-result",&source);launch_player(&source);if(!player_pid)auto_active=0;return;}
+    if(source.url[0]){tv_quality_retry=0;subtitle_route_log("auto-result",&source);launch_player(&source);if(!player_pid)auto_active=0;return;}
     if(pending.mode==6)fprintf(stderr,"Source lookup returned no usable URL for server %s\n",pending.query);
     if(pending.mode==5){
         if(pending.page<pages&&auto_count<40){Browse next=pending;next.page++;auto_request(next);}
@@ -1268,9 +1268,14 @@ static void launch_player(const Title *t) {
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
         int requested_height=t->height?t->height:qualities[quality_setting];
-        /* TV runs continuously: cap its H.264 decode load at 720p on Steam Link.
-         * Honour lower 480p settings; leave on-demand movies untouched. */
-        if(tv_active&&requested_height>720)requested_height=720;
+        /* TV prefers an efficient decode resolution but must also support
+         * sources that only provide 1080p. Retry the SAME source at higher
+         * resolutions only when the player reports no compatible track. */
+        if(tv_active){
+            int preferred=qualities[quality_setting];
+            if(preferred>720)preferred=720;
+            requested_height=tv_quality_retry>=2?1080:tv_quality_retry==1?720:preferred;
+        }
         snprintf(control,sizeof(control),"%d",controls[0]);snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",requested_height);
         snprintf(buffer,sizeof(buffer),"%d",buffer_seconds[buffer_setting]);snprintf(disk,sizeof(disk),"%d",disk_megabytes[disk_setting]);
         snprintf(scale,sizeof(scale),"%d",subtitle_scale);snprintf(delay,sizeof(delay),"%d",subtitle_delay);
@@ -1320,6 +1325,14 @@ static void finish_player(int code){
         if(page>=1&&page<=listing_pages){play_after_load=1;next_catalog_page(direction);return;}
         snprintf(status,sizeof(status),"NO MORE EPISODES IN THIS SEASON");return;
     }
+    if(tv_active&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
+        int current=tv_quality_retry>=1?720:(qualities[quality_setting]>720?720:qualities[quality_setting]);
+        tv_quality_retry=current<720?1:2;
+        fprintf(stderr,"TV source has no compatible %dp track; retrying at %dp\n",current,tv_quality_retry==1?720:1080);
+        launch_player(&playing_title);
+        return;
+    }
+    tv_quality_retry=0;
     /* A finished or interrupted TV episode never creates a resume checkpoint. */
     if(tv_in_break){
         tv_in_break=0;tv_attempts=0;tv_next_at=0;

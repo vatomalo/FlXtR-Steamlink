@@ -54,10 +54,58 @@ static int kiss_list_filtered(int page,const char *query,int genre,int order){
 }
 static inline int kiss_list(int page,const char *query){return kiss_list_filtered(page,query,0,0);}
 
+/* Cache an anime synopsis while the existing episode-page request is open.
+ * No extra network call on browsing, and no scripts or embeds are evaluated. */
+static void kiss_cache_description(int id,const char *html){
+    if(id<=0||!html)return;
+    char description[400]="";
+    const char *meta=html;
+    while((meta=strstr(meta,"<meta"))!=NULL){
+        const char *end=strchr(meta,'>');
+        if(!end)break;
+        char name[80]="",property[80]="";
+        kiss_attr(meta,"name",name,sizeof(name));
+        kiss_attr(meta,"property",property,sizeof(property));
+        if(!strcasecmp(name,"description")||!strcasecmp(property,"og:description")){
+            kiss_attr(meta,"content",description,sizeof(description));
+            if(description[0])break;
+        }
+        meta=end+1;
+    }
+    /* Alternate anime detail layouts store their synopsis in a paragraph. */
+    if(!description[0]){
+        const char *section=strstr(html,"class=\"synp\"");
+        if(!section)section=strstr(html,"class=\"entry-content\"");
+        if(section){
+            const char *p=strchr(section,'>');
+            if(p){
+                p++;
+                char raw[1024];size_t n=0;
+                while(*p&&n+1<sizeof(raw)&&strncmp(p,"</p>",4)&&strncmp(p,"</div>",6)){
+                    if(*p=='<'){const char *close=strchr(p,'>');if(!close)break;p=close+1;
+                        if(n&&raw[n-1]!=' ')raw[n++]=' ';
+                    }else raw[n++]=*p++;
+                }
+                raw[n]=0;
+                kiss_unescape(description,sizeof(description),raw);
+            }
+        }
+    }
+    if(!description[0])return;
+    mkdir("media-info-cache",0700);
+    char dest[100],temp[120];
+    snprintf(dest,sizeof(dest),"media-info-cache/anime-%d.txt",id);
+    snprintf(temp,sizeof(temp),"%s.next",dest);
+    FILE *f=fopen(temp,"w");
+    if(f){fprintf(f,"%s\n",description);
+        if(!fclose(f))rename(temp,dest);else unlink(temp);
+    }
+}
 typedef struct {int id,number;} KissEpisode;
 static int kiss_episode_compare(const void *a,const void *b){return ((const KissEpisode*)a)->number-((const KissEpisode*)b)->number;}
 static int kiss_episodes(int id,int page){
     char url[128];snprintf(url,sizeof(url),KISS"/?post_type=anime&p=%d",id);char *html=kiss_fetch(url);if(!html)return -1;
+    kiss_cache_description(id,html);
     KissEpisode *episodes=calloc(5000,sizeof(*episodes));if(!episodes){free(html);return -1;}
     int n=0;char *p=html;
     while((p=strstr(p,"<a "))&&n<5000){char cls[128],number[32],ident[32];

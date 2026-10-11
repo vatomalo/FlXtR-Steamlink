@@ -946,9 +946,10 @@ static void draw(Uint32 tick) {
             char line[80];snprintf(line,sizeof(line),"%c %02d-%02d  %s",i==active?'>':' ',tv_blocks[i].hour,i+1<TV_BLOCKS?tv_blocks[i+1].hour:24,tv_genres[tv_blocks[i].genre]);
             int y=143+i*37;if(tv_schedule_on&&i==tv_row)rect(190,y-8,724,30,green,0);
             text(202,y,line,2,i==active||i==tv_row?green:white,58);
+            if(tv_schedule_on&&i==tv_row)text(840,y,tv_column?"GENRE":"HOUR",1,green,10);
         }
-        text(194,430,tv_schedule_on?(tv_column?"EDIT GENRE: LEFT/RIGHT / A EDIT HOUR":"EDIT START HOUR: LEFT/RIGHT / A EDIT GENRE"):"A START TV / SELECT EDIT SCHEDULE",1,green,90);
-        text(194,455,tv_schedule_on?"UP/DOWN ROW / B SAVE":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
+        text(194,430,tv_schedule_on?(tv_column?"GENRE: LEFT/RIGHT TO CHOOSE  /  A: EDIT START TIME":"START TIME: LEFT/RIGHT TO CHANGE  /  A: EDIT GENRE"):"A START TV / SELECT EDIT SCHEDULE",1,green,90);
+        text(194,455,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
     }else if(bios_on){
         text(194,94,"GAME BIOS STATUS",3,green,40);
         const char *const *files=bios_files;
@@ -1463,7 +1464,7 @@ static void action(SDL_Keycode key) {
                 case 12:tv_rating_weight=(tv_rating_weight-1+step+5)%5+1;break;
                 case 13:tv_popularity_weight=(tv_popularity_weight+step+6)%6;break;
                 case 14:tv_variety_weight=(tv_variety_weight+step+6)%6;break;
-                case 7:tv_schedule_on=1;tv_row=0;tv_column=1;break;
+                case 7:tv_schedule_on=1;settings_on=0;tv_row=0;tv_column=1;break;
                 case 6:subtitle_delay+=step;if(subtitle_delay>5)subtitle_delay=-5;if(subtitle_delay< -5)subtitle_delay=5;break;
             }save_settings();
         }return;

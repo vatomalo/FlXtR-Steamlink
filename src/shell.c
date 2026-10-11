@@ -138,7 +138,7 @@ static void save_settings(void){
 static void load_settings(void){
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
-    int theme_found=0;
+    int theme_found=0,old_tv_schedule=0;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
         if(!strcmp(key,"tv_rating")&&value>=1&&value<=5)tv_rating_weight=value;
         else if(!strcmp(key,"tv_popularity")&&value>=0&&value<=5)tv_popularity_weight=value;
@@ -154,11 +154,31 @@ static void load_settings(void){
         else if(!strcmp(key,"subtitles")&&value>=0&&value<5)subtitle_setting=value;
         else if(!strcmp(key,"scale")&&value>=2&&value<=3)subtitle_scale=value;
         else if(!strcmp(key,"delay")&&value>=-5&&value<=5)subtitle_delay=value;
-        else if(!strncmp(key,"tv_hour_",8)&&strlen(key)==9&&key[8]>='0'&&key[8]<'0'+TV_BLOCKS)tv_blocks[key[8]-'0'].hour=value;
+        else if(!strncmp(key,"tv_hour_",8)&&strlen(key)==9&&key[8]>='0'&&key[8]<'0'+TV_BLOCKS){tv_blocks[key[8]-'0'].hour=value;if(key[8]>='7')old_tv_schedule=1;}
         else if(!strncmp(key,"tv_genre_",9)&&strlen(key)==10&&key[9]>='0'&&key[9]<'0'+TV_BLOCKS)tv_blocks[key[9]-'0'].genre=value;
     }fclose(f);
     if(!theme_found)menu_theme=monochrome_menu?1:0;
     monochrome_menu=menu_theme==1;
+    if(!old_tv_schedule){
+        /* Upgrade old seven-slot schedules without discarding custom genres.
+         * Insert three new hourly boundaries into the widest existing gaps. */
+        TvBlock upgraded[TV_BLOCKS];
+        for(int i=0;i<7;i++)upgraded[i]=tv_blocks[i];
+        int n=7;
+        for(int extra=0;extra<3;extra++){
+            int best=-1,width=1;
+            for(int i=0;i<n;i++){
+                int end=i+1<n?upgraded[i+1].hour:24;
+                if(end-upgraded[i].hour>width){width=end-upgraded[i].hour;best=i;}
+            }
+            if(best<0)break;
+            int hour=upgraded[best].hour+width/2;
+            memmove(&upgraded[best+2],&upgraded[best+1],(size_t)(n-best-1)*sizeof(TvBlock));
+            upgraded[best+1]=(TvBlock){hour,upgraded[best].genre};
+            n++;
+        }
+        if(n==TV_BLOCKS)memcpy(tv_blocks,upgraded,sizeof(tv_blocks));
+    }
     if(!tv_valid(tv_blocks))memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
 }
 static float flow_position;

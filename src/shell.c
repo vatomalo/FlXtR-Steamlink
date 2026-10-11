@@ -47,7 +47,7 @@ static int tv_breaks=1,tv_break_due,tv_in_break,filters_on,filter_row,filter_ori
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
-static int menu_theme=0; /* 0 white metal, 1 RomanticCrimsonSkulls */
+static int menu_theme=0; /* 0 white metal, 2 RomanticCrimsonSkulls */
 static int settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor"};
@@ -62,7 +62,7 @@ static void load_settings(void){
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
-        if(!strcmp(key,"menu_theme")&&(value==0||value==1))menu_theme=value;
+        if(!strcmp(key,"menu_theme")&&(value==0||value==1||value==2))menu_theme=value==1?2:value;
         else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
         else if(!strcmp(key,"buffer")&&value>=0&&value<3)buffer_setting=value;
@@ -159,8 +159,9 @@ static int open_ui(void) {
     fprintf(stderr,"Shell display: %s window=%dx%d output=%dx%d logical=%dx%d\n",driver?driver:"unknown",width,height,output_w,output_h,W,H);
     green=(SDL_Color){116,255,132,255};dim=(SDL_Color){66,126,77,255};white=(SDL_Color){212,226,214,255};
     SDL_DestroyTexture(background);background=NULL;
-    if(menu_theme==1){
+    if(menu_theme==2){
         SDL_Surface *surface=IMG_Load("assets/backgrounds/romantic_crimson_skulls.png");
+        if(surface)fprintf(stderr,"RomanticCrimsonSkulls PNG loaded: %dx%d\\n",surface->w,surface->h);
         if(!surface){
             /* SDL_LoadBMP works even when the device lacks the PNG decoder. */
             surface=SDL_LoadBMP("assets/backgrounds/romantic_crimson_skulls.bmp");
@@ -702,7 +703,7 @@ static void action(SDL_Keycode key) {
                 case 4:subtitle_setting=(subtitle_setting+step+4)%4;break;
                 case 5:subtitle_scale=subtitle_scale==2?3:2;break;
                 case 8:tv_breaks=!tv_breaks;break;
-                case 9:menu_theme=!menu_theme;close_ui();if(open_ui())running=0;break;
+                case 9:menu_theme=menu_theme==2?0:2;close_ui();if(open_ui())running=0;break;
                 case 7:tv_schedule_on=1;tv_row=0;tv_column=1;break;
                 case 6:subtitle_delay+=step;if(subtitle_delay>5)subtitle_delay=-5;if(subtitle_delay< -5)subtitle_delay=5;break;
             }save_settings();

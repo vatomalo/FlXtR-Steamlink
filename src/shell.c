@@ -941,7 +941,7 @@ static void draw(Uint32 tick) {
 #ifdef FLXTR_DESKTOP
         const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT"};
 #else
-        const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME"};
+        const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT"};
 #endif
         char values[15][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
@@ -1395,7 +1395,7 @@ static void action(SDL_Keycode key) {
                 case 9:menu_theme=(menu_theme+step+3)%3;monochrome_menu=menu_theme==1;load_menu_background();break;
                 case 10:bios_on=1;break;
                 case 11:game_autostate=!game_autostate;break;
-                case 12:tv_rating_weight=(tv_rating_weight+step+4)%5+1;break;
+                case 12:tv_rating_weight=(tv_rating_weight-1+step+5)%5+1;break;
                 case 13:tv_popularity_weight=(tv_popularity_weight+step+6)%6;break;
                 case 14:tv_variety_weight=(tv_variety_weight+step+6)%6;break;
                 case 7:tv_schedule_on=1;tv_row=0;tv_column=1;break;

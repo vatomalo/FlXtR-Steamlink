@@ -347,7 +347,8 @@ int main(int argc,char **argv) {
     if(!video){fprintf(stderr,"SLVideo stream unavailable\n");goto done;}
     view_context=context;source_w=vp->width;source_h=vp->height;
     AVRational sar=av_guess_sample_aspect_ratio(fmt,vs,NULL);sar_n=sar.num;sar_d=sar.den;
-    SLVideo_GetDisplayResolution(context,&screen_w,&screen_h);apply_view(0);
+    SLVideo_GetDisplayResolution(context,&screen_w,&screen_h);
+    /* The hardware viewport does not exist until the first decoded frame. */
     AVRational fps=av_guess_frame_rate(fmt,vs,NULL);
     if(fps.num>0&&fps.den>0)SLVideo_SetStreamTargetFramerate(video,fps.num,fps.den);
     rc=av_bsf_alloc(av_bsf_get_by_name("h264_mp4toannexb"),&bsf);if(rc<0)goto done;
@@ -435,7 +436,9 @@ int main(int argc,char **argv) {
                 if(submitted_at-handoff_start>20000&&slow_submissions++<30)
                     fprintf(stderr,"Hardware frame submission delay: %.1f ms frame=%u\n",
                         (submitted_at-handoff_start)/1000.0,frames);
-                frames++;av_packet_unref(filtered);
+                frames++;
+                if(frames==1)apply_view(0);
+                av_packet_unref(filtered);
             }
             if(rc==AVERROR(EAGAIN)||rc==AVERROR_EOF)rc=0;
         }else {

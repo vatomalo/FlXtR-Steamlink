@@ -519,8 +519,8 @@ static void request_catalog(Browse next,int push,int pop){
             if(idx){
                 char row[800];
                 while(fgets(row,sizeof(row),idx)){
-                    char *tab=strchr(row,'\\t');if(!tab)continue;
-                    *tab++=0;tab[strcspn(tab,"\\r\\n")]=0;
+                    char *tab=strchr(row,'\t');if(!tab)continue;
+                    *tab++=0;tab[strcspn(tab,"\r\n")]=0;
                     if(!*tab||strstr(tab,".."))continue;
                     if(strncmp(tab,"game-art-cache/",15)&&
                        strncmp(tab,"catalog-cache/",14)&&

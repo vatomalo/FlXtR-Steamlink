@@ -412,9 +412,12 @@ static void game_art_prefetch(void){
                 char temp[104];snprintf(temp,sizeof(temp),"%s.tmp.%ld",file,(long)getpid());
                 FILE *in=fopen(copy.poster,"rb"),*out=in?fopen(temp,"wb"):NULL;
                 int good=in&&out;unsigned char buf[4096];size_t n;
-                if(good){while((n=fread(buf,1,sizeof(buf),in))>0)
-                    if(fwrite(buf,1,n,out)!=n){good=0;break;}
-                    if(ferror(in))good=0;}
+                if(good){
+                    while((n=fread(buf,1,sizeof(buf),in))>0){
+                        if(fwrite(buf,1,n,out)!=n){good=0;break;}
+                    }
+                    if(ferror(in))good=0;
+                }
                 if(in)fclose(in);
                 if(out&&fclose(out))good=0;
                 if(good)rename(temp,file);else unlink(temp);

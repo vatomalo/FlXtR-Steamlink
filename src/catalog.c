@@ -511,6 +511,20 @@ int main(int argc,char **argv){
     if(cacheable)unlink(cache_file);
     if(!getenv("FLXTR_NO_ART")&&(!strcmp(kind,"games")||!strcmp(kind,"games-system")))game_art_prefetch();
     for(int i=0;i<used;i++){if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-download")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART")){if(strncmp(entries[i].poster,"game-art-cache/",15))poster(&entries[i],i);}else entries[i].poster[0]=0;}
+    /* A durable title-to-poster index allows existing Favorites saved before
+     * artwork support to inherit art as the original library is revisited. */
+    if(used>0&&strcmp(kind,"games-platforms")&&strcmp(kind,"games-folders")){
+        FILE *index=fopen("favorites-art-index.tsv","a");
+        if(index){
+            for(int i=0;i<used;i++){
+                Entry *e=&entries[i];
+                if(e->poster[0]&&!strchr(e->title,'\\t')&&!strchr(e->title,'\\n')&&
+                   !strchr(e->poster,'\\t')&&!strchr(e->poster,'\\n'))
+                    fprintf(index,"%s\\t%s\\n",e->title,e->poster);
+            }
+            fclose(index);
+        }
+    }
     if(cacheable)cache_save();
 output:
     printf("# pages=%d total=%d\n",total?(total+PAGE_SIZE-1)/PAGE_SIZE:1,total);

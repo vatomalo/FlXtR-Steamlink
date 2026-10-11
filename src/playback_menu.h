@@ -31,7 +31,7 @@ static void menu_draw(void){
     /* Keep the overlay visible while repainting to avoid a blank-frame flash. */
     uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(menu_overlay,&pixels,&pitch);
     if(!pixels||pitch<740*4)return;
-    for(int y=0;y<416;y++)for(int x=0;x<740;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xe8000000;
+    for(int y=0;y<416;y++)for(int x=0;x<740;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=seek_scrubbing?0x38000000:0xe8000000;
     char rows[12][80],heading[80];int seconds=(int)(seek_scrubbing?seek_target:playback_position());
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");

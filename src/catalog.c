@@ -386,52 +386,75 @@ static void game_art_path(const char *key,char *out,size_t capacity){
     snprintf(out,capacity,"game-art-cache/%08lx.bmp",hash);
 }
 static void game_art_prefetch(void){
-    int needed=0;
-    for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
-        char file[80];game_art_path(entries[i].poster,file,sizeof(file));
-        struct stat st;
-        if(stat(file,&st)||st.st_size<54)needed++;
-    }
-    if(!needed)goto map_paths;
+    /* Queue missing covers from EVERY visited page. A single detached worker
+     * drains this durable queue, including pages visited while it was busy. */
     mkdir("game-art-cache",0700);
-    int lock=open("game-art-cache/.worker.lock",O_CREAT|O_RDWR,0600);
-    if(lock<0)goto map_paths;
-    if(flock(lock,LOCK_EX|LOCK_NB)){close(lock);goto map_paths;}
-    pid_t child=fork();
-    if(child<0){close(lock);goto map_paths;}
-    if(child==0){
-        /* Do not hold the UI catalog pipe open after its result is printed. */
-        int devnull=open("/dev/null",O_RDWR);
-        if(devnull>=0){dup2(devnull,0);dup2(devnull,1);dup2(devnull,2);if(devnull>2)close(devnull);}
-        for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
-            char file[80];game_art_path(entries[i].poster,file,sizeof(file));
-            struct stat st;if(!stat(file,&st)&&st.st_size>=54)continue;
-            Entry copy=entries[i];poster(&copy,i);
-            if(!strncmp(copy.poster,"catalog-cache/",14)){
-                /* Atomic promotion to a cache independent of catalog page slots. */
-                char temp[104];snprintf(temp,sizeof(temp),"%s.tmp.%ld",file,(long)getpid());
-                FILE *in=fopen(copy.poster,"rb"),*out=in?fopen(temp,"wb"):NULL;
-                int good=in&&out;unsigned char buf[4096];size_t n;
-                if(good){
-                    while((n=fread(buf,1,sizeof(buf),in))>0){
-                        if(fwrite(buf,1,n,out)!=n){good=0;break;}
-                    }
-                    if(ferror(in))good=0;
+    int queue=open("game-art-cache/.requests",O_CREAT|O_WRONLY|O_APPEND,0600);
+    if(queue>=0){
+        if(!flock(queue,LOCK_EX)){
+            FILE *out=fdopen(dup(queue),"a");
+            if(out){
+                for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
+                    char file[80];game_art_path(entries[i].poster,file,sizeof(file));
+                    struct stat st;
+                    if(stat(file,&st)||st.st_size<54)fprintf(out,"%s\\n",entries[i].poster);
                 }
-                if(in)fclose(in);
-                if(out&&fclose(out))good=0;
-                if(good)rename(temp,file);else unlink(temp);
+                fclose(out);
             }
+            flock(queue,LOCK_UN);
         }
-        close(lock);_exit(0);
+        close(queue);
     }
-    close(lock);
-map_paths:
+    int lock=open("game-art-cache/.worker.lock",O_CREAT|O_RDWR,0600);
+    if(lock>=0&&!flock(lock,LOCK_EX|LOCK_NB)){
+        pid_t child=fork();
+        if(child==0){
+            int devnull=open("/dev/null",O_RDWR);
+            if(devnull>=0){dup2(devnull,0);dup2(devnull,1);dup2(devnull,2);if(devnull>2)close(devnull);}
+            for(int pass=0;pass<24;pass++){
+                int fd=open("game-art-cache/.requests",O_RDWR|O_CREAT,0600);
+                if(fd<0)break;
+                char requests[8192];ssize_t n=0;
+                if(!flock(fd,LOCK_EX)){
+                    n=read(fd,requests,sizeof(requests)-1);
+                    if(n>0){ftruncate(fd,0);lseek(fd,0,SEEK_SET);}
+                    flock(fd,LOCK_UN);
+                }
+                close(fd);
+                if(n<=0)break;
+                requests[n]=0;
+                char *save=NULL;
+                for(char *line=strtok_r(requests,"\\n",&save);line;line=strtok_r(NULL,"\\n",&save)){
+                    if(strncmp(line,"gameart:",8)||strlen(line)>400)continue;
+                    char file[80];game_art_path(line,file,sizeof(file));
+                    struct stat st;if(!stat(file,&st)&&st.st_size>=54)continue;
+                    Entry e={0};snprintf(e.poster,sizeof(e.poster),"%s",line);
+                    poster(&e,0);
+                    if(strncmp(e.poster,"catalog-cache/",14))continue;
+                    char temp[104];snprintf(temp,sizeof(temp),"%s.tmp.%ld",file,(long)getpid());
+                    FILE *in=fopen(e.poster,"rb"),*out=in?fopen(temp,"wb"):NULL;
+                    int good=in&&out;unsigned char buf[4096];size_t count;
+                    if(good){
+                        while((count=fread(buf,1,sizeof(buf),in))>0){
+                            if(fwrite(buf,1,count,out)!=count){good=0;break;}
+                        }
+                        if(ferror(in))good=0;
+                    }
+                    if(in)fclose(in);
+                    if(out&&fclose(out))good=0;
+                    if(good)rename(temp,file);else unlink(temp);
+                }
+            }
+            close(lock);_exit(0);
+        }
+        close(lock);
+    }else if(lock>=0)close(lock);
     for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
         char file[80];game_art_path(entries[i].poster,file,sizeof(file));
         snprintf(entries[i].poster,sizeof(entries[i].poster),"%s",file);
     }
 }
+
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}

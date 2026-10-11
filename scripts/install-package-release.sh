@@ -10,13 +10,14 @@ case "$sha" in *[!0123456789abcdef]*|'') echo "Invalid release tag" >&2;exit 2;;
 [ "${#sha}" -eq 40 ] || { echo "Expected 40-digit commit SHA" >&2; exit 2; }
 [ -f ./greenlink ] && [ -f ./greenlink.sh ] || { echo "Run from FlXtR installation directory" >&2;exit 2; }
 base="https://github.com/vatomalo/FlXtR-Steamlink/releases/download/$tag"
+[ -r certs/cacert.pem ] || { echo "Missing certs/cacert.pem" >&2;exit 1; }
 tmp="./.package-install-$$"
 mkdir "$tmp"
 cleanup(){ rm -rf "$tmp"; }
 trap cleanup 0
 trap 'exit 1' 1 2 15
-curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 180 "$base/build-info.txt" -o "$tmp/build-info.txt"
-curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 300 "$base/greenlink.tgz" -o "$tmp/greenlink.tgz"
+curl -fLsS --cacert certs/cacert.pem --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 180 "$base/build-info.txt" -o "$tmp/build-info.txt"
+curl -fLsS --cacert certs/cacert.pem --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 300 "$base/greenlink.tgz" -o "$tmp/greenlink.tgz"
 version=$(sed -n 's/^version=//p' "$tmp/build-info.txt")
 digest=$(sed -n 's/^sha256=//p' "$tmp/build-info.txt")
 [ "$version" = "$sha" ] || { echo "Manifest version mismatch" >&2; exit 1; }

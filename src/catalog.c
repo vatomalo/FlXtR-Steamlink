@@ -318,6 +318,7 @@ static void poster(Entry *e,int slot){
             }
         }
 
+        /* Prefer box covers; title images and snapshots are fallbacks. */
         fprintf(stderr,"FlXtR game art request: %s\n",url);
         if(!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8)){
             SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);

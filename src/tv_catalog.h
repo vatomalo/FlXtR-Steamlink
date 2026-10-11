@@ -57,9 +57,9 @@ static int tv_pick(int genre,int seed){
             if(tv_recent_has(id,season,episode,0)){json_object_put(root);return -1;}
             Entry *e=&entries[used++];clean(e->title,sizeof(e->title),title);strcpy(e->poster,art);strcpy(e->kind,"episode");
             e->id=id;e->season=season;e->episode=episode;
-            int runtime=number(ep,"runtime");
-            if(runtime<1||runtime>240)runtime=genre==11||genre==4?24:genre==8?50:44;
-            snprintf(e->meta,sizeof(e->meta),"TV MODE / %d MIN / S%02d E%02d / %.35s",runtime,season,episode,string(ep,"name"));
+            int runtime=number(ep,"runtime"),estimated=runtime<1||runtime>240;
+            if(estimated)runtime=genre==11||genre==4?24:genre==8?50:44;
+            snprintf(e->meta,sizeof(e->meta),"TV MODE / %s%d MIN / S%02d E%02d / %.35s",estimated?"~":"",runtime,season,episode,string(ep,"name"));
             total=1;json_object_put(root);return 0;
         }json_object_put(root);season++;episode=1;
     }return -1;

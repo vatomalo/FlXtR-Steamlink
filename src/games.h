@@ -139,25 +139,38 @@ static int games_list_filtered(int page,int refresh,int folder){
         strcpy(e->kind,browse_zip?"game-zip":"game");e->id=i+1;
         /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
         const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
-        const char *systems[]={"Nintendo - Nintendo Entertainment System","Nintendo - Super Nintendo Entertainment System","Nintendo - Game Boy Advance","Nintendo - Game Boy Color","Nintendo - Game Boy","Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo"};
-        const char *needle[]={"fceumm","snes9x","gpsp","gambatte","gambatte","pcsx_rearmed","ppsspp","fbneo"};
+        /* Artwork classification is independent of the selected launch core. */
         const char *system=NULL;
-        if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")||strstr(core,"fbneo")||strstr(core,"fbalpha2012")||(!strcasecmp(e->title,"mslug5")||!strcasecmp(e->title,"lastbld2")||!strncasecmp(e->title,"Samurai Shodown",14)||!strncasecmp(e->title,"Garou",5)||!strncasecmp(e->title,"kof",3)))system="SNK - Neo Geo";
-        else for(int k=0;k<8;k++)if(strstr(core,needle[k])){system=systems[k];break;}
+        const char *ext=strrchr(rom,'.');
+        if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")||
+           strstr(core,"fbneo")||strstr(core,"fbalpha2012")||
+           !strncasecmp(e->title,"kof",3)||!strncasecmp(e->title,"mslug",5)||
+           !strncasecmp(e->title,"lastbld",7)||!strncasecmp(e->title,"samsho",6)||
+           !strncasecmp(e->title,"Samurai Shodown",14)||!strncasecmp(e->title,"Garou",5))
+            system="SNK - Neo Geo";
+        else if(strstr(core,"fceumm")||strstr(core,"nestopia")||(ext&&!strcasecmp(ext,".nes")))
+            system="Nintendo - Nintendo Entertainment System";
+        else if(strstr(core,"snes9x")||strstr(core,"bsnes")||(ext&&(!strcasecmp(ext,".sfc")||!strcasecmp(ext,".smc"))))
+            system="Nintendo - Super Nintendo Entertainment System";
+        else if(strstr(core,"gpsp")||strstr(core,"mgba")||(ext&&!strcasecmp(ext,".gba")))
+            system="Nintendo - Game Boy Advance";
+        else if(ext&&!strcasecmp(ext,".gbc"))system="Nintendo - Game Boy Color";
+        else if(strstr(core,"gambatte")||(ext&&!strcasecmp(ext,".gb")))system="Nintendo - Game Boy";
+        else if(strstr(core,"pcsx_rearmed"))system="Sony - PlayStation";
+        else if(strstr(core,"ppsspp"))system="Sony - PlayStation Portable";
+        else if(strstr(core,"picodrive")||strstr(core,"genesis_plus_gx"))
+            system="Sega - Mega Drive - Genesis";
         if(system){
             char stem[128];snprintf(stem,sizeof(stem),"%s",e->title);
             char thumb[PATH_MAX];
             snprintf(thumb,sizeof(thumb),"%s/.home/.config/retroarch/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
             if(!game_file(thumb))snprintf(thumb,sizeof(thumb),"%s/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
             if(!game_file(thumb)){
-                /* A small built-in name map for arcade filenames; preserve the ROM/title. */
                 const char *art_title=e->title;
-                const char *short_names[]={"kof2002","kof94","lastblad","mslug","mslug2","mslug3","mslug4","mslug5","samsho","samsho2","garou"};
-                const char *full_names[]={"The King of Fighters 2002","The King of Fighters '94","The Last Blade","Metal Slug","Metal Slug 2","Metal Slug 3","Metal Slug 4","Metal Slug 5","Samurai Shodown","Samurai Shodown II","Garou - Mark of the Wolves"};
-                if(!strcmp(system,"SNK - Neo Geo")){
-                    for(size_t k=0;k<sizeof(short_names)/sizeof(short_names[0]);k++)
-                        if(!strcasecmp(e->title,short_names[k])){art_title=full_names[k];break;}
-                }
+                const char *short_names[]={"kof2002","kof94","lastblad","lastbld2","mslug","mslug2","mslug3","mslug4","mslug5","samsho","samsho2","garou","msword","gng","Pocky&Rocky","SecretofMana","SecretofMana2","SuperMarioAll-Stars+SuperMarioWorld"};
+                const char *full_names[]={"The King of Fighters 2002","The King of Fighters '94","The Last Blade","The Last Blade 2","Metal Slug","Metal Slug 2","Metal Slug 3","Metal Slug 4","Metal Slug 5","Samurai Shodown","Samurai Shodown II","Garou - Mark of the Wolves","Magic Sword","Ghosts'n Goblins","Pocky & Rocky","Secret of Mana","Seiken Densetsu 3","Super Mario All-Stars + Super Mario World"};
+                for(size_t k=0;k<sizeof(short_names)/sizeof(short_names[0]);k++)
+                    if(!strcasecmp(e->title,short_names[k])){art_title=full_names[k];break;}
                 if(strlen(system)+strlen(art_title)+10<sizeof(e->poster))
                     snprintf(e->poster,sizeof(e->poster),"gameart:%s|%s",system,art_title);
             }

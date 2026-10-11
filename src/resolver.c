@@ -248,7 +248,13 @@ static int qualities(json_object *root,const char *server){
  * No API keys or response URLs are written to diagnostic logs. */
 static void subdl_subtitles(int id,int season,int episode,Choice *c){
     const char *key=getenv("SUBDL_API_KEY");
-    if(!key||!*key){subtitle_log("SubDL unavailable (SUBDL_API_KEY not configured)");return;}
+    char local_key[201]={0};
+    if(!key||!*key){
+        FILE *f=fopen("subdl-api-key.txt","r");
+        if(f){if(fgets(local_key,sizeof(local_key),f))local_key[strcspn(local_key,"\\r\\n")]=0;fclose(f);}
+        key=local_key;
+    }
+    if(!*key){subtitle_log("SubDL unavailable (API key not configured)");return;}
     size_t len=strlen(key);
     if(len>200||strpbrk(key,"\\r\\n"))return;
     char uri[512];

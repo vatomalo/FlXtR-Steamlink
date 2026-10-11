@@ -1028,7 +1028,12 @@ static void draw(Uint32 tick) {
             snprintf(detail_path,sizeof(detail_path),"media-info-cache/%s-%d.txt",t->kind,t->id);
             FILE *f=fopen(detail_path,"r");
             if(f){if(!fgets(detail,sizeof(detail),f))detail[0]=0;fclose(f);}
-        }else if(!strcmp(t->kind,"game")||!strcmp(t->kind,"game-zip")||!strcmp(t->kind,"kiss")){
+        }else if(!strcmp(t->kind,"kiss")&&t->id>0){
+            snprintf(detail_path,sizeof(detail_path),"media-info-cache/anime-%d.txt",t->id);
+            FILE *f=fopen(detail_path,"r");
+            if(f){if(!fgets(detail,sizeof(detail),f))detail[0]=0;fclose(f);}
+        }
+        if(!detail[0]&&(!strcmp(t->kind,"game")||!strcmp(t->kind,"game-zip")||!strcmp(t->kind,"kiss"))){
             /* Optional local game/anime descriptions keyed by title, kept
              * separate from artwork and launch IDs. No network on selection. */
             FILE *f=fopen("media-descriptions.tsv","r");

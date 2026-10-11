@@ -83,3 +83,28 @@ for name, payload, mime in (
 published = request(base + "/releases/" + str(release["id"]),
                     b'{"draft":false,"make_latest":"false"}', method="PATCH")
 print(published["html_url"])
+
+# Publish the matching shell as the latest release too. The Steam Link's
+# existing packaging/update.sh only checks /releases/latest/download/shell-manifest.txt.
+# Without a shell release, a full-package publication leaves installed devices
+# running an older executable even if the PNG is already in their assets directory.
+shell_tag = "shell-" + version
+shell_release = request(base + "/releases", json.dumps({
+    "tag_name": shell_tag,
+    "target_commitish": version,
+    "name": "Steam Link shell " + version[:8],
+    "draft": True,
+    "make_latest": "false",
+    "body": "Matching shell executable for package-" + version
+            + ". Updates the menu loader; the complete package includes assets.",
+}).encode())
+shell_upload = shell_release["upload_url"].split("{", 1)[0]
+for name, payload, mime in (
+    ("greenlink", shell.read_bytes(), "application/octet-stream"),
+    ("shell-manifest.txt", manifest.encode(), "text/plain"),
+):
+    request(shell_upload + "?" + urllib.parse.urlencode({"name": name}), payload, mime)
+shell_published = request(
+    base + "/releases/" + str(shell_release["id"]),
+    b'{"draft":false,"make_latest":"true"}', method="PATCH")
+print("Auto-updater shell release: " + shell_published["html_url"])

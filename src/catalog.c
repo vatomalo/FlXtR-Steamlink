@@ -321,18 +321,41 @@ static void poster(Entry *e,int slot){
         /* Prefer box covers; title images and snapshots are fallbacks. */
         fprintf(stderr,"FlXtR game art request: %s\n",url);
         int got_png=!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8);
-        /* Title screens and screenshots share many canonical Libretro names. */
+        /* Look up canonical names separately for title screens and snaps. */
         for(int alt=0;alt<2&&!got_png;alt++){
-            char *part=strstr(url,"/Named_Boxarts/");
-            if(!part)part=strstr(url,"/Named_Titles/");
-            if(!part)break;
-            const char *replace=alt==0?"/Named_Titles/":"/Named_Snaps/";
-            char next_url[1024];size_t prefix=(size_t)(part-url);
-            int len=snprintf(next_url,sizeof(next_url),"%.*s%s%s",(int)prefix,url,replace,part+strlen(alt==0?"/Named_Boxarts/":"/Named_Titles/"));
-            if(len<0||len>=(int)sizeof(next_url))break;
-            snprintf(url,sizeof(url),"%s",next_url);
+            char *encoded=curl_easy_escape(NULL,system,0);
+            char *title=curl_easy_escape(NULL,sep,0);
+            if(!encoded||!title){curl_free(encoded);curl_free(title);break;}
+            const char *type=alt==0?"Named_Titles":"Named_Snaps";
+            char directory[512],next_url[1024];
+            int dl=snprintf(directory,sizeof(directory),"https://thumbnails.libretro.com/%s/%s/",encoded,type);
+            curl_free(encoded);
+            if(dl<0||dl>=(int)sizeof(directory)){curl_free(title);continue;}
+            int len=snprintf(next_url,sizeof(next_url),"%s%s.png",directory,title);
+            curl_free(title);
+            if(len<0||len>=(int)sizeof(next_url))continue;
+            Buffer listing={NULL,0,12*1024*1024};
+            if(!fetch(directory,&listing)){
+                char wanted[160];size_t wn=art_normalize(sep,wanted,sizeof(wanted));
+                for(char *p=listing.data;(p=strstr(p,"href=\""))!=NULL;p+=6){
+                    char *first=p+6,*last=strchr(first,'"');
+                    if(!last||last-first>600)continue;
+                    char href[640];memcpy(href,first,(size_t)(last-first));href[last-first]=0;
+                    int decoded_len=0;
+                    char *decoded=curl_easy_unescape(NULL,href,0,&decoded_len);
+                    if(!decoded)continue;
+                    char found[640];size_t fn=art_normalize(decoded,found,sizeof(found));
+                    int match=wn>=4&&fn>=wn&&!strncmp(wanted,found,wn)&&strstr(decoded,".png")!=NULL;
+                    curl_free(decoded);
+                    if(match){
+                        size_t x=strlen(directory),z=strlen(href);
+                        if(x+z<sizeof(next_url)){memcpy(next_url,directory,x);memcpy(next_url+x,href,z+1);break;}
+                    }
+                }
+            }
+            free(listing.data);
             free(b.data);b.data=NULL;b.length=0;
-            got_png=!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8);
+            got_png=!fetch(next_url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8);
         }
         if(got_png){
             SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);

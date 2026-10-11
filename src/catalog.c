@@ -641,7 +641,7 @@ int main(int argc,char **argv){
     else if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&!*argv[3]&&!id&&!season&&!local_list(kind,page,argv[3]))rc=0;
     else rc=remote_list(kind,page,argv[3],id,season);
     if(rc){curl_global_cleanup();return 1;}
-    if(!strcmp(kind,"games")||!strcmp(kind,"games-system"))game_info_prefetch();
+    if(getenv("FLXTR_ENABLE_GAME_INFO")&&(!strcmp(kind,"games")||!strcmp(kind,"games-system")))game_info_prefetch();
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
     if(!getenv("FLXTR_NO_ART")&&(!strcmp(kind,"games")||!strcmp(kind,"games-system")||!strcmp(kind,"games-folders")))game_art_prefetch();

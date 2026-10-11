@@ -166,11 +166,32 @@ static int games_list_filtered(int page,int refresh,int folder){
             snprintf(thumb,sizeof(thumb),"%s/.home/.config/retroarch/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
             if(!game_file(thumb))snprintf(thumb,sizeof(thumb),"%s/thumbnails/%s/Named_Boxarts/%s.png",games_home(),system,stem);
             if(!game_file(thumb)){
+                /* ROM-set identity takes precedence over display-title guessing.
+                 * Manifest columns: Libretro system, ROM stem ID, canonical title.
+                 * This also supports titles supplied by a future CRC/serial DB. */
                 const char *art_title=e->title;
+                char canonical[128]="";
+                char rom_id[128];snprintf(rom_id,sizeof(rom_id),"%s",file);
+                char *extension=strrchr(rom_id,'.');if(extension)*extension=0;
+                FILE *ids=fopen("game-art-ids.tsv","r");
+                if(ids){
+                    char line[512];
+                    while(fgets(line,sizeof(line),ids)){
+                        char *first=strchr(line,'\t');if(!first)continue;
+                        *first++=0;char *second=strchr(first,'\t');if(!second)continue;
+                        *second++=0;second[strcspn(second,"\r\n")]=0;
+                        if(!strcmp(line,system)&&!strcasecmp(first,rom_id)&&
+                           *second&&strlen(second)<sizeof(canonical)){
+                            snprintf(canonical,sizeof(canonical),"%s",second);break;
+                        }
+                    }
+                    fclose(ids);
+                }
+                if(canonical[0])art_title=canonical;
                 const char *short_names[]={"kof2002","kof94","lastblad","lastbld2","mslug","mslug2","mslug3","mslug4","mslug5","samsho","samsho2","garou","msword","gng","Pocky&Rocky","SecretofMana","SecretofMana2","SuperMarioAll-Stars+SuperMarioWorld"};
                 const char *full_names[]={"The King of Fighters 2002","The King of Fighters '94","The Last Blade","The Last Blade 2","Metal Slug","Metal Slug 2","Metal Slug 3","Metal Slug 4","Metal Slug 5","Samurai Shodown","Samurai Shodown II","Garou - Mark of the Wolves","Magic Sword","Ghosts'n Goblins","Pocky & Rocky","Secret of Mana","Seiken Densetsu 3","Super Mario All-Stars + Super Mario World"};
                 for(size_t k=0;k<sizeof(short_names)/sizeof(short_names[0]);k++)
-                    if(!strcasecmp(e->title,short_names[k])){art_title=full_names[k];break;}
+                    if(!canonical[0]&&!strcasecmp(rom_id,short_names[k])){art_title=full_names[k];break;}
                 if(strlen(system)+strlen(art_title)+10<sizeof(e->poster))
                     snprintf(e->poster,sizeof(e->poster),"gameart:%s|%s",system,art_title);
             }

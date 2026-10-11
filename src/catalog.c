@@ -266,7 +266,37 @@ static void poster(Entry *e,int slot){
         curl_free(sys);curl_free(name);
         if(len<0||len>=(int)sizeof(url))return;
         Buffer b={NULL,0,768*1024};
-        if(!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\\x89PNG\\r\\n\\x1a\\n",8)){
+        /* Libretro Neo Geo boxart filenames include revisions and subtitles.
+         * Resolve the real filename from the official directory listing. */
+        if(!strcmp(system,"SNK - Neo Geo")){
+            char *encoded=curl_easy_escape(NULL,system,0);
+            if(encoded){
+                char directory[512];
+                snprintf(directory,sizeof(directory),
+                    "https://thumbnails.libretro.com/%s/Named_Boxarts/",encoded);
+                curl_free(encoded);
+                Buffer listing={NULL,0,512*1024};
+                if(!fetch(directory,&listing)){
+                    size_t want=strlen(sep);
+                    for(char *p=listing.data;(p=strstr(p,"href=\\\""))!=NULL;p+=6){
+                        char *first=p+6,*last=strchr(first,'"');
+                        if(!last||last-first>600)continue;
+                        char href[640];memcpy(href,first,(size_t)(last-first));href[last-first]=0;
+                        int decoded_len=0;
+                        char *decoded=curl_easy_unescape(NULL,href,0,&decoded_len);
+                        if(!decoded)continue;
+                        int match=decoded_len>(int)want+4&&!strncasecmp(decoded,sep,want)
+                            &&(decoded[want]==' '||decoded[want]=='_'||decoded[want]=='-'||decoded[want]=='('||decoded[want]=='.')
+                            &&strstr(decoded,".png")!=NULL;
+                        curl_free(decoded);
+                        if(match){snprintf(url,sizeof(url),"%s%s",directory,href);break;}
+                    }
+                }
+                free(listing.data);
+            }
+        }
+
+        if(!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8)){
             SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);
             SDL_Surface *art=rw?IMG_Load_RW(rw,1):NULL;
             if(art){

@@ -244,6 +244,50 @@ static void poster(Entry *e,int slot){
         }
         SDL_FreeSurface(small);SDL_FreeSurface(art);return;
     }
+    if(!strncmp(path,"gameart:",8)){
+        /* Only the system names chosen by games_list_filtered can reach here.
+         * Encode path components, never accept a supplied host or arbitrary URL. */
+        char *sep=strchr(path+8,'|');
+        if(!sep)return;
+        *sep++=0;
+        const char *system=path+8;
+        if(!*sep||strlen(sep)>120)return;
+        const char *allowed[]={"Nintendo - Nintendo Entertainment System","Nintendo - Super Nintendo Entertainment System",
+            "Nintendo - Game Boy Advance","Nintendo - Game Boy Color","Nintendo - Game Boy",
+            "Sony - PlayStation","Sony - PlayStation Portable","SNK - Neo Geo"};
+        int ok=0;
+        for(size_t k=0;k<sizeof(allowed)/sizeof(allowed[0]);k++)
+            if(!strcmp(system,allowed[k])){ok=1;break;}
+        if(!ok)return;
+        char *sys=curl_easy_escape(NULL,system,0),*name=curl_easy_escape(NULL,sep,0);
+        if(!sys||!name){curl_free(sys);curl_free(name);return;}
+        char url[1024];
+        int len=snprintf(url,sizeof(url),"https://thumbnails.libretro.com/%s/Named_Boxarts/%s.png",sys,name);
+        curl_free(sys);curl_free(name);
+        if(len<0||len>=(int)sizeof(url))return;
+        Buffer b={NULL,0,768*1024};
+        if(!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\\x89PNG\\r\\n\\x1a\\n",8)){
+            SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);
+            SDL_Surface *art=rw?IMG_Load_RW(rw,1):NULL;
+            if(art){
+                if(art->w>0&&art->h>0&&art->w<=2048&&art->h<=2048){
+                    float scale=154.0f/art->w;
+                    if(art->h*scale>231)scale=231.0f/art->h;
+                    int w=(int)(art->w*scale),h=(int)(art->h*scale);
+                    SDL_Surface *small=(w>0&&h>0)?SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888):NULL;
+                    if(small&&!SDL_BlitScaled(art,NULL,small,NULL)){
+                        char file[80];
+                        snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+                        if(!SDL_SaveBMP(small,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
+                    }
+                    SDL_FreeSurface(small);
+                }
+                SDL_FreeSurface(art);
+            }
+        }
+        free(b.data);
+        return;
+    }
     int kiss=!strncmp(path,KISS "/wp-content/uploads/",sizeof(KISS "/wp-content/uploads/")-1);
     int archive=!strncmp(path,ARCHIVE "/services/img/",sizeof(ARCHIVE "/services/img/")-1);
     if(archive&&!archive_identifier(path+sizeof(ARCHIVE "/services/img/")-1))return;

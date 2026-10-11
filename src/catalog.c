@@ -462,7 +462,7 @@ static void game_art_prefetch(void){
                 if(n<=0)break;
                 requests[n]=0;
                 char *save=NULL;
-                for(char *line=strtok_r(requests,"\\n",&save);line;line=strtok_r(NULL,"\\n",&save)){
+                for(char *line=strtok_r(requests,"\n",&save);line;line=strtok_r(NULL,"\n",&save)){
                     if(strncmp(line,"gameart:",8)||strlen(line)>400)continue;
                     char file[80];game_art_path(line,file,sizeof(file));
                     struct stat st;if(!stat(file,&st)&&st.st_size>=54)continue;

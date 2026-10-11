@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <SDL.h>
+#include <SDL_image.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -46,13 +47,14 @@ static int tv_breaks=1,tv_break_due,tv_in_break,filters_on,filter_row,filter_ori
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
+static int menu_theme=0; /* 0 white metal, 1 RomanticCrimsonSkulls */
 static int settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,30},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor"};
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
-    fprintf(f,"tv_breaks=%d\n",tv_breaks);
+    fprintf(f,"tv_breaks=%d\nmenu_theme=%d\n",tv_breaks,menu_theme);
     for(int i=0;i<TV_BLOCKS;i++)fprintf(f,"tv_hour_%d=%d\ntv_genre_%d=%d\n",i,tv_blocks[i].hour,i,tv_blocks[i].genre);
     if(fclose(f)==0)rename("settings.cfg.next","settings.cfg");
 }
@@ -60,7 +62,8 @@ static void load_settings(void){
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
-        if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
+        if(!strcmp(key,"menu_theme")&&(value==0||value==1))menu_theme=value;
+        else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
         else if(!strcmp(key,"buffer")&&value>=0&&value<3)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
@@ -155,12 +158,24 @@ static int open_ui(void) {
     int output_w=0,output_h=0;SDL_GetRendererOutputSize(renderer,&output_w,&output_h);
     fprintf(stderr,"Shell display: %s window=%dx%d output=%dx%d logical=%dx%d\n",driver?driver:"unknown",width,height,output_w,output_h,W,H);
     green=(SDL_Color){116,255,132,255};dim=(SDL_Color){66,126,77,255};white=(SDL_Color){212,226,214,255};
-    struct stat bg_info;
-    if(!stat("assets/white-metal-droplets.bmp",&bg_info)&&bg_info.st_size==1555254){
+    SDL_DestroyTexture(background);background=NULL;
+    if(menu_theme==1){
+        SDL_Surface *surface=IMG_Load("assets/backgrounds/romantic_crimson_skulls.png");
+        if(!surface)fprintf(stderr,"RomanticCrimsonSkulls load failed: %s\\n",IMG_GetError());
+        if(surface){
+            if(surface->w==W&&surface->h==H)background=SDL_CreateTextureFromSurface(renderer,surface);
+            else fprintf(stderr,"RomanticCrimsonSkulls dimensions %dx%d, expected %dx%d\\n",surface->w,surface->h,W,H);
+            SDL_FreeSurface(surface);
+        }
+        green=(SDL_Color){255,62,85,255};dim=(SDL_Color){214,126,139,255};white=(SDL_Color){255,238,241,255};
+    }else{
         SDL_Surface *surface=SDL_LoadBMP("assets/white-metal-droplets.bmp");
-        if(surface){if(surface->w==W&&surface->h==H)background=SDL_CreateTextureFromSurface(renderer,surface);SDL_FreeSurface(surface);}
+        if(surface){
+            if(surface->w==W&&surface->h==H)background=SDL_CreateTextureFromSurface(renderer,surface);
+            SDL_FreeSurface(surface);
+        }
+        if(background){green=(SDL_Color){18,91,56,255};dim=(SDL_Color){62,74,72,255};white=(SDL_Color){24,32,30,255};}
     }
-    if(background){green=(SDL_Color){18,91,56,255};dim=(SDL_Color){62,74,72,255};white=(SDL_Color){24,32,30,255};}
     return 0;
 }
 static void filter(void) {
@@ -390,11 +405,11 @@ static void draw(Uint32 tick) {
     if(background){
         SDL_RenderCopy(renderer,background,NULL,NULL);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
-        rect(20,16,920,55,(SDL_Color){255,255,255,180},1);
-        rect(20,80,155,400,(SDL_Color){255,255,255,208},1);
-        rect(20,483,920,43,(SDL_Color){255,255,255,224},1);
-        rect(184,419,746,63,(SDL_Color){255,255,255,208},1);
-        if(settings_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,(SDL_Color){255,255,255,200},1);
+        rect(20,16,920,55,menu_theme?(SDL_Color){18,3,8,210}:(SDL_Color){255,255,255,180},1);
+        rect(20,80,155,400,menu_theme?(SDL_Color){18,3,8,220}:(SDL_Color){255,255,255,208},1);
+        rect(20,483,920,43,menu_theme?(SDL_Color){18,3,8,220}:(SDL_Color){255,255,255,224},1);
+        rect(184,419,746,63,menu_theme?(SDL_Color){18,3,8,220}:(SDL_Color){255,255,255,208},1);
+        if(settings_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,menu_theme?(SDL_Color){18,3,8,224}:(SDL_Color){255,255,255,200},1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
     if(stars_on&&!background)for(int i=0;i<STARS;i++) {
@@ -414,7 +429,7 @@ static void draw(Uint32 tick) {
     text(30,229,root_mode==11?"> TV MODE":"  TV MODE",1,root_mode==11?green:dim,20);
     text(30,250,root_mode==14?"> GAMES":"  GAMES",1,root_mode==14?green:dim,20);
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,287,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] IMPORT GAMES":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
+    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[Y] IMPORT GAMES":background?(menu_theme?"CRIMSON SKULLS":"WHITE METAL"):"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,"B BACK",1,dim,22);
     if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
         const char *genre=browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
@@ -434,16 +449,16 @@ static void draw(Uint32 tick) {
         text(194,455,tv_schedule_on?"UP/DOWN ROW / B SAVE":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS"};
+        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME"};
 #else
         const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS"};
 #endif
-        char values[9][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[10][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
-        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");
+        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme?"ROMANTIC CRIMSON SKULLS":"WHITE METAL");
         text(194,94,"SETTINGS",3,green,40);
-        for(int i=0;i<9;i++){int y=139+i*33;rect(190,y-9,724,34,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
+        for(int i=0;i<10;i++){int y=135+i*30;rect(190,y-9,724,30,i==settings_row?green:dim,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
         text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
         text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
     }else if(search_on){
@@ -671,7 +686,7 @@ static void action(SDL_Keycode key) {
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
         if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<8)settings_row++;
+        if(key==SDLK_DOWN&&settings_row<9)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
@@ -682,6 +697,7 @@ static void action(SDL_Keycode key) {
                 case 4:subtitle_setting=(subtitle_setting+step+4)%4;break;
                 case 5:subtitle_scale=subtitle_scale==2?3:2;break;
                 case 8:tv_breaks=!tv_breaks;break;
+                case 9:menu_theme=!menu_theme;close_ui();if(open_ui())running=0;break;
                 case 7:tv_schedule_on=1;tv_row=0;tv_column=1;break;
                 case 6:subtitle_delay+=step;if(subtitle_delay>5)subtitle_delay=-5;if(subtitle_delay< -5)subtitle_delay=5;break;
             }save_settings();

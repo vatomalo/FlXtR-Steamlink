@@ -876,7 +876,7 @@ static void draw_coverflow(void) {
     Title *t=&titles[visible[selection]];
     text(194,95,browse.name[0]?browse.name:browse_labels[browse.mode],2,dim,60);
     text(194,427,t->title,2,green,60);text(194,454,t->meta,1,white,78);
-    char line[90];snprintf(line,sizeof(line),"PAGE %d / %d   A OPEN   UP/DOWN PAGE   VIEW: %s",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6,view_names[viewing]);
+    char line[90];snprintf(line,sizeof(line),"PAGE %d / %d   A OPEN   UP/DOWN PAGE",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
     text(194,475,line,1,dim,120);
 }
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
@@ -1064,7 +1064,7 @@ static void draw(Uint32 tick) {
             text(690,260,"DESCRIPTION NOT CACHED",1,dim,28);
         text(690,354,t->url[0]?"[A] PLAY":t->kind[0]?"[A] OPEN":"NO STREAM YET",2,t->kind[0]||t->url[0]?green:dim,20);
         text(690,395,"[LB/RB] VIEW",1,dim,25);
-        text(690,416,view_names[viewing],1,green,25);
+        /* Aspect ratio is controlled only while video is playing. */
         snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
     }
     if(bios_archive_confirm){rect(190,210,680,110,green,0);text(207,225,"ARCHIVE BIOS / COPYRIGHT WARNING",2,green,45);text(207,259,"CONFIRM RIGHTS AND SOURCE BEFORE INSTALL",1,white,75);text(207,289,"A DOWNLOAD / B OR X CANCEL",2,green,42);}

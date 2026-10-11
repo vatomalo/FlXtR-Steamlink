@@ -289,7 +289,14 @@ static void poster(Entry *e,int slot){
                             &&(decoded[want]==' '||decoded[want]=='_'||decoded[want]=='-'||decoded[want]=='('||decoded[want]=='.')
                             &&strstr(decoded,".png")!=NULL;
                         curl_free(decoded);
-                        if(match){snprintf(url,sizeof(url),"%s%s",directory,href);break;}
+                        if(match){
+                            size_t a=strlen(directory),b=strlen(href);
+                            if(a+b<sizeof(url)){
+                                memcpy(url,directory,a);
+                                memcpy(url+a,href,b+1);
+                                break;
+                            }
+                        }
                     }
                 }
                 free(listing.data);

@@ -2,7 +2,9 @@
 
 Based on feature/coverart-neogeo-20261011 at dabe0df, including its folder defaults,
 core picker, artwork, TV and subtitle changes. Pending older folder/core work is
-saved separately; it was not overlaid on this newer implementation.
+saved separately; it was not overlaid on this newer implementation. Explicit
+--library games/archive startup now also uses the folder screens (21/30), including
+the return from RetroArch; upstream only changed the library-switch navigation.
 
 ## Hang evidence and limitations
 
@@ -60,3 +62,6 @@ watchdog recovery and healthy game completion. Native shell/catalog build passes
 outdated playback-menu test expecting immediate seeks; current UI uses seek preview.
 The old shell test also expects a library view shortcut changed upstream. These
 unrelated fixture mismatches are not reported as passing.
+
+Packaged cores each completed two consecutive 300-frame launches with normal audio/video
+on the box, with no media-input errors. Test ROM copies isolated SRAM writes.

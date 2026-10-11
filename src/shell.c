@@ -697,6 +697,8 @@ static void favorites_toggle(void){
         /* Persist a bounded copy of the original poster. Catalog cache files
          * are page-scoped and can be overwritten by unrelated browsing. */
         char saved_art[192]="";
+        if(!strncmp(t->poster,"game-art-cache/",15)&&!strstr(t->poster,".."))
+            snprintf(saved_art,sizeof(saved_art),"%s",t->poster);
         struct stat art_stat;
         if(!strncmp(t->poster,"catalog-cache/",14)&&!strstr(t->poster,"..")&&
            !stat(t->poster,&art_stat)&&S_ISREG(art_stat.st_mode)&&
@@ -749,7 +751,20 @@ static SDL_Texture *load_poster(const char *path) {
     texture=SDL_CreateTextureFromSurface(renderer,image);SDL_FreeSurface(image);return texture;
 }
 static void cache_page(int page) {
-    if(cached_page==page)return;
+    if(cached_page==page){
+        /* Background-prefetched game posters become visible without navigation. */
+        static Uint32 next_check;
+        Uint32 now=SDL_GetTicks();
+        if((int32_t)(now-next_check)>=0){
+            next_check=now+1500;
+            for(int i=0;i<VISIBLE&&page*VISIBLE+i<total;i++){
+                if(posters[i])continue;
+                const char *art=titles[visible[page*VISIBLE+i]].poster;
+                if(!strncmp(art,"game-art-cache/",15))posters[i]=load_poster(art);
+            }
+        }
+        return;
+    }
     clear_posters();cached_page=page;flow_position=(float)selection;
     for(int i=0;i<VISIBLE && page*VISIBLE+i<total;i++)posters[i]=load_poster(titles[visible[page*VISIBLE+i]].poster);
 }

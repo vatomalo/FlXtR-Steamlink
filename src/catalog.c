@@ -320,7 +320,21 @@ static void poster(Entry *e,int slot){
 
         /* Prefer box covers; title images and snapshots are fallbacks. */
         fprintf(stderr,"FlXtR game art request: %s\n",url);
-        if(!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8)){
+        int got_png=!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8);
+        /* Title screens and screenshots share many canonical Libretro names. */
+        for(int alt=0;alt<2&&!got_png;alt++){
+            char *part=strstr(url,"/Named_Boxarts/");
+            if(!part)part=strstr(url,"/Named_Titles/");
+            if(!part)break;
+            const char *replace=alt==0?"/Named_Titles/":"/Named_Snaps/";
+            char next_url[1024];size_t prefix=(size_t)(part-url);
+            int len=snprintf(next_url,sizeof(next_url),"%.*s%s%s",(int)prefix,url,replace,part+strlen(alt==0?"/Named_Boxarts/":"/Named_Titles/"));
+            if(len<0||len>=(int)sizeof(next_url))break;
+            snprintf(url,sizeof(url),"%s",next_url);
+            free(b.data);b.data=NULL;b.length=0;
+            got_png=!fetch(url,&b)&&b.length>8&&!memcmp(b.data,"\x89PNG\r\n\x1a\n",8);
+        }
+        if(got_png){
             SDL_RWops *rw=SDL_RWFromConstMem(b.data,(int)b.length);
             SDL_Surface *art=rw?IMG_Load_RW(rw,1):NULL;
             if(art){

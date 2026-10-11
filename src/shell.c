@@ -1590,11 +1590,19 @@ int main(int argc,char **argv) {
             if(frames>0&&seen>=frames)running=0;
         }
     }
-    if(player_pid){kill(player_pid,SIGKILL);waitpid(player_pid,NULL,0);}
-    if(catalog_pid){kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);}
-    if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);}
-    if(idle_pid)waitpid(idle_pid,NULL,0);
+    /* Never block shutdown on a network request, background helper, or
+     * updater. A stuck child previously kept the whole Steam Link UI alive. */
+    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid};
+    for(size_t i=0;i<sizeof(children)/sizeof(children[0]);i++)
+        if(children[i]>0)kill(children[i],SIGKILL);
+    for(size_t i=0;i<sizeof(children)/sizeof(children[0]);i++){
+        if(children[i]<=0)continue;
+        for(int attempt=0;attempt<25;attempt++){
+            pid_t result=waitpid(children[i],NULL,WNOHANG);
+            if(result==children[i]||result<0)break;
+            SDL_Delay(10);
+        }
+    }
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
-    if(update_pid)waitpid(update_pid,NULL,0);
     SDL_Quit();return game_exit?43:restart_shell?42:0;
 }

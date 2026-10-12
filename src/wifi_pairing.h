@@ -1,5 +1,7 @@
 #ifndef FLXTR_WIFI_PAIRING_H
 #define FLXTR_WIFI_PAIRING_H
+#include <poll.h>
+#include <signal.h>
 /* Read only the active ConnMan Wi-Fi service. Credentials never leave the TV. */
 static int wifi_escape(char *out,size_t size,const char *input){
     size_t n=0;
@@ -25,17 +27,26 @@ static int wifi_payload(char *payload,size_t size){
     if(!child){
         dup2(pipes[1],STDOUT_FILENO);close(pipes[0]);close(pipes[1]);
         int quiet=open("/dev/null",O_WRONLY);if(quiet>=0){dup2(quiet,STDERR_FILENO);close(quiet);}
-        execlp("timeout","timeout","2","connmanctl","services",(char*)NULL);_exit(127);
+        execlp("connmanctl","connmanctl","services",(char*)NULL);_exit(127);
     }
-    close(pipes[1]);FILE *services=fdopen(pipes[0],"r");char line[512],service[180]="";
-    if(services){while(fgets(line,sizeof(line),services)){
+    close(pipes[1]);char listing[4096]={0},line[512],service[180]="";size_t used=0;
+    for(int tries=0;tries<20&&used<sizeof(listing)-1;tries++){
+        struct pollfd fd={pipes[0],POLLIN,0};int ready=poll(&fd,1,100);
+        if(ready<0)break;
+        if(ready&&fd.revents&POLLIN){ssize_t n=read(pipes[0],listing+used,sizeof(listing)-1-used);if(n<=0)break;used+=(size_t)n;}
+        else if(ready)break;
+    }
+    close(pipes[0]);if(waitpid(child,NULL,WNOHANG)==0){kill(child,SIGKILL);waitpid(child,NULL,0);}
+    char *save=NULL;
+    for(char *row=strtok_r(listing,"\n",&save);row;row=strtok_r(NULL,"\n",&save)){
+        snprintf(line,sizeof(line),"%.511s",row);
         if(strncmp(line,"*AO",3)&&strncmp(line,"*AR",3))continue;
         char *id=strstr(line,"wifi_");if(!id)continue;id[strcspn(id," \t\r\n")]=0;
         size_t n=strlen(id);int valid=n>0&&n<sizeof(service);
         for(size_t i=0;i<n;i++)if(!isalnum((unsigned char)id[i])&&id[i]!='_')valid=0;
         if(valid)snprintf(service,sizeof(service),"%s",id);
-    }fclose(services);}else close(pipes[0]);
-    waitpid(child,NULL,0);if(!service[0])return -1;
+    }
+    if(!service[0])return -1;
     int open_wifi=strstr(service,"_managed_none")!=NULL;
     if(!open_wifi&&!strstr(service,"_managed_psk"))return -1;
     char path[256];snprintf(path,sizeof(path),"/var/lib/connman/%s/settings",service);

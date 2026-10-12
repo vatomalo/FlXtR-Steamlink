@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 umask 077
 base=https://github.com/vatomalo/FlXtR-Steamlink/releases
 mkdir .update-lock 2>/dev/null || { echo 'Another update is active (remove .update-lock if a power loss left it behind).'; exit 1; }
-cleanup() { rm -f .update-manifest .update-package-manifest .update-package .update-executable .update-backup; rm -rf .update-lock/stage; rmdir .update-lock; }
+cleanup() { rm -f .update-manifest .update-package-manifest .update-package .update-executable .update-backup .update-lock/package-sha256; rm -rf .update-lock/stage; rmdir .update-lock; }
 trap cleanup 0
 trap 'exit 1' 1 2 15
 fetch() {
@@ -24,7 +24,9 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     case "$package_sha" in ''|*[!a-f0-9]*) exit 1;; esac
     [ "${#package_version}" -eq 40 ] && [ "${#package_sha}" -eq 64 ] || exit 1
     if [ -f .installed-package-version ] &&
-       [ "$(cat .installed-package-version)" = "$package_version" ]; then
+       [ "$(cat .installed-package-version)" = "$package_version" ] &&
+       [ -s .installed-package-sha256 ] &&
+       sha256sum -c .installed-package-sha256 >/dev/null 2>&1; then
         echo 'Complete package already up to date.'; exit 0
     fi
     # The package is bounded independently of the original shell-only executable.
@@ -70,6 +72,13 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     mv -f .update-backup greenlink.previous
+    # A manual install can replace binaries while leaving the version marker.
+    # Record hashes from the verified archive, then verify what is on disk.
+    (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-resolver player-menu-v1 greenlink.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
+        if [ -f "$part" ]; then sha256sum "$part"; fi
+    done) >.update-lock/package-sha256
+    sha256sum -c .update-lock/package-sha256 || exit 1
+    mv -f .update-lock/package-sha256 .installed-package-sha256
     printf '%s\n' "$package_version" >.installed-package-version
     sync
     echo "Installed complete FlXtR package $package_version."

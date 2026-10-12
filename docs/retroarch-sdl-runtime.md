@@ -28,3 +28,15 @@ search paths, opt-out and unchanged parent environment. The device can initializ
 native SDL2 with its DS4 and sound, with no SDL3 in its loaded-library map.
 The user-confirmed walking reproduction passes. Magic Sword and longer sessions
 still need broader gameplay coverage; no universal crash-free claim is made.
+
+On a later recurrence that day, the installed-version marker still said d17984c,
+but greenlink-catalog and greenlink.sh had been replaced by older files. The
+frozen process's maps showed firmware SDL2 compatibility plus SDL3, and its
+LD_LIBRARY_PATH did not include the private runtime. The cause of that file
+replacement is unknown. Reinstalling the verified package restored the expected
+hashes. The updater now records hashes of installed executables, launch scripts,
+private SDL and bundled cores from the verified package, and checks them before
+accepting an unchanged version marker. A missing integrity record or changed
+file triggers repair. Settings, ROMs and user configuration are not hashed or
+replaced by this integrity check. Package updater tests reproduce stale markers,
+overwritten binaries/launchers and missing SDL libraries.

@@ -24,11 +24,35 @@ cp build/greenlink-arm "$app/greenlink"
 cp build/greenlink-catalog-arm "$app/greenlink-catalog"
 cp packaging/greenlink.sh packaging/update.sh packaging/controller-idle.sh packaging/toc.txt "$app/"
 cp catalog.tsv "$app/catalog.tsv"
+# RetroArch 1.7.x predates the firmware's SDL2-to-SDL3 compatibility layer.
+# Pin Valve's native SDL2 build and load it only in the RetroArch child.
+sdl=build/retroarch-libs/libSDL2-2.0.so.0
+mkdir -p build/retroarch-libs "$app/retroarch-libs"
+if [ ! -f "$sdl" ]; then
+    wget -q --tries=3 --timeout=120 \
+        https://raw.githubusercontent.com/ValveSoftware/steamlink-sdk/62b4d098d1472c3534dd098ca2a0e0e10712f1c6/rootfs/usr/lib/libSDL2-2.0.so.0.3100.0 -O "$sdl"
+fi
+echo "c9d19c7ae28243b3739e2f14a4f19cdd48646bed063b26607d25b19dbc148932  $sdl" | sha256sum -c -
+cp "$sdl" "$app/retroarch-libs/"
+cp packaging/SDL2-LICENSE.txt "$app/retroarch-libs/"
+
 if [ -d assets ]; then cp -R assets "$app/"; fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi
 if [ -f build/greenlink-resolver-arm ]; then
     cp build/greenlink-resolver-arm "$app/greenlink-resolver"
     cp build/resolver/WABT-LICENSE.txt "$app/WABT-LICENSE.txt"
+fi
+# Optional side-by-side cores from scripts/build-cores.sh. No system core is replaced.
+for core in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so; do
+    if [ -f "build/cores/$core" ]; then
+        mkdir -p "$app/cores"
+        cp "build/cores/$core" "$app/cores/"
+    fi
+done
+if [ -d "$app/cores" ]; then
+    for notice in SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt; do
+        cp "build/cores/$notice" "$app/cores/"
+    done
 fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi
 chmod +x "$app/greenlink" "$app/greenlink.sh"

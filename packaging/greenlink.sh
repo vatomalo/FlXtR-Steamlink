@@ -22,10 +22,13 @@ while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
     if [ "$code" -eq 43 ]; then
-        # A broken Steam Link video decoder can trap RetroArch indefinitely,
+        # A broken Steam Link audio/video pipeline can trap RetroArch indefinitely,
         # repeatedly printing MV_PE_InputBufWrite failures and ignoring TERM.
         # Recover ONLY when the same error is actively repeating; normal games
         # have no time limit. The watchdog never touches metadata workers.
+        # Keep the previous session even when the user immediately launches again.
+        [ ! -f game.previous.log ] || mv -f game.previous.log game.older.log
+        [ ! -f game.log ] || mv -f game.log game.previous.log
         ./greenlink-catalog --run-game >game.log 2>&1 &
         game_pid=$!
         (
@@ -34,15 +37,21 @@ while :; do
             while kill -0 "$game_pid" 2>/dev/null; do
                 sleep 4
                 current_size=$(wc -c <game.log 2>/dev/null) || current_size=0
-                if [ "$current_size" -gt "$previous_size" ] &&
-                   [ "$(tail -n 8 game.log 2>/dev/null | grep -c 'MV_PE_InputBufWrite() failed')" -ge 8 ]; then
+                # Count only new output: an old error burst followed by healthy
+                # logging must not look like a continuing media failure.
+                errors=0
+                if [ "$current_size" -gt "$previous_size" ]; then
+                    errors=$(tail -c "+$((previous_size + 1))" game.log 2>/dev/null | tail -n 64 | grep -c 'MV_PE_InputBufWrite() failed')
+                fi
+                if [ "$errors" -ge 8 ]; then
                     consecutive=$((consecutive + 1))
                 else
                     consecutive=0
                 fi
                 previous_size=$current_size
                 if [ "$consecutive" -ge 3 ]; then
-                    printf '%s\n' 'FlXtR watchdog: repeating Steam Link video decoder failure; recovering RetroArch' >>watchdog.log
+                    printf '%s\n' 'FlXtR watchdog: repeating Steam Link media input failure; recovering RetroArch' >>watchdog.log
+                    cp game.log game-failure.log
                     kill -TERM "$game_pid" 2>/dev/null
                     sleep 2
                     kill -KILL "$game_pid" 2>/dev/null
@@ -55,6 +64,7 @@ while :; do
         game_code=$?
         kill "$watchdog_pid" 2>/dev/null
         wait "$watchdog_pid" 2>/dev/null
+        [ "$game_code" -eq 0 ] || cp game.log game-failure.log
         printf '%d\n' "$game_code" >game-exit-status
         set -- --library games
         continue

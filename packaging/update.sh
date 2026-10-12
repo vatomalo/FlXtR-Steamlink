@@ -51,6 +51,21 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     for part in assets certs; do
         if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -R "$staged/$part/." "$part/"; fi
     done
+    # Only our two optional cores; leave the user's RetroArch core tree untouched.
+    if [ -d "$staged/cores" ]; then
+        mkdir -p cores
+        for part in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt; do
+            if [ -f "$staged/cores/$part" ]; then
+                cp "$staged/cores/$part" "cores/$part.new" && mv -f "cores/$part.new" "cores/$part"
+            fi
+        done
+    fi
+    if [ -f "$staged/retroarch-libs/libSDL2-2.0.so.0" ]; then
+        mkdir -p retroarch-libs
+        for part in libSDL2-2.0.so.0 SDL2-LICENSE.txt; do
+            cp "$staged/retroarch-libs/$part" "retroarch-libs/$part.new" && mv -f "retroarch-libs/$part.new" "retroarch-libs/$part"
+        done
+    fi
     for part in update.sh greenlink.sh controller-idle.sh toc.txt catalog.tsv WABT-LICENSE.txt; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done

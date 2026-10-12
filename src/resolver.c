@@ -243,6 +243,58 @@ static int qualities(json_object *root,const char *server){
     }
     free(manifest);return 0;
 }
+/* Independently discover raw per-episode subtitles from SubDL when the video
+ * provider offers none. Set SUBDL_API_KEY in the launcher environment.
+ * No API keys or response URLs are written to diagnostic logs. */
+static void subdl_subtitles(int id,int season,int episode,Choice *c){
+    const char *key=getenv("SUBDL_API_KEY");
+    char local_key[201]={0};
+    if(!key||!*key){
+        FILE *f=fopen("subdl-api-key.txt","r");
+        if(f){if(fgets(local_key,sizeof(local_key),f))local_key[strcspn(local_key,"\r\n")]=0;fclose(f);}
+        key=local_key;
+    }
+    if(!*key){subtitle_log("SubDL unavailable (API key not configured)");return;}
+    size_t len=strlen(key);
+    if(len>200||strpbrk(key,"\r\n"))return;
+    char uri[512];
+    snprintf(uri,sizeof(uri),"https://api.subdl.com/api/v1/subtitles?tmdb_id=%d&type=tv&season_number=%d&episode_number=%d&languages=EN,NO,ES&unpack=1&subs_per_page=30&client=custom_integration",id,season,episode);
+    char auth[256];
+    if(snprintf(auth,sizeof(auth),"X-API-Key: %s",key)>=(int)sizeof(auth))return;
+    struct curl_slist *headers=curl_slist_append(NULL,auth);
+    char *raw=request(uri,headers,0);curl_slist_free_all(headers);
+    if(!raw){subtitle_log("SubDL lookup failed id=%d S%d E%d",id,season,episode);return;}
+    json_object *root=parse(raw);free(raw);
+    if(!root)return;
+    json_object *subtitles=field(root,"subtitles");
+    if(subtitles&&json_object_is_type(subtitles,json_type_array)){
+        int n=json_object_array_length(subtitles);
+        for(int i=0;i<n;i++){
+            json_object *item=json_object_array_get_idx(subtitles,i);
+            json_object *files=field(item,"unpack_files");
+            if(!files||!json_object_is_type(files,json_type_array))continue;
+            int m=json_object_array_length(files);
+            for(int j=0;j<m;j++){
+                json_object *file=json_object_array_get_idx(files,j);
+                json_object *sv=field(file,"season"),*ev=field(file,"episode");
+                if(!sv||!ev||json_object_get_int(sv)!=season||json_object_get_int(ev)!=episode)continue;
+                const char *format=string(file,"format");
+                if(strcasecmp(format,"srt")&&strcasecmp(format,"vtt"))continue;
+                const char *language=string(file,"language");
+                char *dst=NULL;
+                if(!strcasecmp(language,"EN")||!strcasecmp(language,"ENG"))dst=c->subs_eng;
+                else if(!strcasecmp(language,"NO")||!strcasecmp(language,"NB")||!strcasecmp(language,"NOR"))dst=c->subs_nor;
+                else if(!strcasecmp(language,"ES")||!strcasecmp(language,"SPA"))dst=c->subs_spa;
+                if(!dst||*dst)continue;
+                const char *url=string(file,"url");
+                if(strncmp(url,"/subtitle/",10)||strlen(url)>900||strpbrk(url,"\r\n\t"))continue;
+                snprintf(dst,1024,"https://dl.subdl.com%s",url);
+            }
+        }
+    }
+    subtitle_log("SubDL id=%d S%d E%d english=%s norwegian=%s spanish=%s",id,season,episode,c->subs_eng[0]?"yes":"no",c->subs_nor[0]?"yes":"no",c->subs_spa[0]?"yes":"no");
+    json_object_put(root);
+}
 /* Provider-independent episode caption mappings, keyed by TMDB series ID,
  * season and episode. Optional: playback continues when no mapping exists.
  * Format: tmdb_id<TAB>season<TAB>episode<TAB>language<TAB>https_url.
@@ -280,6 +332,7 @@ int main(int argc,char **argv){
     if(root){if(resolving){if(qualities(root,argv[6]))goto done;
             if(!strcmp(argv[2],"tv")){
                 independent_subtitles(id,season,episode,&choices[0]);
+                if(!choices[0].subs_eng[0]||!choices[0].subs_nor[0]||!choices[0].subs_spa[0])subdl_subtitles(id,season,episode,&choices[0]);
                 for(int i=1;i<count;i++){
                     snprintf(choices[i].subs_eng,sizeof(choices[i].subs_eng),"%s",choices[0].subs_eng);
                     snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);

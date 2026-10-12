@@ -106,7 +106,7 @@ static int player_control=-1,play_after_load,player_menu;
 static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
-static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column;
+static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column,tv_quality_retry;
 static int game_autostate,tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
 static Uint32 tv_next_at;
 static void tv_candidate(void);
@@ -139,7 +139,7 @@ static void save_settings(void){
 static void load_settings(void){
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
-    int theme_found=0;
+    int theme_found=0,old_tv_schedule=0;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
         if(!strcmp(key,"tv_rating")&&value>=1&&value<=5)tv_rating_weight=value;
         else if(!strcmp(key,"tv_popularity")&&value>=0&&value<=5)tv_popularity_weight=value;
@@ -155,11 +155,31 @@ static void load_settings(void){
         else if(!strcmp(key,"subtitles")&&value>=0&&value<5)subtitle_setting=value;
         else if(!strcmp(key,"scale")&&value>=2&&value<=3)subtitle_scale=value;
         else if(!strcmp(key,"delay")&&value>=-5&&value<=5)subtitle_delay=value;
-        else if(!strncmp(key,"tv_hour_",8)&&strlen(key)==9&&key[8]>='0'&&key[8]<'0'+TV_BLOCKS)tv_blocks[key[8]-'0'].hour=value;
+        else if(!strncmp(key,"tv_hour_",8)&&strlen(key)==9&&key[8]>='0'&&key[8]<'0'+TV_BLOCKS){tv_blocks[key[8]-'0'].hour=value;if(key[8]>='7')old_tv_schedule=1;}
         else if(!strncmp(key,"tv_genre_",9)&&strlen(key)==10&&key[9]>='0'&&key[9]<'0'+TV_BLOCKS)tv_blocks[key[9]-'0'].genre=value;
     }fclose(f);
     if(!theme_found)menu_theme=monochrome_menu?1:0;
     monochrome_menu=menu_theme==1;
+    if(!old_tv_schedule){
+        /* Upgrade old seven-slot schedules without discarding custom genres.
+         * Insert three new hourly boundaries into the widest existing gaps. */
+        TvBlock upgraded[TV_BLOCKS];
+        for(int i=0;i<7;i++)upgraded[i]=tv_blocks[i];
+        int n=7;
+        for(int extra=0;extra<3;extra++){
+            int best=-1,width=1;
+            for(int i=0;i<n;i++){
+                int end=i+1<n?upgraded[i+1].hour:24;
+                if(end-upgraded[i].hour>width){width=end-upgraded[i].hour;best=i;}
+            }
+            if(best<0)break;
+            int hour=upgraded[best].hour+width/2;
+            memmove(&upgraded[best+2],&upgraded[best+1],(size_t)(n-best-1)*sizeof(TvBlock));
+            upgraded[best+1]=(TvBlock){hour,upgraded[best].genre};
+            n++;
+        }
+        if(n==TV_BLOCKS)memcpy(tv_blocks,upgraded,sizeof(tv_blocks));
+    }
     if(!tv_valid(tv_blocks))memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
 }
 static float flow_position;
@@ -625,7 +645,7 @@ static void auto_result(int success){
             if(nf==12&&strlen(field[11])<sizeof(source.subs_spa))strcpy(source.subs_spa,field[11]);
         }
     }fclose(f);}
-    if(source.url[0]){subtitle_route_log("auto-result",&source);launch_player(&source);if(!player_pid)auto_active=0;return;}
+    if(source.url[0]){tv_quality_retry=0;subtitle_route_log("auto-result",&source);launch_player(&source);if(!player_pid)auto_active=0;return;}
     if(pending.mode==6)fprintf(stderr,"Source lookup returned no usable URL for server %s\n",pending.query);
     if(pending.mode==5){
         if(pending.page<pages&&auto_count<40){Browse next=pending;next.page++;auto_request(next);}
@@ -945,11 +965,12 @@ static void draw(Uint32 tick) {
         int active=tv_block_at(tv_blocks,tv_hour());
         for(int i=0;i<TV_BLOCKS;i++){
             char line[80];snprintf(line,sizeof(line),"%c %02d-%02d  %s",i==active?'>':' ',tv_blocks[i].hour,i+1<TV_BLOCKS?tv_blocks[i+1].hour:24,tv_genres[tv_blocks[i].genre]);
-            int y=143+i*37;if(tv_schedule_on&&i==tv_row)rect(190,y-8,724,30,green,0);
+            int y=126+i*29;if(tv_schedule_on&&i==tv_row)rect(190,y-5,724,26,green,0);
             text(202,y,line,2,i==active||i==tv_row?green:white,58);
+            if(tv_schedule_on&&i==tv_row)text(840,y,tv_column?"GENRE":"HOUR",1,green,10);
         }
-        text(194,430,tv_schedule_on?(tv_column?"EDIT GENRE: LEFT/RIGHT / A EDIT HOUR":"EDIT START HOUR: LEFT/RIGHT / A EDIT GENRE"):"A START TV / SELECT EDIT SCHEDULE",1,green,90);
-        text(194,455,tv_schedule_on?"UP/DOWN ROW / B SAVE":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
+        text(194,427,tv_schedule_on?(tv_column?"GENRE: LEFT/RIGHT TO CHOOSE  /  A: EDIT START TIME":"START TIME: LEFT/RIGHT TO CHANGE  /  A: EDIT GENRE"):"A START TV / SELECT EDIT SCHEDULE",1,green,90);
+        text(194,452,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
     }else if(bios_on){
         text(194,94,"GAME BIOS STATUS",3,green,40);
         const char *const *files=bios_files;
@@ -1247,7 +1268,16 @@ static void launch_player(const Title *t) {
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
-        snprintf(control,sizeof(control),"%d",controls[0]);snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",t->height?t->height:qualities[quality_setting]);
+        int requested_height=t->height?t->height:qualities[quality_setting];
+        /* TV prefers an efficient decode resolution but must also support
+         * sources that only provide 1080p. Retry the SAME source at higher
+         * resolutions only when the player reports no compatible track. */
+        if(tv_active){
+            int preferred=qualities[quality_setting];
+            if(preferred>720)preferred=720;
+            requested_height=tv_quality_retry>=2?1080:tv_quality_retry==1?720:preferred;
+        }
+        snprintf(control,sizeof(control),"%d",controls[0]);snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",requested_height);
         snprintf(buffer,sizeof(buffer),"%d",buffer_seconds[buffer_setting]);snprintf(disk,sizeof(disk),"%d",disk_megabytes[disk_setting]);
         snprintf(scale,sizeof(scale),"%d",subtitle_scale);snprintf(delay,sizeof(delay),"%d",subtitle_delay);
         if(!player_menu)execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)NULL);
@@ -1296,6 +1326,14 @@ static void finish_player(int code){
         if(page>=1&&page<=listing_pages){play_after_load=1;next_catalog_page(direction);return;}
         snprintf(status,sizeof(status),"NO MORE EPISODES IN THIS SEASON");return;
     }
+    if(tv_active&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
+        int current=tv_quality_retry>=1?720:(qualities[quality_setting]>720?720:qualities[quality_setting]);
+        tv_quality_retry=current<720?1:2;
+        fprintf(stderr,"TV source has no compatible %dp track; retrying at %dp\n",current,tv_quality_retry==1?720:1080);
+        launch_player(&playing_title);
+        return;
+    }
+    tv_quality_retry=0;
     /* A finished or interrupted TV episode never creates a resume checkpoint. */
     if(tv_in_break){
         tv_in_break=0;tv_attempts=0;tv_next_at=0;
@@ -1464,7 +1502,7 @@ static void action(SDL_Keycode key) {
                 case 12:tv_rating_weight=(tv_rating_weight-1+step+5)%5+1;break;
                 case 13:tv_popularity_weight=(tv_popularity_weight+step+6)%6;break;
                 case 14:tv_variety_weight=(tv_variety_weight+step+6)%6;break;
-                case 7:tv_schedule_on=1;tv_row=0;tv_column=1;break;
+                case 7:tv_schedule_on=1;settings_on=0;tv_row=0;tv_column=1;break;
                 case 6:subtitle_delay+=step;if(subtitle_delay>5)subtitle_delay=-5;if(subtitle_delay< -5)subtitle_delay=5;break;
             }save_settings();
         }return;

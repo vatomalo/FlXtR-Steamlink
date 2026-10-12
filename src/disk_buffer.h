@@ -14,7 +14,7 @@ typedef struct {uint32_t size,type;} DiskSide;
 typedef struct {uint64_t offset;uint32_t bytes;int64_t time;} DiskRecord;
 typedef struct {
     pthread_t thread;pthread_mutex_t mutex;pthread_cond_t changed;
-    AVFormatContext *format;int fd,vi,ai,si,result,done,quit,primed;
+    AVFormatContext *format;int fd,vi,ai,si,result,done,quit,primed,started;
     int head,count,seconds;uint64_t capacity,read_bytes,write_bytes;
     int64_t newest;
     DiskRecord records[DISK_SLOTS];
@@ -68,7 +68,7 @@ static void *disk_producer(void *opaque){
         q->write_bytes+=bytes;q->count++;
         if(ts!=AV_NOPTS_VALUE&&(q->newest==AV_NOPTS_VALUE||ts>q->newest))q->newest=ts;
         int64_t first=q->records[q->head].time;
-        if((first==AV_NOPTS_VALUE&&q->write_bytes-q->read_bytes>=8*1024*1024)||(first!=AV_NOPTS_VALUE&&q->newest-first>=(int64_t)q->seconds*AV_TIME_BASE))q->primed=1;
+        if((first==AV_NOPTS_VALUE&&q->write_bytes-q->read_bytes>=8*1024*1024)||(first!=AV_NOPTS_VALUE&&q->newest-first>=(int64_t)(q->started?1:q->seconds)*AV_TIME_BASE))q->primed=1;
         pthread_cond_broadcast(&q->changed);pthread_mutex_unlock(&q->mutex);av_packet_unref(p);
     }
     av_packet_free(&p);
@@ -111,7 +111,7 @@ static int disk_packet(DiskBuffer *q,AVPacket *p){
         uint8_t *data=av_packet_new_side_data(p,(enum AVPacketSideDataType)side.type,side.size);
         if(!data){error=1;break;}error=disk_io(q,data,side.size,at,0);at+=side.size;
     }
-    q->read_bytes+=record.bytes;q->head=(q->head+1)%DISK_SLOTS;q->count--;
+    q->started=1;q->read_bytes+=record.bytes;q->head=(q->head+1)%DISK_SLOTS;q->count--;
     pthread_cond_broadcast(&q->changed);pthread_mutex_unlock(&q->mutex);
     if(error){av_packet_unref(p);return AVERROR(EIO);}return 0;
 }

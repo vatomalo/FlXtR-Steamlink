@@ -268,7 +268,7 @@ int main(int argc,char **argv) {
     }
     AVCodec *audio_decoder=NULL;
     ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,&audio_decoder,0);
-    if(vi<0){fprintf(stderr,"No compatible H.264 track at selected quality\n");goto done;}
+    if(vi<0){fprintf(stderr,"No compatible H.264 track at selected quality (%dp); requesting higher-resolution retry\n",height_limit);result=45;goto done;}
     if(ai<0){fprintf(stderr,"No decodable audio track; try another server\n");goto done;}
     AVCodecParameters *sound=fmt->streams[ai]->codecpar;
     fprintf(stderr,"Audio: %s; %d channels; %d Hz\n",avcodec_get_name(sound->codec_id),sound->channels,sound->sample_rate);
@@ -290,7 +290,7 @@ int main(int argc,char **argv) {
         sub_decoder->pkt_timebase=fmt->streams[i]->time_base;si=(int)i;break;
     }
     fprintf(stderr,"Subtitle mode: %s, selected track: %d%s\n",sub_language,si,si<0?" (no supported embedded text subtitle track)":"");
-    /* Prefer a requested external language track, otherwise use embedded text. */
+    /* Prefer a compatible embedded text track, then external captions. */
     const char *english=getenv("FLXTR_SUBTITLE_ENGLISH");
     const char *norwegian=getenv("FLXTR_SUBTITLE_NORWEGIAN");
     const char *spanish=getenv("FLXTR_SUBTITLE_SPANISH");
@@ -306,7 +306,7 @@ int main(int argc,char **argv) {
         english&&*english?"available":"absent",norwegian&&*norwegian?"available":"absent",
         external&&*external?"available":"absent");
     player_subtitle_log("handoff",english,norwegian,external);
-    if(external&&*external){
+    if(si<0&&external&&*external){
         if(load_external_subtitles(external)==0){
             player_subtitle_log("loaded",english,norwegian,external);
             avcodec_free_context(&sub_decoder);si=-1;

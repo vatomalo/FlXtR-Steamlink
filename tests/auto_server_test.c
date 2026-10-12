@@ -16,6 +16,16 @@ static void pump(void){
     }
 }
 int main(void){
+    const char *kinds[]={"movie","episode","kiss-episode"};
+    for(int k=0;k<3;k++){
+        strcpy(auto_title.kind,kinds[k]);auto_count=3;
+        strcpy(auto_servers[0],"alpha");strcpy(auto_servers[1],"echo");strcpy(auto_servers[2],"foxtrot");
+        auto_prefer_flixer_server();
+        assert(!strcmp(auto_servers[0],k==2?"alpha":"echo"));
+        assert(!strcmp(auto_servers[1],k==2?"echo":"alpha"));
+        assert(!strcmp(auto_servers[2],"foxtrot"));
+    }
+    auto_count=0;
     char temp[]="/tmp/flxtr-auto-XXXXXX";assert(mkdtemp(temp));assert(!chdir(temp));
     script("greenlink-catalog",
         "#!/bin/sh\n"

@@ -633,6 +633,15 @@ static void auto_request(Browse next){
     request_catalog(next,0,0);
     if(!catalog_pid)auto_active=0;
 }
+static void auto_prefer_flixer_server(void){
+    if(strcmp(auto_title.kind,"movie")&&strcmp(auto_title.kind,"episode"))return;
+    /* Flixer's fifth server is echo. Keep all remaining fallbacks in order. */
+    for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],"echo")){
+        char preferred[32];strcpy(preferred,auto_servers[i]);
+        memmove(auto_servers+1,auto_servers,(size_t)i*sizeof(auto_servers[0]));
+        strcpy(auto_servers[0],preferred);break;
+    }
+}
 static void auto_next(void){
     if(auto_index>=auto_count){auto_active=0;snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
     Browse next={6,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
@@ -671,7 +680,7 @@ static void auto_result(int success){
     if(pending.mode==6)fprintf(stderr,"Source lookup returned no usable URL for server %s\n",pending.query);
     if(pending.mode==5){
         if(pending.page<pages&&auto_count<40){Browse next=pending;next.page++;auto_request(next);}
-        else {auto_index=0;auto_next();}
+        else {auto_prefer_flixer_server();auto_index=0;auto_next();}
     }else {auto_index++;auto_next();}
 }
 static void finish_catalog(void){

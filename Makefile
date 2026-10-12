@@ -7,7 +7,7 @@ all: build/greenlink build/greenlink-catalog
 build/greenlink-catalog: src/catalog.c src/games.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
-build/greenlink: src/shell.c src/font.h src/video_layout.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/browse_filters.h
+build/greenlink: src/shell.c src/child_process.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl
 
@@ -56,6 +56,8 @@ test-psp:
 
 # Focused launch/performance tests, independent of legacy playback UI fixtures.
 test-games: all
+	$(CC) $(CFLAGS) tests/child_exec_test.c -o build/child-exec-test
+	./build/child-exec-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/shutdown_test.c -o build/shutdown-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/shutdown-test
 	python3 tests/games_test.py

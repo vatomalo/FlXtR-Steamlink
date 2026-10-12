@@ -40,3 +40,15 @@ accepting an unchanged version marker. A missing integrity record or changed
 file triggers repair. Settings, ROMs and user configuration are not hashed or
 replaced by this integrity check. Package updater tests reproduce stale markers,
 overwritten binaries/launchers and missing SDL libraries.
+
+The subsequent Donkey Kong Country championship-ROM failure did use native
+SDL2 and the bundled SNES core. Repeated MV_PE_InputBufWrite failures ended in
+watchdog exit 137; native SDL alone is therefore insufficient. Live shell
+fdinfo showed flags 02 (no close-on-exec) on /dev/galois_pe_agent and
+/dev/graphics/gal3d. Kernel logs also showed the previous shell media handle
+closing after RetroArch had already opened its own session. Shell helper
+launches now mark non-stdio descriptors close-on-exec before fork, retaining
+child-side pipe redirection but preventing executed workers from retaining the
+shell's media handles. A regression test verifies exec isolation and parent
+handle/stdout preservation. This is a candidate for the cross-core freeze;
+extended device gameplay must still validate it.

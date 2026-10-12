@@ -23,6 +23,7 @@
 #include "tv_history.h"
 #include "browse_filters.h"
 #include "game_metadata.h"
+#include "child_process.h"
 
 #ifndef FLXTR_VERSION
 #define FLXTR_VERSION "development"
@@ -270,12 +271,12 @@ static int bios_download(void){
     snprintf(tmp,sizeof(tmp),"system/.%s.download",bios_files[bios_selected]);
     if(access(target,F_OK)==0)return 4;
     unlink(tmp);
-    pid_t child=fork();if(child<0)return 3;
+    pid_t child=shell_fork();if(child<0)return 3;
     if(!child){execlp("curl","curl","-fLsS","--proto","=https","--proto-redir","=https","--connect-timeout","10","--max-time","90","--max-filesize","16777216","--cacert","certs/cacert.pem","-o",tmp,url,(char*)NULL);_exit(127);}
     int code=0;if(waitpid(child,&code,0)!=child||!WIFEXITED(code)||WEXITSTATUS(code)){unlink(tmp);return 5;}
     f=fopen("bios-check.txt","w");if(!f){unlink(tmp);return 3;}
     fprintf(f,"%s  %s\n",sha,tmp);fclose(f);
-    child=fork();if(child<0){unlink(tmp);unlink("bios-check.txt");return 3;}
+    child=shell_fork();if(child<0){unlink(tmp);unlink("bios-check.txt");return 3;}
     if(!child){int devnull=open("/dev/null",O_WRONLY);if(devnull>=0){dup2(devnull,STDOUT_FILENO);close(devnull);}execlp("sha256sum","sha256sum","-c","bios-check.txt",(char*)NULL);_exit(127);}
     code=0;int ok=waitpid(child,&code,0)==child&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
     unlink("bios-check.txt");if(!ok){unlink(tmp);return 6;}
@@ -344,7 +345,7 @@ static int bios_archive_download(const Title *item){
     pid_t pid;int code=0;
     FILE *f=fopen("bios-archive-check.txt","w");if(!f){unlink(temp);return 3;}
     fprintf(f,"%s  %s\n",item->meta+5,temp);fclose(f);
-    pid=fork();if(pid<0){unlink(temp);unlink("bios-archive-check.txt");return 3;}
+    pid=shell_fork();if(pid<0){unlink(temp);unlink("bios-archive-check.txt");return 3;}
     if(!pid){
         int fd=open("/dev/null",O_WRONLY);if(fd>=0){dup2(fd,STDOUT_FILENO);close(fd);}
         execlp("sha1sum","sha1sum","-c","bios-archive-check.txt",(char*)NULL);_exit(127);
@@ -356,7 +357,7 @@ static int bios_archive_download(const Title *item){
         /* BusyBox unzip supports -l, not Info-ZIP's -Z -1.
          * Parse only properly formatted listing rows and extract one exact member. */
         int pipes[2];if(pipe(pipes)<0){unlink(temp);return 3;}
-        pid=fork();if(pid<0){close(pipes[0]);close(pipes[1]);unlink(temp);return 3;}
+        pid=shell_fork();if(pid<0){close(pipes[0]);close(pipes[1]);unlink(temp);return 3;}
         if(!pid){
             dup2(pipes[1],STDOUT_FILENO);close(pipes[0]);close(pipes[1]);
             execlp("unzip","unzip","-l",temp,(char*)NULL);_exit(127);
@@ -385,7 +386,7 @@ static int bios_archive_download(const Title *item){
         unlink(extracted);
         int fd=open(extracted,O_WRONLY|O_CREAT|O_EXCL,0600);
         if(fd<0){unlink(temp);return 3;}
-        pid=fork();if(pid<0){close(fd);unlink(extracted);unlink(temp);return 3;}
+        pid=shell_fork();if(pid<0){close(fd);unlink(extracted);unlink(temp);return 3;}
         if(!pid){
             dup2(fd,STDOUT_FILENO);close(fd);
             execlp("unzip","unzip","-p",temp,member,(char*)NULL);_exit(127);
@@ -595,7 +596,7 @@ static void request_catalog(Browse next,int push,int pop){
     catalog_started=SDL_GetTicks();
     download_background=0;
     if(next.mode==19||next.mode==16)unlink("catalog-cache/download-progress");
-    catalog_pid=fork();
+    catalog_pid=shell_fork();
     if(!catalog_pid){
         int out=open("catalog-cache/result.tsv",O_WRONLY|O_CREAT|O_TRUNC,0600),log=open("catalog.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(out<0||log<0)_exit(126);
@@ -713,7 +714,7 @@ static void prefetch_pages(void){
     if(!library_cacheable(browse.mode)){prefetch_left=0;return;}
     if(prefetch_browse.page>=listing_pages){prefetch_left=0;return;}
     Browse target=prefetch_browse;target.page++;
-    prefetch_pid=fork();
+    prefetch_pid=shell_fork();
     if(!prefetch_pid){
         int out=open("/dev/null",O_WRONLY);if(out>=0){dup2(out,STDOUT_FILENO);dup2(out,STDERR_FILENO);close(out);}
         char pg[16],id[16],sn[16],ep[16];
@@ -735,7 +736,7 @@ static void controller_idle(void){
     if(controller_slept||SDL_GetTicks()-controller_activity<300000)return;
     controller_slept=1;
     if(access("./controller-idle.sh",R_OK))return;
-    idle_pid=fork();
+    idle_pid=shell_fork();
     if(!idle_pid){int log=open("controller.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./controller-idle.sh",(char*)NULL);_exit(127);}
     if(idle_pid<0)idle_pid=0;
 }
@@ -903,7 +904,7 @@ static void draw_coverflow(void) {
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
     if(access("./update.sh",R_OK)){snprintf(status,sizeof(status),"UPDATER NOT INSTALLED");return;}
-    update_pid=fork();
+    update_pid=shell_fork();
     if(!update_pid){int log=open("update.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./update.sh",(char*)NULL);_exit(127);}
     if(update_pid<0){update_pid=0;snprintf(status,sizeof(status),"COULD NOT START UPDATER");return;}
     snprintf(status,sizeof(status),"CHECKING GITHUB FOR A SHELL UPDATE...");
@@ -1250,7 +1251,7 @@ static void launch_player(const Title *t) {
     playing_title=*t;player_menu=1; /* Native controller menu is always available. */
     subtitle_route_log("launch-player",t);
     close_ui();
-    player_pid=fork();
+    player_pid=shell_fork();
     if(player_pid==0) {
         close(controls[1]);
         signal(SIGUSR1,SIG_IGN); /* Ignore a controller press before exec is ready. */

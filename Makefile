@@ -7,7 +7,7 @@ all: build/greenlink build/greenlink-catalog
 build/greenlink-catalog: src/catalog.c src/games.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
-build/greenlink: src/shell.c src/child_process.h src/api_setup.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/browse_filters.h
+build/greenlink: src/shell.c src/child_process.h src/api_setup.h src/phone_features.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl
 
@@ -33,6 +33,10 @@ test: all
 	python3 tests/update_test.py
 	python3 tests/update_package_test.py
 	python3 tests/api_setup_test.py
+	$(CC) $(CFLAGS) tests/phone_state_test.c -o build/phone-state-test
+	./build/phone-state-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/phone_playback_test.c -o build/phone-playback-test $(SDL_LIBS)
+	./build/phone-playback-test
 	$(CC) $(CFLAGS) tests/resolver_test.c -o build/resolver-test -lcurl -ljson-c -lcrypto
 	./build/resolver-test
 	SDL_VIDEODRIVER=dummy ./build/greenlink --screenshot build/preview.bmp

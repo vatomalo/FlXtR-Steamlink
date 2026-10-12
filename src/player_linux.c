@@ -48,6 +48,9 @@ static void draw(void){
     command("show-text",text,"60000");
 }
 static void key(char c){
+    if(c=='P'){command("cycle","pause",NULL);return;}
+    if(c=='F'||c=='R'){command("seek",c=='F'?"10":"-10","relative");return;}
+    if(c=='S'){request(7,position());return;}
     if(c=='m'||(c=='b'&&menu)){menu=!menu;if(menu)draw();else command("show-text","","0");return;}
     if(c=='b'){request(7,position());return;}
     if(c=='v'){view=(view+1)%3;sizing();}
@@ -128,6 +131,8 @@ int main(int argc,char **argv){
     if(mpv_initialize(mpv)<0){mpv_terminate_destroy(mpv);return 1;}
     sizing();if(fd>=0)fcntl(fd,F_SETFL,fcntl(fd,F_GETFL)|O_NONBLOCK);
     command("loadfile",argv[1],NULL);
+    const char *external=getenv("FLXTR_SUBTITLE_ENGLISH");
+    if(external&&*external)command("sub-add",external,"select");
     while(!stop){
         char keys[32];ssize_t n;while(fd>=0&&(n=read(fd,keys,sizeof(keys)))>0)for(ssize_t i=0;i<n;i++)key(keys[i]);
         if(stop)break;

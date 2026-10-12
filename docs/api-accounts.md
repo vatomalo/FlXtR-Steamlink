@@ -16,7 +16,7 @@ whether the key works and has remaining quota.
 The small HTTP listener binds the device's private IPv4 address on an ephemeral
 port, only while this screen is open. A random 128-bit URL token protects the
 form, with Host/Origin checks and no external scripts or assets. Leaving the
-screen closes it; it expires after ten minutes. Press A for a fresh code.
+screen closes it; it expires after ten minutes without a valid request. Press A for a fresh code.
 Use a trusted home network: phone-to-device setup uses HTTP, not TLS. Guest
 Wi-Fi/client isolation may prevent reaching the device. The URL is also shown
 on the TV. A PC is not needed for Steam Link setup.
@@ -31,3 +31,5 @@ lookups; subtitle fallback uses the key on the next lookup.
 Test: `python3 tests/api_setup_test.py`. Preview:
 `SDL_VIDEODRIVER=dummy ./build/greenlink --api-accounts --screenshot build/api-accounts.bmp`.
 The preview exits immediately, so its setup link is intentionally no longer live.
+
+The same screen now links to the [phone remote and party quiz](phone-remote.md).

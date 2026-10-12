@@ -3,6 +3,9 @@ import http.client
 import os
 from pathlib import Path
 import socket
+import shutil
+import json
+import time
 import subprocess
 import tempfile
 from urllib.parse import urlsplit, urlencode
@@ -13,6 +16,7 @@ subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-Werror', str(root / 'tes
 subprocess.run([str(binary), 'expire'], check=True)
 with tempfile.TemporaryDirectory() as directory:
     app = Path(directory)
+    shutil.copytree(root / 'assets', app / 'assets')
     server = subprocess.Popen([str(binary)], cwd=app, stdout=subprocess.PIPE, text=True)
     try:
         url = urlsplit(server.stdout.readline().strip())
@@ -23,13 +27,16 @@ with tempfile.TemporaryDirectory() as directory:
             response = conn.getresponse()
             code, text = response.status, response.read().decode()
             assert response.getheader('Cache-Control') == 'no-store'
-            assert response.getheader('Referrer-Policy') == 'no-referrer'
+            assert response.getheader('Referrer-Policy') == 'same-origin'
             conn.close()
             return code, text
         assert request()[0] == 200
         assert request(path='/')[0] == 403
         assert request(headers={'Host': 'evil.example'})[0] == 403
+        assert request(path=url.path+'phone')[0] == 200
+        assert request(path=url.path+'app.js')[0] == 200
         headers = {'Content-Type': 'application/x-www-form-urlencoded', 'Origin': f'http://{url.netloc}'}
+        assert request('POST','subdl=charset_test_key',headers=dict(headers,**{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}))[0]==200
         for field, filename, key in [('subdl', 'subdl-api-key.txt', 'test_SubDL-1234'), ('gamesdb', 'thegamesdb.key', 'test_GameDB-5678')]:
             code, text = request('POST', urlencode({field: key}), headers=headers)
             assert code == 200 and key not in text
@@ -55,6 +62,31 @@ with tempfile.TemporaryDirectory() as directory:
         assert b'200 OK' in response
         assert (app / 'subdl-api-key.txt').read_text() == 'fragmented_key\n'
         assert not list(app.glob('*.setup-*'))
+        assert request('POST', 'subdl=aaaaaaaa', headers=dict(headers, Origin='null'))[0] == 403
+        raw={'Content-Type':'application/octet-stream','Origin':f'http://{url.netloc}'}
+        payload=os.urandom(1024*1024)
+        assert request('POST',payload,path=url.path+'upload/test.mp4',headers=raw)[0]==200
+        assert (app/'phone-files/test.mp4').read_bytes()==payload
+        assert request('POST',b'new',path=url.path+'upload/test.mp4',headers=raw)[0]==409
+        assert (app/'phone-files/test.mp4').read_bytes()==payload
+        assert request('POST',b'bad',path=url.path+'upload/../evil.mp4',headers=raw)[0]==400
+        assert request('POST',b'bad',path=url.path+'upload/run.sh',headers=raw)[0]==400
+        assert request('POST',b'rom',path=url.path+'upload/test.nes',headers=raw)[0]==200
+        assert (app/'roms/phone/test.nes').read_bytes()==b'rom'
+        conn=socket.create_connection((url.hostname,url.port),timeout=4)
+        conn.sendall(f'POST {url.path}upload/interrupted.mp4 HTTP/1.1\r\nHost: {url.netloc}\r\nContent-Type: application/octet-stream\r\nContent-Length: 100000\r\n\r\npartial'.encode())
+        conn.close();time.sleep(.1)
+        assert not (app/'phone-files/interrupted.mp4').exists()
+        assert not list((app/'phone-files').glob('.upload-*'))
+        for name in ('Alice','Bob'):
+            code,token=request('POST',urlencode({'join':name}),headers=headers)
+            assert code==200 and len(token)==32
+        assert request('POST','party=start',headers=headers)[0]==200
+        state=json.loads(request(path=url.path+'state')[1]);assert state['phase']==1 and len(state['players'])==2
+        assert state['correct']==-1 and 'test.mp4' in state['files']
+        answer=urlencode({'answer':f'{token}:0:1'})
+        assert request('POST',answer,headers=headers)[0]==200
+        assert request('POST',answer,headers=headers)[0]==409
     finally:
         server.terminate();server.wait(timeout=5)
 print('PASS: setup HTTP, expiry, key storage permissions, fragmented input, invalid keys and cross-origin rejection')

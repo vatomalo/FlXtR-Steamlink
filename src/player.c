@@ -107,12 +107,14 @@ static void playback_controls(void) {
 static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&av_gettime_relative()>deadline); }
 /* Apply TLS verification to every HLS playlist, key and segment, not only the
  * top-level URL. Never permit a remote playlist to read local files. */
+static const char *local_media;
+#include "phone_media.h"
 static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int flags,AVDictionary **opts) {
     if(megaplay){av_dict_set(opts,"referer","https://megaplay.buzz/",0);av_dict_set(opts,"user_agent","FlXtR-Steamlink/0.2",0);}
     av_dict_set(opts,"tls_verify","1",0);
     av_dict_set(opts,"ca_file",ca_file,0);
     av_dict_set(opts,"rw_timeout","15000000",0);
-    av_dict_set(opts,"protocol_whitelist","http,https,tcp,tls,crypto",0);
+    av_dict_set(opts,"protocol_whitelist",local_media&&!strcmp(local_media,url)?"file":"http,https,tcp,tls,crypto",0);
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
 }
 static void wait_until(int64_t when) {
@@ -152,7 +154,9 @@ static void player_subtitle_log(const char *phase,const char *english,const char
     fclose(f);
 }
 static int load_external_subtitles(const char *url){
-    if(!url||strncmp(url,"https://",8)||strlen(url)>1023||strpbrk(url,"\r\n\t"))return -1;
+    int local=phone_local_media(url);const char *ext=url?strrchr(url,'.'):NULL;
+    if(!url||(!local&&strncmp(url,"https://",8))||strlen(url)>1023||strpbrk(url,"\r\n\t"))return -1;
+    if(local&&(!ext||(strcasecmp(ext,".srt")&&strcasecmp(ext,".vtt"))))return -1;
     AVFormatContext *subfmt=avformat_alloc_context();
     if(!subfmt)return -1;
     subfmt->interrupt_callback.callback=interrupt_io;
@@ -165,11 +169,11 @@ static int load_external_subtitles(const char *url){
     av_dict_set(&options,"tls_verify","1",0);
     av_dict_set(&options,"ca_file",ca_file,0);
     /* FFmpeg's HLS demuxer opens WebVTT segments through nested HTTPS. */
-    av_dict_set(&options,"protocol_whitelist","https,tls,tcp,crypto",0);
+    av_dict_set(&options,"protocol_whitelist",local?"file":"https,tls,tcp,crypto",0);
     av_dict_set(&options,"allowed_extensions","vtt,webvtt,m3u8",0);
     av_dict_set(&options,"rw_timeout","12000000",0);
-    fprintf(stderr,"External subtitle: attempting HTTPS track\n");
-    int rc=avformat_open_input(&subfmt,url,NULL,&options);
+    fprintf(stderr,"External subtitle: attempting %s track\n",local?"uploaded":"HTTPS");
+    int rc=avformat_open_input(&subfmt,url,local?av_find_input_format(!strcasecmp(ext,".srt")?"srt":"webvtt"):NULL,&options);
     av_dict_free(&options);
     if(rc<0){char reason[128];av_strerror(rc,reason,sizeof(reason));fprintf(stderr,"External subtitle URL could not be opened: %s (%d)\n",reason,rc);avformat_free_context(subfmt);return -1;}
     rc=avformat_find_stream_info(subfmt,NULL);
@@ -216,6 +220,7 @@ int main(int argc,char **argv) {
     int probe=!strcmp(argv[1],"--probe")||buffer_probe;
     if(probe&&argc<3)return 2;
     const char *url=probe?argv[2]:argv[1];
+    local_media=phone_local_media(url)?url:NULL;
     ca_file=access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem";
     for(int i=probe?3:2;i<argc;i++){
         if(!strcmp(argv[i],"--view")&&i+1<argc){
@@ -247,7 +252,7 @@ int main(int argc,char **argv) {
     av_dict_set(&opts,"rw_timeout","15000000",0);
     av_dict_set(&opts,"tls_verify","1",0);
     av_dict_set(&opts,"ca_file",ca_file,0);
-    av_dict_set(&opts,"protocol_whitelist","http,https,tcp,tls,crypto",0);
+    av_dict_set(&opts,"protocol_whitelist",local_media?"file,http,https,tcp,tls,crypto":"http,https,tcp,tls,crypto",0);
     if(megaplay){
         av_dict_set(&opts,"referer","https://megaplay.buzz/",0);av_dict_set(&opts,"user_agent","FlXtR-Steamlink/0.2",0);
         /* This host serves MPEG-TS segments with .jpg names. Protocol restrictions

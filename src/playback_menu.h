@@ -94,6 +94,19 @@ static void seek_cancel(void){
     }
 }
 static void menu_command(char c){
+    if(c=='P'){
+        if(!paused){paused=1;pause_started=av_gettime_relative();}
+        else{if(clock_start)clock_start+=av_gettime_relative()-pause_started;paused=0;}
+        if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
+        return;
+    }
+    if(c=='F'||c=='R'){
+        double target=playback_position()+(c=='F'?10:-10);
+        if(target<0)target=0;
+        if(media_duration>1&&target>=media_duration)target=media_duration-1;
+        menu_restart(1,target);return;
+    }
+    if(c=='S'){menu_restart(7,playback_position());return;}
     if(seek_scrubbing&&(c=='b'||c=='m')){seek_cancel();menu_draw();return;}
     if(c=='m'||(c=='b'&&menu_open)){
         menu_open=!menu_open;

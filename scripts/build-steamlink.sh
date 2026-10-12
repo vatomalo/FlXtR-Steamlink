@@ -29,8 +29,8 @@ cp catalog.tsv "$app/catalog.tsv"
 sdl=build/retroarch-libs/libSDL2-2.0.so.0
 mkdir -p build/retroarch-libs "$app/retroarch-libs"
 if [ ! -f "$sdl" ]; then
-    curl -fsSL --retry 2 --connect-timeout 10 --max-time 120 \
-        https://raw.githubusercontent.com/ValveSoftware/steamlink-sdk/62b4d098d1472c3534dd098ca2a0e0e10712f1c6/rootfs/usr/lib/libSDL2-2.0.so.0.3100.0 -o "$sdl"
+    wget -q --tries=3 --timeout=120 \
+        https://raw.githubusercontent.com/ValveSoftware/steamlink-sdk/62b4d098d1472c3534dd098ca2a0e0e10712f1c6/rootfs/usr/lib/libSDL2-2.0.so.0.3100.0 -O "$sdl"
 fi
 echo "c9d19c7ae28243b3739e2f14a4f19cdd48646bed063b26607d25b19dbc148932  $sdl" | sha256sum -c -
 cp "$sdl" "$app/retroarch-libs/"

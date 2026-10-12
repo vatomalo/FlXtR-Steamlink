@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory() as tmp:
     run(); assert (root/'games.json').stat().st_mtime_ns == stamp
     index=next(i for i,g in enumerate(games,1) if g['rom']==str(unsafe_name))
     runtime=home/'retroarch.exec'
-    runtime.write_text('#!/usr/bin/env python3\nimport json,sys,pathlib\npathlib.Path("argv.json").write_text(json.dumps(sys.argv[1:]))\n')
+    runtime.write_text('#!/usr/bin/env python3\nimport json,sys,pathlib,os\npathlib.Path("runtime-env.json").write_text(json.dumps(dict(os.environ)))\npathlib.Path("argv.json").write_text(json.dumps(sys.argv[1:]))\n')
     runtime.chmod(0o755)
     (root/'game-request').write_text(f'{index} 4 6\n')
     subprocess.run([str(worker),'--run-game'],cwd=root,env=env,check=True)
@@ -65,6 +65,15 @@ with tempfile.TemporaryDirectory() as tmp:
     assert launch()[-2]==str(fast)
     (root/'game-cores.tsv').unlink()
     fast.unlink();assert launch()[-2]==str(stock)
+    native=root/'retroarch-libs';native.mkdir()
+    (native/'libSDL2-2.0.so.0').write_bytes(b'fixture')
+    env['LD_LIBRARY_PATH']='/existing/search/path'
+    launch()
+    assert json.loads((home/'runtime-env.json').read_text())['LD_LIBRARY_PATH']==str(native)+':/existing/search/path'
+    assert env['LD_LIBRARY_PATH']=='/existing/search/path'
+    env['FLXTR_USE_SYSTEM_SDL']='1';launch()
+    assert json.loads((home/'runtime-env.json').read_text())['LD_LIBRARY_PATH']=='/existing/search/path'
+    del env['FLXTR_USE_SYSTEM_SDL']
     neo_core=home/'cores/fbalpha2012_neogeo_libretro.so';neo_core.write_bytes(b'fixture')
     (root/'games.json').write_text(json.dumps([{'title':'Neo','rom':str(neo/'mslug.zip'),'core':str(neo_core)}]))
     assert launch()[-2]==str(neo_core)

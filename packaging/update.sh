@@ -60,6 +60,12 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
             fi
         done
     fi
+    if [ -f "$staged/retroarch-libs/libSDL2-2.0.so.0" ]; then
+        mkdir -p retroarch-libs
+        for part in libSDL2-2.0.so.0 SDL2-LICENSE.txt; do
+            cp "$staged/retroarch-libs/$part" "retroarch-libs/$part.new" && mv -f "retroarch-libs/$part.new" "retroarch-libs/$part"
+        done
+    fi
     for part in update.sh greenlink.sh controller-idle.sh toc.txt catalog.tsv WABT-LICENSE.txt; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done

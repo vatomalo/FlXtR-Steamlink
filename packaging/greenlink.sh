@@ -26,6 +26,9 @@ while :; do
         # repeatedly printing MV_PE_InputBufWrite failures and ignoring TERM.
         # Recover ONLY when the same error is actively repeating; normal games
         # have no time limit. The watchdog never touches metadata workers.
+        # Keep the previous session even when the user immediately launches again.
+        [ ! -f game.previous.log ] || mv -f game.previous.log game.older.log
+        [ ! -f game.log ] || mv -f game.log game.previous.log
         ./greenlink-catalog --run-game >game.log 2>&1 &
         game_pid=$!
         (
@@ -61,6 +64,7 @@ while :; do
         game_code=$?
         kill "$watchdog_pid" 2>/dev/null
         wait "$watchdog_pid" 2>/dev/null
+        [ "$game_code" -eq 0 ] || cp game.log game-failure.log
         printf '%d\n' "$game_code" >game-exit-status
         set -- --library games
         continue

@@ -8,9 +8,9 @@ merged with the newer feature work rather than discarded.
 The installed 2019 RetroArch loads firmware SDL2 compatibility (2.3200.69), which
 in turn loads SDL3. The SDK instead carries native SDL2 2.31.0-p8771279. A private
 copy lets us test the compatibility boundary without replacing system libraries
-or rebuilding/changing cores. This is a candidate workaround, not yet proof of
-the root cause. A clean title-screen run is not sufficient validation of the
-reported walking-in-town failure.
+or rebuilding/changing cores. The user confirmed on 2026-10-12 that Castlevania II now works without crashing
+in the first-town reproduction, with the same FCEUmm core. This supports the native
+SDL2 workaround; it does not pinpoint the exact internal compatibility-layer bug.
 
 Builds pin the native binary to Valve SDK commit
 62b4d098d1472c3534dd098ca2a0e0e10712f1c6 and verify SHA-256
@@ -26,4 +26,5 @@ Each game launch retains two previous logs, and nonzero exits retain
 Validation: focused importer/runtime tests cover private SDL selection, preserved
 search paths, opt-out and unchanged parent environment. The device can initialize
 native SDL2 with its DS4 and sound, with no SDL3 in its loaded-library map.
-Walking/reproduction results must be confirmed before calling this fixed.
+The user-confirmed walking reproduction passes. Magic Sword and longer sessions
+still need broader gameplay coverage; no universal crash-free claim is made.

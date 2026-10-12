@@ -1,5 +1,9 @@
 # FlXtR-Steamlink
 
+Phone setup for subtitle and game metadata API keys is available under
+**Settings → API Accounts**. Scan the QR code, sign in on SubDL or TheGamesDB,
+then paste the key on your phone. See [API account setup](docs/api-accounts.md).
+
 A tiny native movie-library shell: black background, green pixel text, poster art,
 and a sparse white starfield inspired by old emulator menus.
 

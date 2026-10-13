@@ -35,3 +35,6 @@ tv-resume.tsv*
 subdl-api-key.txt*
 thegamesdb.key*
 phone-files/
+
+/tv-airing.tsv*
+/tv-preload.log

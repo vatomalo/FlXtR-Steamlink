@@ -78,7 +78,7 @@ static void key(char c){
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc<2)return 2;
-    int buffer=15,mb=128,headless=0;double duration=0;
+    int buffer=15,mb=128,headless=0,preload_fd=-1;double duration=0;
     for(int i=2;i<argc;i++){
         const char *a=argv[i];
         if(!strcmp(a,"--episodes")){episodes=1;continue;}
@@ -91,6 +91,7 @@ int main(int argc,char **argv){
         else if(!strcmp(a,"--start"))start=strtod(v,NULL);
         else if(!strcmp(a,"--duration"))duration=strtod(v,NULL);
         else if(!strcmp(a,"--control-fd"))fd=atoi(v);
+        else if(!strcmp(a,"--preload-fd"))preload_fd=atoi(v);
         else if(!strcmp(a,"--buffer-seconds"))buffer=atoi(v);
         else if(!strcmp(a,"--buffer-mb"))mb=atoi(v);
         else if(!strcmp(a,"--subtitle-size"))scale=atoi(v);
@@ -101,6 +102,7 @@ int main(int argc,char **argv){
     }
     if((height!=480&&height!=720&&height!=1080)||mb<16||mb>256||buffer<1||buffer>30||start<0||start>86400)return 2;
     signal(SIGTERM,signal_stop);signal(SIGINT,signal_stop);
+    if(preload_fd>=3){char go=0;ssize_t n=read(preload_fd,&go,1);close(preload_fd);if(n!=1||go!='G')return 1;}
     mpv=mpv_create();if(!mpv)return 1;
     mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"terminal","yes");
     mpv_set_option_string(mpv,"term-status-msg","");

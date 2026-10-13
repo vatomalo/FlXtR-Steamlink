@@ -628,7 +628,7 @@ int main(int argc,char **argv){
     else if(!strcmp(kind,"games-folders"))rc=games_folders(page);
     else if(!strcmp(kind,"games-system"))rc=games_system(page,id);
     else if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);
-    else if(!strcmp(kind,"tv-pick"))rc=tv_pick(positive(argv[3],1),id);
+    else if(!strcmp(kind,"tv-pick"))rc=tv_pick(argv[3],id,season);
     else if(!strcmp(kind,"archive-folders"))rc=archive_folders(page);
     else if(!strcmp(kind,"archive-category"))rc=archive_category_list(page,id,argv[3]);
     else if(!strcmp(kind,"archive"))rc=archive_list(page,argv[3]);

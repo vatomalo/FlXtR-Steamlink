@@ -216,6 +216,7 @@ int main(int argc,char **argv) {
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
     unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=128,si=-1;const char *sub_language="auto";
     if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
+    int preload_fd=-1;
     int buffer_probe=!strcmp(argv[1],"--probe-buffer");
     int probe=!strcmp(argv[1],"--probe")||buffer_probe;
     if(probe&&argc<3)return 2;
@@ -231,6 +232,7 @@ int main(int argc,char **argv) {
             else return 2;
         }else if(!strcmp(argv[i],"--height")&&i+1<argc){char *end;long h=strtol(argv[++i],&end,10);if(*end||h<0||h>1080)return 2;height_limit=h?(int)h:720;}
         else if(!strcmp(argv[i],"--control-fd")&&i+1<argc){control_fd=atoi(argv[++i]);if(control_fd<3||fcntl(control_fd,F_SETFL,O_NONBLOCK)<0)return 2;}
+        else if(!strcmp(argv[i],"--preload-fd")&&i+1<argc){preload_fd=atoi(argv[++i]);if(preload_fd<3||fcntl(preload_fd,F_SETFL,O_NONBLOCK)<0)return 2;}
         else if(!strcmp(argv[i],"--episodes")){menu_episodes=1;}
         else if(!strcmp(argv[i],"--servers")){menu_servers=1;}
         else if(!strcmp(argv[i],"--start")&&i+1<argc){char *end;playback_start=strtod(argv[++i],&end);if(*end||!isfinite(playback_start)||playback_start<0||playback_start>86400)return 2;}
@@ -346,6 +348,21 @@ int main(int argc,char **argv) {
         }
         result=0;goto done;
     }
+    if(preload_fd>=0){
+        deadline=0;buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
+        fprintf(stderr,"TV preloading compressed packets; hardware decoder remains closed\n");
+        int ready=0;int64_t until=av_gettime_relative()+180000000;
+        while(!stopped&&av_gettime_relative()<until){
+            char go;ssize_t n=read(preload_fd,&go,1);
+            if(n==1){ready=go=='G';break;}
+            if(n==0||(n<0&&errno!=EAGAIN&&errno!=EINTR))break;
+            SDL_Delay(50);
+        }
+        close(preload_fd);preload_fd=-1;if(!ready)goto done;
+        pthread_mutex_lock(&buffer->mutex);
+        fprintf(stderr,"TV preload released: %d packets / %llu bytes; opening hardware decoder\n",buffer->count,(unsigned long long)buffer->write_bytes);
+        pthread_mutex_unlock(&buffer->mutex);
+    }
     context=SLVideo_CreateContext();if(!context){fprintf(stderr,"SLVideo context unavailable\n");goto done;}
     /* Normal mode supports B-frames, unlike Moonlight's low-latency mode. */
     video=SLVideo_CreateStream(context,k_ESLVideoFormatH264,0);
@@ -377,7 +394,7 @@ int main(int argc,char **argv) {
     packet=av_packet_alloc();filtered=av_packet_alloc();frame=av_frame_alloc();
     if(!packet||!filtered||!frame)goto done;
     deadline=0;
-    buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);
+    if(!buffer)buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);
     if(!buffer){fprintf(stderr,"Disk buffer unavailable or insufficient free space\n");goto done;}
     fprintf(stderr,"Disk buffer: %d MiB / %d seconds prefill\n",buffer_mb,buffer_secs);
     show_view("BUFFERING...");
@@ -482,6 +499,7 @@ int main(int argc,char **argv) {
     result=(stopped||rc==AVERROR_EOF)?0:1;
     fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
 done:
+    if(preload_fd>=0)close(preload_fd);
     disk_close(buffer);
     if(menu_overlay){SLVideo_HideOverlay(menu_overlay);SLVideo_FreeOverlay(menu_overlay);}
     if(control_fd>=0)close(control_fd);

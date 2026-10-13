@@ -13,16 +13,33 @@ int main(int argc,char **argv){
     char token[160],reply[160],answer[100];assert(phone_command("join","Alice",token,sizeof(token))==200);
     assert(phone_command("join","Bob",reply,sizeof(reply))==200);
     assert(phone_command("party","start",reply,sizeof(reply))==200);
-    for(int round=0;round<5;round++){
+    int expected=0,streak=0;
+    for(int round=0;round<PHONE_ROUNDS;round++){
         assert(phone_party.phase==1&&phone_party.round==round);
-        snprintf(answer,sizeof(answer),"%.32s:%d:%d",token,round,phone_question()->correct);
+        snprintf(answer,sizeof(answer),"%.32s:%d:%d",token,round,phone_question()->kind?0:phone_question()->correct);
         assert(phone_command("answer",answer,reply,sizeof(reply))==200);
         assert(phone_command("answer",answer,reply,sizeof(reply))==409);
         api_setup_tick(phone_party.deadline);
-        assert(phone_party.phase==2&&phone_party.players[0].score==(round+1)*100);
+        if(!phone_question()->kind)streak++;
+        expected+=(phone_question()->kind?100:200+(streak>1?50:0))*(round>=6?2:1);
+        assert(phone_party.phase==2&&phone_party.players[0].score==expected);
         api_setup_tick(phone_party.deadline);
     }
     assert(phone_party.phase==3&&phone_party.players[1].score==0);
+    int previous[PHONE_ROUNDS];memcpy(previous,phone_party.deck,sizeof(previous));
+    assert(phone_command("party","start-spicy",reply,sizeof(reply))==200);
+    for(int i=0;i<PHONE_ROUNDS;i++){
+        const PhoneQuestion *q=&phone_questions[phone_party.deck[i]];assert(q->kind==i%2);if(q->kind)assert(q->spicy);
+        for(int j=0;j<i;j++)assert(phone_party.deck[i]!=phone_party.deck[j]);
+        for(int j=0;j<PHONE_ROUNDS;j++)assert(phone_party.deck[i]!=previous[j]);
+    }
+    /* Tied room votes both score, passing never scores, and results stay hidden. */
+    phone_party.round=1;phone_party.phase=1;phone_party.players[0].answer=0;phone_party.players[1].answer=1;
+    char state[4096];phone_state(state,sizeof(state));assert(strstr(state,"\"winners\":0")&&strstr(state,"\"votes\":[0,0,0,0]"));
+    phone_party_tick(phone_party.deadline);assert(phone_party.winners==3&&phone_party.players[0].gain==100&&phone_party.players[1].gain==100);
+    phone_party.phase=1;phone_party.players[0].answer=phone_party.players[1].answer=4;
+    phone_party_tick(phone_party.deadline);assert(phone_party.winners==0&&!phone_party.players[0].gain&&!phone_party.players[1].gain);
+    for(int game=0;game<100;game++){phone_party.spicy=game%2;phone_deck((uint32_t)game+1);for(int i=0;i<PHONE_ROUNDS;i++){const PhoneQuestion *q=&phone_questions[phone_party.deck[i]];if(q->kind)assert(q->spicy==phone_party.spicy);for(int j=0;j<i;j++)assert(phone_party.deck[i]!=phone_party.deck[j]);}}
     assert(!phone_local_media("/etc/passwd")&&!phone_local_media("phone-files/../secret"));
     api_setup_close();assert(phone_party.count==0);
     puts("PASS: quiz rounds, deadlines, score-once, room cleanup, local media boundaries and Wi-Fi escaping");return 0;

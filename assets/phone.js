@@ -22,18 +22,28 @@ el('subtitle').onclick=()=>run(async()=>notice(await send('subtitle',el('files')
 el('clear-subtitle').onclick=()=>run(async()=>notice(await send('subtitle','')));
 el('cast').onsubmit=event=>{event.preventDefault();run(async()=>notice(await send('url',el('url').value)));};
 el('join').onsubmit=event=>{event.preventDefault();run(async()=>{if(player){notice('Already joined on this phone.');return;}player=await send('join',el('name').value);sessionStorage.setItem(location.pathname,player);notice('Joined! Wait for everyone, then start.');});};
-el('start').onclick=()=>run(async()=>notice(await send('party','start')));
+el('start').onclick=()=>run(async()=>notice(await send('party','start-'+el('tone').value)));
+el('pass').onclick=()=>run(async()=>{notice(await send('answer',`${player}:${round}:4`));locked=round;});
 async function poll(){
   if(busy)return;
   try{const response=await fetch(new URL('state',base));if(!response.ok)throw Error('Phone session expired. Reopen setup on TV.');const state=await response.json();
     const selected=el('files').value,names=state.files.join('|');
     if(el('files').dataset.names!==names){el('files').replaceChildren(...state.files.map(name=>new Option(name,name)));el('files').dataset.names=names;if(state.files.includes(selected))el('files').value=selected;}
     phase=state.phase;round=state.round;
-    el('question').textContent=phase===1?`Question ${round+1}/5 · ${state.seconds}s: ${state.question}`:phase===2?`Answer: ${state.choices[state.correct]}`:phase===3?'Final scores — play again?':'Join, then start when everyone is ready.';
-    el('scores').textContent=state.players.map(p=>`${p.name}: ${p.score}`).join(' · ');
+    const active=phase===1,reveal=phase===2,final=phase===3;
+    el('lobby').hidden=active||reveal;el('join').hidden=!!player;
+    el('start').textContent=final?'Rematch with fresh questions':'Start the party';
+    el('round-label').textContent=active||reveal?`ROUND ${round+1}/${state.rounds} · ${state.kind?'READ THE ROOM':'TRIVIA TWIST'}${round>=6?' · DOUBLE POINTS':''}`:final?'THE RESULTS ARE IN':'THE LOBBY';
+    el('timer').hidden=!active;el('timer').value=state.seconds;
+    const ranked=[...state.players].sort((a,b)=>b.score-a.score),best=ranked[0]?.score;
+    const winners=ranked.filter(p=>p.score===best).map(p=>p.name);
+    el('question').textContent=active||reveal?state.question:final?(winners.length>1?'Shared glory: ':'Winner: ')+winners.join(' & '):'Take a seat. The room is judging you already.';
+    el('explanation').textContent=reveal?state.explanation:active?`${state.seconds}s · ${state.players.filter(p=>p.answered).length}/${state.players.length} locked in${locked===round?' · Your answer is locked.':''}`:'';
+    el('scores').replaceChildren(...ranked.map(p=>{const li=document.createElement('li');li.textContent=`${p.name}: ${p.score}${reveal?' (+'+p.gain+')':''}`;return li;}));
     if(phase===0||phase===3)locked=-1;
+    el('pass').hidden=!active;el('pass').disabled=!player||locked===round;
     el('answers').replaceChildren();
-    if(phase===1)state.choices.forEach((choice,index)=>{const b=document.createElement('button');b.textContent=choice;b.disabled=!player||locked===round;b.onclick=()=>run(async()=>{notice(await send('answer',`${player}:${round}:${index}`));locked=round;});el('answers').append(b);});
+    if(active||reveal)state.choices.forEach((choice,index)=>{const b=document.createElement('button');b.textContent=choice+(reveal&&state.kind?` · ${state.votes[index]} votes`:'');b.disabled=!active||!player||locked===round;if(reveal&&(state.winners&(1<<index)))b.classList.add('winner');b.onclick=()=>run(async()=>{notice(await send('answer',`${player}:${round}:${index}`));locked=round;await poll();});el('answers').append(b);});
   }catch(error){notice(error.message);}
 }
 poll();setInterval(poll,2000);

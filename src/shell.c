@@ -1008,13 +1008,35 @@ static void draw(Uint32 tick) {
         text(204,96,phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
         if(phone_party.phase){
             const PhoneQuestion *q=phone_question();char caption[96];
-            snprintf(caption,sizeof(caption),"ROUND %d / 5   %s",phone_party.round<5?phone_party.round+1:5,phone_party.phase==1?"ANSWER ON YOUR PHONE":phone_party.phase==2?"RESULT":"FINAL SCORES");
-            text(204,140,caption,2,(SDL_Color){140,240,150,255},58);
+            int last=phone_party.round>=6,answered=0;
+            for(int i=0;i<phone_party.count;i++)if(phone_party.players[i].answer>=0)answered++;
+            snprintf(caption,sizeof(caption),"ROUND %d / %d  %s%s",phone_party.round<PHONE_ROUNDS?phone_party.round+1:PHONE_ROUNDS,PHONE_ROUNDS,phone_party.phase==3?"FINAL SCORES":q->kind?"READ THE ROOM":"TRIVIA TWIST",last&&phone_party.phase!=3?" / DOUBLE POINTS":"");
+            text(204,136,caption,2,(SDL_Color){140,240,150,255},58);
             if(phone_party.phase!=3){
-                wrap(204,180,q->question,56,3,(SDL_Color){255,255,255,255});
-                for(int i=0;i<4;i++){snprintf(caption,sizeof(caption),"%c: %s",'A'+i,q->answers[i]);text(204+(i%2)*350,250+(i/2)*35,caption,2,phone_party.phase==2&&i==q->correct?(SDL_Color){140,240,150,255}:(SDL_Color){255,255,255,255},28);}
+                int left=(int32_t)(phone_party.deadline-phone_now)>0?(int)(phone_party.deadline-phone_now)/1000:0;
+                if(phone_party.phase==2&&q->kind)snprintf(caption,sizeof(caption),"ROOM VOTES / A: %d  B: %d  C: %d  D: %d",phone_party.votes[0],phone_party.votes[1],phone_party.votes[2],phone_party.votes[3]);
+                else if(phone_party.phase==2)snprintf(caption,sizeof(caption),"ANSWER REVEAL / NEXT ROUND IN %d",left);
+                else snprintf(caption,sizeof(caption),"%d SECONDS / %d OF %d LOCKED IN",left,answered,phone_party.count);
+                text(204,160,caption,1,(SDL_Color){240,190,110,255},65);
+                wrap(204,182,q->question,56,3,(SDL_Color){255,255,255,255});
+                for(int i=0;i<4;i++){
+                    int win=phone_party.phase==2&&(phone_party.winners&(1<<i));
+                    snprintf(caption,sizeof(caption),"%c: %s",'A'+i,q->answers[i]);
+                    text(204+(i%2)*350,248+(i/2)*29,caption,2,win?(SDL_Color){140,240,150,255}:(SDL_Color){255,255,255,255},28);
+                }
+                if(phone_party.phase==2)wrap(204,307,q->explanation,58,2,(SDL_Color){240,190,110,255});
             }
-            for(int i=0;i<phone_party.count;i++){snprintf(caption,sizeof(caption),"%s: %d",phone_party.players[i].name,phone_party.players[i].score);text(204+(i%2)*350,330+(i/2)*25,caption,2,(SDL_Color){220,230,220,255},28);}
+            int order[8];for(int i=0;i<phone_party.count;i++)order[i]=i;
+            for(int i=1;i<phone_party.count;i++)for(int j=i;j>0&&phone_party.players[order[j]].score>phone_party.players[order[j-1]].score;j--){int t=order[j];order[j]=order[j-1];order[j-1]=t;}
+            if(phone_party.phase==3){
+                int best=phone_party.count?phone_party.players[order[0]].score:0,ties=0;
+                for(int i=0;i<phone_party.count;i++)if(phone_party.players[i].score==best)ties++;
+                snprintf(caption,sizeof(caption),"%d-WAY TIE / SHARED GLORY",ties);
+                if(ties<=1&&phone_party.count)snprintf(caption,sizeof(caption),"WINNER: %s",phone_party.players[order[0]].name);
+                text(204,195,caption,3,(SDL_Color){240,190,110,255},38);
+                text(204,245,"REMATCH FROM YOUR PHONE / FRESH QUESTIONS",1,(SDL_Color){220,230,220,255},70);
+            }
+            for(int i=0;i<phone_party.count;i++){int p=order[i];snprintf(caption,sizeof(caption),"%s: %d +%d",phone_party.players[p].name,phone_party.players[p].score,phone_party.phase==2?phone_party.players[p].gain:0);text(204+(i%2)*350,355+(i/2)*22,caption,2,(SDL_Color){220,230,220,255},28);}
         }else if(api_setup.listener>=0){
             int size=qrcodegen_getSize(accounts_qr),scale=4,left=204,top=130;
             rect(left,top,(size+8)*scale,(size+8)*scale,(SDL_Color){255,255,255,255},1);
@@ -1022,7 +1044,7 @@ static void draw(Uint32 tick) {
                 rect(left+(x+4)*scale,top+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);
             text(524,155,"SCAN WITH YOUR PHONE",2,(SDL_Color){255,255,255,255},32);
             wrap(524,195,party_entry?"JOIN POCKET QUIZ ON YOUR PHONE. ENTER YOUR NAME, THEN START WHEN EVERYONE IS READY.":"API KEYS, VIDEO UPLOADS, A PHONE REMOTE AND POCKET QUIZ. OPEN THE PHONE REMOTE LINK.",30,5,(SDL_Color){220,230,220,255});
-            text(524,315,party_entry?"1-8 PLAYERS / FIVE QUESTIONS":access("subdl-api-key.txt",R_OK)?"SUBDL: NOT SET":"SUBDL: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
+            text(524,315,party_entry?"1-8 PLAYERS / EIGHT ROUNDS":access("subdl-api-key.txt",R_OK)?"SUBDL: NOT SET":"SUBDL: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
             text(524,348,party_entry?"NO API KEY NEEDED":access("thegamesdb.key",R_OK)?"THEGAMESDB: NOT SET":"THEGAMESDB: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
             if(wifi_qr_valid){
                 int ws=qrcodegen_getSize(wifi_qr),unit=2;

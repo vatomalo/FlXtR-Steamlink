@@ -27,9 +27,7 @@ Controls include pause/resume, stop, ten-second seeks, picture size and menu
 navigation for subtitle/options changes. This is direct playback, not AirPlay,
 Chromecast, protected-app casting or screen mirroring.
 
-Pocket Quiz is an original small quiz prototype: up to eight phones, five
-questions per game, twenty seconds per question, five-second answer reveals,
-100 points per correct answer, scores on TV. Join before starting; each phone
+Pocket Quiz supports up to eight phones and eight rounds drawn from 48 original prompts. Trivia alternates with Read the Room majority votes. Choose Clean Chaos or Flirty Chaos (cheeky, non-explicit). Rounds last 25 seconds, with eight-second reveals; all answers submitted advances the reveal early. Trivia earns 200 points plus a 50-point streak bonus, room votes earn 100, and the final two rounds double the award. Tied popular choices all count; passes score zero. Rematches avoid the previous game's questions. Ranked scores and explanations appear on TV and phones. Join before starting; each phone
 has a random player token and can answer once per round. No account or cloud
 service is involved. The browser polls every two seconds; an open remote keeps
 the room alive. Without valid requests or an active upload it expires after

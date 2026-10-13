@@ -43,3 +43,5 @@ normal same-origin form submissions. Rescan/reload after updating.
 The player control pipe is explicitly retained across exec, while graphics
 handles remain close-on-exec. This repairs the launch regression introduced
 by broad descriptor isolation.
+
+Pocket Quiz is also available directly from About > Party Games / Pocket Quiz and Settings > Party Games. Its QR opens the quiz section directly; API keys are not required.

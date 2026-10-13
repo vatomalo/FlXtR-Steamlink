@@ -29,17 +29,19 @@
 #include "vendor/qrcodegen.c"
 #include "wifi_pairing.h"
 
-static int accounts_on;
+static int accounts_on,party_entry,about_row;
 static uint8_t accounts_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(8)];
 static uint8_t wifi_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(12)];
 static int wifi_qr_valid;
-static void accounts_open(void){
+static void accounts_open(int party){
+    party_entry=party;
     char ip[INET_ADDRSTRLEN];uint8_t temp[sizeof(accounts_qr)];accounts_on=1;
     memset(accounts_qr,0,sizeof(accounts_qr));
     if(api_lan_ip(ip,sizeof(ip))||api_setup_start(ip,SDL_GetTicks())){
         api_setup_close();strcpy(api_setup.message,"NO LAN ADDRESS - CONNECT TO YOUR HOME NETWORK");return;
     }
-    if(!qrcodegen_encodeText(api_setup.url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,8,qrcodegen_Mask_AUTO,true)){
+    char qr_url[256];snprintf(qr_url,sizeof(qr_url),"%s%s",api_setup.url,party_entry?"phone#party":"");
+    if(!qrcodegen_encodeText(qr_url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,8,qrcodegen_Mask_AUTO,true)){
         api_setup_close();strcpy(api_setup.message,"COULD NOT CREATE QR CODE - PRESS A TO RETRY");
     }
     char payload[800];uint8_t wifi_temp[sizeof(wifi_qr)];
@@ -1003,7 +1005,7 @@ static void draw(Uint32 tick) {
     text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[L2] ROM FOLDERS":browse.mode==28?"[Y] DELETE ZIP":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":"B BACK / L3 FAVORITE",1,dim,22);
     if(accounts_on){
         rect(184,80,746,410,(SDL_Color){12,20,14,255},1);
-        text(204,96,phone_party.phase?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
+        text(204,96,phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
         if(phone_party.phase){
             const PhoneQuestion *q=phone_question();char caption[96];
             snprintf(caption,sizeof(caption),"ROUND %d / 5   %s",phone_party.round<5?phone_party.round+1:5,phone_party.phase==1?"ANSWER ON YOUR PHONE":phone_party.phase==2?"RESULT":"FINAL SCORES");
@@ -1019,9 +1021,9 @@ static void draw(Uint32 tick) {
             for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(qrcodegen_getModule(accounts_qr,x,y))
                 rect(left+(x+4)*scale,top+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);
             text(524,155,"SCAN WITH YOUR PHONE",2,(SDL_Color){255,255,255,255},32);
-            wrap(524,195,"API KEYS, VIDEO UPLOADS, A PHONE REMOTE AND POCKET QUIZ. OPEN THE PHONE REMOTE LINK.",30,5,(SDL_Color){220,230,220,255});
-            text(524,315,access("subdl-api-key.txt",R_OK)?"SUBDL: NOT SET":"SUBDL: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
-            text(524,348,access("thegamesdb.key",R_OK)?"THEGAMESDB: NOT SET":"THEGAMESDB: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
+            wrap(524,195,party_entry?"JOIN POCKET QUIZ ON YOUR PHONE. ENTER YOUR NAME, THEN START WHEN EVERYONE IS READY.":"API KEYS, VIDEO UPLOADS, A PHONE REMOTE AND POCKET QUIZ. OPEN THE PHONE REMOTE LINK.",30,5,(SDL_Color){220,230,220,255});
+            text(524,315,party_entry?"1-8 PLAYERS / FIVE QUESTIONS":access("subdl-api-key.txt",R_OK)?"SUBDL: NOT SET":"SUBDL: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
+            text(524,348,party_entry?"NO API KEY NEEDED":access("thegamesdb.key",R_OK)?"THEGAMESDB: NOT SET":"THEGAMESDB: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
             if(wifi_qr_valid){
                 int ws=qrcodegen_getSize(wifi_qr),unit=2;
                 rect(204,322,(ws+8)*unit,(ws+8)*unit,(SDL_Color){255,255,255,255},1);
@@ -1077,8 +1079,8 @@ static void draw(Uint32 tick) {
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme==2?"RomanticCrimsonSkulls":menu_theme==1?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
         snprintf(values[12],40,"%d / 5",tv_rating_weight);snprintf(values[13],40,"%d / 5",tv_popularity_weight);snprintf(values[14],40,"%d / 5",tv_variety_weight);
         text(194,94,"SETTINGS",3,green,40);
-        int first=settings_row==15?1:0;
-        for(int i=first;i<first+15;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,i==15?"API ACCOUNTS":labels[i],2,white,24);text(566,y,i==15?"SCAN QR WITH PHONE":values[i],2,i==settings_row?green:dim,28);}
+        int first=settings_row>14?settings_row-14:0;
+        for(int i=first;i<first+15;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,i==16?"PARTY GAMES":i==15?"API ACCOUNTS":labels[i],2,white,24);text(566,y,i==16?"POCKET QUIZ":i==15?"SCAN QR WITH PHONE":values[i],2,i==settings_row?green:dim,28);}
         text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
         text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
     }else if(search_on){
@@ -1093,7 +1095,9 @@ static void draw(Uint32 tick) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
         wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. WHITE METAL, WATER DROPS, AND GREEN PIXELS.",53,4,white);
         wrap(194,260,"C + SDL2. SIX POSTERS IN MEMORY. NO BROWSER. NO WEB UI. DIRECT VIDEO PLAYBACK USES A SEPARATE PLAYER.",53,5,dim);
-        text(194,390,"A CHECK FOR UPDATE / B RETURN",2,green,50);
+        text(194,355,about_row==0?"> CHECK FOR UPDATE":"  CHECK FOR UPDATE",2,about_row==0?green:white,50);
+        text(194,390,about_row==1?"> PARTY GAMES / POCKET QUIZ":"  PARTY GAMES / POCKET QUIZ",2,about_row==1?green:white,50);
+        text(194,458,"UP/DOWN SELECT / A OPEN / B RETURN",1,dim,65);
         text(194,429,"BUILD " FLXTR_VERSION,1,dim,70);
     } else if(!total) {
         text(194,143,"NOTHING HERE YET",3,green,40);
@@ -1473,7 +1477,7 @@ static void phone_dispatch(void){
 static void action(SDL_Keycode key) {
     if(accounts_on&&!player_pid){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){api_setup_close();accounts_on=0;}
-        else if(key==SDLK_RETURN)accounts_open();
+        else if(key==SDLK_RETURN)accounts_open(party_entry);
         return;
     }
     if(rom_core_menu){
@@ -1605,11 +1609,12 @@ static void action(SDL_Keycode key) {
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
         if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<15)settings_row++;
+        if(key==SDLK_DOWN&&settings_row<16)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
-                case 15:accounts_open();break;
+                case 15:accounts_open(0);break;
+                case 16:accounts_open(1);break;
                 case 0:quality_setting=(quality_setting+step+3)%3;break;
                 case 1:buffer_setting=(buffer_setting+step+9)%9;break;
                 case 2:disk_setting=(disk_setting+step+3)%3;break;
@@ -1629,7 +1634,8 @@ static void action(SDL_Keycode key) {
         }return;
     }
     if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){tv_cancel_prepared();tv_joining=1;tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=tv_prepared=0;tv_tick();return;}
-    if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){start_update();return;}
+    if(about&&(key==SDLK_UP||key==SDLK_DOWN)){about_row=!about_row;return;}
+    if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){if(about_row==1&&key!=SDLK_u)accounts_open(1);else start_update();return;}
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
@@ -1718,7 +1724,7 @@ int main(int argc,char **argv) {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
     if(SDL_Init(SDL_INIT_GAMECONTROLLER|SDL_INIT_TIMER)) {fprintf(stderr,"SDL: %s\n",SDL_GetError());return 1;}
     if(open_ui()){fprintf(stderr,"Renderer: %s\n",SDL_GetError());SDL_Quit();return 1;}
-    if(accounts_on)accounts_open();
+    if(accounts_on)accounts_open(0);
     for(int i=0;i<SDL_NumJoysticks();i++)add_pad(i);
     uint32_t seed=0x31415926;
     for(int i=0;i<STARS;i++){seed=seed*1664525u+1013904223u;star_x[i]=seed>>24;star_y[i]=seed>>16;star_speed[i]=1+(seed%3);}

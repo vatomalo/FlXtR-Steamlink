@@ -431,3 +431,5 @@ Start in Games opens the Internet Archive homebrew list. A downloads the chosen 
 Steam Link fullscreen requires creating the native Vivante window at the current display size: that backend cannot resize the native surface afterward. The shell retains a 960x540 logical layout and logs actual window/output dimensions on startup.
 
 If a cold boot resets the clock before 2024, the Steam Link launcher makes a bounded ten-second NTP synchronization attempt before checking HTTPS updates. An unsuccessful sync is logged in `clock.log`; TLS verification is never disabled.
+
+TV channel scheduling, marathons and preloading: [TV channel mode](docs/tv-channel.md).

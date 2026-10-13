@@ -8,16 +8,16 @@ Default daily lineup:
 
 | Oslo time | Programming | Format |
 |---|---|---|
-| 00–06 | Mystery | Marathon |
-| 06–09 | Kids | Variety |
-| 09–11 | Comedy | Variety |
-| 11–13 | Family | Variety |
-| 13–15 | Documentary | Variety |
-| 15–17 | Crime / drama | Marathon |
-| 17–19 | Action / adventure | Marathon |
-| 19–21 | Sci-fi | Marathon |
-| 21–23 | Sci-fi / adult animation | Variety |
-| 23–00 | Animation | Marathon |
+| 00â€“06 | Mystery | Marathon |
+| 06â€“09 | Kids | Variety |
+| 09â€“11 | Comedy | Variety |
+| 11â€“13 | Family | Variety |
+| 13â€“15 | Documentary | Variety |
+| 15â€“17 | Crime / drama | Marathon |
+| 17â€“19 | Action / adventure | Marathon |
+| 19â€“21 | Sci-fi | Marathon |
+| 21â€“23 | Sci-fi / adult animation | Variety |
+| 23â€“00 | Animation | Marathon |
 
 The old untouched default schedule upgrades automatically. Custom hours and genres are preserved.
 

@@ -107,6 +107,17 @@ static void servers(json_object *root){
 }
 /* External captions are separate HTTPS resources in many provider responses.
  * Never treat subtitle URLs as video sources or trust local protocols. */
+static int caption_url(const char *url,char out[1024]){
+    if(strncmp(url,"https://",8)||strpbrk(url,"\r\n\t\\"))return 0;
+    size_t n=0;
+    for(const unsigned char *p=(const unsigned char*)url;*p;p++){
+        if(*p<=32||*p>=127||*p=='"'||*p=='<'||*p=='>'){
+            if(n+3>=1024)return 0;
+            snprintf(out+n,4,"%%%02X",*p);n+=3;
+        }else {if(n+1>=1024)return 0;out[n++]=(char)*p;}
+    }
+    out[n]=0;return 1;
+}
 static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
     if(!list||!json_object_is_type(list,json_type_array))return;
     for(size_t i=0;i<(size_t)json_object_array_length(list);i++){
@@ -120,7 +131,7 @@ static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
         if(!*lang)lang=string(track,"label");
         if(!*lang)lang=string(track,"languageCode");
         if(!*lang)lang=string(track,"srclang");
-        if(strncmp(url,"https://",8)||strlen(url)>=1024||strpbrk(url,"\r\n\t"))continue;
+        char encoded[1024];if(!caption_url(url,encoded))continue;url=encoded;
         int english=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
         int norwegian=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
             !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);
@@ -128,6 +139,18 @@ static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
         if(norwegian&&!*nor)snprintf(nor,1024,"%s",url);
         if((!strncasecmp(lang,"es",2)||!strncasecmp(lang,"spanish",7))&&!*spa)snprintf(spa,1024,"%s",url);
     }
+}
+/* Flixer's subtitle menu uses a separate catalogue, not the video API.
+ * These public endpoints use the same TMDB movie/episode identity. */
+static void flixer_subtitles(int id,int season,int episode,Choice *choice){
+    for(int version=2;version>=1;version--){
+        char url[256];
+        if(episode)snprintf(url,sizeof(url),"https://sub.vdrk.site/v%d/tv/%d/%d/%d",version,id,season,episode);
+        else snprintf(url,sizeof(url),"https://sub.vdrk.site/v%d/movie/%d",version,id);
+        char *raw=request(url,NULL,0);json_object *list=parse(raw);free(raw);
+        if(list){select_subtitles(list,choice->subs_eng,choice->subs_nor,choice->subs_spa);json_object_put(list);}
+    }
+    subtitle_log("Flixer caption catalogue id=%d S%d E%d english=%s norwegian=%s spanish=%s",id,season,episode,choice->subs_eng[0]?"yes":"no",choice->subs_nor[0]?"yes":"no",choice->subs_spa[0]?"yes":"no");
 }
 static void source_subtitles(json_object *root,json_object *source,char *eng,char *nor,char *spa){
     subtitle_log("JSON fields: selected=%s root.subtitles=%s root.tracks=%s source.subtitles=%s source.tracks=%s",source?"yes":"no",field(root,"subtitles")?"yes":"no",field(root,"tracks")?"yes":"no",source&&field(source,"subtitles")?"yes":"no",source&&field(source,"tracks")?"yes":"no");
@@ -330,15 +353,16 @@ int main(int argc,char **argv){
     if(curl_global_init(CURL_GLOBAL_DEFAULT)||resolver_init())return 1;
     json_object *root=lookup(path,resolving?argv[6]:"");int rc=1;
     if(root){if(resolving){if(qualities(root,argv[6]))goto done;
+            flixer_subtitles(id,season,episode,&choices[0]);
             if(!strcmp(argv[2],"tv")){
                 independent_subtitles(id,season,episode,&choices[0]);
                 if(!choices[0].subs_eng[0]||!choices[0].subs_nor[0]||!choices[0].subs_spa[0])subdl_subtitles(id,season,episode,&choices[0]);
+            }
                 for(int i=1;i<count;i++){
                     snprintf(choices[i].subs_eng,sizeof(choices[i].subs_eng),"%s",choices[0].subs_eng);
                     snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);
                     snprintf(choices[i].subs_spa,sizeof(choices[i].subs_spa),"%s",choices[0].subs_spa);
                 }
-            }
         }else servers(root);
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
         for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor,c->subs_spa);

@@ -13,6 +13,11 @@ int main(void){
     assert(valid_url("https://example.org/master.m3u8")&&!valid_url("file:///etc/passwd"));
     json_object *o=parse("{\"sources\":[{\"server\":\"alpha\"},{\"server\":\"bravo\"},{\"server\":\"alpha\"},{\"server\":\"bad\\nname\"}]}");
     servers(o);assert(count==2&&!strcmp(choices[1].label,"bravo"));json_object_put(o);
+    char english[1024]="",norwegian[1024]="",spanish[1024]="";
+    o=parse("[{\"label\":\"English Hi3\",\"file\":\"https://cache.example/Movie Name.vtt\"},{\"label\":\"Norwegian\",\"file\":\"https://cache.example/no.vtt\"},{\"label\":\"Spanish 2\",\"file\":\"https://cache.example/es.vtt\"}]");
+    select_subtitles(o,english,norwegian,spanish);json_object_put(o);
+    assert(!strcmp(english,"https://cache.example/Movie%20Name.vtt")&&strstr(norwegian,"/no.vtt")&&strstr(spanish,"/es.vtt"));
+    char encoded[1024];assert(!caption_url("file:///etc/passwd",encoded)&&!caption_url("https://x/\nsecret",encoded));
     count=1;
     char master[]="#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",URI=\"audio.m3u8\"\n"
         "#EXT-X-STREAM-INF:RESOLUTION=1280x720,CODECS=\"avc1.64001f\",AUDIO=\"audio\"\n720.m3u8\n"

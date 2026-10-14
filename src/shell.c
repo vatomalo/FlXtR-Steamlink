@@ -30,18 +30,20 @@
 #include "wifi_pairing.h"
 
 static int accounts_on,party_entry,about_row;
-static uint8_t accounts_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(8)];
+static char rom_phone_path[241];
+static uint8_t accounts_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];
 static uint8_t wifi_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(12)];
 static int wifi_qr_valid;
 static void accounts_open(int party){
     party_entry=party;
+    if(party!=2)rom_phone_path[0]=0;
     char ip[INET_ADDRSTRLEN];uint8_t temp[sizeof(accounts_qr)];accounts_on=1;
     memset(accounts_qr,0,sizeof(accounts_qr));
     if(api_lan_ip(ip,sizeof(ip))||api_setup_start(ip,SDL_GetTicks())){
         api_setup_close();strcpy(api_setup.message,"NO LAN ADDRESS - CONNECT TO YOUR HOME NETWORK");return;
     }
-    char qr_url[256];snprintf(qr_url,sizeof(qr_url),"%s%s",api_setup.url,party_entry?"phone#party":"");
-    if(!qrcodegen_encodeText(qr_url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,8,qrcodegen_Mask_AUTO,true)){
+    char qr_url[512];snprintf(qr_url,sizeof(qr_url),"%s%s%s",api_setup.url,party_entry==2?"phone#rom=":party_entry?"phone#party":"",party_entry==2?rom_phone_path:"");
+    if(!qrcodegen_encodeText(qr_url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,16,qrcodegen_Mask_AUTO,true)){
         api_setup_close();strcpy(api_setup.message,"COULD NOT CREATE QR CODE - PRESS A TO RETRY");
     }
     char payload[800];uint8_t wifi_temp[sizeof(wifi_qr)];
@@ -244,8 +246,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","ARCHIVE PLATFORMS","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -553,7 +555,7 @@ static unsigned library_cache_cursor;
 static int library_cacheable(int mode){
     return mode==1||mode==2||mode==3||mode==4||mode==7||mode==8||
         mode==9||mode==10||mode==14||mode==15||mode==17||mode==18||mode==30||mode==31||
-        mode==20||mode==21||mode==22||mode==23||mode==24;
+        mode==32||mode==33||mode==20||mode==21||mode==22||mode==23||mode==24;
 }
 static int library_page_equals(const Browse *a,const Browse *b){
     return a->mode==b->mode&&a->page==b->page&&a->id==b->id&&
@@ -1005,8 +1007,8 @@ static void draw(Uint32 tick) {
     text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[L2] ROM FOLDERS":browse.mode==28?"[Y] DELETE ZIP":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":"B BACK / L3 FAVORITE",1,dim,22);
     if(accounts_on){
         rect(184,80,746,410,(SDL_Color){12,20,14,255},1);
-        text(204,96,phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
-        if(phone_party.phase){
+        text(204,96,party_entry==2?"ROMSGAMES / PHONE IMPORT":phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
+        if(phone_party.phase&&party_entry!=2){
             const PhoneQuestion *q=phone_question();char caption[96];
             int last=phone_party.round>=6,answered=0;
             for(int i=0;i<phone_party.count;i++)if(phone_party.players[i].answer>=0)answered++;
@@ -1038,21 +1040,23 @@ static void draw(Uint32 tick) {
             }
             for(int i=0;i<phone_party.count;i++){int p=order[i];snprintf(caption,sizeof(caption),"%s: %d +%d",phone_party.players[p].name,phone_party.players[p].score,phone_party.phase==2?phone_party.players[p].gain:0);text(204+(i%2)*350,355+(i/2)*22,caption,2,(SDL_Color){220,230,220,255},28);}
         }else if(api_setup.listener>=0){
-            int size=qrcodegen_getSize(accounts_qr),scale=4,left=204,top=130;
+            int size=qrcodegen_getSize(accounts_qr),scale=party_entry==2?280/(size+8):4,left=204,top=130;
+            if(scale>4)scale=4;
+            if(scale<1)scale=1;
             rect(left,top,(size+8)*scale,(size+8)*scale,(SDL_Color){255,255,255,255},1);
             for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(qrcodegen_getModule(accounts_qr,x,y))
                 rect(left+(x+4)*scale,top+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);
             text(524,155,"SCAN WITH YOUR PHONE",2,(SDL_Color){255,255,255,255},32);
-            wrap(524,195,party_entry?"JOIN POCKET QUIZ ON YOUR PHONE. ENTER YOUR NAME, THEN START WHEN EVERYONE IS READY.":"API KEYS, VIDEO UPLOADS, A PHONE REMOTE AND POCKET QUIZ. OPEN THE PHONE REMOTE LINK.",30,5,(SDL_Color){220,230,220,255});
-            text(524,315,party_entry?"1-8 PLAYERS / EIGHT ROUNDS":access("subdl-api-key.txt",R_OK)?"SUBDL: NOT SET":"SUBDL: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
-            text(524,348,party_entry?"NO API KEY NEEDED":access("thegamesdb.key",R_OK)?"THEGAMESDB: NOT SET":"THEGAMESDB: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
-            if(wifi_qr_valid){
+            wrap(524,195,party_entry==2?"OPEN THE GAME LINK ON YOUR PHONE. DOWNLOAD THERE, RETURN TO THE PHONE REMOTE, THEN UPLOAD THE ROM.":party_entry?"JOIN POCKET QUIZ ON YOUR PHONE. ENTER YOUR NAME, THEN START WHEN EVERYONE IS READY.":"API KEYS, VIDEO UPLOADS, A PHONE REMOTE AND POCKET QUIZ. OPEN THE PHONE REMOTE LINK.",30,5,(SDL_Color){220,230,220,255});
+            text(524,315,party_entry==2?"KEEP THIS SCREEN OPEN":party_entry?"1-8 PLAYERS / EIGHT ROUNDS":access("subdl-api-key.txt",R_OK)?"SUBDL: NOT SET":"SUBDL: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
+            text(524,348,party_entry==2?"B CLOSE AND IMPORT":party_entry?"NO API KEY NEEDED":access("thegamesdb.key",R_OK)?"THEGAMESDB: NOT SET":"THEGAMESDB: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
+            if(wifi_qr_valid&&party_entry!=2){
                 int ws=qrcodegen_getSize(wifi_qr),unit=2;
                 rect(204,322,(ws+8)*unit,(ws+8)*unit,(SDL_Color){255,255,255,255},1);
                 for(int y=0;y<ws;y++)for(int x=0;x<ws;x++)if(qrcodegen_getModule(wifi_qr,x,y))rect(204+(x+4)*unit,322+(y+4)*unit,unit,unit,(SDL_Color){0,0,0,255},1);
                 text(360,340,"JOIN THIS WI-FI",1,(SDL_Color){220,230,220,255},25);
                 text(360,359,"CONTAINS WI-FI PASSWORD",1,(SDL_Color){220,230,220,255},28);
-            }else text(204,370,"WI-FI QR UNAVAILABLE",1,(SDL_Color){220,230,220,255},40);
+            }else if(party_entry!=2)text(204,370,"WI-FI QR UNAVAILABLE",1,(SDL_Color){220,230,220,255},40);
             text(524,402,api_setup.url,1,(SDL_Color){220,230,220,255},65);
         }
         text(204,443,api_setup.message,1,(SDL_Color){140,240,150,255},90);
@@ -1146,7 +1150,7 @@ static void draw(Uint32 tick) {
                 SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
             } else placeholder(dst.x,dst.y,dst.w,dst.h,visible[index]);
             text(x,y+162,t->title,1,index==selection?green:white,22);
-            const char *label=!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"download-zip")?"A BROWSE ZIP / Y DELETE":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A PLAY GAME":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
+            const char *label=!strcmp(t->kind,"rg-game")?"A PHONE DOWNLOAD / QR":!strcmp(t->kind,"rg-source")||!strcmp(t->kind,"rg-platform")?"A BROWSE ROMSGAMES":!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"download-zip")?"A BROWSE ZIP / Y DELETE":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A PLAY GAME":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
             text(x,y+177,label,1,dim,22);
         }
         Title *t=&titles[visible[selection]];
@@ -1256,6 +1260,16 @@ static void play(void) {
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
+    }
+    if(!strcmp(t->kind,"rg-source")){Browse next={32,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
+    if(!strcmp(t->kind,"rg-platform")){Browse next={33,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);request_catalog(next,1,0);return;}
+    if(!strcmp(t->kind,"rg-game")){
+        const char *prefix="https://www.romsgames.net";size_t n=strlen(prefix);
+        if(strncmp(t->url,prefix,n)||strlen(t->url+n)>240)return;
+        const char *path=t->url+n;size_t len=strlen(path);
+        if(len<8||path[0]!='/'||path[len-1]!='/'||!strstr(path,"-rom-"))return;
+        for(size_t i=1;i<len-1;i++)if(!(path[i]>='a'&&path[i]<='z')&&!(path[i]>='0'&&path[i]<='9')&&path[i]!='-')return;
+        snprintf(rom_phone_path,sizeof(rom_phone_path),"%s",path);accounts_open(2);return;
     }
     if(!strcmp(t->kind,"game-curated")){Browse next={20,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!strcmp(t->kind,"game-platform")){
@@ -1498,7 +1512,9 @@ static void phone_dispatch(void){
 }
 static void action(SDL_Keycode key) {
     if(accounts_on&&!player_pid){
-        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){api_setup_close();accounts_on=0;}
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){api_setup_close();accounts_on=0;
+            if(party_entry==2){memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
+        }
         else if(key==SDLK_RETURN)accounts_open(party_entry);
         return;
     }

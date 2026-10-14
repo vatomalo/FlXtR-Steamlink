@@ -427,11 +427,11 @@ static int games_archive_list(int page){
 static const char *game_platform_names[]={"NES","SNES","GAME BOY ADVANCE","PLAYSTATION","PSP","ARCADE"};
 static const char *game_platform_queries[]={"NES Nintendo ROM","SNES Super Nintendo ROM","Game Boy Advance GBA ROM","PlayStation PSX game","PSP PlayStation Portable game","Arcade MAME game"};
 static int games_platforms(int page){
-    total=7;
-    for(int i=(page-1)*PAGE_SIZE;i<7&&used<PAGE_SIZE;i++){
-        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==6?"VERIFIED HOMEBREW":game_platform_names[i]);
-        strcpy(e->kind,i==6?"game-curated":"game-platform");e->id=i+1;
-        strcpy(e->meta,i==6?"LICENSED DOWNLOADS / A OPEN":"INTERNET ARCHIVE / BROWSE TITLES / A OPEN");
+    total=8;
+    for(int i=(page-1)*PAGE_SIZE;i<8&&used<PAGE_SIZE;i++){
+        Entry *e=&entries[used++];snprintf(e->title,sizeof(e->title),"%s",i==7?"ROMSGAMES (PHONE)":i==6?"VERIFIED HOMEBREW":game_platform_names[i]);
+        strcpy(e->kind,i==7?"rg-source":i==6?"game-curated":"game-platform");e->id=i+1;
+        strcpy(e->meta,i==7?"BROWSE / QR DOWNLOAD + PHONE UPLOAD":i==6?"LICENSED DOWNLOADS / A OPEN":"INTERNET ARCHIVE / BROWSE TITLES / A OPEN");
     }return 0;
 }
 /* BIOS discovery is intentionally separate from the game installer.

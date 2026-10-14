@@ -1,4 +1,11 @@
 'use strict';
+function showRomSource(){
+  const path=location.hash.startsWith('#rom=')?location.hash.slice(5):'';
+  const valid=path.length<=240&&/^\/[a-z0-9-]+-rom-[a-z0-9-]+\/$/.test(path);
+  el('rom-source').hidden=!valid;
+  if(valid){el('rom-link').href='https://www.romsgames.net'+path;el('rom-source').scrollIntoView();}
+  else el('rom-link').removeAttribute('href');
+}
 const base=new URL('.',location.href),el=id=>document.getElementById(id);
 let busy=false,round=-1,phase=0,locked=-1,player=sessionStorage.getItem(location.pathname)||'';
 const notice=text=>{el('notice').textContent=text;};
@@ -47,3 +54,6 @@ async function poll(){
   }catch(error){notice(error.message);}
 }
 poll();setInterval(poll,2000);
+
+showRomSource();
+window.addEventListener("hashchange",showRomSource);

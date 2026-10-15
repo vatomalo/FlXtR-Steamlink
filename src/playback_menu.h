@@ -72,7 +72,7 @@ static void menu_draw(void){
     }else snprintf(timeline,sizeof(timeline),"%02d:%02d:%02d / LIVE OR UNKNOWN",
         elapsed/3600,elapsed/60%60,elapsed%60);
     menu_text(pixels,pitch,371,timeline,0xffd4e2d6);
-    menu_text(pixels,pitch,386,"DPAD SELECT / A CHANGE / B CLOSE",0xff74ff84);
+    menu_text(pixels,pitch,386,"DPAD / A CHANGE / X NEXT EP / B CLOSE",0xff74ff84);
     SLVideo_SetOverlayDisplayArea(menu_overlay,0.0f,0.0f,1.0f,1.0f);SLVideo_ShowOverlay(menu_overlay);
 }
 static void menu_restart(int action,double position){
@@ -94,6 +94,7 @@ static void seek_cancel(void){
     }
 }
 static void menu_command(char c){
+    if(c=='n'){if(menu_episodes)menu_restart(6,0);return;}
     if(c=='P'){
         if(!paused){paused=1;pause_started=av_gettime_relative();}
         else{if(clock_start)clock_start+=av_gettime_relative()-pause_started;paused=0;}

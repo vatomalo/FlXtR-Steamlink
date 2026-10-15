@@ -147,6 +147,7 @@ static Title tv_next_title,tv_last_title;
 static pid_t tv_buffer_pid;
 static int tv_buffer_control=-1,tv_gate=-1;
 static int tv_rating_weight=5,tv_popularity_weight=2,tv_variety_weight=4;
+static int series_autoplay;
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,20,25,30,45,60,80,128},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
@@ -160,6 +161,7 @@ static void subtitle_route_log(const char *route,const Title *t){
 
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
+    fprintf(f,"series_autoplay=%d\n",series_autoplay);
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
     fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
     fprintf(f,"menu_theme=%d\n",menu_theme);
@@ -189,6 +191,7 @@ static void load_settings(void){
         else if(!strcmp(key,"buffer")&&value>=0&&value<9)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
         else if(!strcmp(key,"coverflow")&&(value==0||value==1))coverflow=value;
+        else if(!strcmp(key,"series_autoplay")&&(value==0||value==1))series_autoplay=value;
         else if(!strcmp(key,"subtitles")&&value>=0&&value<5)subtitle_setting=value;
         else if(!strcmp(key,"scale")&&value>=2&&value<=3)subtitle_scale=value;
         else if(!strcmp(key,"delay")&&value>=-5&&value<=5)subtitle_delay=value;
@@ -246,8 +249,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent"};
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
@@ -630,7 +633,7 @@ static void request_catalog(Browse next,int push,int pop){
     if(!next.mode){
         browse=next;history_size=0;count=0;ready_only=0;listing_pages=1;memset(titles,0,sizeof(titles));read_catalog(local_catalog);return;
     }
-    if(!auto_active&&library_cache_restore(next,push,pop))return;
+    if(!auto_active&&library_cache_restore(next,push,pop)){if(play_after_load){play_after_load=0;if(total)play();}return;}
     if(access("./greenlink-catalog",X_OK)){snprintf(status,sizeof(status),"CATALOG WORKER NOT INSTALLED");return;}
     mkdir("catalog-cache",0700);
     for(int i=0;i<VISIBLE;i++){char path[80];snprintf(path,sizeof(path),"catalog-cache/poster-%d.next.bmp",i);unlink(path);}
@@ -744,7 +747,7 @@ static void finish_catalog(void){
     if(browse.mode==18&&!total)snprintf(status,sizeof(status),"NO SUPPORTED ROM FILES IN THIS ARCHIVE ITEM");
     if(browse.mode==14){FILE *f=fopen("game-exit-status","r");int code=0;if(f){int got=fscanf(f,"%d",&code);fclose(f);unlink("game-exit-status");if(got==1&&code)snprintf(status,sizeof(status),"GAME COULD NOT START / SEE GAME.LOG / Y REIMPORT");}}
     if(browse.mode==10&&!total)snprintf(status,sizeof(status),"NO PUBLIC H.264 / MPEG4 FILES IN THIS ITEM");
-    if(play_after_load){play_after_load=0;if(total)play();}
+    if(play_after_load){play_after_load=0;if(total)play();else if(browse.mode==34)snprintf(status,sizeof(status),"END OF AVAILABLE SERIES");}
 }
 /* Warm catalog.c's bounded on-disk page cache only while browsing is quiet.
  * Catalog workers remain separate; foreground requests always cancel prefetch. */
@@ -1106,7 +1109,7 @@ static void draw(Uint32 tick) {
         snprintf(values[12],40,"%d / 5",tv_rating_weight);snprintf(values[13],40,"%d / 5",tv_popularity_weight);snprintf(values[14],40,"%d / 5",tv_variety_weight);
         text(194,94,"SETTINGS",3,green,40);
         int first=settings_row>14?settings_row-14:0;
-        for(int i=first;i<first+15;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,i==16?"PARTY GAMES":i==15?"API ACCOUNTS":labels[i],2,white,24);text(566,y,i==16?"POCKET QUIZ":i==15?"SCAN QR WITH PHONE":values[i],2,i==settings_row?green:dim,28);}
+        for(int i=first;i<first+15;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,i==17?"AUTOPLAY SERIES":i==16?"PARTY GAMES":i==15?"API ACCOUNTS":labels[i],2,white,24);text(566,y,i==17?(series_autoplay?"ON":"OFF"):i==16?"POCKET QUIZ":i==15?"SCAN QR WITH PHONE":values[i],2,i==settings_row?green:dim,28);}
         text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
         text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
     }else if(search_on){
@@ -1425,13 +1428,27 @@ static void launch_player(const Title *t) {
         if(!player_menu)execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)NULL);
         char gate_arg[16];snprintf(gate_arg,sizeof(gate_arg),"%d",gate[0]);
         char *args[28]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,"--control-fd",control,"--start",start,NULL,NULL,NULL};
-        int n=20;if(tv_preloading){args[n++]="--preload-fd";args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||browse.mode==4||browse.mode==8)args[n++]="--episodes";if(auto_active)args[n++]="--servers";args[n]=NULL;
+        int n=20;if(tv_preloading){args[n++]="--preload-fd";args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||!strcmp(t->kind,"episode")||!strcmp(t->kind,"kiss-episode"))args[n++]="--episodes";if(auto_active)args[n++]="--servers";args[n]=NULL;
         execv("./greenlink-player",args);_exit(127);
     }
     if(tv_preloading){close(gate[0]);tv_gate=gate[1];}
     close(controls[0]);player_control=controls[1];restart_position=0;
     if(player_pid<0){close(player_control);player_control=-1;player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
+}
+static void series_advance(int direction){
+    auto_active=0;restart_position=auto_resume=0;
+    if(!strcmp(playing_title.kind,"episode")){
+        Browse next={34,1,playing_title.id,playing_title.season,playing_title.episode,0,"",""};
+        strcpy(next.query,direction<0?"previous":"next");play_after_load=1;request_catalog(next,0,0);return;
+    }
+    if(!strcmp(playing_title.kind,"kiss-episode")&&browse.mode==8){
+        int next=selection+direction;
+        if(next>=0&&next<total){selection=next;play();return;}
+        int page=browse.page+direction;
+        if(page>=1&&page<=listing_pages){play_after_load=1;next_catalog_page(direction);return;}
+    }
+    snprintf(status,sizeof(status),"END OF AVAILABLE EPISODES");
 }
 static void finish_player(int code){
     int cancelled=stopping_player;
@@ -1448,6 +1465,7 @@ static void finish_player(int code){
         if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
         if(command==8){
             auto_active=0;tv_active=0;
+            if(!strcmp(playing_title.kind,"episode")){Browse next={4,1,playing_title.id,playing_title.season,0,0,"",""};request_catalog(next,0,0);return;}
             if(browse.mode==4||browse.mode==8){
                 snprintf(status,sizeof(status),"EPISODE BROWSER / A SELECT / B SEASONS");
             }else snprintf(status,sizeof(status),"EPISODE LIST UNAVAILABLE FOR THIS SOURCE");
@@ -1462,13 +1480,7 @@ static void finish_player(int code){
         }
         if(command==4){if(auto_active){restart_position=auto_resume=position;auto_index++;auto_next();}else snprintf(status,sizeof(status),"NO ALTERNATE SERVER FOR LOCAL VIDEO");return;}
         if(tv_active&&(command==5||command==6)){tv_cancel_prepared();auto_active=0;tv_in_break=tv_break_due=0;tv_attempts=0;tv_next_at=0;return;}
-        auto_active=0;
-        if(browse.mode!=4&&browse.mode!=8){snprintf(status,sizeof(status),"EPISODE NAVIGATION ONLY AVAILABLE IN SERIES");return;}
-        int direction=command==5?-1:1,next=selection+direction;
-        if(next>=0&&next<total){selection=next;play();return;}
-        int page=browse.page+direction;
-        if(page>=1&&page<=listing_pages){play_after_load=1;next_catalog_page(direction);return;}
-        snprintf(status,sizeof(status),"NO MORE EPISODES IN THIS SEASON");return;
+        series_advance(command==5?-1:1);return;
     }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
         int current=tv_quality_retry>=1?720:(qualities[quality_setting]>720?720:qualities[quality_setting]);
@@ -1488,6 +1500,8 @@ static void finish_player(int code){
     if(WIFEXITED(code)&&WEXITSTATUS(code)==44){auto_active=0;snprintf(status,sizeof(status),"SERVER CANNOT SEEK - SELECT TITLE TO RESTART");return;}
     if(auto_active&&!cancelled&&(!WIFEXITED(code)||WEXITSTATUS(code))){auto_index++;auto_next();return;}
     auto_active=0;
+    if(series_autoplay&&!tv_active&&!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)&&
+       (!strcmp(playing_title.kind,"episode")||!strcmp(playing_title.kind,"kiss-episode"))){series_advance(1);return;}
     if(tv_active&&!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)){
         tv_last_title=auto_title;TvAiring aired;if(tv_airing_read(&aired))tv_last_block=aired.block;
         tv_progress_save(auto_title.id,auto_title.season,auto_title.episode);unlink("tv-resume.tsv");tv_attempts=0;tv_next_at=0;tv_break_due=tv_breaks;
@@ -1545,7 +1559,7 @@ static void action(SDL_Keycode key) {
             if((key==SDLK_ESCAPE||key==SDLK_BACKSPACE)&&!stopping_player){auto_active=0;kill(player_pid,SIGTERM);stopping_player=1;stop_time=SDL_GetTicks();}
             return;
         }
-        char command=key==SDLK_i?'m':key==SDLK_ESCAPE||key==SDLK_BACKSPACE?'b':key==SDLK_UP?'u':key==SDLK_DOWN?'d':key==SDLK_LEFT?'l':key==SDLK_RIGHT?'r':key==SDLK_RETURN?'a':key==SDLK_y||key==SDLK_v?'v':0;
+        char command=key==SDLK_F2?'n':key==SDLK_i?'m':key==SDLK_ESCAPE||key==SDLK_BACKSPACE?'b':key==SDLK_UP?'u':key==SDLK_DOWN?'d':key==SDLK_LEFT?'l':key==SDLK_RIGHT?'r':key==SDLK_RETURN?'a':key==SDLK_y||key==SDLK_v?'v':0;
         if(command&&player_control>=0){ssize_t sent=write(player_control,&command,1);(void)sent;}
         return;
     }
@@ -1647,10 +1661,11 @@ static void action(SDL_Keycode key) {
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
         if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<16)settings_row++;
+        if(key==SDLK_DOWN&&settings_row<17)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
+                case 17:series_autoplay=!series_autoplay;break;
                 case 15:accounts_open(0);break;
                 case 16:accounts_open(1);break;
                 case 0:quality_setting=(quality_setting+step+3)%3;break;

@@ -48,6 +48,7 @@ static void draw(void){
     command("show-text",text,"60000");
 }
 static void key(char c){
+    if(c=='n'){if(episodes)request(6,0);return;}
     if(c=='P'){command("cycle","pause",NULL);return;}
     if(c=='F'||c=='R'){command("seek",c=='F'?"10":"-10","relative");return;}
     if(c=='S'){request(7,position());return;}

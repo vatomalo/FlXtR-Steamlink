@@ -1,6 +1,7 @@
 /* Single hardware overlay plane: the menu owns it while visible. */
 static int control_fd=-1,menu_open,menu_row,paused,requested_action;
 static int menu_height=720,menu_subtitles,menu_episodes,menu_servers;
+static int subtitle_pending=-1;
 static int seek_scrubbing,seek_was_paused;
 static double seek_target;
 static double playback_start,media_duration;
@@ -36,7 +37,7 @@ static void menu_draw(void){
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"%s",seek_scrubbing?"SEEK PREVIEW: LEFT/RIGHT / A PLAY / B CANCEL":"SEEK: LEFT/RIGHT PREVIEW / A PLAY");
-    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN","SPANISH"}[menu_subtitles]);
+    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN","SPANISH"}[subtitle_pending>=0?subtitle_pending:menu_subtitles]);
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
     snprintf(rows[5],80,"VIDEO SIZE: %s",view_names[viewing]);
@@ -72,7 +73,7 @@ static void menu_draw(void){
     }else snprintf(timeline,sizeof(timeline),"%02d:%02d:%02d / LIVE OR UNKNOWN",
         elapsed/3600,elapsed/60%60,elapsed%60);
     menu_text(pixels,pitch,371,timeline,0xffd4e2d6);
-    menu_text(pixels,pitch,386,"DPAD / A CHANGE / X NEXT EP / B CLOSE",0xff74ff84);
+    menu_text(pixels,pitch,386,subtitle_pending>=0?"B APPLY SUBTITLES / M CANCEL":"DPAD / A CHANGE / X NEXT EP / B CLOSE",0xff74ff84);
     SLVideo_SetOverlayDisplayArea(menu_overlay,0.0f,0.0f,1.0f,1.0f);SLVideo_ShowOverlay(menu_overlay);
 }
 static void menu_restart(int action,double position){
@@ -109,7 +110,12 @@ static void menu_command(char c){
     }
     if(c=='S'){menu_restart(7,playback_position());return;}
     if(seek_scrubbing&&(c=='b'||c=='m')){seek_cancel();menu_draw();return;}
+    if(c=='b'&&menu_open&&subtitle_pending>=0){
+        menu_subtitles=subtitle_pending;subtitle_pending=-1;
+        menu_restart(1,playback_position());return;
+    }
     if(c=='m'||(c=='b'&&menu_open)){
+        if(c=='m'&&menu_open)subtitle_pending=-1;
         menu_open=!menu_open;
         if(!menu_open){if(menu_overlay)SLVideo_HideOverlay(menu_overlay);subtitle_visible=-2;}else menu_draw();
         return;
@@ -151,7 +157,10 @@ static void menu_command(char c){
                 if(media_duration>1&&seek_target>=media_duration)seek_target=media_duration-1;
             }
             break;
-        case 2:menu_subtitles=(menu_subtitles+direction+5)%5;menu_restart(1,playback_position());break;
+        case 2:
+            if(subtitle_pending<0)subtitle_pending=menu_subtitles;
+            subtitle_pending=(subtitle_pending+direction+5)%5;
+            break;
         case 3:subtitle_size=subtitle_size==2?3:2;subtitle_visible=-2;break;
         case 4:subtitle_delay+=direction;if(subtitle_delay>5)subtitle_delay=5;if(subtitle_delay< -5)subtitle_delay=-5;subtitle_visible=-2;break;
         case 5:viewing=(viewing+direction+VIEW_COUNT)%VIEW_COUNT;apply_view(0);break;

@@ -6,8 +6,11 @@ static int subtitle_size=2,subtitle_delay,subtitle_visible=-1;
 #include "subtitle_text.h"
 static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *packet){
     AVSubtitle sub={0};int got=0;
-    if(avcodec_decode_subtitle2(decoder,&sub,&got,packet)<0||!got){avsubtitle_free(&sub);return;}
-    int64_t start=packet->pts==AV_NOPTS_VALUE?0:av_rescale_q(packet->pts,stream->time_base,AV_TIME_BASE_Q);
+    int decode_rc=avcodec_decode_subtitle2(decoder,&sub,&got,packet);
+    if(decode_rc<0){fprintf(stderr,"Subtitle decode error: %d\n",decode_rc);avsubtitle_free(&sub);return;}
+    if(!got){avsubtitle_free(&sub);return;}
+    int64_t pts=packet->pts!=AV_NOPTS_VALUE?packet->pts:packet->dts;
+    int64_t start=pts==AV_NOPTS_VALUE?0:av_rescale_q(pts,stream->time_base,AV_TIME_BASE_Q);
     int64_t duration=sub.end_display_time>sub.start_display_time?(int64_t)(sub.end_display_time-sub.start_display_time)*1000:
         packet->duration>0?av_rescale_q(packet->duration,stream->time_base,AV_TIME_BASE_Q):5000000;
     start+=(int64_t)sub.start_display_time*1000;
@@ -18,6 +21,7 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
         subtitle_cues[slot].start=start;subtitle_cues[slot].end=start+duration;
         subtitle_text(subtitle_cues[slot].text,sizeof(subtitle_cues[slot].text),text,!sub.rects[i]->text);
         if(subtitle_visible==slot)subtitle_visible=-2;
+        static unsigned logged_cues; if(logged_cues++<8)fprintf(stderr,"Subtitle cue: start=%.3f end=%.3f text=%.60s\n",start/1000000.0,(start+duration)/1000000.0,subtitle_cues[slot].text);
     }avsubtitle_free(&sub);
 }
 static void subtitle_draw(void){

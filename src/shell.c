@@ -634,7 +634,7 @@ static void request_catalog(Browse next,int push,int pop){
         browse=next;history_size=0;count=0;ready_only=0;listing_pages=1;memset(titles,0,sizeof(titles));read_catalog(local_catalog);return;
     }
     if(!auto_active&&library_cache_restore(next,push,pop)){if(play_after_load){play_after_load=0;if(total)play();}return;}
-    if(access("./greenlink-catalog",X_OK)){snprintf(status,sizeof(status),"CATALOG WORKER NOT INSTALLED");return;}
+    if(access("./greenlink-catalog",X_OK)){play_after_load=0;snprintf(status,sizeof(status),"CATALOG WORKER NOT INSTALLED");return;}
     mkdir("catalog-cache",0700);
     for(int i=0;i<VISIBLE;i++){char path[80];snprintf(path,sizeof(path),"catalog-cache/poster-%d.next.bmp",i);unlink(path);}
     browse.selected=selection;pending=next;pending_push=push;pending_pop=pop;
@@ -1573,7 +1573,7 @@ static void action(SDL_Keycode key) {
         }
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){
             kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
-            tv_cancel_prepared();if(!renderer)open_ui();auto_active=0;tv_active=0;
+            tv_cancel_prepared();if(!renderer)open_ui();auto_active=0;tv_active=0;play_after_load=0;
             snprintf(status,sizeof(status),key==SDLK_F2?"LOAD SKIPPED":"LOAD CANCELLED");
         }
         return;

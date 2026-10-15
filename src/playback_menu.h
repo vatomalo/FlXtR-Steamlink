@@ -92,7 +92,7 @@ static void menu_command(char c){
         switch(menu_row){
         case 0:
             if(!paused){paused=1;pause_started=av_gettime_relative();}
-            else paused=0;
+            else {if(clock_start)clock_start+=av_gettime_relative()-pause_started;paused=0;}
             media_clock_pause(&media_clock,paused,av_gettime_relative(),menu_audio?SDL_GetQueuedAudioSize(menu_audio):0);
             if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
             break;

@@ -196,6 +196,7 @@ int main(int argc,char **argv) {
         sub_decoder->pkt_timebase=fmt->streams[i]->time_base;si=(int)i;break;
     }
     fprintf(stderr,"Subtitle selection: requested=%s track=%d total_streams=%u\n",sub_language,si,fmt->nb_streams);
+    if(!strcmp(sub_language,"off"))fprintf(stderr,"SUBTITLE DISABLED: change the in-player menu from OFF to AUTO or ENGLISH\n");
     for(unsigned i=0;i<fmt->nb_streams;i++)if(fmt->streams[i]->codecpar->codec_type==AVMEDIA_TYPE_SUBTITLE){
         AVDictionaryEntry *lang=av_dict_get(fmt->streams[i]->metadata,"language",NULL,0);
         fprintf(stderr,"Subtitle candidate: stream=%u codec=%s language=%s selected=%d\n",i,avcodec_get_name(fmt->streams[i]->codecpar->codec_id),lang?lang->value:"unknown",(int)i==si);
@@ -232,6 +233,7 @@ int main(int argc,char **argv) {
     video=SLVideo_CreateStream(context,k_ESLVideoFormatH264,0);
     if(!video){fprintf(stderr,"SLVideo stream unavailable\n");goto done;}
     view_context=context;source_w=vp->width;source_h=vp->height;
+    if(si<0&&strcmp(sub_language,"off"))show_view("NO EMBEDDED SUBTITLE TRACK");
     AVRational sar=av_guess_sample_aspect_ratio(fmt,vs,NULL);sar_n=sar.num;sar_d=sar.den;
     SLVideo_GetDisplayResolution(context,&screen_w,&screen_h);apply_view(0);
     AVRational fps=av_guess_frame_rate(fmt,vs,NULL);

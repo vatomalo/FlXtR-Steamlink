@@ -39,7 +39,7 @@ static void *disk_producer(void *opaque){
     for(;;){
         pthread_mutex_lock(&q->mutex);int quit=q->quit;pthread_mutex_unlock(&q->mutex);
         if(quit||stopped){rc=AVERROR_EXIT;break;}
-        deadline=av_gettime_relative()+30000000;rc=av_read_frame(q->format,p);deadline=0;
+        __atomic_store_n(&deadline,av_gettime_relative()+30000000,__ATOMIC_RELAXED);rc=av_read_frame(q->format,p);__atomic_store_n(&deadline,0,__ATOMIC_RELAXED);
         if(rc<0)break;
         if(p->stream_index!=q->vi&&p->stream_index!=q->ai&&p->stream_index!=q->si){av_packet_unref(p);continue;}
         uint64_t bytes=sizeof(DiskHeader)+(uint64_t)p->size;

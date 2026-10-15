@@ -96,9 +96,6 @@ static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int fla
     av_dict_set(opts,"protocol_whitelist","http,https,tcp,tls,crypto",0);
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
 }
-static void wait_until(int64_t when) {
-    while(!stopped&&av_gettime_relative()<when){playback_controls();SDL_Delay(2);}
-}
 static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFrame *frame,SDL_AudioDeviceID device) {
     int rc=avcodec_send_packet(codec,pkt);
     if(rc<0&&rc!=AVERROR_EOF)return rc;

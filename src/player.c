@@ -122,7 +122,7 @@ int main(int argc,char **argv) {
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;
     CSLVideoContext *context=NULL;CSLVideoStream *video=NULL;
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
-    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=128,si=-1;const char *sub_language="off";
+    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=128,si=-1;const char *sub_language="auto";
     if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
     int buffer_probe=!strcmp(argv[1],"--probe-buffer");
     int probe=!strcmp(argv[1],"--probe")||buffer_probe;
@@ -195,7 +195,12 @@ int main(int argc,char **argv) {
         if(avcodec_parameters_to_context(sub_decoder,sp)<0||avcodec_open2(sub_decoder,codec,NULL)<0){avcodec_free_context(&sub_decoder);continue;}
         sub_decoder->pkt_timebase=fmt->streams[i]->time_base;si=(int)i;break;
     }
-    fprintf(stderr,"Subtitle track: %d\n",si);
+    fprintf(stderr,"Subtitle selection: requested=%s track=%d total_streams=%u\n",sub_language,si,fmt->nb_streams);
+    for(unsigned i=0;i<fmt->nb_streams;i++)if(fmt->streams[i]->codecpar->codec_type==AVMEDIA_TYPE_SUBTITLE){
+        AVDictionaryEntry *lang=av_dict_get(fmt->streams[i]->metadata,"language",NULL,0);
+        fprintf(stderr,"Subtitle candidate: stream=%u codec=%s language=%s selected=%d\n",i,avcodec_get_name(fmt->streams[i]->codecpar->codec_id),lang?lang->value:"unknown",(int)i==si);
+    }
+    if(si<0&&strcmp(sub_language,"off"))fprintf(stderr,"SUBTITLE UNAVAILABLE: no supported embedded text track was exposed by this stream; source may require external subtitles\n");
     for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai||(int)i==si)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
     AVStream *vs=fmt->streams[vi];AVCodecParameters *vp=vs->codecpar;
     const AVPixFmtDescriptor *pix=av_pix_fmt_desc_get(vp->format);

@@ -259,7 +259,9 @@ int main(int argc,char **argv) {
         else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
     }
     megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
-    /* Performance experiment: honor the configured prebuffer for MegaPlay too.\n     * Keep the existing disk-buffer size cap and all quality fallbacks. */\n    if(megaplay)fprintf(stderr,"MegaPlay: honoring configured prebuffer of %d seconds (disk cap %d MiB)\n",buffer_secs,buffer_mb);
+    /* Performance experiment: honor the configured prebuffer for MegaPlay too.
+     * Keep the existing disk-buffer size cap and all quality fallbacks. */
+    if(megaplay)fprintf(stderr,"MegaPlay: honoring configured prebuffer of %d seconds (disk cap %d MiB)\n",buffer_secs,buffer_mb);
     menu_height=height_limit;for(int i=0;i<5;i++)if(!strcmp(sub_language,(const char*[]){"off","auto","eng","nor","spa"}[i]))menu_subtitles=i;
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}

@@ -26,7 +26,7 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
 }
 static void subtitle_draw(void){
     if(!view_context||!media_clock.active)return;
-    int64_t now=playback_now()-(int64_t)subtitle_delay*AV_TIME_BASE;
+    /* Subtitle PTS uses the demux timeline. Prefer that same origin-based\n     * timeline to avoid suppressing cues when the audio clock rebases on DTS. */\n    int64_t now=origin+av_gettime_relative()-clock_start-(int64_t)subtitle_delay*AV_TIME_BASE;\n    if(paused)now-=av_gettime_relative()-pause_started;
     int selected=-1;for(int i=0;i<64;i++)if(subtitle_cues[i].text[0]&&now>=subtitle_cues[i].start&&now<subtitle_cues[i].end)selected=i;
     if(selected==subtitle_visible)return;
     subtitle_visible=selected;

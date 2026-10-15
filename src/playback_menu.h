@@ -6,8 +6,8 @@ static SDL_AudioDeviceID menu_audio;
 static CSLVideoOverlay *menu_overlay;
 static int64_t pause_started;
 static double playback_position(void){
-    if(origin==AV_NOPTS_VALUE||!clock_start)return playback_start;
-    double p=(origin+(paused?pause_started:av_gettime_relative())-clock_start)/(double)AV_TIME_BASE;
+    if(!media_clock.active)return playback_start;
+    double p=playback_now()/(double)AV_TIME_BASE;
     return p<0?0:p;
 }
 static void menu_text(uint32_t *pixels,int pitch,int y,const char *label,uint32_t color){
@@ -73,7 +73,8 @@ static void menu_command(char c){
         switch(menu_row){
         case 0:
             if(!paused){paused=1;pause_started=av_gettime_relative();}
-            else {if(clock_start)clock_start+=av_gettime_relative()-pause_started;paused=0;}
+            else paused=0;
+            media_clock_pause(&media_clock,paused,av_gettime_relative(),menu_audio?SDL_GetQueuedAudioSize(menu_audio):0);
             if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
             break;
         case 1:menu_restart(1,playback_position()+direction*10);break;

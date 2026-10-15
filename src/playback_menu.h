@@ -5,6 +5,23 @@ static double playback_start,media_duration;
 static SDL_AudioDeviceID menu_audio;
 static CSLVideoOverlay *menu_overlay;
 static int64_t pause_started;
+/* Combine repeated seek presses into one restart after 650 ms of inactivity. */
+static double pending_seek;
+static Uint32 seek_commit_at;
+static int seek_pending;
+static void seek_queue(int direction){
+    if(!seek_pending)pending_seek=playback_position();
+    pending_seek+=direction*10;
+    if(pending_seek<0)pending_seek=0;
+    if(media_duration>1&&pending_seek>=media_duration)pending_seek=media_duration-1;
+    seek_pending=1;seek_commit_at=SDL_GetTicks()+650;
+}
+static void seek_tick(void){
+    if(seek_pending&&(Sint32)(SDL_GetTicks()-seek_commit_at)>=0){
+        double target=pending_seek;seek_pending=0;menu_restart(1,target);
+    }
+}
+
 static double playback_position(void){
     if(!media_clock.active)return playback_start;
     double p=playback_now()/(double)AV_TIME_BASE;
@@ -30,7 +47,7 @@ static void menu_draw(void){
     uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(menu_overlay,&pixels,&pitch);
     if(!pixels||pitch<740*4)return;
     for(int y=0;y<416;y++)for(int x=0;x<740;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xe8000000;
-    char rows[11][80],heading[80];int seconds=(int)playback_position();
+    char rows[11][80],heading[80];int seconds=(int)(seek_pending?pending_seek:playback_position());
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"SEEK: LEFT -10S / RIGHT +10S");
@@ -63,9 +80,9 @@ static void menu_command(char c){
         if(!menu_open){if(menu_overlay)SLVideo_HideOverlay(menu_overlay);subtitle_visible=-2;}else menu_draw();
         return;
     }
-    if(c=='b'){menu_restart(7,playback_position());return;}
+    if(c=='b'){seek_pending=0;menu_restart(7,playback_position());return;}
     if(c=='v'){viewing=(viewing+1)%VIEW_COUNT;apply_view(!menu_open);}
-    if(!menu_open){if(c=='l'||c=='r')menu_restart(1,playback_position()+(c=='l'?-10:10));return;}
+    if(!menu_open){if(c=='l'||c=='r')seek_queue(c=='l'?-1:1);return;}
     if(c=='u')menu_row=(menu_row+10)%11;
     if(c=='d')menu_row=(menu_row+1)%11;
     if(c=='a'||c=='l'||c=='r'){
@@ -77,7 +94,7 @@ static void menu_command(char c){
             media_clock_pause(&media_clock,paused,av_gettime_relative(),menu_audio?SDL_GetQueuedAudioSize(menu_audio):0);
             if(menu_audio)SDL_PauseAudioDevice(menu_audio,paused);
             break;
-        case 1:menu_restart(1,playback_position()+direction*10);break;
+        case 1:seek_queue(direction);break;
         case 2:menu_subtitles=(menu_subtitles+direction+4)%4;menu_restart(1,playback_position());break;
         case 3:subtitle_size=subtitle_size==2?3:2;subtitle_visible=-2;break;
         case 4:subtitle_delay+=direction;if(subtitle_delay>5)subtitle_delay=5;if(subtitle_delay< -5)subtitle_delay=-5;subtitle_visible=-2;break;
@@ -97,5 +114,6 @@ static void menu_poll(void){
         while(control_fd>=0&&(n=read(control_fd,commands,sizeof(commands)))>0)
             for(ssize_t i=0;i<n&&!stopped;i++)menu_command(commands[i]);
         if(paused&&!stopped)SDL_Delay(20);
+        seek_tick();
     }while(paused&&!stopped);
 }

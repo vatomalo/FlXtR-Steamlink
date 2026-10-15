@@ -267,18 +267,11 @@ int main(int argc,char **argv) {
     if(rc<0){fprintf(stderr,"Could not open stream (%d)\n",rc);goto done;}
     rc=avformat_find_stream_info(fmt,NULL);if(rc<0){fprintf(stderr,"Could not inspect stream (%d)\n",rc);goto done;}
     int best_pixels=0;
-    /* Prefer the configured quality. Single-rendition anime often only offers
-     * 1080p: select the smallest hardware-safe fallback before abandoning it. */
-    for(int fallback=0;fallback<2&&vi<0;fallback++){
-        int cap=fallback?1080:height_limit;
-        for(unsigned i=0;i<fmt->nb_streams;i++){
-            AVCodecParameters *v=fmt->streams[i]->codecpar;const AVPixFmtDescriptor *p=av_pix_fmt_desc_get(v->format);
-            if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>(cap<=480?854:cap<=720?1280:1920)||v->height>cap)continue;
-            if(p&&(p->comp[0].depth>8||p->log2_chroma_w!=1||p->log2_chroma_h!=1))continue;
-            int pixels=v->width*v->height;
-            if(vi<0||(fallback?pixels<best_pixels:pixels>best_pixels)){best_pixels=pixels;vi=(int)i;}
-        }
-        if(fallback&&vi>=0)fprintf(stderr,"No track within %dp preference; using compatible %dx%d H.264 fallback\n",height_limit,fmt->streams[vi]->codecpar->width,fmt->streams[vi]->codecpar->height);
+    for(unsigned i=0;i<fmt->nb_streams;i++){
+        AVCodecParameters *v=fmt->streams[i]->codecpar;const AVPixFmtDescriptor *p=av_pix_fmt_desc_get(v->format);
+        if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>(height_limit<=480?854:height_limit<=720?1280:1920)||v->height>height_limit)continue;
+        if(p&&(p->comp[0].depth>8||p->log2_chroma_w!=1||p->log2_chroma_h!=1))continue;
+        if(v->width*v->height>best_pixels){best_pixels=v->width*v->height;vi=(int)i;}
     }
     AVCodec *audio_decoder=NULL;
     ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,&audio_decoder,0);

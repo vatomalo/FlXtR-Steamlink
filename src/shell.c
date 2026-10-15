@@ -247,6 +247,7 @@ static Uint32 catalog_started;
 static int download_background;
 static void launch_player(const Title *t);
 static void play(void);
+static int auto_retry_height,auto_quality_missing;
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
 static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE"};
@@ -666,7 +667,14 @@ static void auto_prefer_flixer_server(void){
         strcpy(auto_servers[0],preferred);break;
     }
 }
+static int auto_retry_quality(void){
+    int height=auto_retry_height?auto_retry_height:qualities[quality_setting];
+    if(tv_active||auto_index<auto_count||!auto_quality_missing||auto_count<1||height>=1080)return 0;
+    auto_retry_height=height<720?720:1080;auto_quality_missing=0;auto_index=0;
+    fprintf(stderr,"All servers exhausted at %dp; retrying servers at %dp\n",height,auto_retry_height);return 1;
+}
 static void auto_next(void){
+    if(auto_index>=auto_count)auto_retry_quality();
     if(auto_index>=auto_count){auto_active=0;snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
     Browse next={6,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
     strcpy(next.query,auto_servers[auto_index]);auto_request(next);
@@ -1232,7 +1240,7 @@ static void draw(Uint32 tick) {
 }
 static void play(void) {
     if(settings_on||about||!total||player_pid)return;
-    restart_position=auto_resume=0;
+    restart_position=auto_resume=0;auto_retry_height=auto_quality_missing=0;
     Title *t=&titles[visible[selection]];
     if(!strcmp(t->kind,"bios-item")){
         const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
@@ -1414,6 +1422,7 @@ static void launch_player(const Title *t) {
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
         int requested_height=t->height?t->height:qualities[quality_setting];
+        if(auto_active&&auto_retry_height)requested_height=auto_retry_height;
         /* TV prefers an efficient decode resolution but must also support
          * sources that only provide 1080p. Retry the SAME source at higher
          * resolutions only when the player reports no compatible track. */
@@ -1472,7 +1481,7 @@ static void finish_player(int code){
             return;
         }
         if(command<=3){
-            if(command>1){quality_setting=(quality_setting+(command==2?1:2))%3;playing_title.height=0;save_settings();}
+            if(command>1){auto_retry_height=auto_quality_missing=0;quality_setting=(quality_setting+(command==2?1:2))%3;playing_title.height=0;save_settings();}
             restart_position=auto_resume=position;
             if(auto_active&&!strcmp(playing_title.kind,"kiss-episode"))auto_next();
             else launch_player(&playing_title);
@@ -1498,6 +1507,7 @@ static void finish_player(int code){
         snprintf(status,sizeof(status),"BACK TO TV / SELECTING NEXT PROGRAM");return;
     }
     if(WIFEXITED(code)&&WEXITSTATUS(code)==44){auto_active=0;snprintf(status,sizeof(status),"SERVER CANNOT SEEK - SELECT TITLE TO RESTART");return;}
+    if(auto_active&&!tv_active&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45)auto_quality_missing=1;
     if(auto_active&&!cancelled&&(!WIFEXITED(code)||WEXITSTATUS(code))){auto_index++;auto_next();return;}
     auto_active=0;
     if(series_autoplay&&!tv_active&&!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)&&

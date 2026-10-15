@@ -100,3 +100,9 @@ test-subtitle-confirm:
 	./build/subtitle-confirm-test
 
 .PHONY: test-subtitle-confirm
+
+test-quality-retry: all
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/quality_retry_test.c -o build/quality-retry-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/quality-retry-test
+
+.PHONY: test-quality-retry

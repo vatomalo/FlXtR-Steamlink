@@ -21,6 +21,7 @@
 #include <math.h>
 #include "hardware_layout.h"
 #include "font.h"
+#include "media_clock.h"
 
 static volatile sig_atomic_t stopped;
 static volatile sig_atomic_t change_view;
@@ -29,6 +30,11 @@ static CSLVideoContext *view_context;
 static CSLVideoOverlay *view_overlay;
 static Uint32 overlay_until;
 static int64_t deadline;
+static MediaClock media_clock;
+static SDL_AudioDeviceID clock_device;
+static int64_t playback_now(void) {
+    return media_clock_time(&media_clock,av_gettime_relative(),clock_device?SDL_GetQueuedAudioSize(clock_device):0);
+}
 static const char *ca_file;
 static int megaplay;
 static uint64_t audio_samples;
@@ -78,7 +84,8 @@ static void playback_controls(void) {
     if(change_view&&view_context){change_view=0;viewing=(viewing+1)%VIEW_COUNT;apply_view(1);}
     if(overlay_until&&(Sint32)(SDL_GetTicks()-overlay_until)>=0){SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
 }
-static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&av_gettime_relative()>deadline); }
+static int interrupt_io(void *opaque) { (void)opaque;int64_t d=__atomic_load_n(&deadline,__ATOMIC_RELAXED);
+    return stopped||(d&&av_gettime_relative()>d); }
 /* Apply TLS verification to every HLS playlist, key and segment, not only the
  * top-level URL. Never permit a remote playlist to read local files. */
 static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int flags,AVDictionary **opts) {
@@ -103,8 +110,8 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
         int samples=swr_convert(swr,&pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
             while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(5);}
-            audio_samples+=(unsigned)samples;
             if(!stopped&&SDL_QueueAudio(device,pcm,samples*4)<0){av_freep(&pcm);av_frame_unref(frame);return AVERROR(EIO);}
+            if(!stopped){audio_samples+=(unsigned)samples;media_clock.queued_frames_total=audio_samples;}
         }
         av_freep(&pcm);av_frame_unref(frame);
         if(samples<0)return samples;
@@ -163,7 +170,7 @@ int main(int argc,char **argv) {
         av_dict_set(&opts,"allowed_extensions","m3u8,ts,m4s,mp4,aac,key,jpg",0);
     }
     av_dict_set(&opts,"probesize","2097152",0);av_dict_set(&opts,"analyzeduration","3000000",0);
-    deadline=av_gettime_relative()+20000000;
+    __atomic_store_n(&deadline,av_gettime_relative()+20000000,__ATOMIC_RELAXED);
     rc=avformat_open_input(&fmt,url,NULL,&opts);av_dict_free(&opts);
     if(rc<0){fprintf(stderr,"Could not open stream (%d)\n",rc);goto done;}
     rc=avformat_find_stream_info(fmt,NULL);if(rc<0){fprintf(stderr,"Could not inspect stream (%d)\n",rc);goto done;}
@@ -202,15 +209,15 @@ int main(int argc,char **argv) {
     fprintf(stderr,"Video: H.264 %dx%d; audio track %d\n",vp->width,vp->height,ai);
     media_duration=fmt->duration>0?fmt->duration/(double)AV_TIME_BASE:0;
     if(playback_start>0){
-        deadline=av_gettime_relative()+20000000;
+        __atomic_store_n(&deadline,av_gettime_relative()+20000000,__ATOMIC_RELAXED);
         rc=av_seek_frame(fmt,-1,(int64_t)(playback_start*AV_TIME_BASE),AVSEEK_FLAG_BACKWARD);
-        deadline=0;
+        __atomic_store_n(&deadline,0,__ATOMIC_RELAXED);
         if(rc<0){fprintf(stderr,"Server does not support seeking (%d)\n",rc);result=44;goto done;}
         fprintf(stderr,"Seek accepted: %.3f seconds (keyframe)\n",playback_start);
     }
     if(probe){
         if(buffer_probe){
-            deadline=0;buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
+            __atomic_store_n(&deadline,0,__ATOMIC_RELAXED);buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
             packet=av_packet_alloc();if(!packet)goto done;int video_packets=0,audio_packets=0;
             for(int i=0;i<200;i++){rc=disk_packet(buffer,packet);if(rc<0)break;if(packet->stream_index==vi)video_packets++;if(packet->stream_index==ai)audio_packets++;av_packet_unref(packet);}
             fprintf(stderr,"Buffered packet test: %d video / %d audio\n",video_packets,audio_packets);
@@ -244,10 +251,10 @@ int main(int argc,char **argv) {
         device=SDL_OpenAudioDevice(NULL,0,&wanted,NULL,0);
         if(!device){fprintf(stderr,"Audio output unavailable: %s\n",SDL_GetError());goto done;}
     }
-    menu_audio=device;
+    menu_audio=device;clock_device=device;
     packet=av_packet_alloc();filtered=av_packet_alloc();frame=av_frame_alloc();
     if(!packet||!filtered||!frame)goto done;
-    deadline=0;
+    __atomic_store_n(&deadline,0,__ATOMIC_RELAXED);
     buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);
     if(!buffer){fprintf(stderr,"Disk buffer unavailable or insufficient free space\n");goto done;}
     fprintf(stderr,"Disk buffer: %d MiB / %d seconds prefill\n",buffer_mb,buffer_secs);
@@ -256,7 +263,7 @@ int main(int argc,char **argv) {
         playback_controls();
         int64_t wait_start=av_gettime_relative();rc=disk_packet(buffer,packet);
         int64_t waited=av_gettime_relative()-wait_start;
-        if(clock_start&&waited>100000)clock_start+=waited;
+        media_clock_buffer_wait(&media_clock,waited);
         if(overlay_until&&frames==0){SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
         if(rc<0){
             char message[AV_ERROR_MAX_STRING_SIZE];
@@ -270,9 +277,16 @@ int main(int argc,char **argv) {
         int64_t ts=packet->dts!=AV_NOPTS_VALUE?packet->dts:packet->pts;
         if(ts!=AV_NOPTS_VALUE){
             ts=av_rescale_q(ts,fmt->streams[track]->time_base,AV_TIME_BASE_Q);
-            if(origin==AV_NOPTS_VALUE){origin=ts;clock_start=av_gettime_relative();}
+            if(origin==AV_NOPTS_VALUE){origin=ts;clock_start=av_gettime_relative();media_clock_start(&media_clock,ts,clock_start);}
+            if(track==ai&&!media_clock.audio_valid)media_clock_audio_start(&media_clock,ts);
             int64_t elapsed=ts-origin;
-            if(elapsed>0 && elapsed<86400LL*AV_TIME_BASE)wait_until(clock_start+elapsed);
+            /* Audio must be queued ahead, not delayed until its own timestamp.
+             * Schedule compressed video against the audible PCM clock. */
+            if(track==vi&&elapsed>0&&elapsed<86400LL*AV_TIME_BASE){
+                while(!stopped&&!paused&&playback_now()+5000<ts){
+                    playback_controls();SDL_Delay(2);
+                }
+            }
             if(limit>0&&elapsed>limit*AV_TIME_BASE){av_packet_unref(packet);rc=AVERROR_EOF;break;}
         }
         if(stopped){av_packet_unref(packet);break;}
@@ -291,7 +305,7 @@ int main(int argc,char **argv) {
             if(device)SDL_PauseAudioDevice(device,0);
         }
         av_packet_unref(packet);if(rc<0)break;
-        if(frames>200&&clock_start&&av_gettime_relative()-clock_start>20000000&&!audio_samples){
+        if(frames>200&&media_clock.active&&av_gettime_relative()-media_clock.wall_start_us>20000000&&!audio_samples){
             fprintf(stderr,"No audio decoded after 20 seconds; try another server\n");goto done;
         }
     }

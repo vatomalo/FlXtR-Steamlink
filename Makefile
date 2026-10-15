@@ -94,3 +94,9 @@ test-series: all
 	./build/series-settings-test
 
 .PHONY: test-series
+
+test-subtitle-confirm:
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/subtitle_confirm_test.c -o build/subtitle-confirm-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/subtitle-confirm-test
+
+.PHONY: test-subtitle-confirm

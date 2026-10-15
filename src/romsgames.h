@@ -36,8 +36,12 @@ static int rg_list(int page,int id){
     if(id<1||id>10)return -1;
     int web_page=(page-1)/6+1;char url[256];
     snprintf(url,sizeof(url),ROMSGAMES "/roms/%s/?page=%d&sort=popularity",rg_slugs[id-1],web_page);
-    char *html=kiss_fetch(url);if(!html)return -1;
+    char *html=response_cache_load(url);int hit=html!=NULL;
+    if(!html)html=kiss_fetch(url);
+    if(!html)return -1;
     int count=rg_cards(html,((page-1)%6)*PAGE_SIZE),last=web_page;
+    if(!count&&hit){free(html);html=kiss_fetch(url);if(!html)return -1;hit=0;count=rg_cards(html,((page-1)%6)*PAGE_SIZE);}
+    if(count&&!hit)response_cache_store(url,html);
     const char *p=html;while((p=strstr(p,"?page="))){int n=atoi(p+6);if(n>last&&n<=333)last=n;p+=6;}
     total=last>web_page?last*36:(web_page-1)*36+count;
     free(html);return count?0:-1;

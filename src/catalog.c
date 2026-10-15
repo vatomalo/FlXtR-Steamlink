@@ -14,8 +14,10 @@
 #include <sys/file.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <unistd.h>
 #include <time.h>
+#include "response_cache.h"
 #include "browse_filters.h"
 #include "game_metadata.h"
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
@@ -32,8 +34,12 @@ static size_t receive(void *data,size_t size,size_t count,void *opaque){
     char *p=realloc(b->data,b->length+n+1);if(!p)return 0;
     b->data=p;memcpy(p+b->length,data,n);b->length+=n;p[b->length]=0;return n;
 }
+static CURL *catalog_http;
+static void catalog_http_reset(void){if(catalog_http)curl_easy_cleanup(catalog_http);catalog_http=NULL;}
+static void catalog_http_close(void){catalog_http_reset();curl_global_cleanup();}
 static int fetch_referred(const char *url,Buffer *b,const char *referer){
-    CURL *c=curl_easy_init();if(!c)return -1;
+    if(!catalog_http)catalog_http=curl_easy_init();
+    CURL *c=catalog_http;if(!c)return -1;curl_easy_reset(c);
     curl_easy_setopt(c,CURLOPT_URL,url);
     curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);curl_easy_setopt(c,CURLOPT_MAXREDIRS,3L);
     curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,receive);curl_easy_setopt(c,CURLOPT_WRITEDATA,b);
@@ -49,19 +55,24 @@ static int fetch_referred(const char *url,Buffer *b,const char *referer){
     curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
 #endif
     CURLcode rc=curl_easy_perform(c);long code=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);
-    curl_easy_cleanup(c);
     if(rc!=CURLE_OK||code!=200){fprintf(stderr,"Catalog HTTP %ld / error %d\n",code,(int)rc);return -1;}
     return 0;
 }
 static int fetch(const char *url,Buffer *b){return fetch_referred(url,b,NULL);}
 static json_object *get_json(const char *path){
-    char url[1024];Buffer b={NULL,0,2*1024*1024};
+    char url[1024];
     if(snprintf(url,sizeof(url),API"%s",path)>=(int)sizeof(url))return NULL;
-    if(fetch(url,&b)){free(b.data);return NULL;}
-    json_tokener *tok=json_tokener_new_ex(32);if(!tok){free(b.data);return NULL;}
-    json_object *obj=json_tokener_parse_ex(tok,b.data,(int)b.length);
-    if(json_tokener_get_error(tok)!=json_tokener_success){json_object_put(obj);obj=NULL;}
-    json_tokener_free(tok);free(b.data);return obj;
+    char *cached=response_cache_load(url);
+    for(int attempt=0;attempt<2;attempt++){
+        Buffer b={cached,cached?strlen(cached):0,2*1024*1024};int hit=cached!=NULL;cached=NULL;
+        if(!hit&&fetch(url,&b)){free(b.data);return NULL;}
+        json_tokener *tok=json_tokener_new_ex(32);if(!tok){free(b.data);return NULL;}
+        json_object *obj=json_tokener_parse_ex(tok,b.data,(int)b.length);
+        if(json_tokener_get_error(tok)!=json_tokener_success||!json_object_is_type(obj,json_type_object)){json_object_put(obj);obj=NULL;}
+        json_tokener_free(tok);
+        if(obj&&!hit)response_cache_store(url,b.data);
+        free(b.data);if(obj||!hit)return obj;
+    }return NULL;
 }
 static json_object *field(json_object *obj,const char *name){json_object *v=NULL;json_object_object_get_ex(obj,name,&v);return v;}
 static const char *string(json_object *obj,const char *name){json_object *v=field(obj,name);return v&&json_object_is_type(v,json_type_string)?json_object_get_string(v):"";}
@@ -478,6 +489,7 @@ static void game_art_prefetch(void){
     }
     int lock=open("game-art-cache/.worker.lock",O_CREAT|O_RDWR,0600);
     if(lock>=0&&!flock(lock,LOCK_EX|LOCK_NB)){
+        catalog_http_reset(); /* Do not share a live HTTPS connection across fork. */
         pid_t child=fork();
         if(child==0){
             int devnull=open("/dev/null",O_RDWR);
@@ -539,6 +551,7 @@ static void game_info_prefetch(void){
     if(keylen<8||keylen>120)return;
     for(size_t i=0;i<keylen;i++)
         if(!isalnum((unsigned char)key[i])&&key[i]!='-'&&key[i]!='_')return;
+    catalog_http_reset();
     pid_t pid=fork();
     if(pid<0)return;
     if(pid>0){waitpid(pid,NULL,0);return;}
@@ -643,7 +656,7 @@ int main(int argc,char **argv){
     else if(!strcmp(kind,"source"))rc=sources(page,id,season,episode);
     else if((!strcmp(kind,"movie")||!strcmp(kind,"tv"))&&!*argv[3]&&!id&&!season&&!local_list(kind,page,argv[3]))rc=0;
     else rc=remote_list(kind,page,argv[3],id,season);
-    if(rc){curl_global_cleanup();return 1;}
+    if(rc){catalog_http_close();return 1;}
     if(!strcmp(kind,"games")||!strcmp(kind,"games-system"))game_info_prefetch();
     /* Invalidate before replacing art: cancellation cannot pair old JSON with new posters. */
     if(cacheable)unlink(cache_file);
@@ -669,5 +682,5 @@ output:
     for(int i=0;i<used;i++){Entry *e=&entries[i];if(!strcmp(e->kind,"source")&&(e->subs_eng[0]||e->subs_nor[0]||e->subs_spa[0]))
             printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t0\t%s\t%s\t%s\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode,e->subs_eng,e->subs_nor,e->subs_spa);
         else printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode);}
-    curl_global_cleanup();return ferror(stdout)?1:0;
+    catalog_http_close();return ferror(stdout)?1:0;
 }

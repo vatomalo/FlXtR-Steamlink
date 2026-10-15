@@ -6,6 +6,7 @@ static SDL_AudioDeviceID menu_audio;
 static CSLVideoOverlay *menu_overlay;
 static int64_t pause_started;
 /* Combine repeated seek presses into one restart after 650 ms of inactivity. */
+static void menu_restart(int action,double position);
 static double pending_seek;
 static Uint32 seek_commit_at;
 static int seek_pending;

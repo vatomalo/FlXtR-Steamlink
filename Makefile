@@ -12,6 +12,8 @@ build/greenlink: src/shell.c src/font.h src/video_layout.h src/tv_schedule.h src
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image
 
 test: all
+	$(CC) $(CFLAGS) tests/media_clock_test.c -o build/media-clock-test
+	./build/media-clock-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/tv_test.c -o build/tv-test $(SDL_LIBS)
 	./build/tv-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/archive_test.c -o build/archive-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto

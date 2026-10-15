@@ -280,7 +280,8 @@ int main(int argc,char **argv) {
             /* Audio must be queued ahead, not delayed until its own timestamp.
              * Schedule compressed video against the audible PCM clock. */
             if(track==vi&&elapsed>0&&elapsed<86400LL*AV_TIME_BASE){
-                while(!stopped&&!paused&&playback_now()+5000<ts){
+                int64_t pacing_start=av_gettime_relative();
+                while(!stopped&&!paused&&media_clock.audio_valid&&playback_now()+5000<ts&&av_gettime_relative()-pacing_start<80000){
                     playback_controls();SDL_Delay(2);
                 }
             }

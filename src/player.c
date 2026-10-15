@@ -117,8 +117,23 @@ static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int fla
     av_dict_set(opts,"protocol_whitelist",local_media&&!strcmp(local_media,url)?"file":"http,https,tcp,tls,crypto",0);
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
 }
+/* Avoid holding the single demux/decoder thread behind a distant timestamp.
+ * A stalled packet can otherwise prevent queued audio from being fed.
+ * Keep the cap short and log hits for device-side performance diagnosis. */
 static void wait_until(int64_t when) {
-    while(!stopped&&av_gettime_relative()<when){playback_controls();SDL_Delay(2);}
+    const int64_t max_wait_us=40000;
+    int64_t began=av_gettime_relative();
+    while(!stopped&&av_gettime_relative()<when){
+        playback_controls();
+        if(av_gettime_relative()-began>=max_wait_us){
+            static unsigned pace_caps;
+            if(pace_caps++<30)
+                fprintf(stderr,"Playback pacing capped: future=%.1f ms\n",
+                    (when-av_gettime_relative())/1000.0);
+            break;
+        }
+        SDL_Delay(2);
+    }
 }
 static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFrame *frame,SDL_AudioDeviceID device) {
     int rc=avcodec_send_packet(codec,pkt);

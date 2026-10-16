@@ -256,12 +256,12 @@ static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
 /* Persistent index of distinct titles encountered across every catalog page.
  * Append only new titles; no old entries are evicted when browsing. */
-static char (*search_dict)[80];
+static char (*search_dict)[256];
 static size_t search_dict_count,search_dict_capacity;
 static int search_dict_loading;
 static void search_dict_remember(const char *title){
     if(!title||!*title||strchr(title,'\n')||strchr(title,'\r')||strchr(title,'\t'))return;
-    size_t len=strlen(title);if(!len||len>=80)return;
+    size_t len=strlen(title);if(!len||len>=256)return;
     for(size_t i=0;i<search_dict_count;i++)if(!strcasecmp(search_dict[i],title))return;
     if(search_dict_count==search_dict_capacity){
         size_t capacity=search_dict_capacity?search_dict_capacity*2:256;
@@ -270,7 +270,7 @@ static void search_dict_remember(const char *title){
         if(!grown)return;
         search_dict=grown;search_dict_capacity=capacity;
     }
-    snprintf(search_dict[search_dict_count++],80,"%s",title);
+    snprintf(search_dict[search_dict_count++],256,"%s",title);
     if(!search_dict_loading){
         FILE *f=fopen("search-titles.txt","a");
         if(f){fprintf(f,"%s\n",title);fclose(f);}
@@ -279,7 +279,7 @@ static void search_dict_remember(const char *title){
 static void search_dict_load(void){
     FILE *f=fopen("search-titles.txt","r");if(!f)return;
     search_dict_loading=1;
-    char line[256];
+    char line[512];
     while(fgets(line,sizeof(line),f)){
         if(!strchr(line,'\n')&&!feof(f)){int c;while((c=fgetc(f))!=EOF&&c!='\n'){}continue;}
         line[strcspn(line,"\r\n")]=0;search_dict_remember(line);

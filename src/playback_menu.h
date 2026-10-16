@@ -1,4 +1,5 @@
 /* Single hardware overlay plane: the menu owns it while visible. */
+#include <sys/stat.h>
 static int control_fd=-1,menu_open,menu_row,menu_info,paused,requested_action;
 static int menu_height=720,menu_subtitles,menu_episodes,menu_servers;
 static int seek_scrubbing,seek_was_paused;

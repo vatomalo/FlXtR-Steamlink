@@ -29,6 +29,14 @@ cp "$src" "$out"
     (stage / 'greenlink.sh').write_text('#!/bin/sh\necho fixed\n')
     (stage / 'retroarch-libs').mkdir()
     (stage / 'retroarch-libs/libSDL2-2.0.so.0').write_bytes(b'native SDL fixture')
+    (stage / 'assets').mkdir()
+    (stage / 'assets/music-required-v1').write_text('1\n')
+    shutil.copy(stage / 'greenlink', stage / 'greenlink-audio')
+    for name in ('scripts/music-runtime.sh', 'scripts/music-qjs.sh', 'tools/music.py', 'music-runtime/usr/bin/python3'):
+        path = stage / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('#!/bin/sh\nexit 0\n')
+        path.chmod(0o755)
     with tarfile.open(app / 'package.tgz', 'w:gz') as archive:
         archive.add(stage, arcname='greenlink')
     digest = hashlib.sha256((app / 'package.tgz').read_bytes()).hexdigest()
@@ -48,6 +56,14 @@ cp "$src" "$out"
 
     assert 'Installed complete' in run()  # legacy marker without hashes
     assert 'already up to date' in run()
+    # An old updater can leave the new UI installed but omit the new runtime.
+    (app / 'greenlink-audio').unlink()
+    hashes = app / '.installed-package-sha256'
+    hashes.write_text(''.join(line for line in hashes.read_text().splitlines(True) if 'greenlink-audio' not in line))
+    assert 'Installed complete' in run()
+    assert (app / 'greenlink-audio').is_file()
+    (app / 'music-runtime/usr/bin/python3').write_bytes(b'broken runtime')
+    assert 'Installed complete' in run()
     for name in ('greenlink', 'greenlink-catalog', 'greenlink.sh', 'retroarch-libs/libSDL2-2.0.so.0'):
         (app / name).write_bytes(b'overwritten old file')
         assert 'Installed complete' in run(), name

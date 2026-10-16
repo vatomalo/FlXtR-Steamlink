@@ -39,9 +39,14 @@ static int hardware_viewport(VideoRect *rect,int display_w,int display_h) {
     if(!scaling_saved){
         scaling_original_source=before_source;scaling_original_output=before_output;scaling_saved=1;
     }
-    /* This plane is already expanded to display space. Encoded dimensions here
-     * crop the picture; they belong only in video_rect() for the output size. */
-    VideoRect source={0,0,display_w,display_h};
+    /* Preserve the firmware's input crop. Overwriting it with display
+     * dimensions makes the output appear tiny or misaligned on some devices.
+     * Only change the destination rectangle when selecting a view mode. */
+    VideoRect source=scaling_original_source;
+    fprintf(stderr,"Video scaler: input %d,%d %dx%d / previous output %d,%d %dx%d / target %d,%d %dx%d / display %dx%d\n",
+        source.x,source.y,source.w,source.h,
+        before_output.x,before_output.y,before_output.w,before_output.h,
+        rect->x,rect->y,rect->w,rect->h,display_w,display_h);
     rc=scaling_set(viewport_handle,viewport_plane,&source,rect);
     if(rc){fprintf(stderr,"Video scaling failed: 0x%x\n",(unsigned)rc);return -1;}
     rc=scaling_get(viewport_handle,viewport_plane,&actual_source,&actual_output);

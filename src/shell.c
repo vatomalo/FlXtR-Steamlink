@@ -245,6 +245,7 @@ static char auto_servers[40][32];
 static Title auto_title;
 static Uint32 catalog_started;
 static int download_background;
+static void music_video_pause(int resume);
 static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
@@ -1497,6 +1498,7 @@ static void launch_player(const Title *t) {
     }
     playing_title=*t;player_menu=1; /* Native controller menu is always available. */
     subtitle_route_log("launch-player",t);
+    music_video_pause(0);
     close_ui();
     player_pid=shell_fork();
     if(player_pid==0) {
@@ -1577,6 +1579,7 @@ static void finish_player(int code){
     int cancelled=stopping_player;
     player_pid=0;stopping_player=0;if(player_control>=0)close(player_control);player_control=-1;
     if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;auto_active=0;return;}
+    music_video_pause(1);
     if(!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==40){
         int command,view,sub,scale,delay;double position;FILE *f=fopen("playback-request","r");
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;

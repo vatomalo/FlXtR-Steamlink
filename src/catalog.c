@@ -622,7 +622,8 @@ int main(int argc,char **argv){
     /* Game folders are local and cheap; always scan them so missing covers
      * can be queued even after page metadata was cached. */
     if(!strcmp(kind,"games-system"))cacheable=0;
-    if(cacheable){cache_identity(kind,page,argv[3],id,season);if(cache_load())goto output;}
+    cache_identity(kind,page,argv[3],id,season);
+    if(cacheable&&cache_load())goto output;
     if(!strncmp(kind,"games",5))fprintf(stderr,"FlXtR game art enabled=%d; catalog kind=%s\n",!getenv("FLXTR_NO_ART"),kind);
     int rc;
     if(!strcmp(kind,"games-platforms"))rc=games_platforms(page);

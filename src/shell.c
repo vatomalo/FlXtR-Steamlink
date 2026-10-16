@@ -254,6 +254,45 @@ static const char *const browse_kinds[]={"","movie","tv","season","episode","sou
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
+/* Tiny on-device dictionary collected from titles the catalog has parsed.
+ * One title per line; cap both memory and disk usage. No network calls. */
+#define SEARCH_DICT_LIMIT 256
+static char search_dict[SEARCH_DICT_LIMIT][80];
+static int search_dict_count;
+static void search_dict_remember(const char *title){
+    if(!title||!*title||strchr(title,'\n')||strchr(title,'\r')||strchr(title,'\t'))return;
+    size_t len=strlen(title);if(len>=80)return;
+    for(int i=0;i<search_dict_count;i++)if(!strcasecmp(search_dict[i],title))return;
+    if(search_dict_count==SEARCH_DICT_LIMIT){
+        memmove(search_dict,search_dict+1,(SEARCH_DICT_LIMIT-1)*sizeof(search_dict[0]));
+        search_dict_count--;
+    }
+    snprintf(search_dict[search_dict_count++],80,"%s",title);
+}
+static void search_dict_load(void){
+    FILE *f=fopen("search-titles.txt","r");if(!f)return;
+    char line[80];
+    while(fgets(line,sizeof(line),f)){
+        if(!strchr(line,'\n')&&!feof(f)){int c;while((c=fgetc(f))!=EOF&&c!='\n'){}continue;}
+        line[strcspn(line,"\r\n")]=0;search_dict_remember(line);
+    }
+    fclose(f);
+}
+static void search_dict_save(void){
+    FILE *f=fopen("search-titles.txt.next","w");if(!f)return;
+    for(int i=0;i<search_dict_count;i++)fprintf(f,"%s\n",search_dict[i]);
+    if(fclose(f)==0)rename("search-titles.txt.next","search-titles.txt");
+    else unlink("search-titles.txt.next");
+}
+static const char *search_completion(void){
+    size_t n=strlen(search_text);
+    if(n<2)return NULL;
+    for(int i=search_dict_count-1;i>=0;i--)
+        if(!strncasecmp(search_dict[i],search_text,n)&&strlen(search_dict[i])>n)
+            return search_dict[i];
+    return NULL;
+}
+
 static char status[100]="SELECT A TITLE / Y GENRE AND MOST POPULAR";
 static unsigned char star_x[STARS], star_y[STARS], star_speed[STARS];
 static SDL_Color green={116,255,132,255}, dim={66,126,77,255}, white={212,226,214,255};
@@ -543,7 +582,16 @@ static int read_catalog(const char *path) {
             if(strlen(fields[10])<sizeof(t->subs_nor))strcpy(t->subs_nor,fields[10]);}
         if(nf==12&&strlen(fields[11])<sizeof(t->subs_spa))strcpy(t->subs_spa,fields[11]);
     }
-    fclose(f); filter();return count;
+    fclose(f);
+    if(strcmp(path,"favorites.tsv")){
+        int before=search_dict_count;
+        for(int i=0;i<count;i++)
+            if(!strcmp(titles[i].kind,"movie")||!strcmp(titles[i].kind,"tv")||
+               !strcmp(titles[i].kind,"kiss")||!strcmp(titles[i].kind,"archive"))
+                search_dict_remember(titles[i].title);
+        if(search_dict_count!=before)search_dict_save();
+    }
+    filter();return count;
 }
 /* A small RAM-only LRU catalog. Reuse loaded pages until process restart.
  * We never cache playback sources or actions that mutate downloaded files. */
@@ -1133,7 +1181,9 @@ static void draw(Uint32 tick) {
             int x=194+(i%10)*64,y=202+(i/10)*48;char ch[2]={search_keys[i],0};
             rect(x,y,48,38,i==search_key?green:dim,0);text(x+15,y+10,ch,2,i==search_key?green:white,1);
         }
-        text(194,424,"A TYPE / B DELETE / START SEARCH",2,green,60);
+        const char *completion=search_completion();
+        if(completion)text(194,405,completion,1,green,65);
+        text(194,424,completion?"Y COMPLETE / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",2,green,65);
         text(194,460,"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
     }else if(about) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
@@ -1597,6 +1647,10 @@ static void action(SDL_Keycode key) {
         size_t n=strlen(search_text);
         if(key==SDLK_ESCAPE){search_on=0;SDL_StopTextInput();}
         else if(key==SDLK_BACKSPACE){if(n)search_text[n-1]=0;else {search_on=0;SDL_StopTextInput();}}
+        else if(key==SDLK_y){
+            const char *completion=search_completion();
+            if(completion)snprintf(search_text,sizeof(search_text),"%s",completion);
+        }
         else if(key==SDLK_RIGHT&&search_key<39)search_key++;
         else if(key==SDLK_LEFT&&search_key>0)search_key--;
         else if(key==SDLK_DOWN&&search_key<30)search_key+=10;
@@ -1776,7 +1830,7 @@ static void shutdown_children(pid_t *children,size_t count){
 
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
-    load_settings();
+    load_settings();search_dict_load();
     for(int i=1;i<argc;i++) {
         if(!strcmp(argv[i],"--version")){puts(FLXTR_VERSION);return 0;}
         else if(!strcmp(argv[i],"--grid"))coverflow=0;

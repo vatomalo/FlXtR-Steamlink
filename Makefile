@@ -7,7 +7,7 @@ all: build/greenlink build/greenlink-catalog
 build/greenlink-catalog: src/catalog.c src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
-build/greenlink: src/shell.c src/child_process.h src/api_setup.h src/phone_features.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/browse_filters.h
+build/greenlink: src/shell.c src/music_ui.h src/child_process.h src/api_setup.h src/phone_features.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl
 
@@ -94,3 +94,11 @@ test-series: all
 	./build/series-settings-test
 
 .PHONY: test-series
+
+# Native display scaling and bounded music metadata/worker tests.
+test-music-layout: all
+	$(CC) $(CFLAGS) tests/hardware_layout_test.c -ldl -o build/hardware-layout-test
+	./build/hardware-layout-test
+	python3 tests/music_test.py
+
+.PHONY: test-music-layout

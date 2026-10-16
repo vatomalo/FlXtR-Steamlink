@@ -50,3 +50,9 @@ file build/greenlink-player-arm
 wc -c build/greenlink-player-arm
 
 printf "1\n" > build/player-menu-v1
+
+$CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" \
+    $(pkg-config --cflags sdl2) src/audio_player.c -o build/greenlink-audio-arm \
+    -L"$cache/install/lib" -lavformat -lavcodec -lswresample -lavutil \
+    $(pkg-config --libs sdl2 gnutls) -lm -lpthread -ldl -lz
+$STRIP build/greenlink-audio-arm

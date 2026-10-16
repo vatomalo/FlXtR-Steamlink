@@ -245,6 +245,7 @@ static char auto_servers[40][32];
 static Title auto_title;
 static Uint32 catalog_started;
 static int download_background;
+static void music_video_pause(int resume);
 static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
@@ -1028,7 +1029,9 @@ static void start_update(void) {
     if(update_pid<0){update_pid=0;snprintf(status,sizeof(status),"COULD NOT START UPDATER");return;}
     snprintf(status,sizeof(status),"CHECKING GITHUB FOR A SHELL UPDATE...");
 }
+#include "music_ui.h"
 static void draw(Uint32 tick) {
+    if(music_on){music_draw();SDL_RenderPresent(renderer);return;}
     SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
     if(background&&!monochrome_menu){
         SDL_RenderCopy(renderer,background,NULL,NULL);
@@ -1067,7 +1070,8 @@ static void draw(Uint32 tick) {
         SDL_RenderPresent(renderer);return;
     }
     text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
-    text(737,32,"NATIVE / MINIMAL",2,dim,17);
+    if(music_job==3||music_job==2){text(737,22,"[R1] MUSIC / NOW PLAYING",1,dim,32);music_now_playing(737,43,31,green);}
+    else text(737,32,"[R1] MUSIC",2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
     int root_mode=history_size?history[0].mode:browse.mode;
@@ -1495,6 +1499,7 @@ static void launch_player(const Title *t) {
     }
     playing_title=*t;player_menu=1; /* Native controller menu is always available. */
     subtitle_route_log("launch-player",t);
+    music_video_pause(0);
     close_ui();
     player_pid=shell_fork();
     if(player_pid==0) {
@@ -1575,6 +1580,7 @@ static void finish_player(int code){
     int cancelled=stopping_player;
     player_pid=0;stopping_player=0;if(player_control>=0)close(player_control);player_control=-1;
     if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;auto_active=0;return;}
+    music_video_pause(1);
     if(!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==40){
         int command,view,sub,scale,delay;double position;FILE *f=fopen("playback-request","r");
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;
@@ -1640,6 +1646,12 @@ static void phone_dispatch(void){
     if(!strcmp(phone_pending,"control")){
         char c=phone_value[0];c=c=='p'?'P':c=='f'?'F':c=='r'?'R':c=='s'?'S':c;
         if(player_pid&&player_control>=0){ssize_t sent=write(player_control,&c,1);(void)sent;}
+    }else if(!strcmp(phone_pending,"music")){
+        if(!player_pid&&!music_job&&!update_pid){
+            snprintf(music_query,sizeof(music_query),"%.220s",phone_value);
+            music_edit=0;music_on=1;
+            music_spawn(1);
+        }else snprintf(status,sizeof(status),"FINISH CURRENT PLAYBACK BEFORE IMPORTING MUSIC");
     }else if(!player_pid&&!catalog_pid&&!update_pid){
         Title t;memset(&t,0,sizeof(t));snprintf(t.title,sizeof(t.title),"PHONE VIDEO");
         if(!strcmp(phone_pending,"play"))snprintf(t.url,sizeof(t.url),"phone-files/%.100s",phone_value);
@@ -1651,6 +1663,11 @@ static void phone_dispatch(void){
     phone_pending[0]=phone_value[0]=0;
 }
 static void action(SDL_Keycode key) {
+    if(music_on){music_action(key);return;}
+    if(key==SDLK_m&&!player_pid&&!catalog_pid&&!update_pid&&!settings_on&&!about&&!accounts_on&&!search_on){
+        if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access("music-runtime/usr/bin/python3",X_OK))){start_update();return;}
+        tv_active=0;tv_cancel_prepared();music_on=1;return;
+    }
     if(favorite_remove_confirm){
         if(key==SDLK_RETURN&&browse.mode==FAVORITES_MODE&&total){
             favorite_remove_confirm=0;
@@ -1916,6 +1933,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--screenshot")&&i+1<argc)shot=argv[++i];
         else if(!strcmp(argv[i],"--frames")&&i+1<argc)frames=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--no-stars"))stars_on=0;
+        else if(!strcmp(argv[i],"--music"))music_on=1;
         else if(!strcmp(argv[i],"--library")&&i+1<argc){const char *v=argv[++i];initial_library=!strcmp(v,"movies")?1:!strcmp(v,"series")?2:!strcmp(v,"anime")?7:!strcmp(v,"archive")?30:!strcmp(v,"tv")?11:!strcmp(v,"games")?21:0;if(!initial_library)return 2;}
         else {fprintf(stderr,"Usage: %s [--catalog file] [--screenshot file.bmp] [--frames N] [--no-stars]\n",argv[0]);return 2;}
     }
@@ -1931,10 +1949,15 @@ int main(int argc,char **argv) {
     while(running) {
         if(accounts_on){api_setup_tick(SDL_GetTicks());phone_dispatch();if(SDL_GetTicks()-last_draw>=100)dirty=1;}
         SDL_Event event;
-        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:((stars_on&&!background)||flow_animating())?33:250)) do {
+        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT)running=0;
             else if(event.type==SDL_KEYDOWN)action(event.key.keysym.sym);
+            else if(event.type==SDL_MOUSEBUTTONDOWN&&event.button.button==SDL_BUTTON_LEFT){
+                int ww,wh;SDL_GetWindowSize(window,&ww,&wh);
+                if(ww>0&&wh>0&&event.button.x*W/ww>=730&&event.button.y*H/wh>=16&&event.button.y*H/wh<71)action(SDLK_m);
+            }
+            else if(event.type==SDL_TEXTINPUT&&music_on&&music_edit)music_text(event.text.text);
             else if(event.type==SDL_TEXTINPUT&&search_on){for(const char *p=event.text.text;*p;p++){size_t n=strlen(search_text);if(n<64&&(isalnum((unsigned char)*p)||*p==' '||*p=='-')){search_text[n]=(char)toupper((unsigned char)*p);search_text[n+1]=0;}}}
             else if(event.type==SDL_CONTROLLERDEVICEADDED)add_pad(event.cdevice.which);
             else if(event.type==SDL_CONTROLLERDEVICEREMOVED){for(int i=0;i<4;i++)if(pads[i]&&SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i]))==event.cdevice.which){SDL_GameControllerClose(pads[i]);pads[i]=NULL;}}
@@ -1961,8 +1984,8 @@ int main(int argc,char **argv) {
                 if(player_pid&&button<32)last_play_button[button]=pressed_at;
                 controller_used();
                 switch(event.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_A:action(search_on?SDLK_F4:SDLK_RETURN);break;
-                    case SDL_CONTROLLER_BUTTON_B:action(search_on?SDLK_BACKSPACE:SDLK_ESCAPE);break;
+                    case SDL_CONTROLLER_BUTTON_A:action(search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
+                    case SDL_CONTROLLER_BUTTON_B:action(search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
@@ -1970,7 +1993,7 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(player_pid?SDLK_i:SDLK_F3);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;
-                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(player_pid?SDLK_RIGHT:SDLK_v);break;
+                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(player_pid?SDLK_RIGHT:SDLK_m);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:action(SDLK_UP);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:action(SDLK_DOWN);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:action(SDLK_LEFT);break;
@@ -1981,19 +2004,21 @@ int main(int argc,char **argv) {
         if(update_pid){int code;pid_t done=waitpid(update_pid,&code,WNOHANG);
             if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
-        prefetch_pages();controller_idle();tv_tick();
+        if(music_poll())dirty=1;
+        if(!music_on){prefetch_pages();tv_tick();}controller_idle();
         if(player_pid){int code;pid_t p=waitpid(player_pid,&code,WNOHANG);
             if(p==player_pid){finish_player(code);dirty=1;}
             else if(stopping_player&&SDL_GetTicks()-stop_time>3000)kill(player_pid,SIGKILL);
             SDL_Delay(30);continue;
         }
         Uint32 now=SDL_GetTicks();
-        if(dirty||(browse.mode==11&&now-last_draw>=1000)||(!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+        if(dirty||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;
         }
     }
+    music_stop();
     tv_cancel_prepared();
     api_setup_close();
     pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid};

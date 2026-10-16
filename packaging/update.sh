@@ -23,7 +23,12 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     case "$package_version" in ''|*[!a-f0-9]*) exit 1;; esac
     case "$package_sha" in ''|*[!a-f0-9]*) exit 1;; esac
     [ "${#package_version}" -eq 40 ] && [ "${#package_sha}" -eq 64 ] || exit 1
-    if [ -f .installed-package-version ] &&
+    music_complete=1
+    if [ -f assets/music-required-v1 ]; then
+        [ -x greenlink-audio ] && [ -f tools/music.py ] &&
+        [ -f scripts/music-runtime.sh ] && [ -x music-runtime/usr/bin/python3 ] || music_complete=0
+    fi
+    if [ "$music_complete" -eq 1 ] && [ -f .installed-package-version ] &&
        [ "$(cat .installed-package-version)" = "$package_version" ] &&
        [ -s .installed-package-sha256 ] &&
        sha256sum -c .installed-package-sha256 >/dev/null 2>&1; then
@@ -48,11 +53,18 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     # Keep old shell for recovery; copy only package-controlled files.
     # Locally downloaded ROMs, settings and private catalog files remain untouched.
     cp greenlink .update-backup
-    for part in greenlink greenlink-catalog greenlink-player greenlink-resolver player-menu-v1; do
+    for part in greenlink greenlink-catalog greenlink-player greenlink-audio greenlink-resolver player-menu-v1; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && chmod 755 "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
-    for part in assets certs; do
-        if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -R "$staged/$part/." "$part/"; fi
+    for part in assets certs music-runtime; do
+        # Python bytecode validates source mtimes; preserve them on installation.
+        if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -pR "$staged/$part/." "$part/"; fi
+    done
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py; do
+        if [ -f "$staged/$part" ]; then
+            mkdir -p "$(dirname "$part")"
+            cp "$staged/$part" "$part.new" && chmod 755 "$part.new" && mv -f "$part.new" "$part"
+        fi
     done
     # Only our two optional cores; leave the user's RetroArch core tree untouched.
     if [ -d "$staged/cores" ]; then
@@ -75,9 +87,14 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     mv -f .update-backup greenlink.previous
     # A manual install can replace binaries while leaving the version marker.
     # Record hashes from the verified archive, then verify what is on disk.
-    (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-resolver player-menu-v1 greenlink.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
+    (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
-    done) >.update-lock/package-sha256
+    done
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py; do
+        if [ -f "$part" ]; then sha256sum "$part"; fi
+    done
+    if [ -d music-runtime ]; then find music-runtime -type f -exec sha256sum {} \;; fi
+    ) >.update-lock/package-sha256
     sha256sum -c .update-lock/package-sha256 || exit 1
     mv -f .update-lock/package-sha256 .installed-package-sha256
     printf '%s\n' "$package_version" >.installed-package-version

@@ -85,8 +85,8 @@ static void music_action(SDL_Keycode key){
         else if(key==SDLK_RETURN||key==SDLK_F3){music_edit=0;SDL_StopTextInput();music_spawn(1);}
         return;
     }
-    if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){music_stop();music_on=0;return;}
-    if(key==SDLK_F3||key==SDLK_SLASH){music_stop();music_edit=1;music_key=0;SDL_StartTextInput();return;}
+    if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){music_on=0;return;}
+    if(key==SDLK_F3||key==SDLK_SLASH){music_edit=1;music_key=0;SDL_StartTextInput();return;}
     if(music_job==1||music_job==2)return;
     if(key==SDLK_UP&&music_selected>0)music_selected--;
     if(key==SDLK_DOWN&&music_selected+1<music_count)music_selected++;
@@ -94,6 +94,25 @@ static void music_action(SDL_Keycode key){
     if(key==SDLK_RIGHT&&music_count)music_selected=music_selected+6<music_count?music_selected+6:music_count-1;
     if(key==SDLK_RETURN&&music_count)music_spawn(2);
     if(key==SDLK_F2&&music_job==3){kill(music_pid,SIGUSR1);music_paused=!music_paused;snprintf(music_message,sizeof(music_message),"%s / X TOGGLE / B EXIT",music_paused?"PAUSED":"PLAYING");}
+}
+/* Scrolling title is rendered with bounded text; no texture allocation. */
+static void music_now_playing(int x,int y,int columns,SDL_Color color){
+    if(music_job!=3&&music_job!=2&&music_paused==0)return;
+    const char *title=music_playing[0]?music_playing:(music_play_index<music_count?music_rows[music_play_index].title:"");
+    if(!*title)return;
+    char visible[160];size_t n=strlen(title),length=(size_t)columns;
+    if(length>=sizeof(visible))length=sizeof(visible)-1;
+    size_t start=0;
+    if(n>length){
+        /* Pause at the edges, then sweep from start to end. */
+        size_t travel=n-length,period=2*travel+12;
+        size_t tick=(SDL_GetTicks()/230)%period;
+        if(tick>=3&&tick<3+travel)start=tick-3;
+        else if(tick>=3+travel&&tick<9+travel)start=travel;
+        else if(tick>=9+travel)start=travel-(tick-9-travel);
+    }
+    snprintf(visible,sizeof(visible),"%.*s",(int)length,title+start);
+    text(x,y,visible,1,color,columns);
 }
 static void music_draw(void){
     SDL_Color bg={8,12,10,255},accent={116,255,132,255},muted={145,165,151,255};
@@ -108,16 +127,20 @@ static void music_draw(void){
         text(30,425,"A TYPE / B DELETE / START SEARCH / ESC CANCEL",2,muted,70);
         text(30,460,"KEYBOARD: CTRL+V PASTES A PLAYLIST LINK",1,muted,90);
     }else{
+        char counter[72];
+        snprintf(counter,sizeof(counter),"TRACK %d / %d  %s",music_count?music_selected+1:0,music_count,music_job==3?(music_paused?"PAUSED":"PLAYING"):"LIBRARY");
+        text(30,61,counter,1,muted,90);
         int first=music_selected/6*6;
         for(int i=first;i<music_count&&i<first+6;i++){
             int y=88+(i-first)*53;
             if(i==music_selected)rect(24,y-6,912,49,accent,0);
+            if(i==music_play_index&&(music_job==3||music_job==2))text(887,y,"[>]",2,accent,4);
             text(38,y,music_rows[i].title,2,accent,73);text(38,y+22,music_rows[i].artist,1,muted,130);
         }
         if(!music_count)text(30,130,"PRESS START TO SEARCH YOUTUBE OR IMPORT A PLAYLIST",2,accent,73);
         if(*music_playing){text(30,421,"YOUTUBE MATCH:",1,muted,20);text(30,440,music_playing,1,accent,140);}
         text(30,466,music_message,1,accent,145);
-        text(30,503,"A PLAY / X PAUSE / START SEARCH / B STOP AND EXIT",1,muted,100);
+        text(30,503,"A PLAY / X PAUSE / START SEARCH / B BACK (MUSIC CONTINUES)",1,muted,100);
     }
 }
 #endif

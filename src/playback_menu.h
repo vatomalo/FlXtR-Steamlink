@@ -96,7 +96,7 @@ static int bookmark_save(double position){
     snprintf(path,sizeof(path),"bookmarks/%s.txt",key);
     snprintf(temp,sizeof(temp),"%s.next",path);
     FILE *f=fopen(temp,"w");if(!f)return 0;
-    fprintf(f,"%.3f\\n",position);
+    fprintf(f,"%.3f\n",position);
     if(fclose(f)||rename(temp,path)){unlink(temp);return 0;}
     show_view("BOOKMARK SAVED");
     return 1;

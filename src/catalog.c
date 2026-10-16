@@ -235,7 +235,7 @@ static int cache_load(void){
             if(strncmp(e->url,prefix,strlen(prefix)))ok=0;
         }
         char expected[80];snprintf(expected,sizeof(expected),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,i);
-        if(!e->title[0]||((strcmp(e->kind,"archive")&&strcmp(e->kind,"archive-file"))&&e->id<1)||(e->poster[0]&&(strcmp(e->poster,expected)||access(expected,R_OK))))ok=0;
+        if(!e->title[0]||((strcmp(e->kind,"archive")&&strcmp(e->kind,"archive-file"))&&e->id<1)||(e->poster[0]&&((strncmp(e->poster,"favorites-art/",14)&&strcmp(e->poster,expected))||strstr(e->poster,"..")||access(e->poster,R_OK))))ok=0;
     }
     if(ok){used=n;total=number(root,"total");}
     else {used=total=0;memset(entries,0,sizeof(entries));}

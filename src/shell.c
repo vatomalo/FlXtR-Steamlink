@@ -1648,7 +1648,7 @@ static void phone_dispatch(void){
         if(player_pid&&player_control>=0){ssize_t sent=write(player_control,&c,1);(void)sent;}
     }else if(!strcmp(phone_pending,"music")){
         if(!player_pid&&!music_job&&!update_pid){
-            snprintf(music_query,sizeof(music_query),"%s",phone_value);
+            snprintf(music_query,sizeof(music_query),"%.220s",phone_value);
             music_edit=0;music_on=1;
             music_spawn(1);
         }else snprintf(status,sizeof(status),"FINISH CURRENT PLAYBACK BEFORE IMPORTING MUSIC");

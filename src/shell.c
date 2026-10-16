@@ -1514,6 +1514,21 @@ static void launch_player(const Title *t) {
         else unsetenv("FLXTR_SUBTITLE_SPANISH");
         if(t->subs_nor[0])setenv("FLXTR_SUBTITLE_NORWEGIAN",t->subs_nor,1);
         else unsetenv("FLXTR_SUBTITLE_NORWEGIAN");
+        /* Metadata is passed to the video child via environment, never via
+         * the video URL. Prefer parent-series synopsis for an episode. */
+        setenv("FLXTR_VIDEO_TITLE",t->title,1);
+        char info_path[128],info_text[512]="";
+        const char *info_kind=t->kind;
+        if(!strcmp(info_kind,"episode"))info_kind="tv";
+        if(!strcmp(info_kind,"kiss-episode"))info_kind="anime";
+        if((!strcmp(info_kind,"movie")||!strcmp(info_kind,"tv")||
+            !strcmp(info_kind,"anime"))&&t->id>0){
+            snprintf(info_path,sizeof(info_path),"media-info-cache/%s-%d.txt",info_kind,t->id);
+            FILE *info=fopen(info_path,"r");
+            if(info){if(!fgets(info_text,sizeof(info_text),info))info_text[0]=0;fclose(info);}
+        }
+        info_text[strcspn(info_text,"\r\n")]=0;
+        setenv("FLXTR_VIDEO_SYNOPSIS",info_text,1);
         setenv("FLXTR_BOOKMARK_KEY",bookmark_key,1);
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");

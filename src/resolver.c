@@ -15,7 +15,8 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <time.h>
-#define BASE "https://plsdontscrapemelove.flixer.gd"
+#define DEFAULT_API "https://plsdontscrapemelove.flixer.gd"
+#define DEFAULT_ORIGIN "https://flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
 typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024];int height;} Choice;
 static Choice choices[40];static int count;
@@ -71,8 +72,37 @@ static void fingerprint(char *out){
     base36(h,out);
 }
 static struct curl_slist *header(struct curl_slist *list,const char *name,const char *value){char line[1024];if(snprintf(line,sizeof(line),"%s: %s",name,value)>=(int)sizeof(line))return list;return curl_slist_append(list,line);}
+/* Device-local provider address overrides. HTTPS hostnames only, no paths,
+ * user-info, ports, control characters, or shell interpretation. */
+static int provider_https_origin(const char *value){
+    if(strncmp(value,"https://",8))return 0;
+    const char *p=value+8;size_t n=0;
+    if(!isalnum((unsigned char)*p))return 0;
+    for(;*p;p++,n++){
+        unsigned char c=(unsigned char)*p;
+        if(!isalnum(c)&&c!='.'&&c!='-')return 0;
+    }
+    return n>=4&&n<=120&&p[-1]!='.'&&p[-1]!='-';
+}
+static void provider_hosts(char *api,size_t api_size,char *origin,size_t origin_size){
+    snprintf(api,api_size,"%s",DEFAULT_API);
+    snprintf(origin,origin_size,"%s",DEFAULT_ORIGIN);
+    FILE *f=fopen("providers.cfg","r");if(!f)return;
+    char line[256];
+    while(fgets(line,sizeof(line),f)){
+        line[strcspn(line,"\\r\\n")]=0;
+        char *eq=strchr(line,'=');if(!eq)continue;*eq++=0;
+        if(!provider_https_origin(eq))continue;
+        if(!strcmp(line,"flixer_api"))snprintf(api,api_size,"%s",eq);
+        if(!strcmp(line,"flixer_origin"))snprintf(origin,origin_size,"%s",eq);
+    }
+    fclose(f);
+}
 static json_object *lookup(const char *path,const char *server){
-    char *clock=request(BASE"/api/time",NULL,0);json_object *time=parse(clock);free(clock);if(!time)return NULL;
+    char api[160],origin[160],clock_url[192],referer[164];
+    provider_hosts(api,sizeof(api),origin,sizeof(origin));
+    snprintf(clock_url,sizeof(clock_url),"%s/api/time",api);
+    char *clock=request(clock_url,NULL,0);json_object *time=parse(clock);free(clock);if(!time)return NULL;
     int64_t timestamp=json_object_get_int64(field(time,"timestamp"));json_object_put(time);if(timestamp<=0)return NULL;
     char *key=resolver_key();if(!key){fprintf(stderr,"Decoder key: %s\n",resolver_error());return NULL;}
     unsigned char random[16],digest[EVP_MAX_MD_SIZE];unsigned digest_len=0;char encoded[32],nonce[24],sig[128],message[1024],ts[32],fp[16],url[1024];
@@ -80,9 +110,10 @@ static json_object *lookup(const char *path,const char *server){
     EVP_EncodeBlock((unsigned char*)encoded,random,sizeof(random));int n=0;for(int i=0;encoded[i]&&n<22;i++)if(encoded[i]!='/'&&encoded[i]!='+'&&encoded[i]!='=')nonce[n++]=encoded[i];nonce[n]=0;
     snprintf(ts,sizeof(ts),"%lld",(long long)timestamp);snprintf(message,sizeof(message),"%s:%s:%s:%s",key,ts,nonce,path);
     HMAC(EVP_sha256(),key,(int)strlen(key),(unsigned char*)message,strlen(message),digest,&digest_len);EVP_EncodeBlock((unsigned char*)sig,digest,(int)digest_len);
-    fingerprint(fp);snprintf(url,sizeof(url),BASE"%s",path);
+    fingerprint(fp);snprintf(url,sizeof(url),"%s%s",api,path);
     struct curl_slist *headers=NULL;
-    headers=header(headers,"Origin","https://flixer.gd");headers=header(headers,"Referer","https://flixer.gd/");
+    snprintf(referer,sizeof(referer),"%s/",origin);
+    headers=header(headers,"Origin",origin);headers=header(headers,"Referer",referer);
     headers=header(headers,"x-fingerprint-lite","b4f8a1fc72e905d63e");headers=header(headers,"Accept","text/plain");
     headers=header(headers,"X-Api-Key",key);headers=header(headers,"X-Request-Timestamp",ts);headers=header(headers,"X-Request-Nonce",nonce);
     headers=header(headers,"X-Request-Signature",sig);headers=header(headers,"X-Client-Fingerprint",fp);

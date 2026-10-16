@@ -133,7 +133,7 @@ static int player_control=-1,play_after_load,player_menu;
 static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
-static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column,tv_quality_retry,kiss_quality_retry;
+static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column,tv_quality_retry,kiss_quality_retry,kiss_1080_pass;
 static int game_autostate,tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
 static Uint32 tv_next_at;
 static void tv_candidate(void);
@@ -725,7 +725,12 @@ static void auto_prefer_flixer_server(void){
     }
 }
 static void auto_next(void){
-    kiss_quality_retry=0;
+    if(auto_index>=auto_count&&auto_count>0&&
+       !strcmp(auto_title.kind,"kiss-episode")&&!kiss_1080_pass){
+        kiss_1080_pass=1;
+        auto_index=0;
+        fprintf(stderr,"KissAnime: all sources exhausted; trying 1080p across all servers\n");
+    }
     if(auto_index>=auto_count){auto_active=0;snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
     Browse next={6,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
     strcpy(next.query,auto_servers[auto_index]);auto_request(next);
@@ -1399,7 +1404,7 @@ static void play(void) {
         if(next.mode==6){snprintf(next.query,sizeof(next.query),"%.31s",t->title);snprintf(next.name,sizeof(next.name),"%s",browse.name);}
         if(next.mode==5){
             if(access("./greenlink-player",X_OK)){snprintf(status,sizeof(status),"PLAYER NOT INSTALLED");return;}
-            auto_title=*t;auto_active=1;auto_count=auto_index=0;auto_request(next);
+            auto_title=*t;auto_active=1;auto_count=auto_index=0;kiss_1080_pass=0;auto_request(next);
         }else request_catalog(next,1,0);
         return;
     }
@@ -1412,7 +1417,7 @@ static void tv_candidate(void){
     Title *t=&titles[visible[0]];if(strcmp(t->kind,"episode")||t->id<1)return;
     tv_recent_add(t->id,t->season,t->episode);
     fprintf(stderr,"TV selected %d S%d E%d: %s\n",t->id,t->season,t->episode,t->title);
-    auto_title=*t;auto_count=auto_index=0;auto_resume=restart_position=0;
+    auto_title=*t;auto_count=auto_index=0;kiss_1080_pass=0;auto_resume=restart_position=0;
     FILE *guide=fopen("catalog-cache/result.tsv","r");char guide_line[128];tv_air_start=(long long)time(NULL);
     if(guide){while(fgets(guide_line,sizeof(guide_line),guide))if(sscanf(guide_line,"# tv-start=%lld",&tv_air_start)==1)break;fclose(guide);}
     auto_active=1;
@@ -1502,6 +1507,7 @@ static void launch_player(const Title *t) {
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
         int requested_height=t->height?t->height:qualities[quality_setting];
+        if(auto_active&&!strcmp(t->kind,"kiss-episode")&&kiss_1080_pass)requested_height=1080;
         /* TV prefers an efficient decode resolution but must also support
          * sources that only provide 1080p. Retry the SAME source at higher
          * resolutions only when the player reports no compatible track. */
@@ -1574,23 +1580,6 @@ static void finish_player(int code){
         if(command==4){if(auto_active){restart_position=auto_resume=position;auto_index++;auto_next();}else snprintf(status,sizeof(status),"NO ALTERNATE SERVER FOR LOCAL VIDEO");return;}
         if(tv_active&&(command==5||command==6)){tv_cancel_prepared();auto_active=0;tv_in_break=tv_break_due=0;tv_attempts=0;tv_next_at=0;return;}
         series_advance(command==5?-1:1);return;
-    }
-    /* A KissAnime server may expose only 1080p H.264.
-     * Try higher caps on the same server before moving to the next server. */
-    if(auto_active&&!cancelled&&!strcmp(playing_title.kind,"kiss-episode")&&
-       WIFEXITED(code)&&WEXITSTATUS(code)==45&&kiss_quality_retry<2){
-        int current=kiss_quality_retry==0?
-            (playing_title.height?playing_title.height:qualities[quality_setting]):
-            kiss_quality_retry==1?720:1080;
-        int target=current<720?720:1080;
-        if(target>current){
-            kiss_quality_retry=target==720?1:2;
-            restart_position=auto_resume;
-            fprintf(stderr,"KissAnime server lacks compatible %dp; retrying same server at %dp\n",current,target);
-            launch_player(&playing_title);
-            return;
-        }
-        kiss_quality_retry=2;
     }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
         int current=tv_quality_retry>=1?720:(qualities[quality_setting]>720?720:qualities[quality_setting]);

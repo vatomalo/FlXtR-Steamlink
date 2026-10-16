@@ -26,6 +26,7 @@ typedef struct {char title[80],meta[96],poster[512],url[2048],subs_eng[1024],sub
 typedef struct {char *data;size_t length,limit;} Buffer;
 static Entry entries[PAGE_SIZE];
 static int used,total,cache_slot;
+static unsigned long cache_poster_hash;
 static char cache_key[256],cache_file[80];
 static size_t receive(void *data,size_t size,size_t count,void *opaque){
     Buffer *b=opaque;
@@ -199,10 +200,11 @@ static int sources(int page,int id,int season,int episode){
 #define CATALOG_CACHE_TTL (7 * 24 * 60 * 60)
 static void cache_identity(const char *kind,int page,const char *query,int id,int season){
     struct stat st;memset(&st,0,sizeof(st));stat("library.local.tsv",&st);
-    snprintf(cache_key,sizeof(cache_key),"%s|%s|%d|%d|%d|%lld|%lld|%s",(!strcmp(kind,"games-system")||!strcmp(kind,"games-platforms"))?"v8":(!strcmp(kind,"movie")||!strcmp(kind,"tv"))?"v8":(!strcmp(kind,"games-folders")||!strcmp(kind,"kiss"))?"v9":"v7",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
+    snprintf(cache_key,sizeof(cache_key),"%s|%s|%d|%d|%d|%lld|%lld|%s",(!strcmp(kind,"games-system")||!strcmp(kind,"games-platforms"))?"v10":(!strcmp(kind,"movie")||!strcmp(kind,"tv"))?"v10":(!strcmp(kind,"games-folders")||!strcmp(kind,"kiss"))?"v10":"v10",kind,page,id,season,(long long)st.st_mtime,(long long)st.st_size,query);
     unsigned long hash=2166136261UL;
     for(const unsigned char *p=(const unsigned char *)cache_key;*p;p++)
         hash=((hash^(unsigned long)*p)*16777619UL)&0xffffffffUL;
+    cache_poster_hash=hash;
     cache_slot=(int)(hash%CATALOG_CACHE_SLOTS);
     snprintf(cache_file,sizeof(cache_file),"catalog-cache/page-%d.json",cache_slot);
 }
@@ -234,7 +236,7 @@ static int cache_load(void){
                                ARCHIVE "/details/":ARCHIVE "/download/";
             if(strncmp(e->url,prefix,strlen(prefix)))ok=0;
         }
-        char expected[80];snprintf(expected,sizeof(expected),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,i);
+        char expected[80];snprintf(expected,sizeof(expected),"catalog-cache/art-%08lx-%d.bmp",cache_poster_hash,i);
         if(!e->title[0]||((strcmp(e->kind,"archive")&&strcmp(e->kind,"archive-file"))&&e->id<1)||(e->poster[0]&&((strncmp(e->poster,"favorites-art/",14)&&strcmp(e->poster,expected))||strstr(e->poster,"..")||access(e->poster,R_OK))))ok=0;
     }
     if(ok){used=n;total=number(root,"total");}
@@ -285,7 +287,7 @@ static void poster(Entry *e,int slot){
         if(w<1||h<1){SDL_FreeSurface(art);return;}
         SDL_Surface *small=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
         if(small&&!SDL_BlitScaled(art,NULL,small,NULL)){
-            char file[80];snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+            char file[80];snprintf(file,sizeof(file),"catalog-cache/art-%08lx-%d.bmp",cache_poster_hash,slot);
             if(!SDL_SaveBMP(small,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
         }
         SDL_FreeSurface(small);SDL_FreeSurface(art);return;
@@ -413,7 +415,7 @@ static void poster(Entry *e,int slot){
                     SDL_Surface *small=(w>0&&h>0)?SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888):NULL;
                     if(small&&!SDL_BlitScaled(art,NULL,small,NULL)){
                         char file[80];
-                        snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+                        snprintf(file,sizeof(file),"catalog-cache/art-%08lx-%d.bmp",cache_poster_hash,slot);
                         if(!SDL_SaveBMP(small,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
                     }
                     SDL_FreeSurface(small);
@@ -453,7 +455,7 @@ static void poster(Entry *e,int slot){
                     SDL_Surface *small=SDL_CreateRGBSurfaceWithFormat(0,(int)(s->w*scale),(int)(s->h*scale),32,SDL_PIXELFORMAT_ARGB8888);
                     if(!small||SDL_BlitScaled(s,NULL,small,NULL)){SDL_FreeSurface(small);SDL_FreeSurface(s);free(b.data);return;}
                     SDL_FreeSurface(s);s=small;
-                }char file[80];snprintf(file,sizeof(file),"catalog-cache/page-%d-poster-%d.bmp",cache_slot,slot);
+                }char file[80];snprintf(file,sizeof(file),"catalog-cache/art-%08lx-%d.bmp",cache_poster_hash,slot);
                 if(!SDL_SaveBMP(s,file))snprintf(e->poster,sizeof(e->poster),"%s",file);
                 SDL_FreeSurface(s);
             }

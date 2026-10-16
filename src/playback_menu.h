@@ -32,7 +32,7 @@ static void menu_draw(void){
     uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(menu_overlay,&pixels,&pitch);
     if(!pixels||pitch<740*4)return;
     for(int y=0;y<416;y++)for(int x=0;x<740;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=seek_scrubbing?0x38000000:0xe8000000;
-    char rows[12][80],heading[80];int seconds=(int)(seek_scrubbing?seek_target:playback_position());
+    char rows[14][80],heading[80];int seconds=(int)(seek_scrubbing?seek_target:playback_position());
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"%s",seek_scrubbing?"SEEK PREVIEW: LEFT/RIGHT / A PLAY / B CANCEL":"SEEK: LEFT/RIGHT PREVIEW / A PLAY");
@@ -45,9 +45,11 @@ static void menu_draw(void){
     snprintf(rows[8],80,"%s",menu_episodes?"PREVIOUS EPISODE":"PREVIOUS EPISODE: NOT AVAILABLE");
     snprintf(rows[9],80,"%s",menu_episodes?"NEXT EPISODE":"NEXT EPISODE: NOT AVAILABLE");
     snprintf(rows[10],80,"%s",menu_episodes?"[EPISODES] SEASONS / EPISODES":"[EPISODES] NOT AVAILABLE");
-    snprintf(rows[11],80,"STOP PLAYBACK");
+    snprintf(rows[11],80,"SAVE BOOKMARK");
+    snprintf(rows[12],80,"FREEZE TO BACKGROUND");
+    snprintf(rows[13],80,"STOP PLAYBACK");
     menu_text(pixels,pitch,16,heading,0xff74ff84);
-    for(int i=0;i<12;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,49+i*25,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
+    for(int i=0;i<14;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,49+i*21,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
     /* Native overlay progress timeline. Clamp to the known duration;
      * unknown-length live streams show elapsed time without a false percentage. */
     double position=seek_scrubbing?seek_target:playback_position();
@@ -83,6 +85,21 @@ static void menu_restart(int action,double position){
     fprintf(f,"%d %.3f %d %d %d %d\n",action,position,viewing,menu_subtitles,subtitle_size,subtitle_delay);
     if(fclose(f)||rename("playback-request.next","playback-request")){show_view("CONTROL REQUEST FAILED");return;}
     requested_action=40;stopped=1;
+}
+/* Per-title timestamp, kept separate from playback cache and ROM saves. */
+static int bookmark_save(double position){
+    const char *key=getenv("FLXTR_BOOKMARK_KEY");
+    if(!key||strlen(key)!=8||strspn(key,"0123456789abcdef")!=8||
+       !(position>=0&&position<=86400))return 0;
+    mkdir("bookmarks",0700);
+    char path[64],temp[72];
+    snprintf(path,sizeof(path),"bookmarks/%s.txt",key);
+    snprintf(temp,sizeof(temp),"%s.next",path);
+    FILE *f=fopen(temp,"w");if(!f)return 0;
+    fprintf(f,"%.3f\\n",position);
+    if(fclose(f)||rename(temp,path)){unlink(temp);return 0;}
+    show_view("BOOKMARK SAVED");
+    return 1;
 }
 static void seek_cancel(void){
     if(!seek_scrubbing)return;
@@ -124,8 +141,8 @@ static void menu_command(char c){
         menu_row=1;
     }
     if(!menu_open)return;
-    if(c=='u'&&!seek_scrubbing)menu_row=(menu_row+11)%12;
-    if(c=='d'&&!seek_scrubbing)menu_row=(menu_row+1)%12;
+    if(c=='u'&&!seek_scrubbing)menu_row=(menu_row+13)%14;
+    if(c=='d'&&!seek_scrubbing)menu_row=(menu_row+1)%14;
     if(c=='a'||c=='l'||c=='r'){
         int direction=c=='l'?-1:1;
         switch(menu_row){
@@ -160,7 +177,9 @@ static void menu_command(char c){
         case 8:if(menu_episodes)menu_restart(5,0);break;
         case 9:if(menu_episodes)menu_restart(6,0);break;
         case 10:if(menu_episodes)menu_restart(8,playback_position());break;
-        case 11:menu_restart(7,playback_position());break;
+        case 11:bookmark_save(playback_position());break;
+        case 12:if(bookmark_save(playback_position()))menu_restart(9,playback_position());break;
+        case 13:menu_restart(7,playback_position());break;
         }
     }
     if(menu_open&&!stopped)menu_draw();

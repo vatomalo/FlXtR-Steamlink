@@ -126,6 +126,10 @@ static int visible[MAX_TITLES], total, cached_page=-1;
 static SDL_Renderer *renderer;
 static SDL_Window *window;
 static SDL_Texture *posters[VISIBLE],*background;
+static char poster_loaded_path[VISIBLE][192];
+static int poster_loaded_item[VISIBLE];
+static time_t poster_loaded_mtime[VISIBLE];
+static off_t poster_loaded_size[VISIBLE];
 static SDL_GameController *pads[4];
 static pid_t player_pid, update_pid;
 static int restart_shell,game_exit, coverflow=1;
@@ -489,6 +493,10 @@ static void wrap_detail(int x,int y,const char *str,int lines,SDL_Color ink){
 }
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
+    memset(poster_loaded_path,0,sizeof(poster_loaded_path));
+    memset(poster_loaded_item,0,sizeof(poster_loaded_item));
+    memset(poster_loaded_mtime,0,sizeof(poster_loaded_mtime));
+    memset(poster_loaded_size,0,sizeof(poster_loaded_size));
     cached_page=-1;
 }
 /* SDL_HideWindow leaves the last graphics frame over the hardware video plane
@@ -883,24 +891,38 @@ static SDL_Texture *load_poster(const char *path) {
     image=SDL_LoadBMP(path);if(!image)return NULL;
     texture=SDL_CreateTextureFromSurface(renderer,image);SDL_FreeSurface(image);return texture;
 }
+/* Never let one of the six SDL textures outlive its catalog identity.
+ * Recycled pages and files may retain the same slot index while changing art. */
 static void cache_page(int page) {
-    if(cached_page==page){
-        /* Background-prefetched game posters become visible without navigation. */
-        static Uint32 next_check;
-        Uint32 now=SDL_GetTicks();
-        if((int32_t)(now-next_check)>=0){
-            next_check=now+1500;
-            for(int i=0;i<VISIBLE&&page*VISIBLE+i<total;i++){
-                if(posters[i])continue;
-                const char *art=titles[visible[page*VISIBLE+i]].poster;
-                if(!strncmp(art,"game-art-cache/",15))posters[i]=load_poster(art);
-            }
-        }
-        return;
+    static Uint32 next_check;
+    Uint32 now=SDL_GetTicks();
+    int page_changed=cached_page!=page;
+    if(page_changed){
+        clear_posters();
+        cached_page=page;
+        flow_position=(float)selection;
+    }else if((int32_t)(now-next_check)<0)return;
+    next_check=now+350;
+    for(int slot=0;slot<VISIBLE;slot++){
+        int index=page*VISIBLE+slot;
+        const char *path=index<total?titles[visible[index]].poster:"";
+        struct stat st;
+        int valid=*path&&!stat(path,&st)&&S_ISREG(st.st_mode);
+        int item=index<total?visible[index]:-1;
+        if(!page_changed&&item==poster_loaded_item[slot]&&
+           !strcmp(path,poster_loaded_path[slot])&&
+           (!valid||((time_t)st.st_mtime==poster_loaded_mtime[slot]&&
+                     st.st_size==poster_loaded_size[slot])))continue;
+        if(posters[slot])SDL_DestroyTexture(posters[slot]);
+        posters[slot]=NULL;
+        poster_loaded_item[slot]=item;
+        snprintf(poster_loaded_path[slot],sizeof(poster_loaded_path[slot]),"%s",path);
+        poster_loaded_mtime[slot]=valid?st.st_mtime:0;
+        poster_loaded_size[slot]=valid?st.st_size:0;
+        if(valid)posters[slot]=load_poster(path);
     }
-    clear_posters();cached_page=page;flow_position=(float)selection;
-    for(int i=0;i<VISIBLE && page*VISIBLE+i<total;i++)posters[i]=load_poster(titles[visible[page*VISIBLE+i]].poster);
 }
+
 static void placeholder(int x,int y,int w,int h,int seed) {
     if(seed>=0&&seed<MAX_TITLES&&!strcmp(titles[seed].kind,"game-folder")){
         /* Platform badge, not a generic missing-art placeholder. */

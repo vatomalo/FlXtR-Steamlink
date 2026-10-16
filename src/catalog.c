@@ -606,7 +606,11 @@ static void game_info_prefetch(void){
     }
     _exit(0);
 }
+#ifndef FLXTR_VERSION
+#define FLXTR_VERSION "development"
+#endif
 int main(int argc,char **argv){
+    if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);

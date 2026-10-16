@@ -664,16 +664,21 @@ int main(int argc,char **argv){
     if(cacheable)unlink(cache_file);
     if(!getenv("FLXTR_NO_ART")&&(!strcmp(kind,"games")||!strcmp(kind,"games-system")||!strcmp(kind,"games-folders")))game_art_prefetch();
     for(int i=0;i<used;i++){if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-download")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART")){if(strncmp(entries[i].poster,"game-art-cache/",15))poster(&entries[i],i);}else entries[i].poster[0]=0;}
-    /* A durable title-to-poster index allows existing Favorites saved before
-     * artwork support to inherit art as the original library is revisited. */
+    /* Store only identity-bound, stable image paths for Favorites recovery.
+     * Page-scoped catalog-cache bitmaps are reused and must never be indexed. */
     if(used>0&&strcmp(kind,"games-platforms")&&strcmp(kind,"games-folders")){
         FILE *index=fopen("favorites-art-index.tsv","a");
         if(index){
             for(int i=0;i<used;i++){
                 Entry *e=&entries[i];
-                if(e->poster[0]&&!strchr(e->title,'\t')&&!strchr(e->title,'\n')&&
+                if((!strncmp(e->poster,"game-art-cache/",15)||
+                    !strncmp(e->poster,"favorites-art/",14))&&
+                   !strstr(e->poster,"..")&&
+                   !strchr(e->title,'\t')&&!strchr(e->title,'\n')&&
+                   !strchr(e->kind,'\t')&&!strchr(e->kind,'\n')&&
                    !strchr(e->poster,'\t')&&!strchr(e->poster,'\n'))
-                    fprintf(index,"%s\t%s\n",e->title,e->poster);
+                    fprintf(index,"%s\t%d\t%d\t%d\t%s\t%s\n",
+                        e->kind,e->id,e->season,e->episode,e->title,e->poster);
             }
             fclose(index);
         }

@@ -1645,6 +1645,12 @@ static void phone_dispatch(void){
     if(!strcmp(phone_pending,"control")){
         char c=phone_value[0];c=c=='p'?'P':c=='f'?'F':c=='r'?'R':c=='s'?'S':c;
         if(player_pid&&player_control>=0){ssize_t sent=write(player_control,&c,1);(void)sent;}
+    }else if(!strcmp(phone_pending,"music")){
+        if(!player_pid&&!music_job&&!update_pid){
+            snprintf(music_query,sizeof(music_query),"%s",phone_value);
+            music_edit=0;music_on=1;
+            music_spawn(1);
+        }else snprintf(status,sizeof(status),"FINISH CURRENT PLAYBACK BEFORE IMPORTING MUSIC");
     }else if(!player_pid&&!catalog_pid&&!update_pid){
         Title t;memset(&t,0,sizeof(t));snprintf(t.title,sizeof(t.title),"PHONE VIDEO");
         if(!strcmp(phone_pending,"play"))snprintf(t.url,sizeof(t.url),"phone-files/%.100s",phone_value);

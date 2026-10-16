@@ -66,6 +66,19 @@ static int music_poll(void){
     }
     return 1;
 }
+/* Video owns the audio device. Resume only if music was playing before it. */
+static int music_paused_for_video;
+static void music_video_pause(int resume){
+    if(resume){
+        if(music_paused_for_video&&music_job==3&&music_pid>0){
+            kill(music_pid,SIGUSR1);music_paused=0;
+        }
+        music_paused_for_video=0;
+    }else{
+        music_paused_for_video=(music_job==3&&music_pid>0&&!music_paused);
+        if(music_paused_for_video){kill(music_pid,SIGUSR1);music_paused=1;}
+    }
+}
 static void music_text(const char *s){
     size_t n=strlen(music_query);
     while(*s&&n<sizeof(music_query)-1){if((unsigned char)*s>=32)music_query[n++]=*s;s++;}

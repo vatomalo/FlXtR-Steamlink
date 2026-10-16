@@ -254,42 +254,44 @@ static const char *const browse_kinds[]={"","movie","tv","season","episode","sou
 static int search_on,search_key;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
-/* Tiny on-device dictionary collected from titles the catalog has parsed.
- * One title per line; cap both memory and disk usage. No network calls. */
-#define SEARCH_DICT_LIMIT 256
-static char search_dict[SEARCH_DICT_LIMIT][80];
-static int search_dict_count;
+/* Persistent index of distinct titles encountered across every catalog page.
+ * Append only new titles; no old entries are evicted when browsing. */
+static char (*search_dict)[80];
+static size_t search_dict_count,search_dict_capacity;
+static int search_dict_loading;
 static void search_dict_remember(const char *title){
     if(!title||!*title||strchr(title,'\n')||strchr(title,'\r')||strchr(title,'\t'))return;
-    size_t len=strlen(title);if(len>=80)return;
-    for(int i=0;i<search_dict_count;i++)if(!strcasecmp(search_dict[i],title))return;
-    if(search_dict_count==SEARCH_DICT_LIMIT){
-        memmove(search_dict,search_dict+1,(SEARCH_DICT_LIMIT-1)*sizeof(search_dict[0]));
-        search_dict_count--;
+    size_t len=strlen(title);if(!len||len>=80)return;
+    for(size_t i=0;i<search_dict_count;i++)if(!strcasecmp(search_dict[i],title))return;
+    if(search_dict_count==search_dict_capacity){
+        size_t capacity=search_dict_capacity?search_dict_capacity*2:256;
+        if(capacity>1000000)return;
+        void *grown=realloc(search_dict,capacity*sizeof(search_dict[0]));
+        if(!grown)return;
+        search_dict=grown;search_dict_capacity=capacity;
     }
     snprintf(search_dict[search_dict_count++],80,"%s",title);
+    if(!search_dict_loading){
+        FILE *f=fopen("search-titles.txt","a");
+        if(f){fprintf(f,"%s\n",title);fclose(f);}
+    }
 }
 static void search_dict_load(void){
     FILE *f=fopen("search-titles.txt","r");if(!f)return;
-    char line[80];
+    search_dict_loading=1;
+    char line[256];
     while(fgets(line,sizeof(line),f)){
         if(!strchr(line,'\n')&&!feof(f)){int c;while((c=fgetc(f))!=EOF&&c!='\n'){}continue;}
         line[strcspn(line,"\r\n")]=0;search_dict_remember(line);
     }
-    fclose(f);
-}
-static void search_dict_save(void){
-    FILE *f=fopen("search-titles.txt.next","w");if(!f)return;
-    for(int i=0;i<search_dict_count;i++)fprintf(f,"%s\n",search_dict[i]);
-    if(fclose(f)==0)rename("search-titles.txt.next","search-titles.txt");
-    else unlink("search-titles.txt.next");
+    fclose(f);search_dict_loading=0;
 }
 static const char *search_completion(void){
     size_t n=strlen(search_text);
     if(n<4)return NULL;
-    for(int i=search_dict_count-1;i>=0;i--)
-        if(!strncasecmp(search_dict[i],search_text,n)&&strlen(search_dict[i])>n)
-            return search_dict[i];
+    for(size_t i=search_dict_count;i>0;i--)
+        if(!strncasecmp(search_dict[i-1],search_text,n)&&strlen(search_dict[i-1])>n)
+            return search_dict[i-1];
     return NULL;
 }
 
@@ -584,14 +586,9 @@ static int read_catalog(const char *path) {
         if(nf==12&&strlen(fields[11])<sizeof(t->subs_spa))strcpy(t->subs_spa,fields[11]);
     }
     fclose(f);
-    if(strcmp(path,"favorites.tsv")){
-        int before=search_dict_count;
-        for(int i=0;i<count;i++)
-            if(!strcmp(titles[i].kind,"movie")||!strcmp(titles[i].kind,"tv")||
-               !strcmp(titles[i].kind,"kiss")||!strcmp(titles[i].kind,"archive"))
-                search_dict_remember(titles[i].title);
-        if(search_dict_count!=before)search_dict_save();
-    }
+    /* Every parsed library title, including anime, episodes and games,
+     * contributes to the persistent dictionary. Never discard older titles. */
+    for(int i=0;i<count;i++)search_dict_remember(titles[i].title);
     filter();return count;
 }
 /* A small RAM-only LRU catalog. Reuse loaded pages until process restart.

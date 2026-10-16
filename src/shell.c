@@ -1180,19 +1180,22 @@ static void draw(Uint32 tick) {
         text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
         text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
     }else if(search_on){
-        text(194,100,"SEARCH",3,green,30);text(194,150,search_text,2,white,60);
+        text(194,100,"SEARCH",3,green,30);
+        const char *completion=search_completion();
+        /* Phone-style prediction strip directly above the active input. */
+        if(completion){
+            rect(194,121,684,24,dim,0);
+            text(204,126,completion,1,white,65);
+            text(792,126,"Y ACCEPT",1,green,12);
+        }else if(strlen(search_text)>=4){
+            text(202,126,search_dict_count?"NO SUGGESTION":"DICTIONARY EMPTY",1,dim,65);
+        }
+        text(194,154,search_text,2,white,60);
         for(int i=0;i<40;i++){
             int x=194+(i%10)*64,y=202+(i/10)*48;char ch[2]={search_keys[i],0};
             rect(x,y,48,38,i==search_key?green:dim,0);text(x+15,y+10,ch,2,i==search_key?green:white,1);
         }
-        const char *completion=search_completion();
-        if(completion){
-            text(194,405,"DICTIONARY PREDICTION:",1,green,65);
-            text(194,421,completion,1,white,65);
-        }else if(strlen(search_text)>=4){
-            text(194,405,search_dict_count?"NO MATCH IN SAVED TITLES":"DICTIONARY EMPTY - BROWSE LIBRARY",1,dim,65);
-        }
-        text(194,442,completion?"Y ACCEPT / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",1,green,70);
+        text(194,442,completion?"Y ACCEPT SUGGESTION / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",1,green,76);
         text(194,467,"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
     }else if(about) {
         text(194,100,"SMALL BY DESIGN",3,green,35);

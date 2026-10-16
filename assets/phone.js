@@ -27,6 +27,7 @@ el('upload').onclick=()=>run(async()=>{
 el('play').onclick=()=>run(async()=>notice(await send('play',el('files').value)));
 el('subtitle').onclick=()=>run(async()=>notice(await send('subtitle',el('files').value)));
 el('clear-subtitle').onclick=()=>run(async()=>notice(await send('subtitle','')));
+el('music-submit').onsubmit=event=>{event.preventDefault();run(async()=>notice(await send('music',el('music-input').value.trim())));};
 el('cast').onsubmit=event=>{event.preventDefault();run(async()=>notice(await send('url',el('url').value)));};
 el('join').onsubmit=event=>{event.preventDefault();run(async()=>{if(player){notice('Already joined on this phone.');return;}player=await send('join',el('name').value);sessionStorage.setItem(location.pathname,player);notice('Joined! Wait for everyone, then start.');});};
 el('start').onclick=()=>run(async()=>notice(await send('party','start-'+el('tone').value)));

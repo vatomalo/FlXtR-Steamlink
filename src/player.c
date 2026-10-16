@@ -20,6 +20,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
+#include <sys/stat.h>
 #include "hardware_layout.h"
 #include "font.h"
 

@@ -159,6 +159,14 @@ static void subtitle_route_log(const char *route,const Title *t){
     fclose(f);
 }
 
+/* Launcher checks this marker before attempting release updates. */
+static int auto_updates_enabled(void){return access(".no-auto-update",F_OK)!=0;}
+static int set_auto_updates(int enabled){
+    if(enabled)return unlink(".no-auto-update")==0||errno==ENOENT;
+    int fd=open(".no-auto-update",O_WRONLY|O_CREAT,0600);
+    if(fd<0)return 0;
+    return close(fd)==0;
+}
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"series_autoplay=%d\n",series_autoplay);
@@ -1175,21 +1183,21 @@ static void draw(Uint32 tick) {
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES"};
+        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES"};
 #else
         const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES"};
 #endif
-        char values[18][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[19][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme==2?"RomanticCrimsonSkulls":menu_theme==1?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
         snprintf(values[12],40,"%d / 5",tv_rating_weight);snprintf(values[13],40,"%d / 5",tv_popularity_weight);snprintf(values[14],40,"%d / 5",tv_variety_weight);
         snprintf(values[15],40,"SCAN QR WITH PHONE");
         snprintf(values[16],40,"POCKET QUIZ");
-        snprintf(values[17],40,"%s",series_autoplay?"ON":"OFF");
+        snprintf(values[17],40,"%s",series_autoplay?"ON":"OFF");snprintf(values[18],40,"%s",auto_updates_enabled()?"ON":"OFF");
         text(194,94,"SETTINGS",3,green,40);
         int first=settings_row>14?settings_row-14:0;
-        for(int i=first;i<first+15&&i<18;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
+        for(int i=first;i<first+15&&i<19;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
         text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
         text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
     }else if(search_on){
@@ -1823,10 +1831,11 @@ static void action(SDL_Keycode key) {
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
         if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<17)settings_row++;
+        if(key==SDLK_DOWN&&settings_row<18)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
+                case 18:if(!set_auto_updates(!auto_updates_enabled()))snprintf(status,sizeof(status),"COULD NOT CHANGE AUTO UPDATE SETTING");break;
                 case 17:series_autoplay=!series_autoplay;break;
                 case 15:accounts_open(0);break;
                 case 16:accounts_open(1);break;

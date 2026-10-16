@@ -602,24 +602,36 @@ static void request_catalog(Browse next,int push,int pop){
         listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));
         if(access("favorites.tsv",R_OK)==0){
             read_catalog("favorites.tsv");listing_total=total;
-            /* Repair older Favorites with no stored poster using the source
-             * catalog's index, including game covers populated later. */
+            /* Old title-only index rows can cross movie/TV/game boundaries.
+             * Only trust new entries with exact kind, id, season and episode;
+             * cached page images are never stable Favorites artwork. */
             FILE *idx=fopen("favorites-art-index.tsv","r");
             if(idx){
                 char row[800];
                 while(fgets(row,sizeof(row),idx)){
-                    char *tab=strchr(row,'\t');if(!tab)continue;
-                    *tab++=0;tab[strcspn(tab,"\r\n")]=0;
-                    if(!*tab||strstr(tab,".."))continue;
-                    if(strncmp(tab,"game-art-cache/",15)&&
-                       strncmp(tab,"catalog-cache/",14)&&
-                       strncmp(tab,"favorites-art/",14))continue;
+                    char *cols[6],*cursor=row;
+                    int n=0;
+                    while(n<6){
+                        cols[n++]=cursor;
+                        char *tab=strchr(cursor,'\t');
+                        if(!tab)break;
+                        *tab=0;cursor=tab+1;
+                    }
+                    if(n!=6)continue; /* Skip legacy title/path records. */
+                    cols[5][strcspn(cols[5],"\r\n")]=0;
+                    if(strncmp(cols[5],"game-art-cache/",15)&&
+                       strncmp(cols[5],"favorites-art/",14))continue;
+                    if(strstr(cols[5],".."))continue;
                     struct stat st;
-                    if(stat(tab,&st)||!S_ISREG(st.st_mode)||st.st_size<54)continue;
-                    for(int i=0;i<count;i++)
-                        if(!titles[i].poster[0]&&!strcmp(titles[i].title,row)&&
-                           strlen(tab)<sizeof(titles[i].poster))
-                            strcpy(titles[i].poster,tab);
+                    if(stat(cols[5],&st)||!S_ISREG(st.st_mode)||st.st_size<54)continue;
+                    for(int i=0;i<count;i++){
+                        Title *t=&titles[i];
+                        if(!t->poster[0]&&!strcmp(t->kind,cols[0])&&
+                           t->id==atoi(cols[1])&&t->season==atoi(cols[2])&&
+                           t->episode==atoi(cols[3])&&!strcmp(t->title,cols[4])&&
+                           strlen(cols[5])<sizeof(t->poster))
+                            strcpy(t->poster,cols[5]);
+                    }
                 }
                 fclose(idx);
             }

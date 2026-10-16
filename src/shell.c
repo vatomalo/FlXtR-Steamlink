@@ -133,7 +133,7 @@ static int player_control=-1,play_after_load,player_menu;
 static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
-static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column,tv_quality_retry,kiss_quality_retry,kiss_1080_pass;
+static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column,tv_quality_retry,kiss_1080_pass;
 static int game_autostate,tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
 static Uint32 tv_next_at;
 static void tv_candidate(void);

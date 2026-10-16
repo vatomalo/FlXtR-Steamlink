@@ -44,11 +44,11 @@ static void menu_draw(void){
             const char *p=synopsis;
             while(*p&&row<8){
                 char line[52];int n=0;
-                while(p[n]&&p[n]!='\\n'&&n<49)n++;
+                while(p[n]&&p[n]!='\n'&&n<49)n++;
                 if(n==49&&p[n]&&p[n]!=' '){int cut=n;while(cut>0&&p[cut]!=' ')cut--;if(cut>0)n=cut;}
                 memcpy(line,p,(size_t)n);line[n]=0;
                 menu_text(pixels,pitch,157+row*26,line,0xffd4e2d6);
-                p+=n;while(*p==' '||*p=='\\n')p++;
+                p+=n;while(*p==' '||*p=='\n')p++;
                 row++;
             }
         }

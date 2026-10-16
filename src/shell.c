@@ -252,6 +252,7 @@ static const char *local_catalog="catalog.tsv";
 static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE"};
 static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent"};
 static int search_on,search_key;
+static int favorite_remove_confirm;
 static char search_text[65];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
 /* Persistent index of distinct titles encountered across every catalog page.
@@ -1046,6 +1047,14 @@ static void draw(Uint32 tick) {
         int x=star_x[i]*W/256, y=(star_y[i]*H/256+(tick/100)*star_speed[i]/8)%H;
         SDL_Color c={145+(i%3)*40,145+(i%3)*40,145+(i%3)*40,255};rect(x,y,1+(i%9==0),1+(i%9==0),c,1);
     }
+    if(favorite_remove_confirm){
+        rect(184,120,746,259,(SDL_Color){0,0,0,235},1);
+        text(200,150,"REMOVE FAVORITE?",3,green,40);
+        if(total&&selection>=0&&selection<total)
+            text(200,213,titles[visible[selection]].title,2,white,60);
+        text(200,307,"A CONFIRM REMOVE / B CANCEL",2,green,55);
+        SDL_RenderPresent(renderer);return;
+    }
     if(rom_core_menu){
         rect(184,80,746,339,(SDL_Color){0,0,0,235},1);
         text(200,95,"CORE OPTIONS / ROM",2,green,50);
@@ -1627,6 +1636,21 @@ static void phone_dispatch(void){
     phone_pending[0]=phone_value[0]=0;
 }
 static void action(SDL_Keycode key) {
+    if(favorite_remove_confirm){
+        if(key==SDLK_RETURN&&browse.mode==FAVORITES_MODE&&total){
+            favorite_remove_confirm=0;
+            favorites_toggle();
+        }else if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2||key==SDLK_F9){
+            favorite_remove_confirm=0;
+            snprintf(status,sizeof(status),"FAVORITE REMOVAL CANCELLED");
+        }
+        return;
+    }
+    if(key==SDLK_F9&&browse.mode==FAVORITES_MODE&&!player_pid&&!catalog_pid&&
+       !settings_on&&!about&&!search_on&&total){
+        favorite_remove_confirm=1;
+        return;
+    }
     if(accounts_on&&!player_pid){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){api_setup_close();accounts_on=0;
             if(party_entry==2){memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
@@ -1927,6 +1951,7 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
+                    case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(player_pid?SDLK_i:SDLK_F3);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;

@@ -90,7 +90,7 @@ static void provider_hosts(char *api,size_t api_size,char *origin,size_t origin_
     FILE *f=fopen("providers.cfg","r");if(!f)return;
     char line[256];
     while(fgets(line,sizeof(line),f)){
-        line[strcspn(line,"\\r\\n")]=0;
+        line[strcspn(line,"\r\n")]=0;
         char *eq=strchr(line,'=');if(!eq)continue;*eq++=0;
         if(!provider_https_origin(eq))continue;
         if(!strcmp(line,"flixer_api"))snprintf(api,api_size,"%s",eq);

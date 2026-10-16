@@ -1068,7 +1068,7 @@ static void draw(Uint32 tick) {
         text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
         SDL_RenderPresent(renderer);return;
     }
-    text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
+    text(30,24,"FLXTR",4,green,12);if(music_job==3||music_job==2)music_now_playing(180,38,72,green);else text(180,38,"CINEMA / STEAM LINK",1,dim,24);
     text(737,32,"[R1] MUSIC",2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
@@ -1939,7 +1939,7 @@ int main(int argc,char **argv) {
     while(running) {
         if(accounts_on){api_setup_tick(SDL_GetTicks());phone_dispatch();if(SDL_GetTicks()-last_draw>=100)dirty=1;}
         SDL_Event event;
-        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:music_on?100:((stars_on&&!background)||flow_animating())?33:250)) do {
+        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT)running=0;
             else if(event.type==SDL_KEYDOWN)action(event.key.keysym.sym);
@@ -2002,7 +2002,7 @@ int main(int argc,char **argv) {
             SDL_Delay(30);continue;
         }
         Uint32 now=SDL_GetTicks();
-        if(dirty||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+        if(dirty||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;

@@ -1396,6 +1396,16 @@ static void tv_tick(void){
     snprintf(next.query,sizeof(next.query),"%d:%lld:%lld:%d:%d:%d",tv_blocks[block].genre,anchor,(long long)now,tv_joining,tv_blocks[block].marathon,tv_breaks);
     request_catalog(next,0,0);tv_next_at=SDL_GetTicks()+10000;
 }
+static void bookmark_path(const Title *t,char *path,size_t capacity){
+    unsigned long hash=2166136261UL;
+    const char *parts[]={t->kind,t->title};
+    for(size_t i=0;i<2;i++)for(const unsigned char *p=(const unsigned char *)parts[i];*p;p++)
+        hash=((hash^*p)*16777619UL)&0xffffffffUL;
+    hash=((hash^(unsigned)t->id)*16777619UL)&0xffffffffUL;
+    hash=((hash^(unsigned)t->season)*16777619UL)&0xffffffffUL;
+    hash=((hash^(unsigned)t->episode)*16777619UL)&0xffffffffUL;
+    snprintf(path,capacity,"%08lx",hash);
+}
 static void launch_player(const Title *t) {
     if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}prefetch_left=0;
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
@@ -1404,6 +1414,14 @@ static void launch_player(const Title *t) {
     fcntl(controls[1],F_SETFL,O_NONBLOCK);fcntl(controls[1],F_SETFD,FD_CLOEXEC);
     signal(SIGPIPE,SIG_IGN);unlink("playback-request");unlink("playback-position");
     if(auto_active)restart_position=auto_resume;
+    /* Resume only an explicit bookmark for this title, not TV channel output. */
+    char bookmark_key[16],bookmark_file[64];
+    bookmark_path(t,bookmark_key,sizeof(bookmark_key));
+    snprintf(bookmark_file,sizeof(bookmark_file),"bookmarks/%s.txt",bookmark_key);
+    if(!tv_active&&restart_position==0){
+        FILE *f=fopen(bookmark_file,"r");
+        if(f){double saved=0;if(fscanf(f,"%lf",&saved)==1&&saved>=0&&saved<=86400)restart_position=saved;fclose(f);}
+    }
     playing_title=*t;player_menu=1; /* Native controller menu is always available. */
     subtitle_route_log("launch-player",t);
     close_ui();
@@ -1425,6 +1443,7 @@ static void launch_player(const Title *t) {
         else unsetenv("FLXTR_SUBTITLE_SPANISH");
         if(t->subs_nor[0])setenv("FLXTR_SUBTITLE_NORWEGIAN",t->subs_nor,1);
         else unsetenv("FLXTR_SUBTITLE_NORWEGIAN");
+        setenv("FLXTR_BOOKMARK_KEY",bookmark_key,1);
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
@@ -1474,10 +1493,15 @@ static void finish_player(int code){
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;
         if(f)fclose(f);
         unlink("playback-request");
-        if(!valid||command<1||command>8||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
+        if(!valid||command<1||command>9||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
         viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings();
         /* TV is a channel, not a resume-based episode player. */
         if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
+        if(command==9){
+            auto_active=0;tv_active=0;
+            snprintf(status,sizeof(status),"FROZEN TO BACKGROUND / REOPEN TITLE TO RESUME");
+            return;
+        }
         if(command==8){
             auto_active=0;tv_active=0;
             if(!strcmp(playing_title.kind,"episode")){Browse next={4,1,playing_title.id,playing_title.season,0,0,"",""};request_catalog(next,0,0);return;}

@@ -67,8 +67,13 @@ def search(value):
         return fetch_spotify(value)
     if 'spotify.com' in value:
         raise ValueError('Use a public Spotify playlist URL')
+    youtube_url = re.fullmatch(r'https://(?:www\.)?(?:youtube\.com/(?:playlist\?list=[A-Za-z0-9_-]+|watch\?v=[A-Za-z0-9_-]{11}(?:&list=[A-Za-z0-9_-]+)?|shorts/[A-Za-z0-9_-]{11})|youtu\.be/[A-Za-z0-9_-]{11})(?:&[^\s]*)?', value)
+    if value.startswith('https://') and not youtube_url:
+        raise ValueError('Use a YouTube video/playlist URL or a public Spotify playlist')
     with youtube_client(True) as ydl:
-        data = ydl.extract_info('ytsearch20:' + value[:220], download=False)
+        data = ydl.extract_info(value if youtube_url else 'ytsearch20:' + value[:220], download=False)
+    if 'entries' not in data:
+        data = {'entries': [data]}
     rows = []
     for entry in data.get('entries', []):
         if entry and re.fullmatch(r'[A-Za-z0-9_-]{11}', entry.get('id', '')):

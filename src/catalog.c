@@ -55,9 +55,21 @@ static int fetch_referred(const char *url,Buffer *b,const char *referer){
 #else
     curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
 #endif
-    CURLcode rc=curl_easy_perform(c);long code=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);
-    if(rc!=CURLE_OK||code!=200){fprintf(stderr,"Catalog HTTP %ld / error %d\n",code,(int)rc);return -1;}
-    return 0;
+    CURLcode rc;long code=0;
+    for(int attempt=0;attempt<2;attempt++){
+        if(attempt){
+            /* Retry into an empty bounded buffer, never append partial bytes. */
+            free(b->data);b->data=NULL;b->length=0;
+            curl_easy_setopt(c,CURLOPT_WRITEDATA,b);
+        }
+        rc=curl_easy_perform(c);
+        code=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);
+        if(rc==CURLE_OK&&code==200)return 0;
+        if((rc!=CURLE_RECV_ERROR&&rc!=CURLE_WRITE_ERROR&&
+            rc!=CURLE_OPERATION_TIMEDOUT&&rc!=CURLE_PARTIAL_FILE)||attempt)break;
+    }
+    fprintf(stderr,"Catalog HTTP %ld / error %d\n",code,(int)rc);
+    return -1;
 }
 static int fetch(const char *url,Buffer *b){return fetch_referred(url,b,NULL);}
 static json_object *get_json(const char *path){
@@ -238,6 +250,16 @@ static int cache_load(void){
         }
         char expected[80];snprintf(expected,sizeof(expected),"catalog-cache/art-%08lx-%d.bmp",cache_poster_hash,i);
         if(!e->title[0]||((strcmp(e->kind,"archive")&&strcmp(e->kind,"archive-file"))&&e->id<1)||(e->poster[0]&&((strncmp(e->poster,"favorites-art/",14)&&strcmp(e->poster,expected))||strstr(e->poster,"..")||access(e->poster,R_OK))))ok=0;
+    }
+    /* A successful metadata cache entry with blank posters must not suppress
+     * future attempts to retrieve transiently failed artwork. */
+    if(ok&&!getenv("FLXTR_NO_ART")&&strcmp(cache_key,"")!=0){
+        for(int i=0;i<n;i++){
+            if(entries[i].poster[0])continue;
+            if(!strcmp(entries[i].kind,"kiss")||
+               !strcmp(entries[i].kind,"movie")||
+               !strcmp(entries[i].kind,"tv")){ok=0;break;}
+        }
     }
     if(ok){used=n;total=number(root,"total");}
     else {used=total=0;memset(entries,0,sizeof(entries));}

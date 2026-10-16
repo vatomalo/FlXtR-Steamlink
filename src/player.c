@@ -67,6 +67,15 @@ static void show_view(const char *label) {
 }
 static void apply_view(int notify) {
     VideoRect rect;
+    /* SLVideo configures the native picture on its own. Overriding the
+     * hardware scaler for ordinary playback can shrink the entire image
+     * on some Marvell firmware, even when its rectangle readback succeeds.
+     * Preserve the firmware viewport for default fullscreen playback. */
+    if(viewing==VIEW_FIT){
+        restore_viewport();
+        if(notify)show_view(view_names[viewing]);
+        return;
+    }
     int rc=video_rect(viewing,source_w,source_h,sar_n,sar_d,screen_w,screen_h,&rect);
     if(!rc)rc=hardware_viewport(&rect,screen_w,screen_h);
     if(rc){fprintf(stderr,"Viewing mode unavailable: %s\n",view_names[viewing]);if(notify)show_view("VIEW MODE UNAVAILABLE");}

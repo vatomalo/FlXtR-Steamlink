@@ -1069,8 +1069,9 @@ static void draw(Uint32 tick) {
         text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
         SDL_RenderPresent(renderer);return;
     }
-    text(30,24,"FLXTR",4,green,12);if(music_job==3||music_job==2)music_now_playing(180,38,72,green);else text(180,38,"CINEMA / STEAM LINK",1,dim,24);
-    text(737,32,"[R1] MUSIC",2,dim,17);
+    text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
+    if(music_job==3||music_job==2){text(737,22,"[R1] MUSIC / NOW PLAYING",1,dim,32);music_now_playing(737,43,31,green);}
+    else text(737,32,"[R1] MUSIC",2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
     int root_mode=history_size?history[0].mode:browse.mode;

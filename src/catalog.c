@@ -664,6 +664,39 @@ int main(int argc,char **argv){
     if(cacheable)unlink(cache_file);
     if(!getenv("FLXTR_NO_ART")&&(!strcmp(kind,"games")||!strcmp(kind,"games-system")||!strcmp(kind,"games-folders")))game_art_prefetch();
     for(int i=0;i<used;i++){if(strcmp(kind,"games-platforms")&&strcmp(kind,"games-file-download")&&strcmp(kind,"games-download")&&strcmp(kind,"tv-pick")&&strcmp(kind,"tv-break")&&!getenv("FLXTR_NO_ART")){if(strncmp(entries[i].poster,"game-art-cache/",15))poster(&entries[i],i);}else entries[i].poster[0]=0;}
+    /* Page-scoped posters change as the user browses. Snapshot them under
+     * the full catalog identity before adding them to the Favorites index.
+     * This also restores posters for anime Favorites whose saved field is empty. */
+    for(int i=0;i<used;i++){
+        Entry *e=&entries[i];
+        if(strncmp(e->poster,"catalog-cache/",14)||strstr(e->poster,".."))continue;
+        struct stat art;
+        if(stat(e->poster,&art)||!S_ISREG(art.st_mode)||
+           art.st_size<54||art.st_size>192*288*4+4096)continue;
+        unsigned long hash=2166136261UL;
+        const char *parts[]={e->kind,e->title,e->url};
+        for(size_t k=0;k<sizeof(parts)/sizeof(parts[0]);k++)
+            for(const unsigned char *p=(const unsigned char *)parts[k];*p;p++)
+                hash=(hash^*p)*16777619UL;
+        hash=(hash^(unsigned)e->id)*16777619UL;
+        hash=(hash^(unsigned)e->season)*16777619UL;
+        hash=(hash^(unsigned)e->episode)*16777619UL;
+        mkdir("favorites-art",0700);
+        char target[96],temp[112];
+        snprintf(target,sizeof(target),"favorites-art/%08lx.bmp",hash&0xffffffffUL);
+        snprintf(temp,sizeof(temp),"%s.next",target);
+        FILE *src=fopen(e->poster,"rb"),*dst=src?fopen(temp,"wb"):NULL;
+        int good=src&&dst;unsigned char bytes[4096];size_t amount;
+        if(good){
+            while((amount=fread(bytes,1,sizeof(bytes),src))>0)
+                if(fwrite(bytes,1,amount,dst)!=amount){good=0;break;}
+            if(ferror(src))good=0;
+        }
+        if(src)fclose(src);
+        if(dst&&fclose(dst))good=0;
+        if(good&&!rename(temp,target))snprintf(e->poster,sizeof(e->poster),"%s",target);
+        else unlink(temp);
+    }
     /* Store only identity-bound, stable image paths for Favorites recovery.
      * Page-scoped catalog-cache bitmaps are reused and must never be indexed. */
     if(used>0&&strcmp(kind,"games-platforms")&&strcmp(kind,"games-folders")){

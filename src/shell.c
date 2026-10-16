@@ -1184,9 +1184,14 @@ static void draw(Uint32 tick) {
             rect(x,y,48,38,i==search_key?green:dim,0);text(x+15,y+10,ch,2,i==search_key?green:white,1);
         }
         const char *completion=search_completion();
-        if(completion)text(194,405,completion,1,green,65);
-        text(194,424,completion?"Y COMPLETE / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",2,green,60);
-        text(194,460,"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
+        if(completion){
+            text(194,405,"DICTIONARY PREDICTION:",1,green,65);
+            text(194,421,completion,1,white,65);
+        }else if(strlen(search_text)>=4){
+            text(194,405,search_dict_count?"NO MATCH IN SAVED TITLES":"DICTIONARY EMPTY - BROWSE LIBRARY",1,dim,65);
+        }
+        text(194,442,completion?"Y ACCEPT / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",1,green,70);
+        text(194,467,"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
     }else if(about) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
         wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. WHITE METAL, WATER DROPS, AND GREEN PIXELS.",53,4,white);

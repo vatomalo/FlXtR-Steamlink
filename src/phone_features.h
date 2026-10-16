@@ -147,11 +147,23 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
         else phone_subtitle[0]=0;
         snprintf(reply,size,"Subtitle selected for next playback");return 200;
     }
-    if(strcmp(field,"play")&&strcmp(field,"url")&&strcmp(field,"control"))return 400;
+    if(strcmp(field,"play")&&strcmp(field,"url")&&strcmp(field,"control")&&strcmp(field,"music"))return 400;
     if(phone_pending[0])return 409;
     if(!strcmp(field,"play")){
         if(!phone_filename(value)||phone_is_rom(value)||phone_is_sub(value))return 400;
         char path[256];snprintf(path,sizeof(path),"phone-files/%.100s",value);if(access(path,R_OK))return 404;
+    }else if(!strcmp(field,"music")){
+        /* Public YouTube URLs, searches and Spotify playlist links.
+         * No shell interpretation: the worker receives one literal argument. */
+        size_t len=strlen(value);
+        if(!len||len>220)return 400;
+        if(strstr(value,"://")){
+            if(strncmp(value,"https://",8))return 400;
+            if(strncmp(value,"https://open.spotify.com/playlist/",34)&&
+               strncmp(value,"https://www.youtube.com/",24)&&
+               strncmp(value,"https://youtube.com/",20)&&
+               strncmp(value,"https://youtu.be/",17))return 400;
+        }
     }else if(!strcmp(field,"url")){
         if((strncmp(value,"https://",8)&&strncmp(value,"http://",7))||strpbrk(value," \"<>\\")||strlen(value)>1800)return 400;
     }else if(strlen(value)!=1||!strchr("pfrsmudalbv",value[0]))return 400;

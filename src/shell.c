@@ -1533,7 +1533,7 @@ static void finish_player(int code){
         if(target>current){
             kiss_quality_retry=target==720?1:2;
             restart_position=auto_resume;
-            fprintf(stderr,"KissAnime server lacks compatible %dp; retrying same server at %dp\\n",current,target);
+            fprintf(stderr,"KissAnime server lacks compatible %dp; retrying same server at %dp\n",current,target);
             launch_player(&playing_title);
             return;
         }

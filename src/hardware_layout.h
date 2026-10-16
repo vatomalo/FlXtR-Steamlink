@@ -30,7 +30,7 @@ int MV_PE_VideoSetUnderScanWindow(void *handle,unsigned plane,VideoRect *rect) {
     }
     return rc;
 }
-static int hardware_viewport(VideoRect *rect,int display_w,int display_h) {
+static int hardware_viewport(VideoRect *rect,int display_w,int display_h,int decoded_w,int decoded_h) {
     if(!viewport_handle||!scaling_set||!scaling_get||display_w<1||display_h<1||
        display_w>32767||display_h>32767)return -1;
     VideoRect before_source,before_output,actual_source,actual_output;
@@ -42,7 +42,11 @@ static int hardware_viewport(VideoRect *rect,int display_w,int display_h) {
     /* Preserve the firmware's input crop. Overwriting it with display
      * dimensions makes the output appear tiny or misaligned on some devices.
      * Only change the destination rectangle when selecting a view mode. */
-    VideoRect source=scaling_original_source;
+    /* EXPERIMENT: test whether the reported 1920x1080 source window
+     * samples outside the actual decoded video (e.g. 640x480). */
+    if(decoded_w<1||decoded_h<1||decoded_w>32767||decoded_h>32767)return -1;
+    VideoRect source={scaling_original_source.x,scaling_original_source.y,
+                      (int16_t)decoded_w,(int16_t)decoded_h};
     VideoRect native=scaling_original_output;
     if(native.w<=0||native.h<=0)return -1;
     /* SLVideo's output plane may use an internal coordinate space (e.g. 1280x720

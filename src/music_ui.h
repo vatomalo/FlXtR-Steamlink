@@ -38,6 +38,8 @@ static int music_poll(void){
         if(music_job!=3&&SDL_GetTicks()-music_started>120000){music_stop();strcpy(music_message,"LOOKUP TIMED OUT / START TO TRY AGAIN");return 1;}
         return 0;
     }
+    FILE *bglog=fopen("music-background.log","a");
+    if(bglog){fprintf(bglog,"WORKER EXIT job=%d status=%d\n",music_job,WIFEXITED(code)?WEXITSTATUS(code):-1);fclose(bglog);}
     music_pid=0;int job=music_job;music_job=0;music_paused=0;
     if(!WIFEXITED(code)||WEXITSTATUS(code)){
         strcpy(music_message,"MUSIC UNAVAILABLE / START RETRY / DETAILS IN MUSIC.LOG");
@@ -98,7 +100,12 @@ static void music_action(SDL_Keycode key){
         else if(key==SDLK_RETURN||key==SDLK_F3){music_edit=0;SDL_StopTextInput();music_spawn(1);}
         return;
     }
-    if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){music_on=0;return;}
+    if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){
+        /* Exit browser without touching the audio worker; retain diagnostics. */
+        FILE *log=fopen("music-background.log","a");
+        if(log){fprintf(log,"EXIT job=%d pid=%ld paused=%d\n",music_job,(long)music_pid,music_paused);fclose(log);}
+        music_on=0;return;
+    }
     if(key==SDLK_F3||key==SDLK_SLASH){music_edit=1;music_key=0;SDL_StartTextInput();return;}
     if(music_job==1||music_job==2)return;
     if(key==SDLK_UP&&music_selected>0)music_selected--;

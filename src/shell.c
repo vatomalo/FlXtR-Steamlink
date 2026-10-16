@@ -603,8 +603,8 @@ static void request_catalog(Browse next,int push,int pop){
         if(access("favorites.tsv",R_OK)==0){
             read_catalog("favorites.tsv");listing_total=total;
             /* Old title-only index rows can cross movie/TV/game boundaries.
-             * Only trust new entries with exact kind, id, season and episode;
-             * cached page images are never stable Favorites artwork. */
+             * Match exact identity and take the most recent valid cover, so
+             * refreshed covers can replace earlier wrong associations. */
             FILE *idx=fopen("favorites-art-index.tsv","r");
             if(idx){
                 char row[800];
@@ -626,7 +626,7 @@ static void request_catalog(Browse next,int push,int pop){
                     if(stat(cols[5],&st)||!S_ISREG(st.st_mode)||st.st_size<54)continue;
                     for(int i=0;i<count;i++){
                         Title *t=&titles[i];
-                        if(!t->poster[0]&&!strcmp(t->kind,cols[0])&&
+                        if(!strcmp(t->kind,cols[0])&&
                            t->id==atoi(cols[1])&&t->season==atoi(cols[2])&&
                            t->episode==atoi(cols[3])&&!strcmp(t->title,cols[4])&&
                            strlen(cols[5])<sizeof(t->poster))

@@ -37,6 +37,9 @@ cp "$src" "$out"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('#!/bin/sh\nexit 0\n')
         path.chmod(0o755)
+    module = stage / 'music-runtime/example.py'
+    module.write_text('answer = 42\n')
+    os.utime(module, (1600000000, 1600000000))
     with tarfile.open(app / 'package.tgz', 'w:gz') as archive:
         archive.add(stage, arcname='greenlink')
     digest = hashlib.sha256((app / 'package.tgz').read_bytes()).hexdigest()
@@ -52,6 +55,7 @@ cp "$src" "$out"
         assert result.returncode == 0, result.stdout + result.stderr
         assert not (app / '.update-lock').exists()
         assert (app / 'settings.cfg').read_text() == 'private settings\n'
+        assert (app / 'music-runtime/example.py').stat().st_mtime == 1600000000
         return result.stdout
 
     assert 'Installed complete' in run()  # legacy marker without hashes

@@ -57,7 +57,8 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && chmod 755 "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     for part in assets certs music-runtime; do
-        if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -R "$staged/$part/." "$part/"; fi
+        # Python bytecode validates source mtimes; preserve them on installation.
+        if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -pR "$staged/$part/." "$part/"; fi
     done
     for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py; do
         if [ -f "$staged/$part" ]; then

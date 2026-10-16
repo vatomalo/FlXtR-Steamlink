@@ -20,6 +20,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
+#include <sys/stat.h>
 #include "hardware_layout.h"
 #include "font.h"
 
@@ -96,13 +97,14 @@ static void playback_controls(void) {
     /* Refresh the playback timeline once per second while the menu is open. */
     static Uint32 menu_next_refresh;
     Uint32 menu_now=SDL_GetTicks();
+    if(menu_open&&menu_overlay)SLVideo_ShowOverlay(menu_overlay);
     if(menu_open&&(Sint32)(menu_now-menu_next_refresh)>=0){
         menu_next_refresh=menu_now+1000;
         menu_draw();
     }
     if(!menu_open&&!overlay_until)subtitle_draw();
     if(change_view&&view_context){change_view=0;viewing=(viewing+1)%VIEW_COUNT;apply_view(1);}
-    if(overlay_until&&(Sint32)(SDL_GetTicks()-overlay_until)>=0){SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
+    if(overlay_until&&(Sint32)(SDL_GetTicks()-overlay_until)>=0){if(!menu_open)SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
 }
 static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&av_gettime_relative()>deadline); }
 /* Apply TLS verification to every HLS playlist, key and segment, not only the
@@ -424,7 +426,7 @@ int main(int argc,char **argv) {
          * Short disk reads must not accumulate arbitrary subtitle drift. */
         if(clock_start&&disk_read_wait_count>0)clock_start+=waited;
         subtitle_buffering=0;
-        if(overlay_until&&frames==0){SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
+        if(overlay_until&&frames==0){if(!menu_open)SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
         if(rc<0){
             char message[AV_ERROR_MAX_STRING_SIZE];
             av_strerror(rc,message,sizeof(message));
@@ -432,7 +434,7 @@ int main(int argc,char **argv) {
             break;
         }
         int track=packet->stream_index;
-        if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);subtitle_draw();continue;}
+        if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);if(!menu_open)subtitle_draw();continue;}
         if(track!=vi&&track!=ai){av_packet_unref(packet);continue;}
         /* Log anomalous decode/presentation timestamp separation without
          * changing decode-order submission to the H.264 hardware. */

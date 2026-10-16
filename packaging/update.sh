@@ -44,6 +44,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     staged=.update-lock/stage/greenlink
     [ -x "$staged/greenlink" ] && [ -x "$staged/greenlink-catalog" ] || exit 1
     [ "$("$staged/greenlink" --version)" = "$package_version" ] || exit 1
+    [ "$("$staged/greenlink-catalog" --version)" = "$package_version" ] || { echo "Catalog worker version does not match package" >&2; exit 1; }
     # Keep old shell for recovery; copy only package-controlled files.
     # Locally downloaded ROMs, settings and private catalog files remain untouched.
     cp greenlink .update-backup

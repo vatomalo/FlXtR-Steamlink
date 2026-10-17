@@ -2,11 +2,65 @@
 #ifndef FLXTR_MUSIC_UI_H
 #define FLXTR_MUSIC_UI_H
 typedef struct {char kind[8],key[221],title[151],artist[151];} MusicRow;
-static MusicRow music_rows[100];
+static MusicRow music_rows[100],music_recent[20],music_search_rows[100];
+static int music_recent_count,music_recent_view,music_search_count,music_search_selected,music_history_loaded;
 static int music_on,music_edit,music_key,music_count,music_selected,music_job,music_paused,music_play_index;
 static pid_t music_pid;
 static Uint32 music_started;
 static char music_query[221],music_message[181]="START SEARCH / PASTE A PUBLIC SPOTIFY PLAYLIST URL",music_playing[151];
+static void music_history_load(void){
+    if(music_history_loaded)return;
+    music_history_loaded=1;
+    FILE *f=fopen("music-cache/recents.tsv","r");
+    if(!f)return;
+    char line[700];
+    while(music_recent_count<20&&fgets(line,sizeof(line),f)){
+        MusicRow *r=&music_recent[music_recent_count];
+        char *a=strchr(line,'\t');if(!a)continue;*a++=0;
+        char *b=strchr(a,'\t');if(!b)continue;*b++=0;
+        char *c=strchr(b,'\t');if(!c)continue;*c++=0;
+        c[strcspn(c,"\r\n")]=0;
+        if(strlen(line)>=sizeof(r->kind)||strlen(a)>=sizeof(r->key))continue;
+        if(strcmp(line,"video")&&strcmp(line,"query"))continue;
+        snprintf(r->kind,sizeof(r->kind),"%s",line);
+        snprintf(r->key,sizeof(r->key),"%s",a);
+        snprintf(r->title,sizeof(r->title),"%s",b);
+        snprintf(r->artist,sizeof(r->artist),"%s",c);
+        music_recent_count++;
+    }
+    fclose(f);
+}
+static void music_history_save(const MusicRow *track){
+    music_history_load();
+    MusicRow item=*track;
+    for(int i=0;i<music_recent_count;i++){
+        if(!strcmp(item.kind,music_recent[i].kind)&&!strcmp(item.key,music_recent[i].key)){
+            memmove(music_recent+i,music_recent+i+1,(size_t)(music_recent_count-i-1)*sizeof(MusicRow));
+            music_recent_count--;break;
+        }
+    }
+    if(music_recent_count==20)music_recent_count--;
+    memmove(music_recent+1,music_recent,(size_t)music_recent_count*sizeof(MusicRow));
+    music_recent[0]=item;music_recent_count++;
+    FILE *f=fopen("music-cache/recents.next","w");
+    if(!f)return;
+    for(int i=0;i<music_recent_count;i++)
+        fprintf(f,"%s\t%s\t%s\t%s\n",music_recent[i].kind,music_recent[i].key,music_recent[i].title,music_recent[i].artist);
+    if(!fclose(f))rename("music-cache/recents.next","music-cache/recents.tsv");
+    else unlink("music-cache/recents.next");
+}
+static void music_toggle_recents(void){
+    music_history_load();
+    if(!music_recent_view){
+        music_search_count=music_count;music_search_selected=music_selected;
+        memcpy(music_search_rows,music_rows,(size_t)music_count*sizeof(MusicRow));
+        memcpy(music_rows,music_recent,(size_t)music_recent_count*sizeof(MusicRow));
+        music_count=music_recent_count;music_selected=0;music_recent_view=1;
+    }else{
+        memcpy(music_rows,music_search_rows,(size_t)music_search_count*sizeof(MusicRow));
+        music_count=music_search_count;music_selected=music_search_selected;music_recent_view=0;
+    }
+}
 static void music_stop(void){
     if(music_pid){kill(-music_pid,SIGKILL);kill(music_pid,SIGKILL);waitpid(music_pid,NULL,0);music_pid=0;}
     music_job=music_paused=0;
@@ -14,7 +68,8 @@ static void music_stop(void){
 static void music_spawn(int job){
     music_stop();mkdir("music-cache",0700);unlink("music-cache/error.txt");
     if(job==2){unlink("music-cache/stream.txt");unlink("music-cache/playing.txt");}
-    if(job==2)music_play_index=music_selected;
+    if(job==2){music_play_index=music_selected;music_history_save(&music_rows[music_selected]);}
+    if(job==3)unlink("music-cache/progress.txt");
     music_job=job;music_started=SDL_GetTicks();music_pid=shell_fork();
     if(!music_pid){
         setpgid(0,0);
@@ -47,6 +102,7 @@ static int music_poll(void){
         return 1;
     }
     if(job==1){
+        if(music_recent_view)music_toggle_recents();
         music_count=music_selected=0;char line[700];FILE *f=fopen("music-cache/results.tsv","r");
         if(f){while(music_count<100&&fgets(line,sizeof(line),f)){
             MusicRow row={0};char *parts[4],*p=line;int n=0;
@@ -111,6 +167,7 @@ static void music_action(SDL_Keycode key){
         if(log){fprintf(log,"EXIT job=%d pid=%ld paused=%d\n",music_job,(long)music_pid,music_paused);fclose(log);}
         music_on=0;return;
     }
+    if(key==SDLK_r||key==SDLK_F6){if(music_job!=1&&music_job!=2)music_toggle_recents();return;}
     if(key==SDLK_F3||key==SDLK_SLASH){music_edit=1;music_key=0;SDL_StartTextInput();return;}
     if(music_job==1||music_job==2)return;
     if(key==SDLK_UP&&music_selected>0)music_selected--;
@@ -177,6 +234,7 @@ static void music_draw(void){
         char counter[72];
         snprintf(counter,sizeof(counter),"TRACK %d / %d  %s",music_count?music_selected+1:0,music_count,music_job==3?(music_paused?"PAUSED":"PLAYING"):"LIBRARY");
         text(30,61,counter,1,muted,90);
+        text(680,61,music_recent_view?"R: SEARCH RESULTS":"R: RECENTS",1,accent,30);
         int first=music_selected/6*6;
         for(int i=first;i<music_count&&i<first+6;i++){
             int y=88+(i-first)*53;
@@ -187,7 +245,7 @@ static void music_draw(void){
         if(!music_count)text(30,130,"PRESS START TO SEARCH YOUTUBE OR IMPORT A PLAYLIST",2,accent,73);
         if(*music_playing){text(30,421,"YOUTUBE MATCH:",1,muted,20);text(30,440,music_playing,1,accent,140);}
         text(30,466,music_message,1,accent,145);
-        text(30,503,"A PLAY / X PAUSE / START SEARCH / B BACK (MUSIC CONTINUES)",1,muted,100);
+        text(30,503,"A PLAY / X PAUSE / R RECENTS / START SEARCH / B BACK",1,muted,100);
     }
 }
 #endif

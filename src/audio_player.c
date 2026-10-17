@@ -55,8 +55,21 @@ int main(int argc,char **argv){
     packet=av_packet_alloc();frame=av_frame_alloc();if(!packet||!frame)goto done;
     fprintf(stderr,"Audio-only playback: %s -> stereo 48 kHz\n",codec->name);
     SDL_PauseAudioDevice(device,0);
+    Uint32 last_progress=0;
     while(!stopped){
         controls(device);if(stopped)break;
+        Uint32 tick=SDL_GetTicks();
+        if(tick-last_progress>=1000){
+            last_progress=tick;
+            uint64_t pending=SDL_GetQueuedAudioSize(device)/4;
+            double elapsed=(double)(samples_queued>pending?samples_queued-pending:0)/48000.0;
+            double duration=fmt->duration>0?(double)fmt->duration/AV_TIME_BASE:0.0;
+            FILE *progress=fopen("music-cache/progress.next","w");
+            if(progress){fprintf(progress,"%.1f %.1f\n",elapsed,duration);
+                if(!fclose(progress))rename("music-cache/progress.next","music-cache/progress.txt");
+                else unlink("music-cache/progress.next");
+            }
+        }
         while(SDL_GetQueuedAudioSize(device)>48000*4*3&&!stopped){controls(device);SDL_Delay(20);}
         deadline=av_gettime_relative()+20000000;
         rc=av_read_frame(fmt,packet);int eof=rc==AVERROR_EOF;

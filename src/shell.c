@@ -1078,7 +1078,20 @@ static void draw(Uint32 tick) {
         SDL_RenderPresent(renderer);return;
     }
     text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
-    if(music_job==3||music_job==2){text(737,22,"[R1] MUSIC / NOW PLAYING",1,dim,32);music_now_playing(737,43,31,green);}
+    if(music_job==3||music_job==2){
+        text(737,19,"[R1] MUSIC / NOW PLAYING",1,dim,32);
+        music_now_playing(737,36,31,green);
+        double elapsed=0,duration=0;
+        FILE *progress=fopen("music-cache/progress.txt","r");
+        if(progress){if(fscanf(progress,"%lf %lf",&elapsed,&duration)!=2)elapsed=duration=0;fclose(progress);}
+        if(duration>0&&elapsed>=0){
+            int width=184;
+            int filled=(int)(elapsed/duration*width);
+            if(filled<0)filled=0;if(filled>width)filled=width;
+            rect(737,55,width,3,dim,1);
+            if(filled)rect(737,55,filled,3,green,1);
+        }else rect(737,55,184,1,dim,1);
+    }
     else text(737,32,"[R1] MUSIC",2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);

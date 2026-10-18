@@ -22,7 +22,7 @@ static void music_history_load(void){
         c[strcspn(c,"\r\n")]=0;
         if(strlen(line)>=sizeof(r->kind)||strlen(a)>=sizeof(r->key))continue;
         if(strcmp(line,"video")&&strcmp(line,"query"))continue;
-        snprintf(r->kind,sizeof(r->kind),"%s",line);
+        memcpy(r->kind,line,strlen(line)+1);
         snprintf(r->key,sizeof(r->key),"%s",a);
         snprintf(r->title,sizeof(r->title),"%s",b);
         snprintf(r->artist,sizeof(r->artist),"%s",c);

@@ -1087,7 +1087,8 @@ static void draw(Uint32 tick) {
         if(duration>0&&elapsed>=0){
             int width=184;
             int filled=(int)(elapsed/duration*width);
-            if(filled<0)filled=0;if(filled>width)filled=width;
+            if(filled<0)filled=0;
+            if(filled>width)filled=width;
             rect(737,55,width,3,dim,1);
             if(filled)rect(737,55,filled,3,green,1);
         }else rect(737,55,184,1,dim,1);

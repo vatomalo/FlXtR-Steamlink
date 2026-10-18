@@ -2,6 +2,7 @@
 #define FLXTR_PHONE_FEATURES_H
 #include <dirent.h>
 #include <sys/statvfs.h>
+#include "platform_files.h"
 
 static char phone_pending[24],phone_value[2048],phone_subtitle[256];
 static int phone_upload=-1;
@@ -30,8 +31,7 @@ static void phone_deck(uint32_t seed){
     }
 }
 static int phone_random(char token[33]){
-    unsigned char bytes[16];int fd=open("/dev/urandom",O_RDONLY);if(fd<0)return -1;
-    ssize_t n=read(fd,bytes,16);close(fd);if(n!=16)return -1;
+    unsigned char bytes[16];if(flxtr_random_bytes(bytes,sizeof(bytes)))return -1;
     for(int i=0;i<16;i++)snprintf(token+i*2,3,"%02X",bytes[i]);
     return 0;
 }

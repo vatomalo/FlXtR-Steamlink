@@ -5,6 +5,16 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "platform_process.h"
+
+/* Transitional POSIX adapter for callers still using pid_t/waitpid.
+ * New code should own a FlxtrProcess rather than a bare process ID. */
+static inline pid_t shell_spawn(const char *executable,const char *const argv[],
+                                const char *out,const char *err){
+    FlxtrProcess child={0};FlxtrSpawnOptions options={out,err};
+    if(flxtr_process_start(&child,executable,argv,&options))return -1;
+    return (pid_t)child.id;
+}
 
 /* Vendor graphics descriptors are not CLOEXEC. A catalog worker must not
  * retain the shell's media session after exec (or pass it to its workers).

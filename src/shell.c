@@ -709,14 +709,13 @@ static void request_catalog(Browse next,int push,int pop){
     catalog_started=SDL_GetTicks();
     download_background=0;
     if(next.mode==19||next.mode==16)unlink("catalog-cache/download-progress");
-    catalog_pid=shell_fork();
-    if(!catalog_pid){
-        int out=open("catalog-cache/result.tsv",O_WRONLY|O_CREAT|O_TRUNC,0600),log=open("catalog.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
-        if(out<0||log<0)_exit(126);
-        dup2(out,STDOUT_FILENO);dup2(log,STDERR_FILENO);close(out);close(log);
-        char pg[16],id[16],sn[16],ep[16];snprintf(pg,sizeof(pg),"%d",next.page);snprintf(id,sizeof(id),"%d",next.id);snprintf(sn,sizeof(sn),"%d",next.season);snprintf(ep,sizeof(ep),"%d",next.episode);
-        execl("./greenlink-catalog","greenlink-catalog",auto_active&&!strcmp(auto_title.kind,"kiss-episode")?(next.mode==5?"kiss-source":"kiss-quality"):browse_kinds[next.mode],pg,next.query,id,sn,ep,next.mode==6?next.query:"",(char*)NULL);_exit(127);
-    }
+    char pg[16],id[16],sn[16],ep[16];
+    snprintf(pg,sizeof(pg),"%d",next.page);snprintf(id,sizeof(id),"%d",next.id);
+    snprintf(sn,sizeof(sn),"%d",next.season);snprintf(ep,sizeof(ep),"%d",next.episode);
+    const char *args[]={"greenlink-catalog",auto_active&&!strcmp(auto_title.kind,"kiss-episode")?
+        (next.mode==5?"kiss-source":"kiss-quality"):browse_kinds[next.mode],
+        pg,next.query,id,sn,ep,next.mode==6?next.query:"",NULL};
+    catalog_pid=shell_spawn("./greenlink-catalog",args,"catalog-cache/result.tsv","catalog.log");
     if(catalog_pid<0){catalog_pid=0;snprintf(status,sizeof(status),"COULD NOT LOAD CATALOG");}
     else snprintf(status,sizeof(status),"LOADING %s - X SKIP / B CANCEL",browse_labels[next.mode]);
 }
@@ -842,18 +841,11 @@ static void prefetch_pages(void){
     if(!library_cacheable(browse.mode)){prefetch_left=0;return;}
     if(prefetch_browse.page>=listing_pages){prefetch_left=0;return;}
     Browse target=prefetch_browse;target.page++;
-    prefetch_pid=shell_fork();
-    if(!prefetch_pid){
-        int out=open("/dev/null",O_WRONLY);if(out>=0){dup2(out,STDOUT_FILENO);dup2(out,STDERR_FILENO);close(out);}
-        char pg[16],id[16],sn[16],ep[16];
-        snprintf(pg,sizeof(pg),"%d",target.page);
-        snprintf(id,sizeof(id),"%d",target.id);
-        snprintf(sn,sizeof(sn),"%d",target.season);
-        snprintf(ep,sizeof(ep),"%d",target.episode);
-        execl("./greenlink-catalog","greenlink-catalog",browse_kinds[target.mode],
-              pg,target.query,id,sn,ep,"",(char*)NULL);
-        _exit(127);
-    }
+    char pg[16],id[16],sn[16],ep[16];
+    snprintf(pg,sizeof(pg),"%d",target.page);snprintf(id,sizeof(id),"%d",target.id);
+    snprintf(sn,sizeof(sn),"%d",target.season);snprintf(ep,sizeof(ep),"%d",target.episode);
+    const char *args[]={"greenlink-catalog",browse_kinds[target.mode],pg,target.query,id,sn,ep,"",NULL};
+    prefetch_pid=shell_spawn("./greenlink-catalog",args,"/dev/null","/dev/null");
     if(prefetch_pid<0){prefetch_pid=0;prefetch_left=0;return;}
     prefetch_browse.page=target.page;
     prefetch_left--;
@@ -864,8 +856,8 @@ static void controller_idle(void){
     if(controller_slept||SDL_GetTicks()-controller_activity<300000)return;
     controller_slept=1;
     if(access("./controller-idle.sh",R_OK))return;
-    idle_pid=shell_fork();
-    if(!idle_pid){int log=open("controller.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./controller-idle.sh",(char*)NULL);_exit(127);}
+    const char *args[]={"sh","./controller-idle.sh",NULL};
+    idle_pid=shell_spawn("/bin/sh",args,"controller.log","controller.log");
     if(idle_pid<0)idle_pid=0;
 }
 /* User-curated mixed library. Store the same bounded TSV fields used by
@@ -1032,8 +1024,8 @@ static void draw_coverflow(void) {
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
     if(access("./update.sh",R_OK)){snprintf(status,sizeof(status),"UPDATER NOT INSTALLED");return;}
-    update_pid=shell_fork();
-    if(!update_pid){int log=open("update.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./update.sh",(char*)NULL);_exit(127);}
+    const char *args[]={"sh","./update.sh",NULL};
+    update_pid=shell_spawn("/bin/sh",args,"update.log","update.log");
     if(update_pid<0){update_pid=0;snprintf(status,sizeof(status),"COULD NOT START UPDATER");return;}
     snprintf(status,sizeof(status),"CHECKING GITHUB FOR A SHELL UPDATE...");
 }

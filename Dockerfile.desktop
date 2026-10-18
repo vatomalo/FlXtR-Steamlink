@@ -1,0 +1,8 @@
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake pkg-config wget curl python3 git ca-certificates file \
+    libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev \
+    libmpv-dev libavformat-dev libavcodec-dev libavutil-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src

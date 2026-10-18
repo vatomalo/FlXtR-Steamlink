@@ -433,3 +433,10 @@ Steam Link fullscreen requires creating the native Vivante window at the current
 If a cold boot resets the clock before 2024, the Steam Link launcher makes a bounded ten-second NTP synchronization attempt before checking HTTPS updates. An unsuccessful sync is logged in `clock.log`; TLS verification is never disabled.
 
 TV channel scheduling, marathons and preloading: [TV channel mode](docs/tv-channel.md).
+
+## Native Linux and Steam Deck packages
+
+Run `bash scripts/build-desktop.sh` (or `make steamdeck`) in WSL with Docker.
+This builds both x86_64 editions with bundled application libraries.
+See [desktop package instructions](docs/DESKTOP-RELEASE.md) for installation,
+Steam setup, requirements and validation limits.

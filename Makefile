@@ -102,3 +102,9 @@ test-music-layout: all
 	python3 tests/music_test.py
 
 .PHONY: test-music-layout
+
+# Docker-based native Linux and Steam Deck packages.
+desktop steamdeck:
+	bash scripts/build-desktop.sh
+
+.PHONY: desktop steamdeck

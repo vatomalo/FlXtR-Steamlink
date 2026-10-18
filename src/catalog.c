@@ -525,7 +525,7 @@ static void game_art_prefetch(void){
                 char requests[8192];ssize_t n=0;
                 if(!flock(fd,LOCK_EX)){
                     n=read(fd,requests,sizeof(requests)-1);
-                    if(n>0){ftruncate(fd,0);lseek(fd,0,SEEK_SET);}
+                    if(n>0&&ftruncate(fd,0)!=0)n=-1;
                     flock(fd,LOCK_UN);
                 }
                 close(fd);

@@ -157,7 +157,7 @@ static void api_request(void){
         result=phone_upload_write(end+4,api_setup.used-offset);
         memset(api_setup.input,0,sizeof(api_setup.input));api_setup.used=0;
         if(result<0){phone_upload_abort();api_reply(500,"Upload failed");}
-        else if(result==1)api_reply(200,"File saved");
+        else if(result==1)api_reply(200,"File saved. Close the QR screen to refresh Games. A matching core is needed for ROM playback.");
         return;
     }
     if(*route){api_reply(404,"Not found");return;}
@@ -209,7 +209,7 @@ static void api_setup_tick(uint32_t now){
             api_setup.connected=api_setup.started=now;
             int result=phone_upload_write(chunk,(size_t)n);
             if(result<0){phone_upload_abort();api_reply(500,"Upload failed: existing files kept");}
-            else if(result==1)api_reply(200,"File saved. ROM uploads appear after importing games.");
+            else if(result==1)api_reply(200,"File saved. Close the QR screen to refresh Games. A matching core is needed for ROM playback.");
         }
     }
     if(!api_setup.length&&phone_upload<0){

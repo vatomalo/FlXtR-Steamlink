@@ -1,6 +1,9 @@
 """Run the complete extracted Windows package without network-dependent tests."""
 from pathlib import Path
 import argparse
+import http.client
+import time
+from urllib.parse import urlsplit, urlencode
 import json
 import os
 import subprocess
@@ -34,7 +37,36 @@ with tempfile.TemporaryDirectory(prefix='FlXtR Windows data ø ') as temp:
     # It must be beside the package executables for child executable resolution.
     run(helper,fixture)
     print('PASS: native libmpv decoding, UI launcher and control/preload IPC')
-    text=run(package/'greenlink-catalog.exe','games-platforms','1','','0','0','0')
+    server=subprocess.Popen([str(helper),'--phone-server'],cwd=home,env=env,stdout=subprocess.PIPE,text=True)
+    try:
+        url=urlsplit(server.stdout.readline().strip())
+        def phone(method,route,body=None,form=False):
+            connection=http.client.HTTPConnection(url.hostname,url.port,timeout=10)
+            connection.request(method,url.path+route,body,{'Content-Type':'application/x-www-form-urlencoded' if form else 'application/octet-stream'})
+            response=connection.getresponse()
+            result=response.status,response.read().decode()
+            connection.close()
+            return result
+        assert phone('POST','upload/fixture.mp4',fixture.read_bytes())[0]==200
+        (home/'games.json').write_text('[]')
+        assert phone('POST','upload/phone-test.nes',b'NES fixture')[0]==200
+        assert not (home/'games.json').exists()
+        cores=home/'cores';cores.mkdir(exist_ok=True)
+        (cores/'fceumm_libretro.dll').write_bytes(b'fixture core, import-only test')
+        run(package/'greenlink-catalog.exe','games','1','','0','0','0')
+        games=json.loads((home/'games.json').read_text())
+        assert any(g['rom'].endswith('/roms/phone/phone-test.nes') for g in games)
+        assert phone('POST','',urlencode({'play':'fixture.mp4'}),True)[0]==200
+        assert phone('POST','',urlencode({'play':'fixture.mp4'}),True)[0]==409
+        assert phone('POST','',urlencode({'control':'s'}),True)[0]==200
+        deadline=time.monotonic()+15
+        while not (home/'phone-player-exit').exists() and time.monotonic()<deadline:time.sleep(.05)
+        assert (home/'phone-player-exit').read_text()=='40'
+        assert phone('POST','',urlencode({'control':'p'}),True)[0]==409
+        print('PASS: HTTP upload -> actual phone video launch/control; ROM upload -> catalog import')
+    finally:
+        server.terminate();server.wait(timeout=5)
+    text=run(package/'greenlink-catalog.exe','games-platforms' ,'1','','0','0','0')
     assert '# pages=2 total=8' in text and 'NES' in text
     text=run(package/'greenlink-catalog.exe','core-list','1','','0','0','0','')
     assert 'core-download' in text and 'FCEUmm' in text

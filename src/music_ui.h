@@ -3,7 +3,7 @@
 #define FLXTR_MUSIC_UI_H
 typedef struct {char kind[8],key[221],title[151],artist[151];} MusicRow;
 static MusicRow music_rows[100];
-static int music_on,music_edit,music_key,music_count,music_selected,music_job,music_paused,music_play_index;
+static int music_on,music_edit,music_key,music_count,music_selected,music_job,music_paused,music_play_index,music_phone_play;
 static pid_t music_pid;
 static Uint32 music_started;
 static char music_query[221],music_message[181]="START SEARCH / PASTE A PUBLIC SPOTIFY PLAYLIST URL",music_playing[151];
@@ -13,7 +13,7 @@ static void music_stop(void){
 }
 static void music_spawn(int job){
     music_stop();mkdir("music-cache",0700);unlink("music-cache/error.txt");
-    if(job==2){unlink("music-cache/stream.txt");unlink("music-cache/playing.txt");}
+    if(job==2||job==4){unlink("music-cache/stream.txt");unlink("music-cache/playing.txt");}
     if(job==2)music_play_index=music_selected;
     music_job=job;music_started=SDL_GetTicks();
 #ifdef _WIN32
@@ -27,7 +27,7 @@ static void music_spawn(int job){
         snprintf(script,sizeof(script),"%s/tools/music.py",flxtr_win_binary_dir());
         snprintf(cert,sizeof(cert),"%s/certs/cacert.pem",flxtr_win_binary_dir());
         setenv("PYTHONHOME",runtime,1);setenv("PYTHONDONTWRITEBYTECODE","1",1);setenv("SSL_CERT_FILE",cert,1);
-        const char *args[]={"python","-I",script,job==1?"search":"resolve",job==1?music_query:music_rows[music_selected].kind,job==1?NULL:music_rows[music_selected].key,NULL};
+        const char *args[]={"python","-I",script,job==4?"next":job==1?"search":"resolve",job==4?NULL:job==1?music_query:music_rows[music_selected].kind,(job==1||job==4)?NULL:music_rows[music_selected].key,NULL};
         music_pid=flxtr_win_spawn(python,args,job==1?"music-cache/results.tsv":"music.log","music.log",NULL,0,1);
         unsetenv("PYTHONHOME");
     }
@@ -40,6 +40,7 @@ static void music_spawn(int job){
         if(out<0||err<0)_exit(126);
         dup2(out,1);dup2(err,2);close(out);close(err);
         if(job==3)execl("./greenlink-audio","greenlink-audio","music-cache/stream.txt",(char*)NULL);
+        else if(job==4)execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","next",(char*)NULL);
         else if(job==1)execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","search",music_query,(char*)NULL);
         else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","resolve",music_rows[music_selected].kind,music_rows[music_selected].key,(char*)NULL);
         _exit(127);
@@ -49,7 +50,7 @@ static void music_spawn(int job){
 #ifndef _WIN32
     setpgid(music_pid,music_pid);
 #endif
-    snprintf(music_message,sizeof(music_message),"%s",job==1?"SEARCHING... B CANCEL":job==2?"FINDING YOUTUBE AUDIO... B CANCEL":"PLAYING / X PAUSE / A PLAY SELECTED / B EXIT");
+    snprintf(music_message,sizeof(music_message),"%s",job==1?"SEARCHING... B CANCEL":(job==2||job==4)?"FINDING YOUTUBE AUDIO... B CANCEL":"PLAYING / X PAUSE / A PLAY SELECTED / B EXIT");
 }
 static int music_poll(void){
     if(!music_pid)return 0;
@@ -62,6 +63,7 @@ static int music_poll(void){
     if(bglog){fprintf(bglog,"WORKER EXIT job=%d status=%d\n",music_job,WIFEXITED(code)?WEXITSTATUS(code):-1);fclose(bglog);}
     music_pid=0;int job=music_job;music_job=0;music_paused=0;
     if(!WIFEXITED(code)||WEXITSTATUS(code)){
+        music_phone_play=0;
         strcpy(music_message,"MUSIC UNAVAILABLE / START RETRY / DETAILS IN MUSIC.LOG");
         FILE *f=fopen("music-cache/error.txt","r");if(f){if(!fgets(music_message,sizeof(music_message),f))music_message[0]=0;fclose(f);}
         return 1;
@@ -78,13 +80,14 @@ static int music_poll(void){
             snprintf(row.artist,sizeof(row.artist),"%s",parts[3]);music_rows[music_count++]=row;
         }fclose(f);}
         snprintf(music_message,sizeof(music_message),"%d TRACKS / A PLAY / START SEARCH / B EXIT",music_count);
-    }else if(job==2){
+        if(music_phone_play){music_phone_play=0;if(music_count)music_spawn(2);}
+    }else if(job==2||job==4){
         FILE *f=fopen("music-cache/playing.txt","r");music_playing[0]=0;
         if(f){if(!fgets(music_playing,sizeof(music_playing),f))music_playing[0]=0;fclose(f);music_playing[strcspn(music_playing,"\r\n")]=0;}
         music_spawn(3);
     }else if(job==3){
         if(music_play_index+1<music_count){music_selected=music_play_index+1;music_spawn(2);}
-        else strcpy(music_message,"PLAYLIST FINISHED / START SEARCH / A PLAY AGAIN");
+        else music_spawn(4);
     }
     return 1;
 }
@@ -132,7 +135,7 @@ static void music_action(SDL_Keycode key){
         music_on=0;return;
     }
     if(key==SDLK_F3||key==SDLK_SLASH){music_edit=1;music_key=0;SDL_StartTextInput();return;}
-    if(music_job==1||music_job==2)return;
+    if(music_job==1||music_job==2||music_job==4)return;
     if(key==SDLK_UP&&music_selected>0)music_selected--;
     if(key==SDLK_DOWN&&music_selected+1<music_count)music_selected++;
     if(key==SDLK_LEFT)music_selected=music_selected>=6?music_selected-6:0;
@@ -207,7 +210,7 @@ static void music_draw(void){
         if(!music_count)text(30,130,"PRESS START TO SEARCH YOUTUBE OR IMPORT A PLAYLIST",2,accent,73);
         if(*music_playing){text(30,421,"YOUTUBE MATCH:",1,muted,20);text(30,440,music_playing,1,accent,140);}
         text(30,466,music_message,1,accent,145);
-        text(30,503,"A PLAY / X PAUSE / START SEARCH / B BACK (MUSIC CONTINUES)",1,muted,100);
+        text(30,503,"AUTOPLAY ON / A PLAY / X PAUSE / START SEARCH / B BACK",1,muted,100);
     }
 }
 #endif

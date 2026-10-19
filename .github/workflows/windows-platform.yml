@@ -21,6 +21,9 @@ jobs:
           make test-platform test-platform-shell test-desktop-ipc
           python3 tests/api_setup_test.py
           make test-desktop-cores
+          python3 tests/music_test.py
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/music_queue_test.c -o build/music-queue-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/music-queue-test
           cc -std=c99 -Wall -Wextra -Werror tests/child_exec_test.c -o build/child-exec-test
           ./build/child-exec-test
           cc -std=c99 -Wall -Wextra -Werror tests/phone_state_test.c -o build/phone-state-test
@@ -94,6 +97,8 @@ jobs:
           Copy-Item -LiteralPath $supervisor.FullName -Destination $app
           python tests/windows_app_test.py --package $app --fixture $fixture.FullName --helper (Join-Path $app 'windows-app-test.exe')
           if ($LASTEXITCODE -ne 0) { throw "Windows application tests failed: $LASTEXITCODE" }
+          python tests/desktop_audio_test.py (Join-Path $app 'greenlink-audio.exe')
+          if ($LASTEXITCODE -ne 0) { throw "Windows music audio tests failed: $LASTEXITCODE" }
           python tests/core_manager_test.py
           if ($LASTEXITCODE -ne 0) { throw "Core manager tests failed: $LASTEXITCODE" }
           python tests/desktop_games_test.py --catalog (Join-Path $app 'greenlink-catalog.exe') --retroarch (Join-Path $app 'retroarch-fixture.exe') --tools (Join-Path $app 'tools')

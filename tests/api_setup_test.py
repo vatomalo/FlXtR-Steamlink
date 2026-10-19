@@ -75,7 +75,12 @@ with tempfile.TemporaryDirectory(prefix='flxtr phone ø ') as directory:
         assert request('POST',b'bad',path=url.path+'upload/run.sh',headers=raw)[0]==400
         for name in ('CON.mp4', 'nul.srt', 'COM9.extra.mp4'):
             assert request('POST', b'bad', path=url.path+'upload/'+name, headers=raw)[0] == 400
+        (app/'games.json').write_text('[]')
         assert request('POST',b'rom',path=url.path+'upload/test.nes',headers=raw)[0]==200
+        assert not (app/'games.json').exists()
+        for extension in ['md','sms','gg','chd','cue','bin','a26']:
+            assert request('POST',b'rom',path=url.path+'upload/test.'+extension,headers=raw)[0]==200
+            assert (app/('roms/phone/test.'+extension)).read_bytes()==b'rom'
         assert (app/'roms/phone/test.nes').read_bytes()==b'rom'
         conn=socket.create_connection((url.hostname,url.port),timeout=4)
         conn.sendall(f'POST {url.path}upload/interrupted.mp4 HTTP/1.1\r\nHost: {url.netloc}\r\nContent-Type: application/octet-stream\r\nContent-Length: 100000\r\n\r\npartial'.encode())

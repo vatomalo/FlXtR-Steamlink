@@ -34,6 +34,41 @@ class MusicTest(unittest.TestCase):
             self.assertEqual(search.call_count, 4)
             self.assertEqual(len(list(Path(root).glob('*.json'))), 3)
 
+    def test_recommendations_skip_history_and_invalid_ids(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
+            (music.CACHE/'history.txt').write_text(json.dumps(['abcdefghijk', 'lmnopqrstuv']))
+            from unittest.mock import MagicMock
+            client = MagicMock()
+            client.__enter__.return_value.extract_info.return_value = {'entries': iter([
+                None, {'id':'invalid'}, {'id':'abcdefghijk'}, {'id':'lmnopqrstuv'}, {'id':'12345678901'}])}
+            with patch.object(music, 'youtube_client', return_value=client), patch.object(music, 'resolve') as resolve:
+                music.run(['next'])
+                resolve.assert_called_once_with('video', '12345678901')
+                query=client.__enter__.return_value.extract_info.call_args.args[0]
+                self.assertEqual(query, 'https://www.youtube.com/watch?v=lmnopqrstuv&list=RDlmnopqrstuv')
+
+    def test_resolve_records_bounded_history_and_signed_stream(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.return_value={
+            'id':'abcdefghijk','url':'https://example.test/audio?'+'x'*12000,'title':'Test song'}
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)), patch.object(music, 'youtube_client', return_value=client):
+            (music.CACHE/'history.txt').write_text(json.dumps(['12345678901']*60))
+            music.run(['resolve','video','abcdefghijk'])
+            history=json.loads((music.CACHE/'history.txt').read_text())
+            self.assertEqual(len(history), 50)
+            self.assertEqual(history[-1], 'abcdefghijk')
+            self.assertGreater(len((music.CACHE/'stream.txt').read_text()), 12000)
+
+    def test_no_recommendation_stops_instead_of_repeating(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.return_value={'entries':[{'id':'abcdefghijk'}]*30}
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)), patch.object(music, 'youtube_client', return_value=client):
+            (music.CACHE/'history.txt').write_text('["abcdefghijk"]')
+            with self.assertRaisesRegex(ValueError, 'No new'):
+                music.run(['next'])
+
     def test_unavailable_playlist_has_clear_error(self):
         with self.assertRaisesRegex(ValueError, 'public playlist'):
             music.spotify_rows('<html>Sign in</html>')

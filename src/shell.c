@@ -29,6 +29,8 @@
 #include "browse_filters.h"
 #include "game_metadata.h"
 #include "child_process.h"
+static int phone_dispatch(char *reply,size_t size);
+#define FLXTR_PHONE_DISPATCH phone_dispatch
 #include "api_setup.h"
 #include "vendor/qrcodegen.c"
 #include "wifi_pairing.h"
@@ -1773,17 +1775,26 @@ static void finish_player(int code){
     }
     snprintf(status,sizeof(status),cancelled?"PLAYBACK STOPPED":WIFEXITED(code)&&!WEXITSTATUS(code)?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");
 }
-static void phone_dispatch(void){
-    if(!phone_pending[0])return;
+static int phone_dispatch(char *reply,size_t size){
+    int code=200;
+    snprintf(reply,size,"Playback requested. Check FlXtR for playback errors.");
     if(!strcmp(phone_pending,"control")){
         char c=phone_value[0];c=c=='p'?'P':c=='f'?'F':c=='r'?'R':c=='s'?'S':c;
-        if(player_pid&&player_control>=0){ssize_t sent=player_pipe_write(player_control,&c,1);(void)sent;}
+        if(player_pid&&player_control>=0){
+            if(player_pipe_write(player_control,&c,1)!=1){code=503;snprintf(reply,size,"Player control is unavailable.");}
+            else snprintf(reply,size,"Playback control sent.");
+        }else if(music_job==3&&(c=='P'||c=='S')){
+            if(c=='S'){music_stop();snprintf(music_message,sizeof(music_message),"MUSIC STOPPED");}
+            else{kill(music_pid,SIGUSR1);music_paused=!music_paused;}
+            snprintf(reply,size,c=='S'?"Music stopped.":"Music pause toggled.");
+        }else{code=409;snprintf(reply,size,"No active player supports this control.");}
     }else if(!strcmp(phone_pending,"music")){
-        if(!player_pid&&!music_job&&!update_pid){
+        if(!player_pid&&!catalog_pid&&!update_pid){
             snprintf(music_query,sizeof(music_query),"%.220s",phone_value);
-            music_edit=0;music_on=1;
-            music_spawn(1);
-        }else snprintf(status,sizeof(status),"FINISH CURRENT PLAYBACK BEFORE IMPORTING MUSIC");
+            music_edit=0;music_on=1;music_phone_play=1;music_spawn(1);
+            if(!music_pid){code=503;music_phone_play=0;snprintf(reply,size,"Music worker could not start.");}
+            else snprintf(reply,size,"Searching YouTube; the first matching track will play automatically.");
+        }else{code=409;snprintf(reply,size,"FlXtR is busy. Stop playback or wait for the current operation.");}
     }else if(!player_pid&&!catalog_pid&&!update_pid){
         Title t;memset(&t,0,sizeof(t));snprintf(t.title,sizeof(t.title),"PHONE VIDEO");
         if(!strcmp(phone_pending,"play"))snprintf(t.url,sizeof(t.url),"phone-files/%.100s",phone_value);
@@ -1791,8 +1802,10 @@ static void phone_dispatch(void){
         snprintf(t.subs_eng,sizeof(t.subs_eng),"%s",phone_subtitle);
         if(phone_subtitle[0])subtitle_setting=2;
         auto_active=tv_active=0;restart_position=0;launch_player(&t);
-    }
+        if(!player_pid){code=503;snprintf(reply,size,"Player could not start. Check player.log on FlXtR.");}
+    }else{code=409;snprintf(reply,size,"FlXtR is busy. Stop playback or wait for the current operation.");}
     phone_pending[0]=phone_value[0]=0;
+    return code;
 }
 static void action(SDL_Keycode key) {
     if(music_on){music_action(key);return;}
@@ -1800,6 +1813,8 @@ static void action(SDL_Keycode key) {
         if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access(
 #ifdef _WIN32
         "music-runtime/bin/python.exe"
+#elif defined(FLXTR_DESKTOP)
+        "scripts/music-runtime.sh"
 #else
         "music-runtime/usr/bin/python3"
 #endif
@@ -1823,7 +1838,7 @@ static void action(SDL_Keycode key) {
     }
     if(accounts_on&&!player_pid){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){api_setup_close();accounts_on=0;
-            if(party_entry==2){memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
+            if(party_entry==2||phone_rom_uploaded){phone_rom_uploaded=0;memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
         }
         else if(key==SDLK_RETURN)accounts_open(party_entry);
         return;
@@ -2098,7 +2113,7 @@ int main(int argc,char **argv) {
     local_catalog=catalog;read_catalog(catalog);start=SDL_GetTicks();controller_used();
     if(initial_library){Browse next={initial_library,1,0,0,0,0,"",""};request_catalog(next,0,0);}
     while(running) {
-        if(accounts_on){api_setup_tick(SDL_GetTicks());phone_dispatch();if(SDL_GetTicks()-last_draw>=100)dirty=1;}
+        if(accounts_on){api_setup_tick(SDL_GetTicks());if(SDL_GetTicks()-last_draw>=100)dirty=1;}
         SDL_Event event;
         if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;

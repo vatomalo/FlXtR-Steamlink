@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bounded, short-lived metadata/link worker. Never downloads a whole track."""
 import hashlib
+from itertools import islice
 import html
 import json
 import os
@@ -72,6 +73,8 @@ def search(value):
         raise ValueError('Use a YouTube video/playlist URL or a public Spotify playlist')
     with youtube_client(True) as ydl:
         data = ydl.extract_info(value if youtube_url else 'ytsearch20:' + value[:220], download=False)
+        if 'entries' in data:
+            data['entries'] = list(islice(data['entries'], MAX_ROWS))
     if 'entries' not in data:
         data = {'entries': [data]}
     rows = []
@@ -79,6 +82,26 @@ def search(value):
         if entry and re.fullmatch(r'[A-Za-z0-9_-]{11}', entry.get('id', '')):
             rows.append(('video', entry['id'], clean(entry.get('title')), clean(entry.get('channel') or entry.get('uploader'))))
     return rows
+
+def recommendations():
+    """Use YouTube's public radio mix, bounded and without replaying recent IDs."""
+    try:
+        history = json.loads((CACHE / 'history.txt').read_text())
+    except (OSError, ValueError):
+        history = []
+    if not history or not re.fullmatch(r'[A-Za-z0-9_-]{11}', history[-1]):
+        raise ValueError('No current YouTube song for recommendations')
+    ident = history[-1]
+    with youtube_client(True) as ydl:
+        data = ydl.extract_info('https://www.youtube.com/watch?v=' + ident + '&list=RD' + ident, download=False)
+        for entry in islice(data.get('entries', []), 20):
+            if not entry:
+                continue
+            key = entry.get('id', '')
+            if re.fullmatch(r'[A-Za-z0-9_-]{11}', key) and key not in history:
+                resolve('video', key)
+                return
+    raise ValueError('No new YouTube recommendations available / START to search')
 
 def resolve(kind, value):
     if kind == 'video' and re.fullmatch(r'[A-Za-z0-9_-]{11}', value):
@@ -100,6 +123,15 @@ def resolve(kind, value):
         request = url + '\n' + clean(headers.get('User-Agent', 'Mozilla/5.0'), 500) + '\n'
         atomic(CACHE / 'stream.txt', request)
         atomic(CACHE / 'playing.txt', clean(info.get('title')) + '\n')
+        ident = info.get('id', '')
+        if re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
+            try:
+                history = json.loads((CACHE / 'history.txt').read_text())
+                if not isinstance(history, list):
+                    history = []
+            except (OSError, ValueError):
+                history = []
+            atomic(CACHE / 'history.txt', json.dumps((history + [ident])[-50:]))
 
 def youtube_client(flat=False):
     from yt_dlp import YoutubeDL
@@ -116,6 +148,8 @@ def atomic(path, text):
 
 def run(args):
     CACHE.mkdir(mode=0o700, exist_ok=True)
+    if args == ['next']:
+        recommendations(); return
     if args[0] == 'resolve' and len(args) == 3:
         resolve(args[1], args[2]); return
     if args[0] != 'search' or len(args) != 2:

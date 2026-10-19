@@ -1,8 +1,27 @@
 /* Exercise the UI's actual Windows player launch path and native IPC. */
+#include <assert.h>
 #define FLXTR_APP_TEST
 #include "../src/shell.c"
 #undef main
 static int test_main(int argc,char **argv){
+    if(argc==2&&!strcmp(argv[1],"--phone-server")){
+        if(SDL_Init(SDL_INIT_TIMER)||api_setup_start("127.0.0.1",0))return 1;
+        puts(api_setup.url);fflush(stdout);
+        Uint32 began=SDL_GetTicks();
+        while(SDL_GetTicks()-began<60000){
+            api_setup_tick(SDL_GetTicks()-began);
+            if(player_pid){
+                int code;
+                if(waitpid(player_pid,&code,WNOHANG)==player_pid){
+                    player_pid=0;player_pipe_close(player_control);player_control=-1;
+                    FILE *f=fopen("phone-player-exit","w");
+                    if(f){fprintf(f,"%d",WIFEXITED(code)?WEXITSTATUS(code):-1);fclose(f);}
+                }
+            }
+            SDL_Delay(1);
+        }
+        api_setup_close();return 0;
+    }
     if(argc!=2)return 2;
     if(SDL_Init(SDL_INIT_TIMER))return 1;
     Title title={0};snprintf(title.url,sizeof(title.url),"%s",argv[1]);
@@ -33,6 +52,24 @@ static int test_main(int argc,char **argv){
     }
     if(access("music-cache/error.txt",R_OK)){fprintf(stderr,"FAIL: native music worker\n");return 1;}
     puts("PASS: UI music worker, packaged Python path and nested worker Job Object");
+    player_pid=0;
+    char reply[200];
+    strcpy(phone_pending,"url");snprintf(phone_value,sizeof(phone_value),"%s",argv[1]);
+    assert(phone_dispatch(reply,sizeof(reply))==200&&player_pid>0);
+    strcpy(phone_pending,"url");snprintf(phone_value,sizeof(phone_value),"%s",argv[1]);
+    assert(phone_dispatch(reply,sizeof(reply))==409);
+    SDL_Delay(500);
+    strcpy(phone_pending,"control");strcpy(phone_value,"s");
+    assert(phone_dispatch(reply,sizeof(reply))==200);
+    began=SDL_GetTicks();
+    while(waitpid(player_pid,&code,WNOHANG)==0){
+        if(SDL_GetTicks()-began>15000){kill(player_pid,SIGKILL);waitpid(player_pid,NULL,0);return 1;}SDL_Delay(10);
+    }
+    assert(WIFEXITED(code)&&WEXITSTATUS(code)==40);
+    player_pid=0;player_pipe_close(player_control);player_control=-1;
+    strcpy(phone_pending,"control");strcpy(phone_value,"p");
+    assert(phone_dispatch(reply,sizeof(reply))==409);
+    puts("PASS: actual phone dispatch launches mpv, rejects busy/no-player requests and stops via IPC");
     SDL_Quit();return 0;
 }
 int wmain(int argc,wchar_t **argv){return flxtr_win_entry(test_main,argc,argv,1);}

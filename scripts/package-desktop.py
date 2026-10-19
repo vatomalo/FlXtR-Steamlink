@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / 'dist'
 version = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 source = DIST / 'FlXtR-linux-x86_64'
-names = ('greenlink', 'greenlink-catalog', 'greenlink-player', 'greenlink-resolver')
+names = ('greenlink', 'greenlink-catalog', 'greenlink-player', 'greenlink-resolver', 'greenlink-audio')
 # These components must match the host kernel, glibc and installed GPU drivers.
 system = re.compile(r'^(ld-linux|lib(c|m|dl|pthread|rt|resolv|nss_[^.]+)\.so|lib(stdc\+\+|gcc_s)\.so|lib(GL|EGL|GLES|GLX|OpenGL|GLdispatch|glapi|drm|gbm|vulkan|va)[-.0-9a-z_]*\.so)')
 for edition in ('Linux', 'SteamDeck'):
@@ -81,8 +81,9 @@ for edition in ('Linux', 'SteamDeck'):
         ('FlXtR-SteamDeck.sh' if edition == 'SteamDeck' else 'FlXtR.sh') + '.\n'
         'Steam Deck: in Desktop Mode, add FlXtR-SteamDeck.sh to Steam as a non-Steam game.\n'
         'Leave compatibility/Proton disabled. Use the Gamepad controller layout.\n'
-        'Built on Ubuntu 22.04; requires glibc 2.35+, Python 3, system certificates,\n'
+        'Built on Ubuntu 22.04; requires glibc 2.35+, Python 3.10+, system certificates,\n'
         'a desktop display/audio session and system OpenGL/VA-API/Vulkan drivers.\n'
+        'Music includes yt-dlp, EJS and QuickJS.\n'
         'Application libraries are bundled under current/lib with dependency licenses.\n'
         'Automatic updates are disabled to retain bundled libraries. For upgrades,\n'
         'extract a new release separately and copy your data folder across.\n'

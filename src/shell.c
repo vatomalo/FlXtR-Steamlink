@@ -860,13 +860,6 @@ static void prefetch_pages(void){
 }
 static void controller_used(void){controller_activity=SDL_GetTicks();controller_slept=0;}
 static void controller_idle(void){
-    /* Video playback is active use, not controller inactivity. Keep Bluetooth
-     * controllers connected and defer the idle timer until playback ends. */
-    if(player_pid||tv_buffer_pid){
-        controller_activity=SDL_GetTicks();
-        controller_slept=0;
-        return;
-    }
     if(idle_pid){if(waitpid(idle_pid,NULL,WNOHANG)==idle_pid)idle_pid=0;else return;}
     if(controller_slept||SDL_GetTicks()-controller_activity<300000)return;
     controller_slept=1;

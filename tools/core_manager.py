@@ -172,7 +172,8 @@ def install(name):
                     digest=unpack(archive,filename,output)
             if not compatible_header(temp_name,system):raise ValueError('Core binary has the wrong architecture/format')
             check=subprocess.run([sys.executable,'-I',str(Path(__file__).resolve()),'--probe',str(temp_name.resolve())],
-                                 capture_output=True,timeout=20)
+                                 capture_output=True,timeout=20,
+                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
             if check.returncode:
                 detail=check.stderr.decode('utf-8',errors='replace').strip().splitlines()
                 raise ValueError('Core cannot load on this system: '+(detail[-1] if detail else 'missing dependencies'))

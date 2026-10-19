@@ -53,6 +53,7 @@ class CoreTests(unittest.TestCase):
             run.return_value.returncode=0
             self.assertEqual(manager.install('fceumm'),'Core installed')
             self.assertFalse(Path('games.json').exists())
+            self.assertEqual(run.call_args.kwargs['creationflags'],getattr(manager.subprocess,'CREATE_NO_WINDOW',0))
             info=json.loads(Path('cores/fceumm_libretro.so.json').read_text())
             self.assertEqual(info['platform'],'linux-x86_64');self.assertEqual(len(info['sha256']),64)
             Path('cores/fceumm_libretro.so').write_bytes(b'custom core')

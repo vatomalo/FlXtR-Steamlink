@@ -167,6 +167,7 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
         if(strstr(value,"://")){
             if(strncmp(value,"https://",8))return 400;
             if(strncmp(value,"https://open.spotify.com/playlist/",34)&&
+               strncmp(value,"https://music.youtube.com/",26)&&
                strncmp(value,"https://www.youtube.com/",24)&&
                strncmp(value,"https://youtube.com/",20)&&
                strncmp(value,"https://youtu.be/",17))return 400;

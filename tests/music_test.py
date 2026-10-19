@@ -34,6 +34,20 @@ class MusicTest(unittest.TestCase):
             self.assertEqual(search.call_count, 4)
             self.assertEqual(len(list(Path(root).glob('*.json'))), 3)
 
+    def test_youtube_phone_share_links(self):
+        expected='https://www.youtube.com/watch?v=abcdefghijk'
+        for value in ['https://youtu.be/abcdefghijk?si=shared',
+                      'https://www.youtube.com/watch?si=shared&v=abcdefghijk&t=30',
+                      'https://music.youtube.com/watch?v=abcdefghijk&si=shared',
+                      'https://www.youtube.com/shorts/abcdefghijk?feature=share']:
+            self.assertEqual(music.youtube_address(value), expected)
+        self.assertEqual(music.youtube_address(expected+'&list=PLtest&si=shared'), expected+'&list=PLtest')
+        for value in ['https://youtube.com.evil/watch?v=abcdefghijk',
+                      'https://user@youtube.com/watch?v=abcdefghijk',
+                      'https://youtube.com:443/watch?v=abcdefghijk',
+                      'file:///etc/passwd']:
+            self.assertIsNone(music.youtube_address(value))
+
     def test_recommendations_skip_history_and_invalid_ids(self):
         with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
             (music.CACHE/'history.txt').write_text(json.dumps(['abcdefghijk', 'lmnopqrstuv']))

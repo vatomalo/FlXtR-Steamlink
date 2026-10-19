@@ -12,6 +12,7 @@ import sys
 import time
 import unicodedata
 import urllib.request
+from urllib.parse import urlsplit, parse_qs
 
 CACHE = Path('music-cache')
 MAX_ROWS = 100
@@ -63,16 +64,40 @@ def ydl_options(flat=False):
         options['cacert'] = cert
     return options
 
+def youtube_address(value):
+    parsed = urlsplit(value)
+    if parsed.scheme != 'https' or parsed.hostname not in ('youtube.com', 'www.youtube.com', 'music.youtube.com', 'youtu.be'):
+        return None
+    if parsed.username or parsed.password or parsed.netloc != parsed.hostname:
+        return None
+    query = parse_qs(parsed.query)
+    playlist = query.get('list', [''])[0]
+    if playlist and not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', playlist):
+        return None
+    if parsed.path == '/playlist' and playlist:
+        return 'https://www.youtube.com/playlist?list=' + playlist
+    if parsed.hostname == 'youtu.be':
+        ident = parsed.path[1:]
+    elif parsed.path.startswith('/shorts/'):
+        ident = parsed.path[len('/shorts/'):]
+    elif parsed.path == '/watch':
+        ident = query.get('v', [''])[0]
+    else:
+        return None
+    if not re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
+        return None
+    return 'https://www.youtube.com/watch?v=' + ident + ('&list=' + playlist if playlist else '')
+
 def search(value):
     if spotify_id(value):
         return fetch_spotify(value)
     if 'spotify.com' in value:
         raise ValueError('Use a public Spotify playlist URL')
-    youtube_url = re.fullmatch(r'https://(?:www\.)?(?:youtube\.com/(?:playlist\?list=[A-Za-z0-9_-]+|watch\?v=[A-Za-z0-9_-]{11}(?:&list=[A-Za-z0-9_-]+)?|shorts/[A-Za-z0-9_-]{11})|youtu\.be/[A-Za-z0-9_-]{11})(?:&[^\s]*)?', value)
+    youtube_url = youtube_address(value)
     if value.startswith('https://') and not youtube_url:
         raise ValueError('Use a YouTube video/playlist URL or a public Spotify playlist')
     with youtube_client(True) as ydl:
-        data = ydl.extract_info(value if youtube_url else 'ytsearch20:' + value[:220], download=False)
+        data = ydl.extract_info(youtube_url if youtube_url else 'ytsearch20:' + value[:220], download=False)
         if 'entries' in data:
             data['entries'] = list(islice(data['entries'], MAX_ROWS))
     if 'entries' not in data:

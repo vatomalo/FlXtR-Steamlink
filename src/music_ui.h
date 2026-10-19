@@ -15,7 +15,24 @@ static void music_spawn(int job){
     music_stop();mkdir("music-cache",0700);unlink("music-cache/error.txt");
     if(job==2){unlink("music-cache/stream.txt");unlink("music-cache/playing.txt");}
     if(job==2)music_play_index=music_selected;
-    music_job=job;music_started=SDL_GetTicks();music_pid=shell_fork();
+    music_job=job;music_started=SDL_GetTicks();
+#ifdef _WIN32
+    if(job==3){
+        const char *args[]={"greenlink-audio","music-cache/stream.txt",NULL};
+        music_pid=flxtr_win_spawn("greenlink-audio",args,"music.log","music.log",NULL,0,1);
+    }else{
+        char runtime[PATH_MAX],python[PATH_MAX],script[PATH_MAX],cert[PATH_MAX];
+        snprintf(runtime,sizeof(runtime),"%s/music-runtime",flxtr_win_binary_dir());
+        snprintf(python,sizeof(python),"%s/bin/python.exe",runtime);
+        snprintf(script,sizeof(script),"%s/tools/music.py",flxtr_win_binary_dir());
+        snprintf(cert,sizeof(cert),"%s/certs/cacert.pem",flxtr_win_binary_dir());
+        setenv("PYTHONHOME",runtime,1);setenv("PYTHONDONTWRITEBYTECODE","1",1);setenv("SSL_CERT_FILE",cert,1);
+        const char *args[]={"python","-I",script,job==1?"search":"resolve",job==1?music_query:music_rows[music_selected].kind,job==1?NULL:music_rows[music_selected].key,NULL};
+        music_pid=flxtr_win_spawn(python,args,job==1?"music-cache/results.tsv":"music.log","music.log",NULL,0,1);
+        unsetenv("PYTHONHOME");
+    }
+#else
+    music_pid=shell_fork();
     if(!music_pid){
         setpgid(0,0);
         int out=open(job==1?"music-cache/results.tsv":"music.log",O_CREAT|O_WRONLY|O_TRUNC,0600);
@@ -27,8 +44,11 @@ static void music_spawn(int job){
         else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","resolve",music_rows[music_selected].kind,music_rows[music_selected].key,(char*)NULL);
         _exit(127);
     }
+#endif
     if(music_pid<0){music_pid=0;music_job=0;snprintf(music_message,sizeof(music_message),"COULD NOT START MUSIC WORKER");return;}
+#ifndef _WIN32
     setpgid(music_pid,music_pid);
+#endif
     snprintf(music_message,sizeof(music_message),"%s",job==1?"SEARCHING... B CANCEL":job==2?"FINDING YOUTUBE AUDIO... B CANCEL":"PLAYING / X PAUSE / A PLAY SELECTED / B EXIT");
 }
 static int music_poll(void){

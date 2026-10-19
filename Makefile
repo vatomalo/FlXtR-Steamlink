@@ -103,7 +103,7 @@ test-music-layout: all
 
 .PHONY: test-music-layout
 
-# Portable platform foundation; the full Windows app is still being ported.
+# Portable platform foundation and native Windows application.
 test-platform:
 	bash scripts/test-platform.sh
 
@@ -120,3 +120,8 @@ test-desktop-ipc:
 	python3 tests/desktop_player_ipc_test.py
 
 .PHONY: test-desktop-ipc
+
+windows:
+	python3 scripts/build-windows-app.py
+
+.PHONY: windows

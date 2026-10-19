@@ -1,6 +1,7 @@
 /* Desktop backend. libmpv owns video/audio; the shell retains controller input. */
 #define _POSIX_C_SOURCE 200809L
 #include <mpv/client.h>
+#include "windows_runtime.h"
 #include "platform_pipe.h"
 #include <fcntl.h>
 #include <signal.h>
@@ -78,6 +79,9 @@ static void key(char c){
     }
     if(menu&&!stop)draw();
 }
+#ifdef _WIN32
+#define main flxtr_player_main
+#endif
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc<2)return 2;
@@ -127,9 +131,19 @@ int main(int argc,char **argv){
     mpv_set_option_string(mpv,"term-status-msg","");
     mpv_set_option_string(mpv,"ytdl","no");mpv_set_option_string(mpv,"input-default-bindings","yes");
     mpv_set_option_string(mpv,"input-vo-keyboard","yes");mpv_set_option_string(mpv,"osc","no");
-    mpv_set_option_string(mpv,"scripts","./linux-controls.lua");
+    mpv_set_option_string(mpv,"scripts",
+#ifdef _WIN32
+        flxtr_win_resource("linux-controls.lua")
+#else
+        "./linux-controls.lua"
+#endif
+    );
     mpv_set_option_string(mpv,"force-window","yes");mpv_set_option_string(mpv,"hwdec","auto-safe");
-    mpv_set_option_string(mpv,"tls-verify","yes");mpv_set_option_string(mpv,"cache","yes");
+    mpv_set_option_string(mpv,"tls-verify","yes");
+#ifdef _WIN32
+    mpv_set_option_string(mpv,"tls-ca-file",FLXTR_CA_BUNDLE);
+#endif
+mpv_set_option_string(mpv,"cache","yes");
     /* mpv's disk cache is append-only, unlike Steam Link's bounded ring file. */
     mpv_set_option_string(mpv,"cache-on-disk","no");
     char value[160];snprintf(value,sizeof(value),"%d",buffer);mpv_set_option_string(mpv,"cache-secs",value);
@@ -173,3 +187,8 @@ int main(int argc,char **argv){
     if(fd!=FLXTR_INVALID_PIPE)flxtr_pipe_close(fd);
     mpv_terminate_destroy(mpv);return result;
 }
+
+#ifdef _WIN32
+#undef main
+FLXTR_WINDOWS_CONSOLE_ENTRY(flxtr_player_main)
+#endif

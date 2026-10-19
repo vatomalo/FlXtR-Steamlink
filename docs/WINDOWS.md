@@ -1,93 +1,89 @@
-# Windows port — steps 1 and 2
+# Windows application (experimental)
 
-Status: **native platform, IPC and phone-server backends; not a complete Windows app**.
-The package contains developer test executables. There is no Windows GUI/player
-release yet. Linux and Steam Link application builds remain available.
+The native x86-64 Windows package contains **FlXtR.exe**, the SDL UI, catalog
+worker, WASM-backed resolver, libmpv video/audio players, phone HTTP setup,
+and a private Python/yt-dlp/EJS/QuickJS music runtime. It runs without WSL,
+Docker, MSYS2, a Python installation, or C# on the user's Windows machine.
 
-## Build directly in Debian/Ubuntu WSL
+## Run
 
-Run outside Docker:
+Extract the entire FlXtR-Windows-x86_64.zip into a folder and open FlXtR.exe.
+Keep its DLLs, assets, certs, tools and music-runtime folders together.
+Use a controller or keyboard: arrows, Enter/A, Escape/B.
 
-```sh
-sudo apt-get update
-sudo apt-get install gcc-mingw-w64-x86-64-posix libmpv-dev
-bash scripts/test-platform.sh
-bash scripts/build-windows.sh
-```
+Settings, keys, favorites and caches are stored under %LOCALAPPDATA%\FlXtR.
+The optional FLXTR_DATA_DIR environment variable selects another existing or
+creatable directory. Package resources are found relative to the executable,
+so shortcuts and launching from another working directory work.
 
-Output: dist/FlXtR-Windows-platform-x86_64.zip and its SHA-256 file.
-Extract it into a writable Windows folder. In PowerShell:
+This is a first experimental Windows application, not a stable release.
+Provider availability and controller/device compatibility need more user testing.
+The Windows update action opens GitHub releases; extract a new Windows ZIP
+to update. Steam Link's ConnMan Wi-Fi provisioning and controller sleep helper
+are not used on Windows. RetroArch, ScummVM, ROMs and libretro cores are not bundled.
+For RetroArch set FLXTR_RETROARCH_HOME to the installed directory containing
+retroarch.exe, cores, and roms; Windows cores end in _libretro.dll.
+ScummVM can be installed on PATH.
 
-```powershell
-.\FlXtR-windows-platform-test.exe
-.\FlXtR-windows-ipc-test.exe
-```
+## Build in regular Debian/Ubuntu WSL
 
-Both executables must print PASS messages and return zero. No MSYS2 installation
-is required on the Windows test machine. Neither executable is the media app.
+Run **outside Docker**, from this branch's repository checkout:
 
-The optional FlXtR-phone-server-test.exe runs the actual phone setup HTTP server
-on **localhost only** and prints its temporary URL. The package includes its phone
-HTML/JS assets. Ctrl+C stops the fixture. Files or keys intentionally saved through
-its setup pages remain in the working folder; it does not change existing app data.
-This fixture is not a LAN phone-remote release.
+    sudo apt-get update
+    sudo apt-get install -y build-essential cmake python3 zstd wget
+    python3 scripts/build-windows-app.py
 
-## Implemented
+The script downloads a checksum-pinned LLVM-MinGW UCRT compiler and MSYS2 UCRT
+headers, import libraries and runtime packages into build/windows-sdk.
+scripts/windows-sdk.lock.json pins every URL, version and SHA-256.
+The existing resolver script verifies and prepares its WABT/decoder inputs.
+No MSYS shell or Windows-side build tool is needed.
 
-- UTF-8 process arguments through CreateProcessW/posix_spawn, redirection, exact
-  quoting, bounded waits, exit status, termination and handle cleanup.
-- Explicit handle/descriptor inheritance, extended in step 2 to export only
-  selected player pipe endpoints without leaking unrelated handles.
-- Private, local-only Windows byte pipes with nonblocking control writes/reads,
-  backpressure and EOF; POSIX uses anonymous pipes. The player control/preload
-  transport is tested across real parent/child processes on both operating systems.
-- The shared desktop player accepts native Windows control/preload handles and
-  existing POSIX descriptor arguments. Its real source cross-compiles to a Windows
-  object with the public libmpv header. Windows linking/DLLs are still pending.
-- The actual phone HTTP server uses Winsock startup/shutdown, socket-sized
-  handles, nonblocking IO, closesocket and native adapter discovery on Windows.
-  Linux retains POSIX sockets and interface discovery.
-- Rejected HTTP requests half-close the response and drain unread input with a
-  bound, preventing Windows TCP resets from discarding the HTTP error response.
-- Cryptographic randomness via BCrypt/urandom, exclusive file locks and file
-  replacement. Windows key/upload temporaries have a current-user-only DACL.
-- Binary uploads, UTF-8 filesystem paths, no-overwrite publication, free-space
-  checks, rejection of Windows device basenames, and no-follow local media checks.
-- A native data-directory helper returns LOCALAPPDATA\\FlXtR on Windows and the
-  XDG data path on Linux. Existing app data has not been relocated; the future
-  Windows launcher will use this helper.
-- Linux catalog/prefetch/controller/updater helpers use the shared spawn layer
-  through a transitional POSIX adapter; phone session tokens use shared randomness.
+Output:
 
-The pipe implementation intentionally offers synchronous nonblocking polling, as
-used by the existing player; it is not an overlapped-I/O API. A pipe write may be
-partial or return EAGAIN, and callers must retain/retry bytes that were not written.
-The process API owns one direct child. Windows stop currently uses
-TerminateProcess; graceful app shutdown and process-tree management are pending.
+- dist/FlXtR-Windows-x86_64.zip — complete application and DLLs.
+- dist/FlXtR-Windows-x86_64.zip.sha256.
+- build/windows-app/windows-app-test.exe — developer integration helper.
+
+For subsequent offline builds with the SDK already present:
+
+    python3 scripts/build-windows-app.py --no-fetch
+
+The resolver's verified source/build cache must also exist for an offline build.
+GREENLINK_BUILD_CACHE optionally selects it.
 
 ## Validation
 
-GitHub Actions cross-compiles in Linux and runs both test executables plus the
-same HTTP integration suite against the real server on Windows. Tests cover
-spaces/Unicode, argument quoting, handle isolation, control/preload messages,
-empty/full/disconnected pipes, repeated cleanup, private file ACLs, binary uploads,
-duplicate/traversal/device-name rejection, key replacement, fragmented HTTP,
-origin/host rejection and setup expiry.
+The Windows CI job runs the complete package from a path containing spaces and
+Unicode. tests/windows_app_test.py checks the rendered SDL UI, actual UI-to-player
+launch, native libmpv playback, inherited control/preload pipes, catalog resources,
+Unicode JSON/ZIP paths, bounded ZIP extraction/traversal rejection, Python TLS,
+yt-dlp/EJS, QuickJS and relocated music-worker options. Network providers are
+excluded from the deterministic CI tests.
 
-Linux regression checks include the shared platform tests, real desktop player
-playback/control/preload tests, existing helper spawning, phone state and HTTP.
-ASan/UBSan checks run locally for the IPC/platform layer.
+The preceding foundation tests remain separately available:
 
-## Remaining for a usable Windows app
+    sudo apt-get install -y gcc-mingw-w64-x86-64-posix libmpv-dev
+    bash scripts/test-platform.sh
+    bash scripts/build-windows.sh
 
-1. Migrate remaining fork/exec/waitpid/signal users and process IDs to
-   FlxtrProcess: full UI/player launch, artwork workers, music and game launching.
-   Linux /bin/sh helpers still need native Windows replacements.
-2. Build/link Windows SDL2, SDL2_image, curl, json-c, OpenSSL and libmpv, then build
-   the full shell/catalog/resolver/player executable set.
-3. Add the native launcher, Windows updates and DLL packaging; integrate the
-   data-directory helper and validate interactive playback and controllers.
+FlXtR-Windows-platform-x86_64.zip contains developer validation executables;
+it is separate from the complete application ZIP. Its tests cover process
+quoting, Unicode arguments, strict handle inheritance, waits/termination,
+cryptographic randomness, locks, private files, backpressure, EOF and actual
+phone HTTP setup/upload behavior. Linux build and integration regressions run
+alongside the native Windows tests.
 
-MinGW-w64 does not make fork() or POSIX signals work on Windows. Installing the
-compiler alone cannot build the unchanged Linux app. Shared C logic and native
-backends are retained rather than introducing a second C# UI.
+## Implementation and dependencies
+
+Windows starts explicit argument vectors with CreateProcessW; it does not
+emulate fork or execute app helpers through a command shell. Job Objects
+contain worker trees. Native private local byte pipes carry player controls.
+Wide filesystem, environment, directory and process APIs preserve UTF-8 paths.
+ZIP enumeration/extraction uses libarchive; BIOS manifests use OpenSSL hashing.
+Winsock implements the phone HTTP server.
+
+The package includes upstream license files, source-package URLs and pinned
+versions in third-party-licenses and THIRD-PARTY-SOURCES.json.
+The dependency bundler recursively resolves PE imports and refuses unresolved
+non-system DLLs. Python's runtime has its own DLL closure.

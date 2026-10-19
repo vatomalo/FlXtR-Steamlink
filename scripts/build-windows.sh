@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cross-compile the Windows platform/IPC/phone-server validation executables.
-# The full SDL UI/catalog/player are still being ported.
+# For the complete app run: python3 scripts/build-windows-app.py
 set -euo pipefail
 cd "$(dirname "$0")/.."
 compiler=${WINDOWS_CC:-x86_64-w64-mingw32-gcc}
@@ -30,7 +30,7 @@ import zipfile
 root = Path('build/windows-platform')
 readme = (
     'FlXtR Windows port: steps 1 and 2, platform + IPC + phone server\n\n'
-    'These are developer validation executables, NOT the complete FlXtR app.\n'
+    'Developer validation executables; the full app is a separate Windows ZIP.\n'
     'In PowerShell, run from a writable extracted folder:\n'
     '  .\\FlXtR-windows-platform-test.exe\n'
     '  .\\FlXtR-windows-ipc-test.exe\n'
@@ -42,8 +42,8 @@ readme = (
     'Any files/keys deliberately saved through those pages remain in this folder.\n\n'
     'Implemented: native processes, private nonblocking pipes, preload/control IPC,\n'
     'Winsock HTTP setup/uploads, UTF-8 paths, private temp files and data paths.\n'
-    'The desktop player source cross-compiles to a Windows object. Windows\n'
-    'dependency linking, the full app launcher/UI and packaging are still pending.\n'
+    'This package checks the player source with the Windows compiler. Full\n'
+    'application builds are available separately via build-windows-app.py.\n'
     'Build host: Debian/Ubuntu WSL with MinGW-w64. No Docker or C# required.\n'
     'Source/status: https://github.com/vatomalo/FlXtR-Steamlink/blob/port/windows-platform/docs/WINDOWS.md\n'
 )
@@ -59,5 +59,5 @@ with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 Path(str(archive) + '.sha256').write_text(digest + '  ' + archive.name + '\n')
 print('Built ' + str(archive))
-print('Windows platform/IPC foundation: the complete Windows application is not ready.')
+print('Developer foundation tests; complete application: scripts/build-windows-app.py')
 PY

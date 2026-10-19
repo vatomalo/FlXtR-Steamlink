@@ -11,12 +11,18 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <sys/file.h>
+#endif
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
 #include <time.h>
+#include "windows_runtime.h"
+#include "windows_json.h"
 #include "response_cache.h"
 #include "browse_filters.h"
 #include "game_metadata.h"
@@ -26,6 +32,20 @@ typedef struct {char title[80],meta[96],poster[512],url[2048],subs_eng[1024],sub
 typedef struct {char *data;size_t length,limit;} Buffer;
 static Entry entries[PAGE_SIZE];
 static int used,total,cache_slot;
+#ifdef _WIN32
+static int flxtr_background_worker;
+static void flxtr_background(const char *kind){
+    mkdir("catalog-cache",0700);char name[]="catalog-cache/background-XXXXXX";
+    int fd=mkstemp(name);if(fd<0)return;
+    FILE *out=fdopen(fd,"wb");
+    if(!out){close(fd);unlink(name);return;}
+    int good=fwrite(&used,sizeof(used),1,out)==1&&fwrite(entries,sizeof(entries),1,out)==1;
+    if(fclose(out))good=0;
+    const char *args[]={"greenlink-catalog","--background",kind,name,NULL};
+    if(!good||flxtr_win_detach("greenlink-catalog",args))unlink(name);
+}
+#endif
+
 static unsigned long cache_poster_hash;
 static char cache_key[256],cache_file[80];
 static size_t receive(void *data,size_t size,size_t count,void *opaque){
@@ -47,7 +67,7 @@ static int fetch_referred(const char *url,Buffer *b,const char *referer){
     curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,5L);curl_easy_setopt(c,CURLOPT_TIMEOUT,12L);
     curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);curl_easy_setopt(c,CURLOPT_FAILONERROR,1L);
     curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L);
-    curl_easy_setopt(c,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
+    curl_easy_setopt(c,CURLOPT_CAINFO,FLXTR_CA_BUNDLE);
     curl_easy_setopt(c,CURLOPT_USERAGENT,"FlXtR-Steamlink/0.2");
     if(referer&&*referer)curl_easy_setopt(c,CURLOPT_REFERER,referer);
 #if LIBCURL_VERSION_NUM >= 0x075500
@@ -515,10 +535,18 @@ static void game_art_prefetch(void){
     int lock=open("game-art-cache/.worker.lock",O_CREAT|O_RDWR,0600);
     if(lock>=0&&!flock(lock,LOCK_EX|LOCK_NB)){
         catalog_http_reset(); /* Do not share a live HTTPS connection across fork. */
+#ifdef _WIN32
+        if(!flxtr_background_worker){close(lock);lock=-1;flxtr_background("art");}
+        else
+#else
         pid_t child=fork();
-        if(child==0){
+        if(child==0)
+#endif
+        {
+#ifndef _WIN32
             int devnull=open("/dev/null",O_RDWR);
             if(devnull>=0){dup2(devnull,0);dup2(devnull,1);dup2(devnull,2);if(devnull>2)close(devnull);}
+#endif
             for(int pass=0;pass<24;pass++){
                 int fd=open("game-art-cache/.requests",O_RDWR|O_CREAT,0600);
                 if(fd<0)break;
@@ -555,7 +583,7 @@ static void game_art_prefetch(void){
             }
             close(lock);_exit(0);
         }
-        close(lock);
+        if(lock>=0)close(lock);
     }else if(lock>=0)close(lock);
     for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
         char file[80];game_art_path(entries[i].poster,file,sizeof(file));
@@ -577,6 +605,9 @@ static void game_info_prefetch(void){
     for(size_t i=0;i<keylen;i++)
         if(!isalnum((unsigned char)key[i])&&key[i]!='-'&&key[i]!='_')return;
     catalog_http_reset();
+#ifdef _WIN32
+    if(!flxtr_background_worker){flxtr_background("info");return;}
+#else
     pid_t pid=fork();
     if(pid<0)return;
     if(pid>0){waitpid(pid,NULL,0);return;}
@@ -584,6 +615,7 @@ static void game_info_prefetch(void){
     if(detached!=0)_exit(0);
     int nullfd=open("/dev/null",O_RDWR);
     if(nullfd>=0){dup2(nullfd,0);dup2(nullfd,1);dup2(nullfd,2);if(nullfd>2)close(nullfd);}
+#endif
     mkdir("media-info-cache",0700);
     for(int i=0;i<used;i++){
         Entry *e=&entries[i];
@@ -631,7 +663,25 @@ static void game_info_prefetch(void){
 #ifndef FLXTR_VERSION
 #define FLXTR_VERSION "development"
 #endif
+#ifdef _WIN32
+#define main flxtr_catalog_main
+#endif
 int main(int argc,char **argv){
+#ifdef _WIN32
+    if(argc==4&&!strcmp(argv[1],"--background")){
+        if(strlen(argv[3])!=31||strncmp(argv[3],"catalog-cache/background-",25))return 2;
+        for(int i=25;i<31;i++)if(!isalnum((unsigned char)argv[3][i]))return 2;
+        FILE *in=fopen(argv[3],"rb");if(!in)return 2;
+        int good=fread(&used,sizeof(used),1,in)==1&&used>=0&&used<=PAGE_SIZE&&fread(entries,sizeof(entries),1,in)==1;
+        fclose(in);unlink(argv[3]);if(!good)return 2;
+        flxtr_background_worker=1;if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
+        if(!strcmp(argv[2],"art"))game_art_prefetch();
+        else if(!strcmp(argv[2],"info"))game_info_prefetch();
+        else if(!strcmp(argv[2],"anime"))kiss_background_summaries();
+        else return 2;
+        return 0;
+    }
+#endif
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
@@ -753,3 +803,8 @@ output:
         else printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n",e->title,e->meta,e->poster,e->url,e->kind,e->id,e->season,e->episode);}
     catalog_http_close();return ferror(stdout)?1:0;
 }
+
+#ifdef _WIN32
+#undef main
+FLXTR_WINDOWS_CONSOLE_ENTRY(flxtr_catalog_main)
+#endif

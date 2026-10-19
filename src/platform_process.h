@@ -26,7 +26,7 @@
 extern char **environ;
 #endif
 typedef struct {
-    uintptr_t native;
+    uintptr_t native,job_native;
     unsigned long id;
     int running, started, exit_code;
 } FlxtrProcess;
@@ -35,6 +35,7 @@ typedef struct {
     const char *stderr_path; /* Same path as stdout shares its file offset. */
     const uintptr_t *pass_handles; /* Explicit inheritable pipe endpoint copies. */
     size_t pass_count; /* At most 16. Caller retains ownership. */
+    int process_tree; /* Windows: own a kill-on-close Job Object. */
 } FlxtrSpawnOptions;
 #ifdef _WIN32
 static inline wchar_t *flxtr_process_wide(const char *text){
@@ -132,7 +133,7 @@ static inline int flxtr_process_start(FlxtrProcess *process,const char *executab
         if(!DuplicateHandle(GetCurrentProcess(),handles[1],GetCurrentProcess(),&handles[2],0,TRUE,DUPLICATE_SAME_ACCESS))
             handles[2]=INVALID_HANDLE_VALUE;
     }else handles[2]=flxtr_process_stream(err,STD_ERROR_HANDLE,0);
-    int result=-1;SIZE_T bytes=0;
+    int result=-1;SIZE_T bytes=0;HANDLE job=NULL;
     STARTUPINFOEXW startup;PROCESS_INFORMATION info;
     memset(&startup,0,sizeof(startup));memset(&info,0,sizeof(info));
     startup.StartupInfo.cb=sizeof(startup);
@@ -147,16 +148,27 @@ static inline int flxtr_process_start(FlxtrProcess *process,const char *executab
                                  handles,(3+pass_count)*sizeof(HANDLE),NULL,NULL))goto cleanup;
     startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput=handles[0];startup.StartupInfo.hStdOutput=handles[1];startup.StartupInfo.hStdError=handles[2];
-    if(!CreateProcessW(wide,command,NULL,NULL,TRUE,EXTENDED_STARTUPINFO_PRESENT|CREATE_NO_WINDOW,
+    if(options&&options->process_tree){
+        job=CreateJobObjectW(NULL,NULL);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;memset(&limits,0,sizeof(limits));
+        limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if(!job||!SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof(limits))){errno=EIO;goto cleanup;}
+    }
+    if(!CreateProcessW(wide,command,NULL,NULL,TRUE,EXTENDED_STARTUPINFO_PRESENT|CREATE_NO_WINDOW|(job?CREATE_SUSPENDED:0),
                        NULL,NULL,&startup.StartupInfo,&info)){
         DWORD error=GetLastError();
         errno=(error==ERROR_FILE_NOT_FOUND||error==ERROR_PATH_NOT_FOUND)?ENOENT:EIO;
         goto cleanup;
     }
-    CloseHandle(info.hThread);
+    if(job&&(!AssignProcessToJobObject(job,info.hProcess)||ResumeThread(info.hThread)==(DWORD)-1)){
+        TerminateProcess(info.hProcess,126);WaitForSingleObject(info.hProcess,5000);
+        CloseHandle(info.hThread);CloseHandle(info.hProcess);errno=EIO;goto cleanup;
+    }
+    CloseHandle(info.hThread);process->job_native=(uintptr_t)job;job=NULL;
     process->native=(uintptr_t)info.hProcess;process->id=info.dwProcessId;
     process->started=process->running=1;process->exit_code=0;result=0;
 cleanup:
+    if(job)CloseHandle(job);
     if(startup.lpAttributeList){DeleteProcThreadAttributeList(startup.lpAttributeList);free(startup.lpAttributeList);}
     for(size_t i=0;i<3;i++)if(handles[i]!=INVALID_HANDLE_VALUE)CloseHandle(handles[i]);
     free(wide);free(command);return result;
@@ -210,6 +222,7 @@ static inline int flxtr_process_poll(FlxtrProcess *process,int *exit_code){
         if(result!=WAIT_OBJECT_0||!GetExitCodeProcess(handle,&code)){errno=EIO;return -1;}
         process->exit_code=(int)code;
         CloseHandle(handle);process->native=0;
+        if(process->job_native){CloseHandle((HANDLE)process->job_native);process->job_native=0;}
 #else
         int status;pid_t result;
         do{result=waitpid((pid_t)process->id,&status,WNOHANG);}while(result<0&&errno==EINTR);
@@ -246,7 +259,8 @@ static inline int flxtr_process_stop(FlxtrProcess *process,int force){
     int result=flxtr_process_poll(process,NULL);
     if(result)return result<0?-1:0;
 #ifdef _WIN32
-    if(!TerminateProcess((HANDLE)process->native,force?137:143)){
+    BOOL stopped=process->job_native?TerminateJobObject((HANDLE)process->job_native,force?137:143):TerminateProcess((HANDLE)process->native,force?137:143);
+    if(!stopped){
         if(flxtr_process_poll(process,NULL)==1)return 0;
         errno=EIO;return -1;
     }

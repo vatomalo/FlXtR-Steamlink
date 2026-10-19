@@ -14,7 +14,7 @@
 struct w2c_wbg {int unused;};
 static struct w2c_wbg host;
 static w2c_img__data module;
-enum {UNDEFINED,STRING,WINDOW,DOCUMENT,SCREEN,NAVIGATOR,STORAGE,CANVAS,CONTEXT,ARRAY,DATE,PERFORMANCE,FN_GLOBAL,FN_QUEUE,FN_RESOLVE,FN_REJECT,CLOSURE,PROMISE};
+enum {UNDEFINED,STRING,WINDOW,DOCUMENT,SCREEN,NAVIGATOR,STORAGE,CANVAS,CANVAS_CONTEXT,ARRAY,DATE,PERFORMANCE,FN_GLOBAL,FN_QUEUE,FN_RESOLVE,FN_REJECT,CLOSURE,PROMISE};
 typedef struct {int type;char *text;u32 a,b,c;int refs;} Object;
 static Object objects[4096];static u32 object_count=132;
 static char store_keys[16][96],store_values[16][256];static int store_count;

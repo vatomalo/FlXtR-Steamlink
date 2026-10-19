@@ -13,9 +13,13 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 #include <unistd.h>
 #include <time.h>
+#include "windows_runtime.h"
+#include "windows_archive.h"
 #include "font.h"
 #include "video_layout.h"
 #include "tv_schedule.h"
@@ -28,6 +32,10 @@
 #include "api_setup.h"
 #include "vendor/qrcodegen.c"
 #include "wifi_pairing.h"
+#ifdef _WIN32
+#define IMG_Load(path) IMG_Load(flxtr_win_resource(path))
+#define SDL_RWFromFile(path,mode) SDL_RWFromFile(flxtr_win_resource(path),mode)
+#endif
 
 static int accounts_on,party_entry,about_row;
 static char rom_phone_path[241];
@@ -71,7 +79,7 @@ static void rom_core_scan(const char *dir){
     struct dirent *e;
     while((e=readdir(d))&&rom_core_count<ROM_CORE_LIMIT){
         size_t len=strlen(e->d_name);
-        const char suffix[]="_libretro.so";
+        const char suffix[]="_libretro" FLXTR_CORE_EXT;
         if(len<=sizeof(suffix)-1||strcmp(e->d_name+len-(sizeof(suffix)-1),suffix))continue;
         len-=sizeof(suffix)-1;
         if(!len||len>=sizeof(rom_core_names[0]))continue;
@@ -129,7 +137,17 @@ static SDL_Texture *posters[VISIBLE],*background;
 static SDL_GameController *pads[4];
 static pid_t player_pid, update_pid;
 static int restart_shell,game_exit, coverflow=1;
-static int player_control=-1,play_after_load,player_menu;
+#ifdef _WIN32
+typedef FlxtrPipeHandle PlayerPipe;
+#define player_pipe_close flxtr_pipe_close
+#define player_pipe_write flxtr_pipe_write
+#else
+typedef int PlayerPipe;
+#define player_pipe_close close
+#define player_pipe_write write
+#endif
+static PlayerPipe player_control=-1;
+static int play_after_load,player_menu;
 static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
@@ -145,7 +163,7 @@ static int tv_joining,tv_preloading;
 static long long tv_air_start,tv_last_block;
 static Title tv_next_title,tv_last_title;
 static pid_t tv_buffer_pid;
-static int tv_buffer_control=-1,tv_gate=-1;
+static PlayerPipe tv_buffer_control=-1,tv_gate=-1;
 static int tv_rating_weight=5,tv_popularity_weight=2,tv_variety_weight=4;
 static int series_autoplay;
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
@@ -368,6 +386,11 @@ static int bios_download(void){
     snprintf(tmp,sizeof(tmp),"system/.%s.download",bios_files[bios_selected]);
     if(access(target,F_OK)==0)return 4;
     unlink(tmp);
+#ifdef _WIN32
+    const char *args[]={"curl","-fLsS","--proto","=https","--proto-redir","=https","--connect-timeout","10","--max-time","90","--max-filesize","16777216","--cacert",flxtr_win_resource("certs/cacert.pem"),"-o",tmp,url,NULL};
+    if(flxtr_win_run("curl",args,"NUL","bios.log")){unlink(tmp);return 5;}
+    if(!flxtr_digest_matches(tmp,sha,EVP_sha256())){unlink(tmp);return 6;}
+#else
     pid_t child=shell_fork();if(child<0)return 3;
     if(!child){execlp("curl","curl","-fLsS","--proto","=https","--proto-redir","=https","--connect-timeout","10","--max-time","90","--max-filesize","16777216","--cacert","certs/cacert.pem","-o",tmp,url,(char*)NULL);_exit(127);}
     int code=0;if(waitpid(child,&code,0)!=child||!WIFEXITED(code)||WEXITSTATUS(code)){unlink(tmp);return 5;}
@@ -377,6 +400,7 @@ static int bios_download(void){
     if(!child){int devnull=open("/dev/null",O_WRONLY);if(devnull>=0){dup2(devnull,STDOUT_FILENO);close(devnull);}execlp("sha256sum","sha256sum","-c","bios-check.txt",(char*)NULL);_exit(127);}
     code=0;int ok=waitpid(child,&code,0)==child&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
     unlink("bios-check.txt");if(!ok){unlink(tmp);return 6;}
+#endif
     if(link(tmp,target)<0){unlink(tmp);return 4;}
     unlink(tmp);return 0;
 }
@@ -419,7 +443,7 @@ static int bios_archive_download(const Title *item){
     curl_easy_setopt(curl,CURLOPT_TIMEOUT,120L);
     curl_easy_setopt(curl,CURLOPT_LOW_SPEED_LIMIT,1024L);
     curl_easy_setopt(curl,CURLOPT_LOW_SPEED_TIME,45L);
-    curl_easy_setopt(curl,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
+    curl_easy_setopt(curl,CURLOPT_CAINFO,FLXTR_CA_BUNDLE);
     curl_easy_setopt(curl,CURLOPT_SSL_VERIFYPEER,1L);
     curl_easy_setopt(curl,CURLOPT_SSL_VERIFYHOST,2L);
 #if LIBCURL_VERSION_NUM >= 0x075500
@@ -439,6 +463,9 @@ static int bios_archive_download(const Title *item){
         fprintf(stderr,"BIOS Archive transfer failed: HTTP %ld / curl %d / %s / URL %s\\n",http,(int)result,curl_error[0]?curl_error:curl_easy_strerror(result),item->url);
         unlink(temp);return 5;
     }
+#ifdef _WIN32
+    int verified=flxtr_digest_matches(temp,item->meta+5,EVP_sha1());
+#else
     pid_t pid;int code=0;
     FILE *f=fopen("bios-archive-check.txt","w");if(!f){unlink(temp);return 3;}
     fprintf(f,"%s  %s\n",item->meta+5,temp);fclose(f);
@@ -449,10 +476,14 @@ static int bios_archive_download(const Title *item){
     }
     code=0;int verified=waitpid(pid,&code,0)==pid&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
     unlink("bios-archive-check.txt");
+#endif
     if(!verified){unlink(temp);return 6;}
     if(is_zip){
         /* BusyBox unzip supports -l, not Info-ZIP's -Z -1.
          * Parse only properly formatted listing rows and extract one exact member. */
+#ifdef _WIN32
+        FILE *listing=flxtr_archive_listing(temp);char line[512],member[512]="";
+#else
         int pipes[2];if(pipe(pipes)<0){unlink(temp);return 3;}
         pid=shell_fork();if(pid<0){close(pipes[0]);close(pipes[1]);unlink(temp);return 3;}
         if(!pid){
@@ -461,6 +492,7 @@ static int bios_archive_download(const Title *item){
         }
         close(pipes[1]);
         FILE *listing=fdopen(pipes[0],"r");char line[512],member[512]="";
+#endif
         if(listing){
             while(fgets(line,sizeof(line),listing)){
                 size_t n=strcspn(line,"\r\n");
@@ -476,19 +508,28 @@ static int bios_archive_download(const Title *item){
                     snprintf(member,sizeof(member),"%s",path);
             }
             fclose(listing);
-        }else close(pipes[0]);
+        }
+#ifndef _WIN32
+        else close(pipes[0]);
         int listcode=0;waitpid(pid,&listcode,0);
+#else
+        int listcode=listing?0:256;
+#endif
         if(!member[0]||!WIFEXITED(listcode)||WEXITSTATUS(listcode)!=0){unlink(temp);return 7;}
         char extracted[128];snprintf(extracted,sizeof(extracted),"system/.%s.extracted",name);
         unlink(extracted);
         int fd=open(extracted,O_WRONLY|O_CREAT|O_EXCL,0600);
         if(fd<0){unlink(temp);return 3;}
+#ifdef _WIN32
+        int extractcode=flxtr_archive_extract(temp,member,fd,16777216)?256:0;close(fd);
+#else
         pid=shell_fork();if(pid<0){close(fd);unlink(extracted);unlink(temp);return 3;}
         if(!pid){
             dup2(fd,STDOUT_FILENO);close(fd);
             execlp("unzip","unzip","-p",temp,member,(char*)NULL);_exit(127);
         }
         close(fd);int extractcode=0;waitpid(pid,&extractcode,0);
+#endif
         struct stat contents;
         int good=WIFEXITED(extractcode)&&WEXITSTATUS(extractcode)==0&&
             !stat(extracted,&contents)&&contents.st_size==((item->id==5)?16384:524288);
@@ -559,7 +600,7 @@ static int open_ui(void) {
     const char *driver=SDL_GetCurrentVideoDriver();int dummy=driver&&!strcmp(driver,"dummy");
     SDL_DisplayMode display;int width=W,height=H;
     if(!dummy&&!SDL_GetCurrentDisplayMode(0,&display)&&display.w>0&&display.h>0){width=display.w;height=display.h;}
-    window=SDL_CreateWindow("FlXtR Steamlink",dummy?SDL_WINDOWPOS_CENTERED:0,dummy?SDL_WINDOWPOS_CENTERED:0,width,height,SDL_WINDOW_SHOWN | (dummy?0:SDL_WINDOW_FULLSCREEN_DESKTOP));
+    window=SDL_CreateWindow("FlXtR",dummy?SDL_WINDOWPOS_CENTERED:0,dummy?SDL_WINDOWPOS_CENTERED:0,width,height,SDL_WINDOW_SHOWN | (dummy?0:SDL_WINDOW_FULLSCREEN_DESKTOP));
     if(window)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
     if(window&&!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
     if(!renderer){close_ui();return -1;}
@@ -852,6 +893,9 @@ static void prefetch_pages(void){
 }
 static void controller_used(void){controller_activity=SDL_GetTicks();controller_slept=0;}
 static void controller_idle(void){
+#ifdef _WIN32
+    return;
+#else
     if(idle_pid){if(waitpid(idle_pid,NULL,WNOHANG)==idle_pid)idle_pid=0;else return;}
     if(controller_slept||SDL_GetTicks()-controller_activity<300000)return;
     controller_slept=1;
@@ -859,6 +903,7 @@ static void controller_idle(void){
     const char *args[]={"sh","./controller-idle.sh",NULL};
     idle_pid=shell_spawn("/bin/sh",args,"controller.log","controller.log");
     if(idle_pid<0)idle_pid=0;
+#endif
 }
 /* User-curated mixed library. Store the same bounded TSV fields used by
  * the catalog; no account or remote service is required. */
@@ -1023,11 +1068,16 @@ static void draw_coverflow(void) {
 }
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
+#ifdef _WIN32
+    ShellExecuteW(NULL,L"open",L"https://github.com/vatomalo/FlXtR-Steamlink/releases",NULL,NULL,SW_SHOWNORMAL);
+    snprintf(status,sizeof(status),"DOWNLOAD AND EXTRACT THE WINDOWS UPDATE FROM GITHUB");return;
+#else
     if(access("./update.sh",R_OK)){snprintf(status,sizeof(status),"UPDATER NOT INSTALLED");return;}
     const char *args[]={"sh","./update.sh",NULL};
     update_pid=shell_spawn("/bin/sh",args,"update.log","update.log");
     if(update_pid<0){update_pid=0;snprintf(status,sizeof(status),"COULD NOT START UPDATER");return;}
     snprintf(status,sizeof(status),"CHECKING GITHUB FOR A SHELL UPDATE...");
+#endif
 }
 #include "music_ui.h"
 static void draw(Uint32 tick) {
@@ -1440,9 +1490,9 @@ static void tv_candidate(void){
     Browse next={5,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);auto_request(next);
 }
 static void tv_cancel_prepared(void){
-    if(tv_gate>=0)close(tv_gate);
+    if(tv_gate>=0)player_pipe_close(tv_gate);
     tv_gate=-1;
-    if(tv_buffer_control>=0)close(tv_buffer_control);
+    if(tv_buffer_control>=0)player_pipe_close(tv_buffer_control);
     tv_buffer_control=-1;
     if(tv_buffer_pid){kill(tv_buffer_pid,SIGKILL);waitpid(tv_buffer_pid,NULL,0);}tv_buffer_pid=0;tv_prepared=0;
 }
@@ -1450,7 +1500,7 @@ static void tv_begin_prepared(void){
     if(!tv_prepared)return;
     tv_prepared=0;auto_active=1;auto_resume=0;playing_title=tv_next_title;
     player_pid=tv_buffer_pid;player_control=tv_buffer_control;tv_buffer_pid=0;tv_buffer_control=-1;
-    close_ui();char go='G';if(tv_gate>=0){ssize_t n=write(tv_gate,&go,1);(void)n;close(tv_gate);}tv_gate=-1;
+    close_ui();char go='G';if(tv_gate>=0){ssize_t n=player_pipe_write(tv_gate,&go,1);(void)n;player_pipe_close(tv_gate);}tv_gate=-1;
     TvAiring a;if(tv_airing_read(&a)&&a.id==auto_title.id){a.start=(long long)time(NULL);tv_airing_save(&a);}
 }
 static void tv_stage_source(const Title *source){
@@ -1484,10 +1534,26 @@ static void bookmark_path(const Title *t,char *path,size_t capacity){
 static void launch_player(const Title *t) {
     if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}prefetch_left=0;
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
+#ifdef _WIN32
+    FlxtrPipe controls={-1,-1},gate={-1,-1};
+    if(flxtr_pipe_create(&controls)||(tv_preloading&&flxtr_pipe_create(&gate))){
+        flxtr_pipe_close(controls.reader);flxtr_pipe_close(controls.writer);
+        snprintf(status,sizeof(status),"PLAYER CONTROL PIPE FAILED");return;
+    }
+    FlxtrPipeHandle inherited_control=flxtr_pipe_export(controls.reader);
+    FlxtrPipeHandle inherited_gate=tv_preloading?flxtr_pipe_export(gate.reader):-1;
+    if(inherited_control<0||(tv_preloading&&inherited_gate<0)){
+        flxtr_pipe_close(inherited_control);flxtr_pipe_close(inherited_gate);
+        flxtr_pipe_close(controls.reader);flxtr_pipe_close(controls.writer);
+        flxtr_pipe_close(gate.reader);flxtr_pipe_close(gate.writer);return;
+    }
+    unlink("playback-request");unlink("playback-position");
+#else
     int gate[2]={-1,-1};if(tv_preloading&&pipe(gate))return;
     int controls[2];if(pipe(controls)){if(gate[0]>=0){close(gate[0]);close(gate[1]);}snprintf(status,sizeof(status),"PLAYER CONTROL PIPE FAILED");return;}
     fcntl(controls[1],F_SETFL,O_NONBLOCK);fcntl(controls[1],F_SETFD,FD_CLOEXEC);
     signal(SIGPIPE,SIG_IGN);unlink("playback-request");unlink("playback-position");
+#endif
     if(auto_active)restart_position=auto_resume;
     /* Resume only an explicit bookmark for this title, not TV channel output. */
     char bookmark_key[16],bookmark_file[64];
@@ -1501,6 +1567,7 @@ static void launch_player(const Title *t) {
     subtitle_route_log("launch-player",t);
     music_video_pause(0);
     close_ui();
+#ifndef _WIN32
     player_pid=shell_fork();
     if(player_pid==0) {
         close(controls[1]);
@@ -1510,6 +1577,9 @@ static void launch_player(const Title *t) {
         signal(SIGUSR1,SIG_IGN); /* Ignore a controller press before exec is ready. */
         int log=open(tv_preloading?"tv-preload.log":"player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
+#else
+    {
+#endif
         const char *modes[]={"fit","stretch","pixel"};
         /* Keep externally supplied caption URLs separate from media URLs.
          * The player chooses a track according to the subtitle setting. */
@@ -1537,7 +1607,7 @@ static void launch_player(const Title *t) {
         setenv("FLXTR_BOOKMARK_KEY",bookmark_key,1);
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
-        char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
+        char height[16],buffer[16],disk[16],scale[16],delay[16],control[32],start[32];
         int requested_height=t->height?t->height:qualities[quality_setting];
         if(auto_active&&!strcmp(t->kind,"kiss-episode")&&kiss_1080_pass)requested_height=1080;
         /* TV prefers an efficient decode resolution but must also support
@@ -1548,18 +1618,50 @@ static void launch_player(const Title *t) {
             if(preferred>720)preferred=720;
             requested_height=tv_quality_retry>=2?1080:tv_quality_retry==1?720:preferred;
         }
-        snprintf(control,sizeof(control),"%d",controls[0]);snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",requested_height);
+#ifdef _WIN32
+        snprintf(control,sizeof(control),"%" PRIuPTR,(uintptr_t)inherited_control);
+#else
+        snprintf(control,sizeof(control),"%d",controls[0]);
+#endif
+        snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",requested_height);
         snprintf(buffer,sizeof(buffer),"%d",buffer_seconds[buffer_setting]);snprintf(disk,sizeof(disk),"%d",disk_megabytes[disk_setting]);
         snprintf(scale,sizeof(scale),"%d",subtitle_scale);snprintf(delay,sizeof(delay),"%d",subtitle_delay);
+#ifndef _WIN32
         if(!player_menu)execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)NULL);
-        char gate_arg[16];snprintf(gate_arg,sizeof(gate_arg),"%d",gate[0]);
-        char *args[28]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,"--control-fd",control,"--start",start,NULL,NULL,NULL};
-        int n=20;if(tv_preloading){args[n++]="--preload-fd";args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||!strcmp(t->kind,"episode")||!strcmp(t->kind,"kiss-episode"))args[n++]="--episodes";if(auto_active)args[n++]="--servers";args[n]=NULL;
+#endif
+        char gate_arg[32];
+#ifdef _WIN32
+        snprintf(gate_arg,sizeof(gate_arg),"%" PRIuPTR,(uintptr_t)inherited_gate);
+        const char *control_option="--control-handle",*gate_option="--preload-handle";
+#else
+        snprintf(gate_arg,sizeof(gate_arg),"%d",gate[0]);
+        const char *control_option="--control-fd",*gate_option="--preload-fd";
+#endif
+        char *args[28]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)control_option,control,"--start",start,NULL,NULL,NULL};
+        int n=20;if(tv_preloading){args[n++]=(char*)gate_option;args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||!strcmp(t->kind,"episode")||!strcmp(t->kind,"kiss-episode"))args[n++]="--episodes";if(auto_active)args[n++]="--servers";
+#ifdef FLXTR_APP_TEST
+        args[n++]="--headless";
+#endif
+        args[n]=NULL;
+#ifdef _WIN32
+        uintptr_t pass[2]={(uintptr_t)inherited_control,(uintptr_t)inherited_gate};
+        const char *log=tv_preloading?"tv-preload.log":"player.log";
+        player_pid=flxtr_win_spawn("./greenlink-player",(const char *const*)args,log,log,pass,tv_preloading?2:1,0);
+#else
         execv("./greenlink-player",args);_exit(127);
+#endif
     }
+#ifdef _WIN32
+    flxtr_pipe_close(inherited_control);flxtr_pipe_close(inherited_gate);
+    flxtr_pipe_close(controls.reader);flxtr_pipe_close(gate.reader);
+    player_control=controls.writer;
+    if(tv_preloading)tv_gate=gate.writer;
+    restart_position=0;
+#else
     if(tv_preloading){close(gate[0]);tv_gate=gate[1];}
     close(controls[0]);player_control=controls[1];restart_position=0;
-    if(player_pid<0){close(player_control);player_control=-1;player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
+#endif
+    if(player_pid<0){player_pipe_close(player_control);player_control=-1;player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
 }
 static void series_advance(int direction){
@@ -1578,7 +1680,7 @@ static void series_advance(int direction){
 }
 static void finish_player(int code){
     int cancelled=stopping_player;
-    player_pid=0;stopping_player=0;if(player_control>=0)close(player_control);player_control=-1;
+    player_pid=0;stopping_player=0;if(player_control>=0)player_pipe_close(player_control);player_control=-1;
     if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;auto_active=0;return;}
     music_video_pause(1);
     if(!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==40){
@@ -1645,7 +1747,7 @@ static void phone_dispatch(void){
     if(!phone_pending[0])return;
     if(!strcmp(phone_pending,"control")){
         char c=phone_value[0];c=c=='p'?'P':c=='f'?'F':c=='r'?'R':c=='s'?'S':c;
-        if(player_pid&&player_control>=0){ssize_t sent=write(player_control,&c,1);(void)sent;}
+        if(player_pid&&player_control>=0){ssize_t sent=player_pipe_write(player_control,&c,1);(void)sent;}
     }else if(!strcmp(phone_pending,"music")){
         if(!player_pid&&!music_job&&!update_pid){
             snprintf(music_query,sizeof(music_query),"%.220s",phone_value);
@@ -1665,7 +1767,13 @@ static void phone_dispatch(void){
 static void action(SDL_Keycode key) {
     if(music_on){music_action(key);return;}
     if(key==SDLK_m&&!player_pid&&!catalog_pid&&!update_pid&&!settings_on&&!about&&!accounts_on&&!search_on){
-        if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access("music-runtime/usr/bin/python3",X_OK))){start_update();return;}
+        if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access(
+#ifdef _WIN32
+        "music-runtime/bin/python.exe"
+#else
+        "music-runtime/usr/bin/python3"
+#endif
+        ,X_OK))){start_update();return;}
         tv_active=0;tv_cancel_prepared();music_on=1;return;
     }
     if(favorite_remove_confirm){
@@ -1713,12 +1821,18 @@ static void action(SDL_Keycode key) {
     if(player_pid) {
         if(!player_menu){
             if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE)tv_active=0;
-            if(key==SDLK_i||key==SDLK_y||key==SDLK_v)kill(player_pid,SIGUSR1);
+            if(key==SDLK_i||key==SDLK_y||key==SDLK_v){
+#ifdef _WIN32
+                char menu='m';if(player_control>=0)player_pipe_write(player_control,&menu,1);
+#else
+                kill(player_pid,SIGUSR1);
+#endif
+            }
             if((key==SDLK_ESCAPE||key==SDLK_BACKSPACE)&&!stopping_player){auto_active=0;kill(player_pid,SIGTERM);stopping_player=1;stop_time=SDL_GetTicks();}
             return;
         }
         char command=key==SDLK_F2?'n':key==SDLK_i?'m':key==SDLK_ESCAPE||key==SDLK_BACKSPACE?'b':key==SDLK_UP?'u':key==SDLK_DOWN?'d':key==SDLK_LEFT?'l':key==SDLK_RIGHT?'r':key==SDLK_RETURN?'a':key==SDLK_y||key==SDLK_v?'v':0;
-        if(command&&player_control>=0){ssize_t sent=write(player_control,&command,1);(void)sent;}
+        if(command&&player_control>=0){ssize_t sent=player_pipe_write(player_control,&command,1);(void)sent;}
         return;
     }
     if(catalog_pid){
@@ -1922,6 +2036,9 @@ static void shutdown_children(pid_t *children,size_t count){
     }
 }
 
+#ifdef _WIN32
+#define main flxtr_shell_main
+#endif
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
     load_settings();search_dict_load();
@@ -2027,3 +2144,13 @@ int main(int argc,char **argv) {
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
     SDL_Quit();return game_exit?43:restart_shell?42:0;
 }
+
+#ifdef _WIN32
+#undef main
+int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show){
+    (void)instance;(void)previous;(void)command;(void)show;
+    int argc=0;wchar_t **argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+    if(!argv)return 126;
+    SDL_SetMainReady();int code=flxtr_win_entry(flxtr_shell_main,argc,argv,1);LocalFree(argv);return code;
+}
+#endif

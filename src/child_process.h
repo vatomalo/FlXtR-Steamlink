@@ -1,5 +1,11 @@
 #ifndef FLXTR_CHILD_PROCESS_H
 #define FLXTR_CHILD_PROCESS_H
+#ifdef _WIN32
+#include "windows_runtime.h"
+static inline pid_t shell_spawn(const char *file,const char *const args[],const char *out,const char *err){
+    return flxtr_win_spawn(file,args,out,err,NULL,0,0);
+}
+#else
 #include <dirent.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -40,4 +46,5 @@ static pid_t shell_fork(void){
     }
     return fork();
 }
+#endif
 #endif

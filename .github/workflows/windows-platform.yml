@@ -1,4 +1,4 @@
-name: Windows port foundation
+name: Windows application and platform
 on:
   push:
     branches: [main]
@@ -14,7 +14,7 @@ jobs:
       - name: Install compiler and Linux regression dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64-posix build-essential pkg-config libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev ffmpeg
+          sudo apt-get install -y gcc-mingw-w64-x86-64-posix build-essential pkg-config libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev ffmpeg cmake zstd
       - name: Test POSIX backends and existing callers
         run: |
           make -j2 all
@@ -26,6 +26,18 @@ jobs:
           ./build/phone-state-test
       - name: Cross-compile Windows platform, IPC, server and player object
         run: bash scripts/build-windows.sh
+      - name: Build native Windows application and dependency bundle
+        run: |
+          python3 scripts/build-windows-app.py
+          ffmpeg -v error -y -f lavfi -i testsrc2=size=160x90:rate=24 -f lavfi -i sine=frequency=440 -t 3 -c:v libx264 -c:a aac build/windows-app/fixture.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-application
+          path: |
+            dist/FlXtR-Windows-x86_64.zip
+            dist/FlXtR-Windows-x86_64.zip.sha256
+            build/windows-app/windows-app-test.exe
+            build/windows-app/fixture.mp4
       - uses: actions/upload-artifact@v4
         with:
           name: windows-platform-foundation
@@ -57,3 +69,18 @@ jobs:
           $env:FLXTR_API_TEST_BINARY = Join-Path $folder 'FlXtR-phone-server-test.exe'
           python tests/api_setup_test.py
           if ($LASTEXITCODE -ne 0) { throw "Windows HTTP integration tests failed: $LASTEXITCODE" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-application
+          path: app-download
+      - name: Run the complete Windows application package
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem app-download -Recurse -Filter FlXtR-Windows-x86_64.zip | Select-Object -First 1
+          $helper = Get-ChildItem app-download -Recurse -Filter windows-app-test.exe | Select-Object -First 1
+          $fixture = Get-ChildItem app-download -Recurse -Filter fixture.mp4 | Select-Object -First 1
+          $app = Join-Path $env:RUNNER_TEMP 'FlXtR application ø'
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $app
+          Copy-Item -LiteralPath $helper.FullName -Destination $app
+          python tests/windows_app_test.py --package $app --fixture $fixture.FullName --helper (Join-Path $app 'windows-app-test.exe')
+          if ($LASTEXITCODE -ne 0) { throw "Windows application tests failed: $LASTEXITCODE" }

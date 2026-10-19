@@ -56,7 +56,7 @@ def ydl_options(flat=False):
                'cachedir': str(CACHE / 'yt-dlp'), 'noplaylist': not flat,
                'extract_flat': 'in_playlist' if flat else False,
                'playlistend': 20, 'format': 'bestaudio[ext=m4a]/bestaudio',
-               'js_runtimes': {'quickjs': {'path': str(Path('scripts/music-qjs.sh').resolve())}}}
+               'js_runtimes': {'quickjs': {'path': str((Path(__file__).resolve().parent.parent / 'music-runtime/bin/qjs.exe') if os.name == 'nt' else Path('scripts/music-qjs.sh').resolve())}}}
     cert = os.environ.get('SSL_CERT_FILE')
     if cert:
         options['cacert'] = cert

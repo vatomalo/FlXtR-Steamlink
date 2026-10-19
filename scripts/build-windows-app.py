@@ -51,6 +51,7 @@ def main():
         subprocess.run(common+(['-Wno-unused-parameter'] if source.parent==generated else [])+['-c',str(source),'-o',str(obj)],check=True)
         objects.append(str(obj))
     subprocess.run(flags+['-municode']+objects+['-o',str(build/'greenlink-resolver.exe')]+libs+['-lm','-lpthread'],check=True)
+    subprocess.run(flags+['-municode','tests/desktop_fullscreen_test.c','-o',str(build/'windows-fullscreen-test.exe')]+libs,check=True)
     subprocess.run(flags+['-municode','tests/windows_app_test.c','-o',str(build/'windows-app-test.exe')]+libs,check=True)
     subprocess.run([sys.executable,'scripts/package-windows.py'],check=True)
 if __name__=='__main__':

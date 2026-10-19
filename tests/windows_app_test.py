@@ -28,6 +28,7 @@ with tempfile.TemporaryDirectory(prefix='FlXtR Windows data ø ') as temp:
     assert (home/'ui.bmp').stat().st_size>10000
     print('PASS: full native SDL UI, packaged resources and Unicode data directory')
     run(package/'greenlink-player.exe',fixture,'--headless','--duration','1')
+    run(helper.with_name('windows-fullscreen-test.exe'),fixture,'--headless','--duration','1')
     # The integration helper uses the actual UI launch_player(), not a mock.
     # It must be beside the package executables for child executable resolution.
     run(helper,fixture)

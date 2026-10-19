@@ -8,7 +8,7 @@ root = Path(__file__).resolve().parents[1]
 binary = root / 'build/desktop-player-platform-test'
 flags = subprocess.check_output(['pkg-config', '--cflags', '--libs', 'mpv'], text=True).split()
 subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-Werror',
-                'src/player_linux.c', *flags, '-pthread', '-o', str(binary)], cwd=root, check=True)
+                'tests/desktop_fullscreen_test.c', *flags, '-pthread', '-o', str(binary)], cwd=root, check=True)
 with tempfile.TemporaryDirectory(prefix='flxtr player ø ') as directory:
     home = Path(directory)
     clip = home / 'fixture.mp4'
@@ -53,4 +53,4 @@ with tempfile.TemporaryDirectory(prefix='flxtr player ø ') as directory:
     invalid = subprocess.run([str(binary), str(clip), '--control-fd', 'not-a-handle'],
                              cwd=home, capture_output=True, timeout=5)
     assert invalid.returncode == 2
-print('PASS: real desktop playback, preload gating, controller request, gate EOF and invalid handles')
+print('PASS: fullscreen default, real desktop playback, preload gating, controller request, gate EOF and invalid handles')

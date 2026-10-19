@@ -138,6 +138,9 @@ int main(int argc,char **argv){
         "./linux-controls.lua"
 #endif
     );
+    /* Match the fullscreen menu instead of sizing a new window to the video. */
+    mpv_set_option_string(mpv,"fullscreen","yes");
+    mpv_set_option_string(mpv,"title","FlXtR");
     mpv_set_option_string(mpv,"force-window","yes");mpv_set_option_string(mpv,"hwdec","auto-safe");
     mpv_set_option_string(mpv,"tls-verify","yes");
 #ifdef _WIN32

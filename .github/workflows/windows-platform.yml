@@ -37,6 +37,7 @@ jobs:
             dist/FlXtR-Windows-x86_64.zip
             dist/FlXtR-Windows-x86_64.zip.sha256
             build/windows-app/windows-app-test.exe
+            build/windows-app/windows-fullscreen-test.exe
             build/windows-app/fixture.mp4
       - uses: actions/upload-artifact@v4
         with:
@@ -78,9 +79,11 @@ jobs:
         run: |
           $zip = Get-ChildItem app-download -Recurse -Filter FlXtR-Windows-x86_64.zip | Select-Object -First 1
           $helper = Get-ChildItem app-download -Recurse -Filter windows-app-test.exe | Select-Object -First 1
+          $fullscreen = Get-ChildItem app-download -Recurse -Filter windows-fullscreen-test.exe | Select-Object -First 1
           $fixture = Get-ChildItem app-download -Recurse -Filter fixture.mp4 | Select-Object -First 1
           $app = Join-Path $env:RUNNER_TEMP 'FlXtR application ø'
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $app
           Copy-Item -LiteralPath $helper.FullName -Destination $app
+          Copy-Item -LiteralPath $fullscreen.FullName -Destination $app
           python tests/windows_app_test.py --package $app --fixture $fixture.FullName --helper (Join-Path $app 'windows-app-test.exe')
           if ($LASTEXITCODE -ne 0) { throw "Windows application tests failed: $LASTEXITCODE" }

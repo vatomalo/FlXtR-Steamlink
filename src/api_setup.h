@@ -17,7 +17,8 @@
 
 /* Exists only while the API accounts screen is open. No daemon or passwords. */
 static struct {
-    int listener,client;
+    int listener,client,draining;
+    uint32_t drain_started;
     uint32_t started,connected;
     size_t used,sent,length;
     char host[64],path[40],url[128],input[4096],output[16384],message[80];
@@ -26,7 +27,7 @@ static struct {
 static void api_client_close(void){
     phone_upload_abort();
     if(api_setup.client>=0)close(api_setup.client);
-    api_setup.client=-1;api_setup.used=api_setup.sent=api_setup.length=0;
+    api_setup.client=-1;api_setup.used=api_setup.sent=api_setup.length=0;api_setup.draining=0;
     memset(api_setup.input,0,sizeof(api_setup.input));
     memset(api_setup.output,0,sizeof(api_setup.output));
 }
@@ -201,6 +202,20 @@ static void api_setup_tick(uint32_t now){
         if(api_socket_flags(api_setup.client)){api_client_close();return;}api_setup.connected=now;
     }
     if(now-api_setup.connected>=(phone_upload>=0?15000u:5000u)){api_client_close();return;}
+    /* Drain bytes left by rejected requests so phones receive the HTTP
+     * response instead of a connection reset. Limit drain to 500ms. */
+    if(api_setup.draining){
+        char discard[4096];
+        for(int i=0;i<16;i++){
+            ssize_t n=recv(api_setup.client,discard,sizeof(discard),0);
+            if(n==0||(n<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)){
+                api_client_close();return;
+            }
+            if(n<0)break;
+        }
+        if(now-api_setup.drain_started>=500)api_client_close();
+        return;
+    }
     if(phone_upload>=0){
         char chunk[16384];
         for(int i=0;i<16&&phone_upload>=0;i++){
@@ -222,7 +237,10 @@ static void api_setup_tick(uint32_t now){
     if(api_setup.length){
         ssize_t sent=send(api_setup.client,api_setup.output+api_setup.sent,api_setup.length-api_setup.sent,MSG_NOSIGNAL);
         if(sent>0)api_setup.sent+=(size_t)sent;
-        if(api_setup.sent==api_setup.length||(sent<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK))api_client_close();
+        if(api_setup.sent==api_setup.length){
+            shutdown(api_setup.client,SHUT_WR);
+            api_setup.draining=1;api_setup.drain_started=now;
+        }else if(sent<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)api_client_close();
     }
 }
 #endif

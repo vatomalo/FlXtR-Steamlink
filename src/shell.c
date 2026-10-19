@@ -99,6 +99,8 @@ static void rom_core_open(const Title *t){
     snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
     rom_core_count=rom_core_selected=rom_core_first=0;
     rom_core_scan("cores");
+    const char *retroarch_home=getenv("FLXTR_RETROARCH_HOME");
+    if(retroarch_home&&*retroarch_home){char path[PATH_MAX];snprintf(path,sizeof(path),"%s/cores",retroarch_home);rom_core_scan(path);}
     rom_core_scan("/home/apps/retroarch/cores");
     rom_core_scan("/home/apps/retroarch/.home/.config/retroarch/cores");
     /* Open on the previously chosen core, if any. */
@@ -276,8 +278,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE","LIBRETRO CORES","INSTALLING CORE"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent","core-list","core-install"};
 static int search_on,search_key;
 static int favorite_remove_confirm;
 static char search_text[65];
@@ -842,24 +844,44 @@ static void finish_catalog(void){
         else snprintf(status,sizeof(status),"TV: NO EPISODE FOUND / TRYING ANOTHER SHOW");
         tv_next_at=SDL_GetTicks()+10000;return;
     }
-    if(!WIFEXITED(code)||WEXITSTATUS(code)){play_after_load=0;snprintf(status,sizeof(status),(pending.mode==16||pending.mode==19)?"ROM DOWNLOAD FAILED - SEE CATALOG.LOG":pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
+    if(!WIFEXITED(code)||WEXITSTATUS(code)){
+        if(pending.mode==36){
+            FILE *error=fopen("core-error.txt","r");char detail[140]="SEE CATALOG.LOG";
+            if(error){if(!fgets(detail,sizeof(detail),error))strcpy(detail,"SEE CATALOG.LOG");fclose(error);}
+            detail[strcspn(detail,"\r\n")]=0;
+            snprintf(status,sizeof(status),"CORE INSTALL FAILED: %.76s",detail);return;
+        }
+        play_after_load=0;snprintf(status,sizeof(status),(pending.mode==16||pending.mode==19)?"ROM DOWNLOAD FAILED - SEE CATALOG.LOG":pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
     for(int i=0;i<VISIBLE;i++){char src[80],dst[80];snprintf(src,sizeof(src),"catalog-cache/poster-%d.next.bmp",i);snprintf(dst,sizeof(dst),"catalog-cache/poster-%d.bmp",i);rename(src,dst);}
     if(pending_push&&history_size<4)history[history_size++]=browse;
     if(pending_pop&&history_size)history_size--;
     if(pending.mode==16||pending.mode==19||pending.mode==27)pending.mode=14;
     if(pending.mode==29)pending.mode=28;
+    if(pending.mode==36){
+        for(int i=0;i<LIBRARY_RAM_CACHE;i++)if(library_pages[i].key.mode==14||library_pages[i].key.mode==22)library_pages[i].valid=0;
+        pending.mode=35;
+    }
     if(pending.mode==14)pending.id=0;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
     library_cache_store(&browse);
-    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
+    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24&&browse.mode<35){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
     if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"KISSANIME: BROWSING WORKS / SOME VIDEO HOSTS ARE NOT SUPPORTED");
     if(browse.mode==14)snprintf(status,sizeof(status),"Y IMPORT / START LICENSED DOWNLOADS / SHARE+OPTIONS EXIT GAME");
     if(browse.mode==17&&!total)snprintf(status,sizeof(status),"NO ARCHIVE TITLES FOUND - TRY ANOTHER PLATFORM");
     if(browse.mode==18&&!total)snprintf(status,sizeof(status),"NO SUPPORTED ROM FILES IN THIS ARCHIVE ITEM");
-    if(browse.mode==14){FILE *f=fopen("game-exit-status","r");int code=0;if(f){int got=fscanf(f,"%d",&code);fclose(f);unlink("game-exit-status");if(got==1&&code)snprintf(status,sizeof(status),"GAME COULD NOT START / SEE GAME.LOG / Y REIMPORT");}}
+    if(browse.mode==14||browse.mode==21){
+        FILE *f=fopen("game-exit-status","r");int code=0;
+        if(f){int got=fscanf(f,"%d",&code);fclose(f);unlink("game-exit-status");
+            if(got==1&&code){
+                snprintf(status,sizeof(status),"GAME COULD NOT START / SEE GAME.LOG / Y REIMPORT");
+                f=fopen("game-error.txt","r");
+                if(f){char message[100]="";if(fgets(message,sizeof(message),f))snprintf(status,sizeof(status),"%.99s",message);fclose(f);unlink("game-error.txt");}
+            }
+        }
+    }
     if(browse.mode==10&&!total)snprintf(status,sizeof(status),"NO PUBLIC H.264 / MPEG4 FILES IN THIS ITEM");
     if(play_after_load){play_after_load=0;if(total)play();else if(browse.mode==34)snprintf(status,sizeof(status),"END OF AVAILABLE SERIES");}
 }
@@ -1293,7 +1315,7 @@ static void draw(Uint32 tick) {
                 SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
             } else placeholder(dst.x,dst.y,dst.w,dst.h,visible[index]);
             text(x,y+162,t->title,1,index==selection?green:white,22);
-            const char *label=!strcmp(t->kind,"rg-game")?"A PHONE DOWNLOAD / QR":!strcmp(t->kind,"rg-source")||!strcmp(t->kind,"rg-platform")?"A BROWSE ROMSGAMES":!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"download-zip")?"A BROWSE ZIP / Y DELETE":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A PLAY GAME":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
+            const char *label=!strcmp(t->kind,"core-manager")?"A OPEN CORE DOWNLOADER":!strcmp(t->kind,"core-download")?"A INSTALL MISSING CORE":!strcmp(t->kind,"rg-game")?"A PHONE DOWNLOAD / QR":!strcmp(t->kind,"rg-source")||!strcmp(t->kind,"rg-platform")?"A BROWSE ROMSGAMES":!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"download-zip")?"A BROWSE ZIP / Y DELETE":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A PLAY GAME":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
             text(x,y+177,label,1,dim,22);
         }
         Title *t=&titles[visible[selection]];
@@ -1374,6 +1396,14 @@ static void play(void) {
     if(settings_on||about||!total||player_pid)return;
     restart_position=auto_resume=0;
     Title *t=&titles[visible[selection]];
+#ifdef FLXTR_DESKTOP
+    if(!strcmp(t->kind,"core-manager")){Browse next={35,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
+    if(!strcmp(t->kind,"core-download")){
+        Browse next={36,browse.page,0,0,0,0,"",""};
+        snprintf(next.query,sizeof(next.query),"%.64s",t->url);
+        request_catalog(next,0,0);return;
+    }
+#endif
     if(!strcmp(t->kind,"bios-item")){
         const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
         if(strncmp(t->url,prefix,n)||strlen(t->url+n)>=129){snprintf(status,sizeof(status),"INVALID BIOS ARCHIVE ITEM");return;}
@@ -2043,6 +2073,9 @@ int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
     load_settings();search_dict_load();
     for(int i=1;i<argc;i++) {
+#ifdef _WIN32
+        if(!strcmp(argv[i],"--ui-worker"))continue;
+#endif
         if(!strcmp(argv[i],"--version")){puts(FLXTR_VERSION);return 0;}
         else if(!strcmp(argv[i],"--grid"))coverflow=0;
         else if(!strcmp(argv[i],"--settings"))settings_on=1;
@@ -2147,10 +2180,32 @@ int main(int argc,char **argv) {
 
 #ifdef _WIN32
 #undef main
+static int windows_supervisor(int argc,char **argv){
+    const char **args=(const char **)calloc((size_t)argc+4,sizeof(*args));if(!args)return 126;
+    args[0]="FlXtR";args[1]="--ui-worker";
+    for(int i=1;i<argc;i++)args[i+1]=argv[i];
+    int code;
+    for(;;){
+        code=flxtr_win_run("FlXtR",args,"greenlink.log","greenlink.log");
+        if(code==43){
+            const char *game_args[]={"greenlink-catalog","--run-game",NULL};
+            int result=flxtr_win_run("greenlink-catalog",game_args,"game.log","game.log");
+            FILE *f=fopen("game-exit-status","w");if(f){fprintf(f,"%d\n",result);fclose(f);}
+            memset(args,0,((size_t)argc+4)*sizeof(*args));
+            args[0]="FlXtR";args[1]="--ui-worker";args[2]="--library";args[3]="games";continue;
+        }
+        if(code==42)continue;
+        break;
+    }
+    free(args);return code<0?1:code;
+}
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show){
     (void)instance;(void)previous;(void)command;(void)show;
     int argc=0;wchar_t **argv=CommandLineToArgvW(GetCommandLineW(),&argc);
     if(!argv)return 126;
-    SDL_SetMainReady();int code=flxtr_win_entry(flxtr_shell_main,argc,argv,1);LocalFree(argv);return code;
+    SDL_SetMainReady();
+    int worker=argc>1&&!wcscmp(argv[1],L"--ui-worker");
+    int code=flxtr_win_entry(worker?flxtr_shell_main:windows_supervisor,argc,argv,!worker);
+    LocalFree(argv);return code;
 }
 #endif

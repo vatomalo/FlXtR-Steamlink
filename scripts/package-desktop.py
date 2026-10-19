@@ -82,6 +82,8 @@ for edition in ('Linux', 'SteamDeck'):
         'Application libraries are bundled under current/lib with dependency licenses.\n'
         'Automatic updates are disabled to retain bundled libraries. For upgrades,\n'
         'extract a new release separately and copy your data folder across.\n'
+        'Games > DOWNLOAD LIBRETRO CORES installs missing cores. RetroArch is required.\n'
+        'See current/CORES.md for native/Flatpak setup and data paths.\n'
         'Physical Steam Deck and interactive playback validation remains necessary.\n')
     for binary in ('greenlink', 'greenlink-player'):
         output = subprocess.check_output([str(app / binary), '--version'], text=True).strip()

@@ -682,6 +682,25 @@ int main(int argc,char **argv){
         return 0;
     }
 #endif
+#ifdef FLXTR_DESKTOP
+    if(argc>=3&&(!strcmp(argv[1],"core-list")||!strcmp(argv[1],"core-install"))){
+        int page=positive(argv[2],0);if(page<1||page>3||argc!=8)return 2;
+        const char *install=!strcmp(argv[1],"core-install")?argv[3]:NULL;
+#ifdef _WIN32
+        char python[PATH_MAX],script[PATH_MAX];
+        snprintf(python,sizeof(python),"%s/music-runtime/bin/python.exe",flxtr_win_binary_dir());
+        snprintf(script,sizeof(script),"%s/tools/core_manager.py",flxtr_win_binary_dir());
+        const char *args[]={"python","-I",script,install?"--install":"--list",install?install:"--page",install?"--page":argv[2],install?argv[2]:NULL,NULL};
+        pid_t child=flxtr_win_spawn(python,args,NULL,NULL,NULL,0,1);
+        if(child<0)return 1;
+        int status=0;return waitpid(child,&status,0)==child?WEXITSTATUS(status):1;
+#else
+        if(install)execlp("python3","python3","-I","tools/core_manager.py","--install",install,"--page",argv[2],(char*)NULL);
+        else execlp("python3","python3","-I","tools/core_manager.py","--list","--page",argv[2],(char*)NULL);
+        return 1;
+#endif
+    }
+#endif
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
@@ -697,7 +716,7 @@ int main(int argc,char **argv){
     int cacheable=strcmp(kind,"series-adjacent")&&strcmp(kind,"games-downloads-list")&&strcmp(kind,"games-downloads-delete")&&strcmp(kind,"games-zip-list")&&strcmp(kind,"games-zip-extract")&&strcmp(kind,"games-bios-search")&&strcmp(kind,"games-bios-files")&&strcmp(kind,"games-archive")&&strcmp(kind,"games-download")&&strcmp(kind,"games")&&strcmp(kind,"tv-break")&&strcmp(kind,"tv-pick")&&strcmp(kind,"source")&&strcmp(kind,"quality")&&strcmp(kind,"kiss-source")&&strcmp(kind,"kiss-quality");
     /* Game folders are local and cheap; always scan them so missing covers
      * can be queued even after page metadata was cached. */
-    if(!strcmp(kind,"games-system"))cacheable=0;
+    if(!strcmp(kind,"games-system")||!strcmp(kind,"games-folders"))cacheable=0;
     cache_identity(kind,page,argv[3],id,season);
     if(cacheable&&cache_load())goto output;
     if(!strncmp(kind,"games",5))fprintf(stderr,"FlXtR game art enabled=%d; catalog kind=%s\n",!getenv("FLXTR_NO_ART"),kind);

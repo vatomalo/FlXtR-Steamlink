@@ -25,6 +25,9 @@ For RetroArch set FLXTR_RETROARCH_HOME to the installed directory containing
 retroarch.exe, cores, and roms; Windows cores end in _libretro.dll.
 ScummVM can be installed on PATH.
 
+Games > DOWNLOAD LIBRETRO CORES installs official Windows cores into the data
+folder. See [CORES.md](CORES.md) for RetroArch discovery and supported cores.
+
 ## Build in regular Debian/Ubuntu WSL
 
 Run **outside Docker**, from this branch's repository checkout:

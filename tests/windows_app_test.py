@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory(prefix='FlXtR Windows data ø ') as temp:
         return result.stdout.decode('utf-8',errors='replace')
     run(package/'FlXtR.exe','--frames','2','--screenshot','ui.bmp')
     assert (home/'ui.bmp').stat().st_size>10000
+    run(helper.with_name('windows-supervisor-test.exe'))
     print('PASS: full native SDL UI, packaged resources and Unicode data directory')
     run(package/'greenlink-player.exe',fixture,'--headless','--duration','1')
     run(helper.with_name('windows-fullscreen-test.exe'),fixture,'--headless','--duration','1')
@@ -35,6 +36,8 @@ with tempfile.TemporaryDirectory(prefix='FlXtR Windows data ø ') as temp:
     print('PASS: native libmpv decoding, UI launcher and control/preload IPC')
     text=run(package/'greenlink-catalog.exe','games-platforms','1','','0','0','0')
     assert '# pages=2 total=8' in text and 'NES' in text
+    text=run(package/'greenlink-catalog.exe','core-list','1','','0','0','0','')
+    assert 'core-download' in text and 'FCEUmm' in text
     text=run(package/'greenlink-catalog.exe','games-archive','1','','0','0','0')
     assert '# pages=' in text
     # Validate Unicode JSON paths and native bounded ZIP extraction.

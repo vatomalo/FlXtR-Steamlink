@@ -49,6 +49,7 @@ closure(list((runtime/'bin').glob('*.exe'))+list(runtime.rglob('*.pyd')),runtime
 for name in ['assets','tools']:
     shutil.copytree(ROOT/name,OUT/name,ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
 for name in ['catalog.tsv','linux-controls.lua','LICENSE']:shutil.copy2((ROOT/("packaging/"+name) if name=="linux-controls.lua" else ROOT/name),OUT/name)
+shutil.copy2(ROOT/'docs/CORES.md',OUT/'CORES.md')
 (OUT/'certs').mkdir()
 shutil.copy2('/etc/ssl/certs/ca-certificates.crt',OUT/'certs/cacert.pem')
 shutil.copytree(SDK/'share/licenses',OUT/'third-party-licenses',dirs_exist_ok=True)
@@ -66,6 +67,8 @@ Navigation: arrows or a controller; Enter/A select; Escape/B back.
 The native Windows app includes the UI, catalog, resolver, libmpv video
 player, phone setup server, and Python/QuickJS music worker runtime.
 Settings/cache/keys live in %LOCALAPPDATA%/FlXtR.
+Games > DOWNLOAD LIBRETRO CORES installs missing platform cores.
+Install RetroArch separately; see CORES.md.
 Updates: download a newer Windows ZIP from GitHub and extract it.
 
 This is an experimental port. Online providers can change or fail.

@@ -125,3 +125,11 @@ windows:
 	python3 scripts/build-windows-app.py
 
 .PHONY: windows
+
+test-desktop-cores: all
+	python3 tests/core_manager_test.py
+	$(CC) $(CFLAGS) -DFLXTR_DESKTOP $(SDL_CFLAGS) src/catalog.c -o build/desktop-core-catalog $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
+	$(CC) $(CFLAGS) tests/retroarch_fixture.c -o build/retroarch-fixture
+	python3 tests/desktop_games_test.py --catalog build/desktop-core-catalog --retroarch build/retroarch-fixture --tools tools
+
+.PHONY: test-desktop-cores

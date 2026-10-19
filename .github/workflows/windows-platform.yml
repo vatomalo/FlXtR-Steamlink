@@ -20,6 +20,7 @@ jobs:
           make -j2 all
           make test-platform test-platform-shell test-desktop-ipc
           python3 tests/api_setup_test.py
+          make test-desktop-cores
           cc -std=c99 -Wall -Wextra -Werror tests/child_exec_test.c -o build/child-exec-test
           ./build/child-exec-test
           cc -std=c99 -Wall -Wextra -Werror tests/phone_state_test.c -o build/phone-state-test
@@ -37,6 +38,8 @@ jobs:
             dist/FlXtR-Windows-x86_64.zip
             dist/FlXtR-Windows-x86_64.zip.sha256
             build/windows-app/windows-app-test.exe
+            build/windows-app/windows-supervisor-test.exe
+            build/windows-app/retroarch-fixture.exe
             build/windows-app/windows-fullscreen-test.exe
             build/windows-app/fixture.mp4
       - uses: actions/upload-artifact@v4
@@ -79,11 +82,19 @@ jobs:
         run: |
           $zip = Get-ChildItem app-download -Recurse -Filter FlXtR-Windows-x86_64.zip | Select-Object -First 1
           $helper = Get-ChildItem app-download -Recurse -Filter windows-app-test.exe | Select-Object -First 1
+          $supervisor = Get-ChildItem app-download -Recurse -Filter windows-supervisor-test.exe | Select-Object -First 1
+          $retroarch = Get-ChildItem app-download -Recurse -Filter retroarch-fixture.exe | Select-Object -First 1
           $fullscreen = Get-ChildItem app-download -Recurse -Filter windows-fullscreen-test.exe | Select-Object -First 1
           $fixture = Get-ChildItem app-download -Recurse -Filter fixture.mp4 | Select-Object -First 1
           $app = Join-Path $env:RUNNER_TEMP 'FlXtR application ø'
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $app
           Copy-Item -LiteralPath $helper.FullName -Destination $app
           Copy-Item -LiteralPath $fullscreen.FullName -Destination $app
+          Copy-Item -LiteralPath $retroarch.FullName -Destination $app
+          Copy-Item -LiteralPath $supervisor.FullName -Destination $app
           python tests/windows_app_test.py --package $app --fixture $fixture.FullName --helper (Join-Path $app 'windows-app-test.exe')
           if ($LASTEXITCODE -ne 0) { throw "Windows application tests failed: $LASTEXITCODE" }
+          python tests/core_manager_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Core manager tests failed: $LASTEXITCODE" }
+          python tests/desktop_games_test.py --catalog (Join-Path $app 'greenlink-catalog.exe') --retroarch (Join-Path $app 'retroarch-fixture.exe') --tools (Join-Path $app 'tools')
+          if ($LASTEXITCODE -ne 0) { throw "Desktop game launch tests failed: $LASTEXITCODE" }

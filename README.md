@@ -436,6 +436,6 @@ TV channel scheduling, marathons and preloading: [TV channel mode](docs/tv-chann
 
 ## Windows port in progress
 
-A native Windows C port has started. The initial platform layer can be
-cross-compiled directly in WSL and tested on Windows. The full Windows UI and
-player are not available yet. See [Windows port status and build instructions](docs/WINDOWS.md).
+The native Windows C port now includes process handling, player IPC, phone-server
+networking and filesystem backends. These can be cross-compiled directly in WSL
+and tested on Windows. The full Windows UI and linked player are not available yet. See [Windows port status and build instructions](docs/WINDOWS.md).

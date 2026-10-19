@@ -14,41 +14,46 @@ jobs:
       - name: Install compiler and Linux regression dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64-posix build-essential pkg-config libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev
-      - name: Test POSIX platform and existing callers
+          sudo apt-get install -y gcc-mingw-w64-x86-64-posix build-essential pkg-config libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev ffmpeg
+      - name: Test POSIX backends and existing callers
         run: |
           make -j2 all
-          make test-platform test-platform-shell
+          make test-platform test-platform-shell test-desktop-ipc
+          python3 tests/api_setup_test.py
           cc -std=c99 -Wall -Wextra -Werror tests/child_exec_test.c -o build/child-exec-test
           ./build/child-exec-test
           cc -std=c99 -Wall -Wextra -Werror tests/phone_state_test.c -o build/phone-state-test
           ./build/phone-state-test
-      - name: Cross-compile Windows platform tests
+      - name: Cross-compile Windows platform, IPC, server and player object
         run: bash scripts/build-windows.sh
       - uses: actions/upload-artifact@v4
         with:
           name: windows-platform-foundation
           path: |
-            build/windows-platform/FlXtR-windows-platform-test.exe
             dist/FlXtR-Windows-platform-x86_64.zip
             dist/FlXtR-Windows-platform-x86_64.zip.sha256
   windows-runtime:
     needs: cross-build
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: windows-platform-foundation
           path: downloaded
-      - name: Run native Windows tests from a path with spaces and Unicode
+      - name: Run packaged native Windows tests with spaces and Unicode
         shell: pwsh
         run: |
-          $exe = Get-ChildItem downloaded -Recurse -Filter FlXtR-windows-platform-test.exe | Select-Object -First 1
+          $zip = Get-ChildItem downloaded -Recurse -Filter FlXtR-Windows-platform-x86_64.zip | Select-Object -First 1
           $folder = Join-Path $env:RUNNER_TEMP 'FlXtR Windows ø test'
-          New-Item -ItemType Directory -Force -Path $folder | Out-Null
-          Copy-Item -LiteralPath $exe.FullName -Destination $folder
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $folder
           Push-Location $folder
           try {
             & .\FlXtR-windows-platform-test.exe
             if ($LASTEXITCODE -ne 0) { throw "Platform tests failed: $LASTEXITCODE" }
+            & .\FlXtR-windows-ipc-test.exe
+            if ($LASTEXITCODE -ne 0) { throw "IPC tests failed: $LASTEXITCODE" }
           } finally { Pop-Location }
+          $env:FLXTR_API_TEST_BINARY = Join-Path $folder 'FlXtR-phone-server-test.exe'
+          python tests/api_setup_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Windows HTTP integration tests failed: $LASTEXITCODE" }

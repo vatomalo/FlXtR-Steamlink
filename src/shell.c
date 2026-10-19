@@ -1119,7 +1119,7 @@ static void draw(Uint32 tick) {
                 text(204,245,"REMATCH FROM YOUR PHONE / FRESH QUESTIONS",1,(SDL_Color){220,230,220,255},70);
             }
             for(int i=0;i<phone_party.count;i++){int p=order[i];snprintf(caption,sizeof(caption),"%s: %d +%d",phone_party.players[p].name,phone_party.players[p].score,phone_party.phase==2?phone_party.players[p].gain:0);text(204+(i%2)*350,355+(i/2)*22,caption,2,(SDL_Color){220,230,220,255},28);}
-        }else if(api_setup.listener>=0){
+        }else if(flxtr_socket_valid(api_setup.listener)){
             int size=qrcodegen_getSize(accounts_qr),scale=party_entry==2?280/(size+8):4,left=204,top=130;
             if(scale>4)scale=4;
             if(scale<1)scale=1;

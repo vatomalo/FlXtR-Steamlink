@@ -1,82 +1,66 @@
 #ifndef FLXTR_API_SETUP_H
 #define FLXTR_API_SETUP_H
-#include <arpa/inet.h>
+#include "platform_net.h"
 #include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <ifaddrs.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "phone_features.h"
 
 /* Exists only while the API accounts screen is open. No daemon or passwords. */
 static struct {
-    int listener,client;
+    FlxtrSocket listener,client;
+    int network_active,draining;
+    uint32_t drain_started;
     uint32_t started,connected;
     size_t used,sent,length;
     char host[64],path[40],url[128],input[4096],output[16384],message[80];
-} api_setup={.listener=-1,.client=-1};
+} api_setup={.listener=FLXTR_INVALID_SOCKET,.client=FLXTR_INVALID_SOCKET};
 
 static void api_client_close(void){
     phone_upload_abort();
-    if(api_setup.client>=0)close(api_setup.client);
-    api_setup.client=-1;api_setup.used=api_setup.sent=api_setup.length=0;
+    if(flxtr_socket_valid(api_setup.client))flxtr_socket_close(api_setup.client);
+    api_setup.client=FLXTR_INVALID_SOCKET;api_setup.used=api_setup.sent=api_setup.length=0;api_setup.draining=0;
     memset(api_setup.input,0,sizeof(api_setup.input));
     memset(api_setup.output,0,sizeof(api_setup.output));
 }
 static void api_setup_close(void){
-    api_client_close();if(api_setup.listener>=0)close(api_setup.listener);
-    api_setup.listener=-1;api_setup.url[0]=api_setup.path[0]=0;
+    api_client_close();if(flxtr_socket_valid(api_setup.listener))flxtr_socket_close(api_setup.listener);
+    api_setup.listener=FLXTR_INVALID_SOCKET;
+    if(api_setup.network_active){flxtr_network_stop();api_setup.network_active=0;}api_setup.url[0]=api_setup.path[0]=0;
     memset(&phone_party,0,sizeof(phone_party));phone_pending[0]=0;
 }
-static int api_socket_flags(int fd){
-    return fcntl(fd,F_SETFD,FD_CLOEXEC)<0||fcntl(fd,F_SETFL,O_NONBLOCK)<0?-1:0;
-}
+static int api_socket_flags(FlxtrSocket fd){return flxtr_socket_flags(fd);}
 static int api_lan_ip(char *out,size_t size){
-    char preferred[64]="",row[256];FILE *routes=fopen("/proc/net/route","r");
-    if(routes){while(fgets(row,sizeof(row),routes)){
-        char name[64];unsigned long destination,gateway;unsigned flags;
-        if(sscanf(row,"%63s %lx %lx %x",name,&destination,&gateway,&flags)==4&&destination==0&&(flags&1)){
-            snprintf(preferred,sizeof(preferred),"%s",name);break;
-        }
-    }fclose(routes);}
-    struct ifaddrs *list=NULL;if(getifaddrs(&list))return -1;
-    int result=-1;
-    for(struct ifaddrs *p=list;p;p=p->ifa_next){
-        if(!p->ifa_addr||p->ifa_addr->sa_family!=AF_INET)continue;
-        if(!strcmp(p->ifa_name,"lo")||!strcmp(p->ifa_name,"lo0"))continue;
-        struct sockaddr_in *a=(struct sockaddr_in*)p->ifa_addr;
-        uint32_t ip=ntohl(a->sin_addr.s_addr);
-        if((ip>>24)!=10&&(ip>>20)!=0xac1&&(ip>>16)!=0xc0a8)continue;
-        if(result==0&&strcmp(p->ifa_name,preferred))continue;
-        if(inet_ntop(AF_INET,&a->sin_addr,out,size)){result=0;if(!strcmp(p->ifa_name,preferred))break;}
-    }
-    freeifaddrs(list);return result;
+    if(flxtr_network_start())return -1;
+    int result=flxtr_lan_ipv4(out,size);flxtr_network_stop();return result;
 }
 static int api_setup_start(const char *ip,uint32_t now){
     api_setup_close();strcpy(api_setup.message,"SCAN WITH A PHONE ON THE SAME NETWORK");
-    unsigned char token[16];int random=open("/dev/urandom",O_RDONLY);
-    if(random<0)return -1;
-    ssize_t got=read(random,token,sizeof(token));close(random);
-    if(got!=(ssize_t)sizeof(token))return -1;
+    if(flxtr_network_start())return -1;
+    api_setup.network_active=1;
+    unsigned char token[16];if(flxtr_random_bytes(token,sizeof(token)))goto fail;
     struct sockaddr_in addr;memset(&addr,0,sizeof(addr));addr.sin_family=AF_INET;
-    if(inet_pton(AF_INET,ip,&addr.sin_addr)!=1)return -1;
-    int fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0)return -1;
-    if(api_socket_flags(fd)||bind(fd,(struct sockaddr*)&addr,sizeof(addr))||listen(fd,2)){close(fd);return -1;}
-    socklen_t n=sizeof(addr);
-    if(getsockname(fd,(struct sockaddr*)&addr,&n)){close(fd);return -1;}
+    if(inet_pton(AF_INET,ip,&addr.sin_addr)!=1)goto fail;
+    FlxtrSocket fd=socket(AF_INET,SOCK_STREAM,0);
+    if(!flxtr_socket_valid(fd))goto fail;
+    if(api_socket_flags(fd)||bind(fd,(struct sockaddr*)&addr,sizeof(addr))||listen(fd,2)){
+        flxtr_socket_close(fd);goto fail;
+    }
+    FlxtrSocklen n=sizeof(addr);
+    if(getsockname(fd,(struct sockaddr*)&addr,&n)){flxtr_socket_close(fd);goto fail;}
     snprintf(api_setup.host,sizeof(api_setup.host),"%s:%u",ip,ntohs(addr.sin_port));
     api_setup.path[0]='/';
     for(int i=0;i<16;i++)snprintf(api_setup.path+1+i*2,3,"%02X",token[i]);
     strcat(api_setup.path,"/");
     snprintf(api_setup.url,sizeof(api_setup.url),"http://%s%s",api_setup.host,api_setup.path);
     api_setup.listener=fd;api_setup.started=now;return 0;
+fail:
+    api_setup_close();return -1;
 }
 static int api_key_save(const char *field,const char *encoded){
     const char *path;size_t max;
@@ -95,11 +79,11 @@ static int api_key_save(const char *field,const char *encoded){
     }
     if(n<8)return -1;
     key[n++]='\n';char temp[64];snprintf(temp,sizeof(temp),"%s.setup-XXXXXX",path);
-    int fd=mkstemp(temp);if(fd<0)return -2;
-    int ok=fchmod(fd,0600)==0&&write(fd,key,n)==(ssize_t)n&&fsync(fd)==0;
-    if(close(fd))ok=0;
+    int fd=flxtr_temp_file(temp,sizeof(temp));if(fd<0)return -2;
+    int ok=flxtr_fd_write(fd,key,n)==(ptrdiff_t)n&&flxtr_fd_sync(fd)==0;
+    if(flxtr_fd_close(fd))ok=0;
     memset(key,0,sizeof(key));
-    if(!ok||rename(temp,path)){unlink(temp);return -2;}
+    if(!ok||flxtr_replace_file(temp,path)){flxtr_path_unlink(temp);return -2;}
     snprintf(api_setup.message,sizeof(api_setup.message),"%s KEY SAVED - NOT YET VERIFIED",!strcmp(field,"subdl")?"SUBDL":"THEGAMESDB");
     return 0;
 }
@@ -193,18 +177,33 @@ static void api_request(void){
 }
 static void api_setup_tick(uint32_t now){
     phone_party_tick(now);
-    if(api_setup.listener<0)return;
+    if(!flxtr_socket_valid(api_setup.listener))return;
     if(now-api_setup.started>=600000){api_setup_close();strcpy(api_setup.message,"SETUP EXPIRED - PRESS A FOR A NEW CODE");return;}
-    if(api_setup.client<0){
+    if(!flxtr_socket_valid(api_setup.client)){
         api_setup.client=accept(api_setup.listener,NULL,NULL);
-        if(api_setup.client<0)return;
+        if(!flxtr_socket_valid(api_setup.client))return;
         if(api_socket_flags(api_setup.client)){api_client_close();return;}api_setup.connected=now;
     }
     if(now-api_setup.connected>=(phone_upload>=0?15000u:5000u)){api_client_close();return;}
+    /* Half-close the response before draining unread rejected request bytes.
+     * Immediate closesocket with unread input can reset TCP and lose a 4xx
+     * response on Windows. Keep draining bounded and nonblocking. */
+    if(api_setup.draining){
+        char discard[4096];ptrdiff_t count;
+        for(int i=0;i<16;i++){
+            count=flxtr_socket_recv(api_setup.client,discard,sizeof(discard));
+            if(count==0||(count<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)){
+                api_client_close();return;
+            }
+            if(count<0)break;
+        }
+        if(now-api_setup.drain_started>=500)api_client_close();
+        return;
+    }
     if(phone_upload>=0){
         char chunk[16384];
         for(int i=0;i<16&&phone_upload>=0;i++){
-            ssize_t n=recv(api_setup.client,chunk,sizeof(chunk),0);
+            ptrdiff_t n=flxtr_socket_recv(api_setup.client,chunk,sizeof(chunk));
             if(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK))break;
             if(n<=0){api_client_close();return;}
             api_setup.connected=api_setup.started=now;
@@ -214,15 +213,17 @@ static void api_setup_tick(uint32_t now){
         }
     }
     if(!api_setup.length&&phone_upload<0){
-        ssize_t got=recv(api_setup.client,api_setup.input+api_setup.used,sizeof(api_setup.input)-1-api_setup.used,0);
+        ptrdiff_t got=flxtr_socket_recv(api_setup.client,api_setup.input+api_setup.used,sizeof(api_setup.input)-1-api_setup.used);
         if(got==0||(got<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)){api_client_close();return;}
         if(got>0){api_setup.used+=(size_t)got;api_setup.input[api_setup.used]=0;api_request();
             if(!api_setup.length&&api_setup.used==sizeof(api_setup.input)-1)api_reply(413,"Request too large");}
     }
     if(api_setup.length){
-        ssize_t sent=send(api_setup.client,api_setup.output+api_setup.sent,api_setup.length-api_setup.sent,MSG_NOSIGNAL);
+        ptrdiff_t sent=flxtr_socket_send(api_setup.client,api_setup.output+api_setup.sent,api_setup.length-api_setup.sent);
         if(sent>0)api_setup.sent+=(size_t)sent;
-        if(api_setup.sent==api_setup.length||(sent<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK))api_client_close();
+        if(api_setup.sent==api_setup.length){
+            flxtr_socket_shutdown_send(api_setup.client);api_setup.draining=1;api_setup.drain_started=now;
+        }else if(sent<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)api_client_close();
     }
 }
 #endif

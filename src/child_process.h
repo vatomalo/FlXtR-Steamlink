@@ -11,7 +11,7 @@
  * New code should own a FlxtrProcess rather than a bare process ID. */
 static inline pid_t shell_spawn(const char *executable,const char *const argv[],
                                 const char *out,const char *err){
-    FlxtrProcess child={0};FlxtrSpawnOptions options={out,err};
+    FlxtrProcess child={0};FlxtrSpawnOptions options={.stdout_path=out,.stderr_path=err};
     if(flxtr_process_start(&child,executable,argv,&options))return -1;
     return (pid_t)child.id;
 }

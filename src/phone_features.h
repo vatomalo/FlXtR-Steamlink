@@ -1,8 +1,7 @@
 #ifndef FLXTR_PHONE_FEATURES_H
 #define FLXTR_PHONE_FEATURES_H
 #include <dirent.h>
-#include <sys/statvfs.h>
-#include "platform_files.h"
+#include "platform_paths.h"
 
 static char phone_pending[24],phone_value[2048],phone_subtitle[256];
 static int phone_upload=-1;
@@ -72,7 +71,7 @@ static int phone_decode(const char *encoded,char *out,size_t limit){
 }
 /* Upload names are a restricted basename, never a path or executable. */
 static int phone_filename(const char *name){
-    size_t n=strlen(name);if(!n||n>100||name[0]=='.'||strstr(name,".."))return 0;
+    size_t n=strlen(name);if(!n||n>100||flxtr_reserved_basename(name)||name[0]=='.'||strstr(name,".."))return 0;
     for(size_t i=0;i<n;i++)if(!isalnum((unsigned char)name[i])&&name[i]!='.'&&name[i]!='-'&&name[i]!='_')return 0;
     const char *ext=strrchr(name,'.');if(!ext)return 0;
     const char *allowed[]={".mp4",".mkv",".webm",".avi",".mov",".srt",".vtt",".nes",".sfc",".smc",".gb",".gbc",".gba",".zip"};
@@ -82,31 +81,31 @@ static int phone_filename(const char *name){
 static int phone_is_sub(const char *name){const char *e=strrchr(name,'.');return e&&(!strcasecmp(e,".srt")||!strcasecmp(e,".vtt"));}
 static int phone_is_rom(const char *name){const char *e=strrchr(name,'.');return e&&(!strcasecmp(e,".nes")||!strcasecmp(e,".sfc")||!strcasecmp(e,".smc")||!strcasecmp(e,".gb")||!strcasecmp(e,".gbc")||!strcasecmp(e,".gba")||!strcasecmp(e,".zip"));}
 static void phone_upload_abort(void){
-    if(phone_upload>=0)close(phone_upload);
+    if(phone_upload>=0)flxtr_fd_close(phone_upload);
     phone_upload=-1;
-    if(phone_temp[0])unlink(phone_temp);
+    if(phone_temp[0])flxtr_path_unlink(phone_temp);
     phone_temp[0]=0;phone_upload_left=0;
 }
 static int phone_upload_begin(const char *name,size_t length){
     if(!phone_filename(name)||!length||length>512u*1024u*1024u)return -1;
-    mkdir("phone-files",0700);mkdir("roms",0700);mkdir("roms/phone",0700);
+    flxtr_path_mkdir("phone-files");flxtr_path_mkdir("roms");flxtr_path_mkdir("roms/phone");
     const char *dir=phone_is_rom(name)?"roms/phone":"phone-files";
-    struct statvfs space;if(statvfs(dir,&space)||((uint64_t)space.f_bavail*space.f_frsize)<length+16u*1024u*1024u)return -2;
+    uint64_t available;if(flxtr_disk_free(dir,&available)||available<length+16u*1024u*1024u)return -2;
     snprintf(phone_target,sizeof(phone_target),"%s/%s",dir,name);
-    if(!access(phone_target,F_OK))return -3;
+    if(!flxtr_path_access(phone_target,F_OK))return -3;
     snprintf(phone_temp,sizeof(phone_temp),"%s/.upload-XXXXXX",dir);
-    phone_upload=mkstemp(phone_temp);if(phone_upload<0){phone_temp[0]=0;return -2;}
-    fcntl(phone_upload,F_SETFD,FD_CLOEXEC);phone_upload_left=length;return 0;
+    phone_upload=flxtr_temp_file(phone_temp,sizeof(phone_temp));if(phone_upload<0){phone_temp[0]=0;return -2;}
+    phone_upload_left=length;return 0;
 }
 /* Returns 1 when installed, 0 while streaming, -1 on failure. */
 static int phone_upload_write(const char *bytes,size_t n){
     if(n>phone_upload_left)return -1;
-    size_t done=0;while(done<n){ssize_t w=write(phone_upload,bytes+done,n-done);if(w<0&&errno==EINTR)continue;if(w<=0)return -1;done+=(size_t)w;}
+    size_t done=0;while(done<n){ptrdiff_t w=flxtr_fd_write(phone_upload,bytes+done,n-done);if(w<0&&errno==EINTR)continue;if(w<=0)return -1;done+=(size_t)w;}
     phone_upload_left-=n;if(phone_upload_left)return 0;
-    int ok=fsync(phone_upload)==0;if(close(phone_upload))ok=0;phone_upload=-1;
-    /* link is atomic and refuses to overwrite an existing name. */
-    if(!ok||link(phone_temp,phone_target))return -1;
-    unlink(phone_temp);phone_temp[0]=0;return 1;
+    int ok=flxtr_fd_sync(phone_upload)==0;if(flxtr_fd_close(phone_upload))ok=0;phone_upload=-1;
+    /* Publish atomically without replacing an existing name. */
+    if(!ok||flxtr_install_new(phone_temp,phone_target))return -1;
+    flxtr_path_unlink(phone_temp);phone_temp[0]=0;return 1;
 }
 static int phone_command(const char *field,const char *encoded,char *reply,size_t size){
     char value[2048];if(phone_decode(encoded,value,sizeof(value)))return 400;
@@ -143,7 +142,7 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
     }
     if(!strcmp(field,"subtitle")){
         if(value[0]&&(!phone_filename(value)||!phone_is_sub(value)))return 400;
-        if(value[0]){snprintf(phone_subtitle,sizeof(phone_subtitle),"phone-files/%.100s",value);if(access(phone_subtitle,R_OK)){phone_subtitle[0]=0;return 404;}}
+        if(value[0]){snprintf(phone_subtitle,sizeof(phone_subtitle),"phone-files/%.100s",value);if(flxtr_path_access(phone_subtitle,R_OK)){phone_subtitle[0]=0;return 404;}}
         else phone_subtitle[0]=0;
         snprintf(reply,size,"Subtitle selected for next playback");return 200;
     }
@@ -151,7 +150,7 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
     if(phone_pending[0])return 409;
     if(!strcmp(field,"play")){
         if(!phone_filename(value)||phone_is_rom(value)||phone_is_sub(value))return 400;
-        char path[256];snprintf(path,sizeof(path),"phone-files/%.100s",value);if(access(path,R_OK))return 404;
+        char path[256];snprintf(path,sizeof(path),"phone-files/%.100s",value);if(flxtr_path_access(path,R_OK))return 404;
     }else if(!strcmp(field,"music")){
         /* Public YouTube URLs, searches and Spotify playlist links.
          * No shell interpretation: the worker receives one literal argument. */

@@ -6,6 +6,7 @@
  * A live process must be waited before this object is discarded or reused. */
 #include <errno.h>
 #include <stddef.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,8 @@ typedef struct {
 typedef struct {
     const char *stdout_path; /* NULL: inherit; file: truncate and redirect. */
     const char *stderr_path; /* Same path as stdout shares its file offset. */
+    const uintptr_t *pass_handles; /* Explicit inheritable pipe endpoint copies. */
+    size_t pass_count; /* At most 16. Caller retains ownership. */
 } FlxtrSpawnOptions;
 #ifdef _WIN32
 static inline wchar_t *flxtr_process_wide(const char *text){
@@ -104,11 +107,25 @@ static inline int flxtr_process_start(FlxtrProcess *process,const char *executab
                                       const char *const argv[],const FlxtrSpawnOptions *options){
     if(!process||!executable||!executable[0]||!argv||!argv[0]){errno=EINVAL;return -1;}
     if(process->running){errno=EBUSY;return -1;}
+    size_t pass_count=options?options->pass_count:0;
+    const uintptr_t *pass=options?options->pass_handles:NULL;
+    if(pass_count>16||(pass_count&&!pass)){errno=EINVAL;return -1;}
+    for(size_t i=0;i<pass_count;i++){
+        if(pass[i]<3){errno=EINVAL;return -1;}
+        for(size_t j=0;j<i;j++)if(pass[i]==pass[j]){errno=EINVAL;return -1;}
+#ifdef _WIN32
+        DWORD flags;
+        if(!GetHandleInformation((HANDLE)pass[i],&flags)||!(flags&HANDLE_FLAG_INHERIT)){errno=EINVAL;return -1;}
+#else
+        if(pass[i]>INT_MAX||fcntl((int)pass[i],F_GETFD)<0){errno=EINVAL;return -1;}
+#endif
+    }
     const char *out=options?options->stdout_path:NULL,*err=options?options->stderr_path:NULL;
 #ifdef _WIN32
     wchar_t *wide=flxtr_process_wide(executable),*command=flxtr_process_command(argv);
     if(!wide||!command){free(wide);free(command);return -1;}
-    HANDLE handles[3]={INVALID_HANDLE_VALUE,INVALID_HANDLE_VALUE,INVALID_HANDLE_VALUE};
+    HANDLE handles[19]={INVALID_HANDLE_VALUE,INVALID_HANDLE_VALUE,INVALID_HANDLE_VALUE};
+    for(size_t i=0;i<pass_count;i++)handles[3+i]=(HANDLE)pass[i];
     handles[0]=flxtr_process_stream(NULL,STD_INPUT_HANDLE,1);
     handles[1]=flxtr_process_stream(out,STD_OUTPUT_HANDLE,0);
     if(out&&err&&!strcmp(out,err)&&handles[1]!=INVALID_HANDLE_VALUE){
@@ -127,7 +144,7 @@ static inline int flxtr_process_start(FlxtrProcess *process,const char *executab
         free(startup.lpAttributeList);startup.lpAttributeList=NULL;goto cleanup;
     }
     if(!UpdateProcThreadAttribute(startup.lpAttributeList,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                                 handles,sizeof(handles),NULL,NULL))goto cleanup;
+                                 handles,(3+pass_count)*sizeof(HANDLE),NULL,NULL))goto cleanup;
     startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput=handles[0];startup.StartupInfo.hStdOutput=handles[1];startup.StartupInfo.hStdError=handles[2];
     if(!CreateProcessW(wide,command,NULL,NULL,TRUE,EXTENDED_STARTUPINFO_PRESENT|CREATE_NO_WINDOW,
@@ -151,6 +168,8 @@ cleanup:
         if(out&&!strcmp(out,err))result=posix_spawn_file_actions_adddup2(&actions,STDOUT_FILENO,STDERR_FILENO);
         else result=posix_spawn_file_actions_addopen(&actions,STDERR_FILENO,err,O_WRONLY|O_CREAT|O_TRUNC,0600);
     }
+    for(size_t i=0;!result&&i<pass_count;i++)
+        result=posix_spawn_file_actions_adddup2(&actions,(int)pass[i],(int)pass[i]);
     /* Close only in the child. The parent's graphics/socket descriptor flags
      * remain unchanged, and unrelated descriptors never survive exec. */
     DIR *fds=opendir("/proc/self/fd");
@@ -160,14 +179,18 @@ cleanup:
         while(!result&&(entry=readdir(fds))){
             char *end;long fd=strtol(entry->d_name,&end,10);
             if(*end||fd<3||fd==own)continue;
+            int keep=0;for(size_t i=0;i<pass_count;i++)if(pass[i]==(uintptr_t)fd)keep=1;
+            if(keep)continue;
             result=posix_spawn_file_actions_addclose(&actions,(int)fd);
         }
         closedir(fds);
     }else if(!result){
         long limit=sysconf(_SC_OPEN_MAX);
         if(limit<0)result=EINVAL;
-        for(int fd=3;!result&&fd<limit;fd++)
-            if(fcntl(fd,F_GETFD)>=0)result=posix_spawn_file_actions_addclose(&actions,fd);
+        for(int fd=3;!result&&fd<limit;fd++){
+            int keep=0;for(size_t i=0;i<pass_count;i++)if(pass[i]==(uintptr_t)fd)keep=1;
+            if(!keep&&fcntl(fd,F_GETFD)>=0)result=posix_spawn_file_actions_addclose(&actions,fd);
+        }
     }
     pid_t child=0;
     if(!result)result=posix_spawn(&child,executable,&actions,NULL,(char *const *)argv,environ);

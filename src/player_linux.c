@@ -1,6 +1,7 @@
 /* Desktop backend. libmpv owns video/audio; the shell retains controller input. */
 #define _POSIX_C_SOURCE 200809L
 #include <mpv/client.h>
+#include "platform_pipe.h"
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -12,7 +13,8 @@
 #endif
 static mpv_handle *mpv;
 static volatile sig_atomic_t stop;
-static int fd=-1,menu,row,view,subs,scale=2,delay,height=720,episodes,servers,result=1;
+static FlxtrPipeHandle fd=FLXTR_INVALID_PIPE;
+static int menu,row,view,subs,scale=2,delay,height=720,episodes,servers,result=1;
 static double start;
 static const char *languages[]={"off","auto","eng","nor"};
 static void signal_stop(int sig){(void)sig;stop=1;}
@@ -23,7 +25,7 @@ static void request(int action,double p){
     if(p<0)p=0;
     FILE *f=fopen("playback-request.next","w");if(!f)return;
     fprintf(f,"%d %.3f %d %d %d %d\n",action,p,view,subs,scale,delay);
-    if(fclose(f)||rename("playback-request.next","playback-request"))return;
+    if(fclose(f)||flxtr_replace_file("playback-request.next","playback-request"))return;
     result=40;stop=1;
 }
 static void sizing(void){
@@ -79,7 +81,7 @@ static void key(char c){
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc<2)return 2;
-    int buffer=15,mb=128,headless=0,preload_fd=-1;double duration=0;
+    int buffer=15,mb=128,headless=0;FlxtrPipeHandle preload_fd=FLXTR_INVALID_PIPE;double duration=0;
     for(int i=2;i<argc;i++){
         const char *a=argv[i];
         if(!strcmp(a,"--episodes")){episodes=1;continue;}
@@ -91,8 +93,11 @@ int main(int argc,char **argv){
         if(!strcmp(a,"--height"))height=atoi(v);
         else if(!strcmp(a,"--start"))start=strtod(v,NULL);
         else if(!strcmp(a,"--duration"))duration=strtod(v,NULL);
-        else if(!strcmp(a,"--control-fd"))fd=atoi(v);
-        else if(!strcmp(a,"--preload-fd"))preload_fd=atoi(v);
+        else if(!strcmp(a,"--control-fd")||!strcmp(a,"--control-handle")){
+            if(flxtr_pipe_parse(v,&fd))return 2;
+        }else if(!strcmp(a,"--preload-fd")||!strcmp(a,"--preload-handle")){
+            if(flxtr_pipe_parse(v,&preload_fd))return 2;
+        }
         else if(!strcmp(a,"--buffer-seconds"))buffer=atoi(v);
         else if(!strcmp(a,"--buffer-mb"))mb=atoi(v);
         else if(!strcmp(a,"--subtitle-size"))scale=atoi(v);
@@ -103,7 +108,20 @@ int main(int argc,char **argv){
     }
     if((height!=480&&height!=720&&height!=1080)||mb<16||mb>256||buffer<1||buffer>30||start<0||start>86400)return 2;
     signal(SIGTERM,signal_stop);signal(SIGINT,signal_stop);
-    if(preload_fd>=3){char go=0;ssize_t n=read(preload_fd,&go,1);close(preload_fd);if(n!=1||go!='G')return 1;}
+    if(preload_fd!=FLXTR_INVALID_PIPE){
+        if(flxtr_pipe_nonblocking(preload_fd))return 1;
+        char go=0;ptrdiff_t n;
+        for(;;){
+            n=flxtr_pipe_read(preload_fd,&go,1);
+            if(n>=0||errno!=EAGAIN||stop)break;
+#ifdef _WIN32
+            Sleep(10);
+#else
+            struct timespec pause_time={0,10000000};nanosleep(&pause_time,NULL);
+#endif
+        }
+        flxtr_pipe_close(preload_fd);if(n!=1||go!='G'||stop)return 1;
+    }
     mpv=mpv_create();if(!mpv)return 1;
     mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"terminal","yes");
     mpv_set_option_string(mpv,"term-status-msg","");
@@ -132,12 +150,14 @@ int main(int argc,char **argv){
     if(headless){mpv_set_option_string(mpv,"vo","null");mpv_set_option_string(mpv,"ao","null");}
     if(duration>0){snprintf(value,sizeof(value),"%.3f",duration);mpv_set_option_string(mpv,"length",value);}
     if(mpv_initialize(mpv)<0){mpv_terminate_destroy(mpv);return 1;}
-    sizing();if(fd>=0)fcntl(fd,F_SETFL,fcntl(fd,F_GETFL)|O_NONBLOCK);
+    sizing();if(fd!=FLXTR_INVALID_PIPE&&flxtr_pipe_nonblocking(fd)){
+        mpv_terminate_destroy(mpv);return 1;
+    }
     command("loadfile",argv[1],NULL);
     const char *external=getenv("FLXTR_SUBTITLE_ENGLISH");
     if(external&&*external)command("sub-add",external,"select");
     while(!stop){
-        char keys[32];ssize_t n;while(fd>=0&&(n=read(fd,keys,sizeof(keys)))>0)for(ssize_t i=0;i<n;i++)key(keys[i]);
+        char keys[32];ptrdiff_t n;while(fd!=FLXTR_INVALID_PIPE&&(n=flxtr_pipe_read(fd,keys,sizeof(keys)))>0)for(ptrdiff_t i=0;i<n;i++)key(keys[i]);
         if(stop)break;
         mpv_event *e=mpv_wait_event(mpv,0.02);
         if(e->event_id==MPV_EVENT_CLIENT_MESSAGE){mpv_event_client_message *m=e->data;if(m->num_args==2&&!strcmp(m->args[0],"flxtr"))key(m->args[1][0]);}
@@ -150,5 +170,6 @@ int main(int argc,char **argv){
         if(e->event_id==MPV_EVENT_SHUTDOWN){request(7,position());break;}
     }
     if(stop&&result==1)result=0;
+    if(fd!=FLXTR_INVALID_PIPE)flxtr_pipe_close(fd);
     mpv_terminate_destroy(mpv);return result;
 }

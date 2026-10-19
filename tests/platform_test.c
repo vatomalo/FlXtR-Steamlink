@@ -62,13 +62,13 @@ static int run(int argc,char **argv){
     const char *args[11]={executable,"--arguments"};
     for(int i=0;i<7;i++)args[i+2]=arguments[i];
     args[9]=handle;args[10]=NULL;
-    FlxtrProcess child={0};FlxtrSpawnOptions streams={"platform-stdout.txt","platform-stderr.txt"};
+    FlxtrProcess child={0};FlxtrSpawnOptions streams={.stdout_path="platform-stdout.txt",.stderr_path="platform-stderr.txt"};
     assert(flxtr_process_start(&child,executable,args,&streams)==0);
     assert(flxtr_process_start(&child,executable,args,&streams)<0&&errno==EBUSY);
     int code=-1;assert(flxtr_process_wait(&child,10000,&code)==1&&code==23);
     assert(flxtr_process_poll(&child,&code)==1&&code==23);
     check_file("platform-stdout.txt","stdout exact");check_file("platform-stderr.txt","stderr exact");
-    FlxtrSpawnOptions combined={"platform-combined.txt","platform-combined.txt"};
+    FlxtrSpawnOptions combined={.stdout_path="platform-combined.txt",.stderr_path="platform-combined.txt"};
     assert(flxtr_process_start(&child,executable,args,&combined)==0);
     assert(flxtr_process_wait(&child,10000,&code)==1&&code==23);
     check_file("platform-combined.txt","stdout exactstderr exact");

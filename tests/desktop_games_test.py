@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix='desktop games ø ') as directory:
     roms=home/'roms';roms.mkdir()
     rom=roms/'literal $(not a shell); ø.nes';rom.write_bytes(b'NES fixture')
     env=dict(os.environ,FLXTR_RETROARCH=str(frontend),FLXTR_NO_ART='1')
+    if os.name!='nt':env.update(FLXTR_HOST_LIBRARY_PATH_SET='1',FLXTR_HOST_LIBRARY_PATH='/original-host-libraries',LD_LIBRARY_PATH='/app-bundled-libraries')
     def run(*argv,check=True):
         result=subprocess.run([str(worker),*argv],cwd=home,env=env,capture_output=True,timeout=15)
         if check:assert result.returncode==0,(result.returncode,result.stdout,result.stderr)
@@ -38,6 +39,7 @@ with tempfile.TemporaryDirectory(prefix='desktop games ø ') as directory:
     assert '-f' in recorded and '--appendconfig' in recorded
     assert recorded[-2:]==[str(core).replace('\\','/'),str(rom).replace('\\','/')]
     assert not (home/'INJECTED').exists()
+    if os.name!='nt':assert (home/'retroarch-environment.txt').read_text()=='/original-host-libraries'
     # An explicit missing frontend must not fall back to another installation.
     env['FLXTR_RETROARCH']=str(home/'missing-retroarch')
     (home/'game-request').write_text('1 -1 -1\n')

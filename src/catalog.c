@@ -695,6 +695,7 @@ int main(int argc,char **argv){
         if(child<0)return 1;
         int status=0;return waitpid(child,&status,0)==child?WEXITSTATUS(status):1;
 #else
+        desktop_host_environment();
         if(install)execlp("python3","python3","-I","tools/core_manager.py","--install",install,"--page",argv[2],(char*)NULL);
         else execlp("python3","python3","-I","tools/core_manager.py","--list","--page",argv[2],(char*)NULL);
         return 1;

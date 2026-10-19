@@ -2,6 +2,15 @@
 #define FLXTR_DESKTOP_RETROARCH_H
 #ifdef FLXTR_DESKTOP
 #include "platform_process.h"
+static inline void desktop_host_environment(void){
+#ifndef _WIN32
+    if(getenv("FLXTR_HOST_LIBRARY_PATH_SET")){
+        const char *original=getenv("FLXTR_HOST_LIBRARY_PATH");
+        if(original&&*original)setenv("LD_LIBRARY_PATH",original,1);
+        else unsetenv("LD_LIBRARY_PATH");
+    }
+#endif
+}
 static int desktop_find_program(const char *name,char *out,size_t cap){
 #ifdef _WIN32
     const char *found=flxtr_win_executable(name);
@@ -54,6 +63,7 @@ static int desktop_retroarch(char *out,size_t cap){
     return 0;
 }
 static int desktop_run_game(const char *core,const char *rom,const char *extra){
+    desktop_host_environment();
     char runtime[PATH_MAX],data[PATH_MAX];int style=desktop_retroarch(runtime,sizeof(runtime));
     if(!style){
         FILE *error=fopen("game-error.txt","w");

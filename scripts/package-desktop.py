@@ -52,6 +52,10 @@ for edition in ('Linux', 'SteamDeck'):
         executable = app / binary
         executable.rename(app / (binary + '.bin'))
         executable.write_text('#!/bin/sh\napp=$(dirname -- "$(readlink -f -- "$0")")\n'
+                              'if [ -z "${FLXTR_HOST_LIBRARY_PATH_SET+x}" ]; then\n'
+                              '  export FLXTR_HOST_LIBRARY_PATH="${LD_LIBRARY_PATH-}"\n'
+                              '  export FLXTR_HOST_LIBRARY_PATH_SET=1\n'
+                              'fi\n'
                               'export LD_LIBRARY_PATH="$app/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
                               'exec "$app/' + binary + '.bin" "$@"\n')
         executable.chmod(0o755)

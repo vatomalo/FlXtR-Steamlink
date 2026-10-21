@@ -26,9 +26,12 @@ static int write_preview(AVFrame *f){
             int V=f->format==AV_PIX_FMT_NV12?f->data[1][(y/2)*f->linesize[1]+(x/2)*2+1]:f->data[2][(y/2)*f->linesize[2]+x/2];
             int c=Y-16,d=U-128,e=V-128;
             int r=(298*c+409*e+128)>>8,g=(298*c-100*d-208*e+128)>>8,b=(298*c+516*d+128)>>8;
-            if(r<0)r=0;if(r>255)r=255;
-            if(g<0)g=0;if(g>255)g=255;
-            if(b<0)b=0;if(b>255)b=255;
+            if(r<0)r=0;
+            if(r>255)r=255;
+            if(g<0)g=0;
+            if(g>255)g=255;
+            if(b<0)b=0;
+            if(b>255)b=255;
             dst[x]=0xff000000u|((uint32_t)r<<16)|((uint32_t)g<<8)|(uint32_t)b;
         }
     }

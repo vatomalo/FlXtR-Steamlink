@@ -15,7 +15,7 @@ static int youtube_spawn(const char *query,int television){
     if(youtube_pid||(!youtube_preparing&&player_pid)||catalog_pid||update_pid)return -1;
     mkdir("music-cache",0700);unlink("music-cache/video.txt");unlink("music-cache/error.txt");
     youtube_for_tv=television;youtube_started=SDL_GetTicks();youtube_resume=0;
-    char height[12];youtube_height=qualities[quality_setting];snprintf(height,sizeof(height),"%d",youtube_height);
+    char height[12];youtube_height=quality_height();snprintf(height,sizeof(height),"%d",youtube_height);
     const char *mode=television?"tv-video":"video";
 #ifdef _WIN32
     char runtime[PATH_MAX],python[PATH_MAX],script[PATH_MAX],cert[PATH_MAX];
@@ -52,18 +52,20 @@ static int youtube_poll(void){
         if(SDL_GetTicks()-youtube_started<=120000)return 0;
         youtube_stop();
         if(youtube_preparing){youtube_preparing=0;youtube_retry_at=SDL_GetTicks()+15000;return 0;}
+        if(adaptive_lookup_fallback())return 1;
         tv_active=0;music_video_pause(1);snprintf(status,sizeof(status),"YOUTUBE LOOKUP TIMED OUT / A RETRY");return 1;
     }
     youtube_pid=0;
     int preparing=youtube_preparing;youtube_preparing=0;
     if(!WIFEXITED(code)||WEXITSTATUS(code)){
         if(preparing){youtube_retry_at=SDL_GetTicks()+15000;return 0;}
+        if(adaptive_lookup_fallback())return 1;
         if(youtube_for_tv){tv_active=0;music_video_pause(1);}
         snprintf(status,sizeof(status),"YOUTUBE UNAVAILABLE / SEE YOUTUBE.LOG");
         return 1;
     }
     char previous_audio[16004],previous_agent[502];
-    if(preparing){strcpy(previous_audio,youtube_audio);strcpy(previous_agent,youtube_agent);}
+    if(preparing||adaptive_pending){strcpy(previous_audio,youtube_audio);strcpy(previous_agent,youtube_agent);}
     Title title={0};title.height=youtube_height;char name[152];strcpy(title.kind,"youtube");
     FILE *f=fopen("music-cache/video.txt","r");
     int good=f&&!youtube_line(f,name,sizeof(name))&&!youtube_line(f,title.url,sizeof(title.url))&&
@@ -81,6 +83,7 @@ static int youtube_poll(void){
     }
     if(!good||strncmp(title.url,"https://",8)||(youtube_audio[0]&&strncmp(youtube_audio,"https://",8))){
         if(preparing){strcpy(youtube_audio,previous_audio);strcpy(youtube_agent,previous_agent);youtube_retry_at=SDL_GetTicks()+15000;return 0;}
+        if(adaptive_pending){strcpy(youtube_audio,previous_audio);strcpy(youtube_agent,previous_agent);if(adaptive_lookup_fallback())return 1;}
         if(youtube_for_tv){tv_active=0;music_video_pause(1);}
         snprintf(status,sizeof(status),"INVALID YOUTUBE VIDEO RESULT");return 1;
     }

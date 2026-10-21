@@ -161,6 +161,7 @@ static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
 static void tv_begin_prepared(void);
+static void bookmark_path(const Title *t,char *path,size_t capacity);
 static void tv_cancel_prepared(void);
 static void tv_stage_source(const Title *source);
 static int tv_joining,tv_preloading;
@@ -171,13 +172,26 @@ static PlayerPipe tv_buffer_control=-1,tv_gate=-1;
 static int tv_rating_weight=5,tv_popularity_weight=2,tv_variety_weight=4;
 static int series_autoplay;
 enum {MENU_THEMES=6};
-static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
-static const int qualities[]={480,720,1080},buffer_seconds[]={15,15,20,25,30,45,60,80,128};
+#if !defined(FLXTR_DESKTOP)||defined(FLXTR_ADAPTIVE_TEST)
+#define QUALITY_CHOICES 4
+#define DEFAULT_QUALITY 3
+#else
+#define QUALITY_CHOICES 3
+#define DEFAULT_QUALITY 1
+#endif
+static int adaptive_height=720,adaptive_blocked,adaptive_previous=720,adaptive_pending;
+static double adaptive_position;
+static char adaptive_title_key[16];
+static int quality_height(void);
+static int adaptive_lookup_fallback(void);
+static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=DEFAULT_QUALITY,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
+static const int qualities[]={480,720,1080,720},buffer_seconds[]={15,15,20,25,30,45,60,80,128};
 #ifdef FLXTR_DESKTOP
 static const int disk_megabytes[]={64,128,256};
 #else
 static const int disk_megabytes[]={16,32,64};
 #endif
+static int quality_height(void){return quality_setting==3?adaptive_height:qualities[quality_setting];}
 static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
 static void subtitle_route_log(const char *route,const Title *t){
     FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
@@ -223,7 +237,7 @@ static void load_settings(void){
         else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"menu_monochrome")&&(value==0||value==1))monochrome_menu=value;
         else if(!strcmp(key,"menu_theme")&&value>=0&&value<MENU_THEMES){menu_theme=value;theme_found=1;}
-        else if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
+        else if(!strcmp(key,"quality")&&value>=0&&value<QUALITY_CHOICES)quality_setting=value;
         else if(!strcmp(key,"buffer")&&value>=0&&value<9)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
         else if(!strcmp(key,"coverflow")&&(value==0||value==1))coverflow=value;
@@ -1292,9 +1306,9 @@ static void draw(Uint32 tick) {
 #ifdef FLXTR_DESKTOP
         const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES"};
 #else
-        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES"};
+        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES"};
 #endif
-        char values[19][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[19][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
@@ -1574,6 +1588,8 @@ static void tv_begin_prepared(void){
     if(!tv_prepared)return;
     tv_prepared=0;auto_active=1;auto_resume=0;playing_title=tv_next_title;
     player_pid=tv_buffer_pid;player_control=tv_buffer_control;tv_buffer_pid=0;tv_buffer_control=-1;
+    bookmark_path(&playing_title,adaptive_title_key,sizeof(adaptive_title_key));
+    adaptive_blocked=adaptive_pending=0;unlink("adaptive-ready");unlink("adaptive-request");
     close_ui();char go='G';if(tv_gate>=0){ssize_t n=player_pipe_write(tv_gate,&go,1);(void)n;player_pipe_close(tv_gate);}tv_gate=-1;
     if(!strcmp(playing_title.kind,"youtube")){strcpy(youtube_audio,youtube_next_audio);strcpy(youtube_agent,youtube_next_agent);auto_active=0;return;}
     TvAiring a;if(tv_airing_read(&a)&&a.id==auto_title.id){a.start=(long long)time(NULL);tv_airing_save(&a);}
@@ -1642,6 +1658,11 @@ static void launch_player(const Title *t) {
     /* Resume only an explicit bookmark for this title, not TV channel output. */
     char bookmark_key[16],bookmark_file[64];
     bookmark_path(t,bookmark_key,sizeof(bookmark_key));
+    if(!tv_preloading&&strcmp(adaptive_title_key,bookmark_key)){
+        snprintf(adaptive_title_key,sizeof(adaptive_title_key),"%s",bookmark_key);
+        adaptive_blocked=adaptive_pending=0;
+    }
+    if(!tv_preloading){unlink("adaptive-request");unlink("adaptive-ready");}
     snprintf(bookmark_file,sizeof(bookmark_file),"bookmarks/%s.txt",bookmark_key);
     if(!tv_active&&strcmp(t->kind,"youtube")&&restart_position==0){
         FILE *f=fopen(bookmark_file,"r");
@@ -1677,6 +1698,9 @@ static void launch_player(const Title *t) {
          * the video URL. Prefer parent-series synopsis for an episode. */
         setenv("FLXTR_VIDEO_TITLE",t->title,1);
         setenv("FLXTR_VIDEO_KIND",t->kind,1);
+        char auto_mask[16];snprintf(auto_mask,sizeof(auto_mask),"%d",tv_preloading?0:adaptive_blocked);
+        setenv("FLXTR_ADAPTIVE_BLOCKED",auto_mask,1);
+        setenv("FLXTR_ADAPTIVE_RESOLVE",!strcmp(t->kind,"youtube")&&t->meta[0]?"1":"0",1);
         char info_path[128],info_text[512]="";
         const char *info_kind=t->kind;
         if(!strcmp(info_kind,"episode"))info_kind="tv";
@@ -1693,12 +1717,12 @@ static void launch_player(const Title *t) {
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[32],start[32];
-        int requested_height=t->height?t->height:qualities[quality_setting];
-        if(auto_active&&!strcmp(t->kind,"kiss-episode")&&kiss_1080_pass)requested_height=1080;
+        int requested_height=quality_setting==3?adaptive_height:(t->height?t->height:qualities[quality_setting]);
+        if(auto_active&&!strcmp(t->kind,"kiss-episode")&&kiss_1080_pass&&quality_setting!=3)requested_height=1080;
         /* Honor the selected TV target, including 1080p. Older players can
          * still request a higher-resolution retry for a missing rendition. */
         if(tv_active){
-            int preferred=qualities[quality_setting];
+            int preferred=quality_height();
 
             requested_height=tv_quality_retry>=2?1080:tv_quality_retry==1?720:preferred;
         }
@@ -1721,8 +1745,12 @@ static void launch_player(const Title *t) {
         snprintf(gate_arg,sizeof(gate_arg),"%d",gate[0]);
         const char *control_option="--control-fd",*gate_option="--preload-fd";
 #endif
-        char *args[28]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)control_option,control,"--start",start,NULL,NULL,NULL};
-        int n=20;if(tv_preloading){args[n++]=(char*)gate_option;args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||!strcmp(t->kind,"episode")||!strcmp(t->kind,"kiss-episode"))args[n++]="--episodes";if(auto_active)args[n++]="--servers";
+        char *args[30]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)control_option,control,"--start",start,NULL,NULL,NULL};
+        int n=20;
+#ifndef FLXTR_DESKTOP
+        if(quality_setting==3)args[n++]="--adaptive";
+#endif
+        if(tv_preloading){args[n++]=(char*)gate_option;args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||!strcmp(t->kind,"episode")||!strcmp(t->kind,"kiss-episode"))args[n++]="--episodes";if(auto_active)args[n++]="--servers";
 #ifdef FLXTR_APP_TEST
         args[n++]="--headless";
 #endif
@@ -1748,6 +1776,15 @@ static void launch_player(const Title *t) {
     if(player_pid<0){player_pipe_close(player_control);player_control=-1;player_pid=0;if(!tv_preloading&&open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
 }
+static int adaptive_lookup_fallback(void){
+    if(quality_setting!=3||!adaptive_pending)return 0;
+    adaptive_pending=0;
+    adaptive_blocked|=adaptive_height<=480?7:adaptive_height<=720?6:4;
+    adaptive_height=adaptive_previous;tv_cancel_prepared();
+    restart_position=auto_resume=adaptive_position;playing_title.height=0;
+    fprintf(stderr,"Auto quality: resolver failed; retaining previous %dp stream\n",adaptive_height);
+    launch_player(&playing_title);return 1;
+}
 static void series_advance(int direction){
     auto_active=0;restart_position=auto_resume=0;
     if(!strcmp(playing_title.kind,"episode")){
@@ -1767,6 +1804,41 @@ static void finish_player(int code){
     player_pid=0;stopping_player=0;if(player_control>=0)player_pipe_close(player_control);player_control=-1;
     if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;auto_active=0;return;}
     if(!tv_active||strcmp(playing_title.kind,"youtube"))music_video_pause(1);
+    if(!cancelled&&quality_setting==3&&WIFEXITED(code)&&WEXITSTATUS(code)==46){
+        int target=0,blocked=0,actual=0,reason=0;double position=-1;
+        FILE *f=fopen("adaptive-request","r");
+        int good=f&&fscanf(f,"%d %lf %d %d %d",&target,&position,&blocked,&actual,&reason)==5;
+        if(f)fclose(f);
+        unlink("adaptive-request");
+        if(!good||(target!=480&&target!=720&&target!=1080)||!(position>=0&&position<=86400)||
+           blocked<0||blocked>7||actual<1||actual>1080||reason<1||reason>4){
+            tv_active=auto_active=0;tv_cancel_prepared();snprintf(status,sizeof(status),"INVALID AUTO QUALITY REQUEST");return;
+        }
+        adaptive_previous=actual<=480?480:actual<=720?720:1080;
+        adaptive_height=target;adaptive_blocked=blocked;adaptive_position=position;adaptive_pending=1;
+        tv_cancel_prepared();tv_quality_retry=0;playing_title.height=0;
+        fprintf(stderr,"Auto quality: %dp -> %dp at %.3f sec (%s)\n",actual,target,position,
+            reason==1?"buffer starvation":reason==2?"decoder stalls":reason==3?"audio underruns":"stable playback");
+        if(!strcmp(playing_title.kind,"youtube")&&playing_title.meta[0]){
+            if(!youtube_spawn(playing_title.meta,0)){youtube_for_tv=tv_active;youtube_resume=position;}
+            return;
+        }
+        restart_position=auto_resume=position;launch_player(&playing_title);return;
+    }
+    if(adaptive_pending){
+        int failed=!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)!=0&&WEXITSTATUS(code)!=40&&access("adaptive-ready",F_OK);
+        adaptive_pending=0;
+        if(failed){
+            adaptive_blocked|=adaptive_height<=480?7:adaptive_height<=720?6:4;
+            adaptive_height=adaptive_previous;tv_cancel_prepared();playing_title.height=0;tv_quality_retry=0;
+            fprintf(stderr,"Auto quality: switch failed; reverting to %dp\n",adaptive_height);
+            if(!strcmp(playing_title.kind,"youtube")&&playing_title.meta[0]){
+                if(!youtube_spawn(playing_title.meta,0)){youtube_for_tv=tv_active;youtube_resume=adaptive_position;}
+                return;
+            }
+            restart_position=auto_resume=adaptive_position;launch_player(&playing_title);return;
+        }
+    }
     if(!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==40){
         int command,view,sub,scale,delay;double position;FILE *f=fopen("playback-request","r");
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;
@@ -1791,7 +1863,7 @@ static void finish_player(int code){
             return;
         }
         if(command<=3){
-            if(command>1){quality_setting=(quality_setting+(command==2?1:2))%3;playing_title.height=0;save_settings();}
+            if(command>1){quality_setting=(quality_setting+(command==2?1:QUALITY_CHOICES-1))%QUALITY_CHOICES;playing_title.height=0;save_settings();}
             if(command>1&&!strcmp(playing_title.kind,"youtube")&&playing_title.meta[0]){
                 tv_cancel_prepared();
                 if(!youtube_spawn(playing_title.meta,0)){youtube_for_tv=tv_active;youtube_resume=position;}
@@ -1815,7 +1887,7 @@ static void finish_player(int code){
         snprintf(status,sizeof(status),eof?"MUSIC VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
     }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
-        int current=tv_quality_retry>=1?720:qualities[quality_setting];
+        int current=tv_quality_retry>=1?720:quality_height();
         tv_quality_retry=current<720?1:2;
         fprintf(stderr,"TV source has no compatible %dp track; retrying at %dp\n",current,tv_quality_retry==1?720:1080);
         launch_player(&playing_title);
@@ -2068,7 +2140,7 @@ static void action(SDL_Keycode key) {
                 case 17:series_autoplay=!series_autoplay;break;
                 case 15:accounts_open(0);break;
                 case 16:accounts_open(1);break;
-                case 0:quality_setting=(quality_setting+step+3)%3;break;
+                case 0:quality_setting=(quality_setting+step+QUALITY_CHOICES)%QUALITY_CHOICES;break;
                 case 1:if(!buffer_setting)buffer_setting=1;buffer_setting=1+(buffer_setting-1+step+8)%8;break;
                 case 2:disk_setting=(disk_setting+step+3)%3;break;
                 case 3:coverflow=!coverflow;break;

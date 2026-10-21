@@ -26,6 +26,14 @@ jobs:
           ./build/ram-buffer-test
           cc -std=c99 -Wall -Wextra -Werror tests/video_quality_test.c -o build/video-quality-test
           ./build/video-quality-test
+          cc -std=c99 -Wall -Wextra -Werror tests/adaptive_video_test.c -o build/adaptive-video-test
+          ./build/adaptive-video-test
+          cc -std=c99 -Wall -Wextra -Werror tests/adaptive_buffer_wait_test.c -o build/adaptive-buffer-wait-test $(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
+          ./build/adaptive-buffer-wait-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/adaptive_shell_test.c -o build/adaptive-shell-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/adaptive-shell-test
+          cc -std=c99 -Wall -Wextra -Werror -DFLXTR_ARM_SHELL_TEST $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/adaptive_shell_test.c -o build/adaptive-arm-shell-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/adaptive-arm-shell-test
           cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/mtv_preload_test.c -o build/mtv-preload-test $(pkg-config --libs sdl2 SDL2_image libcurl)
           ./build/mtv-preload-test
           cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) tests/playback_menu_test.c -o build/playback-menu-test $(pkg-config --libs sdl2) -lSDL2_image -lcurl

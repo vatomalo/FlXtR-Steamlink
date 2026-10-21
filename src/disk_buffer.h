@@ -11,6 +11,9 @@
 #ifndef DISK_READ_PACKET
 #define DISK_READ_PACKET(format,packet) av_read_frame(format,packet)
 #endif
+#ifndef DISK_WAITED
+#define DISK_WAITED(waited) ((void)(waited))
+#endif
 #define DISK_SLOTS 4096
 typedef struct {int size,stream,flags,sides;int64_t pts,dts,duration,pos;} DiskHeader;
 typedef struct {uint32_t size,type;} DiskSide;
@@ -20,7 +23,7 @@ typedef struct {
     unsigned char *ram;
     AVFormatContext *format;int fd,vi,ai,si,result,done,quit,primed,started;
     int head,count,seconds;uint64_t capacity,read_bytes,write_bytes;
-    int64_t newest;
+    int64_t newest,video_newest;
     DiskRecord records[DISK_SLOTS];
 } DiskBuffer;
 static int disk_io(DiskBuffer *q,void *data,size_t size,uint64_t offset,int writing){
@@ -77,6 +80,7 @@ static void *disk_producer(void *opaque){
         record->stream=p->stream_index;record->flags=p->flags;
         q->write_bytes+=bytes;q->count++;
         if(ts!=AV_NOPTS_VALUE&&(q->newest==AV_NOPTS_VALUE||ts>q->newest))q->newest=ts;
+        if(p->stream_index==q->vi&&ts!=AV_NOPTS_VALUE&&(q->video_newest==AV_NOPTS_VALUE||ts>q->video_newest))q->video_newest=ts;
         int64_t first=q->records[q->head].time;
         if((first==AV_NOPTS_VALUE&&q->write_bytes-q->read_bytes>=8*1024*1024)||(first!=AV_NOPTS_VALUE&&q->newest-first>=(int64_t)(q->started?1:q->seconds)*AV_TIME_BASE))q->primed=1;
         pthread_cond_broadcast(&q->changed);pthread_mutex_unlock(&q->mutex);av_packet_unref(p);
@@ -100,7 +104,7 @@ static DiskBuffer *disk_start(AVFormatContext *fmt,int vi,int ai,int si,int seco
     unlink(name);
 #endif
     q->capacity=capacity;q->format=fmt;q->vi=vi;q->ai=ai;q->si=si;q->seconds=seconds;
-    q->newest=AV_NOPTS_VALUE;
+    q->newest=q->video_newest=AV_NOPTS_VALUE;
     pthread_mutex_init(&q->mutex,NULL);pthread_cond_init(&q->changed,NULL);
     if(pthread_create(&q->thread,NULL,disk_producer,q)){if(q->fd>=0)close(q->fd);free(q->ram);pthread_cond_destroy(&q->changed);pthread_mutex_destroy(&q->mutex);free(q);return NULL;}
     return q;
@@ -110,7 +114,8 @@ static int disk_packet(DiskBuffer *q,AVPacket *p){
     if(!q->count)q->primed=0;
     while(!stopped&&!q->quit&&!q->done&&(!q->count||!q->primed)){
         disk_read_wait_count++;
-        disk_wait(q);pthread_mutex_unlock(&q->mutex);DISK_POLL();pthread_mutex_lock(&q->mutex);
+        int64_t began=av_gettime_relative();disk_wait(q);int64_t waited=av_gettime_relative()-began;
+        pthread_mutex_unlock(&q->mutex);DISK_POLL();DISK_WAITED(waited);pthread_mutex_lock(&q->mutex);
     }
     if(stopped||q->quit){pthread_mutex_unlock(&q->mutex);return AVERROR_EXIT;}
     if(!q->count){int rc=q->result;pthread_mutex_unlock(&q->mutex);return rc;}

@@ -1,6 +1,9 @@
 #ifndef PLAYBACK_SEEK
 #define PLAYBACK_SEEK(position) menu_restart(1,position)
 #endif
+#ifndef PLAYBACK_ADAPTIVE
+#define PLAYBACK_ADAPTIVE 0
+#endif
 /* Single hardware overlay plane: the menu owns it while visible. */
 #include <sys/stat.h>
 static int control_fd=-1,menu_open,menu_row,menu_info,paused,requested_action;
@@ -68,7 +71,7 @@ static void menu_draw(void){
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
     snprintf(rows[5],80,"VIDEO SIZE: %s",view_names[viewing]);
-    snprintf(rows[6],80,"QUALITY TARGET: %dP",menu_height);
+    snprintf(rows[6],80,PLAYBACK_ADAPTIVE?"QUALITY: AUTO (%dP)":"QUALITY TARGET: %dP",menu_height);
     snprintf(rows[7],80,"%s",menu_servers?"TRY NEXT SERVER":"NEXT SERVER: NOT AVAILABLE");
     snprintf(rows[8],80,"%s",menu_episodes?"PREVIOUS EPISODE":"PREVIOUS EPISODE: NOT AVAILABLE");
     snprintf(rows[9],80,"%s",menu_episodes?"NEXT EPISODE":"NEXT EPISODE: NOT AVAILABLE");

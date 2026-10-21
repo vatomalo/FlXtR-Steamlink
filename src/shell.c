@@ -258,7 +258,7 @@ static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"series_autoplay=%d\nvideo_view=%d\n",series_autoplay,default_viewing);
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
-    fprintf(f,"game_output=%d\ngame_view=%d\ngame_performance=%d\nmusic_autoplay=%d\n",game_output,game_view,game_performance,music_autoplay);
+    fprintf(f,"game_output=%d\ngame_view=%d\ngame_performance=%d\nmusic_autoplay=%d\n",GAME_OUTPUT_DEFAULT,game_view,game_performance,music_autoplay);
     fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
     fprintf(f,"menu_theme=%d\n",menu_theme);
     fprintf(f,"tv_rating=%d\ntv_popularity=%d\ntv_variety=%d\n",tv_rating_weight,tv_popularity_weight,tv_variety_weight);
@@ -282,7 +282,7 @@ static void load_settings(void){
         else if(!strcmp(key,"tv_variety")&&value>=0&&value<=5)tv_variety_weight=value;
         else if(!strcmp(key,"game_view")&&game_view_valid(value))game_view=value;
         else if(!strcmp(key,"game_performance")&&value>=0&&value<3)game_performance=value;
-        else if(!strcmp(key,"game_output")&&game_output_valid(value))game_output=value;
+        else if(!strcmp(key,"game_output")&&game_output_valid(value))game_output=GAME_OUTPUT_DEFAULT;
         else if(!strcmp(key,"music_autoplay")&&(value==0||value==1))music_autoplay=value;
         else if(!strcmp(key,"game_autostate")&&(value==0||value==1))game_autostate=value;
         else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
@@ -2386,9 +2386,7 @@ static void action(SDL_Keycode key) {
                     if(access("samba/.configured",R_OK))samba_password_open();
                     else samba_service(access("samba/.enabled",R_OK)?"enable":"disable");
                 }break;
-                case 19:{const int outputs[]={0,240,480,720,1080};int index=0;
-                    for(int i=0;i<5;i++)if(game_output==outputs[i])index=i;
-                    game_output=outputs[(index+step+5)%5];break;}
+                case 19:game_output=GAME_OUTPUT_DEFAULT;break;
                 case 18:if(!set_auto_updates(!auto_updates_enabled()))snprintf(status,sizeof(status),"COULD NOT CHANGE AUTO UPDATE SETTING");break;
                 case 17:series_autoplay=!series_autoplay;break;
                 case 15:accounts_open(0);break;

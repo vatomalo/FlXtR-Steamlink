@@ -83,7 +83,7 @@ if [[ ! -f "$STEAMLINK_SDK_PATH/setenv.sh" ]]; then
 fi
 if [[ ! -e "$source_dir" ]]; then
     git clone --branch main --single-branch "$repo" "$source_dir"
-elif [[ ! -d "$source_dir/.git" ]]; then
+elif ! git -C "$source_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     printf 'Source path is not a Git checkout: %s\n' "$source_dir" >&2; exit 1
 fi
 cd "$source_dir"

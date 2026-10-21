@@ -8,7 +8,14 @@ docker image inspect "$image" >/dev/null
 if [[ ! -f build/music-runtime.tgz ]] || ! tar -tzf build/music-runtime.tgz | grep "yt_dlp_ejs/__init__.py" >/dev/null; then
     bash scripts/build-music-runtime.sh
 fi
-docker run --rm --mount "type=bind,src=$PWD,dst=/src" \
+# A worktree's .git file points outside the source bind. Give Git read-only
+# access to its shared metadata at the same absolute path inside the builder.
+git_mounts=()
+if [[ -f .git ]]; then
+    common=$(git rev-parse --path-format=absolute --git-common-dir)
+    git_mounts=(--mount "type=bind,src=$common,dst=$common,readonly")
+fi
+docker run --rm "${git_mounts[@]}" --mount "type=bind,src=$PWD,dst=/src" \
     --mount type=volume,src=flxtr-steamlink-build-cache,dst=/var/cache/flxtr-steamlink \
     --env FLXTR_SOURCE_DIR=/src --env GREENLINK_BUILD_CACHE=/var/cache/flxtr-steamlink \
     --env FLXTR_DISABLE_AUTO_UPDATE=1 \

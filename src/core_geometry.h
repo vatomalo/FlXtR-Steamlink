@@ -3,7 +3,10 @@
  * inside the UI/launcher. Libretro ABI declarations carry their upstream license. */
 #ifndef FLXTR_CORE_GEOMETRY_H
 #define FLXTR_CORE_GEOMETRY_H
+/* Frontend loads function pointers; do not export core entrypoints on Windows. */
+#define RETRO_API RETRO_CALLCONV
 #include "vendor/libretro.h"
+#undef RETRO_API
 static const char *probe_system,*probe_save;
 static unsigned probe_rotation;
 static bool probe_environment(unsigned command,void *data){

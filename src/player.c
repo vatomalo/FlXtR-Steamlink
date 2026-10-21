@@ -223,7 +223,7 @@ static void adaptive_evaluate(int64_t starvation){
         char line[256];snprintf(line,sizeof(line),"Auto health: actual=%dp target=%dp ahead=%.1fs starvation=%.0fms decoder=%d audio=%d blocked=%d%s\n",
             adaptive_policy.actual,adaptive_policy.target,ahead,((reason>0&&reason<4)?adaptive_policy.last_starved:adaptive_policy.starved)/1000.0,
             (reason>0&&reason<4)?adaptive_policy.last_slow:adaptive_policy.slow,(reason>0&&reason<4)?adaptive_policy.last_underruns:adaptive_policy.underruns,adaptive_policy.blocked,
-            reason&&!target?" / no lower compatible rendition":"");
+            reason&&!target?" / no lower usable rendition":"");
         adaptive_trace(line);
     }
     if(!target)return;

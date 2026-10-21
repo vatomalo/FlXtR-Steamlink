@@ -41,7 +41,7 @@ static int adaptive_sample(AdaptiveVideo *a,int64_t now,int64_t starved,int slow
         a->retry=now+300000000;
         a->healthy=0;a->window=now;a->starved=0;a->slow=a->underruns=0;
         const int levels[]={480,720,1080};
-        for(int i=0;i<3;i++)if(levels[i]<a->actual&&(a->available&(1<<i)))return levels[i];
+        for(int i=0;i<3;i++)if(levels[i]<a->actual&&(a->available&(1<<i))&&!(a->blocked&(1<<i)))return levels[i];
         return 0; /* Only one rendition: do not restart into the same stream. */
     }
     if(!allow_upgrade||!a->healthy)return 0;

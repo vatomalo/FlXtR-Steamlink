@@ -23,6 +23,8 @@ int main(void){
     assert(adaptive_sample(&a,13000000,0,1,0,20,1,&why)==480&&why==2);
     adaptive_init(&a,720,720,7,0,0);
     assert(adaptive_sample(&a,11000000,0,0,3,20,1,&why)==480&&why==3);
+    adaptive_init(&a,720,720,7,7,0);
+    assert(!adaptive_sample(&a,11000000,0,3,0,20,1,&why)); /* don't ping-pong into a failed fallback */
     adaptive_init(&a,720,720,2,0,0);
     assert(!adaptive_sample(&a,11000000,900000,0,0,0,1,&why)); /* fixed 720 source */
     adaptive_init(&a,1080,1080,6,0,0);

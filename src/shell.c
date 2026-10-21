@@ -170,6 +170,7 @@ static pid_t tv_buffer_pid;
 static PlayerPipe tv_buffer_control=-1,tv_gate=-1;
 static int tv_rating_weight=5,tv_popularity_weight=2,tv_variety_weight=4;
 static int series_autoplay;
+enum {MENU_THEMES=6};
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,20,25,30,45,60,80,128},disk_megabytes[]={64,128,256};
 static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
@@ -216,7 +217,7 @@ static void load_settings(void){
         else if(!strcmp(key,"game_autostate")&&(value==0||value==1))game_autostate=value;
         else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"menu_monochrome")&&(value==0||value==1))monochrome_menu=value;
-        else if(!strcmp(key,"menu_theme")&&value>=0&&value<=2){menu_theme=value;theme_found=1;}
+        else if(!strcmp(key,"menu_theme")&&value>=0&&value<MENU_THEMES){menu_theme=value;theme_found=1;}
         else if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
         else if(!strcmp(key,"buffer")&&value>=0&&value<9)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
@@ -332,8 +333,25 @@ static char status[100]="SELECT A TITLE / Y GENRE AND MOST POPULAR";
 static unsigned char star_x[STARS], star_y[STARS], star_speed[STARS];
 static SDL_Color green={116,255,132,255}, dim={66,126,77,255}, white={212,226,214,255};
 
+static int keyboard_used=
+#ifdef FLXTR_DESKTOP
+1;
+#else
+0;
+#endif
+static const char *ui_hint(const char *controller,const char *keyboard){return keyboard_used?keyboard:controller;}
+#include "desktop_theme.h"
 static void apply_menu_theme(void) {
-    if(menu_theme==2){
+    theme_canvas=(SDL_Color){0,0,0,255};theme_panel=(SDL_Color){255,255,255,255};
+    if(menu_theme>=3){
+        green=menu_theme==4?(SDL_Color){255,185,66,255}:(SDL_Color){101,201,255,255};
+        white=menu_theme==4?(SDL_Color){255,226,173,255}:(SDL_Color){231,237,245,255};
+        dim=menu_theme==4?(SDL_Color){173,129,64,255}:(SDL_Color){139,155,175,255};
+        theme_canvas=menu_theme==4?(SDL_Color){16,10,2,255}:(SDL_Color){9,17,31,255};
+        theme_panel=menu_theme==4?(SDL_Color){37,25,8,255}:(SDL_Color){17,30,51,255};
+        if(menu_theme==5)theme_custom();
+    }else if(menu_theme==2){
+        theme_panel=(SDL_Color){12,5,10,255};
         green=(SDL_Color){243,44,66,255};
         dim=(SDL_Color){181,116,125,255};
         white=(SDL_Color){248,235,235,255};
@@ -350,6 +368,15 @@ static void apply_menu_theme(void) {
 static void load_menu_background(void){
     if(!renderer)return;
     SDL_DestroyTexture(background);background=NULL;
+    if(menu_theme>=3){
+        if(menu_theme==5){theme_create_custom();struct stat st;
+            if(!stat("themes/custom/background.png",&st)&&st.st_size<=8*1024*1024){
+                SDL_Surface *custom=IMG_Load("themes/custom/background.png");
+                if(custom){if(custom->w<=4096&&custom->h<=4096)background=SDL_CreateTextureFromSurface(renderer,custom);SDL_FreeSurface(custom);}
+            }
+        }
+        apply_menu_theme();return;
+    }
     if(menu_theme==1){apply_menu_theme();return;}
     const char *path=menu_theme==2?
         "assets/backgrounds/romantic_crimson_skulls.png":
@@ -1104,20 +1131,29 @@ static void start_update(void) {
 #endif
 }
 #include "music_ui.h"
+#include "youtube_video.h"
+static int keyboard_help;
 static void draw(Uint32 tick) {
+    if(keyboard_help){
+        SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
+        text(45,35,"KEYBOARD CONTROLS",3,green,50);
+        const char *lines[]={"ARROWS / ENTER   Navigate / select","ESC              Back / stop video","SPACE / K        Pause / resume playback","J / L            Seek backward / forward 10 seconds","F / M IN VIDEO   Fullscreen / mute","TAB IN VIDEO     Playback menu","F2               Next library","F3 / CTRL+F      Search / TAB completes typed text","F10              Settings / F4 next theme","M / T / G        Music / TV / Games","CTRL+P           Phone setup / CTRL+Q quit","F1 / ESC         Close this help"};
+        for(size_t i=0;i<sizeof(lines)/sizeof(lines[0]);i++)text(45,95+(int)i*33,lines[i],1,white,100);
+        SDL_RenderPresent(renderer);return;
+    }
     if(music_on){music_draw();SDL_RenderPresent(renderer);return;}
-    SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
-    if(background&&!monochrome_menu){
-        SDL_RenderCopy(renderer,background,NULL,NULL);
+    SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
+    if((background&&!monochrome_menu)||menu_theme>=3){
+        if(background)SDL_RenderCopy(renderer,background,NULL,NULL);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
-        SDL_Color pane=menu_theme==2?(SDL_Color){12,5,10,210}:(SDL_Color){255,255,255,180};
-        SDL_Color side=menu_theme==2?(SDL_Color){12,5,10,225}:(SDL_Color){255,255,255,208};
-        SDL_Color foot=menu_theme==2?(SDL_Color){12,5,10,232}:(SDL_Color){255,255,255,224};
+        SDL_Color pane=theme_pane(210);
+        SDL_Color side=theme_pane(225);
+        SDL_Color foot=theme_pane(232);
         rect(20,16,920,55,pane,1);
         rect(20,80,155,400,side,1);
         rect(20,483,920,43,foot,1);
         rect(184,419,746,63,side,1);
-        if(settings_on||bios_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,menu_theme==2?(SDL_Color){12,5,10,225}:(SDL_Color){255,255,255,200},1);
+        if(settings_on||bios_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,theme_pane(225),1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
     if(stars_on&&(!background||monochrome_menu))for(int i=0;i<STARS;i++) {
@@ -1145,7 +1181,7 @@ static void draw(Uint32 tick) {
     }
     text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
     if(music_job==3||music_job==2){text(737,22,"[R1] MUSIC / NOW PLAYING",1,dim,32);music_now_playing(737,43,31,green);}
-    else text(737,32,"[R1] MUSIC",2,dim,17);
+    else text(737,32,ui_hint("[R1] MUSIC","[M] MUSIC"),2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
     int root_mode=history_size?history[0].mode:browse.mode;
@@ -1158,7 +1194,7 @@ static void draw(Uint32 tick) {
         text(30,124+i*21,line,1,root_mode==menu_modes[i]?green:dim,18);
     }
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[L2] ROM FOLDERS":browse.mode==28?"[Y] DELETE ZIP":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":"B BACK / L3 FAVORITE",1,dim,22);
+    text(30,379,ui_hint("[SELECT] SETTINGS","F10 SETTINGS / F1 HELP"),1,dim,22);text(30,402,ui_hint("[X] LIBRARY","F2 LIBRARY"),1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?ui_hint("[Y] GENRE / SECTION","F6 GENRE / SECTION"):browse.mode==14?ui_hint("[L2] ROM FOLDERS","F8 ROM FOLDERS"):browse.mode==28?"[Y] DELETE ZIP":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?ui_hint("[START] SEARCH","F3 SEARCH"):browse.mode==14?ui_hint("[START] GET GAMES","F3 GET GAMES"):browse.mode==21?ui_hint("[START] GET GAMES","F3 GET GAMES"):ui_hint("[START] ABOUT","F1 HELP / I ABOUT"),1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":ui_hint("B BACK / L3 FAVORITE","ESC BACK / F FAVORITE"),1,dim,22);
     if(accounts_on){
         rect(184,80,746,410,(SDL_Color){12,20,14,255},1);
         text(204,96,party_entry==2?"ROMSGAMES / PHONE IMPORT":phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
@@ -1223,7 +1259,7 @@ static void draw(Uint32 tick) {
         text(194,350,"UP/DOWN ROW / LEFT/RIGHT CHANGE",2,green,60);
         text(194,400,"A APPLY / B OR X SKIP",2,green,60);
     }else if(tv_schedule_on||(browse.mode==11&&!settings_on&&!about)){
-        text(194,94,tv_schedule_on?"EDIT TV SCHEDULE":"TV MODE / OSLO TIME",2,green,55);
+        text(194,94,tv_schedule_on?"EDIT TV SCHEDULE":mtv_override?"MTV / MUSIC VIDEOS":"TV MODE / OSLO TIME",2,green,55);
         int active=tv_block_at(tv_blocks,tv_hour());
         for(int i=0;i<TV_BLOCKS;i++){
             char line[80];snprintf(line,sizeof(line),"%c %02d-%02d  %s %s",i==active?'>':' ',tv_blocks[i].hour,i+1<TV_BLOCKS?tv_blocks[i+1].hour:24,tv_genres[tv_blocks[i].genre],tv_blocks[i].marathon?"[MARATHON]":"");
@@ -1231,8 +1267,8 @@ static void draw(Uint32 tick) {
             text(202,y,line,2,i==active||i==tv_row?green:white,58);
             if(tv_schedule_on&&i==tv_row)text(840,y,tv_column==2?"RUN":tv_column?"GENRE":"HOUR",1,green,10);
         }
-        text(194,427,tv_schedule_on?"LEFT/RIGHT: CHANGE  /  A: HOUR, GENRE, MARATHON":"A START TV / SELECT EDIT SCHEDULE",1,green,90);
-        text(194,452,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
+        text(194,427,tv_schedule_on?"LEFT/RIGHT: CHANGE  /  A: HOUR, GENRE, MARATHON":"ENTER/A START TV / F10 EDIT SCHEDULE",1,green,90);
+        text(194,452,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":ui_hint("Y: MTV / SCHEDULE   MUSIC QUERY: MTV-QUERY.TXT","F6: MTV / SCHEDULE   MUSIC QUERY: MTV-QUERY.TXT"),1,dim,90);
     }else if(bios_on){
         text(194,94,"GAME BIOS STATUS",3,green,40);
         const char *const *files=bios_files;
@@ -1256,7 +1292,7 @@ static void draw(Uint32 tick) {
         char values[19][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
-        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme==2?"RomanticCrimsonSkulls":menu_theme==1?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
+        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
         snprintf(values[12],40,"%d / 5",tv_rating_weight);snprintf(values[13],40,"%d / 5",tv_popularity_weight);snprintf(values[14],40,"%d / 5",tv_variety_weight);
         snprintf(values[15],40,"SCAN QR WITH PHONE");
         snprintf(values[16],40,"POCKET QUIZ");
@@ -1544,9 +1580,14 @@ static void tv_stage_source(const Title *source){
     if(!catalog_pid)tv_begin_prepared();
 }
 static void tv_tick(void){
-    if(!tv_active||catalog_pid||player_pid||auto_active||settings_on||tv_schedule_on||(Sint32)(SDL_GetTicks()-tv_next_at)<0)return;
+    if(!tv_active||youtube_pid||catalog_pid||player_pid||auto_active||settings_on||tv_schedule_on||(Sint32)(SDL_GetTicks()-tv_next_at)<0)return;
     if(tv_attempts++>=12){tv_active=0;tv_cancel_prepared();snprintf(status,sizeof(status),"TV: NO WORKING SOURCES / A RETRY");return;}
     time_t now=time(NULL);int block=tv_block_at(tv_blocks,tv_hour());long long anchor=(long long)tv_block_start(tv_blocks,now);
+    if(mtv_override||tv_blocks[block].genre==TV_MUSIC_VIDEOS){
+        char query[221];mtv_query(query,sizeof(query));
+        if(youtube_spawn(query,1))tv_active=0;
+        return;
+    }
     int forced=tv_blocks[block].marathon&&tv_last_block==anchor?tv_last_title.id:0;
     int seed=tv_joining?(int)(anchor/3600)%100000+tv_attempts-1:tv_sequence("tv-sequence.txt");
     Browse next={12,1,seed,forced,0,0,"",""};
@@ -1564,6 +1605,10 @@ static void bookmark_path(const Title *t,char *path,size_t capacity){
     snprintf(path,capacity,"%08lx",hash);
 }
 static void launch_player(const Title *t) {
+    if(!strcmp(t->kind,"youtube")){
+        if(youtube_audio[0])setenv("FLXTR_EXTERNAL_AUDIO",youtube_audio,1);else unsetenv("FLXTR_EXTERNAL_AUDIO");
+        setenv("FLXTR_VIDEO_USER_AGENT",youtube_agent,1);
+    }else{unsetenv("FLXTR_EXTERNAL_AUDIO");unsetenv("FLXTR_VIDEO_USER_AGENT");}
     if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}prefetch_left=0;
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
 #ifdef _WIN32
@@ -1591,7 +1636,7 @@ static void launch_player(const Title *t) {
     char bookmark_key[16],bookmark_file[64];
     bookmark_path(t,bookmark_key,sizeof(bookmark_key));
     snprintf(bookmark_file,sizeof(bookmark_file),"bookmarks/%s.txt",bookmark_key);
-    if(!tv_active&&restart_position==0){
+    if(!tv_active&&strcmp(t->kind,"youtube")&&restart_position==0){
         FILE *f=fopen(bookmark_file,"r");
         if(f){double saved=0;if(fscanf(f,"%lf",&saved)==1&&saved>=0&&saved<=86400)restart_position=saved;fclose(f);}
     }
@@ -1624,6 +1669,7 @@ static void launch_player(const Title *t) {
         /* Metadata is passed to the video child via environment, never via
          * the video URL. Prefer parent-series synopsis for an episode. */
         setenv("FLXTR_VIDEO_TITLE",t->title,1);
+        setenv("FLXTR_VIDEO_KIND",t->kind,1);
         char info_path[128],info_text[512]="";
         const char *info_kind=t->kind;
         if(!strcmp(info_kind,"episode"))info_kind="tv";
@@ -1714,16 +1760,17 @@ static void finish_player(int code){
     int cancelled=stopping_player;
     player_pid=0;stopping_player=0;if(player_control>=0)player_pipe_close(player_control);player_control=-1;
     if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;auto_active=0;return;}
-    music_video_pause(1);
+    if(!tv_active||strcmp(playing_title.kind,"youtube"))music_video_pause(1);
     if(!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==40){
         int command,view,sub,scale,delay;double position;FILE *f=fopen("playback-request","r");
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;
         if(f)fclose(f);
         unlink("playback-request");
-        if(!valid||command<1||command>9||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
+        if(!valid||command<1||command>10||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
+        if(command==10){tv_active=auto_active=0;running=0;return;}
         viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings();
         /* TV is a channel, not a resume-based episode player. */
-        if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
+        if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;music_video_pause(1);snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
         if(command==9){
             auto_active=0;tv_active=0;
             snprintf(status,sizeof(status),"FROZEN TO BACKGROUND / REOPEN TITLE TO RESUME");
@@ -1747,6 +1794,13 @@ static void finish_player(int code){
         if(command==4){if(auto_active){restart_position=auto_resume=position;auto_index++;auto_next();}else snprintf(status,sizeof(status),"NO ALTERNATE SERVER FOR LOCAL VIDEO");return;}
         if(tv_active&&(command==5||command==6)){tv_cancel_prepared();auto_active=0;tv_in_break=tv_break_due=0;tv_attempts=0;tv_next_at=0;return;}
         series_advance(command==5?-1:1);return;
+    }
+    if(!strcmp(playing_title.kind,"youtube")){
+        int eof=!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code);
+        if(!eof)tv_active=0;
+        if(!tv_active)music_video_pause(1);
+        tv_attempts=0;tv_next_at=0;tv_break_due=0;
+        snprintf(status,sizeof(status),eof?"MUSIC VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
     }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
         int current=tv_quality_retry>=1?720:(qualities[quality_setting]>720?720:qualities[quality_setting]);
@@ -1780,7 +1834,9 @@ static int phone_dispatch(char *reply,size_t size){
     snprintf(reply,size,"Playback requested. Check FlXtR for playback errors.");
     if(!strcmp(phone_pending,"control")){
         char c=phone_value[0];c=c=='p'?'P':c=='f'?'F':c=='r'?'R':c=='s'?'S':c;
-        if(player_pid&&player_control>=0){
+        if(youtube_pid&&c=='S'){
+            youtube_stop();tv_active=0;music_video_pause(1);snprintf(reply,size,"YouTube lookup cancelled.");
+        }else if(player_pid&&player_control>=0){
             if(player_pipe_write(player_control,&c,1)!=1){code=503;snprintf(reply,size,"Player control is unavailable.");}
             else snprintf(reply,size,"Playback control sent.");
         }else if(music_job==3&&(c=='P'||c=='S')){
@@ -1789,13 +1845,19 @@ static int phone_dispatch(char *reply,size_t size){
             snprintf(reply,size,c=='S'?"Music stopped.":"Music pause toggled.");
         }else{code=409;snprintf(reply,size,"No active player supports this control.");}
     }else if(!strcmp(phone_pending,"music")){
-        if(!player_pid&&!catalog_pid&&!update_pid){
+        if(!player_pid&&!catalog_pid&&!update_pid&&!youtube_pid){
             snprintf(music_query,sizeof(music_query),"%.220s",phone_value);
             music_edit=0;music_on=1;music_phone_play=1;music_spawn(1);
             if(!music_pid){code=503;music_phone_play=0;snprintf(reply,size,"Music worker could not start.");}
             else snprintf(reply,size,"Searching YouTube; the first matching track will play automatically.");
         }else{code=409;snprintf(reply,size,"FlXtR is busy. Stop playback or wait for the current operation.");}
-    }else if(!player_pid&&!catalog_pid&&!update_pid){
+    }else if(!player_pid&&!catalog_pid&&!update_pid&&!youtube_pid){
+        if(!strcmp(phone_pending,"url")&&youtube_link(phone_value)){
+            tv_active=auto_active=0;
+            code=youtube_spawn(phone_value,0)?503:200;
+            snprintf(reply,size,code==200?"Resolving YouTube video for FlXtR.":"YouTube worker could not start.");
+            phone_pending[0]=phone_value[0]=0;return code;
+        }
         Title t;memset(&t,0,sizeof(t));snprintf(t.title,sizeof(t.title),"PHONE VIDEO");
         if(!strcmp(phone_pending,"play"))snprintf(t.url,sizeof(t.url),"phone-files/%.100s",phone_value);
         else snprintf(t.url,sizeof(t.url),"%s",phone_value);
@@ -1808,6 +1870,10 @@ static int phone_dispatch(char *reply,size_t size){
     return code;
 }
 static void action(SDL_Keycode key) {
+    if(youtube_pid){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){youtube_stop();tv_active=0;music_video_pause(1);snprintf(status,sizeof(status),"YOUTUBE LOOKUP CANCELLED");}
+        return;
+    }
     if(music_on){music_action(key);return;}
     if(key==SDLK_m&&!player_pid&&!catalog_pid&&!update_pid&&!settings_on&&!about&&!accounts_on&&!search_on){
         if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access(
@@ -1899,7 +1965,7 @@ static void action(SDL_Keycode key) {
         size_t n=strlen(search_text);
         if(key==SDLK_ESCAPE){search_on=0;SDL_StopTextInput();}
         else if(key==SDLK_BACKSPACE){if(n)search_text[n-1]=0;else {search_on=0;SDL_StopTextInput();}}
-        else if(key==SDLK_y){
+        else if(key==SDLK_TAB){
             const char *completion=search_completion();
             if(completion)snprintf(search_text,sizeof(search_text),"%s",completion);
         }
@@ -1997,7 +2063,7 @@ static void action(SDL_Keycode key) {
                 case 4:subtitle_setting=(subtitle_setting+step+5)%5;break;
                 case 5:subtitle_scale=subtitle_scale==2?3:2;break;
                 case 8:tv_breaks=!tv_breaks;break;
-                case 9:menu_theme=(menu_theme+step+3)%3;monochrome_menu=menu_theme==1;load_menu_background();break;
+                case 9:menu_theme=(menu_theme+step+MENU_THEMES)%MENU_THEMES;monochrome_menu=menu_theme==1;load_menu_background();break;
                 case 10:bios_on=1;break;
                 case 11:game_autostate=!game_autostate;break;
                 case 12:tv_rating_weight=(tv_rating_weight-1+step+5)%5+1;break;
@@ -2008,6 +2074,7 @@ static void action(SDL_Keycode key) {
             }save_settings();
         }return;
     }
+    if(browse.mode==11&&!about&&(key==SDLK_F6||key==SDLK_y)){mtv_override=!mtv_override;snprintf(status,sizeof(status),mtv_override?"MTV MUSIC VIDEOS / A START":"TV SCHEDULE / A START");return;}
     if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){tv_cancel_prepared();tv_joining=1;tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=tv_prepared=0;tv_tick();return;}
     if(about&&(key==SDLK_UP||key==SDLK_DOWN)){about_row=!about_row;return;}
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){if(about_row==1&&key!=SDLK_u)accounts_open(1);else start_update();return;}
@@ -2043,6 +2110,31 @@ static void action(SDL_Keycode key) {
     }
     if(key==SDLK_PAGEDOWN)next_catalog_page(1);
     if(key==SDLK_PAGEUP)next_catalog_page(-1);
+}
+static void desktop_key(SDL_Keycode key,SDL_Keymod modifiers){
+    int typing=search_on||(music_on&&music_edit);
+    if(key==SDLK_q&&(modifiers&KMOD_CTRL)){running=0;return;}
+    if(!typing&&key==SDLK_F1){keyboard_help=!keyboard_help;return;}
+    if(keyboard_help){if(key==SDLK_ESCAPE)keyboard_help=0;return;}
+    if(typing){action(key);return;}
+    if(youtube_pid){action(key);return;}
+    if(player_pid){
+        char c=(key==SDLK_SPACE||key==SDLK_k)?'P':key==SDLK_j?'R':key==SDLK_l?'F':key==SDLK_LEFT?'l':key==SDLK_RIGHT?'r':key==SDLK_f?'t':key==SDLK_m?'o':key==SDLK_TAB?'m':0;
+        if(c&&player_control>=0){ssize_t n=player_pipe_write(player_control,&c,1);(void)n;return;}
+        action(key);return;
+    }
+    if((key==SDLK_SPACE||key==SDLK_k)&&music_job==3){kill(music_pid,SIGUSR1);music_paused=!music_paused;return;}
+    if(key==SDLK_F10){music_on=0;settings_on=1;about=0;return;}
+    if(key==SDLK_F4){menu_theme=(menu_theme+1)%MENU_THEMES;monochrome_menu=menu_theme==1;load_menu_background();save_settings();return;}
+    if(key==SDLK_p&&(modifiers&KMOD_CTRL)){music_on=0;accounts_open(0);return;}
+    if(key==SDLK_f&&(modifiers&KMOD_CTRL)){action(SDLK_F3);return;}
+    if(!music_on&&!settings_on&&!accounts_on&&!catalog_pid&&(key==SDLK_t||key==SDLK_g)){
+        Browse next={key==SDLK_t?11:21,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);return;
+    }
+    if(key==SDLK_ESCAPE&&!music_on&&!settings_on&&!accounts_on&&!about&&!history_size&&!browse.mode){
+        snprintf(status,sizeof(status),"CTRL+Q TO QUIT / F1 KEYBOARD HELP");return;
+    }
+    action(key);
 }
 static void add_pad(int device) {
     if(!SDL_IsGameController(device))return;
@@ -2099,7 +2191,10 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--screenshot")&&i+1<argc)shot=argv[++i];
         else if(!strcmp(argv[i],"--frames")&&i+1<argc)frames=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--no-stars"))stars_on=0;
+        else if(!strcmp(argv[i],"--mtv")){initial_library=11;mtv_override=tv_active=1;}
         else if(!strcmp(argv[i],"--music"))music_on=1;
+        else if(!strcmp(argv[i],"--keyboard-help"))keyboard_help=1;
+        else if(!strcmp(argv[i],"--theme")&&i+1<argc){char *end;long theme=strtol(argv[++i],&end,10);if(*end||theme<0||theme>=MENU_THEMES)return 2;menu_theme=(int)theme;monochrome_menu=menu_theme==1;load_menu_background();}
         else if(!strcmp(argv[i],"--library")&&i+1<argc){const char *v=argv[++i];initial_library=!strcmp(v,"movies")?1:!strcmp(v,"series")?2:!strcmp(v,"anime")?7:!strcmp(v,"archive")?30:!strcmp(v,"tv")?11:!strcmp(v,"games")?21:0;if(!initial_library)return 2;}
         else {fprintf(stderr,"Usage: %s [--catalog file] [--screenshot file.bmp] [--frames N] [--no-stars]\n",argv[0]);return 2;}
     }
@@ -2118,7 +2213,7 @@ int main(int argc,char **argv) {
         if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT)running=0;
-            else if(event.type==SDL_KEYDOWN)action(event.key.keysym.sym);
+            else if(event.type==SDL_KEYDOWN){keyboard_used=1;desktop_key(event.key.keysym.sym,(SDL_Keymod)event.key.keysym.mod);}
             else if(event.type==SDL_MOUSEBUTTONDOWN&&event.button.button==SDL_BUTTON_LEFT){
                 int ww,wh;SDL_GetWindowSize(window,&ww,&wh);
                 if(ww>0&&wh>0&&event.button.x*W/ww>=730&&event.button.y*H/wh>=16&&event.button.y*H/wh<71)action(SDLK_m);
@@ -2140,6 +2235,7 @@ int main(int argc,char **argv) {
             }
             else if(event.type==SDL_CONTROLLERBUTTONUP)controller_used();
             else if(event.type==SDL_CONTROLLERBUTTONDOWN) {
+                keyboard_used=0;
                 /* Suppress duplicate controller button-down bursts during playback.
                  * Distinct buttons remain independent for normal navigation. */
                 static Uint32 last_play_button[32];
@@ -2153,7 +2249,7 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_A:action(search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
                     case SDL_CONTROLLER_BUTTON_B:action(search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
-                    case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
+                    case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_TAB:SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
@@ -2171,6 +2267,7 @@ int main(int argc,char **argv) {
             if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
         if(music_poll())dirty=1;
+        if(youtube_poll())dirty=1;
         if(!music_on){prefetch_pages();tv_tick();}controller_idle();
         if(player_pid){int code;pid_t p=waitpid(player_pid,&code,WNOHANG);
             if(p==player_pid){finish_player(code);dirty=1;}
@@ -2184,7 +2281,7 @@ int main(int argc,char **argv) {
             if(frames>0&&seen>=frames)running=0;
         }
     }
-    music_stop();
+    music_stop();youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
     pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid};

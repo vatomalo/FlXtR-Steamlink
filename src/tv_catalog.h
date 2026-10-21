@@ -3,7 +3,7 @@
 #include "tv_history.h"
 #include "tv_airing.h"
 static int tv_pick_episode(int genre,int seed,int forced,int requested_season,int requested_episode,int allow_recent){
-    if(genre<0||genre>=TV_GENRES)return -1;
+    if(genre<0||genre>=TV_MUSIC_VIDEOS)return -1;
     /* Alternate sci-fi with animated comedy from Adult Swim's network. */
     const char *filters[]={"","&with_genres=35","&with_genres=80%7C9648%7C18","&with_genres=10765","&with_genres=16","&with_genres=10759","&with_genres=9648","&with_genres=16&with_networks=80","&with_genres=99","&with_genres=10751","&with_genres=10764","&with_genres=10762","&with_genres=10766","&with_genres=10768","&with_genres=37","&with_genres=10767"};
     int effective=genre==7&&seed%2==0?3:genre;

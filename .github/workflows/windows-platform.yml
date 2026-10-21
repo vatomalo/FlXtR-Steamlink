@@ -14,7 +14,7 @@ jobs:
       - name: Install compiler and Linux regression dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64-posix build-essential pkg-config libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev ffmpeg cmake zstd
+          sudo apt-get install -y gcc-mingw-w64-x86-64-posix build-essential pkg-config libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev libavformat-dev libavcodec-dev libavutil-dev ffmpeg cmake zstd
       - name: Test POSIX backends and existing callers
         run: |
           make -j2 all
@@ -24,6 +24,12 @@ jobs:
           python3 tests/music_test.py
           cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/music_queue_test.c -o build/music-queue-test $(pkg-config --libs sdl2 SDL2_image libcurl)
           ./build/music-queue-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/desktop_experience_test.c -o build/desktop-experience-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/desktop-experience-test
+          ffmpeg -v error -y -f lavfi -i testsrc2=size=160x90:rate=24 -t 2 -an -c:v libx264 build/mtv-video.mp4
+          ffmpeg -v error -y -f lavfi -i sine=frequency=440 -t 2 -vn -c:a aac build/mtv-audio.m4a
+          cc -std=c99 -Wall -Wextra -Werror tests/youtube_demux_test.c -o build/youtube-demux-test $(pkg-config --cflags --libs libavformat libavcodec libavutil)
+          ./build/youtube-demux-test build/mtv-video.mp4 build/mtv-audio.m4a
           cc -std=c99 -Wall -Wextra -Werror tests/child_exec_test.c -o build/child-exec-test
           ./build/child-exec-test
           cc -std=c99 -Wall -Wextra -Werror tests/phone_state_test.c -o build/phone-state-test

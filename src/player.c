@@ -39,7 +39,6 @@ static int64_t origin=AV_NOPTS_VALUE,clock_start;
 static int subtitle_buffering,disk_read_wait_count;
 static void playback_controls(void);
 #define DISK_POLL() playback_controls()
-#include "disk_buffer.h"
 #include "subtitles.h"
 static void stop(int sig) { (void)sig;stopped=1; }
 static void next_view(int sig) { (void)sig;change_view=1; }
@@ -113,6 +112,7 @@ static const char *local_media;
 #include "phone_media.h"
 static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int flags,AVDictionary **opts) {
     if(megaplay){av_dict_set(opts,"referer","https://megaplay.buzz/",0);av_dict_set(opts,"user_agent","FlXtR-Steamlink/0.2",0);}
+    const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");if(agent&&strlen(agent)<=500&&!strpbrk(agent,"\r\n"))av_dict_set(opts,"user_agent",agent,0);
     av_dict_set(opts,"tls_verify","1",0);
     av_dict_set(opts,"ca_file",ca_file,0);
     av_dict_set(opts,"rw_timeout","15000000",0);
@@ -170,6 +170,8 @@ static void player_subtitle_log(const char *phase,const char *english,const char
         selected&&*selected?"yes":"no");
     fclose(f);
 }
+#include "youtube_demux.h"
+#include "disk_buffer.h"
 static int load_external_subtitles(const char *url){
     int local=phone_local_media(url);const char *ext=url?strrchr(url,'.'):NULL;
     if(!url||(!local&&strncmp(url,"https://",8))||strlen(url)>1023||strpbrk(url,"\r\n\t"))return -1;
@@ -269,6 +271,7 @@ int main(int argc,char **argv) {
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
     fmt=avformat_alloc_context();if(!fmt)goto done;
     fmt->interrupt_callback.callback=interrupt_io;fmt->io_open=open_io;
+    const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");if(agent&&strlen(agent)<=500&&!strpbrk(agent,"\r\n"))av_dict_set(&opts,"user_agent",agent,0);
     av_dict_set(&opts,"rw_timeout","15000000",0);
     av_dict_set(&opts,"tls_verify","1",0);
     av_dict_set(&opts,"ca_file",ca_file,0);
@@ -290,6 +293,12 @@ int main(int argc,char **argv) {
         if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>(height_limit<=480?854:height_limit<=720?1280:1920)||v->height>height_limit)continue;
         if(p&&(p->comp[0].depth>8||p->log2_chroma_w!=1||p->log2_chroma_h!=1))continue;
         if(v->width*v->height>best_pixels){best_pixels=v->width*v->height;vi=(int)i;}
+    }
+    const char *separate=getenv("FLXTR_EXTERNAL_AUDIO");
+    if(separate&&*separate){
+        deadline=av_gettime_relative()+20000000;
+        rc=youtube_demux_open(&fmt,separate,ca_file,getenv("FLXTR_VIDEO_USER_AGENT"));deadline=0;
+        if(rc<0){fprintf(stderr,"Could not open separate YouTube audio (%d)\n",rc);goto done;}
     }
     AVCodec *audio_decoder=NULL;
     ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,&audio_decoder,0);
@@ -351,7 +360,7 @@ int main(int argc,char **argv) {
     media_duration=fmt->duration>0?fmt->duration/(double)AV_TIME_BASE:0;
     if(playback_start>0){
         deadline=av_gettime_relative()+20000000;
-        rc=av_seek_frame(fmt,-1,(int64_t)(playback_start*AV_TIME_BASE),AVSEEK_FLAG_BACKWARD);
+        rc=youtube_demux_seek(fmt,(int64_t)(playback_start*AV_TIME_BASE));
         deadline=0;
         if(rc<0){fprintf(stderr,"Server does not support seeking (%d)\n",rc);result=44;goto done;}
         fprintf(stderr,"Seek accepted: %.3f seconds (keyframe)\n",playback_start);
@@ -518,7 +527,7 @@ int main(int argc,char **argv) {
     fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
 done:
     if(preload_fd>=0)close(preload_fd);
-    disk_close(buffer);
+    disk_close(buffer);youtube_demux_close();
     if(menu_overlay){SLVideo_HideOverlay(menu_overlay);SLVideo_FreeOverlay(menu_overlay);}
     if(control_fd>=0)close(control_fd);
     if(requested_action)result=requested_action;

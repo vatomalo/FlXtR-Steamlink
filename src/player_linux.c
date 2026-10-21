@@ -15,7 +15,7 @@
 static mpv_handle *mpv;
 static volatile sig_atomic_t stop;
 static FlxtrPipeHandle fd=FLXTR_INVALID_PIPE;
-static int menu,row,view,subs,scale=2,delay,height=720,episodes,servers,result=1;
+static int menu,row,view,subs,scale=2,delay,height=720,episodes,servers,music_video,result=1;
 static double start;
 static const char *languages[]={"off","auto","eng","nor"};
 static void signal_stop(int sig){(void)sig;stop=1;}
@@ -43,14 +43,17 @@ static void draw(void){
     snprintf(lines[5],96,"Video size: %s",(const char*[]){"Fit","Stretch","1:1"}[view]);
     snprintf(lines[6],96,"Quality limit: %dp",height);
     snprintf(lines[7],96,"Next server%s",servers?"":" (unavailable)");
-    snprintf(lines[8],96,"Previous episode%s",episodes?"":" (unavailable)");
-    snprintf(lines[9],96,"Next episode%s",episodes?"":" (unavailable)");
+    snprintf(lines[8],96,"%s",music_video?"Previous video (unavailable)":episodes?"Previous episode":"Previous episode (unavailable)");
+    snprintf(lines[9],96,"%s%s",music_video?"Next music video":"Next episode",episodes?"":" (unavailable)");
     snprintf(lines[10],96,"Stop playback");
     size_t n=(size_t)snprintf(text,sizeof(text),"FlXtR  %.0f sec\n\n",position());
     for(int i=0;i<11;i++)n+=(size_t)snprintf(text+n,sizeof(text)-n,"%c %s\n",row==i?'>':' ',lines[i]);
     command("show-text",text,"60000");
 }
 static void key(char c){
+    if(c=='q'){request(10,position());return;}
+    if(c=='t'){command("cycle","fullscreen",NULL);return;}
+    if(c=='o'){command("cycle","mute",NULL);return;}
     if(c=='n'){if(episodes)request(6,0);return;}
     if(c=='P'){command("cycle","pause",NULL);return;}
     if(c=='F'||c=='R'){command("seek",c=='F'?"10":"-10","relative");return;}
@@ -58,7 +61,7 @@ static void key(char c){
     if(c=='m'||(c=='b'&&menu)){menu=!menu;if(menu)draw();else command("show-text","","0");return;}
     if(c=='b'){request(7,position());return;}
     if(c=='v'){view=(view+1)%3;sizing();}
-    if(!menu){if(c=='l'||c=='r')request(1,position()+(c=='l'?-10:10));return;}
+    if(!menu){if(c=='l'||c=='r')command("seek",c=='l'?"-10":"10","relative");return;}
     if(c=='u')row=(row+10)%11;
     if(c=='d')row=(row+1)%11;
     if(c=='a'||c=='l'||c=='r'){
@@ -72,7 +75,7 @@ static void key(char c){
         case 5:view=(view+d+3)%3;sizing();break;
         case 6:request(d>0?2:3,position());break;
         case 7:if(servers)request(4,position());break;
-        case 8:if(episodes)request(5,0);break;
+        case 8:if(episodes&&!music_video)request(5,0);break;
         case 9:if(episodes)request(6,0);break;
         case 10:request(7,position());break;
         }
@@ -126,7 +129,9 @@ int main(int argc,char **argv){
         }
         flxtr_pipe_close(preload_fd);if(n!=1||go!='G'||stop)return 1;
     }
+    music_video=getenv("FLXTR_VIDEO_KIND")&&!strcmp(getenv("FLXTR_VIDEO_KIND"),"youtube");
     mpv=mpv_create();if(!mpv)return 1;
+    const char *title=getenv("FLXTR_VIDEO_TITLE");if(title&&*title)mpv_set_option_string(mpv,"force-media-title",title);
     mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"terminal","yes");
     mpv_set_option_string(mpv,"term-status-msg","");
     mpv_set_option_string(mpv,"ytdl","no");mpv_set_option_string(mpv,"input-default-bindings","yes");
@@ -163,6 +168,16 @@ mpv_set_option_string(mpv,"cache","yes");
         mpv_set_option_string(mpv,"referrer","https://megaplay.buzz/");
         mpv_set_option_string(mpv,"user-agent","FlXtR-Steamlink/0.2");
         mpv_set_option_string(mpv,"demuxer-lavf-o","allowed_extensions=ALL,extension_picky=0");
+    }
+    const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");
+    if(agent&&strlen(agent)<=500&&!strpbrk(agent,"\r\n"))mpv_set_option_string(mpv,"user-agent",agent);
+    const char *audio=getenv("FLXTR_EXTERNAL_AUDIO");
+    if(audio&&*audio){
+        if(strncmp(audio,"https://",8)||strlen(audio)>16000||strpbrk(audio,"\r\n")){mpv_terminate_destroy(mpv);return 2;}
+        mpv_node item={.u.string=(char*)audio,.format=MPV_FORMAT_STRING};
+        mpv_node_list list={.num=1,.values=&item,.keys=NULL};
+        mpv_node node={.u.list=&list,.format=MPV_FORMAT_NODE_ARRAY};
+        if(mpv_set_option(mpv,"audio-files",MPV_FORMAT_NODE,&node)<0){mpv_terminate_destroy(mpv);return 1;}
     }
     if(headless){mpv_set_option_string(mpv,"vo","null");mpv_set_option_string(mpv,"ao","null");}
     if(duration>0){snprintf(value,sizeof(value),"%.3f",duration);mpv_set_option_string(mpv,"length",value);}

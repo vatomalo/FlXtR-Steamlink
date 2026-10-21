@@ -64,6 +64,10 @@ if [ -f build/music-runtime.tgz ]; then
     printf '1\n' > "$app/assets/music-required-v1"
 fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi
+if [ "${FLXTR_DISABLE_AUTO_UPDATE:-0}" = 1 ]; then
+    printf 'Experimental manual test package; enable updates in Settings if desired.\n' > "$app/.no-auto-update"
+fi
+cp docs/DESKTOP-CONTROLS.md "$app/CONTROLS.md"
 chmod +x "$app/greenlink" "$app/greenlink.sh"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink
 file build/greenlink-arm

@@ -29,6 +29,15 @@ with tempfile.TemporaryDirectory(prefix='FlXtR Windows data ø ') as temp:
         return result.stdout.decode('utf-8',errors='replace')
     run(package/'FlXtR.exe','--frames','2','--screenshot','ui.bmp')
     assert (home/'ui.bmp').stat().st_size>10000
+    for theme, rgb in [(3,(9,17,31)),(4,(16,10,2)),(5,(9,17,31))]:
+        name='theme-'+str(theme)+'.bmp'
+        run(package/'FlXtR.exe','--theme',str(theme),'--no-stars','--frames','2','--screenshot',name)
+        image=(home/name).read_bytes()
+        offset=int.from_bytes(image[10:14],'little')
+        assert tuple(image[offset:offset+3][::-1])==rgb,(theme,image[offset:offset+4])
+    assert (home/'themes/custom/theme.ini').is_file()
+    run(package/'FlXtR.exe','--theme','3','--keyboard-help','--screenshot','keyboard.bmp')
+    print('PASS: native theme palettes/custom data path and keyboard help rendering')
     run(helper.with_name('windows-supervisor-test.exe'))
     print('PASS: full native SDL UI, packaged resources and Unicode data directory')
     run(package/'greenlink-player.exe',fixture,'--headless','--duration','1')

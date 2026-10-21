@@ -42,6 +42,18 @@ with tempfile.TemporaryDirectory(prefix='flxtr player ø ') as directory:
         if child.poll() is None:
             child.kill()
             child.wait()
+    controls = os.pipe()
+    child = subprocess.Popen([str(binary),str(clip),'--headless','--control-fd',str(controls[0])],
+                             cwd=home,env=env,pass_fds=(controls[0],),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    os.close(controls[0])
+    try:
+        os.write(controls[1],b'q')
+        output=child.communicate(timeout=15)[0]
+        assert child.returncode==40,output
+        assert (home/'playback-request').read_text().split()[0]=='10'
+    finally:
+        os.close(controls[1])
+        if child.poll() is None:child.kill();child.wait()
     gate = os.pipe()
     child = subprocess.Popen([str(binary), str(clip), '--headless',
                               '--preload-fd', str(gate[0])],

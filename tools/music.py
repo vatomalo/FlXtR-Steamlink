@@ -158,6 +158,67 @@ def resolve(kind, value):
                 history = []
             atomic(CACHE / 'history.txt', json.dumps((history + [ident])[-50:]))
 
+def video_source(value, television=False, muxed=False, height=720):
+    if height not in (480,720,1080):
+        raise ValueError("Invalid video quality")
+    history_path = CACHE / 'video-history.txt'
+    try:
+        history = json.loads(history_path.read_text())
+        if not isinstance(history, list):
+            history = []
+    except (OSError, ValueError):
+        history = []
+    address = youtube_address(value)
+    if '://' in value and not address:
+        raise ValueError('Use a public YouTube video or playlist URL')
+    if television:
+        with youtube_client(True) as ydl:
+            data = ydl.extract_info(address or 'ytsearch20:' + value[:220], download=False)
+            entries = data.get('entries', [data])
+            choices = [('video', e['id']) for e in islice(entries, 20)
+                       if e and re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', ''))
+                       and e['id'] not in history and not e.get('is_live')
+                       and (e.get('duration') or 0) <= 1200]
+        if not choices and history:
+            with youtube_client(True) as ydl:
+                data = ydl.extract_info('https://www.youtube.com/watch?v=' + history[-1] + '&list=RD' + history[-1], download=False)
+                choices = [('video', e['id']) for e in islice(data.get('entries', []), 20)
+                           if e and re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', '')) and e['id'] not in history]
+        if not choices:
+            raise ValueError('No new music videos available; change mtv-query.txt')
+        address = 'https://www.youtube.com/watch?v=' + choices[0][1]
+    options = ydl_options()
+    combined = f'best[ext=mp4][vcodec^=avc1][height<={height}][acodec!=none]'
+    options['format'] = combined if muxed else (
+        f'bestvideo[ext=mp4][vcodec^=avc1][height<={height}]+bestaudio[ext=m4a]/' + combined)
+    from yt_dlp import YoutubeDL
+    from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE
+    with YoutubeDL(options, auto_init=False) as ydl:
+        for extractor in (YoutubeIE, YoutubeSearchIE, YoutubeTabIE):
+            ydl.add_info_extractor(extractor())
+        info = ydl.extract_info(address or 'ytsearch1:' + value[:220], download=False)
+        if 'entries' in info:
+            info = next((e for e in info['entries'] if e), None)
+        if not info or (television and (info.get('is_live') or (info.get('duration') or 0) > 1200)):
+            raise ValueError('Music-video mode requires a clip under 20 minutes, not a live stream')
+        formats = info.get('requested_formats') or [info]
+        video = next((e for e in formats if e.get('vcodec') not in (None, 'none')), None)
+        audio = next((e for e in formats if e.get('vcodec') == 'none' and e.get('acodec') != 'none'), None)
+        if not video:
+            raise ValueError('No compatible H.264 music video available')
+        def checked(part, limit):
+            value = part.get('url', '') if part else ''
+            if part and (not value.startswith('https://') or len(value) > limit or any(c in value for c in '\r\n\t')):
+                raise ValueError('Invalid video stream address')
+            return value
+        url, sound = checked(video, 2046), checked(audio, 16000)
+        title = clean(info.get('title')) or 'YouTube video'
+        agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
+        atomic(CACHE / 'video.txt', '\n'.join([title, url, sound, agent]) + '\n')
+        ident = info.get('id', '')
+        if television and re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
+            atomic(history_path, json.dumps((history + [ident])[-50:]))
+
 def youtube_client(flat=False):
     from yt_dlp import YoutubeDL
     from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE
@@ -173,6 +234,8 @@ def atomic(path, text):
 
 def run(args):
     CACHE.mkdir(mode=0o700, exist_ok=True)
+    if len(args) in (2,3) and args[0] in ('video', 'video-muxed', 'tv-video', 'tv-video-muxed'):
+        video_source(args[1], television=args[0].startswith('tv-'), muxed=args[0].endswith('muxed'), height=int(args[2]) if len(args)==3 else 720); return
     if args == ['next']:
         recommendations(); return
     if args[0] == 'resolve' and len(args) == 3:

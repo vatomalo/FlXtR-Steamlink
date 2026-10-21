@@ -100,9 +100,15 @@ static void music_video_pause(int resume){
         }
         music_paused_for_video=0;
     }else{
+        if(music_paused_for_video&&music_job==3&&music_pid>0&&music_paused)return;
         music_paused_for_video=(music_job==3&&music_pid>0&&!music_paused);
         if(music_paused_for_video){kill(music_pid,SIGUSR1);music_paused=1;}
     }
+}
+static void music_backspace(void){
+    size_t n=strlen(music_query);if(!n)return;
+    do{n--;}while(n&&((unsigned char)music_query[n]&0xc0)==0x80);
+    music_query[n]=0;
 }
 static void music_text(const char *s){
     size_t n=strlen(music_query);
@@ -114,9 +120,9 @@ static void music_action(SDL_Keycode key){
     if(music_edit){
         size_t n=strlen(music_query);
         if(key==SDLK_ESCAPE){music_edit=0;SDL_StopTextInput();return;}
-        if(key==SDLK_BACKSPACE){if(n)music_query[n-1]=0;else{music_edit=0;SDL_StopTextInput();}}
+        if(key==SDLK_BACKSPACE){if(n)music_backspace();else{music_edit=0;SDL_StopTextInput();}}
         else if(key==SDLK_v&&(SDL_GetModState()&KMOD_CTRL)){char *p=SDL_GetClipboardText();if(p){music_text(p);SDL_free(p);}}
-        else if(key==SDLK_y){
+        else if(key==SDLK_TAB){
             const char *completion=music_completion();
             if(completion)snprintf(music_query,sizeof(music_query),"%s",completion);
         }
@@ -124,7 +130,7 @@ static void music_action(SDL_Keycode key){
         else if(key==SDLK_RIGHT&&music_key<39)music_key++;
         else if(key==SDLK_UP&&music_key>=10)music_key-=10;
         else if(key==SDLK_DOWN&&music_key<30)music_key+=10;
-        else if(key==SDLK_F4){char c=search_keys[music_key];if(c=='<'){if(n)music_query[n-1]=0;}else if(c=='>'){music_edit=0;SDL_StopTextInput();music_spawn(1);}else{char s[2]={c,0};music_text(s);}}
+        else if(key==SDLK_F4){char c=search_keys[music_key];if(c=='<'){if(n)music_backspace();}else if(c=='>'){music_edit=0;SDL_StopTextInput();music_spawn(1);}else{char s[2]={c,0};music_text(s);}}
         else if(key==SDLK_RETURN||key==SDLK_F3){music_edit=0;SDL_StopTextInput();music_spawn(1);}
         return;
     }
@@ -175,20 +181,20 @@ static const char *music_completion(void){
 }
 static void music_draw(void){
     SDL_Color accent=green,muted=dim;
-    SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
-    if(background&&!monochrome_menu){
-        SDL_RenderCopy(renderer,background,NULL,NULL);
+    SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
+    if((background&&!monochrome_menu)||menu_theme>=3){
+        if(background)SDL_RenderCopy(renderer,background,NULL,NULL);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
-        rect(20,16,920,53,menu_theme==2?(SDL_Color){12,5,10,215}:(SDL_Color){255,255,255,215},1);
-        rect(20,78,920,404,menu_theme==2?(SDL_Color){12,5,10,225}:(SDL_Color){255,255,255,215},1);
-        rect(20,484,920,42,menu_theme==2?(SDL_Color){12,5,10,235}:(SDL_Color){255,255,255,230},1);
+        rect(20,16,920,53,theme_pane(215),1);
+        rect(20,78,920,404,theme_pane(225),1);
+        rect(20,484,920,42,theme_pane(235),1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
     text(28,24,"MUSIC / YOUTUBE AUDIO",3,accent,45);
     if(music_edit){
         text(30,85,"SEARCH OR PASTE PUBLIC SPOTIFY PLAYLIST URL",2,accent,70);
         const char *completion=music_completion();
-        if(completion){text(30,105,completion,1,accent,110);text(800,105,"Y ACCEPT",1,accent,15);}
+        if(completion){text(30,105,completion,1,accent,110);text(800,105,"TAB / Y ACCEPT",1,accent,15);}
         text(30,125,music_query,1,white,145);
         for(int i=0;i<40;i++){
             int x=70+(i%10)*80,y=185+(i/10)*53;char c[2]={search_keys[i],0};
@@ -210,7 +216,8 @@ static void music_draw(void){
         if(!music_count)text(30,130,"PRESS START TO SEARCH YOUTUBE OR IMPORT A PLAYLIST",2,accent,73);
         if(*music_playing){text(30,421,"YOUTUBE MATCH:",1,muted,20);text(30,440,music_playing,1,accent,140);}
         text(30,466,music_message,1,accent,145);
-        text(30,503,"AUTOPLAY ON / A PLAY / X PAUSE / START SEARCH / B BACK",1,muted,100);
+        text(30,503,ui_hint("AUTOPLAY / A PLAY / X PAUSE / START SEARCH / B BACK",
+            "AUTOPLAY / ENTER PLAY / SPACE PAUSE / F3 SEARCH / ESC BACK"),1,muted,100);
     }
 }
 #endif

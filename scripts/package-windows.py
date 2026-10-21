@@ -51,6 +51,7 @@ for name in ['assets','tools']:
 for name in ['catalog.tsv','linux-controls.lua','LICENSE']:shutil.copy2((ROOT/("packaging/"+name) if name=="linux-controls.lua" else ROOT/name),OUT/name)
 shutil.copy2(ROOT/'docs/CORES.md',OUT/'CORES.md')
 shutil.copy2(ROOT/'docs/DESKTOP-MUSIC.md',OUT/'MUSIC.md')
+shutil.copy2(ROOT/'docs/DESKTOP-CONTROLS.md',OUT/'CONTROLS.md')
 (OUT/'certs').mkdir()
 shutil.copy2('/etc/ssl/certs/ca-certificates.crt',OUT/'certs/cacert.pem')
 shutil.copytree(SDK/'share/licenses',OUT/'third-party-licenses',dirs_exist_ok=True)

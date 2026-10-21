@@ -6,6 +6,8 @@ import unittest
 from unittest.mock import patch
 import contextlib
 import io
+import sys
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('music', Path(__file__).resolve().parents[1] / 'tools/music.py')
 music = importlib.util.module_from_spec(spec)
@@ -82,6 +84,54 @@ class MusicTest(unittest.TestCase):
             (music.CACHE/'history.txt').write_text('["abcdefghijk"]')
             with self.assertRaisesRegex(ValueError, 'No new'):
                 music.run(['next'])
+
+    def test_music_video_keeps_separate_audio_and_quality(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.return_value={
+            'id':'abcdefghijk','title':'A music video','duration':200,
+            'requested_formats':[
+                {'url':'https://example.test/video','vcodec':'avc1','acodec':'none'},
+                {'url':'https://example.test/audio','vcodec':'none','acodec':'aac'}]}
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            music.run(['video','https://youtu.be/abcdefghijk?si=share','480'])
+            lines=(music.CACHE/'video.txt').read_text().splitlines()
+            self.assertEqual(lines[:3],['A music video','https://example.test/video','https://example.test/audio'])
+            self.assertIn('height<=480',module.YoutubeDL.call_args.args[0]['format'])
+            with self.assertRaisesRegex(ValueError,'quality'):
+                music.run(['video','https://youtu.be/abcdefghijk','999'])
+
+    def test_mtv_skips_recent_long_and_live_entries(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.side_effect=[
+            {'entries':[{'id':'abcdefghijk','duration':200},
+                        {'id':'12345678901','duration':7200},
+                        {'id':'live1234567','is_live':True},
+                        {'id':'lmnopqrstuv','duration':180}]},
+            {'id':'lmnopqrstuv','title':'New clip','duration':180,
+             'vcodec':'avc1','acodec':'aac','url':'https://example.test/video'}]
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            (music.CACHE/'video-history.txt').write_text('["abcdefghijk"]')
+            music.run(['tv-video','rock music videos'])
+            self.assertEqual(client.__enter__.return_value.extract_info.call_args.args[0],'https://www.youtube.com/watch?v=lmnopqrstuv')
+            self.assertEqual(json.loads((music.CACHE/'video-history.txt').read_text()),['abcdefghijk','lmnopqrstuv'])
+
+    def test_music_video_rejects_local_or_injected_stream_addresses(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            for bad in ['file:///etc/passwd','https://example.test/video\nInjected','https://example.test/'+'x'*2100]:
+                client.__enter__.return_value.extract_info.return_value={'id':'abcdefghijk','vcodec':'avc1','url':bad}
+                with self.assertRaisesRegex(ValueError,'address'):
+                    music.run(['video','https://youtu.be/abcdefghijk'])
+                self.assertFalse((music.CACHE/'video.txt').exists())
 
     def test_unavailable_playlist_has_clear_error(self):
         with self.assertRaisesRegex(ValueError, 'public playlist'):

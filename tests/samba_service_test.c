@@ -21,7 +21,7 @@ int main(void){
     f=fopen("samba-service.log","r");assert(f);char log[256]={0};size_t n=fread(log,1,sizeof(log)-1,f);(void)n;fclose(f);
     assert(!strstr(log,"DummyPassword"));
     samba_service("disable");assert(samba_pid>0);wait_service();assert(access("samba/.enabled",R_OK));
-    unlink("samba/.configured");rmdir("samba");unlink("samba-service.log");unlink("samba-server.sh");chdir("/tmp");rmdir(temp);
+    unlink("samba/.configured");rmdir("samba");unlink("samba-service.log");unlink("samba-server.sh");assert(!chdir("/tmp"));rmdir(temp);
     puts("PASS: UI service worker delivers password via stdin, configures/enables, disables and keeps logs free of credentials");
     return 0;
 }

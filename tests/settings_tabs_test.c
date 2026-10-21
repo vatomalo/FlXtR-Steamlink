@@ -26,7 +26,7 @@ int main(void){
     samba_password_text("Test password 123");assert(!strcmp(samba_password,"Test password 123"));
     samba_password_on=1;samba_password_action(SDLK_BACKSPACE);assert(!strcmp(samba_password,"Test password 12"));
     samba_password_action(SDLK_ESCAPE);assert(!samba_password_on&&!samba_password[0]);
-    unlink("settings.cfg");chdir("/tmp");rmdir(temp);
+    unlink("settings.cfg");assert(!chdir("/tmp"));rmdir(temp);
     puts("PASS: tab/row focus, keyboard and shoulder navigation, settings persistence, 240p, desktop service guard and password input");
     return 0;
 }

@@ -78,8 +78,6 @@ typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],su
 static int rom_options_menu,rom_options_row;
 static int scummvm_menu,scummvm_row;
 static int scummvm_size,scummvm_stretch=3,scummvm_filter,scummvm_fullscreen=1,scummvm_subtitles;
-static const char *const scummvm_sizes[]={"AUTO / DISPLAY","640 X 480","800 X 600","1280 X 720","1920 X 1080"};
-static const char *const scummvm_stretches[]={"CENTER","PIXEL PERFECT","EVEN PIXELS","FIT","STRETCH","FIT ASPECT"};
 static void scummvm_settings_load(void){
     FILE *f=fopen("scummvm-settings.cfg","r");if(!f)return;
     char line[96];int n;
@@ -92,12 +90,7 @@ static void scummvm_settings_load(void){
     }
     fclose(f);
 }
-static int scummvm_settings_save(void){
-    FILE *f=fopen("scummvm-settings.cfg.next","w");if(!f)return 0;
-    fprintf(f,"size=%d\nstretch=%d\nfilter=%d\nfullscreen=%d\nsubtitles=%d\n",scummvm_size,scummvm_stretch,scummvm_filter,scummvm_fullscreen,scummvm_subtitles);
-    if(fclose(f))return 0;
-    return rename("scummvm-settings.cfg.next","scummvm-settings.cfg")==0;
-}
+
 static Title rom_options_title;
 static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count,rom_core_first;
 static int platform_core_menu,platform_core_selecting,platform_core_index,platform_core_choice,platform_core_first;

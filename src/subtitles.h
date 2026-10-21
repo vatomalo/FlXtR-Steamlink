@@ -61,14 +61,20 @@ static void subtitle_draw(void){
         const SubtitleCue *cue=&subtitle_cues[i];
         if(!cue->text[0]||now<cue->start)continue;
         int64_t end=cue->end;
+#ifndef SUBTITLE_TIME_US
         if(subtitle_external&&end>cue->start&&now>=end&&now-end<700000)
             end+=700000;
+#endif
         if(now<end&&cue->start>=best_start){
             best_start=cue->start;selected=i;
         }
     }
     if(selected==subtitle_visible)return;
-    if(subtitle_external&&subtitle_visible>=0&&selected<0){
+    if(subtitle_visible>=0&&selected<0
+#ifndef SUBTITLE_TIME_US
+       &&subtitle_external
+#endif
+    ){
         const SubtitleCue *previous=&subtitle_cues[subtitle_visible];
         fprintf(stderr,"Subtitle cue ended: start=%.3f end=%.3f clock=%.3f duration=%.3f\n",
             previous->start/1000000.0,previous->end/1000000.0,

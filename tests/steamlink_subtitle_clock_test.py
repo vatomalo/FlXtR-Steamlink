@@ -27,5 +27,9 @@ for fixture in fixtures:
         assert len(cues)>=2,result.stderr
         # Both cues must appear within 100 ms of the correct audio timestamp.
         assert all(0<=clock-start<.10 for start,end,clock in cues),cues
+        endings=[tuple(map(float,m)) for m in re.findall(
+            r"Subtitle cue ended: start=([\d.-]+) end=([\d.-]+) clock=([\d.-]+)",result.stderr)]
+        assert len(endings)>=2,result.stderr
+        assert all(0<=clock-end<.10 for start,end,clock in endings),endings
         assert "Audio timestamp discontinuity:" not in result.stderr,result.stderr
         print("PASS:",fixture.name,"captions follow the audio clock:",cues)

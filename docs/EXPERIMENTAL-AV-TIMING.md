@@ -47,7 +47,8 @@ keyframe and recreates the decoder rather than dropping arbitrary references.
 
 Embedded captions use stream timestamps plus the container offset; external
 captions use normalized media time. Neither uses an independent wall clock or
-adds the seek offset twice. Adaptive quality counts actual audio underruns,
+adds the seek offset twice. The old 700 ms external-caption linger is disabled;
+cue end times, as well as starts, follow the shared clock. Adaptive quality counts actual audio underruns,
 slow worker submissions and FIFO starvation when the audio reserve is low.
 
 timing.log rotates around 1 MiB and records audio position, PCM reserve, video

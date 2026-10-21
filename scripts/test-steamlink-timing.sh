@@ -12,7 +12,7 @@ python3 tests/steamlink_timing_fixture.py build/timing-tests
 ffmpeg -v error -y -f lavfi -i testsrc2=size=320x180:rate=30 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 8 -c:v libx264 -preset fast -g 30 -bf 2 -c:a aac -movflags +faststart build/timing-tests/video.mp4
 ffmpeg -v error -y -i build/timing-tests/video.mp4 -i build/timing-tests/captions.srt -map 0:v -map 0:a -map 1 -c copy -c:s srt build/timing-tests/captions.mkv
 ffmpeg -v error -y -i build/timing-tests/video.mp4 -c copy -output_ts_offset 5 build/timing-tests/offset-external.mkv
-ffmpeg -v error -y -stream_loop 2 -i build/timing-tests/video.mp4 -t 22 -c copy -output_ts_offset 5 -f mpegts build/timing-tests/seek-offset.ts
+ffmpeg -v error -y -f lavfi -i testsrc2=size=1280x720:rate=10 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 22 -c:v libx264 -preset ultrafast -g 20 -bf 0 -c:a aac -output_ts_offset 5 -f mpegts build/timing-tests/seek-offset.ts
 docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,src=$PWD,dst=/src" "$image" bash -c '
 set -e
 flags="$(pkg-config --cflags sdl2 libavformat libavcodec libavutil libswresample)"

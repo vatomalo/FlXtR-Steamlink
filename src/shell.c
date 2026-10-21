@@ -77,7 +77,7 @@ typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],su
 #define ROM_CORE_LIMIT 128
 static int rom_options_menu,rom_options_row;
 static int scummvm_menu,scummvm_row;
-static int scummvm_size,scummvm_stretch=3,scummvm_filter;
+static int scummvm_size,scummvm_stretch=3,scummvm_filter,scummvm_fullscreen=1,scummvm_subtitles;
 static const char *const scummvm_sizes[]={"AUTO / DISPLAY","640 X 480","800 X 600","1280 X 720","1920 X 1080"};
 static const char *const scummvm_stretches[]={"CENTER","PIXEL PERFECT","EVEN PIXELS","FIT","STRETCH","FIT ASPECT"};
 static void scummvm_settings_load(void){
@@ -87,12 +87,14 @@ static void scummvm_settings_load(void){
         if(sscanf(line,"size=%d",&n)==1&&n>=0&&n<5)scummvm_size=n;
         if(sscanf(line,"stretch=%d",&n)==1&&n>=0&&n<6)scummvm_stretch=n;
         if(sscanf(line,"filter=%d",&n)==1&&n>=0&&n<=1)scummvm_filter=n;
+        if(sscanf(line,"fullscreen=%d",&n)==1&&n>=0&&n<=1)scummvm_fullscreen=n;
+        if(sscanf(line,"subtitles=%d",&n)==1&&n>=0&&n<=1)scummvm_subtitles=n;
     }
     fclose(f);
 }
 static int scummvm_settings_save(void){
     FILE *f=fopen("scummvm-settings.cfg.next","w");if(!f)return 0;
-    fprintf(f,"size=%d\nstretch=%d\nfilter=%d\n",scummvm_size,scummvm_stretch,scummvm_filter);
+    fprintf(f,"size=%d\nstretch=%d\nfilter=%d\nfullscreen=%d\nsubtitles=%d\n",scummvm_size,scummvm_stretch,scummvm_filter,scummvm_fullscreen,scummvm_subtitles);
     if(fclose(f))return 0;
     return rename("scummvm-settings.cfg.next","scummvm-settings.cfg")==0;
 }
@@ -1280,10 +1282,10 @@ static void draw(Uint32 tick) {
     if(scummvm_menu){
         rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
         text(200,100,"SCUMMVM SETTINGS",2,green,60);
-        const char *labels[]={"WINDOW RESOLUTION","GAME SCALING","PIXEL FILTERING","START SCUMMVM"};
-        const char *values[]={scummvm_sizes[scummvm_size],scummvm_stretches[scummvm_stretch],scummvm_filter?"ON":"OFF","LAUNCH"};
-        for(int i=0;i<4;i++){
-            int y=165+i*52;
+        const char *labels[]={"WINDOW RESOLUTION","GAME SCALING","PIXEL FILTERING","FULLSCREEN","SUBTITLES","START SCUMMVM"};
+        const char *values[]={scummvm_sizes[scummvm_size],scummvm_stretches[scummvm_stretch],scummvm_filter?"ON":"OFF",scummvm_fullscreen?"ON":"OFF",scummvm_subtitles?"ON":"OFF","LAUNCH"};
+        for(int i=0;i<6;i++){
+            int y=151+i*43;
             if(scummvm_row==i)rect(194,y-9,718,36,green,0);
             text(210,y,labels[i],1,white,35);
             text(525,y,values[i],1,scummvm_row==i?green:white,42);
@@ -2217,14 +2219,16 @@ static void action(SDL_Keycode key) {
     if(scummvm_menu){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){scummvm_menu=0;return;}
         if(key==SDLK_UP&&scummvm_row>0)scummvm_row--;
-        if(key==SDLK_DOWN&&scummvm_row<3)scummvm_row++;
+        if(key==SDLK_DOWN&&scummvm_row<5)scummvm_row++;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             int d=key==SDLK_LEFT?-1:1;
             if(scummvm_row==0)scummvm_size=(scummvm_size+d+5)%5;
             if(scummvm_row==1)scummvm_stretch=(scummvm_stretch+d+6)%6;
             if(scummvm_row==2)scummvm_filter=!scummvm_filter;
+            if(scummvm_row==3)scummvm_fullscreen=!scummvm_fullscreen;
+            if(scummvm_row==4)scummvm_subtitles=!scummvm_subtitles;
             if(!scummvm_settings_save())snprintf(status,sizeof(status),"SCUMMVM SETTINGS SAVE FAILED");
-            if(scummvm_row==3&&key==SDLK_RETURN){
+            if(scummvm_row==5&&key==SDLK_RETURN){
                 scummvm_menu=0;
                 FILE *request=fopen("game-request","w");
                 if(request){fputs("0 -1 -1\n",request);if(!fclose(request)){game_exit=1;running=0;}}

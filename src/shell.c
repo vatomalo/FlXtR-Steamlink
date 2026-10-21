@@ -78,6 +78,7 @@ typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],su
 static int rom_options_menu,rom_options_row;
 static Title rom_options_title;
 static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count,rom_core_first;
+static int platform_core_menu,platform_core_selecting,platform_core_index,platform_core_choice,platform_core_first;
 static char rom_core_key[17];
 static char rom_core_title[80],rom_core_names[ROM_CORE_LIMIT][96];
 static void rom_core_scan(const char *dir){
@@ -105,6 +106,23 @@ static void rom_core_scan(const char *dir){
     closedir(d);
 }
 static int rom_core_compare(const void *a,const void *b){return strcmp(a,b);}
+static void platform_core_open(void){
+    platform_core_menu=1;platform_core_selecting=0;platform_core_index=0;
+}
+static void platform_core_choices(void){
+    rom_core_count=1;strcpy(rom_core_names[0],"AUTOMATIC");
+    rom_core_scan("cores");
+    const char *root=getenv("FLXTR_RETROARCH_HOME");
+    if(root&&*root){char path[PATH_MAX];snprintf(path,sizeof(path),"%s/cores",root);rom_core_scan(path);}
+    rom_core_scan("/home/apps/retroarch/cores");
+    rom_core_scan("/home/apps/retroarch/.home/.config/retroarch/cores");
+    qsort(rom_core_names+1,(size_t)(rom_core_count-1),sizeof(rom_core_names[0]),rom_core_compare);
+    char preferred[96]={0};rom_platform_core_get(platform_core_index,preferred,sizeof(preferred));
+    platform_core_choice=0;platform_core_first=0;
+    for(int i=1;i<rom_core_count;i++)if(!strcmp(preferred,rom_core_names[i]))platform_core_choice=i;
+    platform_core_first=platform_core_choice>3?platform_core_choice-3:0;
+    platform_core_selecting=1;
+}
 static void rom_core_open(const Title *t){
     if(strcmp(t->kind,"game"))return;
     rom_core_id=t->id;rom_core_key[0]=0;
@@ -1237,6 +1255,27 @@ static void draw(Uint32 tick) {
         text(200,307,"A CONFIRM REMOVE / B CANCEL",2,green,55);
         SDL_RenderPresent(renderer);return;
     }
+    if(platform_core_menu){
+        rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
+        text(200,95,platform_core_selecting?"DEFAULT CORE":"DEFAULT CORES BY SYSTEM",2,green,40);
+        if(platform_core_selecting){
+            text(200,126,rom_platform_names[platform_core_index],2,white,40);
+            for(int i=platform_core_first;i<rom_core_count&&i<platform_core_first+7;i++){
+                char line[112];snprintf(line,sizeof(line),"%c %s",i==platform_core_choice?'>':' ',rom_core_names[i]);
+                text(205,162+(i-platform_core_first)*32,line,2,i==platform_core_choice?green:white,58);
+            }
+            text(200,408,"A SAVE / B SYSTEMS",1,green,75);
+        }else{
+            for(int i=0;i<ROM_PLATFORM_COUNT;i++){
+                char preferred[96]={0},line[160];
+                if(!rom_platform_core_get(i,preferred,sizeof(preferred)))strcpy(preferred,"AUTOMATIC");
+                snprintf(line,sizeof(line),"%s: %s",rom_platform_names[i],preferred);
+                text(205,145+i*29,line,1,i==platform_core_index?green:white,90);
+            }
+            text(200,435,"A CHOOSE CORE / B SETTINGS",1,green,80);
+        }
+        SDL_RenderPresent(renderer);return;
+    }
     if(rom_core_menu){
         rect(184,80,746,339,(SDL_Color){0,0,0,235},1);
         text(200,95,"SELECT INSTALLED CORE",2,green,50);
@@ -1370,11 +1409,11 @@ static void draw(Uint32 tick) {
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING"};
+        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES"};
 #else
-        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING"};
+        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES"};
 #endif
-        char values[27][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[28][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
@@ -1391,6 +1430,7 @@ static void draw(Uint32 tick) {
         snprintf(values[24],40,"SET / CHANGE PASSWORD");
         snprintf(values[25],40,"%s",!access("samba/.enabled",R_OK)?"STARTUP ON":"OFF");
         snprintf(values[26],40,"%s",view_names[default_viewing]);
+        snprintf(values[27],40,"CHOOSE BY SYSTEM");
 #if defined(FLXTR_DESKTOP) || defined(_WIN32)
         for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
 #endif
@@ -2136,6 +2176,27 @@ static void action(SDL_Keycode key) {
         else if(key==SDLK_RETURN)accounts_open(party_entry);
         return;
     }
+    if(platform_core_menu){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){
+            if(platform_core_selecting)platform_core_selecting=0;else platform_core_menu=0;
+            return;
+        }
+        if(platform_core_selecting){
+            if(key==SDLK_UP&&platform_core_choice>0)platform_core_choice--;
+            if(key==SDLK_DOWN&&platform_core_choice+1<rom_core_count)platform_core_choice++;
+            if(platform_core_choice<platform_core_first)platform_core_first=platform_core_choice;
+            if(platform_core_choice>=platform_core_first+7)platform_core_first=platform_core_choice-6;
+            if(key==SDLK_RETURN){
+                int saved=rom_platform_core_save(platform_core_index,platform_core_choice?rom_core_names[platform_core_choice]:NULL);
+                platform_core_selecting=0;snprintf(status,sizeof(status),saved?"DEFAULT CORE SAVED":"COULD NOT SAVE DEFAULT CORE");
+            }
+        }else{
+            if(key==SDLK_UP&&platform_core_index>0)platform_core_index--;
+            if(key==SDLK_DOWN&&platform_core_index+1<ROM_PLATFORM_COUNT)platform_core_index++;
+            if(key==SDLK_RETURN)platform_core_choices();
+        }
+        return;
+    }
     if(rom_core_menu){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){rom_core_menu=0;return;}
         if(key==SDLK_UP&&rom_core_selected>0)rom_core_selected--;
@@ -2308,8 +2369,9 @@ static void action(SDL_Keycode key) {
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             int id=settings_id();
-            if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id>=23))return;
+            if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id==27||id>=23))return;
             switch(id){
+                case 27:if(key==SDLK_RETURN)platform_core_open();break;
                 case 26:default_viewing=(default_viewing+step+VIEW_COUNT)%VIEW_COUNT;break;
                 case 22:game_view=(game_view+step+GAME_VIEWS)%GAME_VIEWS;break;
                 case 20:music_autoplay=!music_autoplay;break;

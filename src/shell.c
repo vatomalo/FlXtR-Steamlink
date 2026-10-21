@@ -1251,17 +1251,15 @@ static void draw(Uint32 tick) {
         rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
         text(200,95,"ROM OPTIONS",2,green,50);
         text(200,127,rom_options_title.title,2,white,58);
-        const char *labels[]={"PLAY","CORE","SCALING","OUTPUT"};
-        char output[40];if(game_output)snprintf(output,sizeof(output),"%dP / %d X %d",game_output,game_output_width(game_output),game_output);
-        else snprintf(output,sizeof(output),"NATIVE / DISPLAY");
-        const char *values[]={"START GAME",rom_core_names[rom_core_selected],game_view_names[game_view],output};
-        for(int row=0;row<4;row++){
+        const char *labels[]={"PLAY","CORE"};
+        const char *values[]={"START GAME",rom_core_names[rom_core_selected]};
+        for(int row=0;row<2;row++){
             int y=181+row*43;
             if(row==rom_options_row)rect(194,y-8,718,32,green,0);
             text(210,y,labels[row],2,white,22);text(420,y,values[row],2,row==rom_options_row?green:white,40);
         }
-        text(200,377,"CORE IS SAVED FOR THIS ROM / DISPLAY OPTIONS APPLY TO ALL ROMS",1,dim,110);
-        text(200,408,"A OPEN / LEFT-RIGHT CHANGE / START PLAY / B BACK",1,green,100);
+        text(200,377,"CORE IS SAVED FOR THIS ROM / GAME SCALING AND OUTPUT IN SETTINGS",1,dim,110);
+        text(200,408,"A OPEN / LEFT-RIGHT CORE / X PLAY / B BACK",1,green,100);
         text(200,448,status,1,dim,100);
         SDL_RenderPresent(renderer);return;
     }
@@ -1638,9 +1636,7 @@ static void play(void) {
         request_catalog(next,0,0);return;
     }
     if(!strcmp(t->kind,"game")){
-        rom_options_title=*t;rom_options_row=0;rom_options_menu=1;
-        rom_core_open(t);rom_core_menu=0;
-        snprintf(status,sizeof(status),"CHOOSE CORE / SCALING / OUTPUT, THEN PLAY");return;
+        rom_launch(t);return;
     }
     if(!strcmp(t->kind,"archive")){
         const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
@@ -2152,19 +2148,14 @@ static void action(SDL_Keycode key) {
     if(rom_options_menu){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){rom_options_menu=0;return;}
         if(key==SDLK_UP&&rom_options_row>0)rom_options_row--;
-        if(key==SDLK_DOWN&&rom_options_row<3)rom_options_row++;
+        if(key==SDLK_DOWN&&rom_options_row<1)rom_options_row++;
         int step=key==SDLK_LEFT?-1:1;
-        if(key==SDLK_F3||(key==SDLK_RETURN&&!rom_options_row)){rom_launch(&rom_options_title);return;}
+        if(key==SDLK_x||key==SDLK_F3||(key==SDLK_RETURN&&!rom_options_row)){rom_launch(&rom_options_title);return;}
         if(key==SDLK_RETURN&&rom_options_row==1){rom_core_first=rom_core_selected>3?rom_core_selected-3:0;rom_core_menu=1;return;}
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             if(rom_options_row==1&&rom_core_count){
                 rom_core_selected=(rom_core_selected+step+rom_core_count)%rom_core_count;
                 if(!rom_core_save())snprintf(status,sizeof(status),"COULD NOT SAVE ROM CORE");
-            }else if(rom_options_row==2)game_view=(game_view+step+GAME_VIEWS)%GAME_VIEWS;
-            else if(rom_options_row==3){
-                const int outputs[]={0,240,480,720,1080};int index=0;
-                for(int i=0;i<5;i++)if(game_output==outputs[i])index=i;
-                game_output=outputs[(index+step+5)%5];
             }
             save_settings();
         }
@@ -2254,7 +2245,9 @@ static void action(SDL_Keycode key) {
     }
     if(!settings_on&&!about&&(browse.mode==14||browse.mode==22||browse.mode==FAVORITES_MODE)&&key==SDLK_y&&total&&
        !strcmp(titles[visible[selection]].kind,"game")){
-        rom_core_open(&titles[visible[selection]]);return;
+        rom_options_title=titles[visible[selection]];
+        rom_options_row=0;rom_options_menu=1;
+        rom_core_open(&rom_options_title);rom_core_menu=0;return;
     }
     if(!settings_on&&!about&&key==SDLK_F8&&(browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28)){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&(key==SDLK_f||key==SDLK_F7)){favorites_toggle();return;}
@@ -2367,6 +2360,7 @@ static void action(SDL_Keycode key) {
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
+    else if(key==SDLK_x&&!about&&total&&!strcmp(titles[visible[selection]].kind,"game"))rom_launch(&titles[visible[selection]]);
     else if(key==SDLK_y)stars_on=!stars_on;
     else if(key==SDLK_v){snprintf(status,sizeof(status),"VIEW OPTIONS ARE AVAILABLE DURING VIDEO PLAYBACK");}
     else if(key==SDLK_TAB&&!browse.mode){ready_only=!ready_only;filter();}
@@ -2529,7 +2523,7 @@ int main(int argc,char **argv) {
                 switch(event.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_A:action(samba_password_on||search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
                     case SDL_CONTROLLER_BUTTON_B:action(samba_password_on?SDLK_ESCAPE:search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
-                    case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
+                    case SDL_CONTROLLER_BUTTON_X:action(!settings_on&&!rom_options_menu&&!rom_core_menu&&!player_pid&&!music_on&&total&&!strcmp(titles[visible[selection]].kind,"game")?SDLK_x:SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_TAB:SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;

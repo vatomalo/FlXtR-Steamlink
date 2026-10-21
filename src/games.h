@@ -12,6 +12,12 @@
 #define GAME_LIMIT 2048
 #include "desktop_retroarch.h"
 #include "game_output.h"
+#include "rom_core_preferences.h"
+#define FLXTR_GAME_CONFIG
+#include "game_scaling.h"
+#undef FLXTR_GAME_CONFIG
+#include "platform_process.h"
+static const char *games_executable;
 static int game_absolute(const char *p){return p&&(p[0]=='/'
 #ifdef _WIN32
  ||(isalpha((unsigned char)p[0])&&p[1]==':'&&(p[2]=='/'||p[2]=='\\'))
@@ -206,6 +212,7 @@ static int games_list_filtered(int page,int refresh,int folder){
             !strcasestr(rom_path,"/neogeo/")&&!strcasestr(rom_path,"/neo-geo/")&&
             !strcasestr(rom_path,"/mame/");
         strcpy(e->kind,browse_zip?"game-zip":"game");e->id=i+1;
+        if(!browse_zip){char key[17];rom_identity(rom_path,key);snprintf(e->url,sizeof(e->url),"romid:%s",key);}
         /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
         const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
         /* Artwork classification is independent of the selected launch core. */
@@ -327,6 +334,8 @@ static int games_list_filtered(int page,int refresh,int folder){
                 }
                 fclose(selected);
             }
+            char preference_key[17];rom_identity(rom_path,preference_key);
+            rom_core_preference(preference_key,core_name,sizeof(core_name));
             char *core_suffix=strstr(core_name,"_libretro" FLXTR_CORE_EXT);if(core_suffix)*core_suffix=0;
             snprintf(e->meta,sizeof(e->meta),"%s / CORE: %.48s",platform,core_name);
         }
@@ -352,9 +361,55 @@ static int games_list_filtered(int page,int refresh,int folder){
 }
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
 static int games_system(int page,int folder){return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;}
+static int game_pixel_geometry(const char *core,const char *rom,int output,int *width,int *height,int *dw,int *dh){
+    char executable[PATH_MAX],system[PATH_MAX],save[PATH_MAX],cwd[PATH_MAX];
+    if(!games_executable||!getcwd(cwd,sizeof(cwd)))return -1;
+    if(game_absolute(games_executable))snprintf(executable,sizeof(executable),"%s",games_executable);
+    else{
+        char *base=SDL_GetBasePath();const char *name=strrchr(games_executable,'/');name=name?name+1:games_executable;
+        int n=base?snprintf(executable,sizeof(executable),"%s%s",base,name):-1;SDL_free(base);
+        if(n<1||n>=(int)sizeof(executable))return -1;
+    }
+    if(snprintf(system,sizeof(system),"%s/system",cwd)>=(int)sizeof(system)||
+       snprintf(save,sizeof(save),"%s/core-probe-cache",cwd)>=(int)sizeof(save))return -1;
+    char config[PATH_MAX],candidate[PATH_MAX];
+    snprintf(config,sizeof(config),"%s/.home/.config/retroarch/retroarch.cfg",games_home());
+    FILE *cfg=fopen(config,"r");
+    if(cfg){char row[PATH_MAX+64];
+        while(fgets(row,sizeof(row),cfg)){
+            char *value=row;while(isspace((unsigned char)*value))value++;
+            if(strncmp(value,"system_directory",16))continue;
+            value+=16;while(isspace((unsigned char)*value))value++;
+            if(*value++!='=')continue;
+            while(isspace((unsigned char)*value))value++;
+            if(*value++!='"')continue;
+            char *end=strchr(value,'"');if(!end||(size_t)(end-value)>=sizeof(candidate))continue;
+            memcpy(candidate,value,(size_t)(end-value));candidate[end-value]=0;
+            if(game_absolute(candidate))snprintf(system,sizeof(system),"%s",candidate);
+        }
+        fclose(cfg);
+    }
+    mkdir(save,0700);
+    const char *args[]={executable,"--probe-core",core,rom,system,save,output?"fixed":"native",NULL};
+    FlxtrSpawnOptions options={.stdout_path="game-geometry.txt",.stderr_path="game-probe.log",.process_tree=1};
+    FlxtrProcess child={0};unlink("game-geometry.txt");
+    if(flxtr_process_start(&child,executable,args,&options))return -1;
+    int code=1,result=flxtr_process_wait(&child,8000,&code);
+    if(result!=1){flxtr_process_stop(&child,1);flxtr_process_wait(&child,2000,NULL);return -1;}
+    if(code)return -1;
+    FILE *f=fopen("game-geometry.txt","r");if(!f)return -1;
+    char line[256];int found=0,sw=0,sh=0;
+    while(fgets(line,sizeof(line),f))
+        if(sscanf(line,"FLXTR_GEOMETRY %d %d %d %d",width,height,&sw,&sh)==4)found=1;
+    fclose(f);
+    *dw=output?game_output_width(output):sw;*dh=output?output:sh;
+    if(!found||*width<1||*height<1||*dw<1||*dh<1||*width>*dw||*height>*dh)return -1;
+    return 0;
+}
 static int games_run(void){
     int id=0,back=-1,start=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
     int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
+    unlink("game-error.txt");
     if(id==0){
         /* Launch the installed ScummVM frontend and its configured games. */
         const char *paths[]={
@@ -393,31 +448,30 @@ static int games_run(void){
      * Accept names only, never paths from the TSV, and require an installed
      * readable Libretro shared object. */
     char bundled[PATH_MAX];if(game_bundled_core(core,bundled,sizeof(bundled)))core=bundled;
-    char selected_core[PATH_MAX]={0};
+    char selected_core[PATH_MAX]={0},selected_name[96]={0};
     FILE *choices=fopen("game-cores.tsv","r");
     if(choices){
         char row[256],title[80],name[96];int selected_id;
-        while(fgets(row,sizeof(row),choices)){
-            if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,title,name)!=3)continue;
-            /* IDs can change when imports are rebuilt; never use a saved core
-             * for an unrelated ROM merely because its numeric slot matches. */
-            if(selected_id!=id||strcmp(title,string(g,"title")))continue;
-            size_t len=strlen(name);int valid=len>0&&len<80;
-            for(size_t j=0;j<len;j++)
-                if(!isalnum((unsigned char)name[j])&&name[j]!='_'&&name[j]!='-')valid=0;
-            if(!valid)continue;
-            snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro" FLXTR_CORE_EXT,games_home(),name);
-            if(!game_file(selected_core))
-                snprintf(selected_core,sizeof(selected_core),"%s/.home/.config/retroarch/cores/%s_libretro" FLXTR_CORE_EXT,games_home(),name);
-            if(!game_file(selected_core)){
-                char cwd[PATH_MAX];
-                if(getcwd(cwd,sizeof(cwd))){
-                    int n=snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro" FLXTR_CORE_EXT,cwd,name);
-                    if(n<0||n>=(int)sizeof(selected_core))selected_core[0]=0;
-                }
+        while(fgets(row,sizeof(row),choices))
+            if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&selected_id,title,name)==3&&
+               selected_id==id&&!strcmp(title,string(g,"title"))&&rom_core_name_valid(name))
+                snprintf(selected_name,sizeof(selected_name),"%s",name);
+        fclose(choices);
+    }
+    char preference_key[17];rom_identity(rom,preference_key);
+    rom_core_preference(preference_key,selected_name,sizeof(selected_name));
+    if(selected_name[0]){
+        snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro" FLXTR_CORE_EXT,games_home(),selected_name);
+        if(!game_file(selected_core))
+            snprintf(selected_core,sizeof(selected_core),"%s/.home/.config/retroarch/cores/%s_libretro" FLXTR_CORE_EXT,games_home(),selected_name);
+        if(!game_file(selected_core)){
+            char cwd[PATH_MAX];
+            if(getcwd(cwd,sizeof(cwd))){
+                int n=snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro" FLXTR_CORE_EXT,cwd,selected_name);
+                if(n<0||n>=(int)sizeof(selected_core))selected_core[0]=0;
             }
-            if(game_file(selected_core))core=selected_core;
-        }fclose(choices);
+        }
+        if(game_file(selected_core))core=selected_core;
     }
     if(!game_file(rom)||!game_file(core)){fprintf(stderr,"Game launch: missing ROM or RetroArch core\n");json_object_put(games);return 2;}
     if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
@@ -433,11 +487,13 @@ static int games_run(void){
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
     f=fopen(extra,"w");if(!f)return 2;
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nkiosk_mode_enable = \"true\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
-    int output=GAME_OUTPUT_DEFAULT;
+    int output=GAME_OUTPUT_DEFAULT,view=GAME_FIT;
     FILE *display_settings=fopen("settings.cfg","r");
     if(display_settings){char line[96];int height;
-        while(fgets(line,sizeof(line),display_settings))
+        while(fgets(line,sizeof(line),display_settings)){
             if(sscanf(line,"game_output=%d",&height)==1&&game_output_valid(height))output=height;
+            if(sscanf(line,"game_view=%d",&height)==1&&game_view_valid(height))view=height;
+        }
         fclose(display_settings);
     }
     if(output){
@@ -445,6 +501,18 @@ static int games_run(void){
             game_output_width(output),output);
         fprintf(stderr,"Game output: request %dx%d; core-native rendering remains unchanged\n",game_output_width(output),output);
     }
+    else fputs("video_windowed_fullscreen = \"true\"\nvideo_fullscreen_x = \"0\"\nvideo_fullscreen_y = \"0\"\n",f);
+    int native_w=0,native_h=0,display_w=output?game_output_width(output):0,display_h=output;
+#ifndef FLXTR_DESKTOP
+    if(view==GAME_PIXEL)game_native_sdl();
+#endif
+    if(view==GAME_PIXEL&&game_pixel_geometry(core,rom,output,&native_w,&native_h,&display_w,&display_h)){
+        fclose(f);FILE *error=fopen("game-error.txt","w");
+        if(error){fputs("1:1 GEOMETRY UNAVAILABLE OR TOO LARGE / CHOOSE FIT / SEE GAME-PROBE.LOG",error);fclose(error);}
+        fprintf(stderr,"1:1 geometry probe failed or picture does not fit selected output\n");
+        json_object_put(games);return 2;
+    }
+    game_scaling_config(f,view,native_w,native_h,display_w,display_h);
     /* Keep Neo Geo and other working systems on their existing configuration. */
     const char *core_base=strrchr(core,'/');core_base=core_base?core_base+1:core;
     if(!strncmp(core_base,"snes9x",6)||!strncmp(core_base,"mame2003",8)){
@@ -488,7 +556,7 @@ static int games_run(void){
 #endif
         ,games_home());
     snprintf(home,sizeof(home),"%s/.home",games_home());
-    game_native_sdl();
+    if(view!=GAME_PIXEL)game_native_sdl();
     if(chdir(games_home()))return 2;
     setenv("HOME",home,1);
     fprintf(stderr,"Game launch: core=%s ROM=%s\n",core,rom);

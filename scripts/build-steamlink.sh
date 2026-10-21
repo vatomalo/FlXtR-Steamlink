@@ -14,7 +14,7 @@ $CC -Os -std=c99 -Wall -Wextra -Werror -DFLXTR_VERSION=\"$version\" $(pkg-config
 $STRIP build/greenlink-catalog-arm
 app=dist/steamlink/apps/greenlink
 $CC -Os -Wall -Wextra -Werror -fPIC -shared -nostdlib src/samba_paths.c -o "$app/samba-paths.so"
-cp packaging/samba-packages.json "$app/"
+cp packaging/samba-packages.json packaging/LIBRETRO-API-LICENSE.txt "$app/"
 if [ ! -f build/cacert.pem ]; then
     wget -q https://curl.se/ca/cacert-2026-09-25.pem -O build/cacert.pem
 fi

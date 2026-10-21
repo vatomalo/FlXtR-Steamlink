@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='desktop games ø ') as directory:
     assert len(games)==1 and Path(games[0]['core'])==core
     (home/'game-request').write_text('1 -1 -1\n')
     run('--run-game')
-    assert 'video_fullscreen_y' not in (home/'game-runtime.cfg').read_text() # desktop Native default
+    assert 'video_fullscreen_y = "0"' in (home/'game-runtime.cfg').read_text() # Native clears stale fullscreen size
     (home/'settings.cfg').write_text('game_output=480\n')
     (home/'game-request').write_text('1 -1 -1\n')
     run('--run-game')

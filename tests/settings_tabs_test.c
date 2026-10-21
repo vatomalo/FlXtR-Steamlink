@@ -15,6 +15,7 @@ int main(void){
     action(SDLK_LEFT);assert(!music_autoplay);
     music_autoplay=1;load_settings();assert(!music_autoplay);
     action(SDLK_m);assert(settings_tab==SETTINGS_ROMS&&settings_row==-1);
+    action(SDLK_DOWN);assert(settings_id()==22);
     action(SDLK_DOWN);assert(settings_id()==19);
     game_output=0;action(SDLK_RIGHT);assert(game_output==240);
     settings_tab=SETTINGS_SERVICES;settings_row=0;

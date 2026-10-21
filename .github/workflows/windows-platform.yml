@@ -20,7 +20,7 @@ jobs:
           make -j2 all
           make test-platform test-platform-shell test-desktop-ipc
           python3 tests/api_setup_test.py
-          make test-desktop-cores test-settings
+          make test-desktop-cores test-settings test-rom-menu
           python3 tests/music_test.py
           cc -std=c99 -Wall -Wextra -Werror tests/audio_master_clock_test.c -o build/audio-master-clock-test
           ./build/audio-master-clock-test

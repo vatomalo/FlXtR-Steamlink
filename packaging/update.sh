@@ -81,7 +81,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
             cp "$staged/retroarch-libs/$part" "retroarch-libs/$part.new" && mv -f "retroarch-libs/$part.new" "retroarch-libs/$part"
         done
     fi
-    for part in update.sh greenlink.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh samba-paths.so samba-packages.json toc.txt catalog.tsv WABT-LICENSE.txt; do
+    for part in update.sh greenlink.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh samba-paths.so samba-packages.json toc.txt catalog.tsv WABT-LICENSE.txt LIBRETRO-API-LICENSE.txt; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     mv -f .update-backup greenlink.previous

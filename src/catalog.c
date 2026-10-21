@@ -666,7 +666,10 @@ static void game_info_prefetch(void){
 #ifdef _WIN32
 #define main flxtr_catalog_main
 #endif
+#include "core_geometry.h"
 int main(int argc,char **argv){
+    games_executable=argv[0];
+    if(argc==7&&!strcmp(argv[1],"--probe-core"))return core_geometry_probe(argv[2],argv[3],argv[4],argv[5],!strcmp(argv[6],"native"));
 #ifdef _WIN32
     if(argc==4&&!strcmp(argv[1],"--background")){
         if(strlen(argv[3])!=31||strncmp(argv[3],"catalog-cache/background-",25))return 2;

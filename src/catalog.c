@@ -146,7 +146,7 @@ static void from_json(Entry *e,json_object *o,const char *kind,int id,int season
         const char *overview=string(o,"overview");
         if(*overview){
             mkdir("media-info-cache",0700);
-            char filename[100],temporary[116],description[400];
+            char filename[100],temporary[116],description[1024];
             snprintf(filename,sizeof(filename),"media-info-cache/%s-%d.txt",kind,e->id);
             snprintf(temporary,sizeof(temporary),"%s.next",filename);
             clean(description,sizeof(description),overview);
@@ -648,7 +648,7 @@ static void game_info_prefetch(void){
             }
         }
         if(overview){
-            char description[400],tmp[112];
+            char description[1024],tmp[112];
             clean(description,sizeof(description),overview);
             snprintf(tmp,sizeof(tmp),"%s.next",output);
             FILE *f=fopen(tmp,"w");

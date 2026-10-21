@@ -270,11 +270,11 @@ def preview_source(value, category):
                 selected = (info.get('requested_formats') or [info])[0]
                 if selected.get('vcodec', '').startswith('avc1') and selected.get('height', 9999) <= 240:
                     url = selected.get('url', '')
-                    if url.startswith('https://') and len(url) < 2046 and not any(c in url for c in '\\r\\n\\t'):
+                    if url.startswith('https://') and len(url) < 2046 and not any(c in url for c in '\r\n\t'):
                         agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
-                        atomic(CACHE / 'preview.txt', '\\n'.join([
+                        atomic(CACHE / 'preview.txt', '\n'.join([
                             clean(info.get('title'), 120), url, agent,
-                            'https://www.youtube.com/watch?v=' + item['id']]) + '\\n')
+                            'https://www.youtube.com/watch?v=' + item['id']]) + '\n')
                         return
             except Exception:
                 continue

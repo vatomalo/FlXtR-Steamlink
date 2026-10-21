@@ -748,10 +748,11 @@ static void wrap_detail(int x,int y,const char *str,int lines,SDL_Color ink){
     }
 }
 /* Automatically page longer cached descriptions without blocking controller input. */
+/* Larger two-line-height synopsis, paced in pages for the narrow detail column. */
 static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink,int identity){
-    char chunks[48][40];int count=0;
+    char chunks[48][32];int count=0;
     while(*str&&count<48){
-        size_t n=strlen(str);if(n>35){n=35;while(n>1&&str[n]!=' ')n--;}
+        size_t n=strlen(str);if(n>26){n=26;while(n>1&&str[n]!=' ')n--;}
         if(!n)break;
         memcpy(chunks[count],str,n);chunks[count][n]=0;count++;
         str+=n;while(*str==' ')str++;
@@ -761,9 +762,9 @@ static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink
     int pages=(count+lines-1)/lines;
     int page=pages>1?(int)(((SDL_GetTicks()-selected_at)/8500U)%(unsigned)pages):0;
     for(int i=0;i<lines&&page*lines+i<count;i++)
-        text(x,y+i*15,chunks[page*lines+i],1,ink,35);
-    if(pages>1){char info[40];snprintf(info,sizeof(info),"DESCRIPTION %d/%d",page+1,pages);
-        text(x,y+lines*15+3,info,1,ink,35);}
+        text(x,y+i*21,chunks[page*lines+i],2,ink,26);
+    if(pages>1){char info[40];snprintf(info,sizeof(info),"MORE %d/%d",page+1,pages);
+        text(x,y+lines*21+2,info,1,dim,26);}
 }
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
@@ -1612,7 +1613,13 @@ static void draw(Uint32 tick) {
         }
         Title *t=&titles[visible[selection]];
         rect(665,94,1,378,dim,1);text(690,97,"NOW SELECTED",1,dim,30);
-        wrap_detail(690,126,t->title,4,green);
+        /* Reserve an inset for future 144p/240p gameplay/movie trailers.
+         * This is intentionally static until a verified embedded decoder exists. */
+        rect(688,121,238,119,dim,0);
+        rect(690,123,234,115,(SDL_Color){9,13,17,255},1);
+        text(749,161,"TRAILER",2,green,18);
+        text(724,191,"PREVIEW UNAVAILABLE",1,dim,27);
+        wrap_detail(690,248,t->title,3,green);
         /* PSP-style detail pane: consume only local metadata, never wait for web. */
         char detail[1024]="",detail_path[128];
         if((!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv"))&&t->id>0){
@@ -1647,13 +1654,11 @@ static void draw(Uint32 tick) {
             }
         }
         detail[strcspn(detail,"\r\n")]=0;
-        wrap_detail(690,205,t->meta,2,white);
-        if(detail[0])wrap_description(690,242,detail,6,white,visible[selection]+browse.mode*100000+browse.id);
+        wrap_detail(690,300,t->meta,2,white);
+        if(detail[0])wrap_description(690,331,detail,5,white,visible[selection]+browse.mode*100000+browse.id);
         else if(!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv")||
                 !strcmp(t->kind,"game")||!strcmp(t->kind,"kiss"))
-            text(690,260,"DESCRIPTION NOT CACHED",1,dim,28);
-        text(690,354,t->url[0]?"[A] PLAY":t->kind[0]?"[A] OPEN":"NO STREAM YET",2,t->kind[0]||t->url[0]?green:dim,20);
-        text(690,395,"[LB/RB] VIEW",1,dim,25);
+            text(690,331,"DESCRIPTION NOT CACHED",1,dim,28);
         /* Aspect ratio is controlled only while video is playing. */
         snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
     }

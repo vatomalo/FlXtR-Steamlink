@@ -1281,17 +1281,12 @@ static void draw(Uint32 tick) {
     }
     if(scummvm_menu){
         rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
-        text(200,100,"SCUMMVM SETTINGS",2,green,60);
-        const char *labels[]={"WINDOW RESOLUTION","GAME SCALING","PIXEL FILTERING","FULLSCREEN","SUBTITLES","START SCUMMVM"};
-        const char *values[]={scummvm_sizes[scummvm_size],scummvm_stretches[scummvm_stretch],scummvm_filter?"ON":"OFF",scummvm_fullscreen?"ON":"OFF",scummvm_subtitles?"ON":"OFF","LAUNCH"};
-        for(int i=0;i<6;i++){
-            int y=151+i*43;
-            if(scummvm_row==i)rect(194,y-9,718,36,green,0);
-            text(210,y,labels[i],1,white,35);
-            text(525,y,values[i],1,scummvm_row==i?green:white,42);
-        }
-        text(200,407,"LEFT / RIGHT CHANGE    A APPLY / LAUNCH    B BACK",1,green,100);
-        text(200,447,"RESOLUTION REQUIRES SCUMMVM OPENGL SUPPORT",1,dim,100);
+        text(200,103,"SCUMMVM",2,green,65);
+        text(200,169,"SAFE NATIVE LAUNCH",2,white,75);
+        text(200,223,"Steam Link graphics options are not yet verified.",1,dim,100);
+        text(200,256,"Forced fullscreen crops; window size may crash.",1,dim,100);
+        text(200,302,"A START SCUMMVM",2,green,85);
+        text(200,407,"B BACK  /  GRAPHICS OPTIONS TEMPORARILY DISABLED",1,white,100);
         SDL_RenderPresent(renderer);return;
     }
     if(platform_core_menu){
@@ -2218,22 +2213,10 @@ static void action(SDL_Keycode key) {
     }
     if(scummvm_menu){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){scummvm_menu=0;return;}
-        if(key==SDLK_UP&&scummvm_row>0)scummvm_row--;
-        if(key==SDLK_DOWN&&scummvm_row<5)scummvm_row++;
-        if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
-            int d=key==SDLK_LEFT?-1:1;
-            if(scummvm_row==0)scummvm_size=(scummvm_size+d+5)%5;
-            if(scummvm_row==1)scummvm_stretch=(scummvm_stretch+d+6)%6;
-            if(scummvm_row==2)scummvm_filter=!scummvm_filter;
-            if(scummvm_row==3)scummvm_fullscreen=!scummvm_fullscreen;
-            if(scummvm_row==4)scummvm_subtitles=!scummvm_subtitles;
-            if(!scummvm_settings_save())snprintf(status,sizeof(status),"SCUMMVM SETTINGS SAVE FAILED");
-            if(scummvm_row==5&&key==SDLK_RETURN){
-                scummvm_menu=0;
-                FILE *request=fopen("game-request","w");
-                if(request){fputs("0 -1 -1\n",request);if(!fclose(request)){game_exit=1;running=0;}}
-                else snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");
-            }
+        if(key==SDLK_RETURN){
+            FILE *request=fopen("game-request","w");
+            if(request){fputs("0 -1 -1\\n",request);if(!fclose(request)){scummvm_menu=0;game_exit=1;running=0;}}
+            else snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");
         }
         return;
     }

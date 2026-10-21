@@ -459,7 +459,9 @@ static int games_run(void){
         fclose(choices);
     }
     char preference_key[17];rom_identity(rom,preference_key);
-    rom_core_preference(preference_key,selected_name,sizeof(selected_name));
+    /* Priority: per-ROM preference, platform default, original core. */
+    if(!rom_core_preference(preference_key,selected_name,sizeof(selected_name))&&!selected_name[0])
+        rom_platform_core_get(rom_platform_for_path(rom),selected_name,sizeof(selected_name));
     if(selected_name[0]){
         snprintf(selected_core,sizeof(selected_core),"%s/cores/%s_libretro" FLXTR_CORE_EXT,games_home(),selected_name);
         if(!game_file(selected_core))

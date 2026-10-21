@@ -22,6 +22,14 @@ jobs:
           python3 tests/api_setup_test.py
           make test-desktop-cores
           python3 tests/music_test.py
+          cc -std=c99 -Wall -Wextra -Werror -DDISK_RAM tests/disk_buffer_test.c -o build/ram-buffer-test $(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
+          ./build/ram-buffer-test
+          cc -std=c99 -Wall -Wextra -Werror tests/video_quality_test.c -o build/video-quality-test
+          ./build/video-quality-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/mtv_preload_test.c -o build/mtv-preload-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/mtv-preload-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) tests/playback_menu_test.c -o build/playback-menu-test $(pkg-config --libs sdl2) -lSDL2_image -lcurl
+          ./build/playback-menu-test
           cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/music_queue_test.c -o build/music-queue-test $(pkg-config --libs sdl2 SDL2_image libcurl)
           ./build/music-queue-test
           cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/desktop_experience_test.c -o build/desktop-experience-test $(pkg-config --libs sdl2 SDL2_image libcurl)
@@ -70,7 +78,7 @@ jobs:
         shell: pwsh
         run: |
           $zip = Get-ChildItem downloaded -Recurse -Filter FlXtR-Windows-platform-x86_64.zip | Select-Object -First 1
-          $folder = Join-Path $env:RUNNER_TEMP 'FlXtR Windows Ã¸ test'
+          $folder = Join-Path $env:RUNNER_TEMP 'FlXtR Windows ø test'
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $folder
           Push-Location $folder
           try {
@@ -95,7 +103,7 @@ jobs:
           $retroarch = Get-ChildItem app-download -Recurse -Filter retroarch-fixture.exe | Select-Object -First 1
           $fullscreen = Get-ChildItem app-download -Recurse -Filter windows-fullscreen-test.exe | Select-Object -First 1
           $fixture = Get-ChildItem app-download -Recurse -Filter fixture.mp4 | Select-Object -First 1
-          $app = Join-Path $env:RUNNER_TEMP 'FlXtR application Ã¸'
+          $app = Join-Path $env:RUNNER_TEMP 'FlXtR application ø'
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $app
           Copy-Item -LiteralPath $helper.FullName -Destination $app
           Copy-Item -LiteralPath $fullscreen.FullName -Destination $app

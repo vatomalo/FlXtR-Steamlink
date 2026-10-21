@@ -214,8 +214,10 @@ def video_source(value, television=False, muxed=False, height=720):
         url, sound = checked(video, 2046), checked(audio, 16000)
         title = clean(info.get('title')) or 'YouTube video'
         agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
-        atomic(CACHE / 'video.txt', '\n'.join([title, url, sound, agent]) + '\n')
         ident = info.get('id', '')
+        page = ('https://www.youtube.com/watch?v=' + ident
+                if re.fullmatch(r'[A-Za-z0-9_-]{11}', ident) else '')
+        atomic(CACHE / 'video.txt', '\n'.join([title, url, sound, agent, page]) + '\n')
         if television and re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
             atomic(history_path, json.dumps((history + [ident])[-50:]))
 

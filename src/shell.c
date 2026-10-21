@@ -172,7 +172,12 @@ static int tv_rating_weight=5,tv_popularity_weight=2,tv_variety_weight=4;
 static int series_autoplay;
 enum {MENU_THEMES=6};
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
-static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,20,25,30,45,60,80,128},disk_megabytes[]={64,128,256};
+static const int qualities[]={480,720,1080},buffer_seconds[]={15,15,20,25,30,45,60,80,128};
+#ifdef FLXTR_DESKTOP
+static const int disk_megabytes[]={64,128,256};
+#else
+static const int disk_megabytes[]={16,32,64};
+#endif
 static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
 static void subtitle_route_log(const char *route,const Title *t){
     FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
@@ -1287,7 +1292,7 @@ static void draw(Uint32 tick) {
 #ifdef FLXTR_DESKTOP
         const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES"};
 #else
-        const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES"};
+        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES"};
 #endif
         char values[19][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
@@ -1558,6 +1563,7 @@ static void tv_candidate(void){
     Browse next={5,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);auto_request(next);
 }
 static void tv_cancel_prepared(void){
+    if(youtube_preparing){youtube_stop();youtube_preparing=0;}
     if(tv_gate>=0)player_pipe_close(tv_gate);
     tv_gate=-1;
     if(tv_buffer_control>=0)player_pipe_close(tv_buffer_control);
@@ -1569,6 +1575,7 @@ static void tv_begin_prepared(void){
     tv_prepared=0;auto_active=1;auto_resume=0;playing_title=tv_next_title;
     player_pid=tv_buffer_pid;player_control=tv_buffer_control;tv_buffer_pid=0;tv_buffer_control=-1;
     close_ui();char go='G';if(tv_gate>=0){ssize_t n=player_pipe_write(tv_gate,&go,1);(void)n;player_pipe_close(tv_gate);}tv_gate=-1;
+    if(!strcmp(playing_title.kind,"youtube")){strcpy(youtube_audio,youtube_next_audio);strcpy(youtube_agent,youtube_next_agent);auto_active=0;return;}
     TvAiring a;if(tv_airing_read(&a)&&a.id==auto_title.id){a.start=(long long)time(NULL);tv_airing_save(&a);}
 }
 static void tv_stage_source(const Title *source){
@@ -1624,12 +1631,12 @@ static void launch_player(const Title *t) {
         flxtr_pipe_close(controls.reader);flxtr_pipe_close(controls.writer);
         flxtr_pipe_close(gate.reader);flxtr_pipe_close(gate.writer);return;
     }
-    unlink("playback-request");unlink("playback-position");
+    if(!tv_preloading){unlink("playback-request");unlink("playback-position");}
 #else
     int gate[2]={-1,-1};if(tv_preloading&&pipe(gate))return;
     int controls[2];if(pipe(controls)){if(gate[0]>=0){close(gate[0]);close(gate[1]);}snprintf(status,sizeof(status),"PLAYER CONTROL PIPE FAILED");return;}
     fcntl(controls[1],F_SETFL,O_NONBLOCK);fcntl(controls[1],F_SETFD,FD_CLOEXEC);
-    signal(SIGPIPE,SIG_IGN);unlink("playback-request");unlink("playback-position");
+    signal(SIGPIPE,SIG_IGN);if(!tv_preloading){unlink("playback-request");unlink("playback-position");}
 #endif
     if(auto_active)restart_position=auto_resume;
     /* Resume only an explicit bookmark for this title, not TV channel output. */
@@ -1643,7 +1650,7 @@ static void launch_player(const Title *t) {
     playing_title=*t;player_menu=1; /* Native controller menu is always available. */
     subtitle_route_log("launch-player",t);
     music_video_pause(0);
-    close_ui();
+    if(!tv_preloading)close_ui();
 #ifndef _WIN32
     player_pid=shell_fork();
     if(player_pid==0) {
@@ -1688,12 +1695,11 @@ static void launch_player(const Title *t) {
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[32],start[32];
         int requested_height=t->height?t->height:qualities[quality_setting];
         if(auto_active&&!strcmp(t->kind,"kiss-episode")&&kiss_1080_pass)requested_height=1080;
-        /* TV prefers an efficient decode resolution but must also support
-         * sources that only provide 1080p. Retry the SAME source at higher
-         * resolutions only when the player reports no compatible track. */
+        /* Honor the selected TV target, including 1080p. Older players can
+         * still request a higher-resolution retry for a missing rendition. */
         if(tv_active){
             int preferred=qualities[quality_setting];
-            if(preferred>720)preferred=720;
+
             requested_height=tv_quality_retry>=2?1080:tv_quality_retry==1?720:preferred;
         }
 #ifdef _WIN32
@@ -1736,10 +1742,10 @@ static void launch_player(const Title *t) {
     if(tv_preloading)tv_gate=gate.writer;
     restart_position=0;
 #else
-    if(tv_preloading){close(gate[0]);tv_gate=gate[1];}
+    if(tv_preloading){close(gate[0]);tv_gate=gate[1];fcntl(tv_gate,F_SETFD,FD_CLOEXEC);}
     close(controls[0]);player_control=controls[1];restart_position=0;
 #endif
-    if(player_pid<0){player_pipe_close(player_control);player_control=-1;player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
+    if(player_pid<0){player_pipe_close(player_control);player_control=-1;player_pid=0;if(!tv_preloading&&open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
 }
 static void series_advance(int direction){
@@ -1786,6 +1792,11 @@ static void finish_player(int code){
         }
         if(command<=3){
             if(command>1){quality_setting=(quality_setting+(command==2?1:2))%3;playing_title.height=0;save_settings();}
+            if(command>1&&!strcmp(playing_title.kind,"youtube")&&playing_title.meta[0]){
+                tv_cancel_prepared();
+                if(!youtube_spawn(playing_title.meta,0)){youtube_for_tv=tv_active;youtube_resume=position;}
+                return;
+            }
             restart_position=auto_resume=position;
             if(auto_active&&!strcmp(playing_title.kind,"kiss-episode"))auto_next();
             else launch_player(&playing_title);
@@ -1797,13 +1808,14 @@ static void finish_player(int code){
     }
     if(!strcmp(playing_title.kind,"youtube")){
         int eof=!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code);
-        if(!eof)tv_active=0;
+        if(!eof){tv_active=0;tv_cancel_prepared();}
+        if(eof&&tv_active&&tv_prepared){tv_begin_prepared();return;}
         if(!tv_active)music_video_pause(1);
         tv_attempts=0;tv_next_at=0;tv_break_due=0;
         snprintf(status,sizeof(status),eof?"MUSIC VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
     }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
-        int current=tv_quality_retry>=1?720:(qualities[quality_setting]>720?720:qualities[quality_setting]);
+        int current=tv_quality_retry>=1?720:qualities[quality_setting];
         tv_quality_retry=current<720?1:2;
         fprintf(stderr,"TV source has no compatible %dp track; retrying at %dp\n",current,tv_quality_retry==1?720:1080);
         launch_player(&playing_title);
@@ -1834,7 +1846,7 @@ static int phone_dispatch(char *reply,size_t size){
     snprintf(reply,size,"Playback requested. Check FlXtR for playback errors.");
     if(!strcmp(phone_pending,"control")){
         char c=phone_value[0];c=c=='p'?'P':c=='f'?'F':c=='r'?'R':c=='s'?'S':c;
-        if(youtube_pid&&c=='S'){
+        if(youtube_pid&&!youtube_preparing&&c=='S'){
             youtube_stop();tv_active=0;music_video_pause(1);snprintf(reply,size,"YouTube lookup cancelled.");
         }else if(player_pid&&player_control>=0){
             if(player_pipe_write(player_control,&c,1)!=1){code=503;snprintf(reply,size,"Player control is unavailable.");}
@@ -1870,7 +1882,7 @@ static int phone_dispatch(char *reply,size_t size){
     return code;
 }
 static void action(SDL_Keycode key) {
-    if(youtube_pid){
+    if(youtube_pid&&!youtube_preparing){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){youtube_stop();tv_active=0;music_video_pause(1);snprintf(status,sizeof(status),"YOUTUBE LOOKUP CANCELLED");}
         return;
     }
@@ -2057,7 +2069,7 @@ static void action(SDL_Keycode key) {
                 case 15:accounts_open(0);break;
                 case 16:accounts_open(1);break;
                 case 0:quality_setting=(quality_setting+step+3)%3;break;
-                case 1:buffer_setting=(buffer_setting+step+9)%9;break;
+                case 1:if(!buffer_setting)buffer_setting=1;buffer_setting=1+(buffer_setting-1+step+8)%8;break;
                 case 2:disk_setting=(disk_setting+step+3)%3;break;
                 case 3:coverflow=!coverflow;break;
                 case 4:subtitle_setting=(subtitle_setting+step+5)%5;break;
@@ -2117,7 +2129,7 @@ static void desktop_key(SDL_Keycode key,SDL_Keymod modifiers){
     if(!typing&&key==SDLK_F1){keyboard_help=!keyboard_help;return;}
     if(keyboard_help){if(key==SDLK_ESCAPE)keyboard_help=0;return;}
     if(typing){action(key);return;}
-    if(youtube_pid){action(key);return;}
+    if(youtube_pid&&!youtube_preparing){action(key);return;}
     if(player_pid){
         char c=(key==SDLK_SPACE||key==SDLK_k)?'P':key==SDLK_j?'R':key==SDLK_l?'F':key==SDLK_LEFT?'l':key==SDLK_RIGHT?'r':key==SDLK_f?'t':key==SDLK_m?'o':key==SDLK_TAB?'m':0;
         if(c&&player_control>=0){ssize_t n=player_pipe_write(player_control,&c,1);(void)n;return;}
@@ -2268,6 +2280,7 @@ int main(int argc,char **argv) {
         if(catalog_pid){finish_catalog();dirty=1;}
         if(music_poll())dirty=1;
         if(youtube_poll())dirty=1;
+        youtube_prefetch();
         if(!music_on){prefetch_pages();tv_tick();}controller_idle();
         if(player_pid){int code;pid_t p=waitpid(player_pid,&code,WNOHANG);
             if(p==player_pid){finish_player(code);dirty=1;}

@@ -100,6 +100,7 @@ class MusicTest(unittest.TestCase):
             lines=(music.CACHE/'video.txt').read_text().splitlines()
             self.assertEqual(lines[:3],['A music video','https://example.test/video','https://example.test/audio'])
             self.assertIn('height<=480',module.YoutubeDL.call_args.args[0]['format'])
+            self.assertEqual(lines[4],'https://www.youtube.com/watch?v=abcdefghijk')
             with self.assertRaisesRegex(ValueError,'quality'):
                 music.run(['video','https://youtu.be/abcdefghijk','999'])
 

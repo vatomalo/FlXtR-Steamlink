@@ -1176,6 +1176,8 @@ static void draw(Uint32 tick) {
         text(194,94,"SAMBA PASSWORD / USER ROOT",2,green,50);
         char masked[65];size_t length=strlen(samba_password);memset(masked,'*',length);masked[length]=0;
         text(194,146,masked,2,white,56);
+        char input_hint[64];snprintf(input_hint,sizeof(input_hint),"%u CHARACTERS / CASE %s",(unsigned)length,samba_password_lower?"LOWER":"UPPER");
+        text(194,176,input_hint,1,dim,80);
         for(int i=0;i<40;i++){
             int x=194+(i%10)*64,y=202+(i/10)*48;char key[2]={search_keys[i],0};
             if(samba_password_lower)key[0]=(char)tolower((unsigned char)key[0]);

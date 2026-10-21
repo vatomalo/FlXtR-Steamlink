@@ -48,6 +48,12 @@ static inline int rom_core_preference_save(const char *key,const char *name){
  * A missing or unavailable core falls back to the catalog's original core. */
 static const char *const rom_platform_names[]={"NES","SNES","GBA","GB/GBC","GENESIS","PSX","PSP","MAME","NEOGEO"};
 enum { ROM_PLATFORM_COUNT=9 };
+/* Portable case-insensitive path component check, no GNU strcasestr dependency. */
+static inline int rom_path_contains(const char *path,const char *part){
+    size_t len=strlen(part);
+    for(const char *p=path;*p;p++)if(!strncasecmp(p,part,len))return 1;
+    return 0;
+}
 static inline int rom_platform_for_path(const char *path){
     const char *ext=strrchr(path,'.');if(!ext)return -1;
     if(!strcasecmp(ext,".nes"))return 0;
@@ -57,12 +63,12 @@ static inline int rom_platform_for_path(const char *path){
     if(!strcasecmp(ext,".md")||!strcasecmp(ext,".gen")||!strcasecmp(ext,".smd")||
        !strcasecmp(ext,".sms")||!strcasecmp(ext,".gg"))return 4;
     if(!strcasecmp(ext,".cso"))return 6;
-    if(strcasestr(path,"/psp/")&&( !strcasecmp(ext,".iso")||!strcasecmp(ext,".pbp")))return 6;
+    if(rom_path_contains(path,"/psp/")&&( !strcasecmp(ext,".iso")||!strcasecmp(ext,".pbp")))return 6;
     if(!strcasecmp(ext,".cue")||!strcasecmp(ext,".pbp")||!strcasecmp(ext,".chd")||
        !strcasecmp(ext,".m3u")||!strcasecmp(ext,".iso"))return 5;
     if(!strcasecmp(ext,".zip")){
-        if(strcasestr(path,"/neogeo/")||strcasestr(path,"/neo-geo/"))return 8;
-        if(strcasestr(path,"/mame/")||strcasestr(path,"/arcade/"))return 7;
+        if(rom_path_contains(path,"/neogeo/")||rom_path_contains(path,"/neo-geo/"))return 8;
+        if(rom_path_contains(path,"/mame/")||rom_path_contains(path,"/arcade/"))return 7;
     }
     return -1;
 }

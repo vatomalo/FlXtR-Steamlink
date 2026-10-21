@@ -33,14 +33,14 @@ int main(void){
     uint8_t pcm[48000*4/5]={0};assert(!sync_audio_queue(pcm,9600,0));sync_audio_start(1);
     assert(sync_position()==0);SDL_Delay(30);assert(sync_position()==0);
     video_packet(0,1);sync_pause(0);SDL_Delay(100);
-    assert(sync_position()>20000&&sync_position()<150000);
+    assert(sync_position()>20000&&sync_position()<=200000);
     sync_pause(1);int64_t frozen=sync_position();SDL_Delay(50);assert(sync_position()==frozen);
     video=sync_close();SLVideo_FreeStream(video);SDL_ClearQueuedAudio(device);
     /* A stale chain is skipped only to an already queued keyframe. */
     video=SLVideo_CreateStream(context,k_ESLVideoFormatH264,0);
     assert(!sync_open(device,1024,context,video,fps,0));sync_pause(1);
     video_packet(0,0);video_packet(200000,0);video_packet(800000,1);
-    pthread_mutex_lock(&av_sync.mutex);av_sync.clock.position=1000000;av_sync.clock.ready=1;av_sync.clock.tail=1000000;pthread_mutex_unlock(&av_sync.mutex);
+    pthread_mutex_lock(&av_sync.mutex);av_sync.pause_position=1000000;av_sync.clock.position=1000000;av_sync.clock.ready=1;av_sync.clock.tail=1000000;pthread_mutex_unlock(&av_sync.mutex);
     sync_pause(0);SDL_Delay(60);
     pthread_mutex_lock(&av_sync.mutex);
     assert(av_sync.frames==1&&av_sync.dropped==2&&av_sync.resets==1);

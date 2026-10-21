@@ -678,13 +678,13 @@ done:
         pthread_mutex_lock(&av_sync.mutex);frames=av_sync.frames;int decoder_error=av_sync.error;pthread_mutex_unlock(&av_sync.mutex);
         video=sync_close();if(decoder_error&&!requested_action)result=1;
     }
-    fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
     av_freep(&audio_pcm);
     if(preload_fd>=0)close(preload_fd);
     active_buffer=NULL;disk_close(buffer);youtube_demux_close();
     if(menu_overlay){SLVideo_HideOverlay(menu_overlay);SLVideo_FreeOverlay(menu_overlay);}
     if(control_fd>=0)close(control_fd);
     if(requested_action)result=requested_action;
+    fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
     if(subtitle_overlay){SLVideo_HideOverlay(subtitle_overlay);SLVideo_FreeOverlay(subtitle_overlay);subtitle_overlay=NULL;}
     avcodec_free_context(&sub_decoder);
     fprintf(stderr,"Audio samples queued: %llu\n",(unsigned long long)audio_samples);

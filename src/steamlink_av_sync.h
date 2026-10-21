@@ -14,16 +14,18 @@ static struct {
     SDL_AudioDeviceID device;AudioMasterClock clock;
     CSLVideoContext *context;CSLVideoStream *stream;AVRational fps;
     SyncVideoPacket queue[SYNC_VIDEO_PACKETS];int head,count,bytes,recover;
-    unsigned epoch,underflows,frames,slow,dropped,resets,hardware_ms;int empty,busy;int64_t last_video,maximum_late;
+    unsigned epoch,underflows,frames,slow,dropped,resets,hardware_ms;int empty,busy;int64_t last_video,maximum_late,pause_at,pause_position;
 } av_sync;
 static unsigned sync_epoch;
 static int64_t sync_position_locked(void){
+    if(av_sync.paused)return av_sync.pause_position;
     int64_t queued=(int64_t)SDL_GetQueuedAudioSize(av_sync.device)*1000000/(48000*4);
-    if(av_sync.started&&!av_sync.paused&&!av_sync.eof&&!queued){
+    int64_t position=audio_master_read_at(&av_sync.clock,queued,av_gettime_relative());
+    if(av_sync.started&&!av_sync.eof&&!queued&&position>=av_sync.clock.tail){
         if(!av_sync.empty)av_sync.underflows++;
         av_sync.empty=1;
     }else if(queued)av_sync.empty=0;
-    return audio_master_read(&av_sync.clock,queued);
+    return position;
 }
 static int64_t sync_position(void){
     if(!av_sync.initialized)return 0;
@@ -32,7 +34,14 @@ static int64_t sync_position(void){
 }
 static void sync_pause(int pause){
     if(!av_sync.initialized)return;
-    pthread_mutex_lock(&av_sync.mutex);av_sync.paused=pause;
+    pthread_mutex_lock(&av_sync.mutex);
+    int64_t now=av_gettime_relative();
+    if(pause&&!av_sync.paused){
+        av_sync.pause_position=sync_position_locked();av_sync.pause_at=now;
+    }else if(!pause&&av_sync.paused&&av_sync.clock.observing){
+        av_sync.clock.observed_at+=now-av_sync.pause_at;
+    }
+    av_sync.paused=pause;
     SDL_PauseAudioDevice(av_sync.device,pause||!av_sync.started);
     pthread_mutex_unlock(&av_sync.mutex);
 }
@@ -171,7 +180,11 @@ static void sync_audio_start(int force){
 static int sync_audio_queue(const uint8_t *pcm,int samples,int64_t timestamp){
     pthread_mutex_lock(&av_sync.mutex);
     int error=SDL_QueueAudio(av_sync.device,pcm,(Uint32)samples*4);
-    if(!error)audio_master_append(&av_sync.clock,timestamp,samples,48000);
+    if(!error){
+        int first=!av_sync.clock.ready;
+        audio_master_append(&av_sync.clock,timestamp,samples,48000);
+        if(first&&av_sync.paused)av_sync.pause_position=av_sync.clock.position;
+    }
     pthread_mutex_unlock(&av_sync.mutex);
     if(!error)sync_audio_start(0);
     return error;

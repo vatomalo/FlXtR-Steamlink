@@ -21,5 +21,15 @@ int main(void){
     audio_master_append(&c,15000000,24000,48000);
     assert(audio_master_read(&c,250000)==15230000);
     assert(audio_master_read(&c,500000)==15230000); /* never backstep within epoch */
+    audio_master_reset(&c,0,20000);audio_master_append(&c,0,24000,48000);
+    assert(audio_master_read_at(&c,500000,1000000)==0);
+    assert(audio_master_read_at(&c,480000,1020000)==0);
+    assert(audio_master_read_at(&c,480000,1030000)==10000); /* smooth between callbacks */
+    assert(audio_master_read_at(&c,460000,1040000)==20000);
+    assert(audio_master_read_at(&c,460000,1050000)==30000);
+    assert(audio_master_read_at(&c,0,1500000)==480000);
+    assert(audio_master_read_at(&c,0,1510000)==490000);
+    assert(audio_master_read_at(&c,0,1520000)==500000);
+    assert(audio_master_read_at(&c,0,9000000)==500000); /* no invented wall-time progress */
     puts("PASS: audio sample clock, startup/pause/underrun freeze, eight-hour precision, seek reset and monotonicity");
 }

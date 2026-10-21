@@ -18,8 +18,8 @@ With real FFmpeg 4.4, SDL dummy audio, an eight-second 30 fps H.264 B-frame clip
 
 | Scheduler | Empty audio queues after startup | Elapsed |
 |---|---:|---:|
-| Serialized baseline 487b940 | 7 | 9.785 s |
-| Audio-master worker | 0 | 8.175 s |
+| Serialized baseline 487b940 | 7-8 | 9.79-9.90 s |
+| Audio-master worker | 0 | 8.17 s |
 
 Recovery skipped 27 encoded frames via one keyframe reset, then caught up.
 A decoder that blocks still freezes video during that block.
@@ -29,7 +29,9 @@ A decoder that blocks still freezes video during that block.
 One sample-based audio clock drives video scheduling, captions, menu time,
 seek requests, checkpoints and bookmarks. Converted sample counts and SDL
 queue consumption replace packet-DTS/wall-clock corrections. Fractional
-microseconds do not accumulate: an eight-hour sample-clock test remains exact.
+microseconds do not accumulate: an eight-hour sample-clock test remains exact. Between SDL callback reports, interpolation is
+bounded by the known output period and queued sample tail, so video gets a
+smooth clock without imaginary progress during an outage.
 
 SDL starts after 200 ms of PCM prefill. Queuing is bounded around 500 ms plus
 one decoded frame. A drained output freezes the timeline; pause freezes audio
@@ -61,7 +63,7 @@ checks embedded/external caption clocks including a five-second timestamp offset
 Queue tests cover bounded memory, keyframe recovery and shutdown. Prior native
 RAM/preload/seek/Stop and adaptive regression tests also apply.
 
-Measured caption transitions were 1-24 ms after their audio-clock cue starts.
+Measured caption transitions were 1-32 ms after their audio-clock cue starts.
 A sink cannot validate physical display, HDMI audio or SDK driver threading.
 SDL exposes queued PCM, not the DAC timestamp; one output period is subtracted
 as an estimate. SLVideo exposes queue duration, not per-frame presentation

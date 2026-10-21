@@ -4,13 +4,30 @@
 #ifndef FLXTR_AUDIO_MASTER_CLOCK_H
 #define FLXTR_AUDIO_MASTER_CLOCK_H
 #include <stdint.h>
-typedef struct {int ready;int64_t tail,position,latency,anchor,samples;} AudioMasterClock;
+typedef struct {int ready,observing;int64_t tail,position,latency,anchor,samples,observed,observed_at;} AudioMasterClock;
 static inline void audio_master_reset(AudioMasterClock *c,int64_t position,int64_t latency){
-    c->ready=0;c->tail=c->position=c->anchor=position;c->samples=0;c->latency=latency;
+    c->ready=c->observing=0;c->observed=c->observed_at=0;c->tail=c->position=c->anchor=position;c->samples=0;c->latency=latency;
 }
 static inline void audio_master_append(AudioMasterClock *c,int64_t first,int samples,int rate){
     if(!c->ready){c->anchor=c->tail=c->position=first;c->ready=1;}
     c->samples+=samples;c->tail=c->anchor+c->samples*1000000/rate;
+}
+/* Interpolate only within the output period whose samples SDL has handed to
+ * the device. This removes callback-sized video pacing steps without letting
+ * wall time run beyond confirmed audio. Refill changes tail and queue equally. */
+static inline int64_t audio_master_read_at(AudioMasterClock *c,int64_t queued_us,int64_t now){
+    if(!c->ready)return c->position;
+    int64_t head=c->tail-queued_us-c->latency;
+    if(!c->observing||head!=c->observed){
+        c->observing=1;c->observed=head;c->observed_at=now;
+    }
+    int64_t elapsed=now-c->observed_at;
+    if(elapsed<0)elapsed=0;
+    if(elapsed>c->latency)elapsed=c->latency;
+    int64_t next=head+elapsed;
+    if(next>c->tail)next=c->tail;
+    if(next>c->position)c->position=next;
+    return c->position;
 }
 static inline int64_t audio_master_read(AudioMasterClock *c,int64_t queued_us){
     if(!c->ready)return c->position;

@@ -96,3 +96,5 @@ For an existing SDK shell with this source already checked out, use:
 Prepare build/music-runtime.tgz with the host helper first to include music.
 Windows, Linux and Deck packages are separate builds and must not be installed
 on the ARM Steam Link. Physical Steam Link/Deck playback still needs testing.
+
+Settings tabs: Tab/Page Down or controller RB selects the next tab; Page Up/LB selects the previous tab. On the tab header, Left/Right also changes tabs. Down enters options; Up returns to the header. Left/Right changes values, Enter/A opens actions, Escape/B saves and returns. Video quality/subtitles remain shared by Movies and Series. Music includes next-song autoplay; ROMs includes output resolution. Services contains the Steam Link Samba installer.

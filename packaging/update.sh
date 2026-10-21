@@ -60,7 +60,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
         # Python bytecode validates source mtimes; preserve them on installation.
         if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -pR "$staged/$part/." "$part/"; fi
     done
-    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py; do
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py; do
         if [ -f "$staged/$part" ]; then
             mkdir -p "$(dirname "$part")"
             cp "$staged/$part" "$part.new" && chmod 755 "$part.new" && mv -f "$part.new" "$part"
@@ -81,7 +81,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
             cp "$staged/retroarch-libs/$part" "retroarch-libs/$part.new" && mv -f "retroarch-libs/$part.new" "retroarch-libs/$part"
         done
     fi
-    for part in update.sh greenlink.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh toc.txt catalog.tsv WABT-LICENSE.txt; do
+    for part in update.sh greenlink.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh samba-paths.so samba-packages.json toc.txt catalog.tsv WABT-LICENSE.txt; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     mv -f .update-backup greenlink.previous
@@ -90,7 +90,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
-    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py; do
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
     if [ -d music-runtime ]; then find music-runtime -type f -exec sha256sum {} \;; fi

@@ -140,7 +140,7 @@ static SDL_Renderer *renderer;
 static SDL_Window *window;
 static SDL_Texture *posters[VISIBLE],*background;
 static SDL_GameController *pads[4];
-static pid_t player_pid, update_pid;
+static pid_t player_pid, update_pid, samba_pid;
 static int restart_shell,game_exit, coverflow=1;
 #ifdef _WIN32
 typedef FlxtrPipeHandle PlayerPipe;
@@ -188,7 +188,9 @@ static double adaptive_position;
 static char adaptive_title_key[16];
 static int quality_height(void);
 static int adaptive_lookup_fallback(void);
-static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=DEFAULT_QUALITY,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
+#include "settings_tabs.h"
+static int music_autoplay=1;
+static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,quality_setting=DEFAULT_QUALITY,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080,720},buffer_seconds[]={15,15,20,25,30,45,60,80,128};
 #ifdef FLXTR_DESKTOP
 static const int disk_megabytes[]={64,128,256};
@@ -217,7 +219,7 @@ static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"series_autoplay=%d\n",series_autoplay);
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
-    fprintf(f,"game_output=%d\n",game_output);
+    fprintf(f,"game_output=%d\nmusic_autoplay=%d\n",game_output,music_autoplay);
     fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
     fprintf(f,"menu_theme=%d\n",menu_theme);
     fprintf(f,"tv_rating=%d\ntv_popularity=%d\ntv_variety=%d\n",tv_rating_weight,tv_popularity_weight,tv_variety_weight);
@@ -239,6 +241,7 @@ static void load_settings(void){
         else if(!strcmp(key,"tv_popularity")&&value>=0&&value<=5)tv_popularity_weight=value;
         else if(!strcmp(key,"tv_variety")&&value>=0&&value<=5)tv_variety_weight=value;
         else if(!strcmp(key,"game_output")&&game_output_valid(value))game_output=value;
+        else if(!strcmp(key,"music_autoplay")&&(value==0||value==1))music_autoplay=value;
         else if(!strcmp(key,"game_autostate")&&(value==0||value==1))game_autostate=value;
         else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"menu_monochrome")&&(value==0||value==1))monochrome_menu=value;
@@ -1144,6 +1147,7 @@ static void draw_coverflow(void) {
 }
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
+    if(samba_pid){snprintf(status,sizeof(status),"WAIT FOR SAMBA INSTALL/SERVICE WORKER");return;}
 #ifdef _WIN32
     ShellExecuteW(NULL,L"open",L"https://github.com/vatomalo/FlXtR-Steamlink/releases",NULL,NULL,SW_SHOWNORMAL);
     snprintf(status,sizeof(status),"DOWNLOAD AND EXTRACT THE WINDOWS UPDATE FROM GITHUB");return;
@@ -1157,6 +1161,7 @@ static void start_update(void) {
 }
 #include "music_ui.h"
 #include "youtube_video.h"
+#include "settings_services.h"
 static int keyboard_help;
 static void draw(Uint32 tick) {
     if(keyboard_help){
@@ -1164,6 +1169,21 @@ static void draw(Uint32 tick) {
         text(45,35,"KEYBOARD CONTROLS",3,green,50);
         const char *lines[]={"ARROWS / ENTER   Navigate / select","ESC              Back / stop video","SPACE / K        Pause / resume playback","J / L            Seek backward / forward 10 seconds","F / M IN VIDEO   Fullscreen / mute","TAB IN VIDEO     Playback menu","F2               Next library","F3 / CTRL+F      Search / TAB completes typed text","F10              Settings / F4 next theme","M / T / G        Music / TV / Games","CTRL+P           Phone setup / CTRL+Q quit","F1 / ESC         Close this help"};
         for(size_t i=0;i<sizeof(lines)/sizeof(lines[0]);i++)text(45,95+(int)i*33,lines[i],1,white,100);
+        SDL_RenderPresent(renderer);return;
+    }
+    if(samba_password_on){
+        SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
+        text(194,94,"SAMBA PASSWORD / USER ROOT",2,green,50);
+        char masked[65];size_t length=strlen(samba_password);memset(masked,'*',length);masked[length]=0;
+        text(194,146,masked,2,white,56);
+        for(int i=0;i<40;i++){
+            int x=194+(i%10)*64,y=202+(i/10)*48;char key[2]={search_keys[i],0};
+            if(samba_password_lower)key[0]=(char)tolower((unsigned char)key[0]);
+            rect(x,y,48,38,i==samba_password_key?green:dim,0);text(x+15,y+10,key,2,i==samba_password_key?green:white,1);
+        }
+        text(194,420,"A TYPE / X CASE / START SAVE / B CANCEL",1,green,90);
+        text(194,446,"8-64 CHARACTERS / SAVING ENABLES LOCAL SHARING",1,white,90);
+        text(194,474,samba_message,1,dim,90);
         SDL_RenderPresent(renderer);return;
     }
     if(music_on){music_draw();SDL_RenderPresent(renderer);return;}
@@ -1310,11 +1330,11 @@ static void draw(Uint32 tick) {
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT"};
+        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","UNUSED","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING"};
 #else
-        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT"};
+        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","UNUSED","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING"};
 #endif
-        char values[20][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[26][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
@@ -1324,11 +1344,32 @@ static void draw(Uint32 tick) {
         snprintf(values[17],40,"%s",series_autoplay?"ON":"OFF");snprintf(values[18],40,"%s",auto_updates_enabled()?"ON":"OFF");
         if(game_output)snprintf(values[19],40,"%dP / %d X %d",game_output,game_output_width(game_output),game_output);
         else snprintf(values[19],40,"NATIVE / RETROARCH");
+        snprintf(values[20],40,"%s",music_autoplay?"ON":"OFF");
+        snprintf(values[21],40,"OPEN MUSIC BROWSER");
+        snprintf(values[23],40,"%s",samba_pid?"WORKING...":samba_installed()?"INSTALLED":"DOWNLOAD AND INSTALL");
+        snprintf(values[24],40,"SET / CHANGE PASSWORD");
+        snprintf(values[25],40,"%s",!access("samba/.enabled",R_OK)?"STARTUP ON":"OFF");
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+        for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
+#endif
         text(194,94,"SETTINGS",3,green,40);
-        int first=settings_row>14?settings_row-14:0;
-        for(int i=first;i<first+15&&i<20;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
-        text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
-        text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
+        for(int i=0;i<SETTINGS_TABS;i++){
+            int x=194+i*103;
+            if(i==settings_tab)rect(x-4,122,99,25,green,0);
+            text(x,130,settings_tabs[i].name,1,i==settings_tab?green:dim,16);
+        }
+        const SettingsTab *tab=&settings_tabs[settings_tab];
+        for(int row=0;row<tab->count;row++){
+            int id=tab->ids[row],y=174+row*36;
+            if(row==settings_row)rect(190,y-8,724,29,green,0);
+            text(204,y,labels[id],2,white,24);
+            text(566,y,values[id],2,row==settings_row?green:dim,28);
+        }
+        text(194,430,"LB/RB OR TAB: TABS / DOWN: OPTIONS / LEFT/RIGHT: CHANGE",1,green,110);
+        text(194,452,"A SELECT / B SAVE AND RETURN",1,dim,90);
+        text(194,474,settings_tab==SETTINGS_SERVICES?samba_message:
+            settings_tab==SETTINGS_MOVIES||settings_tab==SETTINGS_SERIES?
+            "QUALITY AND SUBTITLES APPLY TO ALL VIDEO":status,1,dim,110);
     }else if(search_on){
         text(194,100,"SEARCH",3,green,30);
         const char *completion=search_completion();
@@ -2009,6 +2050,7 @@ static int phone_dispatch(char *reply,size_t size){
     return code;
 }
 static void action(SDL_Keycode key) {
+    if(samba_password_on){samba_password_action(key);return;}
     if(youtube_pid&&!youtube_preparing){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){youtube_stop();tv_active=0;music_video_pause(1);snprintf(status,sizeof(status),"YOUTUBE LOOKUP CANCELLED");}
         return;
@@ -2186,11 +2228,29 @@ static void action(SDL_Keycode key) {
     }
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
-        if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<19)settings_row++;
+        if(key==SDLK_TAB||key==SDLK_PAGEDOWN||key==SDLK_m){settings_switch(1);return;}
+        if(key==SDLK_PAGEUP||key==SDLK_v){settings_switch(-1);return;}
+        if(settings_row<0){
+            if(key==SDLK_LEFT)settings_switch(-1);
+            else if(key==SDLK_RIGHT)settings_switch(1);
+            else if(key==SDLK_DOWN||key==SDLK_RETURN)settings_row=0;
+            return;
+        }
+        if(key==SDLK_UP)settings_row--;
+        if(key==SDLK_DOWN&&settings_row+1<settings_tabs[settings_tab].count)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
-            switch(settings_row){
+            int id=settings_id();
+            if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id>=23))return;
+            switch(id){
+                case 20:music_autoplay=!music_autoplay;break;
+                case 21:settings_on=0;music_on=1;break;
+                case 23:if(key==SDLK_RETURN&&!samba_installed())samba_service("install");break;
+                case 24:if(key==SDLK_RETURN)samba_password_open();break;
+                case 25:if(key==SDLK_RETURN){
+                    if(access("samba/.configured",R_OK))samba_password_open();
+                    else samba_service(access("samba/.enabled",R_OK)?"enable":"disable");
+                }break;
                 case 19:{const int outputs[]={0,240,480,720,1080};int index=0;
                     for(int i=0;i<5;i++)if(game_output==outputs[i])index=i;
                     game_output=outputs[(index+step+5)%5];break;}
@@ -2254,7 +2314,7 @@ static void action(SDL_Keycode key) {
     if(key==SDLK_PAGEUP)next_catalog_page(-1);
 }
 static void desktop_key(SDL_Keycode key,SDL_Keymod modifiers){
-    int typing=search_on||(music_on&&music_edit);
+    int typing=samba_password_on||search_on||(music_on&&music_edit);
     if(key==SDLK_q&&(modifiers&KMOD_CTRL)){running=0;return;}
     if(!typing&&key==SDLK_F1){keyboard_help=!keyboard_help;return;}
     if(keyboard_help){if(key==SDLK_ESCAPE)keyboard_help=0;return;}
@@ -2328,7 +2388,13 @@ int main(int argc,char **argv) {
         if(!strcmp(argv[i],"--version")){puts(FLXTR_VERSION);return 0;}
         else if(!strcmp(argv[i],"--grid"))coverflow=0;
         else if(!strcmp(argv[i],"--settings"))settings_on=1;
-        else if(!strcmp(argv[i],"--api-accounts")){settings_on=1;accounts_on=1;settings_row=15;}
+        else if(!strcmp(argv[i],"--settings-tab")&&i+1<argc){
+            const char *tab=argv[++i];int found=0;
+            for(int k=0;k<SETTINGS_TABS;k++)if(!strcasecmp(tab,settings_tabs[k].name)){settings_tab=k;found=1;break;}
+            if(!found)return 2;
+            settings_on=1;
+        }
+        else if(!strcmp(argv[i],"--api-accounts")){settings_on=1;accounts_on=1;settings_tab=SETTINGS_SERVICES;settings_row=3;}
         else if(!strcmp(argv[i],"--catalog")&&i+1<argc)catalog=argv[++i];
         else if(!strcmp(argv[i],"--screenshot")&&i+1<argc)shot=argv[++i];
         else if(!strcmp(argv[i],"--frames")&&i+1<argc)frames=atoi(argv[++i]);
@@ -2360,6 +2426,7 @@ int main(int argc,char **argv) {
                 int ww,wh;SDL_GetWindowSize(window,&ww,&wh);
                 if(ww>0&&wh>0&&event.button.x*W/ww>=730&&event.button.y*H/wh>=16&&event.button.y*H/wh<71)action(SDLK_m);
             }
+            else if(event.type==SDL_TEXTINPUT&&samba_password_on)samba_password_text(event.text.text);
             else if(event.type==SDL_TEXTINPUT&&music_on&&music_edit)music_text(event.text.text);
             else if(event.type==SDL_TEXTINPUT&&search_on){for(const char *p=event.text.text;*p;p++){size_t n=strlen(search_text);if(n<64&&(isalnum((unsigned char)*p)||*p==' '||*p=='-')){search_text[n]=(char)toupper((unsigned char)*p);search_text[n+1]=0;}}}
             else if(event.type==SDL_CONTROLLERDEVICEADDED)add_pad(event.cdevice.which);
@@ -2388,14 +2455,14 @@ int main(int argc,char **argv) {
                 if(player_pid&&button<32)last_play_button[button]=pressed_at;
                 controller_used();
                 switch(event.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_A:action(search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
-                    case SDL_CONTROLLER_BUTTON_B:action(search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
+                    case SDL_CONTROLLER_BUTTON_A:action(samba_password_on||search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
+                    case SDL_CONTROLLER_BUTTON_B:action(samba_password_on?SDLK_ESCAPE:search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
                     case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_TAB:SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
-                    case SDL_CONTROLLER_BUTTON_START:action(player_pid?SDLK_i:SDLK_F3);break;
+                    case SDL_CONTROLLER_BUTTON_START:action(samba_password_on?SDLK_RETURN:player_pid?SDLK_i:SDLK_F3);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(player_pid?SDLK_RIGHT:SDLK_m);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:action(SDLK_UP);break;
@@ -2408,6 +2475,7 @@ int main(int argc,char **argv) {
         if(update_pid){int code;pid_t done=waitpid(update_pid,&code,WNOHANG);
             if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
+        if(samba_poll())dirty=1;
         if(music_poll())dirty=1;
         if(youtube_poll())dirty=1;
         tv_history_poll();
@@ -2429,7 +2497,7 @@ int main(int argc,char **argv) {
     music_stop();youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
-    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid};
+    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
     SDL_Quit();return game_exit?43:restart_shell?42:0;

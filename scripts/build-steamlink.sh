@@ -13,6 +13,8 @@ $STRIP build/greenlink-arm
 $CC -Os -std=c99 -Wall -Wextra -Werror -DFLXTR_VERSION=\"$version\" $(pkg-config --cflags sdl2) src/catalog.c -o build/greenlink-catalog-arm -lcurl -ljson-c -lcrypto -lSDL2_image $(pkg-config --libs sdl2)
 $STRIP build/greenlink-catalog-arm
 app=dist/steamlink/apps/greenlink
+$CC -Os -Wall -Wextra -Werror -fPIC -shared -nostdlib src/samba_paths.c -o "$app/samba-paths.so"
+cp packaging/samba-packages.json "$app/"
 if [ ! -f build/cacert.pem ]; then
     wget -q https://curl.se/ca/cacert-2026-09-25.pem -O build/cacert.pem
 fi
@@ -58,7 +60,7 @@ if [ -f build/greenlink-audio-arm ]; then cp build/greenlink-audio-arm "$app/gre
 if [ -f build/music-runtime.tgz ]; then
     mkdir -p "$app/music-runtime" "$app/tools" "$app/scripts"
     tar -xzf build/music-runtime.tgz -C "$app/music-runtime"
-    cp tools/music.py "$app/tools/"
+    cp tools/music.py tools/samba_install.py "$app/tools/"
     cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
     chmod +x "$app/scripts/music-runtime.sh" "$app/scripts/music-qjs.sh"
     printf '1\n' > "$app/assets/music-required-v1"

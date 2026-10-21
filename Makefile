@@ -7,7 +7,7 @@ all: build/greenlink build/greenlink-catalog
 build/greenlink-catalog: src/catalog.c src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
-build/greenlink: src/shell.c src/desktop_theme.h src/youtube_video.h src/music_ui.h src/child_process.h src/platform_process.h src/platform_files.h src/platform_paths.h src/platform_net.h src/platform_pipe.h src/api_setup.h src/phone_features.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h
+build/greenlink: src/shell.c src/desktop_theme.h src/youtube_video.h src/music_ui.h src/child_process.h src/platform_process.h src/platform_files.h src/platform_paths.h src/platform_net.h src/platform_pipe.h src/api_setup.h src/phone_features.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/settings_tabs.h src/settings_services.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl
 
@@ -133,3 +133,12 @@ test-desktop-cores: all
 	python3 tests/desktop_games_test.py --catalog build/desktop-core-catalog --retroarch build/retroarch-fixture --tools tools
 
 .PHONY: test-desktop-cores
+
+test-settings: all
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/settings_tabs_test.c -o build/settings-tabs-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/settings-tabs-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/samba_service_test.c -o build/samba-service-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/samba-service-test
+	python3 tests/samba_install_test.py
+
+.PHONY: test-settings

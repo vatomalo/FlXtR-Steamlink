@@ -7,7 +7,7 @@ root=Path("/work")
 with tempfile.TemporaryDirectory(prefix="FlXtR Samba ") as directory:
     app=Path(directory)/"app";app.mkdir()
     for name in ("samba-run.sh","samba-server.sh"):shutil.copyfile(root/"packaging"/name,app/name)
-    shutil.copytree(root/"build/samba-runtime",app/"samba-runtime",symlinks=True)
+    shutil.copytree(root/os.environ.get("FLXTR_SAMBA_TEST_RUNTIME","build/samba-runtime"),app/"samba-runtime",symlinks=True)
     env=dict(os.environ,FLXTR_SAMBA_EMULATOR="/usr/bin/qemu-arm",FLXTR_SAMBA_PORT="1445",FLXTR_SAMBA_INTERFACES="lo")
     def server(action,**kw):
         return subprocess.run(["sh",str(app/"samba-server.sh"),action],env=env,cwd=app,

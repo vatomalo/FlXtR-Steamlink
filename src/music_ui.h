@@ -85,9 +85,11 @@ static int music_poll(void){
         FILE *f=fopen("music-cache/playing.txt","r");music_playing[0]=0;
         if(f){if(!fgets(music_playing,sizeof(music_playing),f))music_playing[0]=0;fclose(f);music_playing[strcspn(music_playing,"\r\n")]=0;}
         music_spawn(3);
-    }else if(job==3){
+    }else if(job==3&&music_autoplay){
         if(music_play_index+1<music_count){music_selected=music_play_index+1;music_spawn(2);}
         else music_spawn(4);
+    }else if(job==3){
+        snprintf(music_message,sizeof(music_message),"TRACK FINISHED / A PLAY / START SEARCH");
     }
     return 1;
 }

@@ -4,6 +4,35 @@ The optional Samba add-on exposes app-local `roms` and `videos` folders as
 password-protected ROMs and Movies shares. Existing RetroArch ROMs are also
 shared when present. NAS/PC shares and NFS are deferred.
 
+## Install from Settings
+
+Open Settings > Services > SAMBA DOWNLOAD and press A/Enter. The status line
+reports download progress. Select SAMBA PASSWORD, choose 8-64 characters using a
+keyboard/controller, and press Start/Enter. Saving configures and enables
+sharing. Username is root; your SSH password stays unchanged. SAMBA SHARING
+toggles sharing and startup on/off.
+
+Password keyboard: A types, X changes case, Start saves and B cancels. Keyboard
+Backspace deletes. Passwords are masked and sent through an anonymous pipe,
+never command-line arguments or saved input files. Only Samba's private
+password database persists.
+
+The installer downloads 53 pinned Alpine ARMv7 packages over verified HTTPS
+and checks SHA256 and size against samba-packages.json. It unpacks into a
+temporary app-local directory with path/link/size checks, then installs by a
+single rename after ARM architecture and completeness checks. Failed downloads
+keep existing installations. Allow at least 160 MiB free storage; download is
+about 20 MiB, installed runtime about 48 MiB. This service is Steam Link only.
+
+No GitHub Samba binary release is needed: runtime packages come directly from
+Alpine. PACKAGE-SOURCES.json retains each package's license, source origin and
+aports commit. The small path-relocation library ships with FlXtR. The manifest
+was generated from apk fetch --recursive against Alpine's signed 3.23 index,
+using the pinned images/ARM keys from build-samba-addon.sh. If upstream removes
+a pinned package, install fails safely; update FlXtR to obtain refreshed pins.
+
+## Manual alternative
+
 Build from regular WSL/Linux:
 
     bash scripts/build-steamlink-package.sh

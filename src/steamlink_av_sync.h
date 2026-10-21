@@ -8,13 +8,17 @@
 #include "audio_master_clock.h"
 #define SYNC_VIDEO_PACKETS 128
 #define SYNC_VIDEO_BYTES (8*1024*1024)
+/* Experimental: 500 ms target, 16 ms maximum per-frame stall. Hardware
+ * queue reporting may include a fixed internal decoder allocation. */
+#define SYNC_HW_QUEUE_TARGET_MS 500
+#define SYNC_HW_QUEUE_WAIT_MAX_MS 16
 typedef struct {AVPacket *packet;int64_t dts,pts;int reset;} SyncVideoPacket;
 static struct {
     pthread_mutex_t mutex;pthread_t thread;int initialized,threaded,quit,paused,started,eof,error;
     SDL_AudioDeviceID device;AudioMasterClock clock;
     CSLVideoContext *context;CSLVideoStream *stream;AVRational fps;
     SyncVideoPacket queue[SYNC_VIDEO_PACKETS];int head,count,bytes,recover;
-    unsigned epoch,underflows,frames,slow,dropped,resets,hardware_ms;int empty,busy;int64_t last_video,maximum_late,pause_at,pause_position;
+    unsigned epoch,underflows,frames,slow,dropped,resets,hardware_ms,queue_waits,queue_wait_ms;int empty,busy;int64_t last_video,maximum_late,pause_at,pause_position;
 } av_sync;
 static unsigned sync_epoch;
 static int64_t sync_position_locked(void){
@@ -105,6 +109,27 @@ static void *sync_video_worker(void *unused){
             if(av_sync.stream&&av_sync.fps.num>0&&av_sync.fps.den>0)
                 SLVideo_SetStreamTargetFramerate(av_sync.stream,av_sync.fps.num,av_sync.fps.den);
             pthread_mutex_lock(&av_sync.mutex);av_sync.resets++;pthread_mutex_unlock(&av_sync.mutex);
+        }
+        /* Experimental hardware-queue backpressure. Never block audio or
+         * demux, and never indefinitely wait for an opaque SDK metric:
+         * some SLVideo versions report a persistent nonzero queue floor.
+         * Skip throttling if the packet is already late on the audio clock. */
+        unsigned waited=0;
+        while(av_sync.stream&&waited<SYNC_HW_QUEUE_WAIT_MAX_MS){
+            unsigned queued_ms=SLVideo_GetQueuedVideoMS(av_sync.stream);
+            if(queued_ms<=SYNC_HW_QUEUE_TARGET_MS)break;
+            pthread_mutex_lock(&av_sync.mutex);
+            int stop=av_sync.quit||av_sync.paused;
+            int64_t audio_now=sync_position_locked();
+            pthread_mutex_unlock(&av_sync.mutex);
+            if(stop||audio_now>item.dts+80000)break;
+            SDL_Delay(2);waited+=2;
+        }
+        if(waited){
+            pthread_mutex_lock(&av_sync.mutex);
+            av_sync.queue_waits++;
+            av_sync.queue_wait_ms+=waited;
+            pthread_mutex_unlock(&av_sync.mutex);
         }
         int64_t began=av_gettime_relative();
         int error=!av_sync.stream||SLVideo_BeginFrame(av_sync.stream,item.packet->size)<0||

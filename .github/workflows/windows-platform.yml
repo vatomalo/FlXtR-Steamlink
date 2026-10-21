@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           $zip = Get-ChildItem downloaded -Recurse -Filter FlXtR-Windows-platform-x86_64.zip | Select-Object -First 1
-          $folder = Join-Path $env:RUNNER_TEMP 'FlXtR Windows ø test'
+          $folder = Join-Path $env:RUNNER_TEMP 'FlXtR Windows Ã¸ test'
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $folder
           Push-Location $folder
           try {
@@ -95,7 +95,7 @@ jobs:
           $retroarch = Get-ChildItem app-download -Recurse -Filter retroarch-fixture.exe | Select-Object -First 1
           $fullscreen = Get-ChildItem app-download -Recurse -Filter windows-fullscreen-test.exe | Select-Object -First 1
           $fixture = Get-ChildItem app-download -Recurse -Filter fixture.mp4 | Select-Object -First 1
-          $app = Join-Path $env:RUNNER_TEMP 'FlXtR application ø'
+          $app = Join-Path $env:RUNNER_TEMP 'FlXtR application Ã¸'
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $app
           Copy-Item -LiteralPath $helper.FullName -Destination $app
           Copy-Item -LiteralPath $fullscreen.FullName -Destination $app
@@ -109,3 +109,45 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Core manager tests failed: $LASTEXITCODE" }
           python tests/desktop_games_test.py --catalog (Join-Path $app 'greenlink-catalog.exe') --retroarch (Join-Path $app 'retroarch-fixture.exe') --tools (Join-Path $app 'tools')
           if ($LASTEXITCODE -ne 0) { throw "Desktop game launch tests failed: $LASTEXITCODE" }
+
+
+  steamdeck-video-hotfix:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build and display-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config wget curl python3 git ca-certificates file libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev libavformat-dev libavcodec-dev libavutil-dev ffmpeg xvfb xauth imagemagick libgl1-mesa-dri
+      - name: Build Linux and Steam Deck packages
+        run: bash scripts/build-desktop.sh --inside
+      - name: Verify visible Steam Deck video output
+        run: xvfb-run -a -s "-screen 0 1280x800x24 +extension GLX" python3 tests/steamdeck_video_test.py dist/FlXtR-SteamDeck-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steamdeck-video-hotfix
+          path: |
+            dist/FlXtR-SteamDeck-x86_64.tgz
+            dist/FlXtR-SteamDeck-x86_64.tgz.sha256
+            dist/FlXtR-Linux-x86_64.tgz
+            dist/FlXtR-Linux-x86_64.tgz.sha256
+      - name: Publish Steam Deck video test hotfix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="steamdeck-video-${GITHUB_SHA}"
+          cat > build/deck-release.md <<'NOTES'
+          Steam Deck video compatibility test hotfix.
+
+          Launch FlXtR-SteamDeck.sh with Proton disabled. Video now uses X11/EGL on the same display as the menu, software decoding, and an X11 output fallback. This avoids mixed Wayland/X11 window selection and hardware decoder interop.
+
+          Extract into a new folder and copy your old data folder across. Keep using the Gamepad controller layout in Game Mode. This package still uses a separate fullscreen player window.
+
+          Validation: the packaged player renders visible video pixels in an X11 virtual display with software OpenGL. Physical Steam Deck confirmation is still needed; the reported black screen has not been reproduced on hardware. Software decoding can use more CPU and battery.
+
+          Windows and Steam Link packages remain available in the previous release.
+          NOTES
+          gh release create "$tag" --target "$GITHUB_SHA" --prerelease --title "Steam Deck video compatibility hotfix" --notes-file build/deck-release.md dist/FlXtR-SteamDeck-x86_64.tgz dist/FlXtR-SteamDeck-x86_64.tgz.sha256 dist/FlXtR-Linux-x86_64.tgz dist/FlXtR-Linux-x86_64.tgz.sha256

@@ -72,6 +72,7 @@ for edition in ('Linux', 'SteamDeck'):
     if edition == 'SteamDeck':
         launcher = dest / 'FlXtR-SteamDeck.sh'
         launcher.write_text('#!/bin/sh\nexport SDL_VIDEODRIVER=x11\n'
+                            'export FLXTR_STEAMDECK=1\nunset WAYLAND_DISPLAY\n'
                             'root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
                             'exec "$root/FlXtR.sh" "$@"\n')
         launcher.chmod(0o755)
@@ -81,6 +82,8 @@ for edition in ('Linux', 'SteamDeck'):
         ('FlXtR-SteamDeck.sh' if edition == 'SteamDeck' else 'FlXtR.sh') + '.\n'
         'Steam Deck: in Desktop Mode, add FlXtR-SteamDeck.sh to Steam as a non-Steam game.\n'
         'Leave compatibility/Proton disabled. Use the Gamepad controller layout.\n'
+        'The Deck launcher uses X11/EGL and software video decoding for compatibility.\n'
+        'For troubleshooting, share the last lines of data/greenlink.log.\n'
         'Built on Ubuntu 22.04; requires glibc 2.35+, Python 3.10+, system certificates,\n'
         'a desktop display/audio session and system OpenGL/VA-API/Vulkan drivers.\n'
         'Music includes yt-dlp, EJS and QuickJS.\n'

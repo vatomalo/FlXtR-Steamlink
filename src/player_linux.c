@@ -147,6 +147,22 @@ int main(int argc,char **argv){
     mpv_set_option_string(mpv,"fullscreen","yes");
     mpv_set_option_string(mpv,"title","FlXtR");
     mpv_set_option_string(mpv,"force-window","yes");mpv_set_option_string(mpv,"hwdec","auto-safe");
+#ifndef _WIN32
+    /* Gamescope exposes both display protocols. Keep the player on the same
+     * Xwayland display as SDL; avoid zero-copy VA-API/driver interop in this
+     * compatibility profile. Generic Linux and Windows retain their defaults. */
+    const char *deck=getenv("FLXTR_STEAMDECK");
+    if(!headless&&deck&&!strcmp(deck,"1")){
+        if(mpv_set_option_string(mpv,"vo","gpu,x11")<0||
+           mpv_set_option_string(mpv,"gpu-api","opengl")<0||
+           mpv_set_option_string(mpv,"gpu-context","x11egl")<0||
+           mpv_set_option_string(mpv,"hwdec","no")<0){
+            fputs("Steam Deck video profile could not be configured\n",stderr);
+            mpv_terminate_destroy(mpv);return 1;
+        }
+        fputs("Steam Deck video: X11/EGL, software decoding, X11 fallback\n",stderr);
+    }
+#endif
     mpv_set_option_string(mpv,"tls-verify","yes");
 #ifdef _WIN32
     mpv_set_option_string(mpv,"tls-ca-file",FLXTR_CA_BUNDLE);

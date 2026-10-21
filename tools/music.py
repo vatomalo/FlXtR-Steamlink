@@ -254,10 +254,8 @@ def preview_source(value, category):
         raise ValueError('Empty trailer title')
     suffix = 'gameplay' if category == 'game' else 'official trailer'
     options = ydl_options()
-    # 360p is far more widely available than AVC 240p. The inset scales it down.
-    options['format'] = (
-        'bestvideo[vcodec^=avc1][height<=360]/'
-        'best[vcodec^=avc1][height<=360]')
+    # Avoid forcing 360p at the yt-dlp selection stage.
+    options['format'] = 'bestvideo[vcodec^=avc1]/best[vcodec^=avc1]'
     from yt_dlp import YoutubeDL
     from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE
     with YoutubeDL(options, auto_init=False) as ydl:
@@ -275,9 +273,9 @@ def preview_source(value, category):
                 formats = info.get('requested_formats') or [info]
                 selected = next((fmt for fmt in formats if
                                  str(fmt.get('vcodec', '')).startswith('avc1')
-                                 and 0 < (fmt.get('height') or 0) <= 360), None)
+                                 and 0 < (fmt.get('height') or 0) <= 720), None)
                 if not selected:
-                    print('Preview skipped: no AVC <=360p:', item['id'], flush=True)
+                    print('Preview skipped: no AVC stream compatible with decoder:', item['id'], flush=True)
                     continue
                 url = selected.get('url', '')
                 if not url.startswith('https://') or len(url) >= 2046 or any(c in url for c in '\r\n\t'):
@@ -291,7 +289,7 @@ def preview_source(value, category):
                 return
             except Exception as error:
                 print('Preview candidate failed:', item['id'], clean(error, 130), flush=True)
-    raise ValueError('No compatible AVC trailer at 360p or lower')
+    raise ValueError('No compatible AVC trailer stream')
 
 def youtube_client(flat=False):
     from yt_dlp import YoutubeDL

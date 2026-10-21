@@ -137,7 +137,8 @@ static int scummvm_settings_save(void){
     if(global)for(int i=0;i<4;i++)if(!seen[i])fputs(vals[i],out);
     if(!seen_section){fputs("\n[scummvm]\n",out);for(int i=0;i<4;i++)fputs(vals[i],out);}
     int ok=!ferror(in)&&!ferror(out);
-    if(fclose(in))ok=0;if(fclose(out))ok=0;
+    if(fclose(in))ok=0;
+    if(fclose(out))ok=0;
     if(ok&&rename(tmp,path)==0)return 1;
     remove(tmp);return 0;
 }

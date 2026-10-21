@@ -2,6 +2,7 @@
  * and an SDL texture. The fullscreen hardware player is never touched. */
 #ifndef FLXTR_PREVIEW_INSET_H
 #define FLXTR_PREVIEW_INSET_H
+#ifndef _WIN32
 static pid_t preview_lookup_pid,preview_decode_pid;
 static Uint32 preview_selected_at,preview_frame_at;
 static SDL_Texture *preview_texture;
@@ -11,8 +12,8 @@ static time_t preview_frame_mtime;
 static long preview_frame_nsec;
 static void preview_kill(pid_t *child){
     if(*child>0){
-        kill(-*child,SIGTERM);kill(*child,SIGTERM);
-        waitpid(*child,NULL,WNOHANG);
+        kill(-*child,SIGKILL);kill(*child,SIGKILL);
+        waitpid(*child,NULL,0);
         *child=0;
     }
 }
@@ -66,9 +67,6 @@ static int preview_launch_decoder(void){
     setpgid(pid,pid);preview_decode_pid=pid;preview_state=2;return 0;
 }
 static int preview_tick(void){
-#ifdef _WIN32
-    return 0;
-#else
     const Title *selected=NULL;
     if(renderer&&!player_pid&&!music_on&&!settings_on&&!rom_options_menu&&!rom_core_menu&&
        !search_on&&!about&&browse.mode!=11&&total>0&&selection>=0&&selection<total)
@@ -122,7 +120,6 @@ static int preview_tick(void){
         }
     }
     return 0;
-#endif
 }
 static void preview_draw(void){
     SDL_Rect dest={691,124,232,114};
@@ -130,4 +127,9 @@ static void preview_draw(void){
     text(749,161,"TRAILER",2,green,18);
     text(715,191,preview_state==3?"NO VIDEO AVAILABLE":"FINDING PREVIEW",1,dim,28);
 }
+#else
+static void preview_stop(void){}
+static int preview_tick(void){return 0;}
+static void preview_draw(void){text(728,174,"PREVIEW ON STEAM LINK",1,dim,31);}
+#endif
 #endif

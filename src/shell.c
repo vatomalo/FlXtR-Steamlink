@@ -234,10 +234,10 @@ static int set_auto_updates(int enabled){
     if(fd<0)return 0;
     return close(fd)==0;
 }
-static int viewing=VIEW_FIT; /* Shared default for movies, series and TV. */
+static int viewing=VIEW_FIT,default_viewing=VIEW_FIT; /* Session view and persistent preference. */
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
-    fprintf(f,"series_autoplay=%d\nvideo_view=%d\n",series_autoplay,viewing);
+    fprintf(f,"series_autoplay=%d\nvideo_view=%d\n",series_autoplay,default_viewing);
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
     fprintf(f,"game_output=%d\ngame_view=%d\nmusic_autoplay=%d\n",game_output,game_view,music_autoplay);
     fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
@@ -256,7 +256,7 @@ static void load_settings(void){
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
     int theme_found=0,old_tv_schedule=0,schedule_version=0;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
-        if(!strcmp(key,"video_view")&&value>=0&&value<VIEW_COUNT)viewing=value;
+        if(!strcmp(key,"video_view")&&value>=0&&value<VIEW_COUNT)viewing=default_viewing=value;
         else if(!strcmp(key,"tv_schedule_version"))schedule_version=value;
         else if(!strcmp(key,"tv_rating")&&value>=1&&value<=5)tv_rating_weight=value;
         else if(!strcmp(key,"tv_popularity")&&value>=0&&value<=5)tv_popularity_weight=value;
@@ -1390,7 +1390,7 @@ static void draw(Uint32 tick) {
         snprintf(values[23],40,"%s",samba_pid?"WORKING...":samba_installed()?"INSTALLED":"DOWNLOAD AND INSTALL");
         snprintf(values[24],40,"SET / CHANGE PASSWORD");
         snprintf(values[25],40,"%s",!access("samba/.enabled",R_OK)?"STARTUP ON":"OFF");
-        snprintf(values[26],40,"%s",view_names[viewing]);
+        snprintf(values[26],40,"%s",view_names[default_viewing]);
 #if defined(FLXTR_DESKTOP) || defined(_WIN32)
         for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
 #endif
@@ -1402,7 +1402,7 @@ static void draw(Uint32 tick) {
         }
         const SettingsTab *tab=&settings_tabs[settings_tab];
         for(int row=0;row<tab->count;row++){
-            int id=tab->ids[row],y=174+row*36;
+            int id=tab->ids[row],y=174+row*32;
             if(row==settings_row)rect(190,y-8,724,29,green,0);
             text(204,y,labels[id],2,white,24);
             text(566,y,values[id],2,row==settings_row?green:dim,28);
@@ -1549,6 +1549,7 @@ static void rom_launch(const Title *t){
 static void play(void) {
     if(settings_on||rom_options_menu||rom_core_menu||about||!total||player_pid)return;
     restart_position=auto_resume=0;
+    viewing=default_viewing; /* Each freshly selected item starts from the saved preference. */
     Title *t=&titles[visible[selection]];
 #ifdef FLXTR_DESKTOP
     if(!strcmp(t->kind,"core-manager")){Browse next={35,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
@@ -1986,7 +1987,7 @@ static void finish_player(int code){
         if(!valid||command<1||command>10||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;tv_history_finish("failed",tv_history_last_position());snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
         if(command>=5)tv_history_finish(command==5||command==6?"skipped":"stopped",position);
         if(command==10){tv_active=auto_active=0;running=0;return;}
-        viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings();
+        viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings(); /* Only default_viewing is persisted. */
         /* TV is a channel, not a resume-based episode player. */
         if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;music_video_pause(1);snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
         if(command==9){
@@ -2309,7 +2310,7 @@ static void action(SDL_Keycode key) {
             int id=settings_id();
             if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id>=23))return;
             switch(id){
-                case 26:viewing=(viewing+step+VIEW_COUNT)%VIEW_COUNT;break;
+                case 26:default_viewing=(default_viewing+step+VIEW_COUNT)%VIEW_COUNT;break;
                 case 22:game_view=(game_view+step+GAME_VIEWS)%GAME_VIEWS;break;
                 case 20:music_autoplay=!music_autoplay;break;
                 case 21:settings_on=0;music_on=1;break;
@@ -2345,7 +2346,7 @@ static void action(SDL_Keycode key) {
         }return;
     }
     if(browse.mode==11&&!about&&(key==SDLK_F6||key==SDLK_y)){mtv_override=!mtv_override;snprintf(status,sizeof(status),mtv_override?"MTV MUSIC VIDEOS / A START":"TV SCHEDULE / A START");return;}
-    if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){tv_cancel_prepared();tv_joining=1;tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=tv_prepared=0;tv_tick();return;}
+    if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){viewing=default_viewing;tv_cancel_prepared();tv_joining=1;tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=tv_prepared=0;tv_tick();return;}
     if(about&&(key==SDLK_UP||key==SDLK_DOWN)){about_row=!about_row;return;}
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){if(about_row==1&&key!=SDLK_u)accounts_open(1);else start_update();return;}
     if(key==SDLK_u){start_update();return;}

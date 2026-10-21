@@ -60,11 +60,12 @@ underruns and SDK video queue duration. Caption diagnostics omit text and URLs.
 Run bash scripts/test-steamlink-timing.sh in regular WSL/Linux with Docker and
 the existing flxtr-desktop-builder:local image. It compiles the pinned baseline
 and experiment, generates fixtures, compares stalls, tests pause/Stop, and
-checks embedded/external caption clocks including a five-second timestamp offset.
+checks embedded/external caption clocks including a five-second timestamp offset. Initial and cached seek tests use
+nonzero stream timestamps and verify conversion to normalized media time.
 Queue tests cover bounded memory, keyframe recovery and shutdown. Prior native
 RAM/preload/seek/Stop and adaptive regression tests also apply.
 
-Measured caption transitions were 1-32 ms after their audio-clock cue starts.
+Measured caption transitions were within 40 ms of their cue timestamps on the audio clock (starts and ends).
 A sink cannot validate physical display, HDMI audio or SDK driver threading.
 SDL exposes queued PCM, not the DAC timestamp; one output period is subtracted
 as an estimate. SLVideo exposes queue duration, not per-frame presentation

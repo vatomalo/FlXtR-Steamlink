@@ -1,6 +1,7 @@
 """Real FFmpeg/player/control path with a test SLVideo sink; no device is simulated."""
 import http.server
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -89,6 +90,8 @@ with tempfile.TemporaryDirectory(prefix="FlXtR RAM player ") as directory:
                 assert time.monotonic()-began<5,(home/"player.log").read_text()
                 time.sleep(.05)
             assert Handler.requests==count,"Cached seek opened a new HTTP connection"
+            requested,actual=map(float,re.search(r"RAM seek: ([\d.]+) -> ([\d.]+)",(home/"player.log").read_text()).groups())
+            assert requested<=actual<requested+2.5,(requested,actual)
             os.write(writer,b"S")
             assert child.wait(timeout=10)==40
             request=(home/"playback-request").read_text().split()

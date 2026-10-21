@@ -242,7 +242,7 @@ static void adaptive_evaluate(int64_t starvation){
     int64_t newest=active_buffer->video_newest;
     pthread_mutex_unlock(&active_buffer->mutex);
     double position=playback_position();
-    double ahead=newest==AV_NOPTS_VALUE?0:newest/(double)AV_TIME_BASE-position;
+    double ahead=newest==AV_NOPTS_VALUE?0:(newest-media_offset)/(double)AV_TIME_BASE-position;
     if(ahead<0)ahead=0;
     int reason=0;
     int target=adaptive_sample(&adaptive_policy,now,starvation,adaptive_slow,adaptive_audio,ahead,
@@ -316,10 +316,10 @@ static void playback_buffer_wait(int64_t waited){
 static int playback_seek(double position){
     int64_t actual;
     if(active_buffer&&position>playback_position()&&
-       disk_seek_forward(active_buffer,(int64_t)(position*AV_TIME_BASE),&actual)){
-        ram_seek=actual;paused=0;seek_scrubbing=0;menu_open=0;
+       disk_seek_forward(active_buffer,(int64_t)(position*AV_TIME_BASE)+media_offset,&actual)){
+        ram_seek=actual-media_offset;paused=0;seek_scrubbing=0;menu_open=0;
         if(menu_overlay)SLVideo_HideOverlay(menu_overlay);
-        fprintf(stderr,"RAM seek: %.3f -> %.3f seconds; no network restart\n",position,actual/(double)AV_TIME_BASE);
+        fprintf(stderr,"RAM seek: %.3f -> %.3f seconds; no network restart\n",position,(actual-media_offset)/(double)AV_TIME_BASE);
         return 1;
     }
     menu_restart(1,position);return 0;
@@ -524,7 +524,7 @@ int main(int argc,char **argv) {
     media_duration=fmt->duration>0?fmt->duration/(double)AV_TIME_BASE:0;
     if(playback_start>0){
         deadline=av_gettime_relative()+20000000;
-        rc=youtube_demux_seek(fmt,(int64_t)(playback_start*AV_TIME_BASE));
+        rc=youtube_demux_seek(fmt,(int64_t)(playback_start*AV_TIME_BASE)+media_offset);
         deadline=0;
         if(rc<0){fprintf(stderr,"Server does not support seeking (%d)\n",rc);result=44;goto done;}
         fprintf(stderr,"Seek accepted: %.3f seconds (keyframe)\n",playback_start);

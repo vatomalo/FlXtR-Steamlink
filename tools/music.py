@@ -253,8 +253,8 @@ def preview_source(value, category):
     if not query:
         raise ValueError('Empty trailer title')
     suffix = 'gameplay' if category == 'game' else 'official trailer'
-    options = ydl_options()
-    # Avoid forcing 360p at the yt-dlp selection stage.
+    options = ydl_options(flat=True)
+    # Flat search matches the working music browser: do not resolve each\n    # search hit before trying candidate videos individually.
     options['format'] = 'bestvideo[vcodec^=avc1]/best[vcodec^=avc1]'
     from yt_dlp import YoutubeDL
     from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE

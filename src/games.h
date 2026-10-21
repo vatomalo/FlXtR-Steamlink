@@ -505,6 +505,18 @@ static int games_run(void){
     }
     else fputs("video_windowed_fullscreen = \"true\"\nvideo_fullscreen_x = \"0\"\nvideo_fullscreen_y = \"0\"\n",f);
     int native_w=0,native_h=0,display_w=output?game_output_width(output):0,display_h=output;
+    /* Stretch uses a custom full-screen viewport: discover the physical
+     * desktop dimensions when output is native, rather than leaving 0x0. */
+    if(view==GAME_STRETCH&&!output){
+        SDL_DisplayMode dm={0};int started=0;
+        if(!(SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO)){
+            if(!SDL_InitSubSystem(SDL_INIT_VIDEO))started=1;
+        }
+        if((SDL_WasInit(SDL_INIT_VIDEO)&SDL_INIT_VIDEO)&&!SDL_GetCurrentDisplayMode(0,&dm)){
+            display_w=dm.w;display_h=dm.h;
+        }
+        if(started)SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    }
 #ifndef FLXTR_DESKTOP
     if(view==GAME_PIXEL)game_native_sdl();
 #endif

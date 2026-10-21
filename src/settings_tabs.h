@@ -6,7 +6,7 @@ typedef struct {const char *name;int count,ids[8];} SettingsTab;
 static const SettingsTab settings_tabs[]={
     {"VIDEO",8,{0,1,2,4,5,6,26,17}},
     {"MUSIC",2,{20,21}},
-    {"ROMS",5,{22,19,10,11,27}},
+    {"ROMS",6,{22,19,28,10,11,27}},
     {"TV",5,{7,8,12,13,14}},
     {"SERVICES",5,{23,24,25,15,18}},
     {"GENERAL",3,{3,9,16}}

@@ -1,5 +1,8 @@
 # FlXtR-Steamlink
 
+Steam Link shared SDL audio investigation, optional queued RetroArch driver and
+on-device diagnostics: [SDL audio validation](docs/steamlink-sdl-audio.md).
+
 Phone setup for subtitle and game metadata API keys is available under
 **Settings → API Accounts**. Scan the QR code, sign in on SubDL or TheGamesDB,
 then paste the key on your phone. See [API account setup](docs/api-accounts.md).

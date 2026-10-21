@@ -573,6 +573,10 @@ static int games_run(void){
         fprintf(f,"savefile_directory = \"%s/saves\"\nsavestate_directory = \"%s/states\"\n",data,data);
     }
 #endif
+    #if defined(__linux__) && !defined(FLXTR_DESKTOP)
+    if(getenv("FLXTR_USE_QUEUED_AUDIO")&&!strcmp(getenv("FLXTR_USE_QUEUED_AUDIO"),"1"))
+        fprintf(f,"audio_driver = \"sdl2\"\naudio_out_rate = \"48000\"\naudio_sync = \"true\"\n");
+    #endif
     if(fclose(f))return 2;
 #ifdef FLXTR_DESKTOP
     (void)config;(void)runtime;(void)home;
@@ -588,6 +592,17 @@ static int games_run(void){
 #endif
         ,games_home());
     snprintf(home,sizeof(home),"%s/.home",games_home());
+    #ifdef __linux__
+    if(getenv("FLXTR_USE_QUEUED_AUDIO")&&!strcmp(getenv("FLXTR_USE_QUEUED_AUDIO"),"1")){
+        char cwd[PATH_MAX];
+        if(!getcwd(cwd,sizeof(cwd)))return 2;
+        int len=snprintf(runtime,sizeof(runtime),"%s/retroarch-audio/retroarch.exec",cwd);
+        if(len<0||len>=(int)sizeof(runtime)||!game_file(runtime)||access(runtime,X_OK)){
+            fprintf(stderr,"Queued SDL audio frontend missing; build/install retroarch-audio first\n");return 2;
+        }
+        fprintf(stderr,"Game audio: experimental queued SDL frontend %s\n",runtime);
+    }
+    #endif
     if(view!=GAME_PIXEL)game_native_sdl();
     if(chdir(games_home()))return 2;
     setenv("HOME",home,1);

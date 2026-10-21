@@ -37,6 +37,19 @@ fi
 echo "c9d19c7ae28243b3739e2f14a4f19cdd48646bed063b26607d25b19dbc148932  $sdl" | sha256sum -c -
 cp "$sdl" "$app/retroarch-libs/"
 cp packaging/SDL2-LICENSE.txt "$app/retroarch-libs/"
+if [ -f build/test-steamlink-audio ]; then
+    mkdir -p "$app/scripts"
+    cp build/test-steamlink-audio "$app/"
+    cp build/steamlink_audio_test_libretro.so "$app/"
+    cp scripts/test-steamlink-audio "$app/scripts/"
+    chmod +x "$app/scripts/test-steamlink-audio"
+fi
+if [ -f build/retroarch-audio/retroarch.exec ]; then
+    mkdir -p "$app/retroarch-audio" "$app/sources"
+    cp build/retroarch-audio/retroarch.exec build/retroarch-audio/COPYING build/retroarch-audio/BUILD.txt "$app/retroarch-audio/"
+    cp dist/core-sources/retroarch-audio.tar.gz "$app/sources/"
+    cp scripts/build-retroarch-audio.sh "$app/sources/"
+fi
 
 if [ -d assets ]; then cp -R assets "$app/"; fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi
@@ -45,15 +58,15 @@ if [ -f build/greenlink-resolver-arm ]; then
     cp build/resolver/WABT-LICENSE.txt "$app/WABT-LICENSE.txt"
 fi
 # Optional side-by-side cores from scripts/build-cores.sh. No system core is replaced.
-for core in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so; do
+for core in snes9x2005_flxtr_libretro.so snes9x2005_plus_flxtr_libretro.so mame2003_plus_flxtr_libretro.so; do
     if [ -f "build/cores/$core" ]; then
         mkdir -p "$app/cores"
         cp "build/cores/$core" "$app/cores/"
     fi
 done
 if [ -d "$app/cores" ]; then
-    for notice in SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt; do
-        cp "build/cores/$notice" "$app/cores/"
+    for notice in SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt snes9x2005_plus-build.txt mame2003-plus-build.txt; do
+        if [ -f "build/cores/$notice" ]; then cp "build/cores/$notice" "$app/cores/"; fi
     done
 fi
 if [ -f build/greenlink-audio-arm ]; then cp build/greenlink-audio-arm "$app/greenlink-audio"; fi

@@ -110,10 +110,10 @@ static int scummvm_settings_save(void){
     FILE *out=fopen(tmp,"w");if(!out){fclose(in);return 0;}
     const char *keys[]={"fullscreen","stretch_mode","filtering","subtitles"};
     char vals[4][96];
-    snprintf(vals[0],sizeof(vals[0]),"fullscreen=%s\\n",scummvm_fullscreen?"true":"false");
-    snprintf(vals[1],sizeof(vals[1]),"stretch_mode=%s\\n",scummvm_modes[scummvm_stretch]);
-    snprintf(vals[2],sizeof(vals[2]),"filtering=%s\\n",scummvm_filter?"true":"false");
-    snprintf(vals[3],sizeof(vals[3]),"subtitles=%s\\n",scummvm_subtitles?"true":"false");
+    snprintf(vals[0],sizeof(vals[0]),"fullscreen=%s\n",scummvm_fullscreen?"true":"false");
+    snprintf(vals[1],sizeof(vals[1]),"stretch_mode=%s\n",scummvm_modes[scummvm_stretch]);
+    snprintf(vals[2],sizeof(vals[2]),"filtering=%s\n",scummvm_filter?"true":"false");
+    snprintf(vals[3],sizeof(vals[3]),"subtitles=%s\n",scummvm_subtitles?"true":"false");
     char line[1024];int global=0,seen_section=0,seen[4]={0};
     while(fgets(line,sizeof(line),in)){
         if(line[0]=='['){
@@ -135,7 +135,7 @@ static int scummvm_settings_save(void){
         fputs(line,out);
     }
     if(global)for(int i=0;i<4;i++)if(!seen[i])fputs(vals[i],out);
-    if(!seen_section){fputs("\\n[scummvm]\\n",out);for(int i=0;i<4;i++)fputs(vals[i],out);}
+    if(!seen_section){fputs("\n[scummvm]\n",out);for(int i=0;i<4;i++)fputs(vals[i],out);}
     int ok=!ferror(in)&&!ferror(out);
     if(fclose(in))ok=0;if(fclose(out))ok=0;
     if(ok&&rename(tmp,path)==0)return 1;
@@ -626,7 +626,7 @@ static int bios_archive_download(const Title *item){
     struct stat downloaded;
     if(result!=CURLE_OK||http!=200||output_error||stat(temp,&downloaded)||
        downloaded.st_size<=0||downloaded.st_size>16777216){
-        fprintf(stderr,"BIOS Archive transfer failed: HTTP %ld / curl %d / %s / URL %s\\n",http,(int)result,curl_error[0]?curl_error:curl_easy_strerror(result),item->url);
+        fprintf(stderr,"BIOS Archive transfer failed: HTTP %ld / curl %d / %s / URL %s\n",http,(int)result,curl_error[0]?curl_error:curl_easy_strerror(result),item->url);
         unlink(temp);return 5;
     }
 #ifdef _WIN32

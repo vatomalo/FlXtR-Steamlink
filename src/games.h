@@ -489,12 +489,13 @@ static int games_run(void){
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
     f=fopen(extra,"w");if(!f)return 2;
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nkiosk_mode_enable = \"true\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
-    int output=GAME_OUTPUT_DEFAULT,view=GAME_FIT;
+    int output=GAME_OUTPUT_DEFAULT,view=GAME_FIT,performance=1;
     FILE *display_settings=fopen("settings.cfg","r");
     if(display_settings){char line[96];int height;
         while(fgets(line,sizeof(line),display_settings)){
             if(sscanf(line,"game_output=%d",&height)==1&&game_output_valid(height))output=height;
             if(sscanf(line,"game_view=%d",&height)==1&&game_view_valid(height))view=height;
+            if(sscanf(line,"game_performance=%d",&height)==1&&height>=0&&height<3)performance=height;
         }
         fclose(display_settings);
     }
@@ -527,6 +528,22 @@ static int games_run(void){
         json_object_put(games);return 2;
     }
     game_scaling_config(f,view,native_w,native_h,display_w,display_h);
+    /* Profiles affect rendering/synchronization overhead, never the display
+     * mode, CPU core implementation, or the emulated game's clock speed. */
+    fputs("video_shader_enable = \"false\"\nvideo_filter = \"\"\n"
+          "rewind_enable = \"false\"\nrun_ahead_enabled = \"false\"\n"
+          "video_frame_delay = \"0\"\n",f);
+    if(performance==0){
+        fputs("video_threaded = \"true\"\nvideo_hard_sync = \"false\"\n"
+              "video_vsync = \"false\"\n",f);
+    }else if(performance==2){
+        fputs("video_threaded = \"false\"\nvideo_hard_sync = \"false\"\n"
+              "video_vsync = \"true\"\n",f);
+    }else{
+        fputs("video_threaded = \"false\"\nvideo_hard_sync = \"false\"\n"
+              "video_vsync = \"true\"\n",f);
+    }
+    fprintf(stderr,"Game performance profile: %d (0=performance 1=balanced 2=low latency)\\n",performance);
     /* Keep Neo Geo and other working systems on their existing configuration. */
     const char *core_base=strrchr(core,'/');core_base=core_base?core_base+1:core;
     if(!strncmp(core_base,"snes9x",6)||!strncmp(core_base,"mame2003",8)){

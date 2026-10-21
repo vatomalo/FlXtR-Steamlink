@@ -81,8 +81,10 @@ static void *disk_producer(void *opaque){
         q->write_bytes+=bytes;q->count++;
         if(ts!=AV_NOPTS_VALUE&&(q->newest==AV_NOPTS_VALUE||ts>q->newest))q->newest=ts;
         if(p->stream_index==q->vi&&ts!=AV_NOPTS_VALUE&&(q->video_newest==AV_NOPTS_VALUE||ts>q->video_newest))q->video_newest=ts;
+        /* Startup fast path: begin at three seconds of compressed packets,
+         * retaining the configured rolling buffer capacity and refill behavior. */
         int64_t first=q->records[q->head].time;
-        if((first==AV_NOPTS_VALUE&&q->write_bytes-q->read_bytes>=8*1024*1024)||(first!=AV_NOPTS_VALUE&&q->newest-first>=(int64_t)(q->started?1:q->seconds)*AV_TIME_BASE))q->primed=1;
+        if((first==AV_NOPTS_VALUE&&q->write_bytes-q->read_bytes>=8*1024*1024)||(first!=AV_NOPTS_VALUE&&q->newest-first>=(int64_t)(q->started?1:(q->seconds<3?q->seconds:3))*AV_TIME_BASE))q->primed=1;
         pthread_cond_broadcast(&q->changed);pthread_mutex_unlock(&q->mutex);av_packet_unref(p);
     }
     av_packet_free(&p);

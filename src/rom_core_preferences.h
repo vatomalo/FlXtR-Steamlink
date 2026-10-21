@@ -43,4 +43,50 @@ static inline int rom_core_preference_save(const char *key,const char *name){
     if(fclose(out))return 0;
     return !rename("rom-cores.tsv.next","rom-cores.tsv");
 }
+
+/* Platform defaults are separate from per-ROM preferences.
+ * A missing or unavailable core falls back to the catalog's original core. */
+static const char *const rom_platform_names[]={"NES","SNES","GBA","GB/GBC","GENESIS","PSX","PSP","MAME","NEOGEO"};
+enum { ROM_PLATFORM_COUNT=9 };
+static inline int rom_platform_for_path(const char *path){
+    const char *ext=strrchr(path,'.');if(!ext)return -1;
+    if(!strcasecmp(ext,".nes"))return 0;
+    if(!strcasecmp(ext,".smc")||!strcasecmp(ext,".sfc"))return 1;
+    if(!strcasecmp(ext,".gba"))return 2;
+    if(!strcasecmp(ext,".gb")||!strcasecmp(ext,".gbc"))return 3;
+    if(!strcasecmp(ext,".md")||!strcasecmp(ext,".gen")||!strcasecmp(ext,".smd")||
+       !strcasecmp(ext,".sms")||!strcasecmp(ext,".gg"))return 4;
+    if(!strcasecmp(ext,".cue")||!strcasecmp(ext,".pbp")||!strcasecmp(ext,".chd")||
+       !strcasecmp(ext,".m3u"))return 5;
+    if(!strcasecmp(ext,".iso"))return 5;
+    if(!strcasecmp(ext,".zip")){
+        if(strcasestr(path,"/neogeo/")||strcasestr(path,"/neo-geo/"))return 8;
+        if(strcasestr(path,"/mame/")||strcasestr(path,"/arcade/"))return 7;
+    }
+    return -1;
+}
+static inline int rom_platform_core_get(int platform,char *name,size_t cap){
+    if(platform<0||platform>=ROM_PLATFORM_COUNT)return 0;
+    FILE *f=fopen("platform-cores.tsv","r");if(!f)return 0;
+    char line[160],saved[96];int id,found=0;
+    while(fgets(line,sizeof(line),f))
+        if(sscanf(line,"%d\t%95[^\n]",&id,saved)==2&&id==platform&&rom_core_name_valid(saved)){
+            snprintf(name,cap,"%s",saved);found=1;
+        }
+    fclose(f);return found;
+}
+static inline int rom_platform_core_save(int platform,const char *name){
+    if(platform<0||platform>=ROM_PLATFORM_COUNT||(name&&*name&&!rom_core_name_valid(name)))return 0;
+    FILE *in=fopen("platform-cores.tsv","r"),*out=fopen("platform-cores.tsv.next","w");
+    if(!out){if(in)fclose(in);return 0;}
+    if(in){char line[160],saved[96];int id;
+        while(fgets(line,sizeof(line),in))
+            if(sscanf(line,"%d\t%95[^\n]",&id,saved)==2&&id!=platform&&id>=0&&id<ROM_PLATFORM_COUNT&&rom_core_name_valid(saved))
+                fprintf(out,"%d\t%s\n",id,saved);
+        fclose(in);
+    }
+    if(name&&*name)fprintf(out,"%d\t%s\n",platform,name);
+    if(fclose(out))return 0;
+    return rename("platform-cores.tsv.next","platform-cores.tsv")==0;
+}
 #endif

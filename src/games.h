@@ -435,14 +435,11 @@ static int games_run(void){
             }
             fclose(sf);
         }
-        const char *sizes[]={"","--window-size=640,480","--window-size=800,600",
-                            "--window-size=1280,720","--window-size=1920,1080"};
-        const char *stretches[]={"--stretch-mode=center","--stretch-mode=pixel-perfect",
-            "--stretch-mode=even-pixels","--stretch-mode=fit","--stretch-mode=stretch",
-            "--stretch-mode=fit_force_aspect"};
-        const char *filter=scumm_filter?"--filtering":"--no-filtering";
-        const char *screen=scumm_fullscreen?"--fullscreen":"--no-fullscreen";
-        const char *subs=scumm_subtitles?"--subtitles":NULL;
+        /* The Steam Link ScummVM build has not demonstrated OpenGL window
+         * resizing or fullscreen viewport support. Avoid forcing either.
+         * Keep compatibility settings persisted for later backend detection. */
+        (void)scumm_size;(void)scumm_stretch;(void)scumm_filter;
+        (void)scumm_fullscreen;(void)scumm_subtitles;
         for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
             if(access(paths[i],X_OK)==0){
 #ifndef FLXTR_DESKTOP
@@ -456,8 +453,7 @@ static int games_run(void){
                        setenv("XDG_CONFIG_HOME","/home/apps/scummvm/.home/.config",1))return 2;
                 }
 #endif
-                if(scumm_size)execl(paths[i],paths[i],sizes[scumm_size],stretches[scumm_stretch],filter,screen,subs,(char*)NULL);
-                else execl(paths[i],paths[i],stretches[scumm_stretch],filter,screen,subs,(char*)NULL);
+                execl(paths[i],paths[i],(char*)NULL);
                 fprintf(stderr,"ScummVM launch failed: %s (%s)\n",paths[i],strerror(errno));
             }
         }

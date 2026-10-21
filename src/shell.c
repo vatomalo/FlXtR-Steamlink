@@ -747,6 +747,24 @@ static void wrap_detail(int x,int y,const char *str,int lines,SDL_Color ink){
         str+=n;while(*str==' ')str++;
     }
 }
+/* Automatically page longer cached descriptions without blocking controller input. */
+static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink,int identity){
+    char chunks[48][40];int count=0;
+    while(*str&&count<48){
+        size_t n=strlen(str);if(n>35){n=35;while(n>1&&str[n]!=' ')n--;}
+        if(!n)break;
+        memcpy(chunks[count],str,n);chunks[count][n]=0;count++;
+        str+=n;while(*str==' ')str++;
+    }
+    static int previous_identity=-1;static Uint32 selected_at;
+    if(previous_identity!=identity){previous_identity=identity;selected_at=SDL_GetTicks();}
+    int pages=(count+lines-1)/lines;
+    int page=pages>1?(int)(((SDL_GetTicks()-selected_at)/8500U)%(unsigned)pages):0;
+    for(int i=0;i<lines&&page*lines+i<count;i++)
+        text(x,y+i*15,chunks[page*lines+i],1,ink,35);
+    if(pages>1){char info[40];snprintf(info,sizeof(info),"DESCRIPTION %d/%d",page+1,pages);
+        text(x,y+lines*15+3,info,1,ink,35);}
+}
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
@@ -1596,7 +1614,7 @@ static void draw(Uint32 tick) {
         rect(665,94,1,378,dim,1);text(690,97,"NOW SELECTED",1,dim,30);
         wrap_detail(690,126,t->title,4,green);
         /* PSP-style detail pane: consume only local metadata, never wait for web. */
-        char detail[400]="",detail_path[128];
+        char detail[1024]="",detail_path[128];
         if((!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv"))&&t->id>0){
             snprintf(detail_path,sizeof(detail_path),"media-info-cache/%s-%d.txt",t->kind,t->id);
             FILE *f=fopen(detail_path,"r");
@@ -1630,7 +1648,7 @@ static void draw(Uint32 tick) {
         }
         detail[strcspn(detail,"\r\n")]=0;
         wrap_detail(690,205,t->meta,2,white);
-        if(detail[0])wrap_detail(690,250,detail,6,white);
+        if(detail[0])wrap_description(690,242,detail,6,white,visible[selection]+browse.mode*100000+browse.id);
         else if(!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv")||
                 !strcmp(t->kind,"game")||!strcmp(t->kind,"kiss"))
             text(690,260,"DESCRIPTION NOT CACHED",1,dim,28);

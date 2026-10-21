@@ -2654,7 +2654,7 @@ static void shutdown_children(pid_t *children,size_t count){
 #endif
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=11;Uint32 start,last_draw=0;int dirty=1;
-    load_settings();scummvm_settings_load();search_dict_load();
+    load_settings();scummvm_settings_load();search_dict_load();music_library_load();
     for(int i=1;i<argc;i++) {
 #ifdef _WIN32
         if(!strcmp(argv[i],"--ui-worker"))continue;

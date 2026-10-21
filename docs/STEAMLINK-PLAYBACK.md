@@ -84,3 +84,12 @@ prefetch reservations. Failed lookups and cancelled preloaders do not create
 played records. Manual YouTube playback outside TV mode can still replay a clip.
 Playback restarts for seeking or changing quality count as one TV session.
 History writing is shared by Steam Link and desktop source builds.
+
+## Experimental audio-master branch
+
+The experiment/audio-master-timing-20261021 branch replaces serialized native
+video/audio pacing with an audio-master clock and a separate bounded video
+submission worker. Its diagnostics are timing.log and timing.previous.log.
+See docs/EXPERIMENTAL-AV-TIMING.md in the source for measurements, tests,
+hardware limitations and device log capture. This branch is not the stable
+update channel and requires physical Steam Link validation before merging.

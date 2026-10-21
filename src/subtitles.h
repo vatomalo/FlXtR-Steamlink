@@ -42,7 +42,11 @@ static void subtitle_draw(void){
     Uint32 ticks=SDL_GetTicks();
     if((Sint32)(ticks-next_poll)<0)return;
     next_poll=ticks+40;
+#ifdef SUBTITLE_TIME_US
+    int64_t now=SUBTITLE_TIME_US(subtitle_external)-(int64_t)subtitle_delay*AV_TIME_BASE;
+#else
     int64_t now=(subtitle_external?subtitle_seek_us:origin)+av_gettime_relative()-clock_start-(int64_t)subtitle_delay*AV_TIME_BASE;
+#endif
     /* Select by cue start time, not array slot. FFmpeg can deliver overlapping
      * cues in a different order, and a short WebVTT duration must not blank
      * the screen before the next line when the dialogue is continuous. */
@@ -77,6 +81,10 @@ static void subtitle_draw(void){
     uint32_t *pixels=NULL;int pitch=0;SLVideo_GetOverlayPixels(subtitle_overlay,&pixels,&pitch);
     if(!pixels||pitch<960*4)return;
     subtitle_visible=selected;
+#ifdef SUBTITLE_TIME_US
+    fprintf(stderr,"Subtitle presented: start=%.3f end=%.3f clock=%.3f\n",
+        subtitle_cues[selected].start/1000000.0,subtitle_cues[selected].end/1000000.0,now/1000000.0);
+#endif
     for(int y=0;y<144;y++)for(int x=0;x<960;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xa0000000;
     const char *input=subtitle_cues[selected].text;int cols=900/(6*subtitle_size);
     for(int row=0;row<3&&*input;row++){

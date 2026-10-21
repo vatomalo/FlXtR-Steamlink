@@ -766,6 +766,7 @@ static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink
     if(pages>1){char info[40];snprintf(info,sizeof(info),"MORE %d/%d",page+1,pages);
         text(x,y+lines*21+2,info,1,dim,26);}
 }
+#include "preview_inset.h"
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
@@ -773,6 +774,7 @@ static void clear_posters(void) {
 /* SDL_HideWindow leaves the last graphics frame over the hardware video plane
  * on Steam Link. Release the graphics backend before handing over to SLVideo. */
 static void close_ui(void) {
+    preview_stop();
     clear_posters();
     SDL_DestroyTexture(background);background=NULL;
     SDL_DestroyRenderer(renderer);renderer=NULL;
@@ -1617,8 +1619,7 @@ static void draw(Uint32 tick) {
          * This is intentionally static until a verified embedded decoder exists. */
         rect(688,121,238,119,dim,0);
         rect(690,123,234,115,(SDL_Color){9,13,17,255},1);
-        text(749,161,"TRAILER",2,green,18);
-        text(724,191,"PREVIEW UNAVAILABLE",1,dim,27);
+        preview_draw();
         wrap_detail(690,248,t->title,3,green);
         /* PSP-style detail pane: consume only local metadata, never wait for web. */
         char detail[1024]="",detail_path[128];
@@ -2759,6 +2760,7 @@ int main(int argc,char **argv) {
             else if(stopping_player&&SDL_GetTicks()-stop_time>3000)kill(player_pid,SIGKILL);
             SDL_Delay(30);continue;
         }
+        if(preview_tick())dirty=1;
         Uint32 now=SDL_GetTicks();
         if(dirty||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);

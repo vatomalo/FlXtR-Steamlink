@@ -14,7 +14,7 @@
 static volatile sig_atomic_t quit;
 static void stop_preview(int signum){(void)signum;quit=1;}
 static int write_preview(AVFrame *f){
-    if(f->width<1||f->height<1||f->width>640||f->height>360)return -1;
+    if(f->width<1||f->height<1||f->width>1280||f->height>720)return -1;
     if(f->format!=AV_PIX_FMT_YUV420P&&f->format!=AV_PIX_FMT_YUVJ420P&&f->format!=AV_PIX_FMT_NV12)return -1;
     SDL_Surface *surface=SDL_CreateRGBSurfaceWithFormat(0,f->width,f->height,32,SDL_PIXELFORMAT_ARGB8888);
     if(!surface)return -1;
@@ -60,7 +60,7 @@ int main(int argc,char **argv){
     track=av_find_best_stream(format,AVMEDIA_TYPE_VIDEO,-1,-1,NULL,0);
     if(track<0)goto done;
     AVCodecParameters *params=format->streams[track]->codecpar;
-    if(params->codec_id!=AV_CODEC_ID_H264||params->width>640||params->height>360)goto done;
+    if(params->codec_id!=AV_CODEC_ID_H264||params->width>1280||params->height>720)goto done;
     const AVCodec *codec=avcodec_find_decoder(params->codec_id);
     if(!codec)goto done;
     decoder=avcodec_alloc_context3(codec);

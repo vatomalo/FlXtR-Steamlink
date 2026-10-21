@@ -76,6 +76,26 @@ typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],su
 /* Every ROM can select any locally installed Libretro core. */
 #define ROM_CORE_LIMIT 128
 static int rom_options_menu,rom_options_row;
+static int scummvm_menu,scummvm_row;
+static int scummvm_size,scummvm_stretch=3,scummvm_filter;
+static const char *const scummvm_sizes[]={"AUTO / DISPLAY","640 X 480","800 X 600","1280 X 720","1920 X 1080"};
+static const char *const scummvm_stretches[]={"CENTER","PIXEL PERFECT","EVEN PIXELS","FIT","STRETCH","FIT ASPECT"};
+static void scummvm_settings_load(void){
+    FILE *f=fopen("scummvm-settings.cfg","r");if(!f)return;
+    char line[96];int n;
+    while(fgets(line,sizeof(line),f)){
+        if(sscanf(line,"size=%d",&n)==1&&n>=0&&n<5)scummvm_size=n;
+        if(sscanf(line,"stretch=%d",&n)==1&&n>=0&&n<6)scummvm_stretch=n;
+        if(sscanf(line,"filter=%d",&n)==1&&n>=0&&n<=1)scummvm_filter=n;
+    }
+    fclose(f);
+}
+static int scummvm_settings_save(void){
+    FILE *f=fopen("scummvm-settings.cfg.next","w");if(!f)return 0;
+    fprintf(f,"size=%d\nstretch=%d\nfilter=%d\n",scummvm_size,scummvm_stretch,scummvm_filter);
+    if(fclose(f))return 0;
+    return rename("scummvm-settings.cfg.next","scummvm-settings.cfg")==0;
+}
 static Title rom_options_title;
 static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count,rom_core_first;
 static int platform_core_menu,platform_core_selecting,platform_core_index,platform_core_choice,platform_core_first;
@@ -1257,6 +1277,21 @@ static void draw(Uint32 tick) {
         text(200,307,"A CONFIRM REMOVE / B CANCEL",2,green,55);
         SDL_RenderPresent(renderer);return;
     }
+    if(scummvm_menu){
+        rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
+        text(200,100,"SCUMMVM SETTINGS",2,green,60);
+        const char *labels[]={"WINDOW RESOLUTION","GAME SCALING","PIXEL FILTERING","START SCUMMVM"};
+        const char *values[]={scummvm_sizes[scummvm_size],scummvm_stretches[scummvm_stretch],scummvm_filter?"ON":"OFF","LAUNCH"};
+        for(int i=0;i<4;i++){
+            int y=165+i*52;
+            if(scummvm_row==i)rect(194,y-9,718,36,green,0);
+            text(210,y,labels[i],1,white,35);
+            text(525,y,values[i],1,scummvm_row==i?green:white,42);
+        }
+        text(200,407,"LEFT / RIGHT CHANGE    A APPLY / LAUNCH    B BACK",1,green,100);
+        text(200,447,"RESOLUTION REQUIRES SCUMMVM OPENGL SUPPORT",1,dim,100);
+        SDL_RenderPresent(renderer);return;
+    }
     if(platform_core_menu){
         rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
         text(200,95,platform_core_selecting?"DEFAULT CORE":"DEFAULT CORES BY SYSTEM",2,green,40);
@@ -2177,6 +2212,24 @@ static void action(SDL_Keycode key) {
             if(party_entry==2||phone_rom_uploaded){phone_rom_uploaded=0;memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
         }
         else if(key==SDLK_RETURN)accounts_open(party_entry);
+        return;
+    }
+    if(scummvm_menu){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){scummvm_menu=0;return;}
+        if(key==SDLK_UP&&scummvm_row>0)scummvm_row--;
+        if(key==SDLK_DOWN&&scummvm_row<3)scummvm_row++;
+        if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
+            int d=key==SDLK_LEFT?-1:1;
+            if(scummvm_row==0)scummvm_size=(scummvm_size+d+5)%5;
+            if(scummvm_row==1)scummvm_stretch=(scummvm_stretch+d+6)%6;
+            if(scummvm_row==2)scummvm_filter=!scummvm_filter;
+            if(!scummvm_settings_save())snprintf(status,sizeof(status),"SCUMMVM SETTINGS SAVE FAILED");
+            if(scummvm_row==3&&key==SDLK_RETURN){
+                scummvm_menu=0;
+                Title scumm={"", "", "", "", "", "", "", "scummvm-launch",0};
+                open_title(&scumm);
+            }
+        }
         return;
     }
     if(platform_core_menu){

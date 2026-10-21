@@ -563,6 +563,10 @@ int main(int argc,char **argv) {
     SLVideo_GetDisplayResolution(context,&screen_w,&screen_h);
     /* The hardware viewport does not exist until the first decoded frame. */
     AVRational fps=av_guess_frame_rate(fmt,vs,NULL);
+    fprintf(stderr,"Video cadence: target=%d/%d avg=%d/%d nominal=%d/%d timebase=%d/%d SAR=%d/%d display=%dx%d profile=%d level=%d\n",
+        fps.num,fps.den,vs->avg_frame_rate.num,vs->avg_frame_rate.den,
+        vs->r_frame_rate.num,vs->r_frame_rate.den,vs->time_base.num,vs->time_base.den,
+        sar_n,sar_d,screen_w,screen_h,vp->profile,vp->level);
     if(fps.num>0&&fps.den>0)SLVideo_SetStreamTargetFramerate(video,fps.num,fps.den);
     rc=av_bsf_alloc(av_bsf_get_by_name("h264_mp4toannexb"),&bsf);if(rc<0)goto done;
     rc=avcodec_parameters_copy(bsf->par_in,vp);if(rc<0)goto done;

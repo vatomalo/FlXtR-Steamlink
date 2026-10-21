@@ -28,5 +28,9 @@ if [ -d "$app" ]; then
 fi
 move_config "${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/scummvm/scummvm.ini"
 move_config "${HOME:-/root}/.scummvmrc"
+# Earlier ROM-menu launches inherited FlXtR's home instead of ScummVM's.
+move_config "$app/../greenlink/.home/.config/scummvm/scummvm.ini"
+move_config "$app/../greenlink/.home/.scummvmrc"
+move_config "$app/../greenlink/.config/scummvm/scummvm.ini"
 if [ -d "$backup" ]; then echo "Restart ScummVM to use defaults. Games and saves were kept."
 else echo "No ScummVM config found in app/home locations; check the launcher for a custom --config path."; fi

@@ -58,3 +58,7 @@ folder. This moves scummvm.ini and .scummvmrc from the ScummVM app tree and
 current home config locations into a timestamped backup next to that app.
 Games and saves are not removed. ScummVM starts with defaults and may need its
 game folders added again. The script reports every config moved.
+
+The Steam Link ROM-menu launcher now uses ScummVMs own .home and app directory.
+The reset also covers legacy configs under greenlink/.home and greenlink/.config.
+Run the reset only while ScummVM is closed; it is not run by package extraction.

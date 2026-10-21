@@ -39,14 +39,11 @@ static int hardware_viewport(VideoRect *rect,int display_w,int display_h,int dec
     if(!scaling_saved){
         scaling_original_source=before_source;scaling_original_output=before_output;scaling_saved=1;
     }
-    /* Preserve the firmware's input crop. Overwriting it with display
+    /* Preserve the firmware's input crop. Replacing it with decoded picture
      * dimensions makes the output appear tiny or misaligned on some devices.
      * Only change the destination rectangle when selecting a view mode. */
-    /* EXPERIMENT: test whether the reported 1920x1080 source window
-     * samples outside the actual decoded video (e.g. 640x480). */
     if(decoded_w<1||decoded_h<1||decoded_w>32767||decoded_h>32767)return -1;
-    VideoRect source={scaling_original_source.x,scaling_original_source.y,
-                      (int16_t)decoded_w,(int16_t)decoded_h};
+    VideoRect source=scaling_original_source;
     VideoRect native=scaling_original_output;
     if(native.w<=0||native.h<=0)return -1;
     /* SLVideo's output plane may use an internal coordinate space (e.g. 1280x720

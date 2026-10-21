@@ -368,6 +368,17 @@ static int games_run(void){
         };
         for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
             if(access(paths[i],X_OK)==0){
+#ifndef FLXTR_DESKTOP
+                /* Match launching the Steam Link app itself: ScummVM must not
+                 * inherit FlXtR's private home or relative asset directory. */
+                if(!strncmp(paths[i],"/home/apps/scummvm/",19)){
+                    if(mkdir("/home/apps/scummvm/.home",0700)&&errno!=EEXIST)return 2;
+                    if(mkdir("/home/apps/scummvm/.home/.config",0700)&&errno!=EEXIST)return 2;
+                    if(chdir("/home/apps/scummvm")||
+                       setenv("HOME","/home/apps/scummvm/.home",1)||
+                       setenv("XDG_CONFIG_HOME","/home/apps/scummvm/.home/.config",1))return 2;
+                }
+#endif
                 execl(paths[i],paths[i],(char*)NULL);
                 fprintf(stderr,"ScummVM launch failed: %s (%s)\n",paths[i],strerror(errno));
             }

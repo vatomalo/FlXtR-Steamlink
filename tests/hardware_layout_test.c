@@ -47,7 +47,7 @@ int main(void){
     input=(VideoRect){0,0,1920,1080};output=(VideoRect){0,0,1920,1080};
     assert(!video_rect(VIEW_FIT,640,480,1,1,1920,1080,&r));
     assert(!hardware_viewport(&r,1920,1080,640,480));
-    assert(input.w==640&&input.h==480);
+    assert(input.w==1920&&input.h==1080); /* firmware coordinates, not decoded pixels */
     assert(output.x==240&&output.w==1440&&output.h==1080);
     restore_viewport();
     puts("Hardware scaling tests passed");

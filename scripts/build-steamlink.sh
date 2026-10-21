@@ -58,12 +58,15 @@ if [ -d "$app/cores" ]; then
     done
 fi
 if [ -f build/greenlink-audio-arm ]; then cp build/greenlink-audio-arm "$app/greenlink-audio"; fi
+# Ship fresh Python source with every package. The optional runtime archive
+# is large and may be cached separately, but scripts must never go stale.
+mkdir -p "$app/tools" "$app/scripts"
+cp tools/music.py tools/samba_install.py "$app/tools/"
+cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
+chmod +x "$app/scripts/music-runtime.sh" "$app/scripts/music-qjs.sh"
 if [ -f build/music-runtime.tgz ]; then
-    mkdir -p "$app/music-runtime" "$app/tools" "$app/scripts"
+    mkdir -p "$app/music-runtime"
     tar -xzf build/music-runtime.tgz -C "$app/music-runtime"
-    cp tools/music.py tools/samba_install.py "$app/tools/"
-    cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
-    chmod +x "$app/scripts/music-runtime.sh" "$app/scripts/music-qjs.sh"
     printf '1\n' > "$app/assets/music-required-v1"
 fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi

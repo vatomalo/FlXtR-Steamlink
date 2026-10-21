@@ -2261,7 +2261,7 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){youtube_stop();tv_active=0;music_video_pause(1);snprintf(status,sizeof(status),"YOUTUBE LOOKUP CANCELLED");}
         return;
     }
-    if(music_on){music_action(key);return;}
+    if(music_on){if(key==SDLK_t){music_on=0;Browse next={11,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);return;}music_action(key);return;}
     if(key==SDLK_m&&!player_pid&&!catalog_pid&&!update_pid&&!settings_on&&!rom_options_menu&&!rom_core_menu&&!about&&!accounts_on&&!search_on){
         if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access(
 #ifdef _WIN32
@@ -2653,7 +2653,7 @@ static void shutdown_children(pid_t *children,size_t count){
 #define main flxtr_shell_main
 #endif
 int main(int argc,char **argv) {
-    const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
+    const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=11;Uint32 start,last_draw=0;int dirty=1;
     load_settings();scummvm_settings_load();search_dict_load();
     for(int i=1;i<argc;i++) {
 #ifdef _WIN32
@@ -2737,7 +2737,7 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(samba_password_on?SDLK_RETURN:player_pid?SDLK_i:SDLK_F3);break;
-                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;
+                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_t);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(player_pid?SDLK_RIGHT:SDLK_m);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:action(SDLK_UP);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:action(SDLK_DOWN);break;

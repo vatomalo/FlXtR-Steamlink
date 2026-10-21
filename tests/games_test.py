@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert launch()[-2]==str(fast)
     assert 'video_fullscreen_x = "640"' in (root/'game-runtime.cfg').read_text()
     assert 'video_fullscreen_y = "480"' in (root/'game-runtime.cfg').read_text()
-    for height,width in [(720,1280),(1080,1920),(0,0),(480,640)]:
+    for height,width in [(240,320),(720,1280),(1080,1920),(0,0),(480,640)]:
         (root/'settings.cfg').write_text(f'game_output={height}\n')
         launch()
         runtime_config=(root/'game-runtime.cfg').read_text()

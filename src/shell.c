@@ -2191,9 +2191,9 @@ static void action(SDL_Keycode key) {
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             switch(settings_row){
-                case 19:{const int outputs[]={0,480,720,1080};int index=0;
-                    for(int i=0;i<4;i++)if(game_output==outputs[i])index=i;
-                    game_output=outputs[(index+step+4)%4];break;}
+                case 19:{const int outputs[]={0,240,480,720,1080};int index=0;
+                    for(int i=0;i<5;i++)if(game_output==outputs[i])index=i;
+                    game_output=outputs[(index+step+5)%5];break;}
                 case 18:if(!set_auto_updates(!auto_updates_enabled()))snprintf(status,sizeof(status),"COULD NOT CHANGE AUTO UPDATE SETTING");break;
                 case 17:series_autoplay=!series_autoplay;break;
                 case 15:accounts_open(0);break;

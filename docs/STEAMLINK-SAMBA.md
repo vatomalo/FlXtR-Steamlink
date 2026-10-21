@@ -45,8 +45,16 @@ and network testing on the Steam Link remains necessary.
 
 ## Games
 
-Settings > GAME OUTPUT selects Native, 480p (640x480), 720p or 1080p.
+Settings > GAME OUTPUT selects Native, 240p (320x240), 480p (640x480), 720p or 1080p.
 Steam Link defaults to 480p; desktop defaults to Native. Only the generated
 per-launch RetroArch output config changes. Core native rendering and global
 RetroArch settings remain unchanged. Display mode support depends on driver
 and display.
+
+## ScummVM reset
+
+Close ScummVM, then run sh reset-scummvm-config.sh in the installed greenlink
+folder. This moves scummvm.ini and .scummvmrc from the ScummVM app tree and
+current home config locations into a timestamped backup next to that app.
+Games and saves are not removed. ScummVM starts with defaults and may need its
+game folders added again. The script reports every config moved.

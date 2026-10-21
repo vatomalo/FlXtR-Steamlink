@@ -22,7 +22,7 @@ cp build/cacert.pem "$app/certs/cacert.pem"
 cp packaging/CERTIFICATES.txt "$app/certs/NOTICE.txt"
 cp build/greenlink-arm "$app/greenlink"
 cp build/greenlink-catalog-arm "$app/greenlink-catalog"
-cp packaging/greenlink.sh packaging/update.sh packaging/controller-idle.sh packaging/samba-run.sh packaging/samba-server.sh packaging/toc.txt "$app/"
+cp packaging/greenlink.sh packaging/update.sh packaging/controller-idle.sh packaging/samba-run.sh packaging/samba-server.sh packaging/reset-scummvm-config.sh packaging/toc.txt "$app/"
 cp catalog.tsv "$app/catalog.tsv"
 # RetroArch 1.7.x predates the firmware's SDL2-to-SDL3 compatibility layer.
 # Pin Valve's native SDL2 build and load it only in the RetroArch child.

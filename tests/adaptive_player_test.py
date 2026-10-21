@@ -22,7 +22,7 @@ server=http.server.ThreadingHTTPServer(("127.0.0.1",0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 with tempfile.TemporaryDirectory(prefix="FlXtR adaptive player ") as directory:
     home=Path(directory)
-    env=dict(os.environ,SDL_AUDIODRIVER="dummy",FLXTR_TEST_VIDEO_STALL="1")
+    env=dict(os.environ,SDL_AUDIODRIVER="dummy",FLXTR_TEST_VIDEO_STALL="1",FLXTR_BOOKMARK_KEY="1234abcd")
     result=subprocess.run([str(binary),f"http://127.0.0.1:{server.server_port}/{fixture.name}",
                            "--height","720","--adaptive","--buffer-mb","32"],
                           cwd=home,env=env,capture_output=True,text=True,timeout=40)
@@ -38,6 +38,8 @@ with tempfile.TemporaryDirectory(prefix="FlXtR adaptive player ") as directory:
     assert "Auto decision: 720p -> 480p" in history and "decoder=3" in history,history
     print(result.stderr[-1400:])
     # Fatal rejection can bypass the startup grace period and request a lower tier.
+    assert (home/"playback-started").read_text().split()[0]=="1234abcd"
+    (home/"playback-started").unlink()
     (home/"adaptive-ready").unlink()
     rejected=subprocess.run([str(binary),f"http://127.0.0.1:{server.server_port}/{fixture.name}",
                               "--height","720","--adaptive","--buffer-mb","32"],
@@ -46,6 +48,7 @@ with tempfile.TemporaryDirectory(prefix="FlXtR adaptive player ") as directory:
     assert rejected.returncode==46,rejected.stderr
     request=(home/"adaptive-request").read_text().split()
     assert request[0]=="480" and float(request[1])<2 and request[4]=="2",request
+    assert not (home/"playback-started").exists(),"Rejected first frame counted as played"
     assert not (home/"adaptive-ready").exists(),"Rejected first frame must not mark a quality switch successful"
 server.shutdown()
 print("PASS: measured decoder/audio stalls produce a bounded 720-to-480 request with a resume timestamp through the real player")

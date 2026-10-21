@@ -26,7 +26,7 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 url=f"http://127.0.0.1:{server.server_port}/{fixture.name}"
 with tempfile.TemporaryDirectory(prefix="FlXtR RAM player ") as directory:
     home=Path(directory)
-    env=dict(os.environ,SDL_AUDIODRIVER="dummy")
+    env=dict(os.environ,SDL_AUDIODRIVER="dummy",FLXTR_BOOKMARK_KEY="1234abcd")
     # A source with only 720p must still be usable when 480p is preferred.
     probe=subprocess.run([str(binary),"--probe",url,"--height","480"],cwd=home,env=env,
                          capture_output=True,text=True,timeout=20)
@@ -48,6 +48,7 @@ with tempfile.TemporaryDirectory(prefix="FlXtR RAM player ") as directory:
                 time.sleep(.05)
             time.sleep(.2)
             assert "TEST SLVIDEO CONTEXT OPEN" not in (home/"preload.log").read_text()
+            assert not (home/"playback-started").exists(),"Preloader counted as played"
             count=Handler.requests
             os.write(go,b"G")
             began=time.monotonic()
@@ -55,6 +56,10 @@ with tempfile.TemporaryDirectory(prefix="FlXtR RAM player ") as directory:
                 assert time.monotonic()-began<10
                 time.sleep(.05)
             assert Handler.requests==count,"Releasing preload gate reopened the stream"
+            while not (home/"playback-started").exists():
+                assert time.monotonic()-began<10
+                time.sleep(.05)
+            assert (home/"playback-started").read_text().split()[0]=="1234abcd"
             os.write(control,b"S");assert child.wait(timeout=10)==40
         finally:
             os.close(go);os.close(control)

@@ -83,6 +83,7 @@ static void apply_view(int notify) {
     }
 }
 #include "playback_menu.h"
+#include "playback_started.h"
 static void playback_controls(void) {
     int64_t controls_began=av_gettime_relative();
     menu_poll();
@@ -605,6 +606,7 @@ int main(int argc,char **argv) {
                         (submitted_at-handoff_start)/1000.0,frames);
                 frames++;
                 if(frames==1){
+                    playback_mark_started(playback_position());
                     apply_view(0);
                     if(adaptive_on){adaptive_decoding_since=av_gettime_relative();adaptive_begin(vp->height,height_limit,available);}
                 }

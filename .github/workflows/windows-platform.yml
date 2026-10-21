@@ -22,6 +22,10 @@ jobs:
           python3 tests/api_setup_test.py
           make test-desktop-cores
           python3 tests/music_test.py
+          cc -std=c99 -Wall -Wextra -Werror tests/tv_channel_test.c -o build/tv-channel-test $(pkg-config --cflags --libs json-c)
+          ./build/tv-channel-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/tv_playback_history_test.c -o build/tv-playback-history-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/tv-playback-history-test
           cc -std=c99 -Wall -Wextra -Werror -DDISK_RAM tests/disk_buffer_test.c -o build/ram-buffer-test $(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
           ./build/ram-buffer-test
           cc -std=c99 -Wall -Wextra -Werror tests/video_quality_test.c -o build/video-quality-test

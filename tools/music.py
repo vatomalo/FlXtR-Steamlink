@@ -158,6 +158,27 @@ def resolve(kind, value):
                 history = []
             atomic(CACHE / 'history.txt', json.dumps((history + [ident])[-50:]))
 
+def unplayed_tv_videos(choices):
+    """Check only the current candidates while streaming the permanent ledger."""
+    remaining = {ident for _, ident in choices}
+    try:
+        with (CACHE.parent / 'tv-play-history.tsv').open(encoding='utf-8', errors='replace') as history:
+            while True:
+                line = history.readline(512)
+                if not line:
+                    break
+                if not line.endswith('\n'):
+                    while line and not line.endswith('\n'):
+                        line = history.readline(512)
+                    continue
+                fields = line.rstrip('\n').split('\t')
+                if (len(fields) == 9 and fields[1:3] == ['started', 'youtube']
+                        and fields[7].startswith('youtube:')):
+                    remaining.discard(fields[7][8:])
+    except OSError:
+        pass
+    return [choice for choice in choices if choice[1] in remaining]
+
 def video_source(value, television=False, muxed=False, height=720):
     if height not in (480,720,1080):
         raise ValueError("Invalid video quality")
@@ -179,11 +200,14 @@ def video_source(value, television=False, muxed=False, height=720):
                        if e and re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', ''))
                        and e['id'] not in history and not e.get('is_live')
                        and (e.get('duration') or 0) <= 1200]
+        choices = unplayed_tv_videos(choices)
         if not choices and history:
             with youtube_client(True) as ydl:
                 data = ydl.extract_info('https://www.youtube.com/watch?v=' + history[-1] + '&list=RD' + history[-1], download=False)
                 choices = [('video', e['id']) for e in islice(data.get('entries', []), 20)
-                           if e and re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', '')) and e['id'] not in history]
+                           if e and re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', '')) and e['id'] not in history and not e.get('is_live')
+                           and (e.get('duration') or 0) <= 1200]
+            choices = unplayed_tv_videos(choices)
         if not choices:
             raise ValueError('No new music videos available; change mtv-query.txt')
         address = 'https://www.youtube.com/watch?v=' + choices[0][1]

@@ -62,3 +62,25 @@ YouTube resolution attempts fall back once to the prior tier. Sources must
 offer a compatible H.264 rendition; this feature does not transcode fixed
 files. Auto health and decisions are recorded in adaptive-quality.log (rotated at 1 MiB),
 player.log and greenlink.log. The persistent health log survives player restarts.
+
+## Permanent TV playback history
+
+TV mode appends every confirmed playback start and its outcome (completed,
+stopped, skipped, failed after starting, or interrupted on app shutdown) to
+tv-play-history.tsv in the application's data directory. Records contain the
+timestamp, event, media kind, show ID, season, episode, position, stable content
+key and title, separated by tabs. This file is never rotated or limited to a
+recent number of shows. Back it up with settings.cfg when moving installations.
+
+Fresh episode selections advance past the furthest episode actually started
+for that show, including episodes stopped early. A still-live unfinished airing
+can be rejoined at its current channel position; stopped or completed airings
+cannot reset the show to episode 1. Season rollover is retained. The older
+completion progress is also respected, but past starts that were never saved
+by older versions cannot be reconstructed.
+
+MTV selection excludes clips in the permanent history as well as recent
+prefetch reservations. Failed lookups and cancelled preloaders do not create
+played records. Manual YouTube playback outside TV mode can still replay a clip.
+Playback restarts for seeking or changing quality count as one TV session.
+History writing is shared by Steam Link and desktop source builds.

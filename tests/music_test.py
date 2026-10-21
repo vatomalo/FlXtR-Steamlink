@@ -134,6 +134,21 @@ class MusicTest(unittest.TestCase):
                     music.run(['video','https://youtu.be/abcdefghijk'])
                 self.assertFalse((music.CACHE/'video.txt').exists())
 
+    def test_permanent_tv_history_outlives_recent_fifty(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)/'music-cache'):
+            ledger = Path(root)/'tv-play-history.tsv'
+            old = 'abcdefghijk'
+            fresh = 'lmnopqrstuv'
+            rows = [f'1\tstarted\tyoutube\t0\t0\t0\t0\tyoutube:{old}\tOld clip\n']
+            rows += [f'1\tstarted\tyoutube\t0\t0\t0\t0\tyoutube:{i:011d}\tOther clip\n' for i in range(100)]
+            rows += [f'1\tfailed\tyoutube\t0\t0\t0\t0\tyoutube:{fresh}\tNever started\n']
+            ledger.write_text(''.join(rows))
+            self.assertEqual(music.unplayed_tv_videos([('video',old),('video',fresh)]), [('video',fresh)])
+            # Malformed and torn records cannot hide the following valid row.
+            with ledger.open('a') as out:
+                out.write('x'*1000+'\n'+'1\tstarted\tyoutube\t0\t0\t0\t0\tyoutube:'+fresh+'\tNew\n')
+            self.assertEqual(music.unplayed_tv_videos([('video',fresh)]), [])
+
     def test_unavailable_playlist_has_clear_error(self):
         with self.assertRaisesRegex(ValueError, 'public playlist'):
             music.spotify_rows('<html>Sign in</html>')

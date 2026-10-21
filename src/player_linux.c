@@ -12,6 +12,7 @@
 #ifndef FLXTR_VERSION
 #define FLXTR_VERSION "development"
 #endif
+#include "playback_started.h"
 static mpv_handle *mpv;
 static volatile sig_atomic_t stop;
 static FlxtrPipeHandle fd=FLXTR_INVALID_PIPE;
@@ -204,10 +205,12 @@ mpv_set_option_string(mpv,"cache","yes");
     command("loadfile",argv[1],NULL);
     const char *external=getenv("FLXTR_SUBTITLE_ENGLISH");
     if(external&&*external)command("sub-add",external,"select");
+    int playback_marked=0;
     while(!stop){
         char keys[32];ptrdiff_t n;while(fd!=FLXTR_INVALID_PIPE&&(n=flxtr_pipe_read(fd,keys,sizeof(keys)))>0)for(ptrdiff_t i=0;i<n;i++)key(keys[i]);
         if(stop)break;
         mpv_event *e=mpv_wait_event(mpv,0.02);
+        if(e->event_id==MPV_EVENT_PLAYBACK_RESTART&&!playback_marked){playback_mark_started(position());playback_marked=1;}
         if(e->event_id==MPV_EVENT_CLIENT_MESSAGE){mpv_event_client_message *m=e->data;if(m->num_args==2&&!strcmp(m->args[0],"flxtr"))key(m->args[1][0]);}
         if(e->event_id==MPV_EVENT_END_FILE){
             mpv_event_end_file *end=e->data;

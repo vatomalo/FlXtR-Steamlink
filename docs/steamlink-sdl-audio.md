@@ -204,3 +204,52 @@ The existing broad `tests/games_test.py` stops at its pre-existing 480p-default
 expectation (the product now defaults to native resolution); it is not counted
 as a passing suite and is not changed in this work.
 
+## Visible gameplay follow-up (not accepted as stable)
+
+The earlier clean intro tests above used null video/input. They did not test
+ScummVM speech, gameplay synchronization, or sustained gameplay performance.
+PSX, MAME and PPSSPP follow-up is deferred at the user's request.
+
+Normal FlXtR launch selected Snes9x2002 for the unpatched `SecretofMana.smc`.
+The user reported very bad music despite good effects/video and suspected a
+crash; the process was still alive, so a crash was not established. Subsequent
+scratch runs used Snes9x2005 Plus, normal video and controller input, separate
+save/state paths, and the same ROM. The user still heard gameplay crackle,
+dropouts and music stutter with both installed and queued frontends.
+
+| Test | User observation | Measured limitation |
+| --- | --- | --- |
+| Installed Plus, queued 64 ms / 1024 frames | Maybe slightly better than installed frontend, still stutters | 43,477 submitted output frames/s over 183 s against 48,000 required; queues empty repeatedly |
+| Installed Plus, queued 64 ms / 512 frames | Slightly better | 38,520 frames/s over 94 s; queues still empty repeatedly |
+| Newly compiled Plus, same audio settings | Slightly worse | Still fails sustained delivery; not a demonstrated core optimization |
+| New Plus, requested 640x480 GL output | Much better overall, still dropouts; small corner picture | Native framebuffer remained 1280x720; 45,985 frames/s over 394 s |
+| Process-local native framebuffer scaling, 640x480 and 960x540 | Still small corner picture | Driver logs report scaling, but physical result fails; no scaling fix claimed |
+| SDL2 video with automatic fullscreen dimensions | Wrong/no picture | Invalid visible test; explicit native window dimensions need retesting |
+
+These windows include different gameplay activity and occasional pauses/state
+loads. Submission rates are diagnostic observations, not controlled benchmarks
+or exact emulation speed measurements. A 64 ms capacity also does not mean
+64 ms of PCM was present: frequent empty queues show insufficient delivery.
+Increasing capacity alone cannot repair sustained throughput below demand.
+
+Detailed tracing (`FLXTR_AUDIO_TRACE=1`) now records submission gaps, write
+duration, total submitted frames, and queue extrema once per second. Summarize
+saved logs with `python3 tools/steamlink_audio_report.py LOG...`. This does not
+measure DAC delay, TV delay or physical input-to-sound synchronization.
+
+`scripts/build-cores.sh snes-plus` now builds the pinned Plus variant with its
+Blargg APU, ARMv7 Cortex-A9 hard-float/NEON compiler settings and a source
+archive/build manifest. The O3 build was actually tested above and was not
+faster to the user. An O2 variant was built but has not been device-tested.
+No newly compiled PSX, MAME or PPSSPP core is claimed.
+
+The diagnostic core also supports `flxtr_audio_test_mode = "av-sync"`: a
+periodic white flash/click and button-triggered flash/click are emitted on the
+same core frame. Host tests verify this pairing, including held-button behavior.
+Physical TV/controller synchronization and ScummVM dialogue remain pending.
+
+Scaling experiments only loaded a scratch adapter into the test process; no
+installed graphics library or working FlXtR player was replaced. The native
+driver accepted 640x480 and 960x540 but rejected 640x360. Its reported framebuffer,
+window, EGL surface and viewport sizes did not establish correct TV scaling.
+Do not enable these experiments or treat their logs as visual acceptance.

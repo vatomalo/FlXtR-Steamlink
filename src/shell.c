@@ -2226,8 +2226,9 @@ static void action(SDL_Keycode key) {
             if(!scummvm_settings_save())snprintf(status,sizeof(status),"SCUMMVM SETTINGS SAVE FAILED");
             if(scummvm_row==3&&key==SDLK_RETURN){
                 scummvm_menu=0;
-                Title scumm={"", "", "", "", "", "", "", "scummvm-launch",0};
-                open_title(&scumm);
+                FILE *request=fopen("game-request","w");
+                if(request){fputs("0 -1 -1\n",request);if(!fclose(request)){game_exit=1;running=0;}}
+                else snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");
             }
         }
         return;
@@ -2362,6 +2363,10 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){filters_on=0;browse.id=filter_original_genre;browse.season=filter_original_order;return;}
         if(key==SDLK_RETURN){filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);}
         return;
+    }
+    if(!settings_on&&!about&&!catalog_pid&&key==SDLK_y&&total&&
+       !strcmp(titles[visible[selection]].kind,"scummvm-launch")){
+        scummvm_settings_load();scummvm_row=0;scummvm_menu=1;return;
     }
     if(!settings_on&&!about&&(browse.mode==14||browse.mode==22||browse.mode==FAVORITES_MODE)&&key==SDLK_y&&total&&
        !strcmp(titles[visible[selection]].kind,"game")){
@@ -2567,7 +2572,7 @@ static void shutdown_children(pid_t *children,size_t count){
 #endif
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
-    load_settings();search_dict_load();
+    load_settings();scummvm_settings_load();search_dict_load();
     for(int i=1;i<argc;i++) {
 #ifdef _WIN32
         if(!strcmp(argv[i],"--ui-worker"))continue;

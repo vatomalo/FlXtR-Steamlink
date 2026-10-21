@@ -537,8 +537,9 @@ static int games_run(void){
         fputs("video_threaded = \"true\"\nvideo_hard_sync = \"false\"\n"
               "video_vsync = \"false\"\n",f);
     }else if(performance==2){
-        fputs("video_threaded = \"false\"\nvideo_hard_sync = \"false\"\n"
-              "video_vsync = \"true\"\n",f);
+        /* Hard GPU synchronization may reduce input latency at a CPU cost. */
+        fputs("video_threaded = \"false\"\nvideo_hard_sync = \"true\"\n"
+              "video_hard_sync_frames = \"0\"\nvideo_vsync = \"true\"\n",f);
     }else{
         fputs("video_threaded = \"false\"\nvideo_hard_sync = \"false\"\n"
               "video_vsync = \"true\"\n",f);

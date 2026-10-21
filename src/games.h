@@ -493,12 +493,16 @@ static int games_run(void){
     FILE *display_settings=fopen("settings.cfg","r");
     if(display_settings){char line[96];int height;
         while(fgets(line,sizeof(line),display_settings)){
-            if(sscanf(line,"game_output=%d",&height)==1&&game_output_valid(height))output=height;
+            /* Retain the experimental output path, but do not apply legacy
+             * non-native preferences from settings.cfg to ordinary launches. */
+            (void)height;
             if(sscanf(line,"game_view=%d",&height)==1&&game_view_valid(height))view=height;
             if(sscanf(line,"game_performance=%d",&height)==1&&height>=0&&height<3)performance=height;
         }
         fclose(display_settings);
     }
+    /* Non-native modes remain implemented for targeted experiments, but
+     * normal launches always use native output until hardware modes are validated. */
     if(output){
         fprintf(f,"video_windowed_fullscreen = \"false\"\nvideo_fullscreen_x = \"%d\"\nvideo_fullscreen_y = \"%d\"\n",
             game_output_width(output),output);

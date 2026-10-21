@@ -39,7 +39,9 @@ int main(void){
     while(youtube_pid){youtube_poll();assert(SDL_GetTicks()-began<5000);SDL_Delay(2);}
     assert(player_pid>0&&adaptive_height==720&&!adaptive_pending&&(adaptive_blocked&4));reap();
     file("playback-request","7 0 0 1 2 0\n");finish_player(40<<8);
-    settings_on=1;settings_row=18;draw(0); /* all visible settings rows must have labels */
+    settings_on=1;
+    for(int tab=0;tab<SETTINGS_TABS;tab++){settings_tab=tab;settings_row=0;draw(0);} /* every tab must have labels */
+    settings_tab=SETTINGS_MOVIES;
     quality_setting=2;settings_on=1;settings_row=0;action(SDLK_RIGHT);assert(quality_setting==3);
     action(SDLK_RIGHT);assert(quality_setting==0); /* manual selection still available */
     close_ui();SDL_Quit();

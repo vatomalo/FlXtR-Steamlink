@@ -37,7 +37,7 @@ int main(void) {
     assert(open_ui()==0);selection=1;draw(0);
     assert(cached_page==0);
     assert(quality_setting==1&&qualities[quality_setting]==720);
-    assert(coverflow);action(SDLK_F5);assert(settings_on);settings_row=3;action(SDLK_RIGHT);assert(!coverflow);draw(0);
+    assert(coverflow);action(SDLK_F5);assert(settings_on);settings_tab=SETTINGS_GENERAL;settings_row=0;action(SDLK_RIGHT);assert(!coverflow);draw(0);
     action(SDLK_RIGHT);assert(coverflow);action(SDLK_ESCAPE);assert(!settings_on);
     quality_setting=2;load_settings();assert(quality_setting==1);unlink("settings.cfg");
     action(SDLK_LEFT);draw(33);

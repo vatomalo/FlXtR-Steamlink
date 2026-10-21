@@ -52,7 +52,7 @@ int main(int argc,char **argv){
     const char *cert=access("certs/cacert.pem",R_OK)?"": "certs/cacert.pem";
     if(*cert)av_dict_set(&opts,"ca_file",cert,0);
     const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");
-    if(agent&&strlen(agent)<500&&!strpbrk(agent,"\\r\\n"))av_dict_set(&opts,"user_agent",agent,0);
+    if(agent&&strlen(agent)<500&&!strpbrk(agent,"\r\n"))av_dict_set(&opts,"user_agent",agent,0);
     int result=1,track=-1;
     AVCodecContext *decoder=NULL;AVPacket *pkt=NULL;AVFrame *frame=NULL;
     if(avformat_open_input(&format,argv[1],NULL,&opts)<0)goto done;

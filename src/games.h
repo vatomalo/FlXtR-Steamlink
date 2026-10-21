@@ -11,6 +11,7 @@
 #include <errno.h>
 #define GAME_LIMIT 2048
 #include "desktop_retroarch.h"
+#include "game_output.h"
 static int game_absolute(const char *p){return p&&(p[0]=='/'
 #ifdef _WIN32
  ||(isalpha((unsigned char)p[0])&&p[1]==':'&&(p[2]=='/'||p[2]=='\\'))
@@ -421,6 +422,18 @@ static int games_run(void){
     size_t n=strlen(extra);if(n+22>=sizeof(extra))return 2;strcpy(extra+n,"/game-runtime.cfg");
     f=fopen(extra,"w");if(!f)return 2;
     fputs("config_save_on_exit = \"false\"\nvideo_fullscreen = \"true\"\nmenu_enable_widgets = \"false\"\nmenu_show_start_screen = \"false\"\nkiosk_mode_enable = \"true\"\nmenu_pause_libretro = \"false\"\ninput_menu_toggle = \"nul\"\ninput_menu_toggle_btn = \"nul\"\ninput_menu_toggle_gamepad_combo = \"0\"\ninput_exit_emulator = \"escape\"\n",f);
+    int output=GAME_OUTPUT_DEFAULT;
+    FILE *display_settings=fopen("settings.cfg","r");
+    if(display_settings){char line[96];int height;
+        while(fgets(line,sizeof(line),display_settings))
+            if(sscanf(line,"game_output=%d",&height)==1&&game_output_valid(height))output=height;
+        fclose(display_settings);
+    }
+    if(output){
+        fprintf(f,"video_windowed_fullscreen = \"false\"\nvideo_fullscreen_x = \"%d\"\nvideo_fullscreen_y = \"%d\"\n",
+            game_output_width(output),output);
+        fprintf(stderr,"Game output: request %dx%d; core-native rendering remains unchanged\n",game_output_width(output),output);
+    }
     /* Keep Neo Geo and other working systems on their existing configuration. */
     const char *core_base=strrchr(core,'/');core_base=core_base?core_base+1:core;
     if(!strncmp(core_base,"snes9x",6)||!strncmp(core_base,"mame2003",8)){

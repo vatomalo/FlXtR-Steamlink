@@ -35,6 +35,12 @@ with tempfile.TemporaryDirectory(prefix='desktop games ø ') as directory:
     assert len(games)==1 and Path(games[0]['core'])==core
     (home/'game-request').write_text('1 -1 -1\n')
     run('--run-game')
+    assert 'video_fullscreen_y' not in (home/'game-runtime.cfg').read_text() # desktop Native default
+    (home/'settings.cfg').write_text('game_output=480\n')
+    (home/'game-request').write_text('1 -1 -1\n')
+    run('--run-game')
+    assert 'video_fullscreen_x = "640"' in (home/'game-runtime.cfg').read_text()
+    assert 'video_fullscreen_y = "480"' in (home/'game-runtime.cfg').read_text()
     recorded=(home/'retroarch-args.txt').read_text(encoding='utf-8').splitlines()
     assert '-f' in recorded and '--appendconfig' in recorded
     assert recorded[-2:]==[str(core).replace('\\','/'),str(rom).replace('\\','/')]

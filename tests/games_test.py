@@ -58,6 +58,19 @@ with tempfile.TemporaryDirectory() as tmp:
         subprocess.run([str(worker),'--run-game'],cwd=root,env=env,check=True)
         return json.loads((home/'argv.json').read_text())
     assert launch()[-2]==str(fast)
+    assert 'video_fullscreen_x = "640"' in (root/'game-runtime.cfg').read_text()
+    assert 'video_fullscreen_y = "480"' in (root/'game-runtime.cfg').read_text()
+    for height,width in [(720,1280),(1080,1920),(0,0),(480,640)]:
+        (root/'settings.cfg').write_text(f'game_output={height}\n')
+        launch()
+        runtime_config=(root/'game-runtime.cfg').read_text()
+        if height:
+            assert f'video_fullscreen_x = "{width}"' in runtime_config
+            assert f'video_fullscreen_y = "{height}"' in runtime_config
+            assert 'video_windowed_fullscreen = "false"' in runtime_config
+        else:
+            assert 'video_fullscreen_x' not in runtime_config and 'video_fullscreen_y' not in runtime_config
+    assert (cfg/'retroarch.cfg').read_text()=='video_driver = "gl"\n'
     assert 'video_shader_enable = "false"' in (root/'game-runtime.cfg').read_text()
     (root/'game-cores.tsv').write_text('1\tTest\tsnes9x2005\n')
     assert launch()[-2]==str(stock)

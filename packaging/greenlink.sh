@@ -18,6 +18,9 @@ if [ "$#" -eq 0 ] && [ -f catalog.local.tsv ]; then
 fi
 # A failed/offline check must never prevent launch. No credentials on the device.
 if [ ! -f .no-auto-update ]; then sh ./update.sh >update.log 2>&1 || true; fi
+if [ -f samba/.enabled ] && [ -f samba-server.sh ]; then
+    sh ./samba-server.sh start >samba-start.log 2>&1 || true
+fi
 while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?

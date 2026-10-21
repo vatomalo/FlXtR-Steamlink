@@ -37,6 +37,19 @@ fi
 echo "c9d19c7ae28243b3739e2f14a4f19cdd48646bed063b26607d25b19dbc148932  $sdl" | sha256sum -c -
 cp "$sdl" "$app/retroarch-libs/"
 cp packaging/SDL2-LICENSE.txt "$app/retroarch-libs/"
+if [ -f build/test-steamlink-audio ]; then
+    mkdir -p "$app/scripts"
+    cp build/test-steamlink-audio "$app/"
+    cp build/steamlink_audio_test_libretro.so "$app/"
+    cp scripts/test-steamlink-audio "$app/scripts/"
+    chmod +x "$app/scripts/test-steamlink-audio"
+fi
+if [ -f build/retroarch-audio/retroarch.exec ]; then
+    mkdir -p "$app/retroarch-audio" "$app/sources"
+    cp build/retroarch-audio/retroarch.exec build/retroarch-audio/COPYING build/retroarch-audio/BUILD.txt "$app/retroarch-audio/"
+    cp dist/core-sources/retroarch-audio.tar.gz "$app/sources/"
+    cp scripts/build-retroarch-audio.sh "$app/sources/"
+fi
 
 if [ -d assets ]; then cp -R assets "$app/"; fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi

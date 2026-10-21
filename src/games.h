@@ -421,6 +421,24 @@ static int games_run(void){
             "/usr/local/bin/scummvm","/usr/bin/scummvm"
 #endif
         };
+        /* Launcher options live in FlXtR's own config, not ScummVM's INI.
+         * Command-line overrides take effect on the next ScummVM launch. */
+        int scumm_size=0,scumm_stretch=3,scumm_filter=0;
+        FILE *sf=fopen("scummvm-settings.cfg","r");
+        if(sf){char line[96];int n;
+            while(fgets(line,sizeof(line),sf)){
+                if(sscanf(line,"size=%d",&n)==1&&n>=0&&n<5)scumm_size=n;
+                if(sscanf(line,"stretch=%d",&n)==1&&n>=0&&n<6)scumm_stretch=n;
+                if(sscanf(line,"filter=%d",&n)==1&&n>=0&&n<=1)scumm_filter=n;
+            }
+            fclose(sf);
+        }
+        const char *sizes[]={"","--window-size=640,480","--window-size=800,600",
+                            "--window-size=1280,720","--window-size=1920,1080"};
+        const char *stretches[]={"--stretch-mode=center","--stretch-mode=pixel-perfect",
+            "--stretch-mode=even-pixels","--stretch-mode=fit","--stretch-mode=stretch",
+            "--stretch-mode=fit_force_aspect"};
+        const char *filter=scumm_filter?"--filtering":"--no-filtering";
         for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
             if(access(paths[i],X_OK)==0){
 #ifndef FLXTR_DESKTOP
@@ -434,7 +452,8 @@ static int games_run(void){
                        setenv("XDG_CONFIG_HOME","/home/apps/scummvm/.home/.config",1))return 2;
                 }
 #endif
-                execl(paths[i],paths[i],(char*)NULL);
+                if(scumm_size)execl(paths[i],paths[i],sizes[scumm_size],stretches[scumm_stretch],filter,(char*)NULL);
+                else execl(paths[i],paths[i],stretches[scumm_stretch],filter,(char*)NULL);
                 fprintf(stderr,"ScummVM launch failed: %s (%s)\n",paths[i],strerror(errno));
             }
         }

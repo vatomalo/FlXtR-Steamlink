@@ -40,6 +40,7 @@ cp packaging/SDL2-LICENSE.txt "$app/retroarch-libs/"
 
 if [ -d assets ]; then cp -R assets "$app/"; fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi
+if [ -f build/greenlink-preview-arm ]; then cp build/greenlink-preview-arm "$app/greenlink-preview"; fi
 if [ -f build/greenlink-resolver-arm ]; then
     cp build/greenlink-resolver-arm "$app/greenlink-resolver"
     cp build/resolver/WABT-LICENSE.txt "$app/WABT-LICENSE.txt"

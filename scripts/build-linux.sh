@@ -13,13 +13,21 @@ flags=(-Os -std=c99 -Wall -Wextra -Werror -DFLXTR_DESKTOP "-DFLXTR_VERSION=\"$ve
 cc "${flags[@]}" $(pkg-config --cflags sdl2 SDL2_image libcurl) src/shell.c -o "$app/greenlink" $(pkg-config --libs sdl2 SDL2_image libcurl)
 cc "${flags[@]}" src/catalog.c -o "$app/greenlink-catalog" $(pkg-config --cflags --libs sdl2 SDL2_image libcurl json-c openssl)
 cc "${flags[@]}" src/player_linux.c -o "$app/greenlink-player" $(pkg-config --cflags --libs mpv)
-strip "$app/greenlink" "$app/greenlink-catalog" "$app/greenlink-player"
+cc "${flags[@]}" src/audio_windows.c -o "$app/greenlink-audio" $(pkg-config --cflags --libs mpv)
+strip "$app/greenlink-audio" "$app/greenlink" "$app/greenlink-catalog" "$app/greenlink-player"
 FLXTR_BUILD_PLATFORM=linux bash scripts/build-resolver.sh
 cp build/greenlink-resolver-linux "$app/greenlink-resolver"
 cp build/resolver/WABT-LICENSE.txt "$app/"
-cp -R assets "$app/"
+cp -R assets tools "$app/"
+mkdir -p "$app/scripts" "$app/certs"
+cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
+cp /etc/ssl/certs/ca-certificates.crt "$app/certs/cacert.pem"
+python3 scripts/build-desktop-music.py "$app"
 cp catalog.tsv packaging/linux-controls.lua "$app/"
 cp LICENSE "$app/"
+cp docs/CORES.md "$app/"
+cp docs/DESKTOP-MUSIC.md "$app/MUSIC.md"
+cp docs/DESKTOP-CONTROLS.md "$app/CONTROLS.md"
 cp packaging/linux-update.py "$app/update.py"
 cp packaging/linux-update.sh "$app/update.sh"
 cp packaging/flxtr-linux.sh "$root/FlXtR.sh"

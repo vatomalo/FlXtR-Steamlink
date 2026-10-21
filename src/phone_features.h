@@ -1,13 +1,14 @@
 #ifndef FLXTR_PHONE_FEATURES_H
 #define FLXTR_PHONE_FEATURES_H
 #include <dirent.h>
-#include <sys/statvfs.h>
+#include "platform_paths.h"
 
 static char phone_pending[24],phone_value[2048],phone_subtitle[256];
 static int phone_upload=-1;
 static size_t phone_upload_left;
 static char phone_temp[256],phone_target[256];
 static uint32_t phone_now;
+static int phone_rom_uploaded;
 #include "party_questions.h"
 static struct {int phase,round,count,spicy,deck[PHONE_ROUNDS],votes[4],winners;uint32_t deadline;
     struct {char name[20],token[33];int score,answer,gain,streak;} players[8];
@@ -30,8 +31,7 @@ static void phone_deck(uint32_t seed){
     }
 }
 static int phone_random(char token[33]){
-    unsigned char bytes[16];int fd=open("/dev/urandom",O_RDONLY);if(fd<0)return -1;
-    ssize_t n=read(fd,bytes,16);close(fd);if(n!=16)return -1;
+    unsigned char bytes[16];if(flxtr_random_bytes(bytes,sizeof(bytes)))return -1;
     for(int i=0;i<16;i++)snprintf(token+i*2,3,"%02X",bytes[i]);
     return 0;
 }
@@ -72,41 +72,48 @@ static int phone_decode(const char *encoded,char *out,size_t limit){
 }
 /* Upload names are a restricted basename, never a path or executable. */
 static int phone_filename(const char *name){
-    size_t n=strlen(name);if(!n||n>100||name[0]=='.'||strstr(name,".."))return 0;
+    size_t n=strlen(name);if(!n||n>100||flxtr_reserved_basename(name)||name[0]=='.'||strstr(name,".."))return 0;
     for(size_t i=0;i<n;i++)if(!isalnum((unsigned char)name[i])&&name[i]!='.'&&name[i]!='-'&&name[i]!='_')return 0;
     const char *ext=strrchr(name,'.');if(!ext)return 0;
-    const char *allowed[]={".mp4",".mkv",".webm",".avi",".mov",".srt",".vtt",".nes",".sfc",".smc",".gb",".gbc",".gba",".zip"};
+    const char *allowed[]={".mp4",".mkv",".webm",".avi",".mov",".srt",".vtt",".nes",".sfc",".smc",".gb",".gbc",".gba",".zip",".md",".gen",".smd",".sms",".gg",".cue",".pbp",".chd",".m3u",".a26",".bin"};
     for(size_t i=0;i<sizeof(allowed)/sizeof(allowed[0]);i++)if(!strcasecmp(ext,allowed[i]))return 1;
     return 0;
 }
 static int phone_is_sub(const char *name){const char *e=strrchr(name,'.');return e&&(!strcasecmp(e,".srt")||!strcasecmp(e,".vtt"));}
-static int phone_is_rom(const char *name){const char *e=strrchr(name,'.');return e&&(!strcasecmp(e,".nes")||!strcasecmp(e,".sfc")||!strcasecmp(e,".smc")||!strcasecmp(e,".gb")||!strcasecmp(e,".gbc")||!strcasecmp(e,".gba")||!strcasecmp(e,".zip"));}
+static int phone_is_rom(const char *name){
+    const char *e=strrchr(name,'.');if(!e)return 0;
+    const char *extensions[]={".nes",".sfc",".smc",".gb",".gbc",".gba",".zip",".md",".gen",".smd",".sms",".gg",".cue",".pbp",".chd",".m3u",".a26",".bin"};
+    for(size_t i=0;i<sizeof(extensions)/sizeof(extensions[0]);i++)if(!strcasecmp(e,extensions[i]))return 1;
+    return 0;
+}
 static void phone_upload_abort(void){
-    if(phone_upload>=0)close(phone_upload);
+    if(phone_upload>=0)flxtr_fd_close(phone_upload);
     phone_upload=-1;
-    if(phone_temp[0])unlink(phone_temp);
+    if(phone_temp[0])flxtr_path_unlink(phone_temp);
     phone_temp[0]=0;phone_upload_left=0;
 }
 static int phone_upload_begin(const char *name,size_t length){
     if(!phone_filename(name)||!length||length>512u*1024u*1024u)return -1;
-    mkdir("phone-files",0700);mkdir("roms",0700);mkdir("roms/phone",0700);
+    flxtr_path_mkdir("phone-files");flxtr_path_mkdir("roms");flxtr_path_mkdir("roms/phone");
     const char *dir=phone_is_rom(name)?"roms/phone":"phone-files";
-    struct statvfs space;if(statvfs(dir,&space)||((uint64_t)space.f_bavail*space.f_frsize)<length+16u*1024u*1024u)return -2;
+    uint64_t available;if(flxtr_disk_free(dir,&available)||available<length+16u*1024u*1024u)return -2;
     snprintf(phone_target,sizeof(phone_target),"%s/%s",dir,name);
-    if(!access(phone_target,F_OK))return -3;
+    if(!flxtr_path_access(phone_target,F_OK))return -3;
     snprintf(phone_temp,sizeof(phone_temp),"%s/.upload-XXXXXX",dir);
-    phone_upload=mkstemp(phone_temp);if(phone_upload<0){phone_temp[0]=0;return -2;}
-    fcntl(phone_upload,F_SETFD,FD_CLOEXEC);phone_upload_left=length;return 0;
+    phone_upload=flxtr_temp_file(phone_temp,sizeof(phone_temp));if(phone_upload<0){phone_temp[0]=0;return -2;}
+    phone_upload_left=length;return 0;
 }
 /* Returns 1 when installed, 0 while streaming, -1 on failure. */
 static int phone_upload_write(const char *bytes,size_t n){
     if(n>phone_upload_left)return -1;
-    size_t done=0;while(done<n){ssize_t w=write(phone_upload,bytes+done,n-done);if(w<0&&errno==EINTR)continue;if(w<=0)return -1;done+=(size_t)w;}
+    size_t done=0;while(done<n){ptrdiff_t w=flxtr_fd_write(phone_upload,bytes+done,n-done);if(w<0&&errno==EINTR)continue;if(w<=0)return -1;done+=(size_t)w;}
     phone_upload_left-=n;if(phone_upload_left)return 0;
-    int ok=fsync(phone_upload)==0;if(close(phone_upload))ok=0;phone_upload=-1;
-    /* link is atomic and refuses to overwrite an existing name. */
-    if(!ok||link(phone_temp,phone_target))return -1;
-    unlink(phone_temp);phone_temp[0]=0;return 1;
+    int ok=flxtr_fd_sync(phone_upload)==0;if(flxtr_fd_close(phone_upload))ok=0;phone_upload=-1;
+    /* Publish atomically without replacing an existing name. */
+    if(!ok||flxtr_install_new(phone_temp,phone_target))return -1;
+    flxtr_path_unlink(phone_temp);phone_temp[0]=0;
+    if(!strncmp(phone_target,"roms/",5)){flxtr_path_unlink("games.json");phone_rom_uploaded=1;}
+    return 1;
 }
 static int phone_command(const char *field,const char *encoded,char *reply,size_t size){
     char value[2048];if(phone_decode(encoded,value,sizeof(value)))return 400;
@@ -143,7 +150,7 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
     }
     if(!strcmp(field,"subtitle")){
         if(value[0]&&(!phone_filename(value)||!phone_is_sub(value)))return 400;
-        if(value[0]){snprintf(phone_subtitle,sizeof(phone_subtitle),"phone-files/%.100s",value);if(access(phone_subtitle,R_OK)){phone_subtitle[0]=0;return 404;}}
+        if(value[0]){snprintf(phone_subtitle,sizeof(phone_subtitle),"phone-files/%.100s",value);if(flxtr_path_access(phone_subtitle,R_OK)){phone_subtitle[0]=0;return 404;}}
         else phone_subtitle[0]=0;
         snprintf(reply,size,"Subtitle selected for next playback");return 200;
     }
@@ -151,7 +158,7 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
     if(phone_pending[0])return 409;
     if(!strcmp(field,"play")){
         if(!phone_filename(value)||phone_is_rom(value)||phone_is_sub(value))return 400;
-        char path[256];snprintf(path,sizeof(path),"phone-files/%.100s",value);if(access(path,R_OK))return 404;
+        char path[256];snprintf(path,sizeof(path),"phone-files/%.100s",value);if(flxtr_path_access(path,R_OK))return 404;
     }else if(!strcmp(field,"music")){
         /* Public YouTube URLs, searches and Spotify playlist links.
          * No shell interpretation: the worker receives one literal argument. */
@@ -160,6 +167,7 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
         if(strstr(value,"://")){
             if(strncmp(value,"https://",8))return 400;
             if(strncmp(value,"https://open.spotify.com/playlist/",34)&&
+               strncmp(value,"https://music.youtube.com/",26)&&
                strncmp(value,"https://www.youtube.com/",24)&&
                strncmp(value,"https://youtube.com/",20)&&
                strncmp(value,"https://youtu.be/",17))return 400;
@@ -168,7 +176,11 @@ static int phone_command(const char *field,const char *encoded,char *reply,size_
         if((strncmp(value,"https://",8)&&strncmp(value,"http://",7))||strpbrk(value," \"<>\\")||strlen(value)>1800)return 400;
     }else if(strlen(value)!=1||!strchr("pfrsmudalbv",value[0]))return 400;
     snprintf(phone_pending,sizeof(phone_pending),"%s",field);snprintf(phone_value,sizeof(phone_value),"%s",value);
+    #ifdef FLXTR_PHONE_DISPATCH
+    return FLXTR_PHONE_DISPATCH(reply,size);
+#else
     snprintf(reply,size,"Request queued on TV");return 200;
+#endif
 }
 static void phone_state(char *out,size_t size){
     const PhoneQuestion *q=phone_question();

@@ -433,3 +433,9 @@ Steam Link fullscreen requires creating the native Vivante window at the current
 If a cold boot resets the clock before 2024, the Steam Link launcher makes a bounded ten-second NTP synchronization attempt before checking HTTPS updates. An unsuccessful sync is logged in `clock.log`; TLS verification is never disabled.
 
 TV channel scheduling, marathons and preloading: [TV channel mode](docs/tv-channel.md).
+
+## Windows port in progress
+
+The native Windows C port now includes process handling, player IPC, phone-server
+networking and filesystem backends. These can be cross-compiled directly in WSL
+and tested on Windows. The full Windows UI and linked player are not available yet. See [Windows port status and build instructions](docs/WINDOWS.md).

@@ -4,10 +4,10 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
 all: build/greenlink build/greenlink-catalog
-build/greenlink-catalog: src/catalog.c src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_progress.h src/tv_history.h src/browse_filters.h
+build/greenlink-catalog: src/catalog.c src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
-build/greenlink: src/shell.c src/music_ui.h src/child_process.h src/api_setup.h src/phone_features.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/browse_filters.h
+build/greenlink: src/shell.c src/desktop_theme.h src/youtube_video.h src/music_ui.h src/child_process.h src/platform_process.h src/platform_files.h src/platform_paths.h src/platform_net.h src/platform_pipe.h src/api_setup.h src/phone_features.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl
 
@@ -102,3 +102,34 @@ test-music-layout: all
 	python3 tests/music_test.py
 
 .PHONY: test-music-layout
+
+# Portable platform foundation and native Windows application.
+test-platform:
+	bash scripts/test-platform.sh
+
+windows-platform:
+	bash scripts/build-windows.sh
+
+test-platform-shell: all
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/platform_shell_test.c -o build/platform-shell-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/platform-shell-test
+
+.PHONY: test-platform windows-platform test-platform-shell
+
+test-desktop-ipc:
+	python3 tests/desktop_player_ipc_test.py
+
+.PHONY: test-desktop-ipc
+
+windows:
+	python3 scripts/build-windows-app.py
+
+.PHONY: windows
+
+test-desktop-cores: all
+	python3 tests/core_manager_test.py
+	$(CC) $(CFLAGS) -DFLXTR_DESKTOP $(SDL_CFLAGS) src/catalog.c -o build/desktop-core-catalog $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
+	$(CC) $(CFLAGS) tests/retroarch_fixture.c -o build/retroarch-fixture
+	python3 tests/desktop_games_test.py --catalog build/desktop-core-catalog --retroarch build/retroarch-fixture --tools tools
+
+.PHONY: test-desktop-cores

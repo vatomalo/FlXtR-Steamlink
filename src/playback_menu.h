@@ -1,3 +1,9 @@
+#ifndef PLAYBACK_SEEK
+#define PLAYBACK_SEEK(position) menu_restart(1,position)
+#endif
+#ifndef PLAYBACK_ADAPTIVE
+#define PLAYBACK_ADAPTIVE 0
+#endif
 /* Single hardware overlay plane: the menu owns it while visible. */
 #include <sys/stat.h>
 static int control_fd=-1,menu_open,menu_row,menu_info,paused,requested_action;
@@ -65,7 +71,7 @@ static void menu_draw(void){
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
     snprintf(rows[5],80,"VIDEO SIZE: %s",view_names[viewing]);
-    snprintf(rows[6],80,"QUALITY LIMIT: %dP",menu_height);
+    snprintf(rows[6],80,PLAYBACK_ADAPTIVE?"QUALITY: AUTO (%dP)":"QUALITY TARGET: %dP",menu_height);
     snprintf(rows[7],80,"%s",menu_servers?"TRY NEXT SERVER":"NEXT SERVER: NOT AVAILABLE");
     snprintf(rows[8],80,"%s",menu_episodes?"PREVIOUS EPISODE":"PREVIOUS EPISODE: NOT AVAILABLE");
     snprintf(rows[9],80,"%s",menu_episodes?"NEXT EPISODE":"NEXT EPISODE: NOT AVAILABLE");
@@ -149,7 +155,7 @@ static void menu_command(char c){
         double target=playback_position()+(c=='F'?10:-10);
         if(target<0)target=0;
         if(media_duration>1&&target>=media_duration)target=media_duration-1;
-        menu_restart(1,target);return;
+        PLAYBACK_SEEK(target);return;
     }
     if(c=='S'){menu_restart(7,playback_position());return;}
     if(seek_scrubbing&&(c=='b'||c=='m')){seek_cancel();menu_draw();return;}
@@ -160,10 +166,10 @@ static void menu_command(char c){
     }
     if(c=='b'){menu_restart(7,playback_position());return;}
     if(c=='v'){viewing=(viewing+1)%VIEW_COUNT;apply_view(!menu_open);}
-    if(c=='l'||c=='r'){
-        /* Left/right always invokes the same persistent seek preview.
+    if((c=='l'||c=='r')&&!menu_open){
+        /* Left/right from playback invokes the same persistent seek preview.
          * A confirms the target; B cancels without restarting playback.
-         * Other menu options remain changeable with A. */
+         * Inside the menu, left/right changes the selected setting. */
         menu_open=1;
         menu_row=1;
     }
@@ -188,7 +194,7 @@ static void menu_command(char c){
                     if(menu_audio)SDL_PauseAudioDevice(menu_audio,1);
                 }
             }
-            if(c=='a')menu_restart(1,seek_target);
+            if(c=='a'){double target=seek_target;seek_cancel();PLAYBACK_SEEK(target);}
             else{
                 seek_target+=direction*10;
                 if(seek_target<0)seek_target=0;

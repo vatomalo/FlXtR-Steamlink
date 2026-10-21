@@ -1,9 +1,10 @@
 #include <time.h>
 #define TV_BLOCKS 10
-#define TV_GENRES 16
+#define TV_GENRES 17
+#define TV_MUSIC_VIDEOS 16
 typedef struct {int hour,genre,marathon;} TvBlock;
 static const TvBlock tv_defaults[TV_BLOCKS]={{0,6,1},{6,11,0},{9,1,0},{11,9,0},{13,8,0},{15,2,1},{17,5,1},{19,3,1},{21,7,0},{23,4,1}};
-static const char *const tv_genres[TV_GENRES]={"MIXED SHOWS","COMEDY","CRIME / DRAMA","SCI-FI","ANIMATION","ACTION / ADVENTURE","MYSTERY","SCI-FI / ADULT ANIMATION","DOCUMENTARY","FAMILY","REALITY","KIDS","SOAP","WAR / POLITICS","WESTERN","TALK SHOW"};
+static const char *const tv_genres[TV_GENRES]={"MIXED SHOWS","COMEDY","CRIME / DRAMA","SCI-FI","ANIMATION","ACTION / ADVENTURE","MYSTERY","SCI-FI / ADULT ANIMATION","DOCUMENTARY","FAMILY","REALITY","KIDS","SOAP","WAR / POLITICS","WESTERN","TALK SHOW","MTV / MUSIC VIDEOS"};
 static inline int tv_valid(const TvBlock *blocks){
     if(blocks[0].hour)return 0;
     for(int i=0;i<TV_BLOCKS;i++)if(blocks[i].hour<0||blocks[i].hour>23||blocks[i].genre<0||blocks[i].genre>=TV_GENRES||blocks[i].marathon<0||blocks[i].marathon>1||(i&&blocks[i].hour<=blocks[i-1].hour))return 0;

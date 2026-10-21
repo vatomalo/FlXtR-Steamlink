@@ -45,7 +45,7 @@ def unpack(archive, destination):
             if name.is_absolute() or '..' in name.parts or not (member.isfile() or member.isdir()):
                 raise ValueError('Unsafe archive entry')
             total += member.size
-            if total > LIMIT or len(name.parts) > 5:
+            if total > LIMIT or len(name.parts) > 12:
                 raise ValueError('Unpacked update exceeds limits')
             target = destination / name
             if member.isdir():

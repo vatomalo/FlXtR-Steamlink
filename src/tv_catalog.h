@@ -1,9 +1,10 @@
 #include "tv_schedule.h"
 #include "tv_progress.h"
 #include "tv_history.h"
+#include "tv_play_history.h"
 #include "tv_airing.h"
-static int tv_pick_episode(int genre,int seed,int forced,int requested_season,int requested_episode,int allow_recent){
-    if(genre<0||genre>=TV_GENRES)return -1;
+static int tv_pick_episode(int genre,int seed,int forced,int requested_season,int requested_episode,int allow_recent,int resume_live){
+    if(genre<0||genre>=TV_MUSIC_VIDEOS)return -1;
     /* Alternate sci-fi with animated comedy from Adult Swim's network. */
     const char *filters[]={"","&with_genres=35","&with_genres=80%7C9648%7C18","&with_genres=10765","&with_genres=16","&with_genres=10759","&with_genres=9648","&with_genres=16&with_networks=80","&with_genres=99","&with_genres=10751","&with_genres=10764","&with_genres=10762","&with_genres=10766","&with_genres=10768","&with_genres=37","&with_genres=10767"};
     int effective=genre==7&&seed%2==0?3:genre;
@@ -56,7 +57,13 @@ static int tv_pick_episode(int genre,int seed,int forced,int requested_season,in
     }
     TvProgress progress[256];n=tv_progress_read(progress);int season=1,episode=1;
     for(int i=0;i<n;i++)if(progress[i].id==id){season=progress[i].season;episode=progress[i].episode+1;}
-    if(requested_season>0){season=requested_season;episode=requested_episode;}
+    int played_season=0,played_episode=0;
+    if(tv_play_cursor(id,&played_season,&played_episode)&&
+       (played_season>season||(played_season==season&&played_episode>=episode))){
+        season=played_season;episode=played_episode+1;
+    }
+    if(requested_season>0&&(resume_live||requested_season>season||
+       (requested_season==season&&requested_episode>=episode))){season=requested_season;episode=requested_episode;}
     for(int attempt=0;attempt<2;attempt++){
         snprintf(path,sizeof(path),"/tv/%d/season/%d",id,season);root=get_json(path);if(!root)return -1;
         json_object *episodes=field(root,"episodes");n=episodes&&json_object_is_type(episodes,json_type_array)?(int)json_object_array_length(episodes):0;
@@ -78,17 +85,27 @@ static int tv_pick_episode(int genre,int seed,int forced,int requested_season,in
 static int tv_pick(const char *query,int seed,int forced){
     int genre=0,joining=0,marathon=0,ads=0;long long block=0,now=0;
     if(sscanf(query,"%d:%lld:%lld:%d:%d:%d",&genre,&block,&now,&joining,&marathon,&ads)!=6)
-        return tv_pick_episode(atoi(query),seed,0,0,0,0);
+        return tv_pick_episode(atoi(query),seed,0,0,0,0,0);
     if(genre<0||genre>=TV_GENRES||block<=0||now<block||now-block>90000||joining<0||joining>1||marathon<0||marathon>1||ads<0||ads>1)return -1;
     TvAiring a={block,joining?block:now,0,0,0,0},saved;
-    int season=0,episode=0;
+    int season=0,episode=0,resume_live=0;
     if(joining&&tv_airing_read(&saved)&&saved.start<=now&&
        (saved.block==block||tv_airing_current(&saved,now))){
-        a=saved;forced=saved.id;season=saved.season;episode=saved.episode;
+        int ps=0,pe=0,known=tv_play_cursor(saved.id,&ps,&pe);
+        int current=tv_airing_current(&saved,now);
+        if((known&&(ps>saved.season||(ps==saved.season&&pe>saved.episode)))||
+           tv_play_closed(saved.id,saved.season,saved.episode)||
+           (!current&&known&&(ps>saved.season||(ps==saved.season&&pe>=saved.episode)))){
+            /* A stopped/completed airing is not a live episode to rejoin. */
+            a.start=now;joining=0;forced=marathon?saved.id:0;
+        }else{
+            a=saved;forced=saved.id;season=saved.season;episode=saved.episode;
+            resume_live=current;
+        }
     }
     for(int step=0;step<96;step++){
         used=total=0;
-        if(tv_pick_episode(genre,seed+step,forced,season,episode,joining)<0){
+        if(tv_pick_episode(genre,seed+step,forced,season,episode,joining,step==0&&resume_live)<0){
             if(!forced)return -1;
             forced=season=episode=0;continue;
         }

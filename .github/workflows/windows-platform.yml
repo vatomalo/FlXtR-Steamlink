@@ -1,0 +1,173 @@
+name: Windows application and platform
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cross-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler and Linux regression dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64-posix build-essential pkg-config libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev libavformat-dev libavcodec-dev libavutil-dev ffmpeg cmake zstd
+      - name: Test POSIX backends and existing callers
+        run: |
+          make -j2 all
+          make test-platform test-platform-shell test-desktop-ipc
+          python3 tests/api_setup_test.py
+          make test-desktop-cores
+          python3 tests/music_test.py
+          cc -std=c99 -Wall -Wextra -Werror tests/tv_channel_test.c -o build/tv-channel-test $(pkg-config --cflags --libs json-c)
+          ./build/tv-channel-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/tv_playback_history_test.c -o build/tv-playback-history-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/tv-playback-history-test
+          cc -std=c99 -Wall -Wextra -Werror -DDISK_RAM tests/disk_buffer_test.c -o build/ram-buffer-test $(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
+          ./build/ram-buffer-test
+          cc -std=c99 -Wall -Wextra -Werror tests/video_quality_test.c -o build/video-quality-test
+          ./build/video-quality-test
+          cc -std=c99 -Wall -Wextra -Werror tests/adaptive_video_test.c -o build/adaptive-video-test
+          ./build/adaptive-video-test
+          cc -std=c99 -Wall -Wextra -Werror tests/adaptive_buffer_wait_test.c -o build/adaptive-buffer-wait-test $(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
+          ./build/adaptive-buffer-wait-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/adaptive_shell_test.c -o build/adaptive-shell-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/adaptive-shell-test
+          cc -std=c99 -Wall -Wextra -Werror -DFLXTR_ARM_SHELL_TEST $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/adaptive_shell_test.c -o build/adaptive-arm-shell-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/adaptive-arm-shell-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/mtv_preload_test.c -o build/mtv-preload-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/mtv-preload-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) tests/playback_menu_test.c -o build/playback-menu-test $(pkg-config --libs sdl2) -lSDL2_image -lcurl
+          ./build/playback-menu-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/music_queue_test.c -o build/music-queue-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/music-queue-test
+          cc -std=c99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2 SDL2_image libcurl) tests/desktop_experience_test.c -o build/desktop-experience-test $(pkg-config --libs sdl2 SDL2_image libcurl)
+          ./build/desktop-experience-test
+          ffmpeg -v error -y -f lavfi -i testsrc2=size=160x90:rate=24 -t 2 -an -c:v libx264 build/mtv-video.mp4
+          ffmpeg -v error -y -f lavfi -i sine=frequency=440 -t 2 -vn -c:a aac build/mtv-audio.m4a
+          cc -std=c99 -Wall -Wextra -Werror tests/youtube_demux_test.c -o build/youtube-demux-test $(pkg-config --cflags --libs libavformat libavcodec libavutil)
+          ./build/youtube-demux-test build/mtv-video.mp4 build/mtv-audio.m4a
+          cc -std=c99 -Wall -Wextra -Werror tests/child_exec_test.c -o build/child-exec-test
+          ./build/child-exec-test
+          cc -std=c99 -Wall -Wextra -Werror tests/phone_state_test.c -o build/phone-state-test
+          ./build/phone-state-test
+      - name: Cross-compile Windows platform, IPC, server and player object
+        run: bash scripts/build-windows.sh
+      - name: Build native Windows application and dependency bundle
+        run: |
+          python3 scripts/build-windows-app.py
+          ffmpeg -v error -y -f lavfi -i testsrc2=size=160x90:rate=24 -f lavfi -i sine=frequency=440 -t 3 -c:v libx264 -c:a aac build/windows-app/fixture.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-application
+          path: |
+            dist/FlXtR-Windows-x86_64.zip
+            dist/FlXtR-Windows-x86_64.zip.sha256
+            build/windows-app/windows-app-test.exe
+            build/windows-app/windows-supervisor-test.exe
+            build/windows-app/retroarch-fixture.exe
+            build/windows-app/windows-fullscreen-test.exe
+            build/windows-app/fixture.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-platform-foundation
+          path: |
+            dist/FlXtR-Windows-platform-x86_64.zip
+            dist/FlXtR-Windows-platform-x86_64.zip.sha256
+  windows-runtime:
+    needs: cross-build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-platform-foundation
+          path: downloaded
+      - name: Run packaged native Windows tests with spaces and Unicode
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem downloaded -Recurse -Filter FlXtR-Windows-platform-x86_64.zip | Select-Object -First 1
+          $folder = Join-Path $env:RUNNER_TEMP 'FlXtR Windows ø test'
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $folder
+          Push-Location $folder
+          try {
+            & .\FlXtR-windows-platform-test.exe
+            if ($LASTEXITCODE -ne 0) { throw "Platform tests failed: $LASTEXITCODE" }
+            & .\FlXtR-windows-ipc-test.exe
+            if ($LASTEXITCODE -ne 0) { throw "IPC tests failed: $LASTEXITCODE" }
+          } finally { Pop-Location }
+          $env:FLXTR_API_TEST_BINARY = Join-Path $folder 'FlXtR-phone-server-test.exe'
+          python tests/api_setup_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Windows HTTP integration tests failed: $LASTEXITCODE" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-application
+          path: app-download
+      - name: Run the complete Windows application package
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem app-download -Recurse -Filter FlXtR-Windows-x86_64.zip | Select-Object -First 1
+          $helper = Get-ChildItem app-download -Recurse -Filter windows-app-test.exe | Select-Object -First 1
+          $supervisor = Get-ChildItem app-download -Recurse -Filter windows-supervisor-test.exe | Select-Object -First 1
+          $retroarch = Get-ChildItem app-download -Recurse -Filter retroarch-fixture.exe | Select-Object -First 1
+          $fullscreen = Get-ChildItem app-download -Recurse -Filter windows-fullscreen-test.exe | Select-Object -First 1
+          $fixture = Get-ChildItem app-download -Recurse -Filter fixture.mp4 | Select-Object -First 1
+          $app = Join-Path $env:RUNNER_TEMP 'FlXtR application ø'
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $app
+          Copy-Item -LiteralPath $helper.FullName -Destination $app
+          Copy-Item -LiteralPath $fullscreen.FullName -Destination $app
+          Copy-Item -LiteralPath $retroarch.FullName -Destination $app
+          Copy-Item -LiteralPath $supervisor.FullName -Destination $app
+          python tests/windows_app_test.py --package $app --fixture $fixture.FullName --helper (Join-Path $app 'windows-app-test.exe')
+          if ($LASTEXITCODE -ne 0) { throw "Windows application tests failed: $LASTEXITCODE" }
+          python tests/desktop_audio_test.py (Join-Path $app 'greenlink-audio.exe')
+          if ($LASTEXITCODE -ne 0) { throw "Windows music audio tests failed: $LASTEXITCODE" }
+          python tests/core_manager_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Core manager tests failed: $LASTEXITCODE" }
+          python tests/desktop_games_test.py --catalog (Join-Path $app 'greenlink-catalog.exe') --retroarch (Join-Path $app 'retroarch-fixture.exe') --tools (Join-Path $app 'tools')
+          if ($LASTEXITCODE -ne 0) { throw "Desktop game launch tests failed: $LASTEXITCODE" }
+
+
+  steamdeck-video-hotfix:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build and display-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config wget curl python3 git ca-certificates file libsdl2-dev libsdl2-image-dev libcurl4-openssl-dev libjson-c-dev libssl-dev libmpv-dev libavformat-dev libavcodec-dev libavutil-dev ffmpeg xvfb xauth imagemagick libgl1-mesa-dri
+      - name: Build Linux and Steam Deck packages
+        run: bash scripts/build-desktop.sh --inside
+      - name: Verify visible Steam Deck video output
+        run: xvfb-run -a -s "-screen 0 1280x800x24 +extension GLX" python3 tests/steamdeck_video_test.py dist/FlXtR-SteamDeck-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steamdeck-video-hotfix
+          path: |
+            dist/FlXtR-SteamDeck-x86_64.tgz
+            dist/FlXtR-SteamDeck-x86_64.tgz.sha256
+            dist/FlXtR-Linux-x86_64.tgz
+            dist/FlXtR-Linux-x86_64.tgz.sha256
+      - name: Publish Steam Deck video test hotfix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="steamdeck-video-${GITHUB_SHA}"
+          cat > build/deck-release.md <<'NOTES'
+          Steam Deck video compatibility test hotfix.
+
+          Launch FlXtR-SteamDeck.sh with Proton disabled. Video now uses X11/EGL on the same display as the menu, software decoding, and an X11 output fallback. This avoids mixed Wayland/X11 window selection and hardware decoder interop.
+
+          Extract into a new folder and copy your old data folder across. Keep using the Gamepad controller layout in Game Mode. This package still uses a separate fullscreen player window.
+
+          Validation: the packaged player renders visible video pixels in an X11 virtual display with software OpenGL. Physical Steam Deck confirmation is still needed; the reported black screen has not been reproduced on hardware. Software decoding can use more CPU and battery.
+
+          Windows and Steam Link packages remain available in the previous release.
+          NOTES
+          gh release create "$tag" --target "$GITHUB_SHA" --prerelease --title "Steam Deck video compatibility hotfix" --notes-file build/deck-release.md dist/FlXtR-SteamDeck-x86_64.tgz dist/FlXtR-SteamDeck-x86_64.tgz.sha256 dist/FlXtR-Linux-x86_64.tgz dist/FlXtR-Linux-x86_64.tgz.sha256

@@ -766,7 +766,7 @@ static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink
     if(pages>1){char info[40];snprintf(info,sizeof(info),"MORE %d/%d",page+1,pages);
         text(x,y+lines*21+2,info,1,dim,26);}
 }
-#include "preview_inset.h"
+static void preview_stop(void);
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
@@ -1290,6 +1290,7 @@ static void start_update(void) {
 #endif
 }
 #include "music_ui.h"
+#include "preview_inset.h"
 #include "youtube_video.h"
 #include "settings_services.h"
 static int keyboard_help;

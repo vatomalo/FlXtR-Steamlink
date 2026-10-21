@@ -2171,11 +2171,21 @@ static void finish_player(int code){
     tv_history_finish(!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)?"completed":cancelled?"stopped":"failed",tv_history_last_position());
     if(!strcmp(playing_title.kind,"youtube")){
         int eof=!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code);
-        if(!eof){tv_active=0;tv_cancel_prepared();}
         if(eof&&tv_active&&tv_prepared){tv_begin_prepared();return;}
-        if(!tv_active)music_video_pause(1);
+        if(tv_active&&!cancelled){
+            /* MTV should continue with a different result on EOF or a failed URL.
+             * The TV scheduler caps consecutive attempts, so unavailable YouTube
+             * results cannot create an infinite respawn loop. */
+            tv_cancel_prepared();
+            if(eof)tv_attempts=0;
+            tv_next_at=SDL_GetTicks()+(eof?200:2500);
+            tv_break_due=0;
+            snprintf(status,sizeof(status),eof?"MTV: FINDING NEXT VIDEO":"MTV: VIDEO STOPPED / TRYING ANOTHER");
+            return;
+        }
+        tv_active=0;tv_cancel_prepared();music_video_pause(1);
         tv_attempts=0;tv_next_at=0;tv_break_due=0;
-        snprintf(status,sizeof(status),eof?"MUSIC VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
+        snprintf(status,sizeof(status),eof?"YOUTUBE VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
     }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
         int current=tv_quality_retry>=1?720:quality_height();

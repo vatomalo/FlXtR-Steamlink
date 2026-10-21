@@ -245,6 +245,41 @@ def video_source(value, television=False, muxed=False, height=720):
         if television and re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
             atomic(history_path, json.dumps((history + [ident])[-50:]))
 
+def preview_source(value, category):
+    """Resolve a small, silent H.264 trailer without disturbing music-video state."""
+    if category not in ('game', 'movie', 'tv', 'anime'):
+        raise ValueError('Unsupported trailer category')
+    query = clean(value, 100).strip()
+    if not query:
+        raise ValueError('Empty trailer title')
+    suffix = 'gameplay' if category == 'game' else 'official trailer'
+    options = ydl_options()
+    options['format'] = 'bestvideo[ext=mp4][vcodec^=avc1][height<=240]/best[ext=mp4][vcodec^=avc1][height<=240]'
+    from yt_dlp import YoutubeDL
+    from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE
+    with YoutubeDL(options, auto_init=False) as ydl:
+        for extractor in (YoutubeIE, YoutubeSearchIE, YoutubeTabIE):
+            ydl.add_info_extractor(extractor())
+        listing = ydl.extract_info('ytsearch5:' + query + ' ' + suffix, download=False)
+        candidates = [e for e in (listing.get('entries') or []) if e and
+                      re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', '')) and
+                      not e.get('is_live') and (e.get('duration') or 0) <= 1200]
+        for item in candidates[:4]:
+            try:
+                info = ydl.extract_info('https://www.youtube.com/watch?v=' + item['id'], download=False)
+                selected = (info.get('requested_formats') or [info])[0]
+                if selected.get('vcodec', '').startswith('avc1') and selected.get('height', 9999) <= 240:
+                    url = selected.get('url', '')
+                    if url.startswith('https://') and len(url) < 2046 and not any(c in url for c in '\\r\\n\\t'):
+                        agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
+                        atomic(CACHE / 'preview.txt', '\\n'.join([
+                            clean(info.get('title'), 120), url, agent,
+                            'https://www.youtube.com/watch?v=' + item['id']]) + '\\n')
+                        return
+            except Exception:
+                continue
+    raise ValueError('No compatible low-resolution trailer among candidate videos')
+
 def youtube_client(flat=False):
     from yt_dlp import YoutubeDL
     from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE
@@ -260,6 +295,8 @@ def atomic(path, text):
 
 def run(args):
     CACHE.mkdir(mode=0o700, exist_ok=True)
+    if len(args) == 3 and args[0] == 'preview':
+        preview_source(args[2], args[1]); return
     if len(args) in (2,3) and args[0] in ('video', 'video-muxed', 'tv-video', 'tv-video-muxed'):
         video_source(args[1], television=args[0].startswith('tv-'), muxed=args[0].endswith('muxed'), height=int(args[2]) if len(args)==3 else 720); return
     if args == ['next']:

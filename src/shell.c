@@ -2215,7 +2215,7 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){scummvm_menu=0;return;}
         if(key==SDLK_RETURN){
             FILE *request=fopen("game-request","w");
-            if(request){fputs("0 -1 -1\\n",request);if(!fclose(request)){scummvm_menu=0;game_exit=1;running=0;}}
+            if(request){fputs("0 -1 -1\n",request);if(!fclose(request)){scummvm_menu=0;game_exit=1;running=0;}}
             else snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");
         }
         return;

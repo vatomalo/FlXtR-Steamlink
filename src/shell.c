@@ -77,18 +77,69 @@ typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],su
 #define ROM_CORE_LIMIT 128
 static int rom_options_menu,rom_options_row;
 static int scummvm_menu,scummvm_row;
-static int scummvm_size,scummvm_stretch=3,scummvm_filter,scummvm_fullscreen=1,scummvm_subtitles;
+/* Use ScummVM's real SDL configuration rather than unsupported CLI modes. */
+static int scummvm_fullscreen,scummvm_filter,scummvm_subtitles,scummvm_stretch;
+static const char *scummvm_ini_path(void){
+#ifdef FLXTR_DESKTOP
+    return "scummvm.ini";
+#else
+    return "/home/apps/scummvm/.home/.config/scummvm/scummvm.ini";
+#endif
+}
+static const char *const scummvm_modes[]={"fit","stretch","pixel-perfect","center"};
 static void scummvm_settings_load(void){
-    FILE *f=fopen("scummvm-settings.cfg","r");if(!f)return;
-    char line[96];int n;
+    scummvm_fullscreen=0;scummvm_stretch=0;scummvm_filter=0;scummvm_subtitles=0;
+    FILE *f=fopen(scummvm_ini_path(),"r");if(!f)return;
+    char line[1024];int global=0;
     while(fgets(line,sizeof(line),f)){
-        if(sscanf(line,"size=%d",&n)==1&&n>=0&&n<5)scummvm_size=n;
-        if(sscanf(line,"stretch=%d",&n)==1&&n>=0&&n<6)scummvm_stretch=n;
-        if(sscanf(line,"filter=%d",&n)==1&&n>=0&&n<=1)scummvm_filter=n;
-        if(sscanf(line,"fullscreen=%d",&n)==1&&n>=0&&n<=1)scummvm_fullscreen=n;
-        if(sscanf(line,"subtitles=%d",&n)==1&&n>=0&&n<=1)scummvm_subtitles=n;
+        if(line[0]=='['){global=!strncmp(line,"[scummvm]",9);continue;}
+        if(!global)continue;
+        char value[128];
+        if(sscanf(line,"fullscreen=%127s",value)==1)scummvm_fullscreen=!strcmp(value,"true");
+        if(sscanf(line,"stretch_mode=%127s",value)==1){
+            for(int i=0;i<4;i++)if(!strcmp(value,scummvm_modes[i]))scummvm_stretch=i;
+        }
+        if(sscanf(line,"filtering=%127s",value)==1)scummvm_filter=!strcmp(value,"true");
+        if(sscanf(line,"subtitles=%127s",value)==1)scummvm_subtitles=!strcmp(value,"true");
     }
     fclose(f);
+}
+static int scummvm_settings_save(void){
+    const char *path=scummvm_ini_path();FILE *in=fopen(path,"r");if(!in)return 0;
+    char tmp[512];if(snprintf(tmp,sizeof(tmp),"%s.flxtr-tmp",path)>=(int)sizeof(tmp)){fclose(in);return 0;}
+    FILE *out=fopen(tmp,"w");if(!out){fclose(in);return 0;}
+    const char *keys[]={"fullscreen","stretch_mode","filtering","subtitles"};
+    char vals[4][96];
+    snprintf(vals[0],sizeof(vals[0]),"fullscreen=%s\\n",scummvm_fullscreen?"true":"false");
+    snprintf(vals[1],sizeof(vals[1]),"stretch_mode=%s\\n",scummvm_modes[scummvm_stretch]);
+    snprintf(vals[2],sizeof(vals[2]),"filtering=%s\\n",scummvm_filter?"true":"false");
+    snprintf(vals[3],sizeof(vals[3]),"subtitles=%s\\n",scummvm_subtitles?"true":"false");
+    char line[1024];int global=0,seen_section=0,seen[4]={0};
+    while(fgets(line,sizeof(line),in)){
+        if(line[0]=='['){
+            if(global)for(int i=0;i<4;i++)if(!seen[i])fputs(vals[i],out);
+            global=!strncmp(line,"[scummvm]",9);
+            if(global){seen_section=1;for(int i=0;i<4;i++)seen[i]=0;}
+        }
+        if(global&&line[0]!='['){
+            int replaced=0;
+            for(int i=0;i<4;i++){
+                size_t n=strlen(keys[i]);
+                if(!strncmp(line,keys[i],n)&&line[n]=='='){
+                    if(!seen[i])fputs(vals[i],out);
+                    seen[i]=1;replaced=1;break;
+                }
+            }
+            if(replaced)continue;
+        }
+        fputs(line,out);
+    }
+    if(global)for(int i=0;i<4;i++)if(!seen[i])fputs(vals[i],out);
+    if(!seen_section){fputs("\\n[scummvm]\\n",out);for(int i=0;i<4;i++)fputs(vals[i],out);}
+    int ok=!ferror(in)&&!ferror(out);
+    if(fclose(in))ok=0;if(fclose(out))ok=0;
+    if(ok&&rename(tmp,path)==0)return 1;
+    remove(tmp);return 0;
 }
 
 static Title rom_options_title;
@@ -1274,12 +1325,18 @@ static void draw(Uint32 tick) {
     }
     if(scummvm_menu){
         rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
-        text(200,103,"SCUMMVM",2,green,65);
-        text(200,169,"SAFE NATIVE LAUNCH",2,white,75);
-        text(200,223,"Steam Link graphics options are not yet verified.",1,dim,100);
-        text(200,256,"Forced fullscreen crops; window size may crash.",1,dim,100);
-        text(200,302,"A START SCUMMVM",2,green,85);
-        text(200,407,"B BACK  /  GRAPHICS OPTIONS TEMPORARILY DISABLED",1,white,100);
+        text(200,100,"SCUMMVM DISPLAY SETTINGS",2,green,75);
+        const char *labels[]={"SCALING","FULLSCREEN","FILTERING","SUBTITLES","START SCUMMVM"};
+        const char *values[]={scummvm_modes[scummvm_stretch],scummvm_fullscreen?"ON":"OFF",
+            scummvm_filter?"ON":"OFF",scummvm_subtitles?"ON":"OFF","LAUNCH"};
+        for(int i=0;i<5;i++){
+            int y=160+i*49;
+            if(i==scummvm_row)rect(196,y-7,708,33,green,0);
+            text(210,y,labels[i],1,white,34);
+            text(515,y,values[i],1,i==scummvm_row?green:white,48);
+        }
+        text(200,412,"LEFT / RIGHT CHANGE   A START   B BACK",1,green,100);
+        text(200,449,"Uses ScummVM INI / fullscreen may crop on SurfaceSDL",1,dim,100);
         SDL_RenderPresent(renderer);return;
     }
     if(platform_core_menu){
@@ -2206,7 +2263,17 @@ static void action(SDL_Keycode key) {
     }
     if(scummvm_menu){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){scummvm_menu=0;return;}
-        if(key==SDLK_RETURN){
+        if(key==SDLK_UP&&scummvm_row>0)scummvm_row--;
+        if(key==SDLK_DOWN&&scummvm_row<4)scummvm_row++;
+        if(key==SDLK_LEFT||key==SDLK_RIGHT||(key==SDLK_RETURN&&scummvm_row<4)){
+            int step=key==SDLK_LEFT?-1:1;
+            if(scummvm_row==0)scummvm_stretch=(scummvm_stretch+step+4)%4;
+            if(scummvm_row==1)scummvm_fullscreen=!scummvm_fullscreen;
+            if(scummvm_row==2)scummvm_filter=!scummvm_filter;
+            if(scummvm_row==3)scummvm_subtitles=!scummvm_subtitles;
+            if(!scummvm_settings_save())snprintf(status,sizeof(status),"SCUMMVM INI WRITE FAILED");
+        }
+        if(key==SDLK_RETURN&&scummvm_row==4){
             FILE *request=fopen("game-request","w");
             if(request){fputs("0 -1 -1\n",request);if(!fclose(request)){scummvm_menu=0;game_exit=1;running=0;}}
             else snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");

@@ -9,7 +9,7 @@ static MusicRow music_saved[100],music_recent[100];
 static int music_saved_count,music_recent_count;
 static void music_store(const char *path,const MusicRow *rows,int count){
     FILE *f=fopen(path,"w");if(!f)return;
-    for(int i=0;i<count;i++)fprintf(f,"%s\\t%s\\t%s\\t%s\\n",
+    for(int i=0;i<count;i++)fprintf(f,"%s\t%s\t%s\t%s\n",
         rows[i].kind,rows[i].key,rows[i].title,rows[i].artist);
     fclose(f);
 }
@@ -20,7 +20,7 @@ static int music_restore(const char *path,MusicRow *rows){
         char *parts[4]={0},*start=line;
         for(int i=0;i<4;i++){
             parts[i]=start;
-            char *end=i==3?strpbrk(start,"\\r\\n"):strchr(start,'\\t');
+            char *end=i==3?strpbrk(start,"\r\n"):strchr(start,'\t');
             if(i<3&&!end)break;
             if(end){*end=0;start=end+1;}
         }

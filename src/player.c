@@ -274,7 +274,7 @@ static void timing_poll(void){
     pthread_mutex_lock(&av_sync.mutex);
     if(seen_epoch!=av_sync.epoch){seen_epoch=av_sync.epoch;seen_frames=seen_resets=seen_underflows=0;reported_error=0;}
     unsigned underflows=av_sync.underflows;
-    unsigned frames=av_sync.frames,drops=av_sync.dropped,resets=av_sync.resets,slow=av_sync.slow,hardware_ms=av_sync.hardware_ms;
+    unsigned frames=av_sync.frames,drops=av_sync.dropped,resets=av_sync.resets,slow=av_sync.slow,hardware_ms=av_sync.hardware_ms,queue_waits=av_sync.queue_waits,queue_wait_ms=av_sync.queue_wait_ms;
     int error=av_sync.error,count=av_sync.count;
     int64_t position=sync_position_locked(),video=av_sync.last_video,late=av_sync.maximum_late;
     av_sync.slow=0;
@@ -290,10 +290,10 @@ static void timing_poll(void){
     if(resets!=seen_resets&&frames)apply_view(0);
     if(now>=next_log||error){
         next_log=now+1000000;
-        char line[256];
-        snprintf(line,sizeof(line),"AV sync: audio=%.3f queued=%.0fms video_pts=%.3f delta=%.0fms packets=%d frames=%u dropped=%u resets=%u max_late=%.0fms underruns=%u hardware_queue=%ums%s\n",
+        char line[320];
+        snprintf(line,sizeof(line),"AV sync: audio=%.3f queued=%.0fms video_pts=%.3f delta=%.0fms packets=%d frames=%u dropped=%u resets=%u max_late=%.0fms underruns=%u hardware_queue=%ums hw_waits=%u hw_wait_total=%ums%s\n",
             position/1000000.0,queued*1000.0/(48000*4),video/1000000.0,(video-position)/1000.0,
-            count,frames,drops,resets,late/1000.0,underflows,hardware_ms,error?" decoder_error":"");
+            count,frames,drops,resets,late/1000.0,underflows,hardware_ms,queue_waits,queue_wait_ms,error?" decoder_error":"");
         fputs(line,stderr);
         struct stat st;if(!stat("timing.log",&st)&&st.st_size>1048576)rename("timing.log","timing.previous.log");
         FILE *log=fopen("timing.log","a");if(log){fputs(line,log);fclose(log);}

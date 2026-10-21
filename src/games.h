@@ -442,7 +442,7 @@ static int games_run(void){
             "--stretch-mode=fit_force_aspect"};
         const char *filter=scumm_filter?"--filtering":"--no-filtering";
         const char *screen=scumm_fullscreen?"--fullscreen":"--no-fullscreen";
-        const char *subs=scumm_subtitles?"--subtitles":"--no-subtitles";
+        const char *subs=scumm_subtitles?"--subtitles":NULL;
         for(size_t i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
             if(access(paths[i],X_OK)==0){
 #ifndef FLXTR_DESKTOP

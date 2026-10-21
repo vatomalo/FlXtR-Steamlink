@@ -16,9 +16,11 @@ fi
 [ "$(git_source rev-parse HEAD)" = "$rev" ] || { echo 'Unexpected RetroArch revision' >&2; exit 1; }
 # This is a dedicated disposable build tree. Refuse unexpected user edits.
 changes=$(git_source diff --name-only)
-[ -z "$changes" ] || [ "$changes" = audio/drivers/sdl_audio.c ] || { echo 'Unexpected source edits' >&2; exit 1; }
+unexpected=$(printf '%s\n' "$changes" | grep -v -E '^(audio/drivers/sdl_audio.c|core_impl.c|dynamic.c)?$' || true)
+[ -z "$unexpected" ] || { echo 'Unexpected source edits' >&2; exit 1; }
 cp retroarch/steamlink_sdl_audio_driver.c "$source_dir/audio/drivers/sdl_audio.c"
 cp src/steamlink_sdl_audio.[ch] "$source_dir/audio/drivers/"
+python3 scripts/patch-retroarch-audio.py "$source_dir"
 cd "$source_dir"
 export OS=Linux
 # RetroArch quotes CC as a single executable; SDK CC contains extra arguments.
@@ -47,5 +49,6 @@ git_source archive --prefix=retroarch/ "$rev" > "$project/dist/core-sources/retr
 staging="$project/build/retroarch-audio-source"
 mkdir -p "$staging/retroarch/audio/drivers"
 cp audio/drivers/sdl_audio.c audio/drivers/steamlink_sdl_audio.[ch] "$staging/retroarch/audio/drivers/"
-tar -rf "$project/dist/core-sources/retroarch-audio.tar" -C "$staging" retroarch/audio/drivers
+cp core_impl.c dynamic.c "$staging/retroarch/"
+tar -rf "$project/dist/core-sources/retroarch-audio.tar" -C "$staging" retroarch/audio/drivers retroarch/core_impl.c retroarch/dynamic.c
 gzip -f "$project/dist/core-sources/retroarch-audio.tar"

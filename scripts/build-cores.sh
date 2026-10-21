@@ -26,8 +26,12 @@ if [ "$target" != mame ]; then
     rev=a79dfe9047e7fec58808aefe48ad2bf499c7af11
     checkout snes9x2005 https://github.com/libretro/snes9x2005.git "$rev"
     cd "$cache/snes9x2005"
-    apu=0;name=snes9x2005
-    if [ "$target" = snes-plus ]; then apu=1;name=snes9x2005_plus;fi
+    apus=0
+    if [ "$target" = snes-plus ]; then apus=1;fi
+    if [ "$target" = all ]; then apus='0 1';fi
+    for apu in $apus; do
+    name=snes9x2005
+    if [ "$apu" = 1 ]; then name=snes9x2005_plus;fi
     compile_flags="$flags -DNDEBUG -fPIC -DLOAD_FROM_MEMORY -DLAGFIX -I./source -I. -I./libretro-common/include"
     if [ "$apu" = 1 ]; then compile_flags="$compile_flags -DUSE_BLARGG_APU";fi
     make platform=unix USE_BLARGG_APU="$apu" LOAD_FROM_MEMORY=1 clean > "$cache/snes-clean.log" 2>&1
@@ -38,6 +42,7 @@ if [ "$target" != mame ]; then
     cp "${name}_libretro.so" "$project/build/cores/${name}_flxtr_libretro.so"
     cp copyright "$project/build/cores/SNES9X-LICENSE.txt"
     printf 'source=https://github.com/libretro/snes9x2005\ncommit=%s\nUSE_BLARGG_APU=%s\nflags=%s\n' "$rev" "$apu" "$compile_flags" > "$project/build/cores/${name}-build.txt"
+    done
 fi
 if [ "$target" = all ] || [ "$target" = mame ]; then
     rev=0353570ddd2e6d9d32bffc89278e1b37f5d61f8e

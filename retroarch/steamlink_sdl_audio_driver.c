@@ -14,6 +14,27 @@ typedef struct {
     Uint64 frequency,started,last_submit,total_bytes,max_gap_us,max_write_us;
     size_t queue_min,queue_max;
 } FlxtrAudio;
+static FlxtrAudio *flxtr_current_audio;
+static void (*flxtr_buffer_callback)(bool,unsigned,bool);
+/* Libretro environment command 62 ABI: one callback pointer. The pinned
+ * frontend predates this API; notification stays on the core's own thread. */
+bool flxtr_audio_buffer_register(void *data){
+    if(data)memcpy(&flxtr_buffer_callback,data,sizeof(flxtr_buffer_callback));
+    else flxtr_buffer_callback=NULL;
+    return true;
+}
+void flxtr_audio_buffer_notify(void){
+    FlxtrAudio *a=flxtr_current_audio;
+    unsigned occupancy=0;
+    bool active=a&&!a->nonblock&&!a->output.paused&&a->output.device;
+    if(!flxtr_buffer_callback)return;
+    if(active){
+        size_t queued=steamlink_sdl_audio_queued(&a->output);
+        occupancy=(unsigned)((Uint64)queued*100/a->output.capacity);
+        if(occupancy>100)occupancy=100;
+    }
+    flxtr_buffer_callback(active,occupancy,active&&occupancy<25);
+}
 static unsigned setting(const char *name,unsigned fallback){
     const char *text=getenv(name);char *end;unsigned long value;
     if(!text)return fallback;
@@ -54,6 +75,7 @@ static void *flxtr_init(const char *device,unsigned rate,unsigned latency,
         a->started=SDL_GetPerformanceCounter();a->traced=SDL_GetTicks();
         a->queue_min=a->output.capacity;
     }
+    flxtr_current_audio=a;
     return a;
 }
 static ssize_t flxtr_write(void *data,const void *buf,size_t size){
@@ -108,6 +130,7 @@ static bool flxtr_alive(void *data){
 static void flxtr_nonblock(void *data,bool state){((FlxtrAudio *)data)->nonblock=state;}
 static void flxtr_free(void *data){
     FlxtrAudio *a=(FlxtrAudio *)data;
+    if(a==flxtr_current_audio)flxtr_current_audio=NULL;
     if(a){fprintf(stderr,"[steamlink-sdl] close: possible-underruns=%u errors=%u\n",a->output.underruns,a->output.errors);steamlink_sdl_audio_close(&a->output);free(a);}
 }
 static bool flxtr_float(void *data){(void)data;return false;}

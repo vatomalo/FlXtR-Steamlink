@@ -224,7 +224,10 @@ dropouts and music stutter with both installed and queued frontends.
 | Newly compiled Plus, same audio settings | Slightly worse | Still fails sustained delivery; not a demonstrated core optimization |
 | New Plus, requested 640x480 GL output | Much better overall, still dropouts; small corner picture | Native framebuffer remained 1280x720; 45,985 frames/s over 394 s |
 | Process-local native framebuffer scaling, 640x480 and 960x540 | Still small corner picture | Driver logs report scaling, but physical result fails; no scaling fix claimed |
-| SDL2 video with automatic fullscreen dimensions | Wrong/no picture | Invalid visible test; explicit native window dimensions need retesting |
+| SDL2 video with automatic fullscreen dimensions | Wrong/no picture | Window-size issue; resolved in the later explicit-size test |
+| SDL2 video with explicit 1280x720 window | Picture correct; music still stutters | Fixes the window-size issue, not audio starvation |
+| Audio buffer-status bridge and core automatic frame skip | Music improved but still crackles | Not stable; software queue still empties |
+| Also avoiding SDL2 duplicate presentation | Unchanged or worse | Experiment rejected; optimization omitted from the implementation |
 
 These windows include different gameplay activity and occasional pauses/state
 loads. Submission rates are diagnostic observations, not controlled benchmarks
@@ -253,3 +256,18 @@ installed graphics library or working FlXtR player was replaced. The native
 driver accepted 640x480 and 960x540 but rejected 640x360. Its reported framebuffer,
 window, EGL surface and viewport sizes did not establish correct TV scaling.
 Do not enable these experiments or treat their logs as visual acceptance.
+
+The queued frontend now backports Libretro command 62 (audio buffer-status
+callback) to the pinned frontend. It reports actual queue occupancy before core
+execution, marks occupancy below 25% as likely underrun, becomes inactive when
+paused/nonblocking/closed, and clears the callback on core unload. This enables
+the core's existing opt-in automatic frame skipping. Command 63 (minimum audio
+latency) remains unsupported; this experiment retained 64 ms / 512 frames.
+Frame skipping is not enabled by default and no tuned profile is accepted.
+
+The newly built Plus core is packaged as the additional
+`snes9x2005_plus_flxtr_libretro.so` choice. It does not replace or automatically
+select over the installed Plus core. `build-cores.sh all` builds both SNES
+variants; `snes-plus` builds only the additional Plus variant. Work is being
+saved at the user's request for a later session; speech, stable gameplay and
+physical synchronization remain unfinished.

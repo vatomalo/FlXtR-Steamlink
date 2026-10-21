@@ -39,11 +39,13 @@ static int hardware_viewport(VideoRect *rect,int display_w,int display_h,int dec
     if(!scaling_saved){
         scaling_original_source=before_source;scaling_original_output=before_output;scaling_saved=1;
     }
-    /* Preserve the firmware's input crop. Replacing it with decoded picture
-     * dimensions makes the output appear tiny or misaligned on some devices.
-     * Only change the destination rectangle when selecting a view mode. */
+    /* The source rectangle is the *decoded visible picture*, not the
+     * scaler's initial underscan/crop rectangle. Reusing the firmware crop
+     * means that Fit, Stretch and even 1:1 can permanently lose image edges.
+     * Keep the full input frame for every mode; only vary the destination.
+     * The scaler may have its own output coordinate space, handled below. */
     if(decoded_w<1||decoded_h<1||decoded_w>32767||decoded_h>32767)return -1;
-    VideoRect source=scaling_original_source;
+    VideoRect source={0,0,(int16_t)decoded_w,(int16_t)decoded_h};
     VideoRect native=scaling_original_output;
     if(native.w<=0||native.h<=0)return -1;
     /* SLVideo's output plane may use an internal coordinate space (e.g. 1280x720

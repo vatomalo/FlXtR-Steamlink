@@ -763,7 +763,7 @@ static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink
     for(int i=0;i<lines&&page*lines+i<count;i++)
         text(x,y+i*18,chunks[page*lines+i],1,ink,27);
     if(pages>1){char info[40];snprintf(info,sizeof(info),"MORE %d/%d",page+1,pages);
-        text(x,y+lines*18+4,info,1,dim,27);}
+        text(922-(int)strlen(info)*6,434,info,1,dim,27);}
 }
 static void preview_stop(void);
 static void clear_posters(void) {
@@ -1654,14 +1654,17 @@ static void draw(Uint32 tick) {
             }
         }
         detail[strcspn(detail,"\r\n")]=0;
-        wrap_detail(690,282,t->meta,1,white);
-        rect(690,305,232,1,dim,1);
-        if(detail[0])wrap_description(690,315,detail,7,white,visible[selection]+browse.mode*100000+browse.id);
+        /* Give the synopsis all space below the title. Footer metadata stays
+         * separate from the description and right-aligned with MORE / PAGE. */
+        rect(690,277,232,1,dim,1);
+        if(detail[0])wrap_description(690,287,detail,7,white,visible[selection]+browse.mode*100000+browse.id);
         else if(!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv")||
                 !strcmp(t->kind,"game")||!strcmp(t->kind,"kiss"))
-            text(690,325,"DESCRIPTION NOT CACHED",1,dim,28);
-        /* Aspect ratio is controlled only while video is playing. */
-        snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
+            text(690,291,"DESCRIPTION NOT CACHED",1,dim,28);
+        const int meta_chars=(int)strlen(t->meta)>35?35:(int)strlen(t->meta);
+        text(922-meta_chars*6,414,t->meta,1,white,35);
+        snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
+        text(922-(int)strlen(num)*6,455,num,1,dim,25);
     }
     if(bios_archive_confirm){rect(190,210,680,110,green,0);text(207,225,"ARCHIVE BIOS / COPYRIGHT WARNING",2,green,45);text(207,259,"CONFIRM RIGHTS AND SOURCE BEFORE INSTALL",1,white,75);text(207,289,"A DOWNLOAD / B OR X CANCEL",2,green,42);}
     if(catalog_pid&&!download_background){

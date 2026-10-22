@@ -38,3 +38,6 @@ phone-files/
 
 /tv-airing.tsv*
 /tv-preload.log
+
+# Transient provider authentication notifications (no credentials).
+*-login-required

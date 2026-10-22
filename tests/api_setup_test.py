@@ -31,7 +31,10 @@ with tempfile.TemporaryDirectory(prefix='flxtr phone ø ') as directory:
             assert response.getheader('Referrer-Policy') == 'same-origin'
             conn.close()
             return code, text
-        assert request()[0] == 200
+        code, page = request()
+        assert code == 200
+        assert "Sign in to YouTube on your phone" in page
+        assert "Phone sign-in does not sign FlXtR in" in page
         assert request(path='/')[0] == 403
         assert request(headers={'Host': 'evil.example'})[0] == 403
         assert request(path=url.path+'phone')[0] == 200

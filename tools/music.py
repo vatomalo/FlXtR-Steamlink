@@ -287,11 +287,19 @@ def run(args):
         if isinstance(row, (list, tuple)) and len(row) == 4:
             print('\t'.join(clean(cell, 220) for cell in row))
 
+def login_required(error):
+    detail = str(error).lower().replace('’', "'")
+    return any(phrase in detail for phrase in (
+        'sign in to confirm', 'sign in to verify', 'login required',
+        'authentication required', 'use --cookies', 'cookies-from-browser'))
+
 if __name__ == '__main__':
     try:
         run(sys.argv[1:])
     except Exception as error:
         CACHE.mkdir(mode=0o700, exist_ok=True)
+        if login_required(error):
+            atomic(Path('youtube-login-required'), '')
         atomic(CACHE / 'error.txt', clean(str(error), 180))
         print('Music lookup failed: ' + clean(str(error), 180), file=sys.stderr)
         sys.exit(1)

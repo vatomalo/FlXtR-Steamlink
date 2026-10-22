@@ -14,6 +14,14 @@ music = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(music)
 
 class MusicTest(unittest.TestCase):
+    def test_login_required_errors(self):
+        for error in ["Sign in to confirm you’re not a bot", "Login required",
+                      "Use --cookies-from-browser to authenticate", "Sign in to verify your age"]:
+            self.assertTrue(music.login_required(error), error)
+        for error in ["HTTP Error 429: Too Many Requests", "HTTP Error 403: Forbidden",
+                      "Connection timed out", "Video unavailable", "No video formats found"]:
+            self.assertFalse(music.login_required(error), error)
+
     def test_playlist_metadata_only(self):
         data = {'props': {'pageProps': {'state': {'data': {'entity': {'trackList': [
             {'title': 'Song\nTitle', 'subtitle': 'Artist', 'audioPreview': {'url': 'must-not-play'}}

@@ -33,6 +33,7 @@
 static int phone_dispatch(char *reply,size_t size);
 #define FLXTR_PHONE_DISPATCH phone_dispatch
 #include "api_setup.h"
+#include "service_login.h"
 #include "vendor/qrcodegen.c"
 #include "wifi_pairing.h"
 #ifdef _WIN32
@@ -60,6 +61,24 @@ static void accounts_open(int party){
     char payload[800];uint8_t wifi_temp[sizeof(wifi_qr)];
     wifi_qr_valid=!wifi_payload(payload,sizeof(payload))&&qrcodegen_encodeText(payload,wifi_temp,wifi_qr,qrcodegen_Ecc_LOW,1,8,qrcodegen_Mask_AUTO,false);
     memset(payload,0,sizeof(payload));memset(wifi_temp,0,sizeof(wifi_temp));
+}
+
+/* Defer optional account prompts until playback and active work are finished. */
+static int service_login_poll(void){
+    static const char *services[]={"subdl","gamesdb","youtube"};
+    if(accounts_on)return 0;
+    for(size_t i=0;i<sizeof(services)/sizeof(services[0]);i++){
+        const char *path=service_login_path(services[i]);
+        if(access(path,F_OK))continue;
+        accounts_open(0);
+        if(flxtr_socket_valid(api_setup.listener)){
+            unlink(path);
+            snprintf(api_setup.message,sizeof(api_setup.message),"%s LOGIN REQUIRED - FOLLOW PHONE INSTRUCTIONS",
+                i==0?"SUBDL":i==1?"THEGAMESDB":"YOUTUBE");
+        }
+        return 1;
+    }
+    return 0;
 }
 
 #ifndef FLXTR_VERSION
@@ -1363,7 +1382,7 @@ static void draw(Uint32 tick) {
             for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(qrcodegen_getModule(accounts_qr,x,y))
                 rect(left+(x+4)*scale,top+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);
             text(524,155,"SCAN WITH YOUR PHONE",2,(SDL_Color){255,255,255,255},32);
-            wrap(524,195,party_entry==2?"OPEN THE GAME LINK ON YOUR PHONE. DOWNLOAD THERE, RETURN TO THE PHONE REMOTE, THEN UPLOAD THE ROM.":party_entry?"JOIN POCKET QUIZ ON YOUR PHONE. ENTER YOUR NAME, THEN START WHEN EVERYONE IS READY.":"API KEYS, VIDEO UPLOADS, A PHONE REMOTE AND POCKET QUIZ. OPEN THE PHONE REMOTE LINK.",30,5,(SDL_Color){220,230,220,255});
+            wrap(524,195,party_entry==2?"OPEN THE GAME LINK ON YOUR PHONE. DOWNLOAD THERE, RETURN TO THE PHONE REMOTE, THEN UPLOAD THE ROM.":party_entry?"JOIN POCKET QUIZ ON YOUR PHONE. ENTER YOUR NAME, THEN START WHEN EVERYONE IS READY.":"SIGN IN TO THE SERVICE ON YOUR PHONE AND FOLLOW ITS SETUP INSTRUCTIONS. KEEP THIS SCREEN OPEN.",30,5,(SDL_Color){220,230,220,255});
             text(524,315,party_entry==2?"KEEP THIS SCREEN OPEN":party_entry?"1-8 PLAYERS / EIGHT ROUNDS":access("subdl-api-key.txt",R_OK)?"SUBDL: NOT SET":"SUBDL: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
             text(524,348,party_entry==2?"B CLOSE AND IMPORT":party_entry?"NO API KEY NEEDED":access("thegamesdb.key",R_OK)?"THEGAMESDB: NOT SET":"THEGAMESDB: KEY SAVED",2,(SDL_Color){140,240,150,255},32);
             if(wifi_qr_valid&&party_entry!=2){
@@ -2621,6 +2640,9 @@ int main(int argc,char **argv) {
             if(p==player_pid){finish_player(code);dirty=1;}
             else if(stopping_player&&SDL_GetTicks()-stop_time>3000)kill(player_pid,SIGKILL);
             SDL_Delay(30);continue;
+        }
+        if(!catalog_pid&&!youtube_pid&&!update_pid&&!music_job&&!samba_password_on&&!search_on&&service_login_poll()){
+            music_on=music_edit=favorite_remove_confirm=0;SDL_StopTextInput();dirty=1;
         }
         Uint32 now=SDL_GetTicks();
         if(dirty||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;

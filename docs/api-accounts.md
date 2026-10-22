@@ -33,3 +33,17 @@ Test: `python3 tests/api_setup_test.py`. Preview:
 The preview exits immediately, so its setup link is intentionally no longer live.
 
 The same screen now links to the [phone remote and party quiz](phone-remote.md).
+
+Authentication failures now open phone setup automatically for SubDL,
+TheGamesDB and YouTube. API HTTP 401 responses and explicit invalid/expired-key
+errors trigger setup; connection errors, generic 403 responses and quota limits
+do not. Prompts wait until foreground playback and workers finish. Close with B
+and retry the original operation after updating the key. Notifications contain
+only the provider identity, never credentials or provider response text.
+
+YouTube login-required errors from the music/video extractor also open this
+screen. The phone page links to Google sign-in and explains that phone login
+cannot authenticate FlXtR's extractor. This is not a YouTube OAuth device flow
+or cookie transfer; retry later or choose another video if verification remains
+required. SubDL configured through SUBDL_API_KEY must be updated in the launcher
+environment because it takes precedence over the phone-saved key.

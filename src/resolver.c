@@ -16,6 +16,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include "windows_runtime.h"
+#include "service_login.h"
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
 typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024];int height;} Choice;
@@ -50,6 +51,7 @@ static char *request(const char *url,struct curl_slist *headers,int media){
     curl_easy_setopt(c,CURLOPT_PROTOCOLS,media?(CURLPROTO_HTTP|CURLPROTO_HTTPS):CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTP|CURLPROTO_HTTPS);
 #endif
     CURLcode rc=curl_easy_perform(c);long code=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);curl_easy_cleanup(c);
+    service_login_response(url,code,b.data);
     if(rc!=CURLE_OK||code!=200){fprintf(stderr,"%s HTTP %ld / error %d\n",media?"Quality list":"Provider",code,(int)rc);free(b.data);return NULL;}
     return b.data;
 }

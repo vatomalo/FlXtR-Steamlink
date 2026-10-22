@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <time.h>
 #include "windows_runtime.h"
+#include "service_login.h"
 #include "windows_json.h"
 #include "response_cache.h"
 #include "browse_filters.h"
@@ -65,7 +66,8 @@ static int fetch_referred(const char *url,Buffer *b,const char *referer){
     curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);curl_easy_setopt(c,CURLOPT_MAXREDIRS,3L);
     curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,receive);curl_easy_setopt(c,CURLOPT_WRITEDATA,b);
     curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,5L);curl_easy_setopt(c,CURLOPT_TIMEOUT,12L);
-    curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);curl_easy_setopt(c,CURLOPT_FAILONERROR,1L);
+    curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);
+    curl_easy_setopt(c,CURLOPT_FAILONERROR,strncmp(url,"https://api.thegamesdb.net/",27)?1L:0L);
     curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L);
     curl_easy_setopt(c,CURLOPT_CAINFO,FLXTR_CA_BUNDLE);
     curl_easy_setopt(c,CURLOPT_USERAGENT,"FlXtR-Steamlink/0.2");
@@ -84,6 +86,7 @@ static int fetch_referred(const char *url,Buffer *b,const char *referer){
         }
         rc=curl_easy_perform(c);
         code=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);
+        if(service_login_response(url,code,b->data))return -1;
         if(rc==CURLE_OK&&code==200)return 0;
         if((rc!=CURLE_RECV_ERROR&&rc!=CURLE_WRITE_ERROR&&
             rc!=CURLE_OPERATION_TIMEDOUT&&rc!=CURLE_PARTIAL_FILE)||attempt)break;
@@ -630,7 +633,7 @@ static void game_info_prefetch(void){
         curl_free(name);
         if(n<0||n>=(int)sizeof(url))continue;
         Buffer buffer={NULL,0,256*1024};
-        if(fetch(url,&buffer)){free(buffer.data);continue;}
+        if(fetch(url,&buffer)){free(buffer.data);if(!access(service_login_path("gamesdb"),F_OK))break;continue;}
         json_object *root=json_tokener_parse(buffer.data?buffer.data:"");
         free(buffer.data);
         if(!root)continue;

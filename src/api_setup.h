@@ -100,7 +100,7 @@ static void api_asset(const char *path,const char *type){
     size_t n=fread(content,1,sizeof(content)-1,f);fclose(f);content[n]=0;api_reply_type(200,content,type);
 }
 static void api_page(const char *message){
-    char body[4800];
+    char body[6000];
     snprintf(body,sizeof(body),"<!doctype html><html lang=en><meta name=viewport content='width=device-width,initial-scale=1'><title>FlXtR API accounts</title>"
         "<style>body{background:#101510;color:#eee;font:18px system-ui;max-width:36em;margin:2em auto;padding:0 1em}a{color:#8fea94}input,button{font:inherit;padding:.7em;max-width:95%%}input{display:block;width:90%%;margin:.8em 0}section{margin:2em 0}button{background:#8fea94;border:0;border-radius:.3em}</style>"
         "<h1>FlXtR API accounts</h1><p><a href='./phone'>Phone remote, uploads and party quiz</a></p><p>%s</p><p>Use a trusted home network: this local setup page uses HTTP. It closes when you leave phone setup on the TV, or after 10 minutes without a request.</p>"
@@ -108,6 +108,7 @@ static void api_page(const char *message){
         "<form method=post action='%s'><label>SubDL API key<input type=password name=subdl minlength=8 maxlength=200 required autocomplete=off autocapitalize=none spellcheck=false></label><button>Save SubDL key</button></form></section>"
         "<section><h2>TheGamesDB</h2><p>Saved on this device: %s</p><p><a href='https://api.thegamesdb.net/key.php' target=_blank rel='noopener noreferrer'>Log in / request API access</a>. Follow the provider's account and API access steps, then copy your public API key.</p>"
         "<form method=post action='%s'><label>TheGamesDB public API key<input type=password name=gamesdb minlength=8 maxlength=120 required autocomplete=off autocapitalize=none spellcheck=false></label><button>Save TheGamesDB key</button></form></section>"
+        "<section><h2>YouTube</h2><p><a href='https://accounts.google.com/ServiceLogin?service=youtube' target=_blank rel='noopener noreferrer'>Sign in to YouTube on your phone</a>.</p><p>Phone sign-in does not sign FlXtR in: YouTube does not offer a device login for this extractor. If it requests cookies or bot verification, retry later or choose another video. Never paste a Google password or cookies into the API key forms.</p></section>"
         "<p>Keys stay on this device and are used for provider requests. Never paste account passwords here. Saving does not verify provider access.</p></html>",
         message,access("subdl-api-key.txt",R_OK)?"No":"Yes",api_setup.path,access("thegamesdb.key",R_OK)?"No":"Yes",api_setup.path);
     api_reply(200,body);

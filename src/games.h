@@ -148,6 +148,7 @@ static json_object *games_import(void){
     json_object *games=json_object_new_array();char path[PATH_MAX];game_visited=0;
     snprintf(path,sizeof(path),"%s/.home/.config/retroarch",games_home());game_scan(games,path,0,1);
     snprintf(path,sizeof(path),"%s/roms",games_home());game_scan(games,path,0,0);
+    game_scan(games,"/mnt/disk/roms",0,0);
     if(getcwd(path,sizeof(path))){size_t n=strlen(path);if(n+6<sizeof(path)){strcpy(path+n,"/roms");game_scan(games,path,0,0);}}
     FILE *f=fopen("games-paths.txt","r");if(f){while(fgets(path,sizeof(path),f)){path[strcspn(path,"\r\n")]=0;if(game_absolute(path))game_scan(games,path,0,0);}fclose(f);}
     if(!json_object_to_file("games.json.next",games))rename("games.json.next","games.json");

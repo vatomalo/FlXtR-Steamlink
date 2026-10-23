@@ -19,8 +19,9 @@ static struct {
 static unsigned sync_epoch;
 static int64_t sync_position_locked(void){
     if(av_sync.paused)return av_sync.pause_position;
-    int64_t queued=(int64_t)SDL_GetQueuedAudioSize(av_sync.device)*1000000/(48000*4);
-    int64_t position=audio_master_read_at(&av_sync.clock,queued,av_gettime_relative());
+    Uint32 queued_bytes=SDL_GetQueuedAudioSize(av_sync.device);
+    int64_t queued=queued_bytes/4;
+    int64_t position=audio_master_read_frames_at(&av_sync.clock,queued,48000,av_gettime_relative());
     if(av_sync.started&&!av_sync.eof&&!queued&&position>=av_sync.clock.tail){
         if(!av_sync.empty)av_sync.underflows++;
         av_sync.empty=1;

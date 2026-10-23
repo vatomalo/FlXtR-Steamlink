@@ -57,6 +57,9 @@ static inline void game_native_sdl(void){
 static json_object *games_read(const char *path){struct stat st;if(stat(path,&st)||st.st_size>8*1024*1024)return NULL;return json_object_from_file(path);}
 static const char *game_core(const char *path){
     const char *ext=strrchr(path,'.');if(!ext)return NULL;ext++;
+    if(!strcasecmp(ext,"cso")||
+       ((!strcasecmp(ext,"iso")||!strcasecmp(ext,"pbp"))&&
+        (rom_path_contains(path,"/psp/")||rom_path_contains(path,"/pspiso/"))))return "ppsspp";
     if(!strcasecmp(ext,"nes"))return "fceumm";
     if(!strcasecmp(ext,"sfc")||!strcasecmp(ext,"smc"))return "snes9x2005";
     if(!strcasecmp(ext,"gba"))return

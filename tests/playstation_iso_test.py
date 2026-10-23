@@ -42,4 +42,17 @@ with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([str(worker), '--run-game'], cwd=root, env=env, check=True)
     args = json.loads((home / 'argv.json').read_text())
     assert args[-3:] == ['--libretro', str(core), games[0]['rom']]
+    psp_core = cores / 'ppsspp_libretro.so'
+    psp_core.write_bytes(b'core fixture')
+    pspiso = home / 'roms/PSPISO'
+    pspiso.mkdir()
+    for name in ('Portable.ISO', 'Portable.pbp', 'Portable.cso'):
+        (pspiso / name).write_bytes(b'PSP fixture')
+    games = scan()
+    assert sum(g['core'] == str(core) for g in games) == 2
+    assert sum(g['core'] == str(psp_core) for g in games) == 4
+    folder = subprocess.run([str(worker), 'games-system', '1', '', '7', '0', '0'],
+                            cwd=root, env=env, check=True, capture_output=True, text=True)
+    assert 'total=4' in folder.stdout
+print('PASS: PSP ISO/PBP/CSO import and PSP folder routing with an installed PPSSPP core')
 print('PASS: PlayStation .iso/.ISO import, matching core, PSP isolation and launch')

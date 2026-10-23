@@ -67,7 +67,8 @@ static const char *game_core(const char *path){
 #endif
     if(!strcasecmp(ext,"gb")||!strcasecmp(ext,"gbc"))return "gambatte";
     if(!strcasecmp(ext,"md")||!strcasecmp(ext,"gen")||!strcasecmp(ext,"smd")||!strcasecmp(ext,"sms")||!strcasecmp(ext,"gg"))return "picodrive";
-    if(!strcasecmp(ext,"cue")||!strcasecmp(ext,"pbp")||!strcasecmp(ext,"chd")||!strcasecmp(ext,"m3u"))return
+    if(!strcasecmp(ext,"cue")||!strcasecmp(ext,"pbp")||!strcasecmp(ext,"chd")||!strcasecmp(ext,"m3u")||
+       (!strcasecmp(ext,"iso")&&rom_platform_for_path(path)==5))return
 #ifdef FLXTR_DESKTOP
         "mednafen_psx";
 #else

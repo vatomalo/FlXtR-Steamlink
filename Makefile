@@ -31,6 +31,7 @@ test: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/kissanime_test.c -o build/kissanime-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 	./build/kissanime-test
 	python3 tests/games_test.py
+	python3 tests/playstation_iso_test.py
 	python3 tests/catalog_test.py
 	python3 tests/update_test.py
 	python3 tests/update_package_test.py

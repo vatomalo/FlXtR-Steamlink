@@ -24,6 +24,9 @@
 #include "hardware_layout.h"
 #include "font.h"
 #include "steamlink_av_sync.h"
+#ifndef FLXTR_VERSION
+#define FLXTR_VERSION "development"
+#endif
 
 static volatile sig_atomic_t stopped;
 static volatile sig_atomic_t change_view;
@@ -380,6 +383,8 @@ static int load_external_subtitles(const char *url){
     return 0;
 }
 int main(int argc,char **argv) {
+    if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
+    fprintf(stderr,"Native player build: %s\n",FLXTR_VERSION);
     DiskBuffer *buffer=NULL;
     AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL,*sub_decoder=NULL;AVBSFContext *bsf=NULL;
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;

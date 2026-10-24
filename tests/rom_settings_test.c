@@ -32,8 +32,10 @@ int main(void){
     assert(rom_platform_for_path("/mnt/disk/roms/PSPISO/game.iso")==6);
     assert(rom_platform_for_path("/mnt/disk/roms/PSXISO/game.iso")==5);
     settings_on=0;rom_core_menu=0;total=count=1;visible[0]=selection=0;browse.mode=22;
-    titles[0]=rom;action(SDLK_y);assert(rom_core_menu||rom_options_menu);
-    action(SDLK_ESCAPE);assert(!rom_options_menu&&!rom_core_menu);
+    titles[0]=rom;action(SDLK_y);assert(rom_assets_on&&!rom_core_menu&&!rom_options_menu);
+    action(SDLK_RETURN);assert(rom_core_menu);
+    action(SDLK_ESCAPE);assert(rom_assets_on&&!rom_core_menu);
+    action(SDLK_ESCAPE);assert(!rom_assets_on&&!rom_options_menu&&!rom_core_menu);
     play();assert(game_exit&&!running&&!rom_options_menu);
     f=fopen("game-request","r");int id=0;assert(f&&fscanf(f,"%d",&id)==1&&id==1);fclose(f);
     unlink("game-request");

@@ -68,7 +68,7 @@ static int preview_launch_decoder(void){
 }
 static int preview_tick(void){
     const Title *selected=NULL;
-    if(renderer&&!coverflow&&!catalog_pid&&!player_pid&&!music_on&&!settings_on&&!rom_options_menu&&!rom_core_menu&&
+    if(renderer&&!coverflow&&!catalog_pid&&!player_pid&&!music_on&&!settings_on&&!rom_assets_on&&!rom_options_menu&&!rom_core_menu&&
        !search_on&&!about&&browse.mode!=11&&total>0&&selection>=0&&selection<total)
         selected=&titles[visible[selection]];
     const char *kind=selected?preview_category(selected):NULL;

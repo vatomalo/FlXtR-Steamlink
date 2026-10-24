@@ -78,6 +78,7 @@ typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],su
 /* Every ROM can select any locally installed Libretro core. */
 #define ROM_CORE_LIMIT 128
 static int rom_options_menu,rom_options_row;
+static int rom_assets_on;
 static Title rom_options_title;
 static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count,rom_core_first;
 static int platform_core_menu,platform_core_selecting,platform_core_index,platform_core_choice,platform_core_first;
@@ -719,6 +720,7 @@ static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink
         text(922-(int)strlen(info)*6,434,info,1,dim,27);}
 }
 static void preview_stop(void);
+static void rom_assets_stop(void);
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
@@ -727,6 +729,7 @@ static void clear_posters(void) {
  * on Steam Link. Release the graphics backend before handing over to SLVideo. */
 static void close_ui(void) {
     preview_stop();
+    rom_assets_stop();
     clear_posters();
     SDL_DestroyTexture(background);background=NULL;
     SDL_DestroyRenderer(renderer);renderer=NULL;
@@ -1263,6 +1266,7 @@ static void start_update(void) {
 }
 #include "music_ui.h"
 #include "preview_inset.h"
+#include "rom_assets_ui.h"
 #include "youtube_video.h"
 #include "settings_services.h"
 static int keyboard_help;
@@ -1318,6 +1322,7 @@ static void draw(Uint32 tick) {
         text(200,307,"A CONFIRM REMOVE / B CANCEL",2,green,55);
         SDL_RenderPresent(renderer);return;
     }
+    if(rom_assets_on&&!rom_core_menu){rom_assets_draw();return;}
     if(platform_core_menu){
         rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
         text(200,95,platform_core_selecting?"DEFAULT CORE":"DEFAULT CORES BY SYSTEM",2,green,40);
@@ -1658,7 +1663,7 @@ static void rom_launch(const Title *t){
         fprintf(f,"%d %d %d\n",t->id,back,start);if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}game_exit=1;running=0;return;
 }
 static void play(void) {
-    if(settings_on||rom_options_menu||rom_core_menu||about||!total||player_pid)return;
+    if(settings_on||rom_assets_on||rom_options_menu||rom_core_menu||about||!total||player_pid)return;
     restart_position=auto_resume=0;
     viewing=default_viewing; /* Each freshly selected item starts from the saved preference. */
     Title *t=&titles[visible[selection]];
@@ -2228,6 +2233,7 @@ static int phone_dispatch(char *reply,size_t size){
     return code;
 }
 static void action(SDL_Keycode key) {
+    if(rom_assets_action(key))return;
     if(samba_password_on){samba_password_action(key);return;}
     if(youtube_pid&&!youtube_preparing){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){youtube_stop();tv_active=0;music_video_pause(1);snprintf(status,sizeof(status),"YOUTUBE LOOKUP CANCELLED");}
@@ -2405,9 +2411,7 @@ static void action(SDL_Keycode key) {
     }
     if(!settings_on&&!about&&(browse.mode==14||browse.mode==22||browse.mode==FAVORITES_MODE)&&key==SDLK_y&&total&&
        !strcmp(titles[visible[selection]].kind,"game")){
-        rom_options_title=titles[visible[selection]];
-        rom_options_row=0;rom_options_menu=1;
-        rom_core_open(&rom_options_title);rom_core_menu=0;return;
+        rom_assets_open(&titles[visible[selection]]);return;
     }
     if(!settings_on&&!about&&key==SDLK_F8&&(browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28)){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&(key==SDLK_f||key==SDLK_F7)){favorites_toggle();return;}
@@ -2705,6 +2709,7 @@ int main(int argc,char **argv) {
         if(update_pid){int code;pid_t done=waitpid(update_pid,&code,WNOHANG);
             if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
+        if(rom_assets_tick())dirty=1;
         if(samba_poll())dirty=1;
         if(music_poll())dirty=1;
         if(youtube_poll())dirty=1;

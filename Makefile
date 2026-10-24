@@ -4,10 +4,10 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
 all: build/greenlink build/greenlink-catalog
-build/greenlink-catalog: src/catalog.c src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/game_scaling.h src/rom_core_preferences.h src/core_geometry.h src/vendor/libretro.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h
+build/greenlink-catalog: src/catalog.c src/rom_cover_preferences.h src/rom_cheat_runtime.h src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/game_scaling.h src/rom_core_preferences.h src/core_geometry.h src/vendor/libretro.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
-build/greenlink: src/shell.c src/desktop_theme.h src/youtube_video.h src/music_ui.h src/child_process.h src/platform_process.h src/platform_files.h src/platform_paths.h src/platform_net.h src/platform_pipe.h src/api_setup.h src/phone_features.h src/server_preferences.h src/mtv_preferences.h src/preview_inset.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/settings_tabs.h src/settings_services.h src/rom_core_preferences.h src/game_scaling.h src/browse_filters.h
+build/greenlink: src/shell.c src/rom_assets_ui.h src/desktop_theme.h src/youtube_video.h src/music_ui.h src/child_process.h src/platform_process.h src/platform_files.h src/platform_paths.h src/platform_net.h src/platform_pipe.h src/api_setup.h src/phone_features.h src/server_preferences.h src/mtv_preferences.h src/preview_inset.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/settings_tabs.h src/settings_services.h src/rom_core_preferences.h src/game_scaling.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl
 
@@ -33,6 +33,9 @@ test: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_settings_test.c -o build/rom-settings-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/rom-settings-test
 	python3 tests/rom_launch_preferences_test.py
+	python3 tests/rom_assets_test.py
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_assets_ui_test.c -o build/rom-assets-ui-test $(SDL_LIBS) -lSDL2_image -lcurl
+	SDL_VIDEODRIVER=dummy ./build/rom-assets-ui-test
 	$(CC) $(CFLAGS) tests/disk_buffer_test.c -o build/disk-buffer-test $$(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
 	./build/disk-buffer-test
 	$(CC) $(CFLAGS) tests/subtitle_text_test.c -o build/subtitle-text-test

@@ -13,6 +13,8 @@
 #include "desktop_retroarch.h"
 #include "game_output.h"
 #include "rom_core_preferences.h"
+#include "rom_cover_preferences.h"
+static int game_prepare_cheats(const char *core,const char *rom,const char *key,char *database,size_t cap);
 #define FLXTR_GAME_CONFIG
 #include "game_scaling.h"
 #undef FLXTR_GAME_CONFIG
@@ -362,6 +364,8 @@ static int games_list_filtered(int page,int refresh,int folder){
             if(!strcasecmp(e->title,aliases[k][0])){
                 snprintf(e->title,sizeof(e->title),"%s",aliases[k][1]);break;
             }
+        char cover_key[17];rom_identity(rom_path,cover_key);
+        rom_cover_override(cover_key,e->poster,sizeof(e->poster));
     }json_object_put(games);return 0;
 }
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
@@ -481,6 +485,13 @@ static int games_run(void){
         if(game_file(selected_core))core=selected_core;
     }
     if(!game_file(rom)||!game_file(core)){fprintf(stderr,"Game launch: missing ROM or RetroArch core\n");json_object_put(games);return 2;}
+    char cheat_database[PATH_MAX]={0};
+    int cheats=game_prepare_cheats(core,rom,preference_key,cheat_database,sizeof(cheat_database));
+    if(cheats<0){
+        FILE *error=fopen("game-error.txt","w");
+        if(error){fputs("COULD NOT PREPARE ROM CHEATS / SEE GAME.LOG",error);fclose(error);}
+        json_object_put(games);return 2;
+    }
     if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
         char bios[PATH_MAX];snprintf(bios,sizeof(bios),"%s",rom);
         char *slash=strrchr(bios,'/');if(slash)strcpy(slash+1,"neogeo.zip");
@@ -568,6 +579,8 @@ static int games_run(void){
           enabled==1?"true":"false",enabled==1?"true":"false");
     }
     if(back>=0&&back<64&&start>=0&&start<64&&back!=start)fprintf(f,"input_enable_hotkey_btn = \"%d\"\ninput_exit_emulator_btn = \"%d\"\n",back,start);
+    fprintf(f,"apply_cheats_after_load = \"%s\"\napply_cheats_after_toggle = \"true\"\n",cheats?"true":"false");
+    if(cheats)fprintf(f,"cheat_database_path = \"%s\"\n",cheat_database);
     /* Shared BIOS directory: the UI checks this same location. */
     fprintf(f,"system_directory = \"%.*s/system\"\n",(int)n,extra);
 #ifdef FLXTR_DESKTOP

@@ -51,4 +51,20 @@ with tempfile.TemporaryDirectory() as tmp:
         assert f'video_vsync = "{vsync}"' in actual
         assert f'video_hard_sync = "{str(profile == 2).lower()}"' in actual
     assert (config / 'retroarch.cfg').read_text() == '# existing config\n'
+    fixture = root / 'fixture.so'
+    subprocess.run(['cc','-shared','-fPIC','-std=c99','tests/libretro_geometry_fixture.c','-o',str(fixture)],check=True)
+    (cores / 'automatic_libretro.so').write_bytes(fixture.read_bytes())
+    cheats = root / 'cheats'
+    cheats.mkdir()
+    chosen = cheats / f'{key:016x}.cht'
+    chosen.write_text('cheats = 1\ncheat0_desc = "Test"\ncheat0_code = "SXIOPO"\ncheat0_enable = true\n')
+    launch('automatic')
+    actual = (root / 'game-runtime.cfg').read_text()
+    expected = cheats / 'runtime' / f'{key:016x}'
+    assert f'cheat_database_path = "{expected}"' in actual
+    assert 'apply_cheats_after_load = "true"' in actual
+    assert (expected / 'Fixture/test.cht').read_text() == chosen.read_text()
+    chosen.write_text(chosen.read_text().replace('true','false'))
+    launch('automatic')
+    assert 'cheat0_enable = false' in (expected / 'Fixture/test.cht').read_text()
 print('PASS: actual launches use Y ROM override > console default > automatic, and all three performance profiles')

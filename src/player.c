@@ -22,6 +22,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include "hardware_layout.h"
+#include "steamlink_video_stats.h"
 #include "font.h"
 #include "steamlink_av_sync.h"
 #ifndef FLXTR_VERSION

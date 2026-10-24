@@ -69,7 +69,8 @@ static inline int tv_network_save(const TvNetworkDay *day,const char *path){
         ok=fprintf(f,"%lld\t%d\t%d\t%d\t%d\t%d\t%s\n",
                    a->start,a->duration,a->kind,a->id,a->season,a->episode,a->title)>0;
     }
-    if(fflush(f)||fclose(f))ok=0;
+    if(fflush(f))ok=0;
+    if(fclose(f))ok=0;
     if(ok){if(rename(next,path))ok=0;}
     if(!ok)remove(next);
     return ok;

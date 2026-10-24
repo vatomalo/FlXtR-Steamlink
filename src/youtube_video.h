@@ -111,11 +111,25 @@ static int youtube_poll(void){
     if(!player_pid&&youtube_for_tv){tv_next_at=SDL_GetTicks()+2500;}
     return 1;
 }
+#include "mtv_weights.h"
 static void mtv_query(char *out,size_t size){
-    snprintf(out,size,"%s",mtv_genre_queries[mtv_genre]);
-    if(mtv_genre)return;
+    /* Explicit genre selection always plays that genre exclusively. */
+    if(mtv_genre>0&&mtv_genre<MTV_GENRES){
+        snprintf(out,size,"%s",mtv_genre_queries[mtv_genre]);
+        return;
+    }
+    /* Keep user-authored MTV queries as the highest-priority custom mode. */
     FILE *f=fopen("mtv-query.txt","r");
-    if(f){char line[221];if(fgets(line,sizeof(line),f)){line[strcspn(line,"\r\n")]=0;if(line[0])snprintf(out,size,"%s",line);}fclose(f);}
+    if(f){
+        char line[221];
+        if(fgets(line,sizeof(line),f)){
+            line[strcspn(line,"\\r\\n")]=0;
+            if(line[0]){snprintf(out,size,"%s",line);fclose(f);return;}
+        }
+        fclose(f);
+    }
+    int chosen=mtv_weighted_genre((unsigned int)tv_sequence("mtv-genre-sequence.txt"));
+    snprintf(out,size,"%s",mtv_genre_queries[chosen]);
 }
 static void youtube_prefetch(void){
     if(!tv_active||!player_pid||strcmp(playing_title.kind,"youtube"))return;

@@ -28,6 +28,7 @@
 #include "tv_history.h"
 #include "tv_play_history.h"
 #include "browse_filters.h"
+#include "server_preferences.h"
 #include "game_metadata.h"
 #include "child_process.h"
 static int phone_dispatch(char *reply,size_t size);
@@ -254,9 +255,13 @@ static int set_auto_updates(int enabled){
     return close(fd)==0;
 }
 static int viewing=VIEW_FIT,default_viewing=VIEW_FIT; /* Session view and persistent preference. */
+static int library_genre[3],library_order[3];
+static const char *const library_filter_names[]={"movie","series","anime"};
+static int library_filter_slot(int mode){return mode==1?0:mode==2?1:mode==7?2:-1;}
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"series_autoplay=%d\nvideo_view=%d\n",series_autoplay,default_viewing);
+    for(int i=0;i<3;i++)fprintf(f,"%s_genre=%d\n%s_order=%d\n",library_filter_names[i],library_genre[i],library_filter_names[i],library_order[i]);
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
     fprintf(f,"game_output=%d\ngame_view=%d\ngame_performance=%d\nmusic_autoplay=%d\n",game_output,game_view,game_performance,music_autoplay);
     fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
@@ -275,6 +280,17 @@ static void load_settings(void){
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
     int theme_found=0,old_tv_schedule=0,schedule_version=0;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
+        int handled=0;
+        for(int i=0;i<3;i++){
+            char filter_key[32];snprintf(filter_key,sizeof(filter_key),"%s_genre",library_filter_names[i]);
+            if(!strcmp(key,filter_key)){
+                if(value>=0&&value<BROWSE_GENRES&&(i!=1||series_genres[value]>=0))library_genre[i]=value;
+                handled=1;
+            }
+            snprintf(filter_key,sizeof(filter_key),"%s_order",library_filter_names[i]);
+            if(!strcmp(key,filter_key)){if(value>=0&&value<BROWSE_ORDERS)library_order[i]=value;handled=1;}
+        }
+        if(handled)continue;
         if(!strcmp(key,"video_view")&&value>=0&&value<VIEW_COUNT)viewing=default_viewing=value;
         else if(!strcmp(key,"tv_schedule_version"))schedule_version=value;
         else if(!strcmp(key,"tv_rating")&&value>=1&&value<=5)tv_rating_weight=value;
@@ -342,6 +358,7 @@ static Uint32 controller_activity;
 static int controller_slept;
 static int auto_active,auto_count,auto_index;
 static char auto_servers[40][32];
+static char playback_server[32];
 static Title auto_title;
 static Uint32 catalog_started;
 static int download_background;
@@ -794,6 +811,10 @@ static int library_cache_restore(Browse next,int push,int pop){
     return 0;
 }
 static void request_catalog(Browse next,int push,int pop){
+    int slot=library_filter_slot(next.mode);
+    if(slot>=0&&!pop&&browse.mode!=next.mode&&next.page==1&&!next.query[0]&&!next.id&&!next.season){
+        next.id=library_genre[slot];next.season=library_order[slot];
+    }
     if(next.mode!=5&&next.mode!=6&&next.mode!=12&&next.mode!=13)tv_active=0;
     if(next.mode==FAVORITES_MODE){
         browse=next;history_size=0;count=0;selection=0;ready_only=0;
@@ -867,9 +888,14 @@ static void auto_request(Browse next){
     if(!catalog_pid)auto_active=0;
 }
 static void auto_prefer_flixer_server(void){
-    if(strcmp(auto_title.kind,"movie")&&strcmp(auto_title.kind,"episode"))return;
-    /* Flixer's fifth server is echo. Keep all remaining fallbacks in order. */
-    for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],"echo")){
+    char preferred_name[32];server_preference_read(auto_title.kind,preferred_name);
+    int found=0;for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],preferred_name))found=1;
+    if(!found){
+        if(server_group(auto_title.kind)!=0)return;
+        strcpy(preferred_name,"echo");
+    }
+    /* A playback-confirmed server wins; preserve all remaining fallbacks. */
+    for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],preferred_name)){
         char preferred[32];strcpy(preferred,auto_servers[i]);
         memmove(auto_servers+1,auto_servers,(size_t)i*sizeof(auto_servers[0]));
         strcpy(auto_servers[0],preferred);break;
@@ -1793,11 +1819,17 @@ static void tv_history_prepare(const Title *t){
     snprintf(tv_history_key,sizeof(tv_history_key),"%s",key);snprintf(tv_history_token,sizeof(tv_history_token),"%s",token);
 }
 static void tv_history_poll(void){
-    if(!tv_history_active)return;
     FILE *f=fopen("playback-started","r");if(!f)return;
-    char token[16];double position=-1;
-    int good=fscanf(f,"%15s %lf",token,&position)==2&&!strcmp(token,tv_history_token)&&position>=0&&position<=86400;
+    char token[16],expected[16];double position=-1;
+    bookmark_path(&playing_title,expected,sizeof(expected));
+    int good=fscanf(f,"%15s %lf",token,&position)==2&&position>=0&&position<=86400&&
+        (!strcmp(token,expected)||(tv_history_active&&!strcmp(token,tv_history_token)));
     fclose(f);unlink("playback-started");if(!good)return;
+    if(playback_server[0]&&!strcmp(token,expected)){
+        if(!server_preference_save(playing_title.kind,playback_server))fprintf(stderr,"Could not save working server preference\n");
+        playback_server[0]=0;
+    }
+    if(!tv_history_active||strcmp(token,tv_history_token))return;
     tv_history_position=position;
     if(tv_history_confirmed)return;
     tv_history_confirmed=1;
@@ -1861,6 +1893,10 @@ static void launch_player(const Title *t) {
     if(tv_active&&!tv_preloading)tv_history_prepare(t);
     if(!tv_preloading)unlink("playback-started");
     playing_title=*t;player_menu=1; /* Native controller menu is always available. */
+    playback_server[0]=0;
+    if(auto_active&&auto_index>=0&&auto_index<auto_count&&!strcmp(t->kind,auto_title.kind)&&
+       t->id==auto_title.id&&t->season==auto_title.season&&t->episode==auto_title.episode)
+        strcpy(playback_server,auto_servers[auto_index]);
     subtitle_route_log("launch-player",t);
     music_video_pause(0);
     if(!tv_preloading)close_ui();
@@ -2318,7 +2354,11 @@ static void action(SDL_Keycode key) {
             else do {browse.id=(browse.id+step+BROWSE_GENRES)%BROWSE_GENRES;}while(browse.mode==2&&series_genres[browse.id]<0);
         }
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){filters_on=0;browse.id=filter_original_genre;browse.season=filter_original_order;return;}
-        if(key==SDLK_RETURN){filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);}
+        if(key==SDLK_RETURN){
+            int slot=library_filter_slot(browse.mode);
+            if(slot>=0){library_genre[slot]=browse.id;library_order[slot]=browse.season;save_settings();}
+            filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);
+        }
         return;
     }
     if(!settings_on&&!about&&(browse.mode==14||browse.mode==22||browse.mode==FAVORITES_MODE)&&key==SDLK_y&&total&&

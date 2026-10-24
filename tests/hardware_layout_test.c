@@ -18,7 +18,7 @@ int main(void){
     viewport_handle=(void*)1;viewport_plane=1;scaling_set=set;scaling_get=get;
     assert(!video_rect(VIEW_FIT,1280,534,1,1,1920,1080,&r));
     assert(!hardware_viewport(&r,1920,1080,1280,720));
-    assert(input.x==12&&input.y==8&&input.w==1280&&input.h==720); /* preserve firmware crop */
+    assert(input.x==0&&input.y==0&&input.w==1280&&input.h==720); /* full decoded frame */
     assert(output.y==139&&output.w==1920&&output.h==801);
     assert(!video_rect(VIEW_STRETCH,1280,534,1,1,1920,1080,&r));
     assert(!hardware_viewport(&r,1920,1080,1280,720)&&output.h==1080);
@@ -40,15 +40,23 @@ int main(void){
     assert(!video_rect(VIEW_PIXEL,1280,720,1,1,1920,1080,&r));
     assert(!hardware_viewport(&r,1920,1080,1280,720));
     assert(output.x==225&&output.y==128&&output.w==854&&output.h==480);
-    assert(input.x==4&&input.y==6);
+    assert(input.x==0&&input.y==0);
     restore_viewport();
     /* Actual 640x480 decode under 1920x1080 output. */
     viewport_handle=(void*)1;viewport_plane=1;calls=0;bad_read=0;scaling_saved=0;
     input=(VideoRect){0,0,1920,1080};output=(VideoRect){0,0,1920,1080};
     assert(!video_rect(VIEW_FIT,640,480,1,1,1920,1080,&r));
     assert(!hardware_viewport(&r,1920,1080,640,480));
-    assert(input.w==1920&&input.h==1080); /* firmware coordinates, not decoded pixels */
+    assert(input.x==0&&input.y==0&&input.w==640&&input.h==480);
     assert(output.x==240&&output.w==1440&&output.h==1080);
     restore_viewport();
+    /* A stale 720x480 crop must not cut down a newly decoded HD stream. */
+    viewport_handle=(void*)1;viewport_plane=1;calls=0;scaling_saved=0;
+    input=(VideoRect){0,0,720,480};output=(VideoRect){38,21,1844,1037};
+    assert(!video_rect(VIEW_FIT,1280,720,1,1,1920,1080,&r));
+    assert(!hardware_viewport(&r,1920,1080,1280,720));
+    assert(input.x==0&&input.y==0&&input.w==1280&&input.h==720);
+    assert(output.x==38&&output.y==21&&output.w==1844&&output.h==1037);
+    restore_viewport();assert(input.w==720&&input.h==480);
     puts("Hardware scaling tests passed");
 }

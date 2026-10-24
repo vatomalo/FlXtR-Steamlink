@@ -59,8 +59,10 @@ static inline int tv_network_path(char *out,size_t cap,const char *directory,
     return n>0&&(size_t)n<cap;
 }
 static inline int tv_network_save(const TvNetworkDay *day,const char *path){
-    if(!tv_network_valid(day)||!path||strlen(path)>PATH_MAX-12)return 0;
-    char next[PATH_MAX];snprintf(next,sizeof(next),"%s.next",path);
+    if(!tv_network_valid(day)||!path)return 0;
+    char next[4096];
+    int n=snprintf(next,sizeof(next),"%s.next",path);
+    if(n<0||(size_t)n>=sizeof(next))return 0;
     FILE *f=fopen(next,"w");if(!f)return 0;
     int ok=fprintf(f,"FLXTR-TV\t%d\t%d\t%lld\t%lld\t%d\n",TV_NETWORK_FORMAT,
                    day->channel,day->day_start,day->day_end,day->count)>0;

@@ -72,11 +72,22 @@ int main(int argc,char **argv){
     decoder=avcodec_alloc_context3(codec);
     if(!decoder||avcodec_parameters_to_context(decoder,params)<0||avcodec_open2(decoder,codec,NULL)<0)goto done;
     pkt=av_packet_alloc();frame=av_frame_alloc();if(!pkt||!frame)goto done;
-    int64_t began=av_gettime_relative(),last=0;
+    int64_t began=av_gettime_relative(),last=0,first_pts=AV_NOPTS_VALUE,preview_clock=0;
     while(!quit&&av_gettime_relative()-began<45000000&&av_read_frame(format,pkt)>=0){
         if(pkt->stream_index==track&&avcodec_send_packet(decoder,pkt)>=0){
             while(avcodec_receive_frame(decoder,frame)>=0){
                 int64_t now=av_gettime_relative();
+                if(frame->best_effort_timestamp!=AV_NOPTS_VALUE){
+                    int64_t pts=av_rescale_q(frame->best_effort_timestamp,format->streams[track]->time_base,AV_TIME_BASE_Q);
+                    if(first_pts==AV_NOPTS_VALUE){first_pts=pts;preview_clock=now;}
+                    int64_t target=preview_clock+pts-first_pts;
+                    if(target-began>=45000000){av_frame_unref(frame);result=0;goto done;}
+                    while(!quit&&target>now){
+                        int64_t wait=target-now;if(wait>10000)wait=10000;
+                        SDL_Delay((Uint32)((wait+999)/1000));now=av_gettime_relative();
+                    }
+                }
+                if(quit){av_frame_unref(frame);result=0;goto done;}
                 if(now-last>=200000){
                     if(write_preview(frame)<0)goto done;
                     last=now;

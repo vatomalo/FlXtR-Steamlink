@@ -90,6 +90,9 @@ static void subtitle_draw(void){
 #ifdef SUBTITLE_TIME_US
     fprintf(stderr,"Subtitle presented: start=%.3f end=%.3f clock=%.3f\n",
         subtitle_cues[selected].start/1000000.0,subtitle_cues[selected].end/1000000.0,now/1000000.0);
+#ifdef SUBTITLE_PRESENTATION_TIME_US
+    fprintf(stderr,"Subtitle presentation clock: %.3f\n",SUBTITLE_PRESENTATION_TIME_US(subtitle_external)/1000000.0);
+#endif
 #endif
     for(int y=0;y<144;y++)for(int x=0;x<960;x++)((uint32_t*)((char*)pixels+y*pitch))[x]=0xa0000000;
     const char *input=subtitle_cues[selected].text;int cols=900/(6*subtitle_size);

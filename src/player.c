@@ -41,12 +41,13 @@ static int megaplay;
 static uint64_t audio_samples;
 static int64_t origin=AV_NOPTS_VALUE,clock_start,media_offset;
 static uint8_t *audio_pcm;static unsigned audio_pcm_capacity;
-static int timing_actual,timing_target,timing_available;
+static int timing_actual,timing_target,timing_available,subtitle_fine_delay_ms;
 static void timing_poll(void);
 static double timing_position(void){return av_sync.initialized?fmax(0,sync_position()/1000000.0):0;}
 #define PLAYBACK_POSITION() timing_position()
 #define PLAYBACK_AUDIO_PAUSE(value) sync_pause(value)
-#define SUBTITLE_TIME_US(external) (sync_position()+((external)?0:media_offset))
+#define SUBTITLE_PRESENTATION_TIME_US(external) (sync_position()+((external)?0:media_offset))
+#define SUBTITLE_TIME_US(external) (SUBTITLE_PRESENTATION_TIME_US(external)-(int64_t)subtitle_fine_delay_ms*1000)
 /* RAM prefill and rebuffering must not advance subtitle presentation. */
 static int subtitle_buffering,disk_read_wait_count;
 static void playback_controls(void);
@@ -425,6 +426,13 @@ int main(int argc,char **argv) {
     }
     if(buffer_secs<15)buffer_secs=15;
     if(buffer_mb>64)buffer_mb=64;
+    FILE *fine=fopen("subtitle-delay-ms","r");
+    if(fine){
+        int requested;char extra;
+        if(fscanf(fine,"%d %c",&requested,&extra)==1&&requested>=-5000&&requested<=5000)subtitle_fine_delay_ms=requested;
+        fclose(fine);
+    }
+    fprintf(stderr,"Subtitle fine delay: %+dms (added to menu delay)\n",subtitle_fine_delay_ms);
     megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
     /* All providers use at least 15 seconds of bounded compressed RAM prefill. */
     if(megaplay)fprintf(stderr,"MegaPlay: honoring configured prebuffer of %d seconds (RAM cap %d MiB)\n",buffer_secs,buffer_mb);

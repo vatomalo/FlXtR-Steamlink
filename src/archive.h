@@ -88,7 +88,8 @@ static int archive_video(json_object *f){
     const char *name=string(f,"name"),*format=string(f,"format");size_t n=strlen(name);
     json_object *private=field(f,"private");
     if(private&&strcmp(json_object_get_string(private),"false")&&strcmp(json_object_get_string(private),"0"))return 0;
-    return n>4&&n<1024&&!strcasecmp(name+n-4,".mp4")&&(!strcasecmp(format,"h.264")||!strcasecmp(format,"MPEG4"));
+    return n>4&&n<1024&&(!strcasecmp(name+n-4,".mp4")||!strcasecmp(name+n-4,".mov"))&&
+           (!strcasecmp(format,"h.264")||!strcasecmp(format,"MPEG4"));
 }
 static int archive_files_json(json_object *root,const char *id,int page){
     json_object *files=field(root,"files");if(!files||!json_object_is_type(files,json_type_array))return -1;

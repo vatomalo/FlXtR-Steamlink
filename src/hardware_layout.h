@@ -39,20 +39,25 @@ static int hardware_viewport(VideoRect *rect,int display_w,int display_h,int dec
     if(!scaling_saved){
         scaling_original_source=before_source;scaling_original_output=before_output;scaling_saved=1;
     }
-    /* This plane is expanded to display space before this scaler. A previous
-     * player may have left an encoded-size crop here; retaining it carries
-     * that crop into the next stream. Restore the full display-space input.
-     * Encoded dimensions belong only in video_rect() for the destination. */
+    /* Preserve the firmware's input crop. Replacing it with decoded picture
+     * dimensions makes the output appear tiny or misaligned on some devices.
+     * Only change the destination rectangle when selecting a view mode. */
     if(decoded_w<1||decoded_h<1||decoded_w>32767||decoded_h>32767)return -1;
-    VideoRect source={0,0,(int16_t)display_w,(int16_t)display_h};
-    /* The initial output is a viewport (including underscan), not the full
-     * coordinate space. Mapping through it shrinks every mode a second time.
-     * Supply the centered HDMI-space rectangle directly, as the working
-     * display-space adapter did before native-output remapping was added. */
-    VideoRect mapped=*rect;
+    VideoRect source=scaling_original_source;
+    VideoRect native=scaling_original_output;
+    if(native.w<=0||native.h<=0)return -1;
+    /* SLVideo's output plane may use an internal coordinate space (e.g. 1280x720
+     * while HDMI is 1920x1080). Translate desired HDMI-space corners through
+     * the firmware's initial output rectangle, retaining its own origin. */
+    int left=native.x+((int64_t)rect->x*native.w+display_w/2)/display_w;
+    int top=native.y+((int64_t)rect->y*native.h+display_h/2)/display_h;
+    int right=native.x+((int64_t)(rect->x+rect->w)*native.w+display_w/2)/display_w;
+    int bottom=native.y+((int64_t)(rect->y+rect->h)*native.h+display_h/2)/display_h;
+    if(left<INT16_MIN||top<INT16_MIN||right>INT16_MAX||bottom>INT16_MAX||right<=left||bottom<=top)return -1;
+    VideoRect mapped={(int16_t)left,(int16_t)top,(int16_t)(right-left),(int16_t)(bottom-top)};
     fprintf(stderr,"Video scaler: input %d,%d %dx%d / original output %d,%d %dx%d / requested %d,%d %dx%d / mapped %d,%d %dx%d / display %dx%d\n",
         source.x,source.y,source.w,source.h,
-        scaling_original_output.x,scaling_original_output.y,scaling_original_output.w,scaling_original_output.h,
+        native.x,native.y,native.w,native.h,
         rect->x,rect->y,rect->w,rect->h,
         mapped.x,mapped.y,mapped.w,mapped.h,display_w,display_h);
     rc=scaling_set(viewport_handle,viewport_plane,&source,&mapped);

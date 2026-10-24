@@ -875,6 +875,17 @@ static void auto_prefer_flixer_server(void){
         strcpy(auto_servers[0],preferred);break;
     }
 }
+static void tv_source_failed(void){
+    if(!tv_active)return;
+    /* Source discovery happens before playback history starts. Close the
+     * failed airing explicitly, or joining TV forces this same episode
+     * again on every retry and every new visit to the channel. */
+    if(!strcmp(auto_title.kind,"episode")&&auto_title.id>0&&auto_title.season>0&&auto_title.episode>0){
+        char key[96];snprintf(key,sizeof(key),"episode:%d:%d:%d",auto_title.id,auto_title.season,auto_title.episode);
+        tv_play_append("failed","episode",auto_title.id,auto_title.season,auto_title.episode,0,key,auto_title.title);
+    }
+    tv_joining=0;
+}
 static void auto_next(void){
     if(auto_index>=auto_count&&auto_count>0&&
        !strcmp(auto_title.kind,"kiss-episode")&&!kiss_1080_pass){
@@ -882,7 +893,7 @@ static void auto_next(void){
         auto_index=0;
         fprintf(stderr,"KissAnime: all sources exhausted; trying 1080p across all servers\n");
     }
-    if(auto_index>=auto_count){auto_active=0;snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
+    if(auto_index>=auto_count){auto_active=0;tv_source_failed();snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
     Browse next={6,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
     strcpy(next.query,auto_servers[auto_index]);auto_request(next);
     if(auto_active)snprintf(status,sizeof(status),"TRYING SERVER %d OF %d - B TO CANCEL",auto_index+1,auto_count);
@@ -890,7 +901,7 @@ static void auto_next(void){
 static void auto_result(int success){
     if(!success){
         if(pending.mode==6){auto_index++;auto_next();}
-        else {auto_active=0;snprintf(status,sizeof(status),"SERVER DISCOVERY FAILED - SEE CATALOG.LOG");}
+        else {auto_active=0;tv_source_failed();snprintf(status,sizeof(status),"SERVER DISCOVERY FAILED - SEE CATALOG.LOG");}
         return;
     }
     FILE *f=fopen("catalog-cache/result.tsv","r");char line[6000];int pages=1;

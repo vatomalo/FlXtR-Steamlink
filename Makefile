@@ -24,6 +24,8 @@ test: all
 	./build/shell-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/auto_server_test.c -o build/auto-server-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/auto-server-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/tv_source_failure_test.c -o build/tv-source-failure-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/tv-source-failure-test
 	$(CC) $(CFLAGS) tests/disk_buffer_test.c -o build/disk-buffer-test $$(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
 	./build/disk-buffer-test
 	$(CC) $(CFLAGS) tests/subtitle_text_test.c -o build/subtitle-text-test

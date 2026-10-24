@@ -86,13 +86,13 @@ int main(int argc,char **argv){
                     if(first_pts==AV_NOPTS_VALUE){first_pts=pts;preview_clock=now;}
                     int64_t target=preview_clock+pts-first_pts;
                     if(now-target>max_late)max_late=now-target;
-                    if(target-began>=45000000){av_frame_unref(frame);result=0;goto done;}
+                    if(target-began>=45000000){av_frame_unref(frame);goto complete;}
                     while(!quit&&target>now){
                         int64_t wait=target-now;if(wait>10000)wait=10000;
                         SDL_Delay((Uint32)((wait+999)/1000));now=av_gettime_relative();
                     }
                 }
-                if(quit){av_frame_unref(frame);result=0;goto done;}
+                if(quit){av_frame_unref(frame);goto complete;}
                 if(now-last>=30000){
                     if(write_preview(frame)<0)goto done;
                     published++;
@@ -103,6 +103,7 @@ int main(int argc,char **argv){
         }
         av_packet_unref(pkt);
     }
+complete:
     fprintf(stderr,"Preview: decoded=%u published=%u elapsed_ms=%lld max_late_ms=%lld source=%dx%d\n",decoded,published,(long long)((av_gettime_relative()-began)/1000),(long long)(max_late/1000),params->width,params->height);
     result=0;
 done:

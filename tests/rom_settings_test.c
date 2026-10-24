@@ -31,6 +31,12 @@ int main(void){
     assert(rom_platform_core_get(6,name,sizeof(name))&&!strcmp(name,"other"));
     assert(rom_platform_for_path("/mnt/disk/roms/PSPISO/game.iso")==6);
     assert(rom_platform_for_path("/mnt/disk/roms/PSXISO/game.iso")==5);
+    settings_on=0;rom_core_menu=0;total=count=1;visible[0]=selection=0;browse.mode=22;
+    titles[0]=rom;action(SDLK_y);assert(rom_core_menu||rom_options_menu);
+    action(SDLK_ESCAPE);assert(!rom_options_menu&&!rom_core_menu);
+    play();assert(game_exit&&!running&&!rom_options_menu);
+    f=fopen("game-request","r");int id=0;assert(f&&fscanf(f,"%d",&id)==1&&id==1);fclose(f);
+    unlink("game-request");
     unlink("cores/test_libretro.so");rmdir("cores");
     unlink("settings.cfg");unlink("tv-gambits.cfg");unlink("platform-cores.tsv");
     unlink("rom-cores.tsv");unlink("game-cores.tsv");

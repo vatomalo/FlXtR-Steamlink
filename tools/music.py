@@ -301,11 +301,24 @@ def preview_source(value, category):
     if not query:
         raise ValueError('Empty trailer title')
     suffix = 'gameplay' if category == 'game' else 'official trailer'
+    saved = CACHE / 'previews' / (hashlib.sha256(('small-v1:' + category + ':' + query).encode()).hexdigest() + '.json')
+    try:
+        cached = json.loads(saved.read_text())
+        lines = cached['lines']
+        if time.time() - cached['time'] < 3600 and len(lines) == 4 and lines[1].startswith('https://'):
+            atomic(CACHE / 'preview.txt', '\n'.join(lines) + '\n')
+            print('Preview resolved from cache', flush=True)
+            return
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
     options = ydl_options(flat=True)
     # Flat search matches the working music browser: do not resolve each
     # search hit before trying candidate videos individually.
-    options['format'] = ('bestvideo[vcodec^=avc1][height<=360]/best[vcodec^=avc1][height<=360]/'
-                         'bestvideo[vcodec^=avc1][height<=720]/best[vcodec^=avc1][height<=720]')
+    # The inset is only 232 pixels wide. Prefer a video-only 144p source;
+    # reducing the decoded source matters more than shrinking the output BMP.
+    options['format'] = ('bestvideo[vcodec^=avc1][height<=144]/'
+                         'bestvideo[vcodec^=avc1][height<=240]/'
+                         'bestvideo[vcodec^=avc1][height<=360]/best[vcodec^=avc1][height<=360]')
     from yt_dlp import YoutubeDL
     from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE
     with YoutubeDL(options, auto_init=False) as ydl:
@@ -323,7 +336,7 @@ def preview_source(value, category):
                 formats = info.get('requested_formats') or [info]
                 selected = next((fmt for fmt in formats if
                                  str(fmt.get('vcodec', '')).startswith('avc1')
-                                 and 0 < (fmt.get('height') or 0) <= 720), None)
+                                 and 0 < (fmt.get('height') or 0) <= 360), None)
                 if not selected:
                     print('Preview skipped: no AVC stream compatible with decoder:', item['id'], flush=True)
                     continue
@@ -332,9 +345,14 @@ def preview_source(value, category):
                     print('Preview skipped: invalid URL:', item['id'], flush=True)
                     continue
                 agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
-                atomic(CACHE / 'preview.txt', '\n'.join([
+                lines = [
                     clean(info.get('title'), 120), url, agent,
-                    'https://www.youtube.com/watch?v=' + item['id']]) + '\n')
+                    'https://www.youtube.com/watch?v=' + item['id']]
+                atomic(CACHE / 'preview.txt', '\n'.join(lines) + '\n')
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                atomic(saved, json.dumps({'time': time.time(), 'lines': lines}))
+                for old in sorted(saved.parent.glob('*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[12:]:
+                    old.unlink()
                 print('Preview resolved:', item['id'], selected.get('height'), flush=True)
                 return
             except Exception as error:

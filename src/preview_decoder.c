@@ -66,21 +66,26 @@ int main(int argc,char **argv){
     track=av_find_best_stream(format,AVMEDIA_TYPE_VIDEO,-1,-1,NULL,0);
     if(track<0)goto done;
     AVCodecParameters *params=format->streams[track]->codecpar;
-    if(params->codec_id!=AV_CODEC_ID_H264||params->width>1280||params->height>720)goto done;
+    if(params->codec_id!=AV_CODEC_ID_H264||params->width>640||params->height>360)goto done;
     const AVCodec *codec=avcodec_find_decoder(params->codec_id);
     if(!codec)goto done;
     decoder=avcodec_alloc_context3(codec);
-    if(!decoder||avcodec_parameters_to_context(decoder,params)<0||avcodec_open2(decoder,codec,NULL)<0)goto done;
+    if(!decoder||avcodec_parameters_to_context(decoder,params)<0)goto done;
+    decoder->thread_count=2;
+    if(avcodec_open2(decoder,codec,NULL)<0)goto done;
     pkt=av_packet_alloc();frame=av_frame_alloc();if(!pkt||!frame)goto done;
     int64_t began=av_gettime_relative(),last=0,first_pts=AV_NOPTS_VALUE,preview_clock=0;
+    unsigned decoded=0,published=0;int64_t max_late=0;
     while(!quit&&av_gettime_relative()-began<45000000&&av_read_frame(format,pkt)>=0){
         if(pkt->stream_index==track&&avcodec_send_packet(decoder,pkt)>=0){
             while(avcodec_receive_frame(decoder,frame)>=0){
+                decoded++;
                 int64_t now=av_gettime_relative();
                 if(frame->best_effort_timestamp!=AV_NOPTS_VALUE){
                     int64_t pts=av_rescale_q(frame->best_effort_timestamp,format->streams[track]->time_base,AV_TIME_BASE_Q);
                     if(first_pts==AV_NOPTS_VALUE){first_pts=pts;preview_clock=now;}
                     int64_t target=preview_clock+pts-first_pts;
+                    if(now-target>max_late)max_late=now-target;
                     if(target-began>=45000000){av_frame_unref(frame);result=0;goto done;}
                     while(!quit&&target>now){
                         int64_t wait=target-now;if(wait>10000)wait=10000;
@@ -88,16 +93,17 @@ int main(int argc,char **argv){
                     }
                 }
                 if(quit){av_frame_unref(frame);result=0;goto done;}
-                if(now-last>=200000){
+                if(now-last>=30000){
                     if(write_preview(frame)<0)goto done;
+                    published++;
                     last=now;
                 }
                 av_frame_unref(frame);
             }
         }
         av_packet_unref(pkt);
-        SDL_Delay(4);
     }
+    fprintf(stderr,"Preview: decoded=%u published=%u elapsed_ms=%lld max_late_ms=%lld source=%dx%d\n",decoded,published,(long long)((av_gettime_relative()-began)/1000),(long long)(max_late/1000),params->width,params->height);
     result=0;
 done:
     av_frame_free(&frame);av_packet_free(&pkt);avcodec_free_context(&decoder);

@@ -101,7 +101,7 @@ static int preview_tick(void){
             int status=0;pid_t result=waitpid(preview_decode_pid,&status,WNOHANG);
             if(result==preview_decode_pid){preview_decode_pid=0;if(!preview_texture)preview_state=3;}
         }
-        if(now-preview_frame_at>=180){
+        if(now-preview_frame_at>=30){
             preview_frame_at=now;
             struct stat st;
             if(!stat("music-cache/preview-frame.bmp",&st)&&st.st_size>54&&

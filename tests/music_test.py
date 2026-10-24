@@ -188,6 +188,10 @@ class MusicTest(unittest.TestCase):
             options=module.YoutubeDL.call_args.args[0]
             self.assertTrue(options['extract_flat'])
             self.assertIn('height<=360',options['format'])
+            self.assertTrue(options['format'].startswith('bestvideo[vcodec^=avc1][height<=144]'))
+            self.assertNotIn('720',options['format'])
+            music.run(['preview','movie','The Matrix'])
+            self.assertEqual(client.__enter__.return_value.extract_info.call_count,2)
 
 if __name__ == '__main__':
     unittest.main()

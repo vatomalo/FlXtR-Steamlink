@@ -1,9 +1,14 @@
+#define _POSIX_C_SOURCE 200809L
 /* Run: cc -std=c11 -Wall -Wextra -Werror -Isrc tests/mtv_weights_test.c -o /tmp/mtv-weights-test && /tmp/mtv-weights-test */
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include "mtv_preferences.h"
 #include "mtv_weights.h"
 int main(void){
+    char tmp[]="/tmp/flxtr-mtv-XXXXXX";
+    assert(mkdtemp(tmp));assert(chdir(tmp)==0);
     int weights[MTV_GENRES];mtv_weights_load(weights);
     assert(weights[1]>=0);
     FILE *f=fopen("mtv-weights.tsv","w");assert(f);
@@ -17,7 +22,7 @@ int main(void){
     assert(mtv_weighted_genre(1)==2);
     assert(mtv_weighted_genre(2)==2);
     assert(mtv_weighted_genre(3)==2);
-    remove("mtv-weights.tsv");
+    remove("mtv-weights.tsv");assert(chdir("/")==0);assert(rmdir(tmp)==0);
     puts("mtv_weights_test: PASS");
     return 0;
 }

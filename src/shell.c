@@ -1335,7 +1335,7 @@ static void draw(Uint32 tick) {
                 snprintf(line,sizeof(line),"%s: %s",rom_platform_names[i],preferred);
                 text(205,145+i*29,line,1,i==platform_core_index?green:white,90);
             }
-            text(200,435,"A CHOOSE CORE / B SETTINGS",1,green,80);
+            text(200,435,"A CHOOSE CORE / B SETTINGS / Y ROM CORE OVERRIDES DEFAULT",1,green,80);
         }
         SDL_RenderPresent(renderer);return;
     }

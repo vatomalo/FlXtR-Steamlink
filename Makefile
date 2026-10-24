@@ -30,6 +30,9 @@ test: all
 	./build/library-preferences-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/preview_settings_test.c -o build/preview-settings-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/preview-settings-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_settings_test.c -o build/rom-settings-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/rom-settings-test
+	python3 tests/rom_launch_preferences_test.py
 	$(CC) $(CFLAGS) tests/disk_buffer_test.c -o build/disk-buffer-test $$(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread
 	./build/disk-buffer-test
 	$(CC) $(CFLAGS) tests/subtitle_text_test.c -o build/subtitle-text-test

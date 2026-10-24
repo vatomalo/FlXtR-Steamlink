@@ -179,6 +179,48 @@ def unplayed_tv_videos(choices):
         pass
     return [choice for choice in choices if choice[1] in remaining]
 
+def tv_video_choices(value, address, history):
+    """Cache flat candidate metadata, never expiring signed media URLs."""
+    key = hashlib.sha256(value.encode()).hexdigest()
+    path = CACHE / ('mtv-candidates-' + key + '.json')
+    try:
+        failed = json.loads((CACHE / 'video-failures.txt').read_text())
+        failed = {key: stamp for key, stamp in failed.items()
+                  if isinstance(stamp, (int, float)) and time.time() - stamp < 1800}
+    except (OSError, ValueError, AttributeError):
+        failed = {}
+
+    def available(entries):
+        choices = [('video', e['id']) for e in entries[:20]
+                   if isinstance(e, dict) and re.fullmatch(r'[A-Za-z0-9_-]{11}', str(e.get('id', '')))
+                   and e['id'] not in history and e['id'] not in failed and not e.get('is_live')
+                   and isinstance(e.get('duration', 0), (int, float, type(None)))
+                   and (e.get('duration') or 0) <= 1200]
+        return unplayed_tv_videos(choices)
+
+    try:
+        entries = json.loads(path.read_text()) if time.time() - path.stat().st_mtime < 7200 else []
+        choices = available(entries) if isinstance(entries, list) else []
+    except (OSError, ValueError):
+        choices = []
+    if choices:
+        print('MTV candidates: cached', len(choices), flush=True)
+        return choices
+    with youtube_client(True) as ydl:
+        data = ydl.extract_info(address or 'ytsearch20:' + value[:220], download=False)
+        entries = [dict(id=e.get('id'), duration=e.get('duration'), is_live=e.get('is_live'))
+                   for e in islice(data.get('entries', [data]), 20) if isinstance(e, dict)]
+    atomic(path, json.dumps(entries))
+    for old in sorted(CACHE.glob('mtv-candidates-*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[4:]:
+        old.unlink(missing_ok=True)
+    choices = available(entries)
+    if not choices and history:
+        with youtube_client(True) as ydl:
+            data = ydl.extract_info('https://www.youtube.com/watch?v=' + history[-1] + '&list=RD' + history[-1], download=False)
+            choices = available(list(islice(data.get('entries', []), 20)))
+    return choices
+
+
 def video_source(value, television=False, muxed=False, height=720):
     if height not in (480,720,1080):
         raise ValueError("Invalid video quality")
@@ -193,21 +235,7 @@ def video_source(value, television=False, muxed=False, height=720):
     if '://' in value and not address:
         raise ValueError('Use a public YouTube video or playlist URL')
     if television:
-        with youtube_client(True) as ydl:
-            data = ydl.extract_info(address or 'ytsearch20:' + value[:220], download=False)
-            entries = data.get('entries', [data])
-            choices = [('video', e['id']) for e in islice(entries, 20)
-                       if e and re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', ''))
-                       and e['id'] not in history and not e.get('is_live')
-                       and (e.get('duration') or 0) <= 1200]
-        choices = unplayed_tv_videos(choices)
-        if not choices and history:
-            with youtube_client(True) as ydl:
-                data = ydl.extract_info('https://www.youtube.com/watch?v=' + history[-1] + '&list=RD' + history[-1], download=False)
-                choices = [('video', e['id']) for e in islice(data.get('entries', []), 20)
-                           if e and re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', '')) and e['id'] not in history and not e.get('is_live')
-                           and (e.get('duration') or 0) <= 1200]
-            choices = unplayed_tv_videos(choices)
+        choices = tv_video_choices(value, address, history)
         if not choices:
             raise ValueError('No new music videos available; change mtv-query.txt')
         address = 'https://www.youtube.com/watch?v=' + choices[0][1]
@@ -220,30 +248,98 @@ def video_source(value, television=False, muxed=False, height=720):
     with YoutubeDL(options, auto_init=False) as ydl:
         for extractor in (YoutubeIE, YoutubeSearchIE, YoutubeTabIE):
             ydl.add_info_extractor(extractor())
-        info = ydl.extract_info(address or 'ytsearch1:' + value[:220], download=False)
-        if 'entries' in info:
-            info = next((e for e in info['entries'] if e), None)
-        if not info or (television and (info.get('is_live') or (info.get('duration') or 0) > 1200)):
-            raise ValueError('Music-video mode requires a clip under 20 minutes, not a live stream')
-        formats = info.get('requested_formats') or [info]
-        video = next((e for e in formats if e.get('vcodec') not in (None, 'none')), None)
-        audio = next((e for e in formats if e.get('vcodec') == 'none' and e.get('acodec') != 'none'), None)
-        if not video:
-            raise ValueError('No compatible H.264 music video available')
-        def checked(part, limit):
-            value = part.get('url', '') if part else ''
-            if part and (not value.startswith('https://') or len(value) > limit or any(c in value for c in '\r\n\t')):
-                raise ValueError('Invalid video stream address')
-            return value
-        url, sound = checked(video, 2046), checked(audio, 16000)
-        title = clean(info.get('title')) or 'YouTube video'
-        agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
-        ident = info.get('id', '')
-        page = ('https://www.youtube.com/watch?v=' + ident
-                if re.fullmatch(r'[A-Za-z0-9_-]{11}', ident) else '')
-        atomic(CACHE / 'video.txt', '\n'.join([title, url, sound, agent, page]) + '\n')
-        if television and re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
-            atomic(history_path, json.dumps((history + [ident])[-50:]))
+        targets = (['https://www.youtube.com/watch?v=' + ident for _, ident in choices[:6]]
+                   if television else [address or 'ytsearch1:' + value[:220]])
+        for target in targets:
+            try:
+                info = ydl.extract_info(target, download=False)
+                if 'entries' in info:
+                    info = next((e for e in info['entries'] if e), None)
+                if not info or (television and (info.get('is_live') or (info.get('duration') or 0) > 1200)):
+                    raise ValueError('Music-video mode requires a clip under 20 minutes, not a live stream')
+                formats = info.get('requested_formats') or [info]
+                video = next((e for e in formats if e.get('vcodec') not in (None, 'none')), None)
+                audio = next((e for e in formats if e.get('vcodec') == 'none' and e.get('acodec') != 'none'), None)
+                if not video:
+                    raise ValueError('No compatible H.264 music video available')
+                def checked(part, limit):
+                    value = part.get('url', '') if part else ''
+                    if part and (not value.startswith('https://') or len(value) > limit or any(c in value for c in '\r\n\t')):
+                        raise ValueError('Invalid video stream address')
+                    return value
+                url, sound = checked(video, 2046), checked(audio, 16000)
+                title = clean(info.get('title')) or 'YouTube video'
+                agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
+                ident = info.get('id', '')
+                page = ('https://www.youtube.com/watch?v=' + ident
+                        if re.fullmatch(r'[A-Za-z0-9_-]{11}', ident) else '')
+                atomic(CACHE / 'video.txt', '\n'.join([title, url, sound, agent, page]) + '\n')
+                if television and re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
+                    atomic(history_path, json.dumps((history + [ident])[-50:]))
+                return
+            except Exception as error:
+                if not television:
+                    raise
+                print('MTV candidate failed:', target.rsplit('=', 1)[-1], clean(error, 130), flush=True)
+                failures_path = CACHE / 'video-failures.txt'
+                try:
+                    failures = json.loads(failures_path.read_text())
+                    if not isinstance(failures, dict):
+                        failures = {}
+                except (OSError, ValueError):
+                    failures = {}
+                failures[target.rsplit('=', 1)[-1]] = time.time()
+                atomic(failures_path, json.dumps(dict(list(failures.items())[-100:])))
+        raise ValueError('No playable music video among the current candidates')
+
+
+def preview_source(value, category):
+    """Resolve a muted H264 trailer. Reuse the working music-video yt-dlp client."""
+    if category not in ('game', 'movie', 'tv', 'anime'):
+        raise ValueError('Unsupported trailer category')
+    query = clean(value, 100).strip()
+    if not query:
+        raise ValueError('Empty trailer title')
+    suffix = 'gameplay' if category == 'game' else 'official trailer'
+    options = ydl_options(flat=True)
+    # Flat search matches the working music browser: do not resolve each
+    # search hit before trying candidate videos individually.
+    options['format'] = ('bestvideo[vcodec^=avc1][height<=360]/best[vcodec^=avc1][height<=360]/'
+                         'bestvideo[vcodec^=avc1][height<=720]/best[vcodec^=avc1][height<=720]')
+    from yt_dlp import YoutubeDL
+    from yt_dlp.extractor.youtube import YoutubeIE, YoutubeSearchIE, YoutubeTabIE
+    with YoutubeDL(options, auto_init=False) as ydl:
+        for extractor in (YoutubeIE, YoutubeSearchIE, YoutubeTabIE):
+            ydl.add_info_extractor(extractor())
+        listing = ydl.extract_info('ytsearch8:' + query + ' ' + suffix, download=False)
+        candidates = [e for e in (listing.get('entries') or []) if e and
+                      re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', ''))
+                      and not e.get('is_live')
+                      and (e.get('duration') or 0) <= 1200]
+        print('Preview search:', query, suffix, 'candidates=', len(candidates), flush=True)
+        for item in candidates[:6]:
+            try:
+                info = ydl.extract_info('https://www.youtube.com/watch?v=' + item['id'], download=False)
+                formats = info.get('requested_formats') or [info]
+                selected = next((fmt for fmt in formats if
+                                 str(fmt.get('vcodec', '')).startswith('avc1')
+                                 and 0 < (fmt.get('height') or 0) <= 720), None)
+                if not selected:
+                    print('Preview skipped: no AVC stream compatible with decoder:', item['id'], flush=True)
+                    continue
+                url = selected.get('url', '')
+                if not url.startswith('https://') or len(url) >= 2046 or any(c in url for c in '\r\n\t'):
+                    print('Preview skipped: invalid URL:', item['id'], flush=True)
+                    continue
+                agent = clean(info.get('http_headers', {}).get('User-Agent', 'Mozilla/5.0'), 500)
+                atomic(CACHE / 'preview.txt', '\n'.join([
+                    clean(info.get('title'), 120), url, agent,
+                    'https://www.youtube.com/watch?v=' + item['id']]) + '\n')
+                print('Preview resolved:', item['id'], selected.get('height'), flush=True)
+                return
+            except Exception as error:
+                print('Preview candidate failed:', item['id'], clean(error, 130), flush=True)
+    raise ValueError('No compatible AVC trailer stream')
 
 def youtube_client(flat=False):
     from yt_dlp import YoutubeDL
@@ -260,6 +356,8 @@ def atomic(path, text):
 
 def run(args):
     CACHE.mkdir(mode=0o700, exist_ok=True)
+    if len(args) == 3 and args[0] == 'preview':
+        preview_source(args[2], args[1]); return
     if len(args) in (2,3) and args[0] in ('video', 'video-muxed', 'tv-video', 'tv-video-muxed'):
         video_source(args[1], television=args[0].startswith('tv-'), muxed=args[0].endswith('muxed'), height=int(args[2]) if len(args)==3 else 720); return
     if args == ['next']:
@@ -281,7 +379,7 @@ def run(args):
         rows = search(query)
         atomic(cached, json.dumps(rows))
         # Three recent result screens; no growing library daemon/database.
-        for old in sorted(CACHE.glob('*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[3:]:
+        for old in sorted((p for p in CACHE.glob('*.json') if re.fullmatch(r'[0-9a-f]{64}\.json', p.name)), key=lambda p: p.stat().st_mtime, reverse=True)[3:]:
             old.unlink(missing_ok=True)
     for row in rows[:MAX_ROWS]:
         if isinstance(row, (list, tuple)) and len(row) == 4:

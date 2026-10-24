@@ -153,5 +153,41 @@ class MusicTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'public playlist'):
             music.spotify_rows('<html>Sign in</html>')
 
+    def test_mtv_reuses_candidates_and_skips_failed_candidate(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        info=lambda ident: dict(id=ident,title='Clip',duration=180,vcodec='avc1',acodec='aac',url='https://example.test/video')
+        client.__enter__.return_value.extract_info.side_effect=[
+            {'entries':[{'id':key,'duration':180} for key in ('abcdefghijk','lmnopqrstuv','12345678901')]},
+            ValueError('Unavailable clip'),info('lmnopqrstuv'),info('12345678901')]
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            music.run(['tv-video','official rock music videos'])
+            self.assertIn('abcdefghijk',json.loads((music.CACHE/'video-failures.txt').read_text()))
+            music.run(['tv-video','official rock music videos'])
+            queries=[call.args[0] for call in client.__enter__.return_value.extract_info.call_args_list]
+            self.assertEqual(sum(query.startswith('ytsearch') for query in queries),1)
+            self.assertEqual(queries[-1],'https://www.youtube.com/watch?v=12345678901')
+            self.assertEqual(json.loads((music.CACHE/'video-history.txt').read_text()),['lmnopqrstuv','12345678901'])
+
+    def test_preview_command_uses_flat_search_and_bounded_avc(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.side_effect=[
+            {'entries':[{'id':'abcdefghijk','duration':180}]},
+            {'title':'Trailer','http_headers':{'User-Agent':'Trailer agent'},
+             'url':'https://example.test/trailer?return=normal','vcodec':'avc1','height':360}]
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            music.run(['preview','movie','The Matrix'])
+            lines=(music.CACHE/'preview.txt').read_text().splitlines()
+            self.assertEqual(lines[1],'https://example.test/trailer?return=normal')
+            self.assertEqual(lines[2],'Trailer agent')
+            options=module.YoutubeDL.call_args.args[0]
+            self.assertTrue(options['extract_flat'])
+            self.assertIn('height<=360',options['format'])
+
 if __name__ == '__main__':
     unittest.main()

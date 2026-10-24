@@ -60,7 +60,7 @@ static int youtube_poll(void){
     if(!WIFEXITED(code)||WEXITSTATUS(code)){
         if(preparing){youtube_retry_at=SDL_GetTicks()+15000;return 0;}
         if(adaptive_lookup_fallback())return 1;
-        if(youtube_for_tv){tv_active=0;music_video_pause(1);}
+        if(youtube_for_tv){tv_next_at=SDL_GetTicks()+2500;snprintf(status,sizeof(status),"MTV: SEARCH FAILED / TRYING ANOTHER");return 1;}
         snprintf(status,sizeof(status),"YOUTUBE UNAVAILABLE / SEE YOUTUBE.LOG");
         return 1;
     }
@@ -108,11 +108,12 @@ static int youtube_poll(void){
         return 0;
     }
     auto_active=0;restart_position=youtube_resume;youtube_resume=0;launch_player(&title);
-    if(!player_pid&&youtube_for_tv)tv_active=0;
+    if(!player_pid&&youtube_for_tv){tv_next_at=SDL_GetTicks()+2500;}
     return 1;
 }
 static void mtv_query(char *out,size_t size){
-    snprintf(out,size,"official music videos 80s 90s pop rock");
+    snprintf(out,size,"%s",mtv_genre_queries[mtv_genre]);
+    if(mtv_genre)return;
     FILE *f=fopen("mtv-query.txt","r");
     if(f){char line[221];if(fgets(line,sizeof(line),f)){line[strcspn(line,"\r\n")]=0;if(line[0])snprintf(out,size,"%s",line);}fclose(f);}
 }

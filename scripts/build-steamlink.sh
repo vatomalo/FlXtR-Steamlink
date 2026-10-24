@@ -65,6 +65,10 @@ if [ -f build/music-runtime.tgz ]; then
     chmod +x "$app/scripts/music-runtime.sh" "$app/scripts/music-qjs.sh"
     printf '1\n' > "$app/assets/music-required-v1"
 fi
+mkdir -p "$app/tools" "$app/scripts"
+cp tools/music.py "$app/tools/"
+cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
+if [ -f build/greenlink-preview-arm ]; then cp build/greenlink-preview-arm "$app/greenlink-preview"; fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi
 if [ "${FLXTR_DISABLE_AUTO_UPDATE:-0}" = 1 ]; then
     printf 'Experimental manual test package; enable updates in Settings if desired.\n' > "$app/.no-auto-update"

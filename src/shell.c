@@ -29,6 +29,7 @@
 #include "tv_play_history.h"
 #include "browse_filters.h"
 #include "server_preferences.h"
+#include "mtv_preferences.h"
 #include "game_metadata.h"
 #include "child_process.h"
 static int phone_dispatch(char *reply,size_t size);
@@ -261,6 +262,7 @@ static int library_filter_slot(int mode){return mode==1?0:mode==2?1:mode==7?2:-1
 static void save_settings(void){
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"series_autoplay=%d\nvideo_view=%d\n",series_autoplay,default_viewing);
+    fprintf(f,"mtv_genre=%d\n",mtv_genre);
     for(int i=0;i<3;i++)fprintf(f,"%s_genre=%d\n%s_order=%d\n",library_filter_names[i],library_genre[i],library_filter_names[i],library_order[i]);
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
     fprintf(f,"game_output=%d\ngame_view=%d\ngame_performance=%d\nmusic_autoplay=%d\n",game_output,game_view,game_performance,music_autoplay);
@@ -292,6 +294,7 @@ static void load_settings(void){
         }
         if(handled)continue;
         if(!strcmp(key,"video_view")&&value>=0&&value<VIEW_COUNT)viewing=default_viewing=value;
+        else if(!strcmp(key,"mtv_genre")&&value>=0&&value<MTV_GENRES)mtv_genre=value;
         else if(!strcmp(key,"tv_schedule_version"))schedule_version=value;
         else if(!strcmp(key,"tv_rating")&&value>=1&&value<=5)tv_rating_weight=value;
         else if(!strcmp(key,"tv_popularity")&&value>=0&&value<=5)tv_popularity_weight=value;
@@ -697,6 +700,25 @@ static void wrap_detail(int x,int y,const char *str,int lines,SDL_Color ink){
         str+=n;while(*str==' ')str++;
     }
 }
+/* Page synopsis within the 236px-wide detail column without crossing the footer. */
+static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink,int identity){
+    char chunks[96][32];int count=0;
+    while(*str&&count<96){
+        size_t n=strlen(str);if(n>27){n=27;while(n>1&&str[n]!=' ')n--;}
+        if(!n)break;
+        memcpy(chunks[count],str,n);chunks[count][n]=0;count++;
+        str+=n;while(*str==' ')str++;
+    }
+    static int previous_identity=-1;static Uint32 selected_at;
+    if(previous_identity!=identity){previous_identity=identity;selected_at=SDL_GetTicks();}
+    int pages=(count+lines-1)/lines;
+    int page=pages>1?(int)(((SDL_GetTicks()-selected_at)/8500U)%(unsigned)pages):0;
+    for(int i=0;i<lines&&page*lines+i<count;i++)
+        text(x,y+i*18,chunks[page*lines+i],1,ink,27);
+    if(pages>1){char info[40];snprintf(info,sizeof(info),"MORE %d/%d",page+1,pages);
+        text(922-(int)strlen(info)*6,434,info,1,dim,27);}
+}
+static void preview_stop(void);
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
@@ -704,6 +726,7 @@ static void clear_posters(void) {
 /* SDL_HideWindow leaves the last graphics frame over the hardware video plane
  * on Steam Link. Release the graphics backend before handing over to SLVideo. */
 static void close_ui(void) {
+    preview_stop();
     clear_posters();
     SDL_DestroyTexture(background);background=NULL;
     SDL_DestroyRenderer(renderer);renderer=NULL;
@@ -1239,6 +1262,7 @@ static void start_update(void) {
 #endif
 }
 #include "music_ui.h"
+#include "preview_inset.h"
 #include "youtube_video.h"
 #include "settings_services.h"
 static int keyboard_help;
@@ -1448,11 +1472,11 @@ static void draw(Uint32 tick) {
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE"};
+        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE"};
 #else
-        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE"};
+        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE"};
 #endif
-        char values[29][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+        char values[30][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
@@ -1471,6 +1495,7 @@ static void draw(Uint32 tick) {
         snprintf(values[26],40,"%s",view_names[default_viewing]);
         snprintf(values[27],40,"CHOOSE BY SYSTEM");
         snprintf(values[28],40,"%s",game_performance_names[game_performance]);
+        snprintf(values[29],40,"%s",mtv_genre_names[mtv_genre]);
 #if defined(FLXTR_DESKTOP) || defined(_WIN32)
         for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
 #endif
@@ -1548,9 +1573,13 @@ static void draw(Uint32 tick) {
         }
         Title *t=&titles[visible[selection]];
         rect(665,94,1,378,dim,1);text(690,97,"NOW SELECTED",1,dim,30);
-        wrap_detail(690,126,t->title,4,green);
+        /* Actual inset video frames are drawn by preview_draw(). */
+        rect(688,121,238,119,dim,0);
+        rect(690,123,234,115,(SDL_Color){9,13,17,255},1);
+        preview_draw();
+        wrap_detail(690,249,t->title,2,green);
         /* PSP-style detail pane: consume only local metadata, never wait for web. */
-        char detail[400]="",detail_path[128];
+        char detail[1024]="",detail_path[128];
         if((!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv"))&&t->id>0){
             snprintf(detail_path,sizeof(detail_path),"media-info-cache/%s-%d.txt",t->kind,t->id);
             FILE *f=fopen(detail_path,"r");
@@ -1583,15 +1612,17 @@ static void draw(Uint32 tick) {
             }
         }
         detail[strcspn(detail,"\r\n")]=0;
-        wrap_detail(690,205,t->meta,2,white);
-        if(detail[0])wrap_detail(690,250,detail,6,white);
+        /* Give the synopsis all space below the title. Footer metadata stays
+         * separate from the description and right-aligned with MORE / PAGE. */
+        rect(690,277,232,1,dim,1);
+        if(detail[0])wrap_description(690,287,detail,7,white,visible[selection]+browse.mode*100000+browse.id);
         else if(!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv")||
                 !strcmp(t->kind,"game")||!strcmp(t->kind,"kiss"))
-            text(690,260,"DESCRIPTION NOT CACHED",1,dim,28);
-        text(690,354,t->url[0]?"[A] PLAY":t->kind[0]?"[A] OPEN":"NO STREAM YET",2,t->kind[0]||t->url[0]?green:dim,20);
-        text(690,395,"[LB/RB] VIEW",1,dim,25);
-        /* Aspect ratio is controlled only while video is playing. */
-        snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
+            text(690,291,"DESCRIPTION NOT CACHED",1,dim,28);
+        const int meta_chars=(int)strlen(t->meta)>35?35:(int)strlen(t->meta);
+        text(922-meta_chars*6,414,t->meta,1,white,35);
+        snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
+        text(922-(int)strlen(num)*6,455,num,1,dim,25);
     }
     if(bios_archive_confirm){rect(190,210,680,110,green,0);text(207,225,"ARCHIVE BIOS / COPYRIGHT WARNING",2,green,45);text(207,259,"CONFIRM RIGHTS AND SOURCE BEFORE INSTALL",1,white,75);text(207,289,"A DOWNLOAD / B OR X CANCEL",2,green,42);}
     if(catalog_pid&&!download_background){
@@ -2077,6 +2108,7 @@ static void finish_player(int code){
         if(!valid||command<1||command>10||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;tv_history_finish("failed",tv_history_last_position());snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
         if(command>=5)tv_history_finish(command==5||command==6?"skipped":"stopped",position);
         if(command==10){tv_active=auto_active=0;running=0;return;}
+        if(viewing!=view)tv_cancel_prepared(); /* Preloaded MTV worker has the old --view argument. */
         viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings(); /* Only default_viewing is persisted. */
         /* TV is a channel, not a resume-based episode player. */
         if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;music_video_pause(1);snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
@@ -2112,11 +2144,21 @@ static void finish_player(int code){
     tv_history_finish(!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)?"completed":cancelled?"stopped":"failed",tv_history_last_position());
     if(!strcmp(playing_title.kind,"youtube")){
         int eof=!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code);
-        if(!eof){tv_active=0;tv_cancel_prepared();}
         if(eof&&tv_active&&tv_prepared){tv_begin_prepared();return;}
-        if(!tv_active)music_video_pause(1);
+        if(tv_active&&!cancelled){
+            /* MTV should continue with a different result on EOF or a failed URL.
+             * The TV scheduler caps consecutive attempts, so unavailable YouTube
+             * results cannot create an infinite respawn loop. */
+            tv_cancel_prepared();
+            if(eof)tv_attempts=0;
+            tv_next_at=SDL_GetTicks()+(eof?200:2500);
+            tv_break_due=0;
+            snprintf(status,sizeof(status),eof?"MTV: FINDING NEXT VIDEO":"MTV: VIDEO STOPPED / TRYING ANOTHER");
+            return;
+        }
+        tv_active=0;tv_cancel_prepared();music_video_pause(1);
         tv_attempts=0;tv_next_at=0;tv_break_due=0;
-        snprintf(status,sizeof(status),eof?"MUSIC VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
+        snprintf(status,sizeof(status),eof?"YOUTUBE VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
     }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
         int current=tv_quality_retry>=1?720:quality_height();
@@ -2423,11 +2465,12 @@ static void action(SDL_Keycode key) {
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             int id=settings_id();
-            if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id==27||id>=23))return;
+            if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id==27||(id>=23&&id<=25)))return;
             switch(id){
                 case 28:game_performance=(game_performance+step+3)%3;break;
                 case 27:if(key==SDLK_RETURN)platform_core_open();break;
                 case 26:default_viewing=(default_viewing+step+VIEW_COUNT)%VIEW_COUNT;break;
+                case 29:mtv_genre=(mtv_genre+step+MTV_GENRES)%MTV_GENRES;break;
                 case 22:game_view=(game_view+step+GAME_VIEWS)%GAME_VIEWS;break;
                 case 20:music_autoplay=!music_autoplay;break;
                 case 21:settings_on=0;music_on=1;break;
@@ -2673,6 +2716,7 @@ int main(int argc,char **argv) {
             else if(stopping_player&&SDL_GetTicks()-stop_time>3000)kill(player_pid,SIGKILL);
             SDL_Delay(30);continue;
         }
+        if(preview_tick())dirty=1;
         Uint32 now=SDL_GetTicks();
         if(dirty||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);

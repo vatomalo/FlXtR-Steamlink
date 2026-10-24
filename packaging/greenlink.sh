@@ -25,6 +25,7 @@ if [ -f tools/state_guard.py ] && [ -f scripts/music-runtime.sh ]; then
     sh scripts/music-runtime.sh tools/state_guard.py seed >state-guard-seed.log 2>&1 &
 fi
 while :; do
+    rm -f game-music-request
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
     if [ "$code" -eq 43 ]; then
@@ -38,6 +39,11 @@ while :; do
         rm -f state-session.json
         ./greenlink-catalog --run-game >game.log 2>&1 &
         game_pid=$!
+        music_guard_pid=
+        if [ -f game-music-request ] && [ -f tools/rom_music.py ]; then
+            sh scripts/music-runtime.sh tools/rom_music.py "$game_pid" >rom-music.log 2>&1 &
+            music_guard_pid=$!
+        fi
         state_guard_pid=
         if [ -f tools/state_guard.py ] && [ -f scripts/music-runtime.sh ]; then
             sh scripts/music-runtime.sh tools/state_guard.py watch "$game_pid" >state-guard.log 2>&1 &
@@ -74,6 +80,21 @@ while :; do
         watchdog_pid=$!
         wait "$game_pid"
         game_code=$?
+        if [ -n "$music_guard_pid" ]; then
+            kill -TERM "$music_guard_pid" 2>/dev/null
+            wait "$music_guard_pid" 2>/dev/null
+        fi
+        # If the game ended before Python accepted the handoff, release its player.
+        if [ -f game-music-request ]; then
+            read music_initial music_auto <game-music-request
+            case "$music_initial" in
+                ''|*[!0-9]*) ;;
+                *) if [ "$(cat "/proc/$music_initial/comm" 2>/dev/null)" = greenlink-audio ]; then
+                       kill -TERM "$music_initial" 2>/dev/null
+                   fi ;;
+            esac
+            rm -f game-music-request
+        fi
         if [ -n "$state_guard_pid" ]; then wait "$state_guard_pid" || true; fi
         kill "$watchdog_pid" 2>/dev/null
         wait "$watchdog_pid" 2>/dev/null

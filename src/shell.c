@@ -75,6 +75,8 @@ static void accounts_open(int party){
 #define STARS 56
 typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode,height; } Title;
 #include "rom_core_preferences.h"
+#include "rom_audio_preferences.h"
+static int game_music_keep;
 /* Every ROM can select any locally installed Libretro core. */
 #define ROM_CORE_LIMIT 128
 static int rom_options_menu,rom_options_row;
@@ -1657,6 +1659,7 @@ static void draw(Uint32 tick) {
     SDL_RenderPresent(renderer);
 }
 static void rom_launch(const Title *t){
+        game_music_keep=!strncmp(t->url,"romid:",6)&&rom_background_music(t->url+6);
         int back=-1,start=-1,load=-1,save=-1;
         for(int i=0;i<4;i++)if(pads[i]){
             SDL_GameControllerButtonBind b=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_BACK),a=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_START);
@@ -2739,7 +2742,8 @@ int main(int argc,char **argv) {
         }
     }
     tv_history_finish("interrupted",tv_history_last_position());
-    music_stop();youtube_stop();
+    if(!game_exit||!game_music_keep||!music_rom_handoff())music_stop();
+    youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
     pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid};

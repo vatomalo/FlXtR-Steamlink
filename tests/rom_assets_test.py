@@ -41,6 +41,21 @@ class RomAssetsTest(unittest.TestCase):
         self.patch.stop()
         self.temp.cleanup()
 
+    def test_audio_is_per_rom_and_preserves_effects(self):
+        assets.audio(self.key)
+        self.assertIn('BACKGROUND MUSIC: OFF', (self.root / 'rom-assets.tsv').read_text())
+        assets.audio(self.key, True)
+        self.assertIn('BACKGROUND MUSIC: ON', (self.root / 'rom-assets.tsv').read_text())
+        other = self.root / 'other.nes'
+        self.games.append(dict(title='Other', rom=str(other), core='unused'))
+        (self.root / 'games.json').write_text(json.dumps(self.games))
+        assets.audio(assets.identity(str(other)))
+        self.assertIn('BACKGROUND MUSIC: OFF', (self.root / 'rom-assets.tsv').read_text())
+        self.assertEqual((self.root / 'rom-audio.tsv').read_text(), self.key + '\t1\n')
+        self.assertFalse((self.root / 'game-runtime.cfg').exists())
+        assets.audio(self.key, True)
+        self.assertIn('BACKGROUND MUSIC: OFF', (self.root / 'rom-assets.tsv').read_text())
+
     def test_cover_borrows_art_without_modifying_game_and_resets(self):
         donor = '0123456789abcdef'
         index = [[donor, 'Another game', 'gameart:Nintendo - Nintendo Entertainment System|Another game']]

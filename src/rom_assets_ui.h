@@ -1,6 +1,6 @@
 #ifndef FLXTR_ROM_ASSETS_UI_H
 #define FLXTR_ROM_ASSETS_UI_H
-enum {ROM_ASSET_CORE,ROM_ASSET_COVER,ROM_ASSET_CHEATS,ROM_ASSET_STATES,ROM_ASSET_TABS};
+enum {ROM_ASSET_CORE,ROM_ASSET_COVER,ROM_ASSET_CHEATS,ROM_ASSET_STATES,ROM_ASSET_AUDIO,ROM_ASSET_TABS};
 typedef struct {char token[20],label[192],detail[192];} RomAssetRow;
 static RomAssetRow rom_asset_rows[2049];
 static int rom_asset_tab,rom_asset_count,rom_asset_selected,rom_asset_first,rom_asset_files,rom_asset_cover_dirty;
@@ -45,6 +45,7 @@ static void rom_assets_tab(int tab){
     rom_asset_confirm[0]=0;
     if(tab==ROM_ASSET_COVER)rom_assets_start("covers",NULL);
     if(tab==ROM_ASSET_CHEATS)rom_assets_start("cheats",NULL);
+    if(tab==ROM_ASSET_AUDIO)rom_assets_start("audio",NULL);
     if(tab==ROM_ASSET_STATES)rom_assets_start("states",NULL);
 }
 static void rom_assets_open(const Title *title){
@@ -82,6 +83,7 @@ static int rom_assets_tick(void){
             if(!strcmp(rom_asset_job,"covers"))for(int i=0;i<rom_asset_count;i++)
                 if(!strcmp(rom_asset_rows[i].detail,"CURRENT")){rom_asset_selected=i;rom_asset_first=i>7?i-7:0;break;}
             snprintf(rom_asset_message,sizeof(rom_asset_message),"%s",rom_asset_files?"CHOOSE THE CORRECT GAME / REGION / REVISION":
+                rom_asset_tab==ROM_ASSET_AUDIO?"A TOGGLE BACKGROUND MUSIC / GAME SOUND EFFECTS ARE KEPT":
                 rom_asset_tab==ROM_ASSET_STATES?(!strcmp(rom_asset_job,"state-recover")?"SHADOW RESTORED / REPLACED FILE PRESERVED":"BACK+RB SAVE / BACK+LB LOAD / AUTO RESUME IS SEPARATE"):
                 rom_asset_tab==ROM_ASSET_CHEATS?"CHEAT CHANGES APPLY ON NEXT GAME LAUNCH":"A SAVE COVER / FIRST ROW RESETS TO AUTOMATIC");
         }else{
@@ -121,6 +123,7 @@ static int rom_assets_action(SDL_Keycode key){
             else if(rom_asset_count){
                 char selected[20];snprintf(selected,sizeof(selected),"%s",rom_asset_rows[rom_asset_selected].token);
                 if(!strcmp(selected,"none"))return 1;
+                if(rom_asset_tab==ROM_ASSET_AUDIO){rom_assets_start("audio-toggle",NULL);return 1;}
                 if(rom_asset_tab==ROM_ASSET_STATES){
                     if(!strcmp(selected,"slot"))rom_assets_start("state-slot","1");
                     else if(!strcmp(selected,"backup"))rom_assets_start("states",NULL);
@@ -142,9 +145,9 @@ static int rom_assets_action(SDL_Keycode key){
 static void rom_assets_draw(void){
     rect(184,80,746,399,(SDL_Color){0,0,0,240},1);
     text(200,94,"ROM SETTINGS",2,green,50);text(200,123,rom_options_title.title,1,white,100);
-    const char *tabs[]={"CORE","COVER","CHEATS","STATES"};
+    const char *tabs[]={"CORE","COVER","CHEATS","STATES","AUDIO"};
     for(int i=0;i<ROM_ASSET_TABS;i++){
-        int x=200+i*164;if(i==rom_asset_tab)rect(x-4,142,148,26,green,0);
+        int x=200+i*140;if(i==rom_asset_tab)rect(x-4,142,132,26,green,0);
         text(x,150,tabs[i],2,i==rom_asset_tab?green:dim,20);
     }
     if(rom_asset_tab==ROM_ASSET_CORE){
@@ -161,7 +164,7 @@ static void rom_assets_draw(void){
             if(rom_asset_tab==ROM_ASSET_COVER&&!strcmp(row->detail,"CURRENT"))text(855,y,"SET",1,green,6);
         }
         if(rom_asset_files&&rom_asset_count)text(200,393,rom_asset_rows[rom_asset_selected].detail,1,dim,105);
-        if(rom_asset_tab==ROM_ASSET_STATES&&rom_asset_count)text(200,393,rom_asset_rows[rom_asset_selected].detail,1,dim,105);
+        if((rom_asset_tab==ROM_ASSET_STATES||rom_asset_tab==ROM_ASSET_AUDIO)&&rom_asset_count)text(200,393,rom_asset_rows[rom_asset_selected].detail,1,dim,105);
     }else text(205,225,"LOADING... B CANCEL",2,green,55);
     text(200,413,rom_asset_message,1,dim,108);
     text(200,443,"LB/RB OR TAB: TABS / A SELECT / B BACK",1,green,100);

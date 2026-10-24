@@ -51,6 +51,12 @@ int main(int argc,char **argv){
     action(SDLK_RETURN);action(SDLK_RETURN);done();assert(!rom_asset_confirm[0]);
     f=fopen("Test.state3","r");assert(f&&fgets(line,sizeof(line),f));fclose(f);assert(!strcmp(line,"original state"));
     snapshot(argc>1?argv[1]:NULL,"rom-states");
+    action(SDLK_m);done();assert(rom_asset_tab==ROM_ASSET_AUDIO&&rom_asset_count==2);
+    assert(strstr(rom_asset_rows[0].label,"OFF"));
+    action(SDLK_RETURN);done();assert(strstr(rom_asset_rows[0].label,"ON"));
+    assert(rom_background_music(key));
+    action(SDLK_DOWN);action(SDLK_RETURN);assert(!rom_asset_pid);
+    snapshot(argc>1?argv[1]:NULL,"rom-audio");
     rom_asset_cover_dirty=0;action(SDLK_ESCAPE);assert(!rom_assets_on&&!game_exit);
     close_ui();SDL_Quit();assert(!chdir(repo));
     puts("PASS: Y tabs, core submenu, asynchronous existing-cover selection and persistent per-ROM cheat toggles");

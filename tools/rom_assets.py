@@ -257,12 +257,34 @@ def states(key, delta=None, recovery=None):
     rows(result)
 
 
+def audio(key, toggle=False):
+    game(key)
+    path = ROOT / 'rom-audio.tsv'
+    saved = path.read_text().splitlines() if path.exists() else []
+    enabled = False
+    for line in saved:
+        fields = line.split('\t')
+        if len(fields) == 2 and fields[0] == key and fields[1] in ('0', '1'):
+            enabled = fields[1] == '1'
+    if toggle:
+        enabled = not enabled
+        saved = [line for line in saved if line.split('\t', 1)[0] != key]
+        saved.append(f'{key}\t{int(enabled)}')
+        atomic(path, '\n'.join(saved) + '\n')
+    rows([('background', 'BACKGROUND MUSIC: ' + ('ON' if enabled else 'OFF'),
+           'START MUSIC BEFORE LAUNCH / EFFECTS UNCHANGED'),
+          ('none', 'GAME MUSIC: USE THE GAME SOUND OPTIONS',
+           'NO SAFE MUSIC-ONLY MUTE IN INSTALLED CORES')])
+
+
 def run(args):
     if len(args) not in (2, 3):
         raise ValueError('Expected action, ROM identity and optional selection')
     verb, key = args[:2]
     value = args[2] if len(args) == 3 else None
-    if verb == 'covers': covers(key)
+    if verb == 'audio': audio(key)
+    elif verb == 'audio-toggle': audio(key, True)
+    elif verb == 'covers': covers(key)
     elif verb == 'cover-set' and value: covers(key, value)
     elif verb == 'cheats': cheats(key)
     elif verb == 'toggle' and value is not None: cheats(key, value)

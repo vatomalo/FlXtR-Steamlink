@@ -88,7 +88,19 @@ static const char *game_core(const char *path){
 }
 static void game_add(json_object *games,const char *rom,const char *core,const char *label){
     if(json_object_array_length(games)>=GAME_LIMIT||!game_file(rom)||!game_file(core))return;
-    for(size_t i=0;i<(size_t)json_object_array_length(games);i++)if(!strcmp(string(json_object_array_get_idx(games,i),"rom"),rom))return;
+    /* A ROM may be discovered by both RetroArch playlists and directory scans.
+     * Deduplicate by file identity, not just textual path: relative paths,
+     * absolute paths and symlink aliases can all point to the same ROM.
+     * Never delete files here; only suppress duplicate catalog entries.
+     */
+    struct stat candidate;
+    if(stat(rom,&candidate))return;
+    for(size_t i=0;i<(size_t)json_object_array_length(games);i++){
+        const char *existing=string(json_object_array_get_idx(games,i),"rom");
+        if(!strcmp(existing,rom))return;
+        struct stat seen;
+        if(!stat(existing,&seen)&&candidate.st_dev==seen.st_dev&&candidate.st_ino==seen.st_ino)return;
+    }
     const char *name=strrchr(rom,'/');name=name?name+1:rom;char title[80];clean(title,sizeof(title),label&&*label?label:name);
     if(!label||!*label){char *dot=strrchr(title,'.');if(dot)*dot=0;}
     json_object *g=json_object_new_object();json_object_object_add(g,"title",json_object_new_string(title));

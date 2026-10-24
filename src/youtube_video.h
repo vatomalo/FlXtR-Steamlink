@@ -123,7 +123,7 @@ static void mtv_query(char *out,size_t size){
     if(f){
         char line[221];
         if(fgets(line,sizeof(line),f)){
-            line[strcspn(line,"\\r\\n")]=0;
+            line[strcspn(line,"\r\n")]=0;
             if(line[0]){snprintf(out,size,"%s",line);fclose(f);return;}
         }
         fclose(f);

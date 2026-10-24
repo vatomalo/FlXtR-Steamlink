@@ -21,6 +21,9 @@ if [ ! -f .no-auto-update ]; then sh ./update.sh >update.log 2>&1 || true; fi
 if [ -f samba/.enabled ] && [ -f samba-server.sh ]; then
     sh ./samba-server.sh start >samba-start.log 2>&1 || true
 fi
+if [ -f tools/state_guard.py ] && [ -f scripts/music-runtime.sh ]; then
+    sh scripts/music-runtime.sh tools/state_guard.py seed >state-guard-seed.log 2>&1 &
+fi
 while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
@@ -32,8 +35,14 @@ while :; do
         # Keep the previous session even when the user immediately launches again.
         [ ! -f game.previous.log ] || mv -f game.previous.log game.older.log
         [ ! -f game.log ] || mv -f game.log game.previous.log
+        rm -f state-session.json
         ./greenlink-catalog --run-game >game.log 2>&1 &
         game_pid=$!
+        state_guard_pid=
+        if [ -f tools/state_guard.py ] && [ -f scripts/music-runtime.sh ]; then
+            sh scripts/music-runtime.sh tools/state_guard.py watch "$game_pid" >state-guard.log 2>&1 &
+            state_guard_pid=$!
+        fi
         (
             previous_size=0
             consecutive=0
@@ -65,6 +74,7 @@ while :; do
         watchdog_pid=$!
         wait "$game_pid"
         game_code=$?
+        if [ -n "$state_guard_pid" ]; then wait "$state_guard_pid" || true; fi
         kill "$watchdog_pid" 2>/dev/null
         wait "$watchdog_pid" 2>/dev/null
         [ "$game_code" -eq 0 ] || cp game.log game-failure.log

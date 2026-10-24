@@ -4,6 +4,7 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
 all: build/greenlink build/greenlink-catalog
+build/greenlink-catalog: src/rom_state_preferences.h src/rom_state_runtime.h
 build/greenlink-catalog: src/catalog.c src/rom_cover_preferences.h src/rom_cheat_runtime.h src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/game_scaling.h src/rom_core_preferences.h src/core_geometry.h src/vendor/libretro.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
@@ -34,6 +35,7 @@ test: all
 	./build/rom-settings-test
 	python3 tests/rom_launch_preferences_test.py
 	python3 tests/rom_assets_test.py
+	python3 tests/state_guard_test.py
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_assets_ui_test.c -o build/rom-assets-ui-test $(SDL_LIBS) -lSDL2_image -lcurl
 	SDL_VIDEODRIVER=dummy ./build/rom-assets-ui-test
 	$(CC) $(CFLAGS) tests/disk_buffer_test.c -o build/disk-buffer-test $$(pkg-config --cflags --libs libavformat libavcodec libavutil) -lpthread

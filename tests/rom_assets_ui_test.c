@@ -42,6 +42,15 @@ int main(int argc,char **argv){
     action(SDLK_m);done();assert(rom_asset_tab==ROM_ASSET_CHEATS&&rom_asset_count==2);
     action(SDLK_DOWN);action(SDLK_RETURN);done();assert(!strcmp(rom_asset_rows[1].detail,"ON"));
     snapshot(argc>1?argv[1]:NULL,"rom-cheats");
+    f=fopen("Test.state3","w");assert(f);fputs("original state",f);fclose(f);
+    action(SDLK_m);done();assert(rom_asset_tab==ROM_ASSET_STATES&&rom_asset_count>=3);
+    action(SDLK_RIGHT);done();assert(strstr(rom_asset_rows[0].label,"SLOT: 1"));
+    f=fopen("Test.state3","w");assert(f);fputs("replaced state",f);fclose(f);
+    action(SDLK_DOWN);action(SDLK_DOWN);action(SDLK_RETURN);assert(rom_asset_confirm[0]);
+    action(SDLK_ESCAPE);assert(!rom_asset_confirm[0]&&rom_assets_on);
+    action(SDLK_RETURN);action(SDLK_RETURN);done();assert(!rom_asset_confirm[0]);
+    f=fopen("Test.state3","r");assert(f&&fgets(line,sizeof(line),f));fclose(f);assert(!strcmp(line,"original state"));
+    snapshot(argc>1?argv[1]:NULL,"rom-states");
     rom_asset_cover_dirty=0;action(SDLK_ESCAPE);assert(!rom_assets_on&&!game_exit);
     close_ui();SDL_Quit();assert(!chdir(repo));
     puts("PASS: Y tabs, core submenu, asynchronous existing-cover selection and persistent per-ROM cheat toggles");

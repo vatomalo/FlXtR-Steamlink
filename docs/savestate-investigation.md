@@ -21,19 +21,26 @@ No saves, SRAM, preferences or emulator binaries were changed during this audit.
 The official RetroArch changelog records a fix in 1.8.9 for auto savestates not
 being fully flushed when quitting without first closing content:
 https://github.com/libretro/RetroArch/blob/master/CHANGES.md
-This matches the installed version and symptoms, but is not yet a reproduced
-root cause. Disk space is available (roughly 11 GB on /mnt/disk).
+That matched the installed version and symptoms. The controlled test below now
+reproduces the exit-time failure. Disk space was available (roughly 11 GB on
+/mnt/disk), so the observed truncation was not explained by a full disk.
 
-Next controlled work:
-1. Back up a test game's existing .srm and .state* files while it is stopped.
-2. Reproduce save and load using the same ROM and exact core binary; check exit
-   status, final file size, and a visible restored game position.
-3. Compare 1.7.6's exit path with the upstream flush fix. Test a patched private
+Update, 2026-10-24: the headless state fixture now reproduces the difference on
+the installed 1.7.6 runtime. Manual SAVE_STATE/LOAD_STATE on configured slot 7
+saved and loaded all 16384 bytes, while the automatic exit state was only 4096
+bytes. The selected slot, live shadow watcher, prelaunch shadow and recovery
+were verified in an isolated directory. This confirms an exit-time autosave
+failure, though the exact upstream patch has not yet been applied or verified.
+Per-ROM slots and versioned shadows are installed; they do not repair missing
+bytes in old states or replace the installed RetroArch binary.
+
+Remaining controlled work:
+1. Compare 1.7.6's exit path with the upstream flush fix. Test a patched private
    runtime before replacing the installed emulator; preserve the native SDL path.
-4. Separate future snapshots by stable ROM identity and core identity, retain a
+2. Separate future emulator snapshots by stable ROM identity and core identity, retain a
    previous known-good snapshot, and expose failed resume instead of treating
    'found auto state' as successful load. Do not migrate/overwrite legacy files
    until a successful load with their originating core has been verified.
-5. Verify cold launch, normal Back+Start exit, app restart, disabled auto resume,
+3. Verify cold launch, normal Back+Start exit, app restart, disabled auto resume,
    core changes, and disk write failure. Forced termination cannot guarantee an
    exit-time save and should never replace a previously verified snapshot.

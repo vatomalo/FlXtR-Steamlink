@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (root / 'games.json').write_text(json.dumps([{'title': 'Test', 'rom': str(rom), 'core': str(cores / 'automatic_libretro.so')}]))
     env = {**os.environ, 'FLXTR_RETROARCH_HOME': str(home)}
     def launch(expected):
-        (root / 'game-request').write_text('1 4 6\n')
+        (root / 'game-request').write_text('1 8 9 4 5\n')
         subprocess.run([str(worker), '--run-game'], cwd=root, env=env, check=True, capture_output=True)
         assert json.loads((home / 'argv.json').read_text())[-2] == str(cores / f'{expected}_libretro.so')
     launch('automatic')
@@ -67,4 +67,19 @@ with tempfile.TemporaryDirectory() as tmp:
     chosen.write_text(chosen.read_text().replace('true','false'))
     launch('automatic')
     assert 'cheat0_enable = false' in (expected / 'Fixture/test.cht').read_text()
+    (root / 'rom-state-slots.tsv').write_text(f'{key:016x}\t7\n')
+    (root / 'tools').mkdir();(root / 'scripts').mkdir()
+    (root / 'tools/state_guard.py').symlink_to(Path('tools/state_guard.py').resolve())
+    (root / 'scripts/music-runtime.sh').write_text('#!/bin/sh\nexec python3 "$@"\n')
+    state = root / 'test.state7';state.write_bytes(b'prelaunch snapshot')
+    launch('automatic')
+    actual = (root / 'game-runtime.cfg').read_text()
+    assert 'state_slot = "7"' in actual
+    assert 'input_load_state_btn = "4"' in actual and 'input_save_state_btn = "5"' in actual
+    assert 'input_enable_hotkey_btn = "8"' in actual
+    assert json.loads((root / 'state-session.json').read_text())['rom'] == str(rom)
+    records = list((root / 'state-shadows').glob('*/record.json'))
+    assert len(records) == 1
+    meta = json.loads(records[0].read_text())
+    assert (records[0].parent / (meta['current']['hash'] + '.state')).read_bytes() == state.read_bytes()
 print('PASS: actual launches use Y ROM override > console default > automatic, and all three performance profiles')

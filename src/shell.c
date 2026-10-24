@@ -1657,10 +1657,19 @@ static void draw(Uint32 tick) {
     SDL_RenderPresent(renderer);
 }
 static void rom_launch(const Title *t){
-        int back=-1,start=-1;
-        for(int i=0;i<4;i++)if(pads[i]){SDL_GameControllerButtonBind b=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_BACK),a=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_START);if(b.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON&&a.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON){back=b.value.button;start=a.value.button;break;}}
+        int back=-1,start=-1,load=-1,save=-1;
+        for(int i=0;i<4;i++)if(pads[i]){
+            SDL_GameControllerButtonBind b=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_BACK),a=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_START);
+            SDL_GameControllerButtonBind l=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_LEFTSHOULDER),r=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+            if(b.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON&&a.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON){
+                back=b.value.button;start=a.value.button;
+                if(l.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON)load=l.value.button;
+                if(r.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON)save=r.value.button;
+                break;
+            }
+        }
         FILE *f=fopen("game-request","w");if(!f){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}
-        fprintf(f,"%d %d %d\n",t->id,back,start);if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}game_exit=1;running=0;return;
+        fprintf(f,"%d %d %d %d %d\n",t->id,back,start,load,save);if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}game_exit=1;running=0;return;
 }
 static void play(void) {
     if(settings_on||rom_assets_on||rom_options_menu||rom_core_menu||about||!total||player_pid)return;

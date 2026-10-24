@@ -668,6 +668,7 @@ static void game_info_prefetch(void){
 #endif
 #include "core_geometry.h"
 #include "rom_cheat_runtime.h"
+#include "rom_state_runtime.h"
 int main(int argc,char **argv){
     games_executable=argv[0];
     if(argc==2&&!strcmp(argv[1],"--game-cover-index")){

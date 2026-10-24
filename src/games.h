@@ -14,7 +14,9 @@
 #include "game_output.h"
 #include "rom_core_preferences.h"
 #include "rom_cover_preferences.h"
+#include "rom_state_preferences.h"
 static int game_prepare_cheats(const char *core,const char *rom,const char *key,char *database,size_t cap);
+static int game_prepare_state_shadows(const char *rom,const char *key,const char *core);
 #define FLXTR_GAME_CONFIG
 #include "game_scaling.h"
 #undef FLXTR_GAME_CONFIG
@@ -416,8 +418,8 @@ static int game_pixel_geometry(const char *core,const char *rom,int output,int *
     return 0;
 }
 static int games_run(void){
-    int id=0,back=-1,start=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
-    int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
+    int id=0,back=-1,start=-1,load=-1,save=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
+    int fields=fscanf(f,"%d %d %d %d %d",&id,&back,&start,&load,&save);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
     unlink("game-error.txt");
     if(id==0){
         /* Launch the installed ScummVM frontend and its configured games. */
@@ -579,6 +581,10 @@ static int games_run(void){
           enabled==1?"true":"false",enabled==1?"true":"false");
     }
     if(back>=0&&back<64&&start>=0&&start<64&&back!=start)fprintf(f,"input_enable_hotkey_btn = \"%d\"\ninput_exit_emulator_btn = \"%d\"\n",back,start);
+    if(back>=0&&back<64&&load>=0&&load<64&&save>=0&&save<64&&load!=save&&load!=back&&save!=back&&load!=start&&save!=start)
+        fprintf(f,"input_load_state_btn = \"%d\"\ninput_save_state_btn = \"%d\"\n",load,save);
+    int state_slot=rom_state_slot(preference_key);
+    if(state_slot>=0)fprintf(f,"state_slot = \"%d\"\nsavestate_auto_index = \"false\"\n",state_slot);
     fprintf(f,"apply_cheats_after_load = \"%s\"\napply_cheats_after_toggle = \"true\"\n",cheats?"true":"false");
     if(cheats)fprintf(f,"cheat_database_path = \"%s\"\n",cheat_database);
     /* Shared BIOS directory: the UI checks this same location. */
@@ -592,6 +598,11 @@ static int games_run(void){
     }
 #endif
     if(fclose(f))return 2;
+    if(game_prepare_state_shadows(rom,preference_key,core)){
+        FILE *error=fopen("game-error.txt","w");
+        if(error){fputs("COULD NOT PROTECT SAVESTATES / SEE STATE-GUARD-PREPARE.LOG",error);fclose(error);}
+        json_object_put(games);return 2;
+    }
 #ifdef FLXTR_DESKTOP
     (void)config;(void)runtime;(void)home;
     unlink("game-error.txt");

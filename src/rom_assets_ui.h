@@ -1,12 +1,13 @@
 #ifndef FLXTR_ROM_ASSETS_UI_H
 #define FLXTR_ROM_ASSETS_UI_H
-enum {ROM_ASSET_CORE,ROM_ASSET_COVER,ROM_ASSET_CHEATS};
+enum {ROM_ASSET_CORE,ROM_ASSET_COVER,ROM_ASSET_CHEATS,ROM_ASSET_STATES,ROM_ASSET_TABS};
 typedef struct {char token[20],label[192],detail[192];} RomAssetRow;
 static RomAssetRow rom_asset_rows[2049];
 static int rom_asset_tab,rom_asset_count,rom_asset_selected,rom_asset_first,rom_asset_files,rom_asset_cover_dirty;
 static pid_t rom_asset_pid;
 static Uint32 rom_asset_started;
 static char rom_asset_job[16],rom_asset_message[160];
+static char rom_asset_confirm[20];
 static void rom_assets_stop(void){
     if(rom_asset_pid>0){
 #ifndef _WIN32
@@ -41,8 +42,10 @@ static void rom_assets_start(const char *job,const char *value){
 static void rom_assets_tab(int tab){
     rom_assets_stop();rom_asset_tab=tab;rom_asset_files=0;
     rom_asset_count=rom_asset_selected=rom_asset_first=0;rom_asset_message[0]=0;
+    rom_asset_confirm[0]=0;
     if(tab==ROM_ASSET_COVER)rom_assets_start("covers",NULL);
     if(tab==ROM_ASSET_CHEATS)rom_assets_start("cheats",NULL);
+    if(tab==ROM_ASSET_STATES)rom_assets_start("states",NULL);
 }
 static void rom_assets_open(const Title *title){
     if(strcmp(title->kind,"game")||strncmp(title->url,"romid:",6)||!rom_key_valid(title->url+6))return;
@@ -79,6 +82,7 @@ static int rom_assets_tick(void){
             if(!strcmp(rom_asset_job,"covers"))for(int i=0;i<rom_asset_count;i++)
                 if(!strcmp(rom_asset_rows[i].detail,"CURRENT")){rom_asset_selected=i;rom_asset_first=i>7?i-7:0;break;}
             snprintf(rom_asset_message,sizeof(rom_asset_message),"%s",rom_asset_files?"CHOOSE THE CORRECT GAME / REGION / REVISION":
+                rom_asset_tab==ROM_ASSET_STATES?(!strcmp(rom_asset_job,"state-recover")?"SHADOW RESTORED / REPLACED FILE PRESERVED":"BACK+RB SAVE / BACK+LB LOAD / AUTO RESUME IS SEPARATE"):
                 rom_asset_tab==ROM_ASSET_CHEATS?"CHEAT CHANGES APPLY ON NEXT GAME LAUNCH":"A SAVE COVER / FIRST ROW RESETS TO AUTOMATIC");
         }else{
             FILE *f=fopen("rom-assets.log","r");
@@ -93,14 +97,19 @@ static int rom_assets_tick(void){
 static int rom_assets_action(SDL_Keycode key){
     if(!rom_assets_on||rom_core_menu)return 0;
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){
+        if(rom_asset_confirm[0]){rom_asset_confirm[0]=0;snprintf(rom_asset_message,sizeof(rom_asset_message),"RECOVERY CANCELLED");return 1;}
         if(rom_asset_files){rom_assets_tab(ROM_ASSET_CHEATS);return 1;}
         rom_assets_stop();rom_assets_on=0;
         if(rom_asset_cover_dirty){memset(library_pages,0,sizeof(library_pages));request_catalog(browse,0,0);}
         return 1;
     }
-    if(key==SDLK_m||key==SDLK_TAB||key==SDLK_PAGEDOWN)rom_assets_tab((rom_asset_tab+1)%3);
-    else if(key==SDLK_v||key==SDLK_PAGEUP)rom_assets_tab((rom_asset_tab+2)%3);
+    if(key==SDLK_m||key==SDLK_TAB||key==SDLK_PAGEDOWN)rom_assets_tab((rom_asset_tab+1)%ROM_ASSET_TABS);
+    else if(key==SDLK_v||key==SDLK_PAGEUP)rom_assets_tab((rom_asset_tab+ROM_ASSET_TABS-1)%ROM_ASSET_TABS);
     else if(!rom_asset_pid){
+        if(key==SDLK_UP||key==SDLK_DOWN||key==SDLK_LEFT||key==SDLK_RIGHT)rom_asset_confirm[0]=0;
+        if(rom_asset_tab==ROM_ASSET_STATES&&rom_asset_selected==0&&(key==SDLK_LEFT||key==SDLK_RIGHT)){
+            rom_assets_start("state-slot",key==SDLK_LEFT?"-1":"1");return 1;
+        }
         if(key==SDLK_UP&&rom_asset_selected>0)rom_asset_selected--;
         if(key==SDLK_DOWN&&rom_asset_selected+1<rom_asset_count)rom_asset_selected++;
         if(key==SDLK_LEFT&&rom_asset_tab!=ROM_ASSET_CORE){rom_asset_selected-=8;if(rom_asset_selected<0)rom_asset_selected=0;}
@@ -112,6 +121,17 @@ static int rom_assets_action(SDL_Keycode key){
             else if(rom_asset_count){
                 char selected[20];snprintf(selected,sizeof(selected),"%s",rom_asset_rows[rom_asset_selected].token);
                 if(!strcmp(selected,"none"))return 1;
+                if(rom_asset_tab==ROM_ASSET_STATES){
+                    if(!strcmp(selected,"slot"))rom_assets_start("state-slot","1");
+                    else if(!strcmp(selected,"backup"))rom_assets_start("states",NULL);
+                    else if(!strcmp(selected,rom_asset_confirm)){
+                        rom_asset_confirm[0]=0;rom_assets_start("state-recover",selected);
+                    }else{
+                        snprintf(rom_asset_confirm,sizeof(rom_asset_confirm),"%s",selected);
+                        snprintf(rom_asset_message,sizeof(rom_asset_message),"RESTORE SELECTED SHADOW? A CONFIRM / B CANCEL / CURRENT FILE IS PRESERVED");
+                    }
+                    return 1;
+                }
                 const char *job=rom_asset_tab==ROM_ASSET_COVER?"cover-set":rom_asset_files?"install":!strcmp(selected,"download")?"search":"toggle";
                 rom_assets_start(job,!strcmp(job,"search")?rom_options_title.title:selected);
             }else rom_assets_tab(rom_asset_tab);
@@ -122,8 +142,8 @@ static int rom_assets_action(SDL_Keycode key){
 static void rom_assets_draw(void){
     rect(184,80,746,399,(SDL_Color){0,0,0,240},1);
     text(200,94,"ROM SETTINGS",2,green,50);text(200,123,rom_options_title.title,1,white,100);
-    const char *tabs[]={"CORE","COVER","CHEATS"};
-    for(int i=0;i<3;i++){
+    const char *tabs[]={"CORE","COVER","CHEATS","STATES"};
+    for(int i=0;i<ROM_ASSET_TABS;i++){
         int x=200+i*164;if(i==rom_asset_tab)rect(x-4,142,148,26,green,0);
         text(x,150,tabs[i],2,i==rom_asset_tab?green:dim,20);
     }
@@ -141,10 +161,11 @@ static void rom_assets_draw(void){
             if(rom_asset_tab==ROM_ASSET_COVER&&!strcmp(row->detail,"CURRENT"))text(855,y,"SET",1,green,6);
         }
         if(rom_asset_files&&rom_asset_count)text(200,393,rom_asset_rows[rom_asset_selected].detail,1,dim,105);
+        if(rom_asset_tab==ROM_ASSET_STATES&&rom_asset_count)text(200,393,rom_asset_rows[rom_asset_selected].detail,1,dim,105);
     }else text(205,225,"LOADING... B CANCEL",2,green,55);
     text(200,413,rom_asset_message,1,dim,108);
     text(200,443,"LB/RB OR TAB: TABS / A SELECT / B BACK",1,green,100);
-    text(200,463,"UP/DOWN: ROW / LEFT/RIGHT: PAGE",1,dim,95);
+    text(200,463,rom_asset_tab==ROM_ASSET_STATES?"LEFT/RIGHT: SLOT OR PAGE / A RECOVER SELECTED COPY":"UP/DOWN: ROW / LEFT/RIGHT: PAGE",1,dim,110);
     SDL_RenderPresent(renderer);
 }
 #endif

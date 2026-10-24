@@ -12,6 +12,8 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import state_guard
 
 ROOT = Path('.')
 MAX_CHEATS = 512
@@ -232,6 +234,29 @@ def install(key, selected):
     cheats(key)
 
 
+def states(key, delta=None, recovery=None):
+    item = game(key)
+    state_guard.ROOT = ROOT
+    if delta is not None: state_guard.set_slot(key, delta)
+    if recovery is not None:
+        selected = next((v for v in state_guard.versions(item['rom']) if v[0] == recovery), None)
+        state_guard.recover(item['rom'], recovery)
+        if selected:
+            match = re.search(r'\.state(\d*)$', selected[1].name, re.I)
+            if match and int(match[1] or 0) <= 99:
+                state_guard.set_slot(key, int(match[1] or 0) - state_guard.slot_for(key))
+    if not state_guard.emulator_running(): state_guard.snapshot(state_guard.sources_for(item['rom']), verify=True)
+    result = [('slot', f'SAVESTATE SLOT: {state_guard.slot_for(key)}', 'LEFT/RIGHT CHANGE / 0-99'),
+              ('backup', 'UPDATE SHADOW COPIES', 'AUTO AND ALL NUMBERED SLOTS')]
+    for token, source, version, kind in state_guard.versions(item['rom']):
+        size = version['size']
+        match = re.search(r'\.state(\d*)$', source.name, re.I)
+        slot = str(int(match[1] or 0)) if match else 'AUTO'
+        result.append((token, f'{kind.upper()} / SLOT {slot} / {size} B / {source.parent.name}/{source.name}',
+                       time.strftime('%Y-%m-%d %H:%M', time.localtime(version['time']))))
+    rows(result)
+
+
 def run(args):
     if len(args) not in (2, 3):
         raise ValueError('Expected action, ROM identity and optional selection')
@@ -243,6 +268,9 @@ def run(args):
     elif verb == 'toggle' and value is not None: cheats(key, value)
     elif verb == 'search': search(key, value)
     elif verb == 'install' and value is not None: install(key, value)
+    elif verb == 'states': states(key)
+    elif verb == 'state-slot' and value is not None: states(key, delta=value)
+    elif verb == 'state-recover' and value is not None: states(key, recovery=value)
     else: raise ValueError('Unknown ROM asset action')
 
 

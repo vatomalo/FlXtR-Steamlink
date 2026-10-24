@@ -144,7 +144,8 @@ static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int fla
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
 }
 /* Decode/feed audio on the UI thread. Video submission is independent, so
- * hardware waits no longer starve the output queue. Keep 200-500 ms of PCM;
+ * hardware waits no longer starve the output queue. PCM reserve permits the
+ * configured video decode lead without delaying the 200 ms audio start;
  * the compressed RAM FIFO retains the much larger network reserve. */
 static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFrame *frame,SDL_AudioDeviceID device) {
     int rc=avcodec_send_packet(codec,pkt);
@@ -157,7 +158,7 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
         if(!audio_pcm){av_frame_unref(frame);return AVERROR(ENOMEM);}
         int samples=swr_convert(swr,&audio_pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
-            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(2);}
+            while(!stopped&&SDL_GetQueuedAudioSize(device)>av_sync.pcm_limit){playback_controls();SDL_Delay(2);}
             int64_t timestamp=frame->best_effort_timestamp;
             if(timestamp!=AV_NOPTS_VALUE)
                 timestamp=av_rescale_q(timestamp,codec->pkt_timebase,AV_TIME_BASE_Q)-media_offset-
@@ -174,7 +175,7 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
                 static const uint8_t silence[4800*4]={0};
                 int64_t missing=(timestamp-initial)*48000/1000000;
                 while(missing>0&&!stopped){
-                    while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(2);}
+                    while(!stopped&&SDL_GetQueuedAudioSize(device)>av_sync.pcm_limit){playback_controls();SDL_Delay(2);}
                     int n=missing>4800?4800:(int)missing;
                     if(sync_audio_queue(silence,n,initial)<0){av_frame_unref(frame);return AVERROR(EIO);}
                     audio_samples+=(unsigned)n;missing-=n;

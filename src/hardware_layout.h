@@ -39,11 +39,12 @@ static int hardware_viewport(VideoRect *rect,int display_w,int display_h,int dec
     if(!scaling_saved){
         scaling_original_source=before_source;scaling_original_output=before_output;scaling_saved=1;
     }
-    /* This scaler's source window is established by the firmware. Encoded
-     * dimensions are used by video_rect(), not as a replacement source crop. */
+    /* This plane is expanded to display space before this scaler. A previous
+     * player may have left an encoded-size crop here; retaining it carries
+     * that crop into the next stream. Restore the full display-space input.
+     * Encoded dimensions belong only in video_rect() for the destination. */
     if(decoded_w<1||decoded_h<1||decoded_w>32767||decoded_h>32767)return -1;
-    VideoRect source=scaling_original_source;
-    if(source.w<=0||source.h<=0)return -1;
+    VideoRect source={0,0,(int16_t)display_w,(int16_t)display_h};
     /* The initial output is a viewport (including underscan), not the full
      * coordinate space. Mapping through it shrinks every mode a second time.
      * Supply the centered HDMI-space rectangle directly, as the working

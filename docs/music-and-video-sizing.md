@@ -8,8 +8,8 @@ subtitle and provider changes.
 Fit keeps the picture's aspect ratio, Stretch fills the display, and 1:1 centers
 the encoded pixel dimensions without enlarging them. The previous adapter called
 `MV_PE_VideoSetUnderScanWindow`, which rejected the non-fullscreen rectangles.
-The adapter calls `MV_PE_VideoSetScaling`, retaining the firmware's input
-window and supplying the desired output rectangle in display coordinates.
+The adapter calls `MV_PE_VideoSetScaling` with a full display-space input
+rectangle and the desired output rectangle in display coordinates.
 Using encoded dimensions for the input crops the picture. The initial output
 rectangle may include underscan (the device reported 38,21 / 1844x1037 on a
 1920x1080 display); it is not the full coordinate space. Scaling destinations

@@ -94,6 +94,24 @@ static const char *game_core(const char *path){
         if(strcasestr(path,"/gba/"))return "gpsp";
     }return NULL;
 }
+/* Exact content comparison is used only for equal-size, same-name candidates.
+ * Streaming avoids loading large disc images into memory or relying on hashes.
+ */
+static int game_same_contents(const char *a,const char *b){
+    FILE *x=fopen(a,"rb"),*y=fopen(b,"rb");
+    if(!x||!y){if(x)fclose(x);if(y)fclose(y);return 0;}
+    unsigned char xa[16384],yb[16384];int equal=1;
+    for(;;){
+        size_t nx=fread(xa,1,sizeof(xa),x),ny=fread(yb,1,sizeof(yb),y);
+        if(nx!=ny||memcmp(xa,yb,nx)){equal=0;break;}
+        if(nx<sizeof(xa)){
+            if(ferror(x)||ferror(y))equal=0;
+            break;
+        }
+    }
+    if(fclose(x)||fclose(y))equal=0;
+    return equal;
+}
 static void game_add(json_object *games,const char *rom,const char *core,const char *label){
     if(json_object_array_length(games)>=GAME_LIMIT||!game_file(rom)||!game_file(core))return;
     /* A ROM can be indexed through playlists and directory scans under aliases.
@@ -105,7 +123,16 @@ static void game_add(json_object *games,const char *rom,const char *core,const c
         const char *existing=string(json_object_array_get_idx(games,i),"rom");
         if(!strcmp(existing,rom))return;
         struct stat seen;
-        if(!stat(existing,&seen)&&candidate.st_dev==seen.st_dev&&candidate.st_ino==seen.st_ino)return;
+        if(stat(existing,&seen))continue;
+        if(candidate.st_dev==seen.st_dev&&candidate.st_ino==seen.st_ino)return;
+        /* Separate installations or mounts can contain byte-identical ROMs.
+         * Match basename and size first, then verify every byte. Preserve
+         * differing regions, hacks and revisions rather than title-matching.
+         */
+        const char *left=strrchr(existing,'/'),*right=strrchr(rom,'/');
+        left=left?left+1:existing;right=right?right+1:rom;
+        if(candidate.st_size==seen.st_size&&!strcasecmp(left,right)&&
+           game_same_contents(existing,rom))return;
     }
     const char *name=strrchr(rom,'/');name=name?name+1:rom;char title[80];clean(title,sizeof(title),label&&*label?label:name);
     if(!label||!*label){char *dot=strrchr(title,'.');if(dot)*dot=0;}

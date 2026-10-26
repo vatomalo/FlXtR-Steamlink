@@ -1898,10 +1898,12 @@ static void tv_history_finish(const char *event,double position){
     tv_history_active=tv_history_confirmed=0;
 }
 static void launch_player(const Title *t) {
+    if(!tv_preloading)unlink("youtube-playback-outcome");
     if(!strcmp(t->kind,"youtube")){
+        setenv("FLXTR_YOUTUBE_PLAYBACK","1",1);
         if(youtube_audio[0])setenv("FLXTR_EXTERNAL_AUDIO",youtube_audio,1);else unsetenv("FLXTR_EXTERNAL_AUDIO");
         setenv("FLXTR_VIDEO_USER_AGENT",youtube_agent,1);
-    }else{unsetenv("FLXTR_EXTERNAL_AUDIO");unsetenv("FLXTR_VIDEO_USER_AGENT");}
+    }else{unsetenv("FLXTR_EXTERNAL_AUDIO");unsetenv("FLXTR_VIDEO_USER_AGENT");unsetenv("FLXTR_YOUTUBE_PLAYBACK");}
     if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}prefetch_left=0;
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
 #ifdef _WIN32
@@ -2161,6 +2163,32 @@ static void finish_player(int code){
     tv_history_finish(!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)?"completed":cancelled?"stopped":"failed",tv_history_last_position());
     if(!strcmp(playing_title.kind,"youtube")){
         int eof=!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code);
+        /* Standalone streams can terminate on expired/failed media URLs.
+         * Re-resolve the canonical watch URL, never a signed stream URL. */
+        if(!tv_active&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)!=0&&
+           WEXITSTATUS(code)!=40&&WEXITSTATUS(code)!=46&&
+           playing_title.meta[0]&&youtube_recovery_attempts<3){
+            double position=0.0,duration=0.0;int outcome=0;
+            FILE *f=fopen("youtube-playback-outcome","r");
+            if(f){
+                if(fscanf(f,"%lf %lf %d",&position,&duration,&outcome)!=3)position=0;
+                fclose(f);
+            }
+            unlink("youtube-playback-outcome");
+            if(!(position>=0&&position<86400))position=0;
+            if(position>1.0)position-=1.0;
+            youtube_recovery_pending=1;
+            int spawned=youtube_spawn(playing_title.meta,0);
+            youtube_recovery_pending=0;
+            if(!spawned){
+                youtube_resume=position;
+                youtube_recovery_attempts++;
+                fprintf(stderr,"YouTube recovery %u/3: resume %.3f / duration %.3f (exit %d)\n",
+                        youtube_recovery_attempts,position,duration,WEXITSTATUS(code));
+                snprintf(status,sizeof(status),"YOUTUBE RECONNECTING (%u/3)",youtube_recovery_attempts);
+                return;
+            }
+        }
         if(eof&&tv_active&&tv_prepared){tv_begin_prepared();return;}
         if(tv_active&&!cancelled){
             /* MTV should continue with a different result on EOF or a failed URL.

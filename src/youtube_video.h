@@ -167,14 +167,9 @@ static void mtv_fusion_query(int anchor,char *out,size_t size){
     }else{
         /* Keep Karaoke search instrumental by default, rather than
          * retrieving regular vocal performances. */
-        /* Reserve suffix space before formatting variable text. GCC treats
-         * this as bounded even with -Werror=format-truncation. */
-        const char *suffix=" karaoke instrumental backing track";
-        size_t reserved=strlen(suffix)+1;
-        if(size<=reserved){if(size)out[0]=0;return;}
-        snprintf(out,size,"%.*s%s%.*s%s",
-                 (int)((size-reserved)/2),subject,subject[0]?" ":"",
-                 (int)((size-reserved)/2),genre,suffix);
+        /* Fixed precision caps avoid -Werror=format-truncation. */
+        snprintf(out,size,"%.70s%s%.70s karaoke instrumental backing track",
+                 subject,subject[0]?" ":"",genre);
     }
 }
 static void mtv_query(char *out,size_t size){

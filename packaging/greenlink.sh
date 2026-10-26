@@ -28,6 +28,7 @@ while :; do
     rm -f game-music-request
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
+    if [ -r ./power-activity.sh ]; then sh ./power-activity.sh --idle >power-activity.log 2>&1 || true; fi
     if [ "$code" -eq 43 ]; then
         # A broken Steam Link audio/video pipeline can trap RetroArch indefinitely,
         # repeatedly printing MV_PE_InputBufWrite failures and ignoring TERM.
@@ -39,6 +40,11 @@ while :; do
         rm -f state-session.json
         ./greenlink-catalog --run-game >game.log 2>&1 &
         game_pid=$!
+        power_guard_pid=
+        if [ -r ./power-activity.sh ]; then
+            sh ./power-activity.sh "$game_pid" >power-activity.log 2>&1 &
+            power_guard_pid=$!
+        fi
         music_guard_pid=
         if [ -f game-music-request ] && [ -f tools/rom_music.py ]; then
             sh scripts/music-runtime.sh tools/rom_music.py "$game_pid" >rom-music.log 2>&1 &
@@ -80,6 +86,10 @@ while :; do
         watchdog_pid=$!
         wait "$game_pid"
         game_code=$?
+        if [ -n "$power_guard_pid" ]; then
+            kill -TERM "$power_guard_pid" 2>/dev/null || true
+            wait "$power_guard_pid" 2>/dev/null || true
+        fi
         if [ -n "$music_guard_pid" ]; then
             kill -TERM "$music_guard_pid" 2>/dev/null
             wait "$music_guard_pid" 2>/dev/null

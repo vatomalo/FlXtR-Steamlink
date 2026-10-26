@@ -27,6 +27,7 @@ cp "$src" "$out"
     shutil.copy(stage / 'greenlink', stage / 'greenlink-catalog')
     shutil.copy(root / 'packaging/update.sh', stage / 'update.sh')
     (stage / 'greenlink.sh').write_text('#!/bin/sh\necho fixed\n')
+    shutil.copy(root / 'packaging/power-activity.sh', stage / 'power-activity.sh')
     (stage / 'retroarch-libs').mkdir()
     (stage / 'retroarch-libs/libSDL2-2.0.so.0').write_bytes(b'native SDL fixture')
     (stage / 'assets').mkdir()
@@ -68,7 +69,7 @@ cp "$src" "$out"
     assert (app / 'greenlink-audio').is_file()
     (app / 'music-runtime/usr/bin/python3').write_bytes(b'broken runtime')
     assert 'Installed complete' in run()
-    for name in ('greenlink', 'greenlink-catalog', 'greenlink.sh', 'retroarch-libs/libSDL2-2.0.so.0'):
+    for name in ('greenlink', 'greenlink-catalog', 'greenlink.sh', 'power-activity.sh', 'retroarch-libs/libSDL2-2.0.so.0'):
         (app / name).write_bytes(b'overwritten old file')
         assert 'Installed complete' in run(), name
         assert (app / name).read_bytes() == (stage / name).read_bytes(), name

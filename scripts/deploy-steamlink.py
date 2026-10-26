@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify and deploy the shell/catalog/player from a Steam Link package.
+"""Verify and deploy shell/catalog/player and playback activity helpers.
 
 Run in WSL/Linux with SSH access. User libraries and settings are never extracted.
 """
@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 BINARIES = ("greenlink", "greenlink-catalog", "greenlink-player")
+PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh")
 
 
 def verified_payload(package, destination):
@@ -43,16 +44,16 @@ def verified_payload(package, destination):
         expected = {}
         for line in manifest.decode().splitlines():
             digest, name = line.split()
-            if name not in BINARIES or name in expected or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            if name not in PAYLOAD_FILES or name in expected or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 raise ValueError("Invalid binary manifest")
             expected[name] = digest
-        if set(expected) != set(BINARIES):
+        if set(expected) != set(PAYLOAD_FILES):
             raise ValueError("Incomplete binary manifest")
-        files = {name: read(name) for name in BINARIES}
+        files = {name: read(name) for name in PAYLOAD_FILES}
         for name, data in files.items():
             if hashlib.sha256(data).hexdigest() != expected[name]:
                 raise ValueError(f"Package hash mismatch: {name}")
-            if data[:5] != b"\x7fELF\x01" or int.from_bytes(data[18:20], "little") != 40:
+            if name in BINARIES and (data[:5] != b"\x7fELF\x01" or int.from_bytes(data[18:20], "little") != 40):
                 raise ValueError(f"Not a 32-bit ARM ELF executable: {name}")
         files["build-version.txt"] = (version + "\n").encode()
         files["build-sha256.txt"] = manifest
@@ -60,7 +61,7 @@ def verified_payload(package, destination):
             for name, data in files.items():
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
-                info.mode = 0o755 if name in BINARIES else 0o644
+                info.mode = 0o755 if name in PAYLOAD_FILES else 0o644
                 payload.addfile(info, io.BytesIO(data))
         return version
 
@@ -85,7 +86,7 @@ done
 cd "$app"
 test -x ./greenlink.sh
 # Back up exactly the files being replaced, plus private configuration for recovery.
-for part in greenlink greenlink-catalog greenlink-player build-version.txt build-sha256.txt .no-auto-update; do
+for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh build-version.txt build-sha256.txt .no-auto-update; do
     if test -e "$part"; then cp -p "$part" "$backup/$part"; fi
 done
 for part in settings.cfg mtv-weights.tsv mtv-query.txt mtv-fusion-style.txt mtv-vga-subject.txt catalog.local.tsv favorites.tsv tv-progress.tsv; do
@@ -95,7 +96,7 @@ changed=0
 rollback() {
     result=$?
     if test "$result" -ne 0 && test "$changed" -eq 1; then
-        for part in greenlink greenlink-catalog greenlink-player build-version.txt build-sha256.txt .no-auto-update; do
+        for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh build-version.txt build-sha256.txt .no-auto-update; do
             if test -f "$backup/$part"; then
                 cp -p "$backup/$part" "$app/$part.rollback"
                 mv -f "$app/$part.rollback" "$app/$part"
@@ -107,7 +108,7 @@ rollback() {
 trap rollback EXIT
 changed=1
 printf 'Manual feature-branch test; preserve this build until testing is complete.\n' > .no-auto-update
-for part in greenlink greenlink-catalog greenlink-player build-version.txt build-sha256.txt; do
+for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh build-version.txt build-sha256.txt; do
     cp -p "$stage/$part" "$part.deploy-new"
     mv -f "$part.deploy-new" "$part"
 done

@@ -24,7 +24,7 @@ cp build/cacert.pem "$app/certs/cacert.pem"
 cp packaging/CERTIFICATES.txt "$app/certs/NOTICE.txt"
 cp build/greenlink-arm "$app/greenlink"
 cp build/greenlink-catalog-arm "$app/greenlink-catalog"
-cp packaging/greenlink.sh packaging/update.sh packaging/controller-idle.sh packaging/samba-run.sh packaging/samba-server.sh packaging/reset-scummvm-config.sh packaging/toc.txt "$app/"
+cp packaging/greenlink.sh packaging/power-activity.sh packaging/update.sh packaging/controller-idle.sh packaging/samba-run.sh packaging/samba-server.sh packaging/reset-scummvm-config.sh packaging/toc.txt "$app/"
 cp catalog.tsv "$app/catalog.tsv"
 # RetroArch 1.7.x predates the firmware's SDL2-to-SDL3 compatibility layer.
 # Pin Valve's native SDL2 build and load it only in the RetroArch child.
@@ -80,7 +80,7 @@ chmod +x "$app/greenlink" "$app/greenlink.sh"
 printf '%s\n' "$version" > "$app/build-version.txt"
 git diff --quiet && git diff --cached --quiet && source_dirty=0 || source_dirty=1
 printf '%s\n' "$source_dirty" > "$app/build-source-dirty.txt"
-(cd "$app"; for part in greenlink greenlink-catalog greenlink-player; do
+(cd "$app"; for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh; do
     if [ -f "$part" ]; then sha256sum "$part"; fi
 done) > "$app/build-sha256.txt"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink

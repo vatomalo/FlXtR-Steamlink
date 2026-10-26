@@ -81,13 +81,13 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
             cp "$staged/retroarch-libs/$part" "retroarch-libs/$part.new" && mv -f "retroarch-libs/$part.new" "retroarch-libs/$part"
         done
     fi
-    for part in update.sh greenlink.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh samba-paths.so samba-packages.json toc.txt catalog.tsv WABT-LICENSE.txt LIBRETRO-API-LICENSE.txt; do
+    for part in update.sh greenlink.sh power-activity.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh samba-paths.so samba-packages.json toc.txt catalog.tsv WABT-LICENSE.txt LIBRETRO-API-LICENSE.txt; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     mv -f .update-backup greenlink.previous
     # A manual install can replace binaries while leaving the version marker.
     # Record hashes from the verified archive, then verify what is on disk.
-    (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
+    (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
     for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py; do

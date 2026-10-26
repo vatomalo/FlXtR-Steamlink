@@ -16,10 +16,10 @@ spec.loader.exec_module(deploy)
 class DeploymentTest(unittest.TestCase):
     def package(self, root, *, dirty=b"0\n", corrupt=False, extra=None, duplicate=False):
         elf = b"\x7fELF\x01" + bytes(13) + b"\x28\x00" + bytes(44)
-        files = {name: elf for name in deploy.BINARIES}
+        files = {name: elf if name in deploy.BINARIES else b"#!/bin/sh\nexit 0\n" for name in deploy.PAYLOAD_FILES}
         files["build-version.txt"] = b"a" * 40 + b"\n"
         files["build-source-dirty.txt"] = dirty
-        files["build-sha256.txt"] = "".join(f"{hashlib.sha256(elf).hexdigest()}  {name}\n" for name in deploy.BINARIES).encode()
+        files["build-sha256.txt"] = "".join(f"{hashlib.sha256(files[name]).hexdigest()}  {name}\n" for name in deploy.PAYLOAD_FILES).encode()
         files["settings.cfg"] = b"must not be installed\n"
         if corrupt:
             files["greenlink"] += b"corrupt"
@@ -41,7 +41,7 @@ class DeploymentTest(unittest.TestCase):
             output = root / "payload.tgz"
             self.assertEqual(deploy.verified_payload(self.package(root), output), "a" * 40)
             with tarfile.open(output) as archive:
-                self.assertEqual(set(archive.getnames()), set(deploy.BINARIES) | {"build-version.txt", "build-sha256.txt"})
+                self.assertEqual(set(archive.getnames()), set(deploy.PAYLOAD_FILES) | {"build-version.txt", "build-sha256.txt"})
 
     def test_invalid_packages_rejected(self):
         for options in ({"dirty": b"1\n"}, {"corrupt": True}, {"extra": "greenlink/../../settings.cfg"}, {"extra": "other/greenlink"}, {"duplicate": True}):

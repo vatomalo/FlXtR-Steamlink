@@ -1270,6 +1270,7 @@ static void start_update(void) {
 #include "preview_inset.h"
 #include "rom_assets_ui.h"
 #include "youtube_video.h"
+#include "power_activity.h"
 #include "settings_services.h"
 static int keyboard_help;
 static void draw(Uint32 tick) {
@@ -2759,6 +2760,7 @@ int main(int argc,char **argv) {
         if(youtube_poll())dirty=1;
         tv_history_poll();
         youtube_prefetch();
+        power_activity_tick(player_pid>0||(tv_active&&(youtube_pid>0||tv_buffer_pid>0)),SDL_GetTicks());
         if(!music_on){prefetch_pages();tv_tick();}controller_idle();
         if(player_pid){int code;pid_t p=waitpid(player_pid,&code,WNOHANG);
             if(p==player_pid){finish_player(code);dirty=1;}
@@ -2778,7 +2780,7 @@ int main(int argc,char **argv) {
     youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
-    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid};
+    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
     SDL_Quit();return game_exit?43:restart_shell?42:0;

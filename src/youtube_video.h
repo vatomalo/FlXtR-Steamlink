@@ -6,6 +6,8 @@ static Uint32 youtube_started;
 static int youtube_for_tv,mtv_override,youtube_height,youtube_preparing;
 static Uint32 youtube_retry_at;
 static double youtube_resume;
+static unsigned int youtube_recovery_attempts;
+static int youtube_recovery_pending;
 static char youtube_audio[16004],youtube_agent[502],youtube_next_audio[16004],youtube_next_agent[502];
 static void youtube_stop(void){
     if(youtube_pid){kill(-youtube_pid,SIGKILL);kill(youtube_pid,SIGKILL);waitpid(youtube_pid,NULL,0);}
@@ -14,6 +16,7 @@ static void youtube_stop(void){
 static int youtube_spawn(const char *query,int television){
     if(youtube_pid||(!youtube_preparing&&player_pid)||catalog_pid||update_pid)return -1;
     mkdir("music-cache",0700);unlink("music-cache/video.txt");unlink("music-cache/error.txt");
+    if(!television&&!youtube_recovery_pending)youtube_recovery_attempts=0;
     youtube_for_tv=television;youtube_started=SDL_GetTicks();youtube_resume=0;
     char height[12];youtube_height=quality_height();snprintf(height,sizeof(height),"%d",youtube_height);
     const char *mode=television?"tv-video":"video";

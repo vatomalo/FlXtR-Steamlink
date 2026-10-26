@@ -164,3 +164,16 @@ test-settings: all
 	python3 tests/samba_install_test.py
 
 .PHONY: test-settings
+
+test-mtv:
+	mkdir -p build
+	$(CC) $(CFLAGS) -Isrc tests/mtv_weights_test.c -o build/mtv-weights-test
+	./build/mtv-weights-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/mtv_query_test.c -o build/mtv-query-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/mtv-query-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/mtv_preload_test.c -o build/mtv-preload-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/mtv-preload-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/youtube_recovery_test.c -o build/youtube-recovery-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/youtube-recovery-test
+
+.PHONY: test-mtv

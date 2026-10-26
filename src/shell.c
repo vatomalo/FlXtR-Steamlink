@@ -2660,6 +2660,10 @@ int main(int argc,char **argv) {
         if(!strcmp(argv[i],"--ui-worker"))continue;
 #endif
         if(!strcmp(argv[i],"--version")){puts(FLXTR_VERSION);return 0;}
+        else if(!strcmp(argv[i],"--mtv-genres")){
+            for(int genre=0;genre<MTV_GENRES;genre++)printf("%d\t%s\n",genre,mtv_genre_names[genre]);
+            return 0;
+        }
         else if(!strcmp(argv[i],"--grid"))coverflow=0;
         else if(!strcmp(argv[i],"--settings"))settings_on=1;
         else if(!strcmp(argv[i],"--settings-tab")&&i+1<argc){

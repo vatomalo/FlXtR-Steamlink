@@ -76,6 +76,13 @@ fi
 cp docs/DESKTOP-CONTROLS.md "$app/CONTROLS.md"
 cp docs/STEAMLINK-PLAYBACK.md "$app/PLAYBACK.md"
 chmod +x "$app/greenlink" "$app/greenlink.sh"
+# Keep provenance inside the archive so deployment can verify the actual payload.
+printf '%s\n' "$version" > "$app/build-version.txt"
+git diff --quiet && git diff --cached --quiet && source_dirty=0 || source_dirty=1
+printf '%s\n' "$source_dirty" > "$app/build-source-dirty.txt"
+(cd "$app"; for part in greenlink greenlink-catalog greenlink-player; do
+    if [ -f "$part" ]; then sha256sum "$part"; fi
+done) > "$app/build-sha256.txt"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink
 file build/greenlink-arm
 wc -c build/greenlink-arm dist/greenlink.tgz

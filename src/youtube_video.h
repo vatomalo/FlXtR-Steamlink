@@ -141,16 +141,17 @@ static void mtv_fusion_query(int anchor,char *out,size_t size){
     static const char *const styles[MTV_GENRES]={
         "city pop","pop","rock","hip hop","electronic","metal",
         "jazz","country","R&B soul","k-pop","anime music",
-        "video game music","karaoke"
+        "video game music","karaoke","enka","city pop","latin"
     };
     int weights[MTV_GENRES];mtv_weights_load(weights);
     unsigned int total=0;
     /* Genre weights remain relative and styles must never recursively
      * choose VGA or Karaoke as the second genre. */
-    for(int i=1;i<11;i++)total+=(unsigned int)weights[i];
+    for(int i=1;i<MTV_GENRES;i++)if(i!=11&&i!=12)total+=(unsigned int)weights[i];
     unsigned int roll=total?(unsigned int)tv_sequence("mtv-fusion-sequence.txt")%total:0;
     int style=0;
-    for(int i=1;total&&i<11;i++){
+    for(int i=1;total&&i<MTV_GENRES;i++){
+        if(i==11||i==12)continue;
         if(roll<(unsigned int)weights[i]){style=i;break;}
         roll-=(unsigned int)weights[i];
     }

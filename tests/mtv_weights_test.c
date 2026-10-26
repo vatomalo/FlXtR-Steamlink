@@ -23,7 +23,7 @@ int main(void){
     assert(mtv_weighted_genre(2)==2);
     assert(mtv_weighted_genre(3)==2);
     f=fopen("mtv-weights.tsv","w");assert(f);
-    fprintf(f,"1 0\\n2 0\\n3 0\\n4 0\\n5 0\\n6 0\\n7 0\\n8 0\\n9 0\\n10 0\\n11 70\\n12 30\\n");
+    fprintf(f,"1 0\n2 0\n3 0\n4 0\n5 0\n6 0\n7 0\n8 0\n9 0\n10 0\n11 70\n12 30\n");
     assert(!fclose(f));
     for(unsigned i=0;i<100;i++)
         assert(mtv_weighted_genre(i)==(i<70?11:12));

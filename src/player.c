@@ -691,7 +691,29 @@ int main(int argc,char **argv) {
         SDL_Delay(150);
     }
     result=(stopped||rc==AVERROR_EOF)?0:1;
+    /* FFmpeg can report EOF before the expected end of a remote stream.
+     * Only flag early EOF if an actual finite duration is known. */
+    if(!stopped && rc==AVERROR_EOF && getenv("FLXTR_YOUTUBE_PLAYBACK") &&
+       media_duration>30.0 && playback_position()+fmax(20.0,media_duration*0.04)<media_duration){
+        fprintf(stderr,"YouTube premature EOF: position=%.3f expected=%.3f\n",
+                playback_position(),media_duration);
+        result=47;
+    }
 done:
+    /* Atomic per-player outcome for the shell. Read BEFORE releasing sync
+     * objects so resume uses the last valid audio-master position. */
+    if(getenv("FLXTR_YOUTUBE_PLAYBACK")){
+        double last=av_sync.initialized?playback_position():playback_start;
+        if(!isfinite(last)||last<0||last>86400)last=0;
+        FILE *out=fopen("youtube-playback-outcome.next","w");
+        if(out){
+            fprintf(out,"%.3f %.3f %d\n",last,media_duration,result);
+            if(!fclose(out))rename("youtube-playback-outcome.next","youtube-playback-outcome");
+            else unlink("youtube-playback-outcome.next");
+        }
+        fprintf(stderr,"YouTube playback outcome: position=%.3f duration=%.3f result=%d\n",
+                last,media_duration,result);
+    }
     if(av_sync.initialized){
         timing_poll();
         pthread_mutex_lock(&av_sync.mutex);frames=av_sync.frames;int decoder_error=av_sync.error;pthread_mutex_unlock(&av_sync.mutex);

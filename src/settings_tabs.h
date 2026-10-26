@@ -5,7 +5,7 @@ enum { SETTINGS_VIDEO,SETTINGS_MUSIC,SETTINGS_ROMS,
 typedef struct {const char *name;int count,ids[8];} SettingsTab;
 static const SettingsTab settings_tabs[]={
     {"VIDEO",8,{0,1,2,4,5,6,26,17}},
-    {"MUSIC",3,{20,21,29}},
+    {"MUSIC",5,{20,21,29,31,32}},
     {"ROMS",6,{22,19,28,10,11,27}},
     {"TV",5,{7,8,12,13,14}},
     {"SERVICES",6,{23,24,25,15,18,30}},

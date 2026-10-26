@@ -155,8 +155,9 @@ static void mtv_fusion_query(int anchor,char *out,size_t size){
         if(roll<(unsigned int)weights[i]){style=i;break;}
         roll-=(unsigned int)weights[i];
     }
-    char custom_style[100],subject[100];
-    mtv_fusion_file("mtv-fusion-style.txt",custom_style,sizeof(custom_style));
+    if(mtv_fusion_genre>0&&mtv_fusion_genre<MTV_GENRES&&mtv_fusion_valid(mtv_fusion_genre))style=mtv_fusion_genre;
+    char custom_style[100]={0},subject[100];
+    if(mtv_fusion_genre==MTV_FUSION_CUSTOM)mtv_fusion_file("mtv-fusion-style.txt",custom_style,sizeof(custom_style));
     mtv_fusion_file("mtv-vga-subject.txt",subject,sizeof(subject));
     const char *genre=custom_style[0]?custom_style:styles[style];
     if(anchor==11){

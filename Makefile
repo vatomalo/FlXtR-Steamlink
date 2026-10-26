@@ -4,7 +4,7 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
 all: build/greenlink build/greenlink-catalog
-build/greenlink: src/power_activity.h src/usb_setup_ui.h
+build/greenlink: src/power_activity.h src/usb_setup_ui.h src/mtv_weights_ui.h src/mtv_weights.h
 build/greenlink-catalog: src/rom_state_preferences.h src/rom_state_runtime.h
 build/greenlink-catalog: src/catalog.c src/rom_cover_preferences.h src/rom_cheat_runtime.h src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/game_scaling.h src/rom_core_preferences.h src/core_geometry.h src/vendor/libretro.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h
 	mkdir -p build
@@ -172,6 +172,8 @@ test-mtv:
 	./build/mtv-weights-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/mtv_query_test.c -o build/mtv-query-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/mtv-query-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/mtv_weights_ui_test.c -o build/mtv-weights-ui-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/mtv-weights-ui-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/mtv_preload_test.c -o build/mtv-preload-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/mtv-preload-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/youtube_recovery_test.c -o build/youtube-recovery-test $(SDL_LIBS) -lSDL2_image -lcurl

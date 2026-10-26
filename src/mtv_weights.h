@@ -29,4 +29,13 @@ static int mtv_weighted_genre(unsigned int selection){
     }
     return 0;
 }
+static inline int mtv_weights_save(const int weights[MTV_GENRES]){
+    for(int i=1;i<MTV_GENRES;i++)if(weights[i]<0||weights[i]>100)return -1;
+    FILE *f=fopen("mtv-weights.tsv.next","w");if(!f)return -1;
+    int failed=0;
+    for(int i=1;i<MTV_GENRES;i++)if(fprintf(f,"%d %d\n",i,weights[i])<0)failed=1;
+    if(fclose(f))failed=1;
+    if(!failed&&!rename("mtv-weights.tsv.next","mtv-weights.tsv"))return 0;
+    remove("mtv-weights.tsv.next");return -1;
+}
 #endif

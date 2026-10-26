@@ -4,6 +4,10 @@
 
 Open **Settings → MUSIC → MTV GENRE**, then use Left/Right to cycle the choices. Select **CUSTOM / MIX** for weighted selection. In that mode, a nonempty `mtv-query.txt` takes priority over the weights.
 
+Open **MTV GENRE WEIGHTS** in the same MUSIC tab to edit every genre with the controller. Up/Down selects the genre, Left/Right adjusts by 1, shoulders adjust by 10, A toggles mute, X resets equal weights, and B saves and returns. Weights range from 0 to 100; zero disables a genre. The editor shows the current MTV and fusion modes. Selecting a single MTV genre still overrides weighted mixing.
+
+**FUSION GENRE** chooses the style paired with VGA or Karaoke: a specific genre, **WEIGHTED MIX**, or **CUSTOM STYLE FILE**. A manual genre or Weighted Mix takes priority over an existing `mtv-fusion-style.txt`. On an older installation with that file and no saved fusion setting, Custom Style File is initially selected to preserve the previous behavior. An absent or empty custom style falls back to the weights. The style weights exclude VGA/Karaoke to avoid recursive combinations.
+
 Without a custom query, create `mtv-weights.tsv` in FlXtR's working directory, for example:
 
 ```text
@@ -47,6 +51,6 @@ Do not deploy to a Steam Link whose `/home/apps` storage is full. Never create r
 
 Compile the feature branch with `bash scripts/autocompile --steamlink --no-update` in the SDK container. The archive root is `greenlink/`, and the executable inside it is `greenlink/greenlink`. Extracting that archive inside `/home/apps/greenlink` uses the wrong directory depth. The `build/greenlink-arm` filename is only the compiler output; the launcher runs `./greenlink`.
 
-Run `python3 scripts/deploy-steamlink.py dist/greenlink.tgz --verify-only` to validate the archive. With SSH access, omit `--verify-only` to stage, back up and atomically replace the shell, catalog and player. An existing SSH control socket can be supplied with `--control-path`. This targeted deployment requires all three executables to report the same committed version, preserves user data, and disables automatic updates while testing the feature branch. It does not replace the music runtime or install optional add-ons.
+Run `python3 scripts/deploy-steamlink.py dist/greenlink.tgz --verify-only` to validate the archive. With SSH access, omit `--verify-only` to stage, back up and atomically replace the shell, catalog, player, launcher, activity helper and USB setup helpers. An existing SSH control socket can be supplied with `--control-path`. This targeted deployment requires all three executables to report the same committed version, preserves user data, and disables automatic updates while testing the feature branch. It does not replace the music runtime or install optional add-ons.
 
 The script prints the backup directory and checks private configuration hashes. Relaunch the app afterward. Verify `/home/apps/greenlink/greenlink --version` and `--mtv-genres`, then compare the running process's `/proc/PID/exe` hash with `build-sha256.txt`. A disk file update alone does not replace an already running process. Re-enable automatic updates in Settings after branch testing is finished.

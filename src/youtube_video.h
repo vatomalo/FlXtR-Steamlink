@@ -112,10 +112,67 @@ static int youtube_poll(void){
     return 1;
 }
 #include "mtv_weights.h"
+
+/* VGA and Karaoke use one weighted genre-fusion search builder.
+ * A custom anchor (mtv-vga-subject.txt) and optional style
+ * (mtv-fusion-style.txt) can be edited without recompiling.
+ * Legacy MTV genre weights remain the source of style probabilities.
+ */
+static void mtv_fusion_file(const char *path,char *out,size_t size){
+    out[0]=0;
+    FILE *f=fopen(path,"r");
+    if(!f)return;
+    if(fgets(out,(int)size,f)){
+        out[strcspn(out,"\\r\\n")]=0;
+        for(size_t i=0;out[i];i++)
+            if((unsigned char)out[i]<32||out[i]=='"'||out[i]=='\\\\')out[i]=' ';
+    }else out[0]=0;
+    fclose(f);
+}
+static void mtv_fusion_query(int anchor,char *out,size_t size){
+    static const char *const subjects[]={
+        "Persona 5 Royal","Final Fantasy","NieR Automata",
+        "Chrono Trigger","Sonic Adventure","Cowboy Bebop",
+        "Studio Ghibli","Kingdom Hearts"
+    };
+    static const char *const styles[MTV_GENRES]={
+        "city pop","pop","rock","hip hop","electronic","metal",
+        "jazz","country","R&B soul","k-pop","anime music",
+        "video game music","karaoke"
+    };
+    int weights[MTV_GENRES];mtv_weights_load(weights);
+    unsigned int total=0;
+    /* Genre weights remain relative and styles must never recursively
+     * choose VGA or Karaoke as the second genre. */
+    for(int i=1;i<11;i++)total+=(unsigned int)weights[i];
+    unsigned int roll=total?(unsigned int)tv_sequence("mtv-fusion-sequence.txt")%total:0;
+    int style=0;
+    for(int i=1;total&&i<11;i++){
+        if(roll<(unsigned int)weights[i]){style=i;break;}
+        roll-=(unsigned int)weights[i];
+    }
+    char custom_style[100],subject[100];
+    mtv_fusion_file("mtv-fusion-style.txt",custom_style,sizeof(custom_style));
+    mtv_fusion_file("mtv-vga-subject.txt",subject,sizeof(subject));
+    const char *genre=custom_style[0]?custom_style:styles[style];
+    if(anchor==11){
+        if(!subject[0]){
+            unsigned int n=(unsigned int)tv_sequence("mtv-vga-sequence.txt");
+            snprintf(subject,sizeof(subject),"%s",subjects[n%(sizeof(subjects)/sizeof(subjects[0]))]);
+        }
+        snprintf(out,size,"%s %s remix music video",subject,genre);
+    }else{
+        /* Keep Karaoke search instrumental by default, rather than
+         * retrieving regular vocal performances. */
+        snprintf(out,size,"%s%s%s karaoke instrumental backing track",
+                 subject,subject[0]?" ":"",genre);
+    }
+}
 static void mtv_query(char *out,size_t size){
-    /* Explicit genre selection always plays that genre exclusively. */
+    /* Exclusive selection and weighted mix share one fusion builder. */
     if(mtv_genre>0&&mtv_genre<MTV_GENRES){
-        snprintf(out,size,"%s",mtv_genre_queries[mtv_genre]);
+        if(mtv_genre==11||mtv_genre==12)mtv_fusion_query(mtv_genre,out,size);
+        else snprintf(out,size,"%s",mtv_genre_queries[mtv_genre]);
         return;
     }
     /* Keep user-authored MTV queries as the highest-priority custom mode. */
@@ -129,7 +186,8 @@ static void mtv_query(char *out,size_t size){
         fclose(f);
     }
     int chosen=mtv_weighted_genre((unsigned int)tv_sequence("mtv-genre-sequence.txt"));
-    snprintf(out,size,"%s",mtv_genre_queries[chosen]);
+    if(chosen==11||chosen==12)mtv_fusion_query(chosen,out,size);
+    else snprintf(out,size,"%s",mtv_genre_queries[chosen]);
 }
 static void youtube_prefetch(void){
     if(!tv_active||!player_pid||strcmp(playing_title.kind,"youtube"))return;

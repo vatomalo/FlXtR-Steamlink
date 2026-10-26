@@ -41,7 +41,7 @@ class DeploymentTest(unittest.TestCase):
             output = root / "payload.tgz"
             self.assertEqual(deploy.verified_payload(self.package(root), output), "a" * 40)
             with tarfile.open(output) as archive:
-                self.assertEqual(set(archive.getnames()), set(deploy.PAYLOAD_FILES) | {"build-version.txt", "build-sha256.txt"})
+                self.assertEqual(set(archive.getnames()), set(deploy.PAYLOAD_FILES) | {"tools", "build-version.txt", "build-sha256.txt"})
 
     def test_invalid_packages_rejected(self):
         for options in ({"dirty": b"1\n"}, {"corrupt": True}, {"extra": "greenlink/../../settings.cfg"}, {"extra": "other/greenlink"}, {"duplicate": True}):

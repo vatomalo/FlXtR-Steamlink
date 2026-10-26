@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 BINARIES = ("greenlink", "greenlink-catalog", "greenlink-player")
-PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh")
+PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh", "tools/usb_setup.py", "tools/usb_mount_template.sh")
 
 
 def verified_payload(package, destination):
@@ -58,6 +58,11 @@ def verified_payload(package, destination):
         files["build-version.txt"] = (version + "\n").encode()
         files["build-sha256.txt"] = manifest
         with tarfile.open(destination, "w:gz") as payload:
+            for directory in sorted({str(Path(name).parent) for name in files} - {"."}):
+                info = tarfile.TarInfo(directory)
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                payload.addfile(info)
             for name, data in files.items():
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
@@ -86,7 +91,8 @@ done
 cd "$app"
 test -x ./greenlink.sh
 # Back up exactly the files being replaced, plus private configuration for recovery.
-for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh build-version.txt build-sha256.txt .no-auto-update; do
+for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh build-version.txt build-sha256.txt .no-auto-update; do
+    mkdir -p "$backup/$(dirname "$part")"
     if test -e "$part"; then cp -p "$part" "$backup/$part"; fi
 done
 for part in settings.cfg mtv-weights.tsv mtv-query.txt mtv-fusion-style.txt mtv-vga-subject.txt catalog.local.tsv favorites.tsv tv-progress.tsv; do
@@ -96,7 +102,7 @@ changed=0
 rollback() {
     result=$?
     if test "$result" -ne 0 && test "$changed" -eq 1; then
-        for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh build-version.txt build-sha256.txt .no-auto-update; do
+        for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh build-version.txt build-sha256.txt .no-auto-update; do
             if test -f "$backup/$part"; then
                 cp -p "$backup/$part" "$app/$part.rollback"
                 mv -f "$app/$part.rollback" "$app/$part"
@@ -108,7 +114,8 @@ rollback() {
 trap rollback EXIT
 changed=1
 printf 'Manual feature-branch test; preserve this build until testing is complete.\n' > .no-auto-update
-for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh build-version.txt build-sha256.txt; do
+for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh build-version.txt build-sha256.txt; do
+    mkdir -p "$(dirname "$part")"
     cp -p "$stage/$part" "$part.deploy-new"
     mv -f "$part.deploy-new" "$part"
 done

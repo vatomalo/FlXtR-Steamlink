@@ -33,7 +33,7 @@ cp "$src" "$out"
     (stage / 'assets').mkdir()
     (stage / 'assets/music-required-v1').write_text('1\n')
     shutil.copy(stage / 'greenlink', stage / 'greenlink-audio')
-    for name in ('scripts/music-runtime.sh', 'scripts/music-qjs.sh', 'tools/music.py', 'music-runtime/usr/bin/python3'):
+    for name in ('scripts/music-runtime.sh', 'scripts/music-qjs.sh', 'tools/music.py', 'tools/usb_setup.py', 'tools/usb_mount_template.sh', 'music-runtime/usr/bin/python3'):
         path = stage / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('#!/bin/sh\nexit 0\n')
@@ -69,7 +69,7 @@ cp "$src" "$out"
     assert (app / 'greenlink-audio').is_file()
     (app / 'music-runtime/usr/bin/python3').write_bytes(b'broken runtime')
     assert 'Installed complete' in run()
-    for name in ('greenlink', 'greenlink-catalog', 'greenlink.sh', 'power-activity.sh', 'retroarch-libs/libSDL2-2.0.so.0'):
+    for name in ('greenlink', 'greenlink-catalog', 'greenlink.sh', 'power-activity.sh', 'tools/usb_setup.py', 'tools/usb_mount_template.sh', 'retroarch-libs/libSDL2-2.0.so.0'):
         (app / name).write_bytes(b'overwritten old file')
         assert 'Installed complete' in run(), name
         assert (app / name).read_bytes() == (stage / name).read_bytes(), name

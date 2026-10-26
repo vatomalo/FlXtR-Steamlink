@@ -63,7 +63,8 @@ static inline int rom_platform_for_path(const char *path){
     if(!strcasecmp(ext,".md")||!strcasecmp(ext,".gen")||!strcasecmp(ext,".smd")||
        !strcasecmp(ext,".sms")||!strcasecmp(ext,".gg"))return 4;
     if(!strcasecmp(ext,".cso"))return 6;
-    if(rom_path_contains(path,"/psp/")&&( !strcasecmp(ext,".iso")||!strcasecmp(ext,".pbp")))return 6;
+    if((rom_path_contains(path,"/psp/")||rom_path_contains(path,"/pspiso/"))&&
+       (!strcasecmp(ext,".iso")||!strcasecmp(ext,".pbp")))return 6;
     if(!strcasecmp(ext,".cue")||!strcasecmp(ext,".pbp")||!strcasecmp(ext,".chd")||
        !strcasecmp(ext,".m3u")||!strcasecmp(ext,".iso"))return 5;
     if(!strcasecmp(ext,".zip")){

@@ -39,7 +39,8 @@ if [ ! -f "$cache/install/lib/libavformat.a" ] || [ ! -f "$cache/install/subtitl
     touch "$cache/install/subtitles-buffer-v3"
 fi
 cd "$project"
-$CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" \
+version=$(git rev-parse HEAD)
+$CC -Os -std=c99 -Wall -Wextra -Werror -DFLXTR_VERSION=\"$version\" -I"$cache/install/include" \
     $(pkg-config --cflags sdl2) -c src/player.c -o build/player-arm.o
 $CC build/player-arm.o -o build/greenlink-player-arm \
     -Wl,--dynamic-list=scripts/player.exports \
@@ -56,3 +57,9 @@ $CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" \
     -L"$cache/install/lib" -lavformat -lavcodec -lswresample -lavutil \
     $(pkg-config --libs sdl2 gnutls) -lm -lpthread -ldl -lz
 $STRIP build/greenlink-audio-arm
+
+$CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" \
+    $(pkg-config --cflags sdl2) src/preview_decoder.c -o build/greenlink-preview-arm \
+    -L"$cache/install/lib" -lavformat -lavcodec -lswresample -lavutil \
+    $(pkg-config --libs sdl2 gnutls) -lm -lpthread -ldl -lz
+$STRIP build/greenlink-preview-arm

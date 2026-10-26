@@ -22,8 +22,12 @@
 #include <time.h>
 #include <sys/stat.h>
 #include "hardware_layout.h"
+#include "steamlink_video_stats.h"
 #include "font.h"
 #include "steamlink_av_sync.h"
+#ifndef FLXTR_VERSION
+#define FLXTR_VERSION "development"
+#endif
 
 static volatile sig_atomic_t stopped;
 static volatile sig_atomic_t change_view;
@@ -37,12 +41,13 @@ static int megaplay;
 static uint64_t audio_samples;
 static int64_t origin=AV_NOPTS_VALUE,clock_start,media_offset;
 static uint8_t *audio_pcm;static unsigned audio_pcm_capacity;
-static int timing_actual,timing_target,timing_available;
+static int timing_actual,timing_target,timing_available,subtitle_fine_delay_ms;
 static void timing_poll(void);
 static double timing_position(void){return av_sync.initialized?fmax(0,sync_position()/1000000.0):0;}
 #define PLAYBACK_POSITION() timing_position()
 #define PLAYBACK_AUDIO_PAUSE(value) sync_pause(value)
-#define SUBTITLE_TIME_US(external) (sync_position()+((external)?0:media_offset))
+#define SUBTITLE_PRESENTATION_TIME_US(external) (sync_position()+((external)?0:media_offset))
+#define SUBTITLE_TIME_US(external) (SUBTITLE_PRESENTATION_TIME_US(external)-(int64_t)subtitle_fine_delay_ms*1000)
 /* RAM prefill and rebuffering must not advance subtitle presentation. */
 static int subtitle_buffering,disk_read_wait_count;
 static void playback_controls(void);
@@ -140,7 +145,8 @@ static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int fla
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
 }
 /* Decode/feed audio on the UI thread. Video submission is independent, so
- * hardware waits no longer starve the output queue. Keep 200-500 ms of PCM;
+ * hardware waits no longer starve the output queue. PCM reserve permits the
+ * configured video decode lead without delaying the 200 ms audio start;
  * the compressed RAM FIFO retains the much larger network reserve. */
 static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFrame *frame,SDL_AudioDeviceID device) {
     int rc=avcodec_send_packet(codec,pkt);
@@ -153,7 +159,7 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
         if(!audio_pcm){av_frame_unref(frame);return AVERROR(ENOMEM);}
         int samples=swr_convert(swr,&audio_pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
-            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(2);}
+            while(!stopped&&SDL_GetQueuedAudioSize(device)>av_sync.pcm_limit){playback_controls();SDL_Delay(2);}
             int64_t timestamp=frame->best_effort_timestamp;
             if(timestamp!=AV_NOPTS_VALUE)
                 timestamp=av_rescale_q(timestamp,codec->pkt_timebase,AV_TIME_BASE_Q)-media_offset-
@@ -170,7 +176,7 @@ static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFra
                 static const uint8_t silence[4800*4]={0};
                 int64_t missing=(timestamp-initial)*48000/1000000;
                 while(missing>0&&!stopped){
-                    while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/2){playback_controls();SDL_Delay(2);}
+                    while(!stopped&&SDL_GetQueuedAudioSize(device)>av_sync.pcm_limit){playback_controls();SDL_Delay(2);}
                     int n=missing>4800?4800:(int)missing;
                     if(sync_audio_queue(silence,n,initial)<0){av_frame_unref(frame);return AVERROR(EIO);}
                     audio_samples+=(unsigned)n;missing-=n;
@@ -380,6 +386,8 @@ static int load_external_subtitles(const char *url){
     return 0;
 }
 int main(int argc,char **argv) {
+    if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
+    fprintf(stderr,"Native player build: %s\n",FLXTR_VERSION);
     DiskBuffer *buffer=NULL;
     AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL,*sub_decoder=NULL;AVBSFContext *bsf=NULL;
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;
@@ -418,6 +426,13 @@ int main(int argc,char **argv) {
     }
     if(buffer_secs<15)buffer_secs=15;
     if(buffer_mb>64)buffer_mb=64;
+    FILE *fine=fopen("subtitle-delay-ms","r");
+    if(fine){
+        int requested;char extra;
+        if(fscanf(fine,"%d %c",&requested,&extra)==1&&requested>=-5000&&requested<=5000)subtitle_fine_delay_ms=requested;
+        fclose(fine);
+    }
+    fprintf(stderr,"Subtitle fine delay: %+dms (added to menu delay)\n",subtitle_fine_delay_ms);
     megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
     /* All providers use at least 15 seconds of bounded compressed RAM prefill. */
     if(megaplay)fprintf(stderr,"MegaPlay: honoring configured prebuffer of %d seconds (RAM cap %d MiB)\n",buffer_secs,buffer_mb);
@@ -676,7 +691,29 @@ int main(int argc,char **argv) {
         SDL_Delay(150);
     }
     result=(stopped||rc==AVERROR_EOF)?0:1;
+    /* FFmpeg can report EOF before the expected end of a remote stream.
+     * Only flag early EOF if an actual finite duration is known. */
+    if(!stopped && rc==AVERROR_EOF && getenv("FLXTR_YOUTUBE_PLAYBACK") &&
+       media_duration>30.0 && playback_position()+fmax(20.0,media_duration*0.04)<media_duration){
+        fprintf(stderr,"YouTube premature EOF: position=%.3f expected=%.3f\n",
+                playback_position(),media_duration);
+        result=47;
+    }
 done:
+    /* Atomic per-player outcome for the shell. Read BEFORE releasing sync
+     * objects so resume uses the last valid audio-master position. */
+    if(getenv("FLXTR_YOUTUBE_PLAYBACK")){
+        double last=av_sync.initialized?playback_position():playback_start;
+        if(!isfinite(last)||last<0||last>86400)last=0;
+        FILE *out=fopen("youtube-playback-outcome.next","w");
+        if(out){
+            fprintf(out,"%.3f %.3f %d\n",last,media_duration,result);
+            if(!fclose(out))rename("youtube-playback-outcome.next","youtube-playback-outcome");
+            else unlink("youtube-playback-outcome.next");
+        }
+        fprintf(stderr,"YouTube playback outcome: position=%.3f duration=%.3f result=%d\n",
+                last,media_duration,result);
+    }
     if(av_sync.initialized){
         timing_poll();
         pthread_mutex_lock(&av_sync.mutex);frames=av_sync.frames;int decoder_error=av_sync.error;pthread_mutex_unlock(&av_sync.mutex);

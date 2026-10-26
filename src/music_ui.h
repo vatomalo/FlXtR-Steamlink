@@ -11,6 +11,20 @@ static void music_stop(void){
     if(music_pid){kill(-music_pid,SIGKILL);kill(music_pid,SIGKILL);waitpid(music_pid,NULL,0);music_pid=0;}
     music_job=music_paused=0;
 }
+/* The launcher supervises this worker while the UI releases its video device. */
+static int music_rom_handoff(void){
+#if defined(_WIN32) || defined(FLXTR_DESKTOP)
+    return 0;
+#else
+    if(music_job!=3||music_pid<1||music_paused||access("tools/rom_music.py",R_OK))return 0;
+    FILE *f=fopen("game-music-request.next","w");if(!f)return 0;
+    fprintf(f,"%ld\t%d\n",(long)music_pid,music_autoplay);
+    for(int i=music_play_index+1;i<music_count;i++)
+        fprintf(f,"%s\t%s\n",music_rows[i].kind,music_rows[i].key);
+    if(fclose(f)||rename("game-music-request.next","game-music-request"))return 0;
+    music_pid=0;music_job=0;return 1;
+#endif
+}
 static void music_spawn(int job){
     music_stop();mkdir("music-cache",0700);unlink("music-cache/error.txt");
     if(job==2||job==4){unlink("music-cache/stream.txt");unlink("music-cache/playing.txt");}

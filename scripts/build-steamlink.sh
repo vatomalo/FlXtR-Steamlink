@@ -24,7 +24,7 @@ cp build/cacert.pem "$app/certs/cacert.pem"
 cp packaging/CERTIFICATES.txt "$app/certs/NOTICE.txt"
 cp build/greenlink-arm "$app/greenlink"
 cp build/greenlink-catalog-arm "$app/greenlink-catalog"
-cp packaging/greenlink.sh packaging/update.sh packaging/controller-idle.sh packaging/samba-run.sh packaging/samba-server.sh packaging/reset-scummvm-config.sh packaging/toc.txt "$app/"
+cp packaging/greenlink.sh packaging/power-activity.sh packaging/update.sh packaging/controller-idle.sh packaging/samba-run.sh packaging/samba-server.sh packaging/reset-scummvm-config.sh packaging/toc.txt "$app/"
 cp catalog.tsv "$app/catalog.tsv"
 # RetroArch 1.7.x predates the firmware's SDL2-to-SDL3 compatibility layer.
 # Pin Valve's native SDL2 build and load it only in the RetroArch child.
@@ -78,6 +78,10 @@ if [ -f build/music-runtime.tgz ]; then
     chmod +x "$app/scripts/music-runtime.sh" "$app/scripts/music-qjs.sh"
     printf '1\n' > "$app/assets/music-required-v1"
 fi
+mkdir -p "$app/tools" "$app/scripts"
+cp tools/music.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/usb_setup.py tools/usb_mount_template.sh "$app/tools/"
+cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
+if [ -f build/greenlink-preview-arm ]; then cp build/greenlink-preview-arm "$app/greenlink-preview"; fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi
 if [ "${FLXTR_DISABLE_AUTO_UPDATE:-0}" = 1 ]; then
     printf 'Experimental manual test package; enable updates in Settings if desired.\n' > "$app/.no-auto-update"
@@ -85,6 +89,13 @@ fi
 cp docs/DESKTOP-CONTROLS.md "$app/CONTROLS.md"
 cp docs/STEAMLINK-PLAYBACK.md "$app/PLAYBACK.md"
 chmod +x "$app/greenlink" "$app/greenlink.sh"
+# Keep provenance inside the archive so deployment can verify the actual payload.
+printf '%s\n' "$version" > "$app/build-version.txt"
+git diff --quiet && git diff --cached --quiet && source_dirty=0 || source_dirty=1
+printf '%s\n' "$source_dirty" > "$app/build-source-dirty.txt"
+(cd "$app"; for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh; do
+    if [ -f "$part" ]; then sha256sum "$part"; fi
+done) > "$app/build-sha256.txt"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink
 file build/greenlink-arm
 wc -c build/greenlink-arm dist/greenlink.tgz

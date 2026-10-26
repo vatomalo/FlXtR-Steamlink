@@ -13,6 +13,10 @@
 #include "desktop_retroarch.h"
 #include "game_output.h"
 #include "rom_core_preferences.h"
+#include "rom_cover_preferences.h"
+#include "rom_state_preferences.h"
+static int game_prepare_cheats(const char *core,const char *rom,const char *key,char *database,size_t cap);
+static int game_prepare_state_shadows(const char *rom,const char *key,const char *core);
 #define FLXTR_GAME_CONFIG
 #include "game_scaling.h"
 #undef FLXTR_GAME_CONFIG
@@ -57,6 +61,9 @@ static inline void game_native_sdl(void){
 static json_object *games_read(const char *path){struct stat st;if(stat(path,&st)||st.st_size>8*1024*1024)return NULL;return json_object_from_file(path);}
 static const char *game_core(const char *path){
     const char *ext=strrchr(path,'.');if(!ext)return NULL;ext++;
+    if(!strcasecmp(ext,"cso")||
+       ((!strcasecmp(ext,"iso")||!strcasecmp(ext,"pbp"))&&
+        (rom_path_contains(path,"/psp/")||rom_path_contains(path,"/pspiso/"))))return "ppsspp";
     if(!strcasecmp(ext,"nes"))return "fceumm";
     if(!strcasecmp(ext,"sfc")||!strcasecmp(ext,"smc"))return "snes9x2005";
     if(!strcasecmp(ext,"gba"))return
@@ -67,7 +74,8 @@ static const char *game_core(const char *path){
 #endif
     if(!strcasecmp(ext,"gb")||!strcasecmp(ext,"gbc"))return "gambatte";
     if(!strcasecmp(ext,"md")||!strcasecmp(ext,"gen")||!strcasecmp(ext,"smd")||!strcasecmp(ext,"sms")||!strcasecmp(ext,"gg"))return "picodrive";
-    if(!strcasecmp(ext,"cue")||!strcasecmp(ext,"pbp")||!strcasecmp(ext,"chd")||!strcasecmp(ext,"m3u"))return
+    if(!strcasecmp(ext,"cue")||!strcasecmp(ext,"pbp")||!strcasecmp(ext,"chd")||!strcasecmp(ext,"m3u")||
+       (!strcasecmp(ext,"iso")&&rom_platform_for_path(path)==5))return
 #ifdef FLXTR_DESKTOP
         "mednafen_psx";
 #else
@@ -86,9 +94,46 @@ static const char *game_core(const char *path){
         if(strcasestr(path,"/gba/"))return "gpsp";
     }return NULL;
 }
+/* Exact content comparison is used only for equal-size, same-name candidates.
+ * Streaming avoids loading large disc images into memory or relying on hashes.
+ */
+static int game_same_contents(const char *a,const char *b){
+    FILE *x=fopen(a,"rb"),*y=fopen(b,"rb");
+    if(!x||!y){if(x)fclose(x);if(y)fclose(y);return 0;}
+    unsigned char xa[16384],yb[16384];int equal=1;
+    for(;;){
+        size_t nx=fread(xa,1,sizeof(xa),x),ny=fread(yb,1,sizeof(yb),y);
+        if(nx!=ny||memcmp(xa,yb,nx)){equal=0;break;}
+        if(nx<sizeof(xa)){
+            if(ferror(x)||ferror(y))equal=0;
+            break;
+        }
+    }
+    if(fclose(x)||fclose(y))equal=0;
+    return equal;
+}
 static void game_add(json_object *games,const char *rom,const char *core,const char *label){
     if(json_object_array_length(games)>=GAME_LIMIT||!game_file(rom)||!game_file(core))return;
-    for(size_t i=0;i<(size_t)json_object_array_length(games);i++)if(!strcmp(string(json_object_array_get_idx(games,i),"rom"),rom))return;
+    /* A ROM can be indexed through playlists and directory scans under aliases.
+     * Filter duplicate entries by filesystem identity without deleting ROMs.
+     */
+    struct stat candidate;
+    if(stat(rom,&candidate))return;
+    for(size_t i=0;i<(size_t)json_object_array_length(games);i++){
+        const char *existing=string(json_object_array_get_idx(games,i),"rom");
+        if(!strcmp(existing,rom))return;
+        struct stat seen;
+        if(stat(existing,&seen))continue;
+        if(candidate.st_dev==seen.st_dev&&candidate.st_ino==seen.st_ino)return;
+        /* Separate installations or mounts can contain byte-identical ROMs.
+         * Match basename and size first, then verify every byte. Preserve
+         * differing regions, hacks and revisions rather than title-matching.
+         */
+        const char *left=strrchr(existing,'/'),*right=strrchr(rom,'/');
+        left=left?left+1:existing;right=right?right+1:rom;
+        if(candidate.st_size==seen.st_size&&!strcasecmp(left,right)&&
+           game_same_contents(existing,rom))return;
+    }
     const char *name=strrchr(rom,'/');name=name?name+1:rom;char title[80];clean(title,sizeof(title),label&&*label?label:name);
     if(!label||!*label){char *dot=strrchr(title,'.');if(dot)*dot=0;}
     json_object *g=json_object_new_object();json_object_object_add(g,"title",json_object_new_string(title));
@@ -147,6 +192,7 @@ static json_object *games_import(void){
     json_object *games=json_object_new_array();char path[PATH_MAX];game_visited=0;
     snprintf(path,sizeof(path),"%s/.home/.config/retroarch",games_home());game_scan(games,path,0,1);
     snprintf(path,sizeof(path),"%s/roms",games_home());game_scan(games,path,0,0);
+    game_scan(games,"/mnt/disk/roms",0,0);
     if(getcwd(path,sizeof(path))){size_t n=strlen(path);if(n+6<sizeof(path)){strcpy(path+n,"/roms");game_scan(games,path,0,0);}}
     FILE *f=fopen("games-paths.txt","r");if(f){while(fgets(path,sizeof(path),f)){path[strcspn(path,"\r\n")]=0;if(game_absolute(path))game_scan(games,path,0,0);}fclose(f);}
     if(!json_object_to_file("games.json.next",games))rename("games.json.next","games.json");
@@ -357,6 +403,8 @@ static int games_list_filtered(int page,int refresh,int folder){
             if(!strcasecmp(e->title,aliases[k][0])){
                 snprintf(e->title,sizeof(e->title),"%s",aliases[k][1]);break;
             }
+        char cover_key[17];rom_identity(rom_path,cover_key);
+        rom_cover_override(cover_key,e->poster,sizeof(e->poster));
     }json_object_put(games);return 0;
 }
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
@@ -407,8 +455,8 @@ static int game_pixel_geometry(const char *core,const char *rom,int output,int *
     return 0;
 }
 static int games_run(void){
-    int id=0,back=-1,start=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
-    int fields=fscanf(f,"%d %d %d",&id,&back,&start);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
+    int id=0,back=-1,start=-1,load=-1,save=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
+    int fields=fscanf(f,"%d %d %d %d %d",&id,&back,&start,&load,&save);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
     unlink("game-error.txt");
     if(id==0){
         /* Launch the installed ScummVM frontend and its configured games. */
@@ -476,6 +524,13 @@ static int games_run(void){
         if(game_file(selected_core))core=selected_core;
     }
     if(!game_file(rom)||!game_file(core)){fprintf(stderr,"Game launch: missing ROM or RetroArch core\n");json_object_put(games);return 2;}
+    char cheat_database[PATH_MAX]={0};
+    int cheats=game_prepare_cheats(core,rom,preference_key,cheat_database,sizeof(cheat_database));
+    if(cheats<0){
+        FILE *error=fopen("game-error.txt","w");
+        if(error){fputs("COULD NOT PREPARE ROM CHEATS / SEE GAME.LOG",error);fclose(error);}
+        json_object_put(games);return 2;
+    }
     if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
         char bios[PATH_MAX];snprintf(bios,sizeof(bios),"%s",rom);
         char *slash=strrchr(bios,'/');if(slash)strcpy(slash+1,"neogeo.zip");
@@ -563,6 +618,12 @@ static int games_run(void){
           enabled==1?"true":"false",enabled==1?"true":"false");
     }
     if(back>=0&&back<64&&start>=0&&start<64&&back!=start)fprintf(f,"input_enable_hotkey_btn = \"%d\"\ninput_exit_emulator_btn = \"%d\"\n",back,start);
+    if(back>=0&&back<64&&load>=0&&load<64&&save>=0&&save<64&&load!=save&&load!=back&&save!=back&&load!=start&&save!=start)
+        fprintf(f,"input_load_state_btn = \"%d\"\ninput_save_state_btn = \"%d\"\n",load,save);
+    int state_slot=rom_state_slot(preference_key);
+    if(state_slot>=0)fprintf(f,"state_slot = \"%d\"\nsavestate_auto_index = \"false\"\n",state_slot);
+    fprintf(f,"apply_cheats_after_load = \"%s\"\napply_cheats_after_toggle = \"true\"\n",cheats?"true":"false");
+    if(cheats)fprintf(f,"cheat_database_path = \"%s\"\n",cheat_database);
     /* Shared BIOS directory: the UI checks this same location. */
     fprintf(f,"system_directory = \"%.*s/system\"\n",(int)n,extra);
 #ifdef FLXTR_DESKTOP
@@ -578,6 +639,11 @@ static int games_run(void){
         fprintf(f,"audio_driver = \"sdl2\"\naudio_out_rate = \"48000\"\naudio_sync = \"true\"\n");
     #endif
     if(fclose(f))return 2;
+    if(game_prepare_state_shadows(rom,preference_key,core)){
+        FILE *error=fopen("game-error.txt","w");
+        if(error){fputs("COULD NOT PROTECT SAVESTATES / SEE STATE-GUARD-PREPARE.LOG",error);fclose(error);}
+        json_object_put(games);return 2;
+    }
 #ifdef FLXTR_DESKTOP
     (void)config;(void)runtime;(void)home;
     unlink("game-error.txt");

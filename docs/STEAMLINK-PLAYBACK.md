@@ -93,3 +93,11 @@ submission worker. Its diagnostics are timing.log and timing.previous.log.
 See docs/EXPERIMENTAL-AV-TIMING.md in the source for measurements, tests,
 hardware limitations and device log capture. This branch is not the stable
 update channel and requires physical Steam Link validation before merging.
+
+## Playback and ROM power activity
+
+FlXtR refreshes the Steam Link firmware's activity timer every 10 seconds while a video player is active, including paused video and MTV resolver/preload transitions. ROM sessions use the same firmware call for the lifetime of the game worker. Refreshes stop when playback ends, and the app reports idle again. Menus retain normal firmware idle behavior.
+
+The helper uses a system-bus method call to `system.powermanager.SetActivity` at `/powermanager`, with a uint32 activity value (1 interactive, 0 idle). It does not change global timeout files or disable the hardware watchdog. The shell starts the helper asynchronously; an unresponsive helper is terminated after two seconds. The ROM guard checks the target process's start time and stops on exit or termination, including zombie processes.
+
+Run `make test-power` for video refresh/release, firmware message shape, ROM lifetime and launcher cleanup coverage. `power-activity.log` records helper errors on the device.

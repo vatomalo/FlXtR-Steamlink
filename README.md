@@ -146,6 +146,8 @@ generated code stay in the build cache; they are not committed to this repositor
 
 ## Install
 
+For USB mounts, symbolic links, boot recovery, and guarded drive preparation, open **Settings → Services → USB Storage Setup**. See [USB storage setup](docs/USB-STORAGE-SETUP.md). Existing-drive repair is the default; erase-and-prepare is a separate confirmed operation.
+
 Copy the `dist/steamlink` folder onto a FAT32 USB drive, insert it into the Steam
 Link, then power-cycle it. The FlXtR Steamlink entry appears in the native menu. Existing
 firmware and other apps are not replaced.

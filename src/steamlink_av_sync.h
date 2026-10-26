@@ -13,14 +13,16 @@ static struct {
     pthread_mutex_t mutex;pthread_t thread;int initialized,threaded,quit,paused,started,eof,error;
     SDL_AudioDeviceID device;AudioMasterClock clock;
     CSLVideoContext *context;CSLVideoStream *stream;AVRational fps;
+    int64_t decode_lead;Uint32 pcm_limit;
     SyncVideoPacket queue[SYNC_VIDEO_PACKETS];int head,count,bytes,recover;
     unsigned epoch,underflows,frames,slow,dropped,resets,hardware_ms;int empty,busy;int64_t last_video,maximum_late,pause_at,pause_position;
 } av_sync;
 static unsigned sync_epoch;
 static int64_t sync_position_locked(void){
     if(av_sync.paused)return av_sync.pause_position;
-    int64_t queued=(int64_t)SDL_GetQueuedAudioSize(av_sync.device)*1000000/(48000*4);
-    int64_t position=audio_master_read_at(&av_sync.clock,queued,av_gettime_relative());
+    Uint32 queued_bytes=SDL_GetQueuedAudioSize(av_sync.device);
+    int64_t queued=queued_bytes/4;
+    int64_t position=audio_master_read_frames_at(&av_sync.clock,queued,48000,av_gettime_relative());
     if(av_sync.started&&!av_sync.eof&&!queued&&position>=av_sync.clock.tail){
         if(!av_sync.empty)av_sync.underflows++;
         av_sync.empty=1;
@@ -68,9 +70,10 @@ static void *sync_video_worker(void *unused){
             pthread_mutex_lock(&av_sync.mutex);
             int64_t master=sync_position_locked();quit=av_sync.quit;
             int pause=av_sync.paused||!av_sync.clock.ready,ending=av_sync.eof;
+            int64_t audio_end=av_sync.clock.tail;
             pthread_mutex_unlock(&av_sync.mutex);
             if(quit)break;
-            /* Feed decode-order DTS with 100 ms lead. PTS remains diagnostic;
+            /* Feed decode-order DTS with the configured decode lead. PTS remains diagnostic;
              * B-frame references must keep their encoded ordering. */
             int64_t late=master-item.dts;
             if(late>300000&&!item.reset){
@@ -94,8 +97,8 @@ static void *sync_video_worker(void *unused){
                 pthread_mutex_unlock(&av_sync.mutex);
                 if(discard)break;
             }
-            if(ending&&!pause&&item.dts>master+500000){discard=1;break;}
-            if(!pause&&item.dts<=master+100000)break;
+            if(ending&&!pause&&item.dts>audio_end+500000){discard=1;break;}
+            if(!pause&&item.dts<=master+av_sync.decode_lead)break;
             SDL_Delay(2);
         }
         if(quit||discard){av_packet_free(&item.packet);pthread_mutex_lock(&av_sync.mutex);av_sync.busy=0;pthread_mutex_unlock(&av_sync.mutex);if(quit)break;continue;}
@@ -136,6 +139,16 @@ static int sync_open(SDL_AudioDeviceID device,int samples,CSLVideoContext *conte
                      AVRational fps,int64_t position){
     memset(&av_sync,0,sizeof(av_sync));pthread_mutex_init(&av_sync.mutex,NULL);
     av_sync.initialized=1;av_sync.epoch=++sync_epoch;av_sync.device=device;av_sync.context=context;av_sync.stream=stream;av_sync.fps=fps;
+    int lead_ms=100,requested=0;char extra;
+    FILE *timing=fopen("video-decode-lead-ms","r");
+    if(timing){
+        if(fscanf(timing,"%d %c",&requested,&extra)==1&&requested>=100&&requested<=2000)lead_ms=requested;
+        fclose(timing);
+    }
+    av_sync.decode_lead=(int64_t)lead_ms*1000;
+    int reserve_ms=lead_ms+250;if(reserve_ms<500)reserve_ms=500;
+    av_sync.pcm_limit=(Uint32)reserve_ms*48000*4/1000;
+    fprintf(stderr,"Video decode lead: %dms; PCM reserve limit: %dms; audio start threshold unchanged at 200ms\n",lead_ms,reserve_ms);
     audio_master_reset(&av_sync.clock,position,(int64_t)samples*1000000/48000);
     if(pthread_create(&av_sync.thread,NULL,sync_video_worker,NULL))return -1;
     av_sync.threaded=1;return 0;

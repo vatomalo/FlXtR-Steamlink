@@ -23,4 +23,6 @@ python3 tests/steamlink_timing_integration_test.py build/timing-tests/audio-mast
 python3 tests/steamlink_buffer_integration_test.py build/timing-tests/audio-master build/timing-tests/seek-offset.ts
 python3 tests/steamlink_timing_seek_test.py build/timing-tests/audio-master build/timing-tests/seek-offset.ts
 python3 tests/steamlink_subtitle_clock_test.py build/timing-tests/audio-master build/timing-tests/captions.mkv build/timing-tests/offset-external.mkv
+FLXTR_TEST_DECODE_LEAD_MS=1550 FLXTR_TEST_SUBTITLE_DELAY_MS=250 python3 tests/steamlink_subtitle_clock_test.py build/timing-tests/audio-master build/timing-tests/captions.mkv build/timing-tests/offset-external.mkv
+python3 tests/steamlink_decode_lead_test.py build/timing-tests/audio-master build/timing-tests/video.mp4
 '

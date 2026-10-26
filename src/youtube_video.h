@@ -123,9 +123,9 @@ static void mtv_fusion_file(const char *path,char *out,size_t size){
     FILE *f=fopen(path,"r");
     if(!f)return;
     if(fgets(out,(int)size,f)){
-        out[strcspn(out,"\\r\\n")]=0;
+        out[strcspn(out,"\r\n")]=0;
         for(size_t i=0;out[i];i++)
-            if((unsigned char)out[i]<32||out[i]=='"'||out[i]=='\\\\')out[i]=' ';
+            if((unsigned char)out[i]<32||out[i]=='"'||out[i]=='\\')out[i]=' ';
     }else out[0]=0;
     fclose(f);
 }

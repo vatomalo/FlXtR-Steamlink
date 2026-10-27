@@ -2169,7 +2169,14 @@ static void finish_player(int code){
             return;
         }
         if(command==4){if(auto_active){restart_position=auto_resume=position;auto_index++;auto_next();}else snprintf(status,sizeof(status),"NO ALTERNATE SERVER FOR LOCAL VIDEO");return;}
-        if(tv_active&&(command==5||command==6)){tv_cancel_prepared();auto_active=0;tv_in_break=tv_break_due=0;tv_attempts=0;tv_next_at=0;return;}
+        if(tv_active&&(command==5||command==6)){
+            auto_active=0;tv_in_break=tv_break_due=0;tv_attempts=0;tv_next_at=0;
+            if(command==6&&!strcmp(playing_title.kind,"youtube")){
+                if(tv_prepared){fprintf(stderr,"MTV Next: promoting prepared video\n");tv_begin_prepared();return;}
+                if(youtube_preparing&&youtube_pid){fprintf(stderr,"MTV Next: retaining pending lookup\n");return;}
+            }
+            tv_cancel_prepared();return;
+        }
         series_advance(command==5?-1:1);return;
     }
     tv_history_finish(!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)?"completed":cancelled?"stopped":"failed",tv_history_last_position());

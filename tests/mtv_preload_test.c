@@ -38,7 +38,8 @@ int main(void){
     wait_file("next-expanded");assert(access("next-started",F_OK));
     pid_t next=tv_buffer_pid;
     file("finish-current","",0);int code;assert(waitpid(current,&code,0)==current&&!code);
-    finish_player(code);wait_file("next-started");
+    file("playback-request","6 12 0 1 2 0\n",0);
+    finish_player(40<<8);wait_file("next-started");
     assert(player_pid==next&&!tv_prepared&&tv_active&&!auto_active);
     assert(!strcmp(playing_title.title,"Next clip"));
     assert(!strcmp(youtube_audio,"https://example.test/next.m4a"));
@@ -56,7 +57,11 @@ int main(void){
     /* Stop must also cancel a resolver running behind the active player. */
     tv_active=1;player_pid=123;strcpy(playing_title.kind,"youtube");
     youtube_retry_at=0;youtube_prefetch();assert(youtube_preparing&&youtube_pid>0);
+    pid_t resolving=youtube_pid;
+    file("playback-request","6 0 0 1 2 0\n",0);
+    finish_player(40<<8);
+    assert(!player_pid&&youtube_pid==resolving&&youtube_preparing&&tv_active);
     tv_cancel_prepared();assert(!youtube_pid&&!youtube_preparing&&tv_gate<0);
     player_pid=0;close_ui();SDL_Quit();
-    puts("PASS: MTV resolves and gates next clip during playback, preserves active controls/audio, promotes on EOF and cancels on Stop");
+    puts("PASS: MTV resolves and gates next clip, expands near EOF, promotes prepared worker on Next and cancels on Stop");
 }

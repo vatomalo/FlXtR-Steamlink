@@ -115,6 +115,8 @@ test-series: all
 test-music-layout: all
 	$(CC) $(CFLAGS) tests/hardware_layout_test.c -ldl -o build/hardware-layout-test
 	./build/hardware-layout-test
+	$(CC) $(CFLAGS) tests/viewport_startup_test.c -ldl -o build/viewport-startup-test
+	./build/viewport-startup-test
 	python3 tests/music_test.py
 
 .PHONY: test-music-layout

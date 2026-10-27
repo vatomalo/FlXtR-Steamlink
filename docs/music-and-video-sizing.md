@@ -70,3 +70,9 @@ audio link resolution and a short native AAC playback succeeded.
 YouTube/MTV playback uses the display-space scaler path validated in PR #21. The source window is the full HDMI display plane, and Fit/Stretch/1:1 destination rectangles are sent directly in that coordinate system. Mapping those rectangles back into the initial firmware underscan bounds makes Stretch retain borders (observed: 1920×1080 requested, 1844×1037 applied). Encoded video dimensions still determine Fit and 1:1 geometry; they do not crop the display-sized source window.
 
 The existing native-coordinate adapter remains in use for other playback. Both paths validate scaler readback, roll back failed changes, and restore the original state on exit. Regression coverage includes the observed underscan bounds, 4:3 Fit, 1:1, non-1080p input, and rollback.
+
+## Decoder startup verification
+
+Submitting the first compressed frame does not mean the hardware decoder has finished configuring its picture. For ten seconds after the first submitted frame, a decoder reset, or a mode selection, the player checks viewport readback every 250 ms. It retries a temporarily unavailable viewport or reapplies the latest requested geometry if the firmware changed it. Stable geometry does not trigger writes, and unsupported modes do not retry. The window is bounded; this does not continuously override firmware geometry throughout a video.
+
+`viewport.log` records per-process apply results, actual-versus-expected drift, repairs and startup completion. It rotates at 32 KiB into one previous log, avoiding the shared preloader-log truncation that can obscure startup evidence. Tests simulate delayed handle availability, a decoder overwriting initially accepted scaling, mode changes, read failures and expiry.

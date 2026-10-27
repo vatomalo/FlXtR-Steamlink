@@ -22,6 +22,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include "hardware_layout.h"
+#include "viewport_guard.h"
 #include "steamlink_video_stats.h"
 #include "font.h"
 #include "steamlink_av_sync.h"
@@ -85,9 +86,12 @@ static void show_view(const char *label) {
     SLVideo_SetOverlayDisplayArea(view_overlay,0.05f,0.83f,0.5f,0.12f);
     SLVideo_ShowOverlay(view_overlay);overlay_until=SDL_GetTicks()+2500;
 }
-static void apply_view(int notify) {
+static ViewportGuard view_guard;
+static int view_retry_notify;
+static int apply_view_once(int notify) {
     VideoRect rect;
     int rc=video_rect(viewing,source_w,source_h,sar_n,sar_d,screen_w,screen_h,&rect);
+    if(rc){fprintf(stderr,"Viewing mode unavailable: %s\n",view_names[viewing]);if(notify)show_view("VIEW MODE UNAVAILABLE");return -2;}
     if(!rc)rc=getenv("FLXTR_YOUTUBE_PLAYBACK")?hardware_youtube_viewport(&rect,screen_w,screen_h):
         hardware_viewport(&rect,screen_w,screen_h,source_w,source_h);
     if(rc){fprintf(stderr,"Viewing mode unavailable: %s\n",view_names[viewing]);if(notify)show_view("VIEW MODE UNAVAILABLE");}
@@ -95,6 +99,21 @@ static void apply_view(int notify) {
         fprintf(stderr,"Viewport %s: %d,%d %dx%d (readback verified)\n",view_names[viewing],rect.x,rect.y,rect.w,rect.h);
         if(notify)show_view(view_names[viewing]);
     }
+    viewport_trace("event=apply mode=%d video=%dx%d display=%dx%d result=%d",viewing,source_w,source_h,screen_w,screen_h,rc);
+    return rc;
+}
+static void apply_view(int notify){
+    view_retry_notify=notify;
+    int result=apply_view_once(notify);
+    viewport_guard_arm(&view_guard,av_gettime_relative(),result);
+}
+static int view_guard_matches(void *unused){(void)unused;return hardware_viewport_matches();}
+static int view_guard_apply(void *unused){(void)unused;return apply_view_once(view_retry_notify);}
+static void check_startup_view(void){
+    int active=view_guard.active;
+    if(viewport_guard_poll(&view_guard,av_gettime_relative(),view_guard_matches,view_guard_apply,NULL)>0)
+        viewport_trace("event=startup_repair mode=%d attempt=%u",viewing,view_guard.attempts);
+    if(active&&!view_guard.active)viewport_trace("event=startup_complete mode=%d pending=%d attempts=%u repairs=%u",viewing,view_guard.pending,view_guard.attempts,view_guard.repairs);
 }
 #include "playback_menu.h"
 #include "playback_started.h"
@@ -295,6 +314,7 @@ static void timing_poll(void){
         if(adaptive_on){adaptive_decoding_since=now;adaptive_begin(timing_actual,timing_target,timing_available);}
     }
     if(resets!=seen_resets&&frames)apply_view(0);
+    if(frames&&!stopped)check_startup_view();
     if(now>=next_log||error){
         next_log=now+1000000;
         char line[256];

@@ -9,6 +9,10 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 #include "video_layout.h"
 typedef int (*ViewportCall)(void *,unsigned,VideoRect *);
 typedef int (*ScalingCall)(void *,unsigned,VideoRect *,VideoRect *);
@@ -18,6 +22,27 @@ static void *viewport_handle;
 static unsigned viewport_plane;
 static VideoRect scaling_original_source,scaling_original_output;
 static int scaling_saved;
+static VideoRect scaling_expected_source,scaling_expected_output;
+static int scaling_target_valid;
+static inline void viewport_trace(const char *format,...){
+    char line[512];int prefix=snprintf(line,sizeof(line),"time=%ld pid=%lu ",(long)time(NULL),(unsigned long)getpid());
+    if(prefix<0||(size_t)prefix>=sizeof(line))return;
+    va_list args;va_start(args,format);vsnprintf(line+prefix,sizeof(line)-(size_t)prefix,format,args);va_end(args);
+    struct stat info;if(!stat("viewport.log",&info)&&info.st_size>32768)rename("viewport.log","viewport.previous.log");
+    FILE *log=fopen("viewport.log","a");if(log){fprintf(log,"%s\n",line);fclose(log);}
+}
+/* Read after decoder startup, not just immediately after SetScaling. */
+static inline int hardware_viewport_matches(void){
+    if(!scaling_target_valid||!viewport_handle||!scaling_get)return -1;
+    VideoRect source,output;
+    if(scaling_get(viewport_handle,viewport_plane,&source,&output))return -1;
+    if(!memcmp(&source,&scaling_expected_source,sizeof(source))&&!memcmp(&output,&scaling_expected_output,sizeof(output)))return 1;
+    viewport_trace("event=drift actual_source=%d,%d,%d,%d actual_output=%d,%d,%d,%d expected_source=%d,%d,%d,%d expected_output=%d,%d,%d,%d",
+        source.x,source.y,source.w,source.h,output.x,output.y,output.w,output.h,
+        scaling_expected_source.x,scaling_expected_source.y,scaling_expected_source.w,scaling_expected_source.h,
+        scaling_expected_output.x,scaling_expected_output.y,scaling_expected_output.w,scaling_expected_output.h);
+    return 0;
+}
 
 int MV_PE_VideoSetUnderScanWindow(void *handle,unsigned plane,VideoRect *rect) {
     if(!viewport_set)viewport_set=(ViewportCall)dlsym(RTLD_NEXT,"MV_PE_VideoSetUnderScanWindow");
@@ -73,6 +98,7 @@ static int hardware_viewport_apply(VideoRect *rect,int display_w,int display_h,i
         fprintf(stderr,"Video scaling readback did not match; restoring previous size\n");
         scaling_set(viewport_handle,viewport_plane,&before_source,&before_output);return -1;
     }
+    scaling_expected_source=source;scaling_expected_output=mapped;scaling_target_valid=1;
     return 0;
 }
 static inline int hardware_viewport(VideoRect *rect,int display_w,int display_h,int decoded_w,int decoded_h){
@@ -81,7 +107,7 @@ static inline int hardware_viewport(VideoRect *rect,int display_w,int display_h,
 static void restore_viewport(void) {
     if(viewport_handle&&scaling_saved&&scaling_set)
         scaling_set(viewport_handle,viewport_plane,&scaling_original_source,&scaling_original_output);
-    scaling_saved=0;viewport_handle=NULL;
+    scaling_saved=scaling_target_valid=0;viewport_handle=NULL;
 }
 static inline int hardware_youtube_viewport(VideoRect *rect,int display_w,int display_h){
     /* PR #21 was verified on YouTube playback: this plane is display-sized.

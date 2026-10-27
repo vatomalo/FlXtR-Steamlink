@@ -58,5 +58,24 @@ int main(void){
     assert(input.x==0&&input.y==0&&input.w==1280&&input.h==720);
     assert(output.x==38&&output.y==21&&output.w==1844&&output.h==1037);
     restore_viewport();assert(input.w==720&&input.h==480);
+    /* PR #21: the YouTube plane uses display coordinates even for a 720p clip.
+     * Mapping Stretch back into the firmware underscan frame leaves borders. */
+    viewport_handle=(void*)1;viewport_plane=1;calls=0;scaling_saved=0;
+    input=(VideoRect){0,0,720,480};output=(VideoRect){38,21,1844,1037};
+    assert(!video_rect(VIEW_STRETCH,1280,720,1,1,1920,1080,&r));
+    assert(!hardware_youtube_viewport(&r,1920,1080));
+    assert(input.x==0&&input.y==0&&input.w==1920&&input.h==1080);
+    assert(output.x==0&&output.y==0&&output.w==1920&&output.h==1080);
+    assert(!video_rect(VIEW_FIT,640,480,1,1,1920,1080,&r));
+    assert(!hardware_youtube_viewport(&r,1920,1080));
+    assert(input.w==1920&&input.h==1080&&output.x==240&&output.w==1440);
+    assert(!video_rect(VIEW_PIXEL,640,480,1,1,1920,1080,&r));
+    assert(!hardware_youtube_viewport(&r,1920,1080));
+    assert(input.w==1920&&input.h==1080&&output.x==640&&output.y==300&&output.w==640&&output.h==480);
+    restore_viewport();assert(input.w==720&&input.h==480&&output.x==38&&output.w==1844);
+    viewport_handle=(void*)1;calls=0;bad_read=1;
+    assert(hardware_youtube_viewport(&r,1920,1080)<0&&calls==2);
+    assert(input.w==720&&input.h==480&&output.x==38&&output.w==1844);
+    bad_read=0;restore_viewport();
     puts("Hardware scaling tests passed");
 }

@@ -88,7 +88,8 @@ static void show_view(const char *label) {
 static void apply_view(int notify) {
     VideoRect rect;
     int rc=video_rect(viewing,source_w,source_h,sar_n,sar_d,screen_w,screen_h,&rect);
-    if(!rc)rc=hardware_viewport(&rect,screen_w,screen_h,source_w,source_h);
+    if(!rc)rc=getenv("FLXTR_YOUTUBE_PLAYBACK")?hardware_youtube_viewport(&rect,screen_w,screen_h):
+        hardware_viewport(&rect,screen_w,screen_h,source_w,source_h);
     if(rc){fprintf(stderr,"Viewing mode unavailable: %s\n",view_names[viewing]);if(notify)show_view("VIEW MODE UNAVAILABLE");}
     else {
         fprintf(stderr,"Viewport %s: %d,%d %dx%d (readback verified)\n",view_names[viewing],rect.x,rect.y,rect.w,rect.h);

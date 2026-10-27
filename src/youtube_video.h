@@ -200,6 +200,18 @@ static void youtube_prefetch(void){
     if(tv_prepared&&tv_buffer_pid){
         int code;pid_t done=waitpid(tv_buffer_pid,&code,WNOHANG);
         if(done==tv_buffer_pid){tv_buffer_pid=0;tv_cancel_prepared();youtube_retry_at=SDL_GetTicks()+15000;}
+        static Uint32 next_check;
+        Uint32 now=SDL_GetTicks();
+        if(tv_prepared&&tv_gate>=0&&(Sint32)(now-next_check)>=0){
+            next_check=now+1000;
+            double position=0,duration=0;
+            FILE *f=fopen("playback-position","r");
+            if(f){int fields=fscanf(f,"%lf %lf",&position,&duration);fclose(f);
+                if(fields==2&&position>=0&&duration>0&&duration-position<=30){
+                    char expand='B';ssize_t n=player_pipe_write(tv_gate,&expand,1);(void)n;
+                }
+            }
+        }
     }
     if(tv_prepared||youtube_pid||(Sint32)(SDL_GetTicks()-youtube_retry_at)<0)return;
     char query[221];mtv_query(query,sizeof(query));youtube_preparing=1;

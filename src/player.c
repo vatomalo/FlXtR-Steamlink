@@ -132,7 +132,7 @@ static void playback_controls(void) {
         if(position>=0&&position<86400){
             FILE *f=fopen("playback-position.next","w");
             if(f){
-                fprintf(f,"%.3f\n",position);
+                fprintf(f,"%.3f %.3f\n",position,media_duration);
                 if(!fclose(f))rename("playback-position.next","playback-position");
                 else unlink("playback-position.next");
             }
@@ -576,16 +576,20 @@ int main(int argc,char **argv) {
         result=0;goto done;
     }
     if(preload_fd>=0){
-        deadline=0;buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
-        fprintf(stderr,"TV preloading compressed packets; hardware decoder remains closed\n");
+        deadline=0;buffer=disk_start_mode(fmt,vi,ai,si,buffer_secs,buffer_mb,1);if(!buffer)goto done;
+        fprintf(stderr,"TV small preload: 5 seconds / 8 MiB maximum; hardware decoder remains closed\n");
         int ready=0;int64_t until=av_gettime_relative()+1800000000LL;
         while(!stopped&&av_gettime_relative()<until){
             char go;ssize_t n=read(preload_fd,&go,1);
-            if(n==1){ready=go=='G';break;}
+            if(n==1){
+                if(go=='B'){if(disk_expand_preload(buffer))fprintf(stderr,"TV preload expanded near end: %llu MiB cap\n",(unsigned long long)(buffer->capacity/1024/1024));continue;}
+                ready=go=='G';break;
+            }
             if(n==0||(n<0&&errno!=EAGAIN&&errno!=EINTR))break;
             SDL_Delay(50);
         }
         close(preload_fd);preload_fd=-1;if(!ready)goto done;
+        disk_expand_preload(buffer);
         pthread_mutex_lock(&buffer->mutex);
         fprintf(stderr,"TV preload released: %d packets / %llu bytes; opening hardware decoder\n",buffer->count,(unsigned long long)buffer->write_bytes);
         pthread_mutex_unlock(&buffer->mutex);

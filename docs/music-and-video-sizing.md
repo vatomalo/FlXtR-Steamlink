@@ -76,3 +76,18 @@ The existing native-coordinate adapter remains in use for other playback. Both p
 Submitting the first compressed frame does not mean the hardware decoder has finished configuring its picture. For ten seconds after the first submitted frame, a decoder reset, or a mode selection, the player checks viewport readback every 250 ms. It retries a temporarily unavailable viewport or reapplies the latest requested geometry if the firmware changed it. Stable geometry does not trigger writes, and unsupported modes do not retry. The window is bounded; this does not continuously override firmware geometry throughout a video.
 
 `viewport.log` records per-process apply results, actual-versus-expected drift, repairs and startup completion. It rotates at 32 KiB into one previous log, avoiding the shared preloader-log truncation that can obscure startup evidence. Tests simulate delayed handle availability, a decoder overwriting initially accepted scaling, mode changes, read failures and expiry.
+# Next-video preload
+
+MTV resolves one next video during playback. Its gated player keeps at most
+five seconds or 8 MiB of compressed packets, whichever comes first. The RAM
+allocation also starts at 8 MiB rather than allocating the full normal buffer.
+The hardware decoder stays closed until promotion.
+
+With 30 seconds remaining, the shell asks the gated player to expand to the
+configured buffer cap (at most 64 MiB). Position checkpoints arrive every ten
+seconds, so this normally happens with about 20–30 seconds remaining. Unknown
+durations stay on the small buffer until promotion. An early skip promotes the
+small buffer immediately and expands it for normal playback. Allocation failure
+retains the smaller working buffer. Only one next item is held; Stop cancels it.
+
+This does not add automatic next-movie selection to standalone movie playback.

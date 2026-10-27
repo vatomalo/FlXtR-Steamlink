@@ -27,7 +27,13 @@ int main(void){
     for(int i=0;i<2;i++){AVStream *s=avformat_new_stream(fmt,NULL);assert(s);s->time_base=(AVRational){1,1000};}
     for(int pass=0;pass<2;pass++){
         stopped=0;generated=0;fail_at_end=pass;
-        DiskBuffer *q=disk_start(fmt,0,1,-1,5,64);assert(q);AVPacket *p=av_packet_alloc();assert(p);
+        DiskBuffer *q=disk_start_mode(fmt,0,1,-1,5,64,1);assert(q);AVPacket *p=av_packet_alloc();assert(p);
+        av_usleep(100000);
+        pthread_mutex_lock(&q->mutex);
+        assert(q->capacity==8*1024*1024&&q->write_bytes<=q->capacity&&q->small_preload);
+        assert(q->count>0&&q->count<200);
+        pthread_mutex_unlock(&q->mutex);
+        assert(disk_expand_preload(q));assert(!disk_expand_preload(q));
         for(int i=0;i<2200;i++){
             assert(!disk_packet(q,p));assert(p->size==65536&&p->pts==i*20&&p->duration==20&&p->stream_index==i%2);
             for(int j=0;j<p->size;j++)assert(p->data[j]==i%251);
@@ -44,10 +50,17 @@ int main(void){
     }
     stopped=0;generated=0;DiskBuffer *q=disk_start(fmt,0,1,-1,30,64);assert(q);
     av_usleep(100000);disk_close(q); /* also wakes a producer blocked on a full ring */
+    stopped=0;generated=0;q=disk_start_mode(fmt,0,1,-1,30,64,1);assert(q);
+    av_usleep(100000);disk_close(q); /* Stop also wakes the small preload gate. */
 #ifdef DISK_RAM
-    stopped=0;generated=0;fail_at_end=0;packet_size=256;q=disk_start(fmt,0,1,-1,15,16);assert(q);
+    stopped=0;generated=0;fail_at_end=0;packet_size=256;q=disk_start_mode(fmt,0,1,-1,15,16,1);assert(q);
+    av_usleep(100000);
+    pthread_mutex_lock(&q->mutex);
+    assert(q->newest-q->records[q->head].time==5000000&&q->write_bytes<8*1024*1024);
+    pthread_mutex_unlock(&q->mutex);
+    assert(disk_expand_preload(q));
     for(int n=0;n<100;n++){
-        pthread_mutex_lock(&q->mutex);int ready=q->primed;pthread_mutex_unlock(&q->mutex);
+        pthread_mutex_lock(&q->mutex);int ready=q->newest-q->records[q->head].time>=15000000;pthread_mutex_unlock(&q->mutex);
         if(ready)break;
         av_usleep(10000);
     }

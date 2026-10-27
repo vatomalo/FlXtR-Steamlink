@@ -22,7 +22,7 @@ typedef struct {
     pthread_t thread;pthread_mutex_t mutex;pthread_cond_t changed;
     unsigned char *ram;
     AVFormatContext *format;int fd,vi,ai,si,result,done,quit,primed,started;
-    int head,count,seconds;uint64_t capacity,read_bytes,write_bytes;
+    int head,count,seconds,small_preload;uint64_t capacity,full_capacity,read_bytes,write_bytes;
     int64_t newest,video_newest;
     DiskRecord records[DISK_SLOTS];
 } DiskBuffer;
@@ -61,7 +61,8 @@ static void *disk_producer(void *opaque){
         int64_t ts=p->dts!=AV_NOPTS_VALUE?p->dts:p->pts;
         if(ts!=AV_NOPTS_VALUE)ts=av_rescale_q(ts,q->format->streams[p->stream_index]->time_base,AV_TIME_BASE_Q);
         pthread_mutex_lock(&q->mutex);
-        while(!q->quit&&!stopped&&(q->count==DISK_SLOTS||q->write_bytes-q->read_bytes+bytes>q->capacity)){
+        while(!q->quit&&!stopped&&(q->count==DISK_SLOTS||q->write_bytes-q->read_bytes+bytes>q->capacity||
+              (q->small_preload&&q->count&&q->records[q->head].time!=AV_NOPTS_VALUE&&q->newest-q->records[q->head].time>=5000000))){
             q->primed=1;pthread_cond_broadcast(&q->changed);disk_wait(q);
         }
         if(q->quit||stopped){pthread_mutex_unlock(&q->mutex);rc=AVERROR_EXIT;break;}
@@ -89,10 +90,12 @@ static void *disk_producer(void *opaque){
 finished:
     pthread_mutex_lock(&q->mutex);q->done=1;q->result=rc;pthread_cond_broadcast(&q->changed);pthread_mutex_unlock(&q->mutex);return NULL;
 }
-static DiskBuffer *disk_start(AVFormatContext *fmt,int vi,int ai,int si,int seconds,int megabytes){
+static DiskBuffer *disk_start_mode(AVFormatContext *fmt,int vi,int ai,int si,int seconds,int megabytes,int small){
     uint64_t capacity=(uint64_t)megabytes*1024*1024;
     DiskBuffer *q=calloc(1,sizeof(*q));if(!q)return NULL;
-    q->fd=-1;
+    q->fd=-1;q->small_preload=small;
+    q->full_capacity=capacity;
+    if(small&&capacity>8*1024*1024)capacity=8*1024*1024;
 #ifdef DISK_RAM
     if(capacity>64*1024*1024)capacity=64*1024*1024;
     q->ram=malloc((size_t)capacity);if(!q->ram){free(q);return NULL;}
@@ -108,6 +111,26 @@ static DiskBuffer *disk_start(AVFormatContext *fmt,int vi,int ai,int si,int seco
     pthread_mutex_init(&q->mutex,NULL);pthread_cond_init(&q->changed,NULL);
     if(pthread_create(&q->thread,NULL,disk_producer,q)){if(q->fd>=0)close(q->fd);free(q->ram);pthread_cond_destroy(&q->changed);pthread_mutex_destroy(&q->mutex);free(q);return NULL;}
     return q;
+}
+static DiskBuffer *disk_start(AVFormatContext *fmt,int vi,int ai,int si,int seconds,int megabytes){
+    return disk_start_mode(fmt,vi,ai,si,seconds,megabytes,0);
+}
+/* The gated FIFO has never been consumed, so its offsets have not wrapped.
+ * Resize under the producer lock before releasing the small preload limit. */
+static inline int disk_expand_preload(DiskBuffer *q){
+    pthread_mutex_lock(&q->mutex);
+    if(!q->small_preload){pthread_mutex_unlock(&q->mutex);return 0;}
+    uint64_t target=q->full_capacity;
+#ifdef DISK_RAM
+    if(target>64*1024*1024)target=64*1024*1024;
+    unsigned char *ram=realloc(q->ram,(size_t)target);
+    if(ram){q->ram=ram;q->capacity=target;}
+#else
+    q->capacity=target;
+#endif
+    q->small_preload=0;
+    pthread_cond_broadcast(&q->changed);
+    pthread_mutex_unlock(&q->mutex);return 1;
 }
 static int disk_packet(DiskBuffer *q,AVPacket *p){
     pthread_mutex_lock(&q->mutex);

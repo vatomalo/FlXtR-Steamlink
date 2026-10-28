@@ -29,6 +29,20 @@ while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
     if [ -r ./power-activity.sh ]; then sh ./power-activity.sh --idle >power-activity.log 2>&1 || true; fi
+    if [ "$code" -eq 44 ]; then
+        # Gamez: hand the display to Moonlight after FlXtR has shut down SDL.
+        # Keep existing pairing, controller setup, and app identity unchanged.
+        (
+            cd /home/apps/moonlight || exit 127
+            export HOME=/usr/local/moonlight
+            export SDL_ENABLE_STEAM_CONTROLLERS=1
+            export SENSOR_REPORT_RATE_LIMIT_HZ=0
+            exec ./bin/moonlight stream 192.168.10.187 "Final Fantasy VII Remake" --1080 --fps 60
+        ) >moonlight-gamez.log 2>&1
+        printf '%d\n' "$?" >game-exit-status
+        set -- --library games
+        continue
+    fi
     if [ "$code" -eq 43 ]; then
         # A broken Steam Link audio/video pipeline can trap RetroArch indefinitely,
         # repeatedly printing MV_PE_InputBufWrite failures and ignoring TERM.

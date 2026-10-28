@@ -3,7 +3,28 @@ CFLAGS ?= -Os -std=c99 -Wall -Wextra -Werror
 SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
-all: build/greenlink build/greenlink-catalog
+all: build/greenlink build/greenlink-catalog build/greenlink-download
+build/greenlink: src/video_download_ui.h src/phone_media.h
+build/greenlink: src/favorite_art.h src/favorite_art_ui.h
+build/greenlink-catalog: src/favorite_art.h src/favorite_art_worker.h
+build/greenlink-download: src/video_download.c src/video_quality.h
+	mkdir -p build
+	$(CC) $(CFLAGS) src/video_download.c -o $@ $$(pkg-config --cflags --libs libavformat libavcodec libavutil)
+
+test-video-downloads: build/greenlink-download
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/video_download_ui_test.c -o build/video-download-ui-test $(SDL_LIBS) -lSDL2_image -lcurl
+	SDL_VIDEODRIVER=dummy ./build/video-download-ui-test
+	python3 tests/video_download_test.py
+
+.PHONY: test-video-downloads
+
+test-favorites-art:
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/favorite_art_test.c -o build/favorite-art-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
+	./build/favorite-art-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/favorite_art_ui_test.c -o build/favorite-art-ui-test $(SDL_LIBS) -lSDL2_image -lcurl
+	SDL_VIDEODRIVER=dummy ./build/favorite-art-ui-test
+
+.PHONY: test-favorites-art
 build/greenlink: src/power_activity.h src/usb_setup_ui.h src/mtv_weights_ui.h src/mtv_weights.h
 build/greenlink-catalog: src/rom_state_preferences.h src/rom_state_runtime.h
 build/greenlink-catalog: src/catalog.c src/rom_cover_preferences.h src/rom_cheat_runtime.h src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/game_scaling.h src/rom_core_preferences.h src/core_geometry.h src/vendor/libretro.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h

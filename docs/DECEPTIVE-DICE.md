@@ -25,8 +25,9 @@ battle sequencing and presentation still contain JavaScript.
 The previous GPU candidate measured 35.65 FPS in a seeded combat test on the
 physical Steam Link, compared with 2.95 FPS for the initial software renderer.
 The C++ build passes standalone core tests and 3,040 comparisons against the
-original JavaScript methods. Its on-device installation and FPS measurement
-are pending because the device went offline. Audible audio still needs checking.
+original JavaScript methods. The C++ build also passed the same checks on physical Steam Link hardware
+and measured 35.22 FPS across 360 frames after warmup. Audible audio still needs
+checking.
 
 Existing installations keep their downloaded game for offline launches. To
 fetch the new pinned version, close FlXtR, move the existing game directory

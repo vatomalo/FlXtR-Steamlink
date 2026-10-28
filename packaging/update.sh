@@ -53,7 +53,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     # Keep old shell for recovery; copy only package-controlled files.
     # Locally downloaded ROMs, settings and private catalog files remain untouched.
     cp greenlink .update-backup
-    for part in greenlink greenlink-catalog greenlink-player greenlink-audio greenlink-resolver player-menu-v1; do
+    for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && chmod 755 "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     for part in assets certs music-runtime; do
@@ -87,7 +87,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     mv -f .update-backup greenlink.previous
     # A manual install can replace binaries while leaving the version marker.
     # Record hashes from the verified archive, then verify what is on disk.
-    (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
+    (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
     for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh; do

@@ -23,7 +23,7 @@ fi
 echo "f9514e0d3515aee5a271283df71636e1d1ff7274b15853bcd84e144be416ab07  $archive" | sha256sum -c -
 if [ ! -d "$cache/ffmpeg-4.4.5" ]; then tar -C "$cache" -xf "$archive"; fi
 cd "$cache/ffmpeg-4.4.5"
-if [ ! -f "$cache/install/lib/libavformat.a" ] || [ ! -f "$cache/install/subtitles-buffer-v3" ]; then
+if [ ! -f "$cache/install/lib/libavformat.a" ] || [ ! -f "$cache/install/offline-mux-v1" ]; then
     ./configure --prefix="$cache/install" --enable-cross-compile --cross-prefix="$CROSS" \
         --arch=arm --cpu=cortex-a9 --target-os=linux --sysroot="$MARVELL_ROOTFS" \
         --cc="$CC" --cxx="$CXX" --pkg-config=pkg-config \
@@ -31,15 +31,15 @@ if [ ! -f "$cache/install/lib/libavformat.a" ] || [ ! -f "$cache/install/subtitl
         --disable-debug --disable-shared --enable-static --enable-small --enable-network \
         --enable-gnutls --enable-avformat --enable-avcodec --enable-swresample \
         --enable-protocol=file,http,https,tcp,tls,crypto \
-        --enable-demuxer=mov,mpegts,hls,aac,matroska,ogg,webvtt,srt,ass \
+        --enable-demuxer=mov,mpegts,hls,aac,matroska,ogg,webvtt,srt,ass --enable-muxer=matroska \
         --enable-decoder=h264,aac,aac_latm,mp2,mp3,ac3,eac3,dca,opus,vorbis,flac,pcm_s16le,pcm_s24le,subrip,webvtt,movtext,ass,ssa \
-        --enable-parser=h264,aac,aac_latm,mpegaudio,ac3,dca,opus,vorbis,flac --enable-bsf=h264_mp4toannexb
+        --enable-parser=h264,aac,aac_latm,mpegaudio,ac3,dca,opus,vorbis,flac --enable-bsf=h264_mp4toannexb,extract_extradata,aac_adtstoasc
     make -j"${JOBS:-4}" >"$cache/ffmpeg-make.log" 2>&1 || { tail -60 "$cache/ffmpeg-make.log"; exit 1; }
     make install >"$cache/ffmpeg-install.log" 2>&1
-    touch "$cache/install/subtitles-buffer-v3"
+    touch "$cache/install/subtitles-buffer-v3" "$cache/install/offline-mux-v1"
 fi
 cd "$project"
-version=$(git rev-parse HEAD)
+version=$(git -c safe.directory="$project" rev-parse HEAD)
 $CC -Os -std=c99 -Wall -Wextra -Werror -DFLXTR_VERSION=\"$version\" -I"$cache/install/include" \
     $(pkg-config --cflags sdl2) -c src/player.c -o build/player-arm.o
 $CC build/player-arm.o -o build/greenlink-player-arm \
@@ -63,3 +63,7 @@ $CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" \
     -L"$cache/install/lib" -lavformat -lavcodec -lswresample -lavutil \
     $(pkg-config --libs sdl2 gnutls) -lm -lpthread -ldl -lz
 $STRIP build/greenlink-preview-arm
+
+$CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" src/video_download.c -o build/greenlink-download-arm \
+    -L"$cache/install/lib" -lavformat -lavcodec -lswresample -lavutil $(pkg-config --libs gnutls) -lm -lpthread -ldl -lz
+$STRIP build/greenlink-download-arm

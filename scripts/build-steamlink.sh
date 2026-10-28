@@ -53,6 +53,7 @@ fi
 
 if [ -d assets ]; then cp -R assets "$app/"; fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi
+if [ -f build/greenlink-download-arm ]; then cp build/greenlink-download-arm "$app/greenlink-download"; fi
 if [ -f build/greenlink-resolver-arm ]; then
     cp build/greenlink-resolver-arm "$app/greenlink-resolver"
     cp build/resolver/WABT-LICENSE.txt "$app/WABT-LICENSE.txt"

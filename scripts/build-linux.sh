@@ -14,7 +14,8 @@ cc "${flags[@]}" $(pkg-config --cflags sdl2 SDL2_image libcurl) src/shell.c -o "
 cc "${flags[@]}" src/catalog.c -o "$app/greenlink-catalog" $(pkg-config --cflags --libs sdl2 SDL2_image libcurl json-c openssl)
 cc "${flags[@]}" src/player_linux.c -o "$app/greenlink-player" $(pkg-config --cflags --libs mpv)
 cc "${flags[@]}" src/audio_windows.c -o "$app/greenlink-audio" $(pkg-config --cflags --libs mpv)
-strip "$app/greenlink-audio" "$app/greenlink" "$app/greenlink-catalog" "$app/greenlink-player"
+cc "${flags[@]}" src/video_download.c -o "$app/greenlink-download" $(pkg-config --cflags --libs libavformat libavcodec libavutil)
+strip "$app/greenlink-download" "$app/greenlink-audio" "$app/greenlink" "$app/greenlink-catalog" "$app/greenlink-player"
 FLXTR_BUILD_PLATFORM=linux bash scripts/build-resolver.sh
 cp build/greenlink-resolver-linux "$app/greenlink-resolver"
 cp build/resolver/WABT-LICENSE.txt "$app/"

@@ -1718,6 +1718,13 @@ static void play(void) {
         snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
     }
+    if(!strcmp(t->kind,"deceptive-dice")){
+        FILE *f=fopen("game-request","w");
+        if(!f){snprintf(status,sizeof(status),"COULD NOT START DECEPTIVE DICE");return;}
+        fprintf(f,"2049 -1 -1\n");
+        if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START DECEPTIVE DICE");return;}
+        game_exit=1;running=0;return;
+    }
     if(!strcmp(t->kind,"scummvm-launch")){
         FILE *f=fopen("game-request","w");
         if(!f){snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");return;}

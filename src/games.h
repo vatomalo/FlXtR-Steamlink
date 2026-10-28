@@ -211,15 +211,24 @@ static int local_category(const char *core,const char *rom){
     return 10;
 }
 static int games_folders(int page){
-    total=12;
-#ifndef FLXTR_DESKTOP
     total=13;
+#ifndef FLXTR_DESKTOP
+    total=14;
 #endif
 #ifdef FLXTR_DESKTOP
-    total=13;
+    total=14;
 #endif
     for(int slot=(page-1)*PAGE_SIZE;slot<total&&used<PAGE_SIZE;slot++){
-        int i=slot;
+        if(slot==0){
+            Entry *e=&entries[used++];
+            strcpy(e->title,"GAMEZ");
+            strcpy(e->meta,"PC GAMES / MOONLIGHT / A OPEN");
+            strcpy(e->kind,"game-folder");
+            strcpy(e->poster,"gameart:FlXtR Console|PC");
+            e->id=11;
+            continue;
+        }
+        int i=slot-1;
 #ifndef FLXTR_DESKTOP
         if(i==12){
             Entry *e=&entries[used++];strcpy(e->title,"DECEPTIVE DICE");
@@ -229,7 +238,7 @@ static int games_folders(int page){
         }
 #endif
 #ifdef FLXTR_DESKTOP
-        i=slot==0?12:slot-1;
+        i=slot==1?12:slot-2;
         if(i==12){
             Entry *e=&entries[used++];strcpy(e->title,"DOWNLOAD LIBRETRO CORES");
             strcpy(e->meta,"OFFICIAL PLATFORM CORES / RETROARCH REQUIRED");
@@ -419,7 +428,21 @@ static int games_list_filtered(int page,int refresh,int folder){
     }json_object_put(games);return 0;
 }
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
-static int games_system(int page,int folder){return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;}
+static int games_system(int page,int folder){
+    if(folder==11){
+        total=1;
+        if(page==1&&used<PAGE_SIZE){
+            Entry *e=&entries[used++];
+            strcpy(e->title,"FINAL FANTASY VII REMAKE");
+            strcpy(e->meta,"CAFELEBLANC / MOONLIGHT / A STREAM");
+            strcpy(e->kind,"moonlight-game");
+            strcpy(e->poster,"gameart:Final Fantasy VII Remake|PC");
+            e->id=1;
+        }
+        return 0;
+    }
+    return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;
+}
 static int game_pixel_geometry(const char *core,const char *rom,int output,int *width,int *height,int *dw,int *dh){
     char executable[PATH_MAX],system[PATH_MAX],save[PATH_MAX],cwd[PATH_MAX];
     if(!games_executable||!getcwd(cwd,sizeof(cwd)))return -1;

@@ -212,11 +212,22 @@ static int local_category(const char *core,const char *rom){
 }
 static int games_folders(int page){
     total=12;
+#ifndef FLXTR_DESKTOP
+    total=13;
+#endif
 #ifdef FLXTR_DESKTOP
     total=13;
 #endif
     for(int slot=(page-1)*PAGE_SIZE;slot<total&&used<PAGE_SIZE;slot++){
         int i=slot;
+#ifndef FLXTR_DESKTOP
+        if(i==12){
+            Entry *e=&entries[used++];strcpy(e->title,"DECEPTIVE DICE");
+            strcpy(e->meta,"NATIVE STEAM LINK GAME / A INSTALL OR PLAY");
+            strcpy(e->kind,"deceptive-dice");
+            strcpy(e->poster,"gameart:Deceptive Dice|ARCADE");continue;
+        }
+#endif
 #ifdef FLXTR_DESKTOP
         i=slot==0?12:slot-1;
         if(i==12){
@@ -456,7 +467,13 @@ static int game_pixel_geometry(const char *core,const char *rom,int output,int *
 }
 static int games_run(void){
     int id=0,back=-1,start=-1,load=-1,save=-1;FILE *f=fopen("game-request","r");if(!f)return 2;
-    int fields=fscanf(f,"%d %d %d %d %d",&id,&back,&start,&load,&save);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT)return 2;
+    int fields=fscanf(f,"%d %d %d %d %d",&id,&back,&start,&load,&save);fclose(f);unlink("game-request");if(fields<1||id<0||id>GAME_LIMIT+1)return 2;
+#ifndef FLXTR_DESKTOP
+    if(id==GAME_LIMIT+1){
+        execl("/bin/sh","sh","./deceptive-dice.sh",(char*)NULL);
+        fprintf(stderr,"Deceptive Dice launcher unavailable: %s\n",strerror(errno));return 2;
+    }
+#endif
     unlink("game-error.txt");
     if(id==0){
         /* Launch the installed ScummVM frontend and its configured games. */

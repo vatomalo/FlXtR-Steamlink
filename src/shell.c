@@ -795,6 +795,7 @@ static int read_catalog(const char *path) {
     filter();return count;
 }
 #include "video_download_ui.h"
+#include "favorite_art_ui.h"
 
 /* A small RAM-only LRU catalog. Reuse loaded pages until process restart.
  * We never cache playback sources or actions that mutate downloaded files. */
@@ -893,7 +894,7 @@ static void request_catalog(Browse next,int push,int pop){
             }
         }
         else {filter();snprintf(status,sizeof(status),"FAVORITES EMPTY / L3 TO ADD");}
-        return;
+        favorites_prepare_art();return;
     }
     if(next.mode==11){browse=next;history_size=0;about=0;total=count=0;prefetch_left=0;snprintf(status,sizeof(status),"A START TV / SELECT SETTINGS / OSLO TIME");return;}
     if(catalog_pid)return;
@@ -1187,7 +1188,7 @@ static void cache_page(int page) {
             for(int i=0;i<VISIBLE&&page*VISIBLE+i<total;i++){
                 if(posters[i])continue;
                 const char *art=titles[visible[page*VISIBLE+i]].poster;
-                if(!strncmp(art,"game-art-cache/",15))posters[i]=load_poster(art);
+                if(!strncmp(art,"game-art-cache/",15)||browse.mode==FAVORITES_MODE)posters[i]=load_poster(art);
             }
         }
         return;
@@ -2810,6 +2811,7 @@ int main(int argc,char **argv) {
             if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
         if(video_download_pid){video_download_finish();dirty=1;}
+        if(favorites_art_tick())dirty=1;
         if(rom_assets_tick())dirty=1;
         if(usb_poll())dirty=1;
         if(samba_poll())dirty=1;
@@ -2837,7 +2839,7 @@ int main(int argc,char **argv) {
     youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
-    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid};
+    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
     SDL_Quit();return game_exit?43:restart_shell?42:0;

@@ -504,6 +504,8 @@ static void poster(Entry *e,int slot){
         }
     }free(b.data);
 }
+#include "favorite_art_worker.h"
+
 /* Render game pages immediately. A detached worker warms persistent artwork
  * without delaying controller navigation; repeat views reuse the same BMP. */
 static void game_art_path(const char *key,char *out,size_t capacity){
@@ -716,6 +718,7 @@ int main(int argc,char **argv){
 #endif
     }
 #endif
+    if(argc==2&&!strcmp(argv[1],"--repair-favorites-art")){if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;int result=favorite_repair_all();catalog_http_close();return result;}
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}

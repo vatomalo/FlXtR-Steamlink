@@ -1,6 +1,7 @@
-# FlXtR Android media preview 0.4
+# FlXtR Android media preview 0.5
 
-Target tested: Samsung SM-T510 running Android 11 (32-bit armeabi-v7a).
+Minimum supported system: Android 8.0 (API 26). Phone/tablet layout is automatic.
+Hardware tested: Samsung SM-T510 running Android 11 (32-bit armeabi-v7a).
 The APK also includes arm64-v8a for other devices. Update over the earlier APK;
 keep the same signing key to retain favorites and progress.
 
@@ -17,8 +18,10 @@ playable files. Music accepts searches, YouTube links and public Spotify playlis
 links; Spotify entries become music searches and do not play Spotify audio.
 
 More → Choose theme selects Original White Metal, Original Green/Black, or the
-previous Touch theme. The original themes use FlXtR's texture, pixel font, sidebar
-and a cover carousel; Touch retains the native poster grid. The theme persists.
+previous Touch theme. The original themes use FlXtR's texture and pixel font, with a sidebar and cover
+carousel in tablet layout; Touch retains the native poster grid. The theme persists. More → Screen layout offers Automatic, Phone/compact, or
+Tablet/carousel. Narrow and short windows use the compact poster grid without the
+wide sidebar. The keyboard stays hidden until search is requested.
 Touch, Android Back and controllers can be used together.
 
 | Controller | Library | Player |
@@ -72,7 +75,8 @@ sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'ndk;28.0.13004108' 'cmak
 ANDROID_HOME=/path/to/sdk bash scripts/build-android.sh
 ```
 
-The script builds both ARM variants and runs assembleDebug, testDebugUnitTest and
+The script builds the response-decoder native library for both ARM variants and
+runs assembleDebug, testDebugUnitTest and
 lintDebug. Gradle 8.9, AGP 8.7.3, NDK r28, Media3 1.5.1, jsoup 1.18.3 and
 Android yt-dlp runtime 0.18.1 are pinned. Music uses packaged Android Python/QuickJS;
 no Linux worker is needed. More → Update music engine updates yt-dlp if a provider
@@ -84,9 +88,9 @@ native libraries are built for 16 KB pages; this preview's primary device target
 Android 11. No blanket 16 KB compatibility claim is made for third-party runtimes.
 See android-third-party.md and packaged assets/licenses for distribution notices.
 
-Validation: 30 unit tests cover catalogue parsing, request signing, source/header
+Validation: 32 unit tests cover catalogue parsing, request signing, source/header
 handling, anime parsing/AES/token format, captions, archive filtering, controller
-repeat policy, finite media ranges, media persistence, TV scheduling and MTV/Spotify mapping. Live host
+repeat policy, responsive layout selection, finite media ranges, media persistence, TV scheduling and MTV/Spotify mapping. Live host
 tests fetch movie/episode/anime manifests and media fragments, and archive listings.
 Debug-only MediaSmokeInstrumentation can probe and render known sample media on a
 connected tablet without printing signed stream URLs:
@@ -118,3 +122,27 @@ tablet, including switching between the carousel and grid. No app crash was
 reported during these checks. Physical gamepads, extended playback, long download
 recovery, TV scheduling over clock boundaries, and background music still need
 broader testing. These are sample checks, not a guarantee for every provider item.
+
+## Version 0.5: phones, Android 8 and fullscreen playback
+
+The same ARM APK adapts to phones and tablets; a separate app installation is not
+required. The old internal SDL preview launcher is no longer bundled. Android
+media features use their native Android implementations, and the shared response
+decoder remains in place. Removing the obsolete launcher also removes its Android
+9-only process dependency and reduces the APK from about 54 MiB to 39 MiB.
+
+Video starts edge to edge, with Android's system bars and the playback header
+hidden. Tap the video to reveal controls; they disappear after 2.5 seconds. The
+Back and Options buttons are transparent overlays, and Next server is under
+Options. Fill screen crops edges by default; Options → Picture size → Fit whole
+picture preserves the complete image. Swipe from an edge for Android system
+navigation. The old permanent bar/menu no longer covers the picture.
+
+Android 8.0/API 26 was exercised on a 720×1280 x86_64 AOSP phone emulator at
+360 dp width. The compact library loaded 20 titles in two columns. Movie, anime,
+music with a seek to one minute, and cache-only offline playback all rendered
+video, decoded audio, and advanced. The player header and system bars were hidden
+in each playback check. Phone layout and borderless playback were visually
+inspected. The same source builds the shipped armeabi-v7a/arm64-v8a APK; the x86_64
+build is a test artifact. Actual phone hardware and Android 8 ARM devices still
+need verification when available.

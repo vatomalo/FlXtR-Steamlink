@@ -23,7 +23,7 @@ Kotlin standard library: Apache-2.0. https://github.com/JetBrains/kotlin
 Jackson 2.11.1: Apache-2.0. https://github.com/FasterXML/jackson
 Apache Commons IO 2.5: Apache-2.0. https://commons.apache.org/proper/commons-io/
 
-SDL2, SDL2_image, mbedTLS, curl and WABT notices are packaged in
-assets/runtime/licenses by the existing build scripts. The pixel font is generated
+WABT and FlXtR notices are packaged in assets/runtime/licenses. The former SDL,
+curl and mbedTLS preview launcher is no longer included in the Android media APK. The pixel font is generated
 from FlXtR src/font.h; the White Metal texture is the original repository asset.
 No online catalogue art or streams are embedded in this APK.

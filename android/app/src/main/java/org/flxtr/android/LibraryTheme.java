@@ -20,6 +20,7 @@ final class LibraryTheme {
         return new ColorDrawable(bg);
     }
     Drawable surface(boolean focused){GradientDrawable d=new GradientDrawable();d.setColor(panel);d.setCornerRadius(id==2?12:0);d.setStroke(focused?4:1,focused?accent:(id==0?0xffb9c8bd:muted));return d;}
+    Drawable selection(){GradientDrawable border=new GradientDrawable();border.setColor(android.graphics.Color.TRANSPARENT);border.setStroke(4,accent);border.setCornerRadius(id==2?12:0);return border;}
     Drawable focus(){StateListDrawable state=new StateListDrawable();state.addState(new int[]{android.R.attr.state_pressed},surface(true));state.addState(new int[]{android.R.attr.state_focused},surface(true));state.addState(new int[]{android.R.attr.state_selected},surface(true));state.addState(new int[]{},surface(false));return state;}
     TextView text(Context context,String value,int size,int color){TextView view=new TextView(context);view.setText(value);view.setTextSize(size);view.setTextColor(color);view.setTypeface(font);return view;}
 }

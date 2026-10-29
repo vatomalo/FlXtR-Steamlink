@@ -1,6 +1,6 @@
 # FlXtR-Steamlink
 
-Android media preview (movies/series, KissAnime, music/MTV, TV channels, archive, downloads, selectable original/touch themes and controller support): [build and testing](docs/ANDROID.md).
+Android 8+ phone/tablet media preview (movies/series, KissAnime, music/MTV, TV channels, archive, downloads, selectable original/touch themes and controller support): [build and testing](docs/ANDROID.md).
 
 
 Steam Link shared SDL audio investigation, optional queued RetroArch driver and

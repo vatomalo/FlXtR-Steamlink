@@ -1,6 +1,6 @@
 # FlXtR-Steamlink
 
-Android tablet preview (touch movie/series catalogue, favorites and direct HTTPS video playback): [build and testing](docs/ANDROID.md).
+Android tablet preview (touch movie/series catalogue, automatic stream lookup, favorites and HLS playback): [build and testing](docs/ANDROID.md).
 
 
 Steam Link shared SDL audio investigation, optional queued RetroArch driver and

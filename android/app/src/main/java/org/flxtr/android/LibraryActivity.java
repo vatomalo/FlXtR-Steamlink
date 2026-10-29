@@ -125,16 +125,16 @@ public class LibraryActivity extends Activity {
         if(kind.equals("favorites"))load();else adapter.notifyDataSetChanged();
     }
     private void details(CatalogItem item){
-        ScrollView scroll=new ScrollView(this);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);scroll.addView(content);TextView description=label(item.meta+"\n\n"+(item.overview.isEmpty()?"No description available.":item.overview)+
-            (item.kind.equals("movie")||item.kind.equals("episode")?"\n\nPlayback uses a direct HTTPS media link you provide.":""),16,INK);description.setPadding(dp(22),dp(10),dp(22),dp(12));content.addView(description);
+        ScrollView scroll=new ScrollView(this);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);scroll.addView(content);TextView description=label(item.meta+"\n\n"+(item.overview.isEmpty()?"No description available.":item.overview),16,INK);description.setPadding(dp(22),dp(10),dp(22),dp(12));content.addView(description);
         AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle(item.title).setView(scroll).setNegativeButton("Close",null)
             .setNeutralButton(isFavorite(item)?"Remove favorite":"Favorite",(d,w)->toggleFavorite(item));
         if(item.kind.equals("tv")||item.kind.equals("season"))dialog.setPositiveButton("Browse",(d,w)->open(item));
-        else dialog.setPositiveButton(prefs.contains("stream:"+item.key())?"Play saved stream":"Link stream",(d,w)->{
-            String url=prefs.getString("stream:"+item.key(),"");if(CatalogItem.validStream(url))play(url,item.title,item.key());else link(item);
-        });
+        else dialog.setPositiveButton("Play",(d,w)->playCatalogue(item));
         AlertDialog shown=dialog.show();
-        if(prefs.contains("stream:"+item.key()))content.addView(button("Change saved stream",()->{shown.dismiss();link(item);}));
+        if(item.kind.equals("movie")||item.kind.equals("episode")){
+            if(prefs.contains("stream:"+item.key()))content.addView(button("Play saved direct link",()->{shown.dismiss();play(prefs.getString("stream:"+item.key(),""),item.title,item.key());}));
+            content.addView(button("Use a direct link",()->{shown.dismiss();link(item);}));
+        }
     }
     private void link(CatalogItem item){
         EditText input=new EditText(this);input.setSingleLine(true);input.setTextColor(INK);input.setHint("https://… direct media URL");input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
@@ -142,6 +142,8 @@ public class LibraryActivity extends Activity {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Stream for "+item.title).setView(input).setNegativeButton("Cancel",null).setPositiveButton("Save & play",null).create();
         dialog.setOnShowListener(event->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{String value=input.getText().toString().trim();if(!CatalogItem.validStream(value)){input.setError("Enter a direct HTTPS media URL");return;}prefs.edit().putString("stream:"+item.key(),value).apply();dialog.dismiss();play(value,item.title,item.key());}));dialog.show();
     }
+    private void playCatalogue(CatalogItem item){startActivity(new Intent(this,PlayerActivity.class).putExtra("mediaKind",item.kind).putExtra("mediaId",item.id)
+        .putExtra("season",item.season).putExtra("episode",item.episode).putExtra("title",item.title).putExtra("resumeKey",item.key()));}
     private void play(String url,String label,String key){startActivity(new Intent(this,PlayerActivity.class).putExtra("url",url).putExtra("title",label).putExtra("resumeKey",key));}
     private void more(){
         new AlertDialog.Builder(this).setTitle("FlXtR").setItems(new String[]{"Open a direct video URL","Play Big Buck Bunny demo","Refresh this page",prefs.getBoolean("compact",false)?"Larger posters":"Smaller posters"},(dialog,which)->{

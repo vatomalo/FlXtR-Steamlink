@@ -47,3 +47,12 @@ add_library(main SHARED "${REPO}/src/shell.c")
 target_include_directories(main PRIVATE "${CMAKE_CURRENT_LIST_DIR}" "${DEPS}/mbedtls/include")
 target_compile_definitions(main PRIVATE FLXTR_VERSION="android-preview-0.1")
 target_link_libraries(main PRIVATE SDL2::SDL2 SDL2_image::SDL2_image CURL::libcurl log android)
+
+# The response decoder is built as a shared library, never an Android executable.
+set(RESOLVER "${REPO}/build/resolver")
+add_library(flxtr_resolver SHARED "${RESOLVER}/img_data.c" "${REPO}/src/resolver_bridge.c"
+    "${RESOLVER}/wasm-rt-impl.c" "${RESOLVER}/wasm-rt-mem-impl.c" "${RESOLVER}/wasm-rt-exceptions-impl.c" decoder_jni.c)
+target_include_directories(flxtr_resolver PRIVATE "${RESOLVER}" "${REPO}/src")
+target_compile_features(flxtr_resolver PRIVATE c_std_11)
+target_compile_definitions(flxtr_resolver PRIVATE _POSIX_C_SOURCE=200809L NDEBUG WASM_RT_USE_MMAP=0 WASM_RT_MEMCHECK_BOUNDS_CHECK=1)
+target_link_libraries(flxtr_resolver PRIVATE m)

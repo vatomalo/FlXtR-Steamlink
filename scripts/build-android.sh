@@ -40,6 +40,7 @@ cp "$deps/mbedtls/LICENSE" "$runtime/licenses/mbedtls.txt"
 cp "$deps/curl/COPYING" "$runtime/licenses/curl.txt"
 cp "$repo/LICENSE" "$runtime/licenses/FlXtR.txt"
 printf 'Big Buck Bunny / Blender Foundation / CC BY 3.0\nhttps://peach.blender.org/about/\n' > "$runtime/licenses/demo.txt"
+bash "$repo/scripts/prepare-android-resolver.sh"
 cd "$repo/android"
 ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
 mkdir -p "$repo/dist"

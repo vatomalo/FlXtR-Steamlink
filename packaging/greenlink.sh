@@ -30,14 +30,37 @@ while :; do
     code=$?
     if [ -r ./power-activity.sh ]; then sh ./power-activity.sh --idle >power-activity.log 2>&1 || true; fi
     if [ "$code" -eq 44 ]; then
-        # Gamez: hand the display to Moonlight after FlXtR has shut down SDL.
-        # Keep existing pairing, controller setup, and app identity unchanged.
+        # The UI passes a numeric catalog selection, never a shell command.
+        game_id=$(cat gamez-request 2>/dev/null) || game_id=
+        rm -f gamez-request
+        case "$game_id" in
+            1) game='Final Fantasy VII Remake' ;;
+            2) game='Ghost of Tsushima' ;;
+            3) game='Nioh 2 Complete Edition' ;;
+            4) game='Minecraft Dungeons' ;;
+            5) game='NINJA GAIDEN - Master Collection' ;;
+            6) game='Yakuza 3 Remastered' ;;
+            7) game='Yakuza 4 Remastered' ;;
+            8) game='Yakuza 5 Remastered' ;;
+            9) game='Yakuza 6 The Song of Life' ;;
+            10) game='Persona 4 Golden' ;;
+            11) game='Chrono Trigger' ;;
+            12) game='TEKKEN 8' ;;
+            13) game='Street Fighter V - Champion Edition' ;;
+            14) game='Kingdom Hearts III and Re-Mind' ;;
+            15) game='The Witcher 3 - Wild Hunt' ;;
+            16) game='Starfield' ;;
+            *) printf '%s\n' 'Invalid Gamez selection' >moonlight-gamez.log
+               set -- --library games
+               continue ;;
+        esac
+        # Sunshine must have an application registered with this exact title.
         (
             cd /home/apps/moonlight || exit 127
             export HOME=/usr/local/moonlight
             export SDL_ENABLE_STEAM_CONTROLLERS=1
             export SENSOR_REPORT_RATE_LIMIT_HZ=0
-            exec ./bin/moonlight stream 192.168.10.187 "Final Fantasy VII Remake" --1080 --fps 60
+            exec ./bin/moonlight stream 192.168.10.187 "$game" --1080 --fps 60
         ) >moonlight-gamez.log 2>&1
         printf '%d\n' "$?" >game-exit-status
         set -- --library games

@@ -446,7 +446,9 @@ static int games_system(int page,int folder){
             "Street Fighter V - Champion Edition",
             "Kingdom Hearts III and Re-Mind",
             "The Witcher 3 - Wild Hunt",
-            "Starfield"
+            "Starfield",
+            "Black Myth: Wukong",
+            "Baldur's Gate 3"
         };
         total=(int)(sizeof(pc_games)/sizeof(pc_games[0]));
         for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){

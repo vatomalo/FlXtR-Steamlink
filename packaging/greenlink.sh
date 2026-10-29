@@ -107,6 +107,34 @@ while :; do
                set -- --library games
                continue ;;
         esac
+        # Optional single-entry Gamez bridge. Disabled unless locally configured.
+        # Never launch the FFVII dummy session if the Windows companion rejects a game.
+        if [ -f gamez-bridge.conf ]; then
+            GAMEZ_HOST= GAMEZ_TOKEN_FILE= GAMEZ_SUNSHINE_APP=
+            . ./gamez-bridge.conf
+            case "$GAMEZ_HOST" in
+                ''|*[!0-9A-Za-z.:-]*) printf '%s\n' 'Invalid Gamez bridge host' >moonlight-gamez.log; set -- --library games; continue ;;
+            esac
+            case "$GAMEZ_SUNSHINE_APP" in
+                '') printf '%s\n' 'Missing Sunshine dummy application name' >moonlight-gamez.log; set -- --library games; continue ;;
+            esac
+            if [ ! -r "$GAMEZ_TOKEN_FILE" ]; then
+                printf '%s\n' 'Missing Gamez bridge token' >moonlight-gamez.log
+                set -- --library games
+                continue
+            fi
+            token=$(cat "$GAMEZ_TOKEN_FILE")
+            if ! curl --fail --silent --show-error --connect-timeout 3 --max-time 12 \
+                -X POST -H "Authorization: Bearer $token" \
+                --data-binary "$game_id" "http://$GAMEZ_HOST/v1/launch" \
+                >gamez-bridge-response.json 2>moonlight-gamez.log; then
+                printf '%s\n' 'Gamez companion rejected launch; not starting Moonlight' >>moonlight-gamez.log
+                set -- --library games
+                continue
+            fi
+            game=$GAMEZ_SUNSHINE_APP
+        fi
+        # Legacy route remains available when gamez-bridge.conf is absent.
         # Sunshine must have an application registered with this exact title.
         (
             cd /home/apps/moonlight || exit 127

@@ -1747,6 +1747,10 @@ static void play(void) {
         game_exit=1;running=0;return;
     }
     if(!strcmp(t->kind,"moonlight-game")){
+        FILE *request=fopen("gamez-request","w");
+        if(!request){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
+        fprintf(request,"%d\n",t->id);
+        if(fclose(request)){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
         moonlight_exit=1;
         running=0;
         return;

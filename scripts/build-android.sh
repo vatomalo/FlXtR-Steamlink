@@ -41,7 +41,7 @@ cp "$deps/curl/COPYING" "$runtime/licenses/curl.txt"
 cp "$repo/LICENSE" "$runtime/licenses/FlXtR.txt"
 printf 'Big Buck Bunny / Blender Foundation / CC BY 3.0\nhttps://peach.blender.org/about/\n' > "$runtime/licenses/demo.txt"
 cd "$repo/android"
-./gradlew --no-daemon assembleDebug lintDebug
+./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
 mkdir -p "$repo/dist"
 cp app/build/outputs/apk/debug/app-debug.apk "$repo/dist/FlXtR-Android-preview.apk"
 sha256sum "$repo/dist/FlXtR-Android-preview.apk"

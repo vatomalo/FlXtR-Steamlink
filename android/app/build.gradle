@@ -7,8 +7,8 @@ android {
         applicationId 'org.flxtr.android'
         minSdk 28
         targetSdk 35
-        versionCode 1
-        versionName '0.1-android-preview'
+        versionCode 2
+        versionName '0.2-android-preview'
         ndk { abiFilters.addAll((project.findProperty('flxtrAbis') ?: 'armeabi-v7a,arm64-v8a').split(',')) }
         externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_shared' } }
     }
@@ -21,4 +21,8 @@ android {
     buildTypes { release { minifyEnabled false } }
 }
 
-dependencies { implementation 'androidx.core:core:1.15.0' }
+dependencies {
+    implementation 'androidx.core:core:1.15.0'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}

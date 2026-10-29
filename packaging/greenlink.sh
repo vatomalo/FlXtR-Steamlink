@@ -50,6 +50,8 @@ while :; do
             14) game='Kingdom Hearts III and Re-Mind' ;;
             15) game='The Witcher 3 - Wild Hunt' ;;
             16) game='Starfield' ;;
+            17) game='Black Myth: Wukong' ;;
+            18) game='Baldur\'s Gate 3' ;;
             *) printf '%s\n' 'Invalid Gamez selection' >moonlight-gamez.log
                set -- --library games
                continue ;;

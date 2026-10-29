@@ -13,6 +13,6 @@ cc -shared -fPIC -Os -std=c11 -D_POSIX_C_SOURCE=200809L -DNDEBUG -DWASM_RT_USE_M
     build/resolver/wasm-rt-impl.c build/resolver/wasm-rt-mem-impl.c build/resolver/wasm-rt-exceptions-impl.c \
     android/app/src/main/cpp/decoder_jni.c -o "$build/libflxtr_resolver.so" -lm -lpthread
 java --add-modules jdk.compiler com.sun.tools.javac.Main -cp "$json" -d "$build/classes" \
-    android/app/src/main/java/org/flxtr/android/{CatalogItem,StreamProtocol,StreamDecoder,StreamResolver}.java tests/android/StreamResolverSmoke.java
+    android/app/src/main/java/org/flxtr/android/{CatalogItem,MediaCaptions,StreamProtocol,StreamDecoder,StreamResolver}.java tests/android/StreamResolverSmoke.java
 java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke
 java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke episode

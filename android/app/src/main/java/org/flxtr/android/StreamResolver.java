@@ -10,11 +10,14 @@ import java.util.*;
 
 final class StreamResolver {
     interface Progress {void update(String message);}
+    interface ExtraBackend {StreamProtocol.Stream resolve(CatalogItem item,int attempt,Request request,Progress progress) throws Exception;}
+    static volatile ExtraBackend extraBackend;
     static final class Request {
         volatile boolean cancelled;
+        volatile Runnable onCancel;
         volatile HttpsURLConnection connection;
         final long deadline=System.nanoTime()+90_000_000_000L;
-        void cancel(){cancelled=true;HttpsURLConnection active=connection;if(active!=null)active.disconnect();}
+        void cancel(){cancelled=true;HttpsURLConnection active=connection;if(active!=null)active.disconnect();if(onCancel!=null)onCancel.run();}
         void check() throws IOException {if(cancelled||Thread.currentThread().isInterrupted())throw new InterruptedIOException("Cancelled");if(System.nanoTime()>deadline)throw new IOException("Stream lookup timed out");}
     }
     static final class Session {
@@ -23,11 +26,17 @@ final class StreamResolver {
         private int next;
         Session(CatalogItem item){this.item=item;}
         StreamProtocol.Stream next(Request request,Progress progress) throws Exception {
+            if(!item.kind.equals("movie")&&!item.kind.equals("episode")){
+                if(extraBackend==null)throw new IOException("Media backend unavailable");
+                int tries=0;boolean continuous=item.kind.equals("mtv-channel")||item.kind.equals("tv-channel");
+                while(tries++<2&&(continuous||next<2)){request.check();try{StreamProtocol.Stream result=extraBackend.resolve(item,next++,request,progress);if(result.offlineId==null&&CatalogItem.validStream(result.url)){probe(result,request);if(result.audioUrl!=null){StreamProtocol.Stream audio=new StreamProtocol.Stream(result.audioUrl,result.server);audio.headers.clear();audio.headers.putAll(result.headers);probe(audio,request);}}result.item=result.item==null?item:result.item;return result;}catch(Exception failure){request.check();}}
+                throw new IOException("No working media source was found");
+            }
             String path=StreamProtocol.path(item);
             if(servers==null){progress.update("Finding available servers…");servers=StreamProtocol.servers(lookup(path,"",request));}
             while(next<servers.size()){
                 request.check();String server=servers.get(next++);progress.update("Opening server "+next+" of "+servers.size()+"…");
-                try{StreamProtocol.Stream stream=StreamProtocol.stream(lookup(path,server,request),server);probe(stream,request);request.check();return stream;}
+                try{StreamProtocol.Stream stream=StreamProtocol.stream(lookup(path,server,request),server);probe(stream,request);request.check();stream.item=item;return stream;}
                 catch(Exception unavailable){request.check();/* Try the next provider; never log signed media URLs. */}
             }
             throw new IOException("No playable stream was returned. Please retry or choose another title.");

@@ -1,95 +1,120 @@
-# Android 0.3 — catalogue playback preview
+# FlXtR Android media preview 0.4
 
-This update replaces the main Android screen with a native touch browser.
-The app package and launcher entry stay the same so the local APK can update
-0.1/0.2 without uninstalling. Android 9+; both ARM ABIs are included. Primary test
-device: Samsung Galaxy Tab A SM-T510 on Android 11.
+Target tested: Samsung SM-T510 running Android 11 (32-bit armeabi-v7a).
+The APK also includes arm64-v8a for other devices. Update over the earlier APK;
+keep the same signing key to retain favorites and progress.
 
-## What is available
+## Library and controls
 
-- Movies and series: popular pages, search, posters, ratings and descriptions.
-- Tap a series to open seasons; tap a season to open its episodes.
-- Tap a movie/episode for details. Hold any poster for details and favorites.
-- Favorites remain available offline. Successfully visited pages and posters
-  are cached; an older page used after a connection failure is marked Saved page.
-- Scroll vertically; swipe horizontally or tap Next/Previous to change pages.
-- Android Back returns through seasons/pages. Page, scroll and search survive
-  navigation and rotation. Portrait and landscape are supported.
-- More offers direct HTTPS video, the Big Buck Bunny demo, refresh and poster size.
-- A movie/episode can remember a direct media URL through Use a direct link. Playback
-  position is saved on leaving the player and restored on the next visit.
+Movie and episode details use **Play** to resolve and start playback. Manual links
+are available only through More → Open a direct video URL.
 
-Movie and episode details now have **Play**. The app resolves available servers
-with the existing native response decoder, probes the media, and opens it with
-Media3 ExoPlayer. It carries the media request headers through HLS manifests,
-segments and keys. Failed servers are skipped; Next server tries another source.
-Retry starts a fresh lookup. Signed stream URLs are not saved to disk.
+Library offers Movies, Series, KissAnime, Music, MTV, TV channels, Internet Archive,
+Continue, History, Favorites, Downloads and Local media. Movies/series support
+search, seasons, episodes, genres and ordering. Anime supports search, genres,
+ordering and SUB/DUB selection under More. Archive folders contain individually
+playable files. Music accepts searches, YouTube links and public Spotify playlist
+links; Spotify entries become music searches and do not play Spotify audio.
 
-Use a direct link and Play saved direct link remain optional alternatives.
+More → Choose theme selects Original White Metal, Original Green/Black, or the
+previous Touch theme. The original themes use FlXtR's texture, pixel font, sidebar
+and a cover carousel; Touch retains the native poster grid. The theme persists.
+Touch, Android Back and controllers can be used together.
 
-MTV, music helpers, games, downloads, external subtitle lookup and FlXtR-specific playback
-menus still need Android implementations. The older SDL activity remains internal;
-the Android launcher now opens the touch catalogue. Bluetooth scanning, microphone
-and broad shared-storage permissions are not requested. Video playback uses
-Media3 with HLS support, audio focus, resume and a 720p/H.264 preference for the
-tablet. Actual codec support still depends on the device.
+| Controller | Library | Player |
+| --- | --- | --- |
+| D-pad / left stick | Navigate | Show/navigate playback controls |
+| A | Select | Play/pause |
+| B | Back | Return to library |
+| X | Search | Show playback controls |
+| Y | Details | Playback options |
+| LB / RB | Previous/next page | Seek backward/forward |
+| Start | More | Play/pause |
 
-## Tablet test
+Controller keys have been exercised through ADB; physical controller mappings and
+stick behavior still need a real controller test.
 
-1. Open `FlXtR-Android-preview-0.3.apk` on the tablet and update FlXtR Preview.
-   Use the local APK from the same builder; CI debug signing keys may differ.
-2. Tap Movies and Series. Check posters, search, next page and horizontal swipes.
-3. Open a series, season and episode; use Android Back to return to the same page.
-4. Hold a poster, save a favorite, then open Favorites. Test removing it there.
-5. Rotate the tablet on a search result page and inside a season.
-6. Open a movie → Play. Check that server lookup finishes and picture/audio start.
-   Try Next server, then Back. Reopen the movie and check resume.
-7. Open Series → a show → season → episode → Play. Also test the Big Buck Bunny
-   demo under More and a direct media URL if available.
-8. Disconnect Wi-Fi and revisit a cached page; check the Saved page message.
+## Playback and offline media
 
-A failed request must leave navigation and Retry usable. Rapidly switch tabs
-while loading to check that an old response does not replace the current screen.
+The player resolves movies, episodes and anime, retains source headers through
+HLS requests, tries alternative servers, and saves progress/history. Available
+embedded/provider text captions can be selected in the player. More → Playback
+settings controls preferred caption language/size and episode autoplay. Player
+Options includes speed, picture fit, subtitles, next episode/video and downloading.
+Episode autoplay can cross seasons; music/local queues follow the visible list.
+MTV plays a continuous video mix. TV channels support a ten-block Oslo schedule,
+genres, selection weights and marathon mode. MTV weights, custom search and fusion
+style are configurable under More.
 
-## Reproduce
+Downloads are app-private and survive process restarts. Choose Download for offline
+playback on a playable title; visit Library → Downloads to refresh status, retry,
+remove, or play completed media. The default is unmetered/Wi-Fi downloads. HLS
+selection is capped at 720p with H.264 preferred; separate music audio is also
+queued. Signed stream addresses are retained only inside private download metadata
+while required for the transfer. Failed/expired transfers may require Retry.
 
-Linux/WSL, JDK 17+, Python 3, curl, tar, and an SDK with accepted licenses:
+More → Add local media opens Android's document picker for videos/audio; the app
+retains access to selected documents without broad storage permission. Moving or
+deleting a document invalidates that entry. Music audio can continue in a media
+service while browsing, with system playback controls.
+
+This remains a media preview, not complete desktop feature parity. Game/emulator
+launching is excluded as requested. Desktop phone-upload/remote/quiz tools, API-key
+setup, external subtitle search/delay and advanced TV airing/history editors have
+not been ported. Download recovery and background music need longer device tests.
+
+## Build and checks
+
+Linux/WSL, JDK 17+, Python 3, curl, tar, C/C++ build tools and an Android SDK:
 
 ```sh
 sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'ndk;28.0.13004108' 'cmake;3.22.1' 'platform-tools'
-ANDROID_HOME=/path/to/android-sdk bash scripts/build-android.sh
+ANDROID_HOME=/path/to/sdk bash scripts/build-android.sh
 ```
 
-The script downloads pinned SDL2, SDL2_image, mbed TLS and curl sources, then runs
-`assembleDebug testDebugUnitTest lintDebug`. Output: `dist/FlXtR-Android-preview.apk`.
-Gradle 8.9, Android Gradle Plugin 8.7.3, NDK r28 and Media3 1.5.1. Native libraries
-support 16 KB pages. The resolver preparation uses a host C/C++ compiler, CMake,
-Python and wget; WABT 1.0.36, its auxiliary header and the decoder module are hash
-verified. A matching installed wasm2c can be reused. No Linux child executables
-run on Android.
-Third-party notices and demo attribution are packaged in `runtime/licenses`.
-The sample is Big Buck Bunny / Blender Foundation / CC BY 3.0:
-https://peach.blender.org/about/
+The script builds both ARM variants and runs assembleDebug, testDebugUnitTest and
+lintDebug. Gradle 8.9, AGP 8.7.3, NDK r28, Media3 1.5.1, jsoup 1.18.3 and
+Android yt-dlp runtime 0.18.1 are pinned. Music uses packaged Android Python/QuickJS;
+no Linux worker is needed. More → Update music engine updates yt-dlp if a provider
+change requires it. The optional pixel font regeneration script uses fontTools;
+the generated font is already checked in.
 
-## Validation
+The native movie resolver/WASM preparation is hash-verified as before. FlXtR's own
+native libraries are built for 16 KB pages; this preview's primary device target is
+Android 11. No blanket 16 KB compatibility claim is made for third-party runtimes.
+See android-third-party.md and packaged assets/licenses for distribution notices.
 
-- Both ARM variants compile. Android build, lint and all 16 unit tests pass.
-- Protocol tests cover request signing/fingerprint compatibility, movie/episode
-  identities (including specials), server validation, HTTPS source selection,
-  media-header isolation and cancellation. Catalogue tests remain in place.
-- The same Java resolver and JNI library were exercised on the Linux host against
-  live movie and episode lookups. Both resolved HLS playlists and fetched 64 KiB
-  media fragments. Invalid decoder input was rejected and a later lookup worked.
-- APK signing, ABI metadata and 16 KB alignment are checked before delivery.
-- Actual MediaCodec rendering and audio on the SM-T510 still require the tablet
-  tests above. A provider can be temporarily unavailable for a particular title.
-
-To repeat the optional live integration test after building on Linux/WSL:
+Validation: 30 unit tests cover catalogue parsing, request signing, source/header
+handling, anime parsing/AES/token format, captions, archive filtering, controller
+repeat policy, finite media ranges, media persistence, TV scheduling and MTV/Spotify mapping. Live host
+tests fetch movie/episode/anime manifests and media fragments, and archive listings.
+Debug-only MediaSmokeInstrumentation can probe and render known sample media on a
+connected tablet without printing signed stream URLs:
 
 ```sh
-ANDROID_HOME=/path/to/android-sdk bash tests/test-android-resolver-live.sh
+adb shell am instrument -w -e mode anime org.flxtr.android/.MediaSmokeInstrumentation
+adb shell am instrument -w -e mode play-anime org.flxtr.android/.MediaSmokeInstrumentation
+# Also: music, movie, play-music, play-movie, play-seek, play-offline, controls
 ```
 
-SDL's Java glue uses AndroidX receiver registration for Android compatibility.
-Permission lint suppressions remain scoped to unused SDL capture and optional
-Bluetooth helpers; application code is checked normally.
+Provider availability varies by title and region. A successful sample verifies
+that path, not every catalogue item or every subtitle format.
+
+## Device results (2026-10-29)
+
+The final 0.4 APK was installed over 0.3 through Windows ADB on the user's
+Android 11 / armeabi-v7a tablet. All four device playback checks returned success:
+
+| Sample path | Video | Audio decoded | Playback | Additional check |
+| --- | --- | --- | --- | --- |
+| Movie 550 | Rendered | 64 buffers | Advanced past 1 s | Automatic stream resolution |
+| Naruto episode 7417 | Rendered | 64 buffers | Advanced past 1 s | Two provider caption tracks resolved |
+| YouTube / Blender | Rendered | 81 buffers | Advanced past 61 s | Seek to 60 s rendered successfully |
+| Downloaded Blender demo | Rendered | 70 buffers | Advanced past 1 s | Download completed; cache-only player used |
+
+Controller A opened Play; B closed the dialog; Start opened the library menu.
+Original White Metal, Green/Black and Touch themes were visually checked on the
+tablet, including switching between the carousel and grid. No app crash was
+reported during these checks. Physical gamepads, extended playback, long download
+recovery, TV scheduling over clock boundaries, and background music still need
+broader testing. These are sample checks, not a guarantee for every provider item.

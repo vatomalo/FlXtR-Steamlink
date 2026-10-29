@@ -17,7 +17,7 @@ final class CatalogPage {
         JSONArray rows=root.optJSONArray(field);
         if(rows==null)throw new JSONException("Catalogue response is missing "+field);
         List<CatalogItem> items=new ArrayList<>();
-        for(int i=0;i<Math.min(rows.length(),200);i++){
+        for(int i=0;i<Math.min(rows.length(),kind.equals("season")||kind.equals("episode")?5000:200);i++){
             JSONObject row=rows.optJSONObject(i);if(row==null)continue;
             int id=row.optInt("id"),sn=0,ep=0;
             if(kind.equals("season")){id=showId;sn=row.optInt("season_number",-1);if(sn<0)continue;}

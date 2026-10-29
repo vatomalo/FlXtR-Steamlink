@@ -21,7 +21,8 @@ final class CatalogClient {
     static final class Request {
         volatile boolean cancelled;
         volatile HttpsURLConnection connection;
-        void cancel(){cancelled=true;HttpsURLConnection c=connection;if(c!=null)c.disconnect();}
+        volatile StreamResolver.Request bridge;
+        void cancel(){cancelled=true;HttpsURLConnection c=connection;if(c!=null)c.disconnect();if(bridge!=null)bridge.cancel();}
         void check() throws InterruptedIOException {if(cancelled||Thread.currentThread().isInterrupted())throw new InterruptedIOException("Cancelled");}
     }
     static String path(String kind,int page,String query,int id,int season) throws IOException {
@@ -31,8 +32,18 @@ final class CatalogClient {
         return query.isEmpty()?"/"+kind+"/popular?page="+page:
             "/search/"+kind+"?include_adult=false&query="+URLEncoder.encode(query,"UTF-8")+"&page="+page;
     }
+    static String path(String kind,int page,String query,int id,int season,int genre,int order) throws IOException {
+        if(!query.isEmpty()||(!kind.equals("movie")&&!kind.equals("tv"))||(genre==0&&order==0))return path(kind,page,query,id,season);
+        int[] movie={0,28,12,35,18,14,27,9648,10749,878,53,16},tv={0,10759,10759,35,18,10765,-1,9648,-1,10765,-1,16};
+        if(genre<0||genre>=movie.length||order<0||order>3)throw new IOException("Invalid filter");int g=(kind.equals("movie")?movie:tv)[genre];if(g<0)throw new IOException("Genre unavailable for series");
+        String[] sort={"popularity.desc","vote_average.desc",kind.equals("movie")?"primary_release_date.desc":"first_air_date.desc",kind.equals("movie")?"original_title.asc":"name.asc"};
+        return "/discover/"+kind+"?include_adult=false&vote_count.gte=20&sort_by="+sort[order]+"&page="+page+(g==0?"":"&with_genres="+g);
+    }
     CatalogPage load(String kind,int page,String query,int id,int season,Request request) throws Exception {
-        String path=path(kind,page,query,id,season);
+        return load(kind,page,query,id,season,0,0,request);
+    }
+    CatalogPage load(String kind,int page,String query,int id,int season,int genre,int order,Request request) throws Exception {
+        String path=path(kind,page,query,id,season,genre,order);
         File file=new File(jsonDir,hash(path)+".json");
         long age=System.currentTimeMillis()-file.lastModified();
         byte[] data=null;boolean cached=false;
@@ -47,28 +58,18 @@ final class CatalogClient {
     Bitmap poster(String path) throws Exception {
         if(CatalogItem.safePoster(path).isEmpty())return null;
         File file=new File(imageDir,hash(path)+".img");
-        byte[] data=file.isFile()&&file.length()<=1024*1024?Files.readAllBytes(file.toPath()):null;
-        if(data==null){data=download("https://image.tmdb.org/t/p/w185"+path,1024*1024,new Request());write(file,data);}
+        byte[] data=file.isFile()&&file.length()<=4*1024*1024?Files.readAllBytes(file.toPath()):null;
+        if(data==null){data=download(path.startsWith("https://")?path:"https://image.tmdb.org/t/p/w185"+path,4*1024*1024,new Request());write(file,data);}
         BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(data,0,data.length,bounds);
-        if(bounds.outWidth<1||bounds.outWidth>1024||bounds.outHeight>2048){file.delete();return null;}
-        BitmapFactory.Options options=new BitmapFactory.Options();options.inPreferredConfig=Bitmap.Config.RGB_565;
+        if(bounds.outWidth<1||bounds.outWidth>4096||bounds.outHeight>8192){file.delete();return null;}
+        BitmapFactory.Options options=new BitmapFactory.Options();options.inPreferredConfig=Bitmap.Config.RGB_565;options.inSampleSize=Math.max(1,bounds.outWidth/250);
         Bitmap bitmap=BitmapFactory.decodeByteArray(data,0,data.length,options);
         if(bitmap==null)file.delete();
         return bitmap;
     }
     private static byte[] download(String url,int limit,Request request) throws IOException {
-        request.check();HttpsURLConnection connection=(HttpsURLConnection)new URL(url).openConnection();request.connection=connection;
-        connection.setConnectTimeout(8000);connection.setReadTimeout(12000);connection.setInstanceFollowRedirects(false);
-        connection.setRequestProperty("Accept","application/json,image/*");connection.setRequestProperty("User-Agent","FlXtR-Android/0.2");
-        try {
-            request.check();int code=connection.getResponseCode();if(code!=200)throw new IOException("Server returned HTTP "+code);
-            if(connection.getContentLengthLong()>limit)throw new IOException("Response is too large");
-            try(InputStream in=connection.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
-                byte[] buffer=new byte[8192];int n;
-                while((n=in.read(buffer))!=-1){request.check();if(out.size()+n>limit)throw new IOException("Response is too large");out.write(buffer,0,n);}
-                return out.toByteArray();
-            }
-        } finally {request.connection=null;connection.disconnect();}
+        request.check();StreamResolver.Request media=new StreamResolver.Request();
+        request.bridge=media;if(request.cancelled)media.cancel();try{return MediaHttp.bytes(url,java.util.Collections.emptyMap(),limit,media);}finally{request.bridge=null;}
     }
     private static void write(File file,byte[] bytes) throws IOException {
         File temp=File.createTempFile("download-",".tmp",file.getParentFile());

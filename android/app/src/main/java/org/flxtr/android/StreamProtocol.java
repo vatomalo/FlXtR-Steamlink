@@ -38,7 +38,9 @@ final class StreamProtocol {
     }
     static final class Stream {
         final String url,server;
-        String mime;
+        String mime,audioUrl,offlineId;
+        CatalogItem item;
+        final List<MediaCaptions.Track> subtitles=new ArrayList<>();
         final Map<String,String> headers=new HashMap<>();
         Stream(String url,String server){this.url=url;this.server=server;headers.put("User-Agent",UA);headers.put("Origin","https://flixer.gd");headers.put("Referer","https://flixer.gd/");}
     }
@@ -55,6 +57,6 @@ final class StreamProtocol {
             String key=keys.next(),value=headers.optString(key,"");String name=key.equalsIgnoreCase("referer")?"Referer":key.equalsIgnoreCase("origin")?"Origin":key.equalsIgnoreCase("user-agent")?"User-Agent":null;
             if(name!=null&&!value.isEmpty()&&value.length()<512&&value.indexOf('\r')<0&&value.indexOf('\n')<0)result.headers.put(name,value);
         }}
-        return result;
+        MediaCaptions.read(root,result);MediaCaptions.read(selected,result);return result;
     }
 }

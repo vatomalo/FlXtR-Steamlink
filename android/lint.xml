@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- SDL checks Bluetooth permissions via PackageManager at runtime; this
+         preview declares neither legacy Bluetooth nor BLUETOOTH_CONNECT, so
+         its optional Steam Controller BLE backend remains inactive.
+         SDL audio capture is unused; do not request microphone access solely
+         to satisfy analysis of this third-party helper. App code stays checked. -->
+    <issue id="MissingPermission">
+        <ignore path="**/org/libsdl/app/HIDDeviceBLESteamController.java" />
+        <ignore path="**/org/libsdl/app/HIDDeviceManager.java" />
+        <ignore path="**/org/libsdl/app/SDLAudioManager.java" />
+    </issue>
+</lint>

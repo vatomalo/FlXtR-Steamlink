@@ -1,5 +1,8 @@
 # FlXtR-Steamlink
 
+Android tablet preview (interface and direct HTTPS video playback): [build and testing](docs/ANDROID.md).
+
+
 Steam Link shared SDL audio investigation, optional queued RetroArch driver and
 on-device diagnostics: [SDL audio validation](docs/steamlink-sdl-audio.md).
 

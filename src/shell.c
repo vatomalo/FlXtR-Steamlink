@@ -20,6 +20,9 @@
 #include <time.h>
 #include "windows_runtime.h"
 #include "windows_archive.h"
+#ifdef __ANDROID__
+#include "android_bridge.h"
+#endif
 #include "font.h"
 #include "video_layout.h"
 #include "tv_schedule.h"
@@ -848,6 +851,11 @@ static int library_cache_restore(Browse next,int push,int pop){
     return 0;
 }
 static void request_catalog(Browse next,int push,int pop){
+#ifdef __ANDROID__
+    if(next.mode&&next.mode!=FAVORITES_MODE){
+        play_after_load=0;snprintf(status,sizeof(status),"ANDROID PREVIEW / ONLINE CATALOG NOT PORTED YET");return;
+    }
+#endif
     if(next.mode==OFFLINE_MODE){if(catalog_pid)return;tv_active=auto_active=0;about=ready_only=0;browse=next;history_size=0;video_download_list();return;}
     int slot=library_filter_slot(next.mode);
     if(slot>=0&&!pop&&browse.mode!=next.mode&&next.page==1&&!next.query[0]&&!next.id&&!next.season){
@@ -1264,6 +1272,9 @@ static void draw_coverflow(void) {
 }
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
+#ifdef __ANDROID__
+    snprintf(status,sizeof(status),"ANDROID PREVIEW / INSTALL A NEW APK TO UPDATE");return;
+#endif
     if(samba_pid){snprintf(status,sizeof(status),"WAIT FOR SAMBA INSTALL/SERVICE WORKER");return;}
 #ifdef _WIN32
     ShellExecuteW(NULL,L"open",L"https://github.com/vatomalo/FlXtR-Steamlink/releases",NULL,NULL,SW_SHOWNORMAL);
@@ -1931,6 +1942,11 @@ static void tv_history_finish(const char *event,double position){
     tv_history_active=tv_history_confirmed=0;
 }
 static void launch_player(const Title *t) {
+#ifdef __ANDROID__
+    if(flxtr_android_play(t->url,t->title))snprintf(status,sizeof(status),"ANDROID PLAYBACK REQUIRES A DIRECT HTTPS MEDIA URL");
+    else snprintf(status,sizeof(status),"ANDROID PLAYER / BACK RETURNS TO FLXTR");
+    return;
+#endif
     if(video_download_requested){video_download_requested=0;auto_active=0;video_download_start(t);return;}
     if(!tv_preloading)unlink("youtube-playback-outcome");
     if(!strcmp(t->kind,"youtube")){
@@ -2308,6 +2324,13 @@ static int phone_dispatch(char *reply,size_t size){
     return code;
 }
 static void action(SDL_Keycode key) {
+#ifdef __ANDROID__
+    if(key==SDLK_AC_BACK)key=SDLK_ESCAPE;
+    /* Device services and external Linux workers have no Android backend yet. */
+    if(!settings_on&&(key==SDLK_m||key==SDLK_t||key==SDLK_g)){
+        snprintf(status,sizeof(status),"ANDROID PREVIEW / ONLINE CATALOG AND GAMES COMING NEXT");return;
+    }
+#endif
     if(video_download_delete_confirm){
         if(key==SDLK_RETURN){video_download_delete_confirm=0;video_download_delete(&video_download_delete_title);}
         else if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE)video_download_delete_confirm=0;
@@ -2708,6 +2731,13 @@ static void shutdown_children(pid_t *children,size_t count){
 #endif
 int main(int argc,char **argv) {
     const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0,usb_requested=0,weights_requested=0;Uint32 start,last_draw=0;int dirty=1;
+#ifdef __ANDROID__
+    /* Android can re-enter SDL_main after an Activity was finished. */
+    running=1;count=total=selection=0;settings_on=about=search_on=music_on=0;
+    memset(pads,0,sizeof(pads));memset(titles,0,sizeof(titles));
+    const char *private_dir=SDL_AndroidGetInternalStoragePath();
+    if(!private_dir||chdir(private_dir)){SDL_Log("Cannot open Android app storage");return 1;}
+#endif
     load_settings();search_dict_load();
     for(int i=1;i<argc;i++) {
 #ifdef _WIN32

@@ -430,14 +430,32 @@ static int games_list_filtered(int page,int refresh,int folder){
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
 static int games_system(int page,int folder){
     if(folder==11){
-        total=1;
-        if(page==1&&used<PAGE_SIZE){
+        static const char *const pc_games[]={
+            "Final Fantasy VII Remake",
+            "Ghost of Tsushima",
+            "Nioh 2 Complete Edition",
+            "Minecraft Dungeons",
+            "NINJA GAIDEN - Master Collection",
+            "Yakuza 3 Remastered",
+            "Yakuza 4 Remastered",
+            "Yakuza 5 Remastered",
+            "Yakuza 6 The Song of Life",
+            "Persona 4 Golden",
+            "Chrono Trigger",
+            "TEKKEN 8",
+            "Street Fighter V - Champion Edition",
+            "Kingdom Hearts III and Re-Mind",
+            "The Witcher 3 - Wild Hunt",
+            "Starfield"
+        };
+        total=(int)(sizeof(pc_games)/sizeof(pc_games[0]));
+        for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){
             Entry *e=&entries[used++];
-            strcpy(e->title,"FINAL FANTASY VII REMAKE");
-            strcpy(e->meta,"CAFELEBLANC / MOONLIGHT / A STREAM");
+            snprintf(e->title,sizeof(e->title),"%s",pc_games[i]);
+            strcpy(e->meta,"CAFELEBLANC / SUNSHINE / A STREAM");
             strcpy(e->kind,"moonlight-game");
-            strcpy(e->poster,"gameart:Final Fantasy VII Remake|PC");
-            e->id=1;
+            snprintf(e->poster,sizeof(e->poster),"gameart:%s|PC",pc_games[i]);
+            e->id=i+1;
         }
         return 0;
     }

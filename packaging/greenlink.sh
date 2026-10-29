@@ -29,6 +29,124 @@ while :; do
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
     if [ -r ./power-activity.sh ]; then sh ./power-activity.sh --idle >power-activity.log 2>&1 || true; fi
+    if [ "$code" -eq 44 ]; then
+        # The UI passes a numeric catalog selection, never a shell command.
+        game_id=$(cat gamez-request 2>/dev/null) || game_id=
+        rm -f gamez-request
+        case "$game_id" in
+            1) game='Final Fantasy VII Remake' ;;
+            2) game='Ghost of Tsushima' ;;
+            3) game='Nioh 2 Complete Edition' ;;
+            4) game='Minecraft Dungeons' ;;
+            5) game='NINJA GAIDEN - Master Collection' ;;
+            6) game='Yakuza 3 Remastered' ;;
+            7) game='Yakuza 4 Remastered' ;;
+            8) game='Yakuza 5 Remastered' ;;
+            9) game='Yakuza 6 The Song of Life' ;;
+            10) game='Persona 4 Golden' ;;
+            11) game='Chrono Trigger' ;;
+            12) game='TEKKEN 8' ;;
+            13) game='Street Fighter V - Champion Edition' ;;
+            14) game='Kingdom Hearts III and Re-Mind' ;;
+            15) game='The Witcher 3 - Wild Hunt' ;;
+            16) game='Starfield' ;;
+            17) game='Black Myth: Wukong' ;;
+            18) game='Baldur'\''s Gate 3' ;;
+            19) game='Actraiser Renaissance' ;;
+            20) game='Castlevania Advance Collection' ;;
+            21) game='Middle-Earth - Shadow of Mordor' ;;
+            22) game='My Friend Peppa Pig' ;;
+            23) game='Ruined King' ;;
+            24) game='Sword and Fairy 7' ;;
+            25) game='VtM - Reckoning of New York' ;;
+            26) game='Dragon Ball Z Kakarot' ;;
+            27) game='JUMP FORCE' ;;
+            28) game='Killer Instinct' ;;
+            29) game='MARVEL vs CAPCOM FC - AC' ;;
+            30) game='ONE PUNCH MAN A HERO NOBODY KNOWS' ;;
+            31) game='SOULCALIBUR VI Deluxe Edition' ;;
+            32) game='The King of Fighters XIV' ;;
+            33) game='FFXV' ;;
+            34) game='Final Fantasy VII Remake - Crisis Core Reunion' ;;
+            35) game='LIVE A LIVE' ;;
+            36) game='Light Fairytale Episode 2' ;;
+            37) game='SMT III Nocturne HD Remaster' ;;
+            38) game='Secret of Mana' ;;
+            39) game='Stranger of Paradise - Final Fantasy Origin' ;;
+            40) game='The Last Oricru' ;;
+            41) game='ToA' ;;
+            42) game='Trials of Mana' ;;
+            43) game='Valkyrie Elysium' ;;
+            44) game='Vampire The Masquerade - Shadows of New York' ;;
+            45) game='Vampire The Masquerade Bloodlines - Ultimate' ;;
+            46) game='Vampire The Masquerade Coteries of New York Deluxe Edition' ;;
+            47) game='Yakuza Kiwami 3 & Dark Ties' ;;
+            48) game='Ys IX Monstrum Nox' ;;
+            49) game='Beyond a Steel Sky' ;;
+            50) game='City of Broken Dreamers Book One' ;;
+            51) game='Ghosts n Goblins Resurrection' ;;
+            52) game='KAGE Shadow of the Ninja' ;;
+            53) game='KATANA KAMI A Way of the Samurai Story' ;;
+            54) game='Katamar iDamacy REROLL' ;;
+            55) game='Mega Man 11' ;;
+            56) game='No.More.Heroes.2.Desperate.Struggle.Build.7018796' ;;
+            57) game='No.More.Heroes.Build.7018523' ;;
+            58) game='P5S' ;;
+            59) game='Pathfinder Wrath of the Righteous' ;;
+            60) game='Sakuna - Of Rice and Ruin' ;;
+            61) game='Star Wars Jedi - Fallen Order' ;;
+            62) game='Steins;Gate' ;;
+            63) game='Stranger Things 3 The Game' ;;
+            64) game='SuperMash' ;;
+            65) game='The Fermi Paradox' ;;
+            66) game='The Walking Dead The Telltale Definitive Series' ;;
+            67) game='Until We Die' ;;
+            68) game='Way of the Samurai 4' ;;
+            69) game='Wolcen Lords of Mayhem Bloodtrail' ;;
+            *) printf '%s\n' 'Invalid Gamez selection' >moonlight-gamez.log
+               set -- --library games
+               continue ;;
+        esac
+        # Optional single-entry Gamez bridge. Disabled unless locally configured.
+        # Never launch the FFVII dummy session if the Windows companion rejects a game.
+        if [ -f gamez-bridge.conf ]; then
+            GAMEZ_HOST= GAMEZ_TOKEN_FILE= GAMEZ_SUNSHINE_APP=
+            . ./gamez-bridge.conf
+            case "$GAMEZ_HOST" in
+                ''|*[!0-9A-Za-z.:-]*) printf '%s\n' 'Invalid Gamez bridge host' >moonlight-gamez.log; set -- --library games; continue ;;
+            esac
+            case "$GAMEZ_SUNSHINE_APP" in
+                '') printf '%s\n' 'Missing Sunshine dummy application name' >moonlight-gamez.log; set -- --library games; continue ;;
+            esac
+            if [ ! -r "$GAMEZ_TOKEN_FILE" ]; then
+                printf '%s\n' 'Missing Gamez bridge token' >moonlight-gamez.log
+                set -- --library games
+                continue
+            fi
+            token=$(cat "$GAMEZ_TOKEN_FILE")
+            if ! curl --fail --silent --show-error --connect-timeout 3 --max-time 12 \
+                -X POST -H "Authorization: Bearer $token" \
+                --data-binary "$game_id" "http://$GAMEZ_HOST/v1/launch" \
+                >gamez-bridge-response.json 2>moonlight-gamez.log; then
+                printf '%s\n' 'Gamez companion rejected launch; not starting Moonlight' >>moonlight-gamez.log
+                set -- --library games
+                continue
+            fi
+            game=$GAMEZ_SUNSHINE_APP
+        fi
+        # Legacy route remains available when gamez-bridge.conf is absent.
+        # Sunshine must have an application registered with this exact title.
+        (
+            cd /home/apps/moonlight || exit 127
+            export HOME=/usr/local/moonlight
+            export SDL_ENABLE_STEAM_CONTROLLERS=1
+            export SENSOR_REPORT_RATE_LIMIT_HZ=0
+            exec ./bin/moonlight stream 192.168.10.187 "$game" --1080 --fps 60
+        ) >moonlight-gamez.log 2>&1
+        printf '%d\n' "$?" >game-exit-status
+        set -- --library games
+        continue
+    fi
     if [ "$code" -eq 43 ]; then
         # A broken Steam Link audio/video pipeline can trap RetroArch indefinitely,
         # repeatedly printing MV_PE_InputBufWrite failures and ignoring TERM.

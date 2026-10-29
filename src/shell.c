@@ -185,7 +185,7 @@ static SDL_Window *window;
 static SDL_Texture *posters[VISIBLE],*background;
 static SDL_GameController *pads[4];
 static pid_t player_pid, update_pid, samba_pid;
-static int restart_shell,game_exit, coverflow=1;
+static int restart_shell,game_exit,moonlight_exit, coverflow=1;
 #ifdef _WIN32
 typedef FlxtrPipeHandle PlayerPipe;
 #define player_pipe_close flxtr_pipe_close
@@ -1746,6 +1746,15 @@ static void play(void) {
         if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");return;}
         game_exit=1;running=0;return;
     }
+    if(!strcmp(t->kind,"moonlight-game")){
+        FILE *request=fopen("gamez-request","w");
+        if(!request){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
+        fprintf(request,"%d\n",t->id);
+        if(fclose(request)){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
+        moonlight_exit=1;
+        running=0;
+        return;
+    }
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
@@ -2842,7 +2851,7 @@ int main(int argc,char **argv) {
     pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
-    SDL_Quit();return game_exit?43:restart_shell?42:0;
+    SDL_Quit();return moonlight_exit?44:game_exit?43:restart_shell?42:0;
 }
 
 #ifdef _WIN32

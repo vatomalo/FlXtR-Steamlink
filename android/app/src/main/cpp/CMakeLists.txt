@@ -18,4 +18,4 @@ target_include_directories(flxtr_retro PRIVATE "${GAMBATTE}/libgambatte/src" "${
 target_compile_definitions(flxtr_retro PRIVATE __LIBRETRO__ HAVE_STDINT_H HAVE_INTTYPES_H CC_RESAMPLER_NO_HIGHPASS VIDEO_RGB565)
 target_compile_features(flxtr_retro PRIVATE cxx_std_11)
 target_compile_options(flxtr_retro PRIVATE -O2 -fno-strict-aliasing)
-target_link_libraries(flxtr_retro PRIVATE android log m)
+target_link_libraries(flxtr_retro PRIVATE android log m dl)

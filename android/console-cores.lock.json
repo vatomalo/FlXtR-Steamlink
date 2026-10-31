@@ -1,0 +1,45 @@
+{
+  "origin": "Official Libretro buildbot, fetched 2026-10-31",
+  "cores": {
+    "fceumm": {
+      "arm64-v8a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/fceumm_libretro_android.so.zip",
+        "sha256": "a14ea16fe7709beb1ef8bbc9288646c1d8bd6e00b6c5e2667526d9745c18aed8"
+      },
+      "armeabi-v7a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/fceumm_libretro_android.so.zip",
+        "sha256": "dc4dffcdffe25e50ed96b30908ec01e66bcc93f46efc716aacc15b24d5403e4f"
+      }
+    },
+    "snes9x": {
+      "arm64-v8a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/snes9x_libretro_android.so.zip",
+        "sha256": "09c2ae926cf3ba23f65bff125a709604f1fb73591e78fb4d928fad66b1979233"
+      },
+      "armeabi-v7a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/snes9x_libretro_android.so.zip",
+        "sha256": "dee4aa4bbac1cedf9551937e4fa1de6f232a3400ae064c961b67d10428cabfa0"
+      }
+    },
+    "mgba": {
+      "arm64-v8a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/mgba_libretro_android.so.zip",
+        "sha256": "2189872d0fa9ff9656358ddf761e76d99919c731a8e4a6f3ad243b5239353435"
+      },
+      "armeabi-v7a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/mgba_libretro_android.so.zip",
+        "sha256": "b0a67ffcf217ece486907d34427a1078cffa51dcb56ca61cda944f85385e7c24"
+      }
+    },
+    "pcsx_rearmed": {
+      "arm64-v8a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/pcsx_rearmed_libretro_android.so.zip",
+        "sha256": "68c695c7d22c400cfc3b7f9e78f35dd870ea9a19f69441991d04723a4ad83c20"
+      },
+      "armeabi-v7a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/pcsx_rearmed_libretro_android.so.zip",
+        "sha256": "bd49fb4e82f96ce2232146307507db39fbf9a7f71ef1af3625e2aa03b09cbf93"
+      }
+    }
+  }
+}

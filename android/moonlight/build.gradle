@@ -1,14 +1,16 @@
 plugins { id 'com.android.library' }
+def nativeDirectory = providers.gradleProperty('flxtrNativeDir').orNull
 android {
     namespace 'com.limelight'
     compileSdk 35
-    ndkVersion '28.0.13004108'
+    buildToolsVersion '35.0.0'
+    if (nativeDirectory == null) { ndkVersion '28.0.13004108' }
     defaultConfig {
         minSdk 26
         buildConfigField 'boolean', 'ROOT_BUILD', 'false'
         buildConfigField 'String', 'APPLICATION_ID', '"org.flxtr.android"'
         ndk { abiFilters.addAll((project.findProperty('flxtrAbis') ?: 'armeabi-v7a,arm64-v8a').split(',')) }
-        externalNativeBuild { ndkBuild { arguments 'PRODUCT_FLAVOR=nonRoot' } }
+        if (nativeDirectory == null) { externalNativeBuild { ndkBuild { arguments 'PRODUCT_FLAVOR=nonRoot' } } }
     }
     buildFeatures { buildConfig true; resValues true }
     sourceSets.main {
@@ -21,7 +23,7 @@ android {
         resValue 'string', 'app_label', 'Moonlight in FlXtR'
         resValue 'string', 'app_label_root', 'Moonlight in FlXtR'
     }
-    externalNativeBuild { ndkBuild { path '../build/game-sources/moonlight-native/Android.mk' } }
+    if (nativeDirectory == null) { externalNativeBuild { ndkBuild { path '../build/game-sources/moonlight-native/Android.mk' } } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8; coreLibraryDesugaringEnabled true }
     // Match upstream's localization policy; integration code retains full lint.
     lint { disable 'MissingTranslation'; lintConfig file('lint.xml') }

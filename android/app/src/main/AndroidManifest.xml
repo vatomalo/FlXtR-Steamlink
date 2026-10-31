@@ -12,10 +12,15 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <application android:name=".MediaApp" android:label="FlXtR Preview" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:extractNativeLibs="true" android:usesCleartextTraffic="false" android:enableOnBackInvokedCallback="false" android:icon="@drawable/icon">
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true"><meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" /></provider>
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
         <activity android:name=".GamesActivity" android:exported="false" />

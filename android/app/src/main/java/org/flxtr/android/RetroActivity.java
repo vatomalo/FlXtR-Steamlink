@@ -10,10 +10,14 @@ import java.io.*;
 import java.nio.file.Files;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-/** In-process Libretro frontend: bundled Gambatte, stereo audio and joypad input. */
+/** In-process Libretro frontend with per-system cores, saves and disc switching. */
 public final class RetroActivity extends Activity implements SurfaceHolder.Callback {
     static {System.loadLibrary("flxtr_retro");}
-    static native double[] startCore(String path,String saves,Surface surface);
+    static native double[] startCore(String path,String saves,String system,String library,Surface surface);
+    static native int diskCount();
+    static native int diskIndex();
+    static native boolean swapDisk(int index);
+    static native String coreInfo(String library);
     static native short[] frame(int mask);
     static native byte[] readMemory(boolean state);
     static native boolean writeMemory(byte[] data,boolean state);
@@ -29,14 +33,20 @@ public final class RetroActivity extends Activity implements SurfaceHolder.Callb
     private FrameLayout root;
     private final ConcurrentLinkedQueue<Runnable> commands=new ConcurrentLinkedQueue<>();
     private File rom,save;
+    private String coreName;
     private double aspect=160.0/144;
     @Override public void onCreate(Bundle state){
         super.onCreate(state);getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
-        rom=new File(getIntent().getStringExtra("rom"));File folder=new File(getFilesDir(),"games");save=new File(folder,rom.getName());
-        try{if(!rom.getCanonicalFile().getParentFile().equals(folder.getCanonicalFile())||!rom.isFile())throw new IOException();}catch(Exception invalid){finish();return;}
+        String path=getIntent().getStringExtra("rom");if(path==null){finish();return;}rom=new File(path);File folder=new File(getFilesDir(),"games");
+        coreName=GameFormats.core(rom.getName());
+        try{if(!rom.getCanonicalPath().startsWith(folder.getCanonicalPath()+File.separator)||!rom.isFile()||coreName.isEmpty())throw new IOException();String key=getIntent().getStringExtra("saveKey");if(key!=null&&!key.isEmpty()){if(!key.matches("[0-9a-f]{64}"))throw new IOException();File saves=new File(folder,"saves");if(!saves.isDirectory()&&!saves.mkdirs())throw new IOException();save=new File(saves,key);}else save=new File(folder,rom.getName());File system=new File(folder,"system");if(!system.isDirectory()&&!system.mkdirs())throw new IOException();}catch(Exception invalid){finish();return;}
         root=new FrameLayout(this);root.setBackgroundColor(0xff000000);surface=new SurfaceView(this);root.addView(surface,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));surface.getHolder().addCallback(this);root.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->fit());
         LinearLayout dpad=new LinearLayout(this);dpad.setOrientation(LinearLayout.VERTICAL);dpad.addView(row(control("↑",4)));dpad.addView(row(control("←",6),control("↓",5),control("→",7)));root.addView(dpad,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT));
-        LinearLayout buttons=new LinearLayout(this);buttons.setOrientation(LinearLayout.VERTICAL);buttons.addView(row(control("B",0),control("A",8)));buttons.addView(row(control("Select",2),control("Start",3)));root.addView(buttons,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT));
+        LinearLayout buttons=new LinearLayout(this);buttons.setOrientation(LinearLayout.VERTICAL);
+        if(coreName.equals("pcsx_rearmed")){buttons.addView(row(control("L2",12),control("R2",13)));buttons.addView(row(control("□",1),control("△",9)));buttons.addView(row(control("×",0),control("○",8)));}
+        else{if(coreName.equals("snes9x"))buttons.addView(row(control("Y",1),control("X",9)));buttons.addView(row(control("B",0),control("A",8)));}
+        if(!coreName.equals("gambatte")&&!coreName.equals("fceumm"))buttons.addView(row(control("L",10),control("R",11)));
+        buttons.addView(row(control("Select",2),control("Start",3)));root.addView(buttons,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT));
         Button menu=new Button(this);menu.setText("⋮");menu.setContentDescription("Game menu");menu.setAlpha(.75f);menu.setOnClickListener(v->menu());root.addView(menu,new FrameLayout.LayoutParams(dp(56),dp(48),Gravity.TOP|Gravity.RIGHT));setContentView(root);hideBars();
     }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
@@ -53,7 +63,8 @@ public final class RetroActivity extends Activity implements SurfaceHolder.Callb
     private synchronized void start(){if(!resumed||!ready||running||thread!=null&&thread.isAlive())return;running=true;paused=false;touch=keys=stick=0;commands.clear();thread=new Thread(this::run,"FlXtR-Libretro");thread.start();}
     private void run(){
         boolean started=false;try{
-            double[] av=startCore(rom.getAbsolutePath(),save.getParent(),surface.getHolder().getSurface());if(av==null)throw new IOException("This game couldn't be loaded. Choose an uncompressed .gb or .gbc ROM.");started=true;aspect=av[2];runOnUiThread(this::fit);
+            String library=coreName.equals("gambatte")?"":new File(getApplicationInfo().nativeLibraryDir,"libflxtr_"+coreName+".so").getAbsolutePath();
+            double[] av=startCore(rom.getAbsolutePath(),save.getParent(),new File(getFilesDir(),"games/system").getAbsolutePath(),library,surface.getHolder().getSurface());if(av==null)throw new IOException("This "+GameFormats.label(coreName)+" game couldn't be loaded. Check the game files and, for PlayStation, its BIOS and disc tracks.");started=true;aspect=av[2];runOnUiThread(this::fit);
             restore(".srm",false);restore(".auto",true);
             int rate=(int)Math.round(av[1]);if(rate<8000||rate>192000)throw new IOException("Unsupported game audio");int buffer=Math.max(AudioTrack.getMinBufferSize(rate,AudioFormat.CHANNEL_OUT_STEREO,AudioFormat.ENCODING_PCM_16BIT),rate/5*4);
             audio=new AudioTrack.Builder().setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()).setAudioFormat(new AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()).setBufferSizeInBytes(buffer).setTransferMode(AudioTrack.MODE_STREAM).build();if(audio.getState()!=AudioTrack.STATE_INITIALIZED)throw new IOException("Game audio is unavailable");audio.play();
@@ -68,12 +79,12 @@ public final class RetroActivity extends Activity implements SurfaceHolder.Callb
         finally{if(started){persist(".srm",false);persist(".auto",true);stopCore();}AudioTrack track=audio;audio=null;if(track!=null){track.pause();track.flush();track.release();}running=false;}
     }
     private boolean persist(String suffix,boolean state){try{byte[] data=readMemory(state);if(data==null)return !state;android.util.AtomicFile file=new android.util.AtomicFile(new File(save+suffix));FileOutputStream out=file.startWrite();try{out.write(data);file.finishWrite(out);}catch(Exception failure){file.failWrite(out);return false;}return true;}catch(Exception ignored){return false;}}
-    private boolean restore(String suffix,boolean state){try{File file=new File(save+suffix);return file.isFile()&&file.length()<=8*1024*1024&&writeMemory(Files.readAllBytes(file.toPath()),state);}catch(Exception failure){return false;}}
+    private boolean restore(String suffix,boolean state){try{File file=new File(save+suffix);return file.isFile()&&file.length()<=32*1024*1024&&writeMemory(Files.readAllBytes(file.toPath()),state);}catch(Exception failure){return false;}}
     private synchronized void stop(){running=false;touch=keys=stick=0;AudioTrack track=audio;if(track!=null)try{track.pause();track.flush();}catch(Exception ignored){}if(thread!=null){thread.interrupt();try{thread.join(2000);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}}}
     @Override public void onBackPressed(){menu();}
-    private void menu(){if(!running){finish();return;}paused=true;touch=keys=stick=0;AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Libretro · Gambatte").setItems(new String[]{"Resume","Save state","Load state","Reset game","Exit to library"},(d,i)->{if(i==1)commands.add(()->{toast(persist(".state",true)?"State saved":"Could not save state");});if(i==2)commands.add(()->toast(restore(".state",true)?"State loaded":"No saved state"));if(i==3)commands.add(RetroActivity::resetCore);if(i==4)finish();}).setNegativeButton("Resume",null).create();dialog.setOnDismissListener(d->{paused=false;hideBars();});dialog.show();Gamepad.dialog(dialog);}
+    private void menu(){if(!running){finish();return;}paused=true;touch=keys=stick=0;AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Libretro · "+GameFormats.label(coreName)).setItems(new String[]{"Resume","Save state","Load state","Reset game","Next disc","Exit to library"},(d,i)->{if(i==1)commands.add(()->toast(persist(".state",true)?"State saved":"Could not save state"));if(i==2)commands.add(()->toast(restore(".state",true)?"State loaded":"No saved state"));if(i==3)commands.add(RetroActivity::resetCore);if(i==4)commands.add(()->{int count=diskCount(),next=count>1?(diskIndex()+1)%count:0;toast(count>1&&swapDisk(next)?"Disc "+(next+1)+" of "+count:"Load an M3U playlist to switch discs");});if(i==5)finish();}).setNegativeButton("Resume",null).create();dialog.setOnDismissListener(d->{paused=false;hideBars();});dialog.show();Gamepad.dialog(dialog);}
     private void toast(String text){runOnUiThread(()->Toast.makeText(this,text,Toast.LENGTH_SHORT).show());}
-    private int bit(int code){switch(code){case KeyEvent.KEYCODE_BUTTON_A:return 8;case KeyEvent.KEYCODE_BUTTON_B:return 0;case KeyEvent.KEYCODE_BUTTON_X:return 9;case KeyEvent.KEYCODE_BUTTON_Y:return 1;case KeyEvent.KEYCODE_BUTTON_SELECT:return 2;case KeyEvent.KEYCODE_BUTTON_START:return 3;case KeyEvent.KEYCODE_DPAD_UP:return 4;case KeyEvent.KEYCODE_DPAD_DOWN:return 5;case KeyEvent.KEYCODE_DPAD_LEFT:return 6;case KeyEvent.KEYCODE_DPAD_RIGHT:return 7;case KeyEvent.KEYCODE_BUTTON_L1:return 10;case KeyEvent.KEYCODE_BUTTON_R1:return 11;default:return -1;}}
+    private int bit(int code){boolean ps=coreName.equals("pcsx_rearmed");switch(code){case KeyEvent.KEYCODE_BUTTON_A:return ps?0:8;case KeyEvent.KEYCODE_BUTTON_B:return ps?8:0;case KeyEvent.KEYCODE_BUTTON_X:return ps?1:9;case KeyEvent.KEYCODE_BUTTON_Y:return ps?9:1;case KeyEvent.KEYCODE_BUTTON_SELECT:return 2;case KeyEvent.KEYCODE_BUTTON_START:return 3;case KeyEvent.KEYCODE_DPAD_UP:return 4;case KeyEvent.KEYCODE_DPAD_DOWN:return 5;case KeyEvent.KEYCODE_DPAD_LEFT:return 6;case KeyEvent.KEYCODE_DPAD_RIGHT:return 7;case KeyEvent.KEYCODE_BUTTON_L1:return 10;case KeyEvent.KEYCODE_BUTTON_R1:return 11;case KeyEvent.KEYCODE_BUTTON_L2:return 12;case KeyEvent.KEYCODE_BUTTON_R2:return 13;default:return -1;}}
     @Override public boolean dispatchKeyEvent(KeyEvent e){if(e.getKeyCode()==KeyEvent.KEYCODE_BUTTON_THUMBR||e.getKeyCode()==KeyEvent.KEYCODE_MENU){if(e.getAction()==KeyEvent.ACTION_DOWN&&e.getRepeatCount()==0)menu();return true;}int bit=bit(e.getKeyCode());if(bit>=0){if(e.getAction()==KeyEvent.ACTION_DOWN)keys|=1<<bit;else if(e.getAction()==KeyEvent.ACTION_UP)keys&=~(1<<bit);return true;}return super.dispatchKeyEvent(e);}
     @Override public boolean onGenericMotionEvent(MotionEvent e){if((e.getSource()&InputDevice.SOURCE_JOYSTICK)!=0){float x=e.getAxisValue(MotionEvent.AXIS_X),y=e.getAxisValue(MotionEvent.AXIS_Y),hatX=e.getAxisValue(MotionEvent.AXIS_HAT_X),hatY=e.getAxisValue(MotionEvent.AXIS_HAT_Y);if(Math.abs(hatX)>.5)x=hatX;if(Math.abs(hatY)>.5)y=hatY;stick=(x<-.35?1<<6:0)|(x>.35?1<<7:0)|(y<-.35?1<<4:0)|(y>.35?1<<5:0);return true;}return super.onGenericMotionEvent(e);}
 }

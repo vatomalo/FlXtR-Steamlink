@@ -1,4 +1,4 @@
-# FlXtR Android media preview 0.5
+# FlXtR Android preview 0.6
 
 Minimum supported system: Android 8.0 (API 26). Phone/tablet layout is automatic.
 Hardware tested: Samsung SM-T510 running Android 11 (32-bit armeabi-v7a).
@@ -61,8 +61,7 @@ retains access to selected documents without broad storage permission. Moving or
 deleting a document invalidates that entry. Music audio can continue in a media
 service while browsing, with system playback controls.
 
-This remains a media preview, not complete desktop feature parity. Game/emulator
-launching is excluded as requested. Desktop phone-upload/remote/quiz tools, API-key
+This remains a preview, not complete desktop feature parity. Desktop phone-upload/remote/quiz tools, API-key
 setup, external subtitle search/delay and advanced TV airing/history editors have
 not been ported. Download recovery and background music need longer device tests.
 
@@ -75,7 +74,7 @@ sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'ndk;28.0.13004108' 'cmak
 ANDROID_HOME=/path/to/sdk bash scripts/build-android.sh
 ```
 
-The script builds the response-decoder native library for both ARM variants and
+The script prepares pinned Moonlight/Gambatte sources, builds native media, streaming and emulation libraries for both ARM variants, and
 runs assembleDebug, testDebugUnitTest and
 lintDebug. Gradle 8.9, AGP 8.7.3, NDK r28, Media3 1.5.1, jsoup 1.18.3 and
 Android yt-dlp runtime 0.18.1 are pinned. Music uses packaged Android Python/QuickJS;
@@ -88,7 +87,7 @@ native libraries are built for 16 KB pages; this preview's primary device target
 Android 11. No blanket 16 KB compatibility claim is made for third-party runtimes.
 See android-third-party.md and packaged assets/licenses for distribution notices.
 
-Validation: 32 unit tests cover catalogue parsing, request signing, source/header
+Validation: 35 unit tests cover catalogue parsing, request signing, source/header
 handling, anime parsing/AES/token format, captions, archive filtering, controller
 repeat policy, responsive layout selection, finite media ranges, media persistence, TV scheduling and MTV/Spotify mapping. Live host
 tests fetch movie/episode/anime manifests and media fragments, and archive listings.
@@ -144,5 +143,60 @@ music with a seek to one minute, and cache-only offline playback all rendered
 video, decoded audio, and advanced. The player header and system bars were hidden
 in each playback check. Phone layout and borderless playback were visually
 inspected. The same source builds the shipped armeabi-v7a/arm64-v8a APK; the x86_64
-build is a test artifact. Actual phone hardware and Android 8 ARM devices still
-need verification when available.
+build is a test artifact. On the physical Galaxy S7 edge / Android 8, version 0.5 movie, anime and offline video passed. Music extraction was blocked by a Samsung system utility/library conflict; version 0.6 includes a Python platform-probe fix. That fix still needs a hardware retest.
+
+
+## Version 0.6: app updates and embedded games
+
+The same universal ARM APK updates the Android 8 phone and Android 11 SM-T510
+without removing favorites or settings. Phone/tablet layout is automatic, with a
+manual override under More → Screen layout. The tablet download is the same
+signed universal package, named for convenience; it is not a different app.
+
+More → App updates provides a manual check and an automatic-check toggle (on by
+default). Automatic checks run at most once a day when opening the library.
+An available update offers a download, verifies exact size, SHA-256, package,
+newer version, Android compatibility and matching installed signing certificate,
+then opens Android's installer. Downloads can be cancelled; a failed download
+keeps the installed app. Android 8+ may first require “Allow from this source”.
+Android always asks before installation. Downloads only begin after tapping
+Download; there is no periodic background service or silent installation.
+
+The channel is independent of desktop releases:
+`https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-latest/android.json`.
+After committing and building, `bash scripts/publish-android.sh` publishes an
+immutable Android prerelease and then advances this channel. Keep the existing
+signing key and increment versionCode for every published build. Older previews
+need one manual installation of 0.6 before they can use app updates.
+
+Library → Moonlight opens the embedded Moonlight PC browser. Add a PC running
+Sunshine or NVIDIA GameStream, pair using the PIN shown by Moonlight, then select
+a PC app. Streaming, touch input, controller support and stream settings run in
+FlXtR's process/package; a separate Moonlight installation is unnecessary. The
+upstream 12.1 UI/JNI interface is used for Android 8 compatibility, with native
+OpenSSL/Opus payloads from upstream 12.2 and refreshed Java dependencies. Refs and
+integration changes are explicit in scripts/prepare-android-games.py. Moonlight's
+own native screens retain their upstream UI.
+
+Library → Libretro games opens the built-in Gambatte player for Game Boy/Game Boy
+Color. Add uncompressed .gb/.gbc ROMs through Android's file picker. Games are
+copied into private storage; no games are bundled or downloaded. Touch controls,
+D-pad/stick, A/B, Start/Select are supported. Back or R3 opens Resume, Save state, Load
+state, Reset and Exit. Battery RAM and an automatic resume state are saved locally
+when leaving; manual state slots are separate. This initial core does not run NES,
+SNES, arcade or other systems, and is not an embedded copy of RetroArch.
+
+On an Android 8 x86_64 emulator, the original synthetic ROM rendered patterned
+video, generated stereo audio, advanced past 120 frames, serialized/restored state,
+and accepted controller A. Embedded Moonlight's activity and native library loaded.
+Update menu and library A/Start controls passed. Music playback and a seek to one
+minute passed with hidden video chrome/system bars. These are sample checks;
+Moonlight pairing/live streaming, physical controller mappings, long game sessions,
+and final ARM hardware checks still require devices/host access.
+
+Debug-only game checks:
+```sh
+adb shell am instrument -w -e mode retro org.flxtr.android/.GamesSmokeInstrumentation
+adb shell am instrument -w -e mode moonlight org.flxtr.android/.GamesSmokeInstrumentation
+adb shell am instrument -w -e mode updates org.flxtr.android/.GamesSmokeInstrumentation
+```

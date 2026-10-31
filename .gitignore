@@ -38,3 +38,5 @@ phone-files/
 
 /tv-airing.tsv*
 /tv-preload.log
+
+/android/moonlight/AndroidManifest.xml

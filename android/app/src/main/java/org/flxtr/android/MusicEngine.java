@@ -11,11 +11,21 @@ import java.io.*;
 final class MusicEngine {
     private static final ScheduledExecutorService watchdog=Executors.newSingleThreadScheduledExecutor();
     private static String execute(Context context,String address,boolean flat,boolean audio,StreamResolver.Request active) throws Exception {
-        active.check();YoutubeDL.INSTANCE.init(context.getApplicationContext());active.check();
+        active.check();YoutubeDL.INSTANCE.init(context.getApplicationContext());preparePython(context);active.check();
         YoutubeDLRequest request=new YoutubeDLRequest(address);request.addOption("--skip-download");request.addOption("--no-warnings");request.addOption("--socket-timeout","15");request.addOption("--retries","1");request.addOption("--extractor-retries","1");request.addOption("--dump-single-json");request.addOption("--playlist-end",flat?"30":"1");
         if(flat)request.addOption("--flat-playlist");else{request.addOption("--no-playlist");request.addOption("-f",audio?"bestaudio[ext=m4a][audio_channels<=2]/bestaudio[ext=m4a]/bestaudio":"best[ext=mp4][height<=720][fps<=30]/bestvideo[vcodec^=avc1][height<=720][fps<=30]+bestaudio[ext=m4a][audio_channels<=2]/best[height<=720]/best");}
         String process="flxtr-"+UUID.randomUUID();Runnable kill=()->YoutubeDL.INSTANCE.destroyProcessById(process);active.onCancel=kill;ScheduledFuture<?> deadline=watchdog.schedule(kill,70,TimeUnit.SECONDS);
         try{String result=YoutubeDL.INSTANCE.execute(request,process,false,null).getOut();active.check();if(result.length()>4*1024*1024)throw new IOException("Music response is too large");return result;}finally{active.onCancel=null;deadline.cancel(false);}
+    }
+    private static synchronized void preparePython(Context context)throws IOException{
+        File lib=new File(context.getNoBackupFilesDir(),"youtubedl-android/packages/python/usr/lib");
+        File[] versions=lib.listFiles(file->file.isDirectory()&&file.getName().matches("python3\\.[0-9]+"));
+        if(versions==null||versions.length!=1)throw new IOException("Music runtime is unavailable");
+        File target=new File(versions[0],"site-packages/sitecustomize.py");
+        byte[] content;try(InputStream in=context.getAssets().open("music-sitecustomize.py");ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buffer=new byte[1024];int n;while((n=in.read(buffer))!=-1)out.write(buffer,0,n);content=out.toByteArray();}
+        if(target.isFile()&&java.util.Arrays.equals(content,java.nio.file.Files.readAllBytes(target.toPath())))return;
+        File temporary=new File(target.getParentFile(),"sitecustomize.py.tmp");try(OutputStream out=new FileOutputStream(temporary)){out.write(content);}
+        if(!temporary.renameTo(target))throw new IOException("Cannot prepare music runtime");
     }
     static CatalogPage search(Context context,String query,int page,StreamResolver.Request request) throws Exception {
         if(query.matches("https://open\\.spotify\\.com/.*"))return spotify(query,request);

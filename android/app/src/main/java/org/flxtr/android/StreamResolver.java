@@ -16,7 +16,9 @@ final class StreamResolver {
         volatile boolean cancelled;
         volatile Runnable onCancel;
         volatile HttpsURLConnection connection;
-        final long deadline=System.nanoTime()+90_000_000_000L;
+        final long deadline;
+        Request(){this(90);}
+        Request(int seconds){deadline=System.nanoTime()+seconds*1_000_000_000L;}
         void cancel(){cancelled=true;HttpsURLConnection active=connection;if(active!=null)active.disconnect();if(onCancel!=null)onCancel.run();}
         void check() throws IOException {if(cancelled||Thread.currentThread().isInterrupted())throw new InterruptedIOException("Cancelled");if(System.nanoTime()>deadline)throw new IOException("Stream lookup timed out");}
     }

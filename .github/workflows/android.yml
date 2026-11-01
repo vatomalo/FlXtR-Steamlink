@@ -1,10 +1,13 @@
 name: Android preview
 on:
   push:
-    branches: [feature/android]
+    branches: [feature/android, codex/steamlink-game-menus]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: android-startup-channel
+  cancel-in-progress: false
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -17,11 +20,28 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
       - name: Install build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'ndk;28.0.13004108' 'cmake;3.22.1'
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.0.13004108' 'cmake;3.22.1'
+      - name: Restore Android signing identity
+        env:
+          FLXTR_SIGNING_KEY: ${{ secrets.FLXTR_ANDROID_SIGNING_KEY }}
+        run: |
+          test -n "$FLXTR_SIGNING_KEY"
+          mkdir -p "$HOME/.android"
+          printf '%s' "$FLXTR_SIGNING_KEY" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
       - name: Build and lint
-        run: bash scripts/build-android.sh
+        env:
+          FLXTR_ANDROID_RELEASE: '1'
+        run: |
+          export FLXTR_ANDROID_VERSION_CODE="$((1000 + GITHUB_RUN_NUMBER))"
+          export FLXTR_ANDROID_VERSION_NAME="0.9-steamlink-menus.${GITHUB_RUN_NUMBER}"
+          bash scripts/build-android.sh
       - uses: actions/upload-artifact@v4
         with:
           name: FlXtR-Android-preview
           path: dist/FlXtR-Android-preview.apk
           if-no-files-found: error
+      - name: Publish signed startup update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-android.py --apk dist/FlXtR-Android-preview.apk

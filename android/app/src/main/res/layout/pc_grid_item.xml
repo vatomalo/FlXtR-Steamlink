@@ -1,0 +1,9 @@
+<!-- Framework Activities use framework ImageViews and android:tint. -->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="UseAppTint" android:layout_width="148dp" android:layout_height="172dp" android:padding="8dp" android:background="@drawable/flxtr_console_focus">
+ <RelativeLayout android:id="@+id/grid_image_layout" android:layout_width="match_parent" android:layout_height="112dp">
+  <ImageView android:id="@+id/grid_image" android:layout_width="108dp" android:layout_height="100dp" android:layout_centerHorizontal="true" android:scaleType="fitCenter" android:tint="#74ff84" android:contentDescription="Host PC"/>
+  <ImageView android:id="@+id/grid_overlay" android:layout_width="40dp" android:layout_height="40dp" android:layout_centerInParent="true" android:tint="#74ff84" android:contentDescription="Host status"/>
+  <ProgressBar android:id="@+id/grid_spinner" android:layout_width="32dp" android:layout_height="32dp" android:layout_centerInParent="true" android:indeterminateTint="#74ff84"/>
+ </RelativeLayout>
+ <TextView android:id="@+id/grid_text" style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="44dp" android:layout_below="@id/grid_image_layout" android:gravity="center" android:maxLines="2" android:ellipsize="end" android:textSize="13sp"/>
+</RelativeLayout>

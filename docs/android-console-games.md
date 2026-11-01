@@ -4,6 +4,34 @@ Open **More → Games** or **Library → Libretro games**. **Moonlight** is avai
 from the same menus and the Games screen; it uses the embedded Moonlight client,
 including PC discovery, pairing, controller input and stream settings.
 
+The ROM library groups games into console tiles. Open a game for **Play / Core /
+Scaling / Output** options; scaling is saved per game. Output opens Android's
+display settings. Moonlight uses the same black-and-green pixel presentation.
+
+Use the D-pad or left stick to navigate and **A** to select. In the ROM library,
+**X** plays, **Y** opens game options and **Start** opens library options. In
+Moonlight, **Y** opens host/game options, **X** adds a PC on the host screen and
+**Start** opens stream settings. **B** returns. Gameplay retains each emulator's
+controller mapping and Moonlight's native controller support.
+
+## Startup updates
+
+FlXtR checks the `android-latest` GitHub release channel when its home/library
+screen enters the foreground. **More → App updates** can check manually or turn
+startup checks off. There is no background polling. New APKs download over HTTPS
+and must match the published size/hash, package, newer version and installed
+signing certificate. Libraries, folder grants and saves survive installation.
+
+On rooted devices, allow FlXtR root access once for automatic installation and
+restart. Otherwise Android asks for install permission and confirmation. A
+download completed during gameplay waits until the next frontend startup.
+
+The Android workflow builds, tests, signs and publishes updates when changes
+reach `feature/android` or `codex/steamlink-game-menus`. The encrypted repository
+secret `FLXTR_ANDROID_SIGNING_KEY` must contain the existing keystore in base64;
+changing that identity prevents updates to existing installs. The publisher
+uploads a versioned APK before advancing the channel and never downgrades it.
+
 Add a game folder once through Android's file picker. FlXtR saves read access and
 recursively scans it when the game library opens (at most once per 30 seconds).
 **Scan now** refreshes it immediately. There is no periodic background service.
@@ -43,8 +71,9 @@ Android's system power-management configuration is not changed by this feature.
 Run `scripts/build-android.sh` with the existing Android SDK/NDK requirements.
 `prepare-console-cores.py` verifies `android/console-cores.lock.json` and caches
 the official Libretro archives under `android/build/console-core-cache`.
-Because upstream `latest` URLs change, retain that cache with a release; a hash
-mismatch fails the build rather than accepting a different binary.
+The lockfile points to versioned mirrors of official Libretro archives and also
+records their upstream URLs. A hash mismatch fails the build rather than
+accepting a different binary.
 
 For incremental Java builds, `-PflxtrNativeDir=/absolute/path/to/jniLibs` uses
 previously built native libraries instead of rerunning CMake/ndk-build. That

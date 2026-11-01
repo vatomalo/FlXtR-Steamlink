@@ -29,9 +29,9 @@ final class Gamepad {
     static void dialog(AlertDialog dialog){
         if(dialog.getListView()!=null)dialog.getListView().requestFocus();else if(dialog.getButton(AlertDialog.BUTTON_POSITIVE)!=null)dialog.getButton(AlertDialog.BUTTON_POSITIVE).requestFocus();
         Gamepad pad=new Gamepad();View decor=dialog.getWindow().getDecorView();Actions listener=new Actions(){
-            public boolean button(int key){if(key==KeyEvent.KEYCODE_BUTTON_A){send(decor,KeyEvent.KEYCODE_DPAD_CENTER);return true;}if(key==KeyEvent.KEYCODE_BUTTON_B||key==KeyEvent.KEYCODE_BUTTON_START){dialog.dismiss();return true;}return false;}
+            public boolean button(int key){if(key==KeyEvent.KEYCODE_BUTTON_A){send(decor,KeyEvent.KEYCODE_DPAD_CENTER);return true;}if(key==KeyEvent.KEYCODE_BUTTON_B||key==KeyEvent.KEYCODE_BUTTON_START){dialog.cancel();return true;}return false;}
             public void direction(int key){send(decor,key);}
         };
-        dialog.setOnDismissListener(d->pad.reset());dialog.setOnKeyListener((d,key,event)->pad.key(event,listener));decor.setOnGenericMotionListener((view,event)->pad.motion(event,listener));
+        decor.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){}public void onViewDetachedFromWindow(View v){pad.reset();}});dialog.setOnKeyListener((d,key,event)->pad.key(event,listener));decor.setOnGenericMotionListener((view,event)->pad.motion(event,listener));
     }
 }

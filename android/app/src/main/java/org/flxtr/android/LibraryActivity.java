@@ -56,7 +56,7 @@ public class LibraryActivity extends Activity {
         android.content.res.Configuration window=getResources().getConfiguration();compactLayout=LibraryLayout.compact(settings.getInt("layout",0),window.screenWidthDp,window.screenHeightDp);
         BG=theme.bg;PANEL=theme.panel;INK=theme.ink;GREEN=theme.accent;MUTED=theme.muted;client=new CatalogClient(getCacheDir());repository=new MediaRepository(this,client);
         if(state!=null){try{restore(new JSONObject(state.getString("navigation","{}")));JSONArray stack=new JSONArray(state.getString("history","[]"));for(int i=0;i<stack.length();i++)history.addLast(stack.getJSONObject(i));restorePosition=state.getInt("scroll",0);}catch(Exception invalid){history.clear();}}
-        if(getIntent().getStringExtra("section")!=null){kind=getIntent().getStringExtra("section");title="Downloads";}build();load();updates=new AppUpdates(this);getWindow().getDecorView().postDelayed(()->{if(!isFinishing()&&!isDestroyed())updates.automatic();},4000);
+        if(getIntent().getStringExtra("section")!=null){kind=getIntent().getStringExtra("section");title="Downloads";}build();load();updates=new AppUpdates(this);
     }
     private int dp(float value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private TextView label(String text,int size,int color){TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(color);v.setTypeface(theme.font);return v;}

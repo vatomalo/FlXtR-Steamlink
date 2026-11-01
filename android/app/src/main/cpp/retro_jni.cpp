@@ -100,7 +100,7 @@ extern "C" JNIEXPORT jdoubleArray JNICALL Java_org_flxtr_android_RetroActivity_s
     loaded=core.load_game(&game);if(!loaded){cleanup();return nullptr;}
     core.set_controller_port_device(0,RETRO_DEVICE_JOYPAD);retro_system_av_info av={};core.get_system_av_info(&av);
     if(av.geometry.base_width==0||av.geometry.base_height==0||av.timing.fps<=0){cleanup();return nullptr;}
-    jdouble values[]={av.timing.fps,av.timing.sample_rate,av.geometry.aspect_ratio>0?av.geometry.aspect_ratio:(double)av.geometry.base_width/av.geometry.base_height};auto result=env->NewDoubleArray(3);if(result)env->SetDoubleArrayRegion(result,0,3,values);else cleanup();return result;
+    jdouble values[]={av.timing.fps,av.timing.sample_rate,av.geometry.aspect_ratio>0?av.geometry.aspect_ratio:(double)av.geometry.base_width/av.geometry.base_height,(double)av.geometry.base_width,(double)av.geometry.base_height};auto result=env->NewDoubleArray(5);if(result)env->SetDoubleArrayRegion(result,0,5,values);else cleanup();return result;
 }
 extern "C" JNIEXPORT jshortArray JNICALL Java_org_flxtr_android_RetroActivity_frame(JNIEnv *env,jclass,jint mask){sound.clear();buttons=(unsigned)mask;if(loaded)core.run();auto result=env->NewShortArray(sound.size());if(result)env->SetShortArrayRegion(result,0,sound.size(),sound.data());return result;}
 extern "C" JNIEXPORT jbyteArray JNICALL Java_org_flxtr_android_RetroActivity_readMemory(JNIEnv *env,jclass,jboolean state){

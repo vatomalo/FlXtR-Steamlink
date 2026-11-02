@@ -13,8 +13,8 @@ int main(void){
     assert(server_preference_save("episode","sflix")); /* Cannot promote provider 3. */
     play();Uint32 start=SDL_GetTicks();
     while(catalog_pid||player_pid){assert(SDL_GetTicks()-start<5000);if(catalog_pid)finish_catalog();if(player_pid){int status;if(waitpid(player_pid,&status,WNOHANG)==player_pid)finish_player(status);}SDL_Delay(1);}
-    char attempts[80]={0},provider[16]={0};FILE *f=fopen("attempts","r");assert(f);fread(attempts,1,sizeof(attempts)-1,f);fclose(f);
-    f=fopen("provider","r");assert(f);fread(provider,1,sizeof(provider)-1,f);fclose(f);
+    char attempts[80]={0},provider[16]={0};FILE *f=fopen("attempts","r");assert(f);assert(fread(attempts,1,sizeof(attempts)-1,f)>0);fclose(f);
+    f=fopen("provider","r");assert(f);assert(fread(provider,1,sizeof(provider)-1,f)>0);fclose(f);
     assert(!strcmp(attempts,"alpha\nfmovies\nsflix\n")&&!strcmp(provider,"sflix"));
     assert(!auto_active&&!strcmp(status,"PLAYBACK FINISHED")&&browse.mode==4);
     close_ui();SDL_Quit();

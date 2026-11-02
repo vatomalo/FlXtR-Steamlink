@@ -1,5 +1,17 @@
 # FlXtR-Steamlink
 
+**Downloads — November 2, 2026**
+
+| Platform | Package |
+| --- | --- |
+| Android 8+ | [Signed APK](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/FlXtR-Android-preview.apk) |
+| Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/FlXtR-SteamDeck-x86_64.tgz) |
+| PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/FlXtR-PSP-beta.zip) |
+| Steam Link | [Complete ARM package](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/greenlink.tgz) |
+
+[Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases/tag/v2026.11.02).
+PSP device playback and physical Steam Deck validation remain experimental.
+
 Android 8+ phone/tablet media preview (movies/series, KissAnime, music/MTV, TV channels, archive, downloads, selectable original/touch themes and controller support): [build and testing](docs/ANDROID.md).
 
 

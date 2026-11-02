@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / 'dist'
 version = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 source = DIST / 'FlXtR-linux-x86_64'
-names = ('greenlink', 'greenlink-catalog', 'greenlink-player', 'greenlink-resolver', 'greenlink-audio')
+names = ('greenlink', 'greenlink-catalog', 'greenlink-player', 'greenlink-resolver', 'greenlink-audio', 'greenlink-download')
 # These components must match the host kernel, glibc and installed GPU drivers.
 system = re.compile(r'^(ld-linux|lib(c|m|dl|pthread|rt|resolv|nss_[^.]+)\.so|lib(stdc\+\+|gcc_s)\.so|lib(GL|EGL|GLES|GLX|OpenGL|GLdispatch|glapi|drm|gbm|vulkan|va)[-.0-9a-z_]*\.so)')
 for edition in ('Linux', 'SteamDeck'):

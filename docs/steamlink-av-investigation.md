@@ -1,5 +1,21 @@
 # Steam Link A/V timing investigation handoff
 
+## November 2026 hardware comparison
+
+Installed player `4eca847` already contains the sample-clock refill fix. Normal
+BoJack playback loaded the firmware SDL2 compatibility layer and SDL3. The user
+reported video trailing audio; captures showed zero underruns/drops and a stable
+audio clock. A one-shot launcher then selected the bundled Valve native SDL2
+library for the same episode. Process maps confirmed that library was loaded.
+The user reported the large video delay gone, leaving a small audio delay.
+This is a user-observed A/B result; no calibrated physical offset was measured.
+
+Steam Link video children now select that same native SDL2 runtime by default.
+The UI keeps its firmware runtime. `FLXTR_USE_SYSTEM_SDL=1` selects the previous
+path for comparisons; a missing bundled library also retains the previous path.
+No decode-lead or fixed A/V offset is changed. The runtime-selection test covers
+the child environment, parent isolation, missing library and explicit override.
+
 ## Saved correction
 
 PCM refills can change `tail_us - queued_us` by one microsecond even when

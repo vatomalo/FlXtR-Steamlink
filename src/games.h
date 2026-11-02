@@ -46,18 +46,8 @@ static int game_bundled_core(const char *current,char *out,size_t cap){
     int n=snprintf(out,cap,"%s/cores/%s",cwd,name);
     return n>0&&n<(int)cap&&game_file(out);
 }
-/* Scope the legacy SDL runtime to RetroArch, never the shell or system. */
-static inline void game_native_sdl(void){
-    if(getenv("FLXTR_USE_SYSTEM_SDL"))return;
-    char cwd[PATH_MAX],library[PATH_MAX],search[PATH_MAX*2];
-    if(!getcwd(cwd,sizeof(cwd)))return;
-    int n=snprintf(library,sizeof(library),"%s/retroarch-libs/libSDL2-2.0.so.0",cwd);
-    if(n<0||n>=(int)sizeof(library)||!game_file(library))return;
-    const char *old=getenv("LD_LIBRARY_PATH");
-    n=snprintf(search,sizeof(search),"%s/retroarch-libs%s%s",cwd,old&&*old?":":"",old&&*old?old:"");
-    if(n<0||n>=(int)sizeof(search)||setenv("LD_LIBRARY_PATH",search,1))return;
-    fprintf(stderr,"Game runtime: native SDL2 from %s\n",library);
-}
+#include "native_sdl_runtime.h"
+static inline void game_native_sdl(void){native_sdl_runtime("Game");}
 static json_object *games_read(const char *path){struct stat st;if(stat(path,&st)||st.st_size>8*1024*1024)return NULL;return json_object_from_file(path);}
 static const char *game_core(const char *path){
     const char *ext=strrchr(path,'.');if(!ext)return NULL;ext++;

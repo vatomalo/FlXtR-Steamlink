@@ -9,8 +9,8 @@ android {
         applicationId 'org.flxtr.android'
         minSdk 26
         targetSdk 35
-        versionCode = Integer.parseInt(project.findProperty('flxtrVersionCode')?.toString() ?: '9')
-        versionName = project.findProperty('flxtrVersionName')?.toString() ?: '0.9-steamlink-menus-preview'
+        versionCode = Integer.parseInt(project.findProperty('flxtrVersionCode')?.toString() ?: '1010')
+        versionName = project.findProperty('flxtrVersionName')?.toString() ?: '0.10.10-background-library'
         ndk { abiFilters.addAll((project.findProperty('flxtrAbis') ?: 'armeabi-v7a,arm64-v8a').split(',')) }
         if (nativeDirectory == null) { externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_shared' } } }
     }

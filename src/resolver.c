@@ -343,6 +343,7 @@ static void independent_subtitles(int id,int season,int episode,Choice *c){
         id,season,episode,c->subs_eng[0]?"yes":"no",
         c->subs_nor[0]?"yes":"no",c->subs_spa[0]?"yes":"no");
 }
+#include "web_providers.h"
 #ifdef _WIN32
 #define main flxtr_resolver_main
 #endif
@@ -354,9 +355,12 @@ int main(int argc,char **argv){
     subtitle_log("invoke mode=%s media=%s",resolving?"source":"servers",argv[2]);
     char path[256];if(!strcmp(argv[2],"movie"))snprintf(path,sizeof(path),"/api/tmdb/movie/%d/images",id);
     else {if(!episode)return 2;snprintf(path,sizeof(path),"/api/tmdb/tv/%d/season/%d/episode/%d/images",id,season,episode);}
-    if(curl_global_init(CURL_GLOBAL_DEFAULT)||resolver_init())return 1;
-    json_object *root=lookup(path,resolving?argv[6]:"");int rc=1;
-    if(root){if(resolving){if(qualities(root,argv[6]))goto done;
+    if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
+    int web=resolving&&provider_rank(argv[6]);
+    int initialized=web?0:!resolver_init();
+    json_object *root=initialized?lookup(path,resolving?argv[6]:""):NULL;int rc=1;
+    if(web){if(web_provider(argv[6],id,season,episode))goto done;}
+    else if(root&&resolving){if(qualities(root,argv[6]))goto done;
             flixer_subtitles(id,season,episode,&choices[0]);
             if(!strcmp(argv[2],"tv")){
                 independent_subtitles(id,season,episode,&choices[0]);
@@ -367,7 +371,9 @@ int main(int argc,char **argv){
                     snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);
                     snprintf(choices[i].subs_spa,sizeof(choices[i].subs_spa),"%s",choices[0].subs_spa);
                 }
-        }else servers(root);
+        }
+    else if(!resolving){if(root)servers(root);web_servers();}
+    if(count){
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
         for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor,c->subs_spa);
             else printf("%s\t%s\t\t%s\tserver\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,id,season,episode,c->height);}
@@ -375,7 +381,7 @@ int main(int argc,char **argv){
     }
 done:subtitle_log("completed mode=%s success=%s rows=%d",resolving?"source":"servers",rc==0?"yes":"no",count);
     if(root)json_object_put(root);
-    resolver_free();
+    if(initialized)resolver_free();
     curl_global_cleanup();
     return rc;
 }

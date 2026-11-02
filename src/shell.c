@@ -36,6 +36,7 @@
 #include "game_metadata.h"
 #include "child_process.h"
 #include "phone_media.h"
+#include "native_sdl_runtime.h"
 static int phone_dispatch(char *reply,size_t size);
 #define FLXTR_PHONE_DISPATCH phone_dispatch
 #include "api_setup.h"
@@ -77,6 +78,7 @@ static void accounts_open(int party){
 #define FAVORITES_MODE 25
 #define VISIBLE 6
 #define STARS 56
+#include "provider_order.h"
 typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode,height; } Title;
 #include "rom_core_preferences.h"
 #include "rom_audio_preferences.h"
@@ -935,7 +937,7 @@ static void auto_request(Browse next){
 }
 static void auto_prefer_flixer_server(void){
     char preferred_name[32];server_preference_read(auto_title.kind,preferred_name);
-    int found=0;for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],preferred_name))found=1;
+    int found=0;for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],preferred_name)&&(!provider_rank(preferred_name)||server_group(auto_title.kind)!=0))found=1;
     if(!found){
         if(server_group(auto_title.kind)!=0)return;
         strcpy(preferred_name,"echo");
@@ -993,6 +995,7 @@ static void auto_result(int success){
                  (!strncmp(field[3],"https://",8)||!strncmp(field[3],"http://",7))){
             /* First row is AUTO: player chooses the best compatible H.264 stream. */
             strcpy(source.url,field[3]);
+            if(provider_rank(pending.query))snprintf(source.meta,sizeof(source.meta),"%s",field[1]);
             if(nf>=11){if(strlen(field[9])<sizeof(source.subs_eng))strcpy(source.subs_eng,field[9]);
                 if(strlen(field[10])<sizeof(source.subs_nor))strcpy(source.subs_nor,field[10]);}
             if(nf==12&&strlen(field[11])<sizeof(source.subs_spa))strcpy(source.subs_spa,field[11]);
@@ -2019,6 +2022,9 @@ static void launch_player(const Title *t) {
         signal(SIGUSR1,SIG_IGN); /* Ignore a controller press before exec is ready. */
         int log=open(tv_preloading?"tv-preload.log":"player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
+#ifndef FLXTR_DESKTOP
+        native_sdl_runtime("Video");
+#endif
 #else
     {
 #endif
@@ -2052,6 +2058,7 @@ static void launch_player(const Title *t) {
         setenv("FLXTR_VIDEO_SYNOPSIS",info_text,1);
         setenv("FLXTR_BOOKMARK_KEY",bookmark_key,1);
         if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
+        else if(*source_provider(t->meta))setenv("FLXTR_MEDIA_PROVIDER",source_provider(t->meta),1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[32],start[32];
         int requested_height=quality_setting==3?adaptive_height:(t->height?t->height:qualities[quality_setting]);

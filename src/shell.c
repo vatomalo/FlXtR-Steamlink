@@ -33,6 +33,7 @@
 #include "game_metadata.h"
 #include "child_process.h"
 #include "phone_media.h"
+#include "native_sdl_runtime.h"
 static int phone_dispatch(char *reply,size_t size);
 #define FLXTR_PHONE_DISPATCH phone_dispatch
 #include "api_setup.h"
@@ -1996,6 +1997,9 @@ static void launch_player(const Title *t) {
         signal(SIGUSR1,SIG_IGN); /* Ignore a controller press before exec is ready. */
         int log=open(tv_preloading?"tv-preload.log":"player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
+#ifndef FLXTR_DESKTOP
+        native_sdl_runtime("Video");
+#endif
 #else
     {
 #endif

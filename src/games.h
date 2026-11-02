@@ -211,15 +211,24 @@ static int local_category(const char *core,const char *rom){
     return 10;
 }
 static int games_folders(int page){
-    total=12;
-#ifndef FLXTR_DESKTOP
     total=13;
+#ifndef FLXTR_DESKTOP
+    total=14;
 #endif
 #ifdef FLXTR_DESKTOP
-    total=13;
+    total=14;
 #endif
     for(int slot=(page-1)*PAGE_SIZE;slot<total&&used<PAGE_SIZE;slot++){
-        int i=slot;
+        if(slot==0){
+            Entry *e=&entries[used++];
+            strcpy(e->title,"GAMEZ");
+            strcpy(e->meta,"PC GAMES / MOONLIGHT / A OPEN");
+            strcpy(e->kind,"game-folder");
+            strcpy(e->poster,"gameart:FlXtR Console|PC");
+            e->id=11;
+            continue;
+        }
+        int i=slot-1;
 #ifndef FLXTR_DESKTOP
         if(i==12){
             Entry *e=&entries[used++];strcpy(e->title,"DECEPTIVE DICE");
@@ -229,7 +238,7 @@ static int games_folders(int page){
         }
 #endif
 #ifdef FLXTR_DESKTOP
-        i=slot==0?12:slot-1;
+        i=slot==1?12:slot-2;
         if(i==12){
             Entry *e=&entries[used++];strcpy(e->title,"DOWNLOAD LIBRETRO CORES");
             strcpy(e->meta,"OFFICIAL PLATFORM CORES / RETROARCH REQUIRED");
@@ -419,7 +428,92 @@ static int games_list_filtered(int page,int refresh,int folder){
     }json_object_put(games);return 0;
 }
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
-static int games_system(int page,int folder){return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;}
+static int games_system(int page,int folder){
+    if(folder==11){
+        static const char *const pc_games[]={
+            "Final Fantasy VII Remake",
+            "Ghost of Tsushima",
+            "Nioh 2 Complete Edition",
+            "Minecraft Dungeons",
+            "NINJA GAIDEN - Master Collection",
+            "Yakuza 3 Remastered",
+            "Yakuza 4 Remastered",
+            "Yakuza 5 Remastered",
+            "Yakuza 6 The Song of Life",
+            "Persona 4 Golden",
+            "Chrono Trigger",
+            "TEKKEN 8",
+            "Street Fighter V - Champion Edition",
+            "Kingdom Hearts III and Re-Mind",
+            "The Witcher 3 - Wild Hunt",
+            "Starfield",
+            "Black Myth: Wukong",
+            "Baldur's Gate 3",
+            "Actraiser Renaissance",
+            "Castlevania Advance Collection",
+            "Middle-Earth - Shadow of Mordor",
+            "My Friend Peppa Pig",
+            "Ruined King",
+            "Sword and Fairy 7",
+            "VtM - Reckoning of New York",
+            "Dragon Ball Z Kakarot",
+            "JUMP FORCE",
+            "Killer Instinct",
+            "MARVEL vs CAPCOM FC - AC",
+            "ONE PUNCH MAN A HERO NOBODY KNOWS",
+            "SOULCALIBUR VI Deluxe Edition",
+            "The King of Fighters XIV",
+            "FFXV",
+            "Final Fantasy VII Remake - Crisis Core Reunion",
+            "LIVE A LIVE",
+            "Light Fairytale Episode 2",
+            "SMT III Nocturne HD Remaster",
+            "Secret of Mana",
+            "Stranger of Paradise - Final Fantasy Origin",
+            "The Last Oricru",
+            "ToA",
+            "Trials of Mana",
+            "Valkyrie Elysium",
+            "Vampire The Masquerade - Shadows of New York",
+            "Vampire The Masquerade Bloodlines - Ultimate",
+            "Vampire The Masquerade Coteries of New York Deluxe Edition",
+            "Yakuza Kiwami 3 & Dark Ties",
+            "Ys IX Monstrum Nox",
+            "Beyond a Steel Sky",
+            "City of Broken Dreamers Book One",
+            "Ghosts n Goblins Resurrection",
+            "KAGE Shadow of the Ninja",
+            "KATANA KAMI A Way of the Samurai Story",
+            "Katamar iDamacy REROLL",
+            "Mega Man 11",
+            "No.More.Heroes.2.Desperate.Struggle.Build.7018796",
+            "No.More.Heroes.Build.7018523",
+            "P5S",
+            "Pathfinder Wrath of the Righteous",
+            "Sakuna - Of Rice and Ruin",
+            "Star Wars Jedi - Fallen Order",
+            "Steins;Gate",
+            "Stranger Things 3 The Game",
+            "SuperMash",
+            "The Fermi Paradox",
+            "The Walking Dead The Telltale Definitive Series",
+            "Until We Die",
+            "Way of the Samurai 4",
+            "Wolcen Lords of Mayhem Bloodtrail"
+        };
+        total=(int)(sizeof(pc_games)/sizeof(pc_games[0]));
+        for(int i=(page-1)*PAGE_SIZE;i<total&&used<PAGE_SIZE;i++){
+            Entry *e=&entries[used++];
+            snprintf(e->title,sizeof(e->title),"%s",pc_games[i]);
+            strcpy(e->meta,"CAFELEBLANC / SUNSHINE / A STREAM");
+            strcpy(e->kind,"moonlight-game");
+            snprintf(e->poster,sizeof(e->poster),"gameart:%s|PC",pc_games[i]);
+            e->id=i+1;
+        }
+        return 0;
+    }
+    return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;
+}
 static int game_pixel_geometry(const char *core,const char *rom,int output,int *width,int *height,int *dw,int *dh){
     char executable[PATH_MAX],system[PATH_MAX],save[PATH_MAX],cwd[PATH_MAX];
     if(!games_executable||!getcwd(cwd,sizeof(cwd)))return -1;

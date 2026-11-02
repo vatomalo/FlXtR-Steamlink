@@ -79,7 +79,9 @@ static void video_download_start(const Title *title){
         int log=open("video-download.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log<0)_exit(126);
         dup2(log,STDOUT_FILENO);dup2(log,STDERR_FILENO);close(log);
-        if(!strcmp(title->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);else unsetenv("FLXTR_MEDIA_PROVIDER");
+        if(!strcmp(title->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
+        else if(*source_provider(title->meta))setenv("FLXTR_MEDIA_PROVIDER",source_provider(title->meta),1);
+        else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16];snprintf(height,sizeof(height),"%d",title->height?title->height:quality_height());
         execl("./greenlink-download","greenlink-download",title->url,video_download_key,height,(char*)NULL);_exit(127);
     }

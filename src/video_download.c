@@ -11,6 +11,7 @@
 #include <sys/statvfs.h>
 #include <unistd.h>
 #include "video_quality.h"
+#include "provider_http.h"
 
 static volatile sig_atomic_t cancelled;
 static int64_t deadline;
@@ -21,6 +22,7 @@ static void stop_download(int signal_number){(void)signal_number;cancelled=1;}
 static int interrupted(void *unused){(void)unused;return cancelled||(deadline&&av_gettime_relative()>deadline);}
 static const char *certificate;
 static int network_open(AVFormatContext *context,AVIOContext **io,const char *url,int flags,AVDictionary **options){
+    provider_http_options(options);
     if(strncmp(url,"http://",7)&&strncmp(url,"https://",8))return AVERROR(EINVAL);
     av_dict_set(options,"tls_verify","1",0);av_dict_set(options,"ca_file",certificate,0);
     av_dict_set(options,"protocol_whitelist","http,https,tcp,tls,crypto",0);
@@ -58,6 +60,7 @@ int main(int argc,char **argv){
     av_dict_set(&options,"tls_verify","1",0);av_dict_set(&options,"ca_file",certificate,0);
     av_dict_set(&options,"protocol_whitelist","http,https,tcp,tls,crypto",0);
     av_dict_set(&options,"rw_timeout","15000000",0);
+    provider_http_options(&options);
     if(getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay")){
         av_dict_set(&options,"referer","https://megaplay.buzz/",0);
         av_dict_set(&options,"user_agent","FlXtR-Steamlink/0.2",0);

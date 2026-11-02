@@ -27,5 +27,15 @@ int main(void){
     add_variants(master,"https://example.org/master.m3u8","alpha");
     assert(count==3&&choices[1].height==720&&choices[2].height==1080);
     assert(!strcmp(choices[1].url,"https://example.org/master.m3u8")); /* Keep alternate audio group. */
+    count=0;server_choice("alpha");server_choice("echo");web_servers();
+    assert(count==4&&!strcmp(choices[2].label,"fmovies")&&!strcmp(choices[3].label,"sflix"));
+    count=0;web_servers();assert(count==2&&!strcmp(choices[0].label,"fmovies")); /* Flixer unavailable. */
+    char key[80];assert(web_extract("var fz=`123abc`;","var fz=`",'`',key,sizeof(key))&&!strcmp(key,"123abc"));
+    assert(!web_extract("var fz=`bad\nheader`;","var fz=`",'`',key,sizeof(key)));
+    o=web_assignment("var Q = {\"ssr\":{\"servers\":[]},\"t\":\"public-reference\"}; next();","var Q = ");
+    assert(o&&field(o,"ssr"));json_object_put(o);
+    o=parse("{\"url\":\"https://media.example/master.m3u8\",\"tracks\":[{\"label\":\"English\",\"file\":\"https://media.example/en.vtt\"}]}");
+    assert(web_source(o,"SFLIX")&&count==1&&strstr(choices[0].meta,"SFLIX")&&choices[0].subs_eng[0]);json_object_put(o);
+    o=parse("{\"url\":\"file:///etc/passwd\"}");assert(!web_source(o,"FMOVIES"));json_object_put(o);
     puts("PASS: server deduplication, URL validation and compatible HLS quality choices");return 0;
 }

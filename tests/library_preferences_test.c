@@ -42,6 +42,9 @@ int main(void){
     auto_prefer_flixer_server();assert(!strcmp(auto_servers[0],"mirror_2"));
     strcpy(auto_title.kind,"movie");auto_count=2;strcpy(auto_servers[0],"alpha");strcpy(auto_servers[1],"echo");
     auto_prefer_flixer_server();assert(!strcmp(auto_servers[0],"echo")); /* missing preferred server retains fallback */
+    assert(server_preference_save("movie","sflix"));auto_count=4;
+    strcpy(auto_servers[0],"alpha");strcpy(auto_servers[1],"echo");strcpy(auto_servers[2],"fmovies");strcpy(auto_servers[3],"sflix");
+    auto_prefer_flixer_server();assert(!strcmp(auto_servers[0],"echo")&&!strcmp(auto_servers[2],"fmovies")&&!strcmp(auto_servers[3],"sflix"));
     unlink("settings.cfg");unlink("tv-gambits.cfg");unlink("server-preferences.cfg");
     SDL_Quit();assert(!chdir("/tmp"));assert(!rmdir(temp));
     puts("PASS: independent persistent genres/order, cancelled filters, validated settings, confirmed server learning and provider fallbacks");

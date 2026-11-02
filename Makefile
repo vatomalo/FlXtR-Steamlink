@@ -4,6 +4,21 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
 SDL_LIBS := $(shell pkg-config --libs sdl2)
 
 all: build/greenlink build/greenlink-catalog build/greenlink-download
+build/greenlink: src/provider_order.h
+build/greenlink-download: src/provider_http.h
+
+test-providers:
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/resolver_test.c -o build/resolver-test -lcurl -ljson-c -lcrypto
+	./build/resolver-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/library_preferences_test.c -o build/library-preferences-test $(SDL_LIBS) -lSDL2_image -lcurl
+	SDL_VIDEODRIVER=dummy ./build/library-preferences-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/provider_fallback_test.c -o build/provider-fallback-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/provider-fallback-test
+	$(CC) $(CFLAGS) tests/provider_http_test.c -o build/provider-http-test $$(pkg-config --cflags --libs libavutil)
+	./build/provider-http-test
+
+.PHONY: test-providers
 build/greenlink: src/video_download_ui.h src/phone_media.h
 build/greenlink: src/favorite_art.h src/favorite_art_ui.h
 build/greenlink-catalog: src/favorite_art.h src/favorite_art_worker.h

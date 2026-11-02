@@ -25,6 +25,7 @@
 #include "steamlink_video_stats.h"
 #include "font.h"
 #include "steamlink_av_sync.h"
+#include "provider_http.h"
 #ifndef FLXTR_VERSION
 #define FLXTR_VERSION "development"
 #endif
@@ -137,6 +138,7 @@ static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&
 static const char *local_media;
 #include "phone_media.h"
 static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int flags,AVDictionary **opts) {
+    provider_http_options(opts);
     if(megaplay){av_dict_set(opts,"referer","https://megaplay.buzz/",0);av_dict_set(opts,"user_agent","FlXtR-Steamlink/0.2",0);}
     const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");if(agent&&strlen(agent)<=500&&!strpbrk(agent,"\r\n"))av_dict_set(opts,"user_agent",agent,0);
     av_dict_set(opts,"tls_verify","1",0);
@@ -442,6 +444,7 @@ int main(int argc,char **argv) {
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
     fmt=avformat_alloc_context();if(!fmt)goto done;
     fmt->interrupt_callback.callback=interrupt_io;fmt->io_open=open_io;
+    provider_http_options(&opts);
     const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");if(agent&&strlen(agent)<=500&&!strpbrk(agent,"\r\n"))av_dict_set(&opts,"user_agent",agent,0);
     av_dict_set(&opts,"rw_timeout","15000000",0);
     av_dict_set(&opts,"tls_verify","1",0);

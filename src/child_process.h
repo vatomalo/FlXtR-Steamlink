@@ -26,6 +26,9 @@ static inline pid_t shell_spawn(const char *executable,const char *const argv[],
  * retain the shell's media session after exec (or pass it to its workers).
  * Preserve descriptors until exec so child-side dup2 piping still works. */
 static pid_t shell_fork(void){
+#ifdef __ANDROID__
+    errno=ENOSYS;return -1;
+#endif
     DIR *fds=opendir("/proc/self/fd");
     if(fds){
         struct dirent *entry;

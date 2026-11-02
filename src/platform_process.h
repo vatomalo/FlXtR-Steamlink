@@ -106,6 +106,10 @@ static inline HANDLE flxtr_process_stream(const char *path,DWORD standard,int in
 #endif
 static inline int flxtr_process_start(FlxtrProcess *process,const char *executable,
                                       const char *const argv[],const FlxtrSpawnOptions *options){
+#ifdef __ANDROID__
+    /* APK code runs in-process; do not execute desktop helpers on Android. */
+    errno=ENOSYS;return -1;
+#endif
     if(!process||!executable||!executable[0]||!argv||!argv[0]){errno=EINVAL;return -1;}
     if(process->running){errno=EBUSY;return -1;}
     size_t pass_count=options?options->pass_count:0;

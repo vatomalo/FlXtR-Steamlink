@@ -1,0 +1,6 @@
+<!-- Framework Activities use framework ImageViews and android:tint. -->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="UseAppTint" android:layout_width="148dp" android:layout_height="198dp" android:padding="4dp" android:background="@drawable/flxtr_console_focus">
+ <ImageView android:id="@+id/grid_image" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="Game cover"/>
+ <ImageView android:id="@+id/grid_overlay" android:layout_width="40dp" android:layout_height="40dp" android:layout_centerHorizontal="true" android:layout_marginTop="10dp" android:tint="#74ff84" android:contentDescription="Game running"/>
+ <TextView android:id="@+id/grid_text" style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/grid_overlay" android:layout_margin="6dp" android:gravity="center" android:textSize="13sp"/>
+</RelativeLayout>

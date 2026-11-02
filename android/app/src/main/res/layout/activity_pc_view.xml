@@ -1,0 +1,30 @@
+<!-- Framework Activities use framework ImageViews and android:tint. -->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" tools:ignore="UseAppTint" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#000000" android:padding="14dp">
+    <TextView android:id="@+id/flxtr_console_title" style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical" android:text="FLXTR / MOONLIGHT" android:textColor="#74ff84" android:textSize="23sp"/>
+    <LinearLayout android:id="@+id/flxtr_console_toolbar" android:layout_below="@id/flxtr_console_title" android:layout_width="match_parent" android:layout_height="76dp" android:orientation="horizontal">
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <ImageButton android:id="@+id/settingsButton" android:layout_width="match_parent" android:layout_height="48dp" android:background="@drawable/flxtr_console_focus" android:src="@drawable/ic_settings" android:tint="#74ff84" android:padding="10dp" android:scaleType="fitCenter" android:contentDescription="Stream settings"/>
+            <TextView style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="28dp" android:gravity="center" android:text="SETTINGS" android:textSize="11sp"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <ImageButton android:id="@+id/manuallyAddPc" android:layout_width="match_parent" android:layout_height="48dp" android:background="@drawable/flxtr_console_focus" android:src="@drawable/ic_add" android:tint="#74ff84" android:padding="10dp" android:scaleType="fitCenter" android:contentDescription="Add PC"/>
+            <TextView style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="28dp" android:gravity="center" android:text="ADD PC" android:textSize="11sp"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <ImageButton android:id="@+id/helpButton" android:layout_width="match_parent" android:layout_height="48dp" android:background="@drawable/flxtr_console_focus" android:src="@drawable/ic_help" android:tint="#74ff84" android:padding="10dp" android:scaleType="fitCenter" android:contentDescription="Moonlight setup help"/>
+            <TextView style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="28dp" android:gravity="center" android:text="HELP" android:textSize="11sp"/>
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:id="@+id/flxtr_console_footer" android:layout_width="match_parent" android:layout_height="72dp" android:layout_alignParentBottom="true" android:orientation="vertical">
+        <TextView style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="28dp" android:gravity="center_vertical" android:text="A CONNECT / Y OPTIONS / X ADD PC" android:textSize="10sp" android:textColor="#74ff84"/>
+        <Button android:id="@+id/flxtr_console_back" style="@style/FlxtrConsoleButton" android:layout_width="match_parent" android:layout_height="44dp" android:text="B BACK TO FLXTR"/>
+    </LinearLayout>
+    <RelativeLayout android:id="@+id/pcFragmentContainer" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/flxtr_console_toolbar" android:layout_above="@id/flxtr_console_footer"/>
+    <RelativeLayout android:id="@+id/no_pc_found_layout" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/flxtr_console_toolbar" android:layout_above="@id/flxtr_console_footer">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_centerInParent="true" android:padding="20dp" android:orientation="vertical" android:gravity="center">
+            <ProgressBar android:id="@+id/pcs_loading" android:layout_width="32dp" android:layout_height="32dp" android:indeterminateTint="#74ff84"/>
+            <TextView style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:text="SEARCHING FOR HOST PCS" android:textColor="#74ff84" android:gravity="center"/>
+            <TextView style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="RUN SUNSHINE ON YOUR PC.\nUSE ADD PC TO ENTER ITS ADDRESS." android:gravity="center" android:textSize="11sp" android:textColor="#74a77c"/>
+        </LinearLayout>
+    </RelativeLayout>
+</RelativeLayout>

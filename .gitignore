@@ -38,3 +38,7 @@ phone-files/
 
 /tv-airing.tsv*
 /tv-preload.log
+
+/android/moonlight/AndroidManifest.xml
+/android/app/src/main/jniLibs/libflxtr_*
+/android/app/src/main/jniLibs/*/libflxtr_*.so

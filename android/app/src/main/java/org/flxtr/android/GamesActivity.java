@@ -1,0 +1,90 @@
+package org.flxtr.android;
+
+import android.app.*;
+import android.content.*;
+import android.net.Uri;
+import android.os.Bundle;
+import android.view.*;
+import android.widget.*;
+import org.json.JSONObject;
+import java.io.File;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Steam Link-style console folders, ROM covers and per-ROM options. */
+public final class GamesActivity extends Activity {
+    private static final String[] SYSTEMS={"all","nes","snes","gb","gbc","gba","ps"};
+    private static final String[] LABELS={"ALL GAMES","NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION"};
+    private static final String[] CODES={"ALL","FC","SFC","GB","GBC","GBA","PS"};
+    static final String[] SCALES={"FULLSCREEN FIT","INTEGER / PIXEL","FILL / CROP","STRETCH"};
+    private final ExecutorService worker=Executors.newSingleThreadExecutor();
+    private final Gamepad gamepad=new Gamepad();
+    private final ArrayList<Button> actions=new ArrayList<>();
+    private final ArrayList<Tile> tiles=new ArrayList<>();
+    private GameLibrary library;
+    private ConsoleMenu menu;
+    private GridView grid;
+    private TextView status,heading;
+    private boolean busy;
+    private long lastScan;
+    private String system="";
+    private static final class Tile {String title,detail,code,system;JSONObject game;Tile(String title,String detail,String code,String system,JSONObject game){this.title=title;this.detail=detail;this.code=code;this.system=system;this.game=game;}}
+    @Override public void onCreate(Bundle state){super.onCreate(state);library=new GameLibrary(this);menu=new ConsoleMenu(this);if(state!=null)system=state.getString("system","");build();render();}
+    private void build(){
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(14),dp(10),dp(14),dp(8));root.setBackgroundColor(android.graphics.Color.BLACK);
+        LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);header.addView(menu.text("FLXTR",25,menu.theme.accent));heading=menu.text("ROM FOLDERS",12,menu.theme.ink);heading.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);header.addView(heading,new LinearLayout.LayoutParams(0,dp(46),1));root.addView(header);menu.divider(root);
+        LinearLayout tools=new LinearLayout(this);action(tools,"ADD FOLDER",this::pickFolder);action(tools,"SCAN",this::scan);action(tools,"OPTIONS",this::options);root.addView(tools);
+        status=menu.text("",11,menu.theme.muted);status.setPadding(0,dp(6),0,dp(6));status.setMaxLines(2);root.addView(status);
+        grid=new GridView(this);grid.setNumColumns(getResources().getConfiguration().screenWidthDp<600?2:3);grid.setHorizontalSpacing(dp(10));grid.setVerticalSpacing(dp(12));grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(menu.theme.selection());grid.setDrawSelectorOnTop(true);grid.setClipToPadding(false);grid.setAdapter(new CoverAdapter());grid.setOnItemClickListener((p,v,index,id)->open(index));grid.setOnItemLongClickListener((p,v,index,id)->{if(index<tiles.size()&&tiles.get(index).game!=null){romOptions(tiles.get(index).game);return true;}return false;});root.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
+        menu.divider(root);TextView hints=menu.text("A OPEN  /  X PLAY  /  Y OPTIONS  /  B BACK",10,menu.theme.accent);hints.setPadding(0,dp(8),0,dp(8));root.addView(hints);
+        LinearLayout bottom=new LinearLayout(this);Button back=menu.button("B BACK",this::onBackPressed),stream=menu.button("MOONLIGHT",()->startActivity(new Intent(this,com.limelight.PcView.class)));bottom.addView(back,new LinearLayout.LayoutParams(0,dp(44),1));bottom.addView(stream,new LinearLayout.LayoutParams(0,dp(44),1));root.addView(bottom);setContentView(root);grid.requestFocus();
+    }
+    private int dp(int n){return menu.dp(n);}
+    private void action(LinearLayout row,String label,Runnable click){Button b=menu.button(label,click);row.addView(b,new LinearLayout.LayoutParams(0,dp(46),1));actions.add(b);}
+    private String system(JSONObject game){switch(game.optString("core")){case "fceumm":return "nes";case "snes9x":return "snes";case "mgba":return "gba";case "pcsx_rearmed":return "ps";default:return game.optString("name").toLowerCase(Locale.ROOT).endsWith(".gbc")?"gbc":"gb";}}
+    private String systemLabel(String value){for(int i=0;i<SYSTEMS.length;i++)if(SYSTEMS[i].equals(value))return LABELS[i];return "ROM FOLDERS";}
+    private void render(){int selected=grid.getSelectedItemPosition();tiles.clear();try{List<JSONObject> games=library.games();if(system.isEmpty()){
+            for(int i=0;i<SYSTEMS.length;i++){int count=0;for(JSONObject game:games)if(i==0||system(game).equals(SYSTEMS[i]))count++;tiles.add(new Tile(LABELS[i],count+" ROM"+(count==1?"":"S"),CODES[i],SYSTEMS[i],null));}
+        }else for(JSONObject game:games)if(system.equals("all")||system(game).equals(system)){String title=game.optString("name").replaceFirst("\\.[^.]+$","");tiles.add(new Tile(title,GameFormats.label(game.optString("core")).toUpperCase(Locale.ROOT),ConsoleMenu.coreName(game.optString("core")),"",game));}
+        heading.setText(system.isEmpty()?"ROM FOLDERS":systemLabel(system));status.setText((system.isEmpty()?games.size():tiles.size())+" TITLES  /  "+(library.scanMessage.contains("unavailable")?library.scanMessage:system.isEmpty()?"CHOOSE A CONSOLE":tiles.isEmpty()?"NO ROMS HERE · ADD FILES TO YOUR GAME FOLDER":"A ROM OPTIONS / X START GAME"));
+        ((BaseAdapter)grid.getAdapter()).notifyDataSetChanged();if(!tiles.isEmpty())grid.setSelection(Math.max(0,Math.min(selected,tiles.size()-1)));
+    }catch(Exception e){status.setText(e.getMessage());}}
+    private final class CoverAdapter extends BaseAdapter {
+        public int getCount(){return tiles.size();}public Object getItem(int i){return tiles.get(i);}public long getItemId(int i){return i;}
+        public View getView(int index,View old,android.view.ViewGroup parent){Tile tile=tiles.get(index);LinearLayout cell=new LinearLayout(GamesActivity.this);cell.setOrientation(LinearLayout.VERTICAL);cell.setPadding(dp(4),dp(4),dp(4),dp(6));cell.setBackground(menu.theme.surface(false));String code=tile.game==null?tile.code:GameFormats.label(tile.game.optString("core")).replace("PlayStation","PS");cell.addView(new ConsoleArtView(GamesActivity.this,code,tile.game==null,menu.theme.font),new LinearLayout.LayoutParams(-1,dp(getResources().getConfiguration().screenHeightDp<450?84:110)));TextView title=menu.text(tile.title,13,menu.theme.ink);title.setMaxLines(2);title.setMinLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);cell.addView(title);TextView detail=menu.text(tile.detail,10,menu.theme.muted);detail.setSingleLine(true);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);cell.addView(detail);cell.setContentDescription(tile.title+", "+tile.detail);return cell;}
+    }
+    private void open(int index){if(busy||index<0||index>=tiles.size())return;Tile tile=tiles.get(index);if(tile.game==null){system=tile.system;grid.setSelection(0);render();}else romOptions(tile.game);}
+    private SharedPreferences preferences(){return getSharedPreferences("retro-options",MODE_PRIVATE);}
+    private void romOptions(JSONObject game){if(busy)return;try{
+        String key=GameLibrary.hash(GameLibrary.identity(game)),core=game.optString("core");SharedPreferences prefs=preferences();AlertDialog dialog=new AlertDialog.Builder(this,R.style.FlxtrConsoleDialog).create();LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(18),dp(18),dp(18),dp(16));body.setBackgroundColor(android.graphics.Color.BLACK);body.addView(menu.text("ROM OPTIONS",20,menu.theme.accent));TextView title=menu.text(game.optString("name"),15,menu.theme.ink);title.setPadding(0,dp(10),0,dp(22));body.addView(title);
+        body.addView(menu.row("PLAY","START GAME",()->{dialog.dismiss();play(game);}));
+        LinearLayout coreRow=menu.row("CORE",prefs.getString("core:"+key,"").isEmpty()?"AUTOMATIC":ConsoleMenu.coreName(core),()->{dialog.dismiss();menu.choices("CORE FOR THIS ROM",new String[]{"AUTOMATIC",ConsoleMenu.coreName(core)},i->{prefs.edit().putString("core:"+key,i==0?"":core).apply();romOptions(game);});});body.addView(coreRow);
+        LinearLayout scaleRow=menu.row("SCALING",SCALES[Math.max(0,Math.min(3,prefs.getInt("scale:"+key,0)))],()->{dialog.dismiss();menu.choices("ROM SCALING",SCALES,i->{prefs.edit().putInt("scale:"+key,i).apply();romOptions(game);});});body.addView(scaleRow);
+        coreRow.setOnKeyListener((v,code,event)->{if(event.getAction()==KeyEvent.ACTION_DOWN&&(code==KeyEvent.KEYCODE_DPAD_LEFT||code==KeyEvent.KEYCODE_DPAD_RIGHT)){boolean automatic=!prefs.getString("core:"+key,"").isEmpty();prefs.edit().putString("core:"+key,automatic?"":core).apply();((TextView)coreRow.getChildAt(1)).setText(automatic?"AUTOMATIC":ConsoleMenu.coreName(core));return true;}return false;});
+        scaleRow.setOnKeyListener((v,code,event)->{if(event.getAction()==KeyEvent.ACTION_DOWN&&(code==KeyEvent.KEYCODE_DPAD_LEFT||code==KeyEvent.KEYCODE_DPAD_RIGHT)){int next=(prefs.getInt("scale:"+key,0)+(code==KeyEvent.KEYCODE_DPAD_LEFT?3:1))%4;prefs.edit().putInt("scale:"+key,next).apply();((TextView)scaleRow.getChildAt(1)).setText(SCALES[next]);return true;}return false;});
+        body.addView(menu.row("OUTPUT","NATIVE / DISPLAY",()->{dialog.dismiss();startActivity(new Intent(android.provider.Settings.ACTION_DISPLAY_SETTINGS));}));
+        TextView note=menu.text("CORE AND SCALING ARE SAVED FOR THIS ROM",10,menu.theme.muted);note.setPadding(0,dp(22),0,dp(10));body.addView(note);body.addView(menu.text("A OPEN / LEFT-RIGHT CHANGE / X PLAY / B BACK",10,menu.theme.accent));Button close=menu.button("B BACK",dialog::dismiss);LinearLayout.LayoutParams closeParams=new LinearLayout.LayoutParams(-1,dp(44));closeParams.topMargin=dp(18);body.addView(close,closeParams);dialog.setView(body);dialog.show();dialog.getWindow().setLayout(Math.min(getResources().getDisplayMetrics().widthPixels-dp(24),dp(760)),-2);
+        Gamepad pad=new Gamepad();View decor=dialog.getWindow().getDecorView();Gamepad.Actions controls=new Gamepad.Actions(){public boolean button(int button){if(button==KeyEvent.KEYCODE_BUTTON_X){dialog.dismiss();play(game);return true;}if(button==KeyEvent.KEYCODE_BUTTON_B){dialog.dismiss();return true;}if(button==KeyEvent.KEYCODE_BUTTON_A){Gamepad.send(decor,KeyEvent.KEYCODE_DPAD_CENTER);return true;}return false;}public void direction(int direction){Gamepad.send(decor,direction);}};dialog.setOnKeyListener((d,code,event)->pad.key(event,controls));decor.setOnGenericMotionListener((v,event)->pad.motion(event,controls));dialog.setOnDismissListener(d->pad.reset());body.getChildAt(2).requestFocus();
+    }catch(Exception e){error(e);}}
+    private void options(){menu.choices("GAMES / OPTIONS",new String[]{"ADD GAME FILES","MANAGE SCAN FOLDERS","IMPORT PLAYSTATION BIOS","MOONLIGHT","ANDROID SETTINGS"},i->{if(i==0)pickFiles(90);if(i==1)folders();if(i==2)pickFiles(92);if(i==3)startActivity(new Intent(this,com.limelight.PcView.class));if(i==4)startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));});}
+    @Override protected void onResume(){super.onResume();if(!busy&&(lastScan==0||android.os.SystemClock.elapsedRealtime()-lastScan>30000))scan();}
+    @Override public void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putString("system",system);}
+    @Override public void onBackPressed(){if(!system.isEmpty()){system="";grid.setSelection(0);render();}else finish();}
+    private void pickFolder(){startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,Uri.parse("content://com.android.externalstorage.documents/document/primary%3AFlXtR%2FGames")).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION),91);}
+    private void pickFiles(int code){startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE,code==90).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),code);}
+    private void setBusy(boolean value){busy=value;for(Button b:actions)b.setEnabled(!value);grid.setEnabled(!value);if(!value)grid.requestFocus();}
+    private void scan(){if(busy)return;lastScan=android.os.SystemClock.elapsedRealtime();setBusy(true);status.setText("SCANNING ROM FOLDERS...");worker.execute(()->{String error="";try{library.scan();}catch(Exception e){error=e.getMessage()==null?"Scan failed":e.getMessage();}final String problem=error;runOnUiThread(()->{if(isFinishing()||isDestroyed())return;setBusy(false);render();if(!problem.isEmpty())status.setText(problem);});});}
+    private void folders(){try{List<String> folders=library.folders();if(folders.isEmpty()){pickFolder();return;}String[] labels=new String[folders.size()];for(int i=0;i<labels.length;i++)labels[i]=Uri.decode(Uri.parse(folders.get(i)).getLastPathSegment());menu.choices("REMOVE A SCAN FOLDER",labels,i->{try{library.removeFolder(folders.get(i));render();}catch(Exception e){error(e);}});}catch(Exception e){error(e);}}
+    @Override protected void onActivityResult(int code,int result,Intent data){super.onActivityResult(code,result,data);if(result!=RESULT_OK||data==null)return;
+        ArrayList<Uri> uris=new ArrayList<>();if(data.getClipData()!=null)for(int i=0;i<Math.min(200,data.getClipData().getItemCount());i++)uris.add(data.getClipData().getItemAt(i).getUri());else if(data.getData()!=null)uris.add(data.getData());for(Uri uri:uris)try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(SecurityException ignored){}
+        setBusy(true);worker.execute(()->{ArrayList<String> problems=new ArrayList<>();for(Uri uri:uris)try{if(code==91)library.addFolder(uri);else if(code==90)library.addFile(uri);else if(code==92)library.importBios(uri);}catch(Exception e){problems.add(e.getMessage()==null?"Could not add file":e.getMessage());}try{library.scan();}catch(Exception e){problems.add(e.getMessage()==null?"Scan failed":e.getMessage());}runOnUiThread(()->{if(isFinishing()||isDestroyed())return;setBusy(false);render();if(!problems.isEmpty())error(new Exception(String.join("\n",problems)));else if(code==92)Toast.makeText(this,"PLAYSTATION BIOS IMPORTED",Toast.LENGTH_SHORT).show();});});
+    }
+    private void play(JSONObject game){if(busy)return;setBusy(true);AtomicBoolean cancelled=new AtomicBoolean();ProgressDialog progress=new ProgressDialog(this,R.style.FlxtrConsoleDialog);progress.setMessage("PREPARING "+game.optString("name"));progress.setCancelable(true);Future<?> job=worker.submit(()->{try{File rom=library.stage(game);String key=library.saveKey(game),optionsKey=GameLibrary.hash(GameLibrary.identity(game));if(Thread.currentThread().isInterrupted()||cancelled.get())return;runOnUiThread(()->{progress.dismiss();if(isFinishing()||isDestroyed()||cancelled.get())return;setBusy(false);startActivity(new Intent(this,RetroActivity.class).putExtra("rom",rom.getAbsolutePath()).putExtra("core",game.optString("core")).putExtra("saveKey",key).putExtra("optionsKey",optionsKey));});}catch(Exception e){runOnUiThread(()->{progress.dismiss();if(isFinishing()||isDestroyed()||cancelled.get())return;setBusy(false);if(!(e instanceof java.io.InterruptedIOException))error(e);});}});progress.setOnCancelListener(d->{cancelled.set(true);job.cancel(true);setBusy(false);});progress.show();Gamepad.dialog(progress);}
+    private void error(Exception error){new AlertDialog.Builder(this,R.style.FlxtrConsoleDialog).setTitle("GAMES").setMessage(error.getMessage()==null?"Could not open this game":error.getMessage()).setPositiveButton("OK",null).show();}
+    private final Gamepad.Actions controls=new Gamepad.Actions(){public boolean button(int key){if(key==KeyEvent.KEYCODE_BUTTON_B){onBackPressed();return true;}if(key==KeyEvent.KEYCODE_BUTTON_START||key==KeyEvent.KEYCODE_BUTTON_Y){int selected=grid.getSelectedItemPosition();if(key==KeyEvent.KEYCODE_BUTTON_Y&&selected>=0&&selected<tiles.size()&&tiles.get(selected).game!=null)romOptions(tiles.get(selected).game);else options();return true;}if(key==KeyEvent.KEYCODE_BUTTON_X){int selected=grid.getSelectedItemPosition();if(selected>=0&&selected<tiles.size()&&tiles.get(selected).game!=null)play(tiles.get(selected).game);return true;}if(key==KeyEvent.KEYCODE_BUTTON_A){View focus=getCurrentFocus();if(focus==grid||focus==null)open(grid.getSelectedItemPosition());else focus.performClick();return true;}return false;}public void direction(int key){Gamepad.send(getWindow().getDecorView(),key);}};
+    @Override public boolean dispatchKeyEvent(KeyEvent event){return gamepad.key(event,controls)||super.dispatchKeyEvent(event);}
+    @Override public boolean onGenericMotionEvent(MotionEvent event){return gamepad.motion(event,controls)||super.onGenericMotionEvent(event);}
+    @Override protected void onPause(){gamepad.reset();super.onPause();}
+    @Override protected void onDestroy(){gamepad.reset();worker.shutdownNow();super.onDestroy();}
+}

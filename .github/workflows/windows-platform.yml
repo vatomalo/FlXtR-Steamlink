@@ -18,6 +18,7 @@ jobs:
       - name: Test POSIX backends and existing callers
         run: |
           make -j2 all
+          make test-providers test-native-sdl
           make test-platform test-platform-shell test-desktop-ipc
           python3 tests/api_setup_test.py
           make test-video-downloads

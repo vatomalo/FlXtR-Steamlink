@@ -59,8 +59,8 @@ with tempfile.TemporaryDirectory() as tmp:
         subprocess.run([str(worker),'--run-game'],cwd=root,env=env,check=True)
         return json.loads((home/'argv.json').read_text())
     assert launch()[-2]==str(fast)
-    assert 'video_fullscreen_x = "640"' in (root/'game-runtime.cfg').read_text()
-    assert 'video_fullscreen_y = "480"' in (root/'game-runtime.cfg').read_text()
+    assert 'video_fullscreen_x = "0"' in (root/'game-runtime.cfg').read_text()
+    assert 'video_fullscreen_y = "0"' in (root/'game-runtime.cfg').read_text()
     for height,width in [(240,320),(720,1280),(1080,1920),(0,0),(480,640)]:
         (root/'settings.cfg').write_text(f'game_output={height}\n')
         launch()
@@ -77,7 +77,11 @@ with tempfile.TemporaryDirectory() as tmp:
         (root/'settings.cfg').write_text(f'game_output=480\ngame_view={mode}\n')
         launch()
         config=(root/'game-runtime.cfg').read_text()
-        assert 'aspect_ratio_index = "22"' in config and 'custom_viewport_width = "0"' in config
+        if mode==0:
+            assert 'aspect_ratio_index = "22"' in config and 'custom_viewport_width = "0"' in config
+        else:
+            assert 'aspect_ratio_index = "23"' in config
+            assert 'custom_viewport_width = "640"' in config and 'custom_viewport_height = "480"' in config
         assert f'video_force_aspect = "{str(mode==0).lower()}"' in config
         assert 'video_scale_integer = "false"' in config
     fixture=pathlib.Path('build/geometry-fixture_libretro.so').resolve()
@@ -136,7 +140,7 @@ with tempfile.TemporaryDirectory() as tmp:
     neo_core=home/'cores/fbalpha2012_neogeo_libretro.so';neo_core.write_bytes(b'fixture')
     (root/'games.json').write_text(json.dumps([{'title':'Neo','rom':str(neo/'mslug.zip'),'core':str(neo_core)}]))
     assert launch()[-2]==str(neo_core)
-    assert 'video_shader_enable' not in (root/'game-runtime.cfg').read_text()
+    assert 'video_shader_enable = "false"' in (root/'game-runtime.cfg').read_text()
     (root/'game-request').write_text('99999 4 6\n')
     assert subprocess.run([str(worker),'--run-game'],cwd=root,env=env).returncode==2
 print('PASS: JSON/legacy import, deduplication, bounded paging, unknown core exclusion, exact argv and exit hotkeys')

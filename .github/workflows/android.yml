@@ -1,7 +1,7 @@
 name: Android preview
 on:
   push:
-    branches: [feature/android, codex/steamlink-game-menus]
+    branches: [main, feature/android, codex/steamlink-game-menus]
   workflow_dispatch:
 permissions:
   contents: write

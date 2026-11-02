@@ -18,7 +18,12 @@ test-providers:
 	$(CC) $(CFLAGS) tests/provider_http_test.c -o build/provider-http-test $$(pkg-config --cflags --libs libavutil)
 	./build/provider-http-test
 
-.PHONY: test-providers
+test-native-sdl:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/video_native_sdl_test.c -o build/video-native-sdl-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/video-native-sdl-test
+
+.PHONY: test-providers test-native-sdl
 build/greenlink: src/video_download_ui.h src/phone_media.h
 build/greenlink: src/favorite_art.h src/favorite_art_ui.h
 build/greenlink-catalog: src/favorite_art.h src/favorite_art_worker.h

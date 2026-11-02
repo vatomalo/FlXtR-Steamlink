@@ -4,12 +4,13 @@
 
 | Platform | Package |
 | --- | --- |
-| Android 8+ | [Signed APK](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/FlXtR-Android-preview.apk) |
-| Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/FlXtR-SteamDeck-x86_64.tgz) |
-| PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/FlXtR-PSP-beta.zip) |
-| Steam Link | [Complete ARM package](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/v2026.11.02/greenlink.tgz) |
+| Android 8+ | [Signed APK](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1009-dfa3f6291c1e/FlXtR-Android-preview.apk) |
+| Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/steamdeck-video-b6fa41b007d8dba13ed7c5aa814281e35f980166/FlXtR-SteamDeck-x86_64.tgz) |
+| PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/psp-49601dfa187deaa88e1452ad2a9d1eee2804d489/FlXtR-PSP-beta.zip) |
+| Steam Link | [Complete ARM package](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/steamlink-tv-2f94974ea7f4314ae690af0381c5eae9c1953490/greenlink.tgz) |
 
-[Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases/tag/v2026.11.02).
+[Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases).
+Each download above is pinned to its platform's most recent published package.
 PSP device playback and physical Steam Deck validation remain experimental.
 
 Android 8+ phone/tablet media preview (movies/series, KissAnime, music/MTV, TV channels, archive, downloads, selectable original/touch themes and controller support): [build and testing](docs/ANDROID.md).

@@ -4,7 +4,7 @@
 
 | Platform | Package |
 | --- | --- |
-| Android 8+ | [Signed APK](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1010-background-library/FlXtR-Android-preview.apk) |
+| Android 8+ | [Signed APK](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1013-touch-controls/FlXtR-Android-preview.apk) |
 | Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-Windows-x86_64.zip) |
 | Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-Linux-x86_64.tgz) |
 | Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-SteamDeck-x86_64.tgz) |

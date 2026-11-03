@@ -11,7 +11,7 @@ final class MediaCaptions {
                 for(String field:new String[]{"url","file","src","link"}){url=track.optString(field,"");if(!url.isEmpty())break;}
                 if(!CatalogItem.validStream(url))continue;String label="";
                 for(String field:new String[]{"lang","language","label","languageCode","srclang"}){label=track.optString(field,"");if(!label.isEmpty())break;}
-                String language=label.toLowerCase(Locale.ROOT);language=language.startsWith("en")?"en":language.startsWith("no")||language.startsWith("nb")?"no":language.startsWith("es")||language.startsWith("spa")?"es":language.length()==2?language:"und";
+                String language=label.toLowerCase(Locale.ROOT);language=language.startsWith("en")?"en":language.startsWith("no")||language.startsWith("nb")||language.startsWith("nn")?"no":language.startsWith("es")||language.startsWith("spa")?"es":language.length()==2?language:"und";
                 String lower=url.toLowerCase(Locale.ROOT),mime=lower.contains(".srt")?"application/x-subrip":lower.contains(".ass")||lower.contains(".ssa")?"text/x-ssa":"text/vtt";
                 boolean duplicate=false;for(Track old:stream.subtitles)if(old.url.equals(url))duplicate=true;
                 if(!duplicate)stream.subtitles.add(new Track(url,language,label.isEmpty()?language:label,mime));

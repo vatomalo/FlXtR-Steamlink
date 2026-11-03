@@ -38,10 +38,17 @@ final class StreamResolver {
             if(servers==null){progress.update("Finding available servers…");servers=StreamProtocol.servers(lookup(path,"",request));}
             while(next<servers.size()){
                 request.check();String server=servers.get(next++);progress.update("Opening server "+next+" of "+servers.size()+"…");
-                try{StreamProtocol.Stream stream=StreamProtocol.stream(lookup(path,server,request),server);probe(stream,request);request.check();stream.item=item;return stream;}
+                try{StreamProtocol.Stream stream=StreamProtocol.stream(lookup(path,server,request),server);probe(stream,request);if(stream.subtitles.isEmpty())discoverCaptions(item,stream,request);request.check();stream.item=item;return stream;}
                 catch(Exception unavailable){request.check();/* Try the next provider; never log signed media URLs. */}
             }
             throw new IOException("No playable stream was returned. Please retry or choose another title.");
+        }
+    }
+    private static void discoverCaptions(CatalogItem item,StreamProtocol.Stream stream,Request request) throws IOException {
+        String path=item.kind.equals("movie")?"movie/"+item.id:"tv/"+item.id+"/"+item.season+"/"+item.episode;
+        for(int version=2;version>=1&&stream.subtitles.isEmpty();version--){
+            request.check();
+            try{String raw=MediaHttp.text("https://sub.vdrk.site/v"+version+"/"+path,Collections.emptyMap(),524288,request);JSONObject root=new JSONObject();root.put("tracks",new org.json.JSONArray(raw));MediaCaptions.read(root,stream);}catch(Exception unavailable){request.check();}
         }
     }
     private static JSONObject lookup(String path,String server,Request request) throws Exception {

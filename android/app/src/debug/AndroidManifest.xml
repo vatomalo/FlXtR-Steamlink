@@ -1,7 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <instrumentation android:name=".DolphinPlaybackInstrumentation" android:targetPackage="org.flxtr.android" />
+ <instrumentation android:name=".EngineCoreInstrumentation" android:targetPackage="org.flxtr.android" />
+ <instrumentation android:name=".EnginePlaybackInstrumentation" android:targetPackage="org.flxtr.android" />
+ <instrumentation android:name=".HardwareRenderInstrumentation" android:targetPackage="org.flxtr.android" />
+ <instrumentation android:name=".ScummLauncherInstrumentation" android:targetPackage="org.flxtr.android" />
+ <instrumentation android:name=".AdventureImportInstrumentation" android:targetPackage="org.flxtr.android" />
  <instrumentation android:name=".MediaSmokeInstrumentation" android:targetPackage="org.flxtr.android" />
  <instrumentation android:name=".GamesSmokeInstrumentation" android:targetPackage="org.flxtr.android" />
  <instrumentation android:name=".ConsoleSmokeInstrumentation" android:targetPackage="org.flxtr.android" />
  <instrumentation android:name=".ConsolePlaybackInstrumentation" android:targetPackage="org.flxtr.android" />
- <application><provider android:name=".GameTestDocumentsProvider" android:authorities="org.flxtr.android.testgames" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS"><intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER"/></intent-filter></provider></application>
+<application><provider android:name=".GameTestDocumentsProvider" android:authorities="org.flxtr.android.testgames" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS"><intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER"/></intent-filter></provider><provider android:name=".AdventureDocumentsProvider" android:authorities="org.flxtr.android.testadventure" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS"><intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER"/></intent-filter></provider></application>
 </manifest>

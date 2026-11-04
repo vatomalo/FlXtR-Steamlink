@@ -20,7 +20,7 @@ final class GameCovers {
     void load(JSONObject game,ImageView image,Runnable show){
         String name=game.optString("name").replaceFirst("\\.[^.]+$","");
         String core=game.optString("core"),system;
-        switch(core){case "fceumm":system="Nintendo - Nintendo Entertainment System";break;case "snes9x":system="Nintendo - Super Nintendo Entertainment System";break;case "mgba":system="Nintendo - Game Boy Advance";break;case "pcsx_rearmed":system="Sony - PlayStation";break;default:system=game.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".gbc")?"Nintendo - Game Boy Color":"Nintendo - Game Boy";}
+switch(core){case "ppsspp":system="Sony - PlayStation Portable";break;case "dolphin":system=game.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".wbfs")?"Nintendo - Wii":"Nintendo - GameCube";break;case "scummvm":return;case "fceumm":system="Nintendo - Nintendo Entertainment System";break;case "snes9x":system="Nintendo - Super Nintendo Entertainment System";break;case "mgba":system="Nintendo - Game Boy Advance";break;case "pcsx_rearmed":system="Sony - PlayStation";break;default:system=game.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".gbc")?"Nintendo - Game Boy Color":"Nintendo - Game Boy";}
         final String platform=system;
         worker.execute(()->{try{
             String url="https://thumbnails.libretro.com/"+URLEncoder.encode(platform,"UTF-8").replace("+","%20")+"/Named_Boxarts/"+URLEncoder.encode(name.replaceAll("[&*/:`<>?\\\\|]","_"),"UTF-8").replace("+","%20")+".png";

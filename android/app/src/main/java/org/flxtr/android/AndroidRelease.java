@@ -14,7 +14,7 @@ final class AndroidRelease {
     AndroidRelease(JSONObject json) throws Exception {
         code=json.getInt("versionCode");minSdk=json.getInt("minSdk");size=json.getLong("size");
         name=json.getString("versionName");url=json.getString("url");sha256=json.getString("sha256");
-        if(!json.getString("package").equals("org.flxtr.android")||code<1||minSdk<26||size<1||size>128L*1024*1024||name.length()>80||!sha256.matches("[a-f0-9]{64}")||!validUrl(url))throw new IOException("Invalid Android release");
+        if(!json.getString("package").equals("org.flxtr.android")||code<1||minSdk<26||size<1||size>256L*1024*1024||name.length()>80||!sha256.matches("[a-f0-9]{64}")||!validUrl(url))throw new IOException("Invalid Android release");
     }
     static boolean validUrl(String value){
         try{URI u=new URI(value);return value.startsWith(ROOT+"android-")&&"https".equals(u.getScheme())&&"github.com".equals(u.getHost())&&u.getPort()==-1&&u.getUserInfo()==null&&u.getQuery()==null&&u.getFragment()==null&&u.getPath().endsWith(".apk")&&!u.getPath().contains("..");}catch(Exception invalid){return false;}

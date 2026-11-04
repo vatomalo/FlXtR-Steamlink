@@ -1,0 +1,24 @@
+Embedded cores are independently licensed third-party software.
+
+PPSSPP (GPL-2.0-or-later), both Android ARM ABIs:
+https://github.com/hrydgard/ppsspp/tree/5e39edd444ad66a711cf296658de0b7e8823a920
+
+ScummVM (GPL-3.0-or-later), both Android ARM ABIs:
+https://github.com/scummvm/scummvm/tree/e0ddc60bfabb1efdf1e135006c8914ca59d0596c
+
+Dolphin (GPL-2.0-or-later), arm64-v8a:
+https://github.com/libretro/dolphin/tree/b93001ed50c8b34e6ead4eed713c2005a80386e4
+
+Dolphin (GPL-2.0-or-later), armeabi-v7a:
+https://github.com/libretro/dolphin/tree/cd1d6298aacdd27d9b186d4037eaead10b63784d
+
+Each APK release adding these binaries provides corresponding source snapshots,
+including submodules, alongside its native input artifacts. Subcomponents retain
+their own notices in those snapshots. Core archive SHA-256 pins and upstream URLs
+are recorded in android/console-cores.lock.json in the application source.
+
+Runtime system assets originate from:
+https://buildbot.libretro.com/assets/system/PPSSPP.zip
+https://buildbot.libretro.com/assets/system/ScummVM.zip
+https://buildbot.libretro.com/assets/system/Dolphin.zip
+Their original notices are retained when extracted.

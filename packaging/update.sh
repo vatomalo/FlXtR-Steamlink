@@ -53,14 +53,14 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     # Keep old shell for recovery; copy only package-controlled files.
     # Locally downloaded ROMs, settings and private catalog files remain untouched.
     cp greenlink .update-backup
-    for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1; do
+    for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1 greenlink-handoff-game; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && chmod 755 "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     for part in assets certs music-runtime; do
         # Python bytecode validates source mtimes; preserve them on installation.
         if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -pR "$staged/$part/." "$part/"; fi
     done
-    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh; do
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py; do
         if [ -f "$staged/$part" ]; then
             mkdir -p "$(dirname "$part")"
             cp "$staged/$part" "$part.new" && chmod 755 "$part.new" && mv -f "$part.new" "$part"
@@ -69,7 +69,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     # Only our two optional cores; leave the user's RetroArch core tree untouched.
     if [ -d "$staged/cores" ]; then
         mkdir -p cores
-        for part in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt; do
+        for part in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt gambatte_handoff_libretro.so gambatte-handoff.json GAMBATTE-COPYING.txt; do
             if [ -f "$staged/cores/$part" ]; then
                 cp "$staged/cores/$part" "cores/$part.new" && mv -f "cores/$part.new" "cores/$part"
             fi

@@ -675,6 +675,7 @@ int main(int argc,char **argv) {
             rc=queue_audio(audio,swr,packet,frame,device);
         }
         pthread_mutex_lock(&av_sync.mutex);frames=av_sync.frames;pthread_mutex_unlock(&av_sync.mutex);
+        if(frames){const char *ack=getenv("FLXTR_HANDOFF_ACK");if(ack&&strlen(ack)==48&&!strncmp(ack,"handoff/",8)&&strspn(ack+8,"0123456789abcdef")==32&&!strcmp(ack+40,"/started")){FILE *out=fopen(ack,"w");if(out){fputs("playing\n",out);fclose(out);}unsetenv("FLXTR_HANDOFF_ACK");}}
         av_packet_unref(packet);if(rc<0)break;
         adaptive_evaluate(0);
         if(frames>200&&clock_start&&av_gettime_relative()-clock_start>20000000&&!audio_samples){

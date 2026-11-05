@@ -24,6 +24,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".GamesActivity" android:exported="false" />
+        <activity android:name=".TvPairActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="flxtr" android:host="tv"/></intent-filter></activity>
         <activity android:name=".RetroActivity" android:exported="false" android:screenOrientation="sensorLandscape" />
         <activity android:name=".PlayerActivity" android:exported="false" android:screenOrientation="sensorLandscape" />
         <service android:name=".AudioPlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback"><intent-filter><action android:name="androidx.media3.session.MediaSessionService" /></intent-filter></service>

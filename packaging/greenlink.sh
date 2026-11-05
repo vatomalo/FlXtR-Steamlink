@@ -24,6 +24,12 @@ fi
 if [ -f tools/state_guard.py ] && [ -f scripts/music-runtime.sh ]; then
     sh scripts/music-runtime.sh tools/state_guard.py seed >state-guard-seed.log 2>&1 &
 fi
+handoff_pid=
+if [ -f tools/handoff.py ]; then
+    sh scripts/music-runtime.sh tools/handoff.py serve >handoff.log 2>&1 &
+    handoff_pid=$!
+fi
+trap '[ -z "$handoff_pid" ] || kill "$handoff_pid" 2>/dev/null; rm -f handoff/url.txt handoff/armed' EXIT
 while :; do
     rm -f game-music-request
     ./greenlink "$@" >>greenlink.log 2>&1
@@ -148,6 +154,13 @@ while :; do
         continue
     fi
     if [ "$code" -eq 43 ]; then
+        if [ -f handoff/launch ]; then
+            read handoff_id <handoff/launch
+            rm -f handoff/launch
+            sh scripts/music-runtime.sh tools/handoff.py launch "$handoff_id" >handoff-game.log 2>&1
+            set -- --library games
+            continue
+        fi
         # A broken Steam Link audio/video pipeline can trap RetroArch indefinitely,
         # repeatedly printing MV_PE_InputBufWrite failures and ignoring TERM.
         # Recover ONLY when the same error is actively repeating; normal games

@@ -13,6 +13,12 @@ $STRIP build/greenlink-arm
 $CC -Os -std=c99 -Wall -Wextra -Werror -DFLXTR_VERSION=\"$version\" $(pkg-config --cflags sdl2) src/catalog.c -o build/greenlink-catalog-arm -lcurl -ljson-c -lcrypto -lSDL2_image $(pkg-config --libs sdl2)
 $STRIP build/greenlink-catalog-arm
 app=dist/steamlink/apps/greenlink
+if [ -f build/greenlink-handoff-game-arm ]; then
+    cp build/greenlink-handoff-game-arm "$app/greenlink-handoff-game"
+    mkdir -p "$app/cores" "$app/sources"
+    cp build/cores/gambatte_handoff_libretro.so build/cores/gambatte-handoff.json build/cores/GAMBATTE-COPYING.txt "$app/cores/"
+    cp dist/core-sources/gambatte-handoff-source.tar.gz "$app/sources/"
+fi
 $CC -Os -Wall -Wextra -Werror -fPIC -shared -nostdlib src/samba_paths.c -o "$app/samba-paths.so"
 cp packaging/samba-packages.json packaging/LIBRETRO-API-LICENSE.txt "$app/"
 if [ ! -f build/cacert.pem ]; then
@@ -80,7 +86,7 @@ if [ -f build/music-runtime.tgz ]; then
     printf '1\n' > "$app/assets/music-required-v1"
 fi
 mkdir -p "$app/tools" "$app/scripts"
-cp tools/music.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/usb_setup.py tools/usb_mount_template.sh "$app/tools/"
+cp tools/music.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py "$app/tools/"
 cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
 if [ -f build/greenlink-preview-arm ]; then cp build/greenlink-preview-arm "$app/greenlink-preview"; fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi

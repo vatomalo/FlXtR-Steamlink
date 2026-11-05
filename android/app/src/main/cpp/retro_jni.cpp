@@ -45,11 +45,13 @@ static bool pointerPressed;
 static bool loaded,initialized;
 static bool supportsNoGame;
 static retro_keyboard_callback keyboard={};
+static uint64_t serializationQuirks;
 static void logCore(enum retro_log_level level,const char *format,...){va_list args;va_start(args,format);__android_log_vprint(level>=RETRO_LOG_ERROR?ANDROID_LOG_ERROR:ANDROID_LOG_INFO,"FlXtR-Libretro",format,args);va_end(args);}
 static void definitions(const retro_core_option_definition *defs){if(!defs)return;for(auto d=defs;d->key;d++)options.emplace(d->key,d->default_value?d->default_value:(d->values[0].value?d->values[0].value:""));}
 static void definitionsV2(const retro_core_options_v2 *v2){if(!v2||!v2->definitions)return;for(auto d=v2->definitions;d->key;d++)options.emplace(d->key,d->default_value?d->default_value:(d->values[0].value?d->values[0].value:""));}
 static bool environment(unsigned cmd,void *data){
     switch(cmd){
+        case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:if(!data)return false;serializationQuirks=*(uint64_t*)data;return true;
         case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:if(!data)return false;keyboard=*(retro_keyboard_callback*)data;return true;
         case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:supportsNoGame=data&&*(bool*)data;return true;
         case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:*(retro_hw_context_type*)data=RETRO_HW_CONTEXT_OPENGLES3;return true;
@@ -112,6 +114,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_org_flxtr_android_RetroActivity_coreIn
 extern "C" JNIEXPORT jdoubleArray JNICALL Java_org_flxtr_android_RetroActivity_startCore(JNIEnv *env,jclass,jstring path,jstring saves,jstring system,jstring library,jobject surface){
     if(initialized)return nullptr;
     renderedFrames.store(0,std::memory_order_relaxed);
+    serializationQuirks=0;
     notification("");
     supportsNoGame=false;
     keyboard={};
@@ -154,5 +157,11 @@ extern "C" JNIEXPORT jboolean JNICALL Java_org_flxtr_android_RetroActivity_swapD
 extern "C" JNIEXPORT void JNICALL Java_org_flxtr_android_RetroActivity_resetCore(JNIEnv*,jclass){if(loaded)core.reset();}
 extern "C" JNIEXPORT void JNICALL Java_org_flxtr_android_RetroActivity_stopCore(JNIEnv*,jclass){cleanup();}
 extern "C" JNIEXPORT jint JNICALL Java_org_flxtr_android_RetroActivity_renderedFrames(JNIEnv*,jclass){return (jint)renderedFrames.load(std::memory_order_relaxed);}
+static std::string jsonString(const std::string &value){std::string result="\"";for(unsigned char c:value){if(c=='"'||c=='\\')result+='\\';if(c>=32)result+=(char)c;}return result+"\"";}
+extern "C" JNIEXPORT jstring JNICALL Java_org_flxtr_android_RetroActivity_handoffMetadata(JNIEnv *env,jclass){
+    if(!loaded)return nullptr;retro_system_info info={};core.get_system_info(&info);
+    std::string result="{\"coreInfo\":"+jsonString(std::string(info.library_name?info.library_name:"")+" "+(info.library_version?info.library_version:""))+",\"quirks\":"+std::to_string(serializationQuirks)+",\"options\":{";
+    bool first=true;for(const auto &option:options){if(!first)result+=",";first=false;result+=jsonString(option.first)+":"+jsonString(option.second);}result+="}}";return env->NewStringUTF(result.c_str());
+}
 extern "C" JNIEXPORT void JNICALL Java_org_flxtr_android_RetroActivity_sendKey(JNIEnv*,jclass,jboolean down,jint key,jint character,jint modifiers){if(initialized&&keyboard.callback)keyboard.callback(down,(unsigned)key,(uint32_t)character,(uint16_t)modifiers);}
 extern "C" JNIEXPORT jbyteArray JNICALL Java_org_flxtr_android_RetroActivity_messageBytes(JNIEnv *env,jclass){std::lock_guard<std::mutex> lock(messageMutex);auto result=env->NewByteArray(coreMessage.size());if(result&&!coreMessage.empty())env->SetByteArrayRegion(result,0,coreMessage.size(),(const jbyte*)coreMessage.data());return result;}

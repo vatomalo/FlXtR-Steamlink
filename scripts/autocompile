@@ -103,6 +103,7 @@ if (( update )); then
 fi
 mkdir -p "$GREENLINK_BUILD_CACHE"
 if (( ! shell_only )); then bash scripts/build-player.sh; bash scripts/build-resolver.sh; fi
+bash scripts/build-handoff-core.sh
 bash scripts/build-steamlink.sh
 {
     printf 'commit=%s\n' "$(git rev-parse HEAD)"

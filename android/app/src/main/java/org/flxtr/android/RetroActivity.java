@@ -20,6 +20,7 @@ public final class RetroActivity extends Activity implements SurfaceHolder.Callb
     static native String coreInfo(String library);
     static native short[] frame(int mask,short leftX,short leftY,short rightX,short rightY,short deltaX,short deltaY,short absoluteX,short absoluteY,boolean pressed);
     static native int renderedFrames();
+    static native String handoffMetadata();
     static native void sendKey(boolean down,int key,int character,int modifiers);
     private static native byte[] messageBytes();
     static String lastMessage(){byte[] message=messageBytes();return message==null?"":new String(message,java.nio.charset.StandardCharsets.UTF_8);}
@@ -47,6 +48,7 @@ public final class RetroActivity extends Activity implements SurfaceHolder.Callb
     private TextView loadingText;
     private View touchDpad,touchButtons;
     private boolean touchControls;
+    private volatile boolean handingOff;
     private final ConcurrentLinkedQueue<Runnable> commands=new ConcurrentLinkedQueue<>();
     private File rom,save;
     private String coreName;
@@ -95,7 +97,7 @@ double[] av=startCore(coreName.equals("scummvm")&&getIntent().getBooleanExtra("c
             audio=new AudioTrack.Builder().setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()).setAudioFormat(new AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()).setBufferSizeInBytes(buffer).setTransferMode(AudioTrack.MODE_STREAM).build();if(audio.getState()!=AudioTrack.STATE_INITIALIZED)throw new IOException("Game audio is unavailable");audio.play();
             long period=(long)(1_000_000_000/Math.max(1,Math.min(120,av[0]))),next=System.nanoTime();boolean wasPaused=false;
             boolean displayed=false;while(running){Runnable command;while((command=commands.poll())!=null)command.run();
-                if(paused){if(!wasPaused){audio.pause();audio.flush();wasPaused=true;}Thread.sleep(20);next=System.nanoTime();continue;}
+                if(paused||handingOff){if(!wasPaused){audio.pause();audio.flush();wasPaused=true;}Thread.sleep(20);next=System.nanoTime();continue;}
                 if(wasPaused){audio.play();wasPaused=false;}
                 short[] samples=frame(touch|keys|stick,leftX,leftY,rightX,rightY,(short)Math.max(-32767,Math.min(32767,mouseX.getAndSet(0))),(short)Math.max(-32767,Math.min(32767,mouseY.getAndSet(0))),pointerX,pointerY,pointerPressed);framesPlayed++;if(!displayed&&renderedFrames()>0){displayed=true;runOnUiThread(()->loadingText.setVisibility(View.GONE));}if(samples!=null&&samples.length>0&&running){samplesPlayed+=samples.length/2;if(audio.write(samples,0,samples.length,AudioTrack.WRITE_BLOCKING)<0&&running)throw new IOException("Game audio stopped");}
                 next+=period;long wait=next-System.nanoTime();if(wait>0)Thread.sleep(wait/1000000,(int)(wait%1000000));else if(wait<-period*3)next=System.nanoTime();
@@ -107,8 +109,23 @@ double[] av=startCore(coreName.equals("scummvm")&&getIntent().getBooleanExtra("c
     private boolean restore(String suffix,boolean state){try{File file=new File(save+suffix);return file.isFile()&&file.length()<=128*1024*1024&&writeMemory(Files.readAllBytes(file.toPath()),state);}catch(Exception failure){return false;}catch(OutOfMemoryError memory){return false;}}
     private synchronized void stop(){running=false;touch=keys=stick=0;clearAnalog();AudioTrack track=audio;if(track!=null)try{track.pause();track.flush();}catch(Exception ignored){}if(thread!=null){thread.interrupt();try{thread.join(2000);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}}}
     @Override public void onBackPressed(){menu();}
-private void menu(){if(!running){finish();return;}paused=true;touch=keys=stick=0;clearAnalog();AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Libretro · "+GameFormats.label(coreName)).setItems(new String[]{"Resume",coreName.equals("scummvm")?"Save state (unsupported)":"Save state",coreName.equals("scummvm")?"Load state (unsupported)":"Load state","Reset game","Next disc","Touch controls: "+(touchControls?"On":"Off"),"Exit to library"},(d,i)->{if((i==1||i==2)&&coreName.equals("scummvm")){toast("Use ScummVM's in-game save/load menu");return;}if(i==1)commands.add(()->toast(persist(".state",true)?"State saved":"Could not save state"));if(i==2)commands.add(()->toast(restore(".state",true)?"State loaded":"No saved state"));if(i==3)commands.add(RetroActivity::resetCore);if(i==4)commands.add(()->{int count=diskCount(),next=count>1?(diskIndex()+1)%count:0;toast(count>1&&swapDisk(next)?"Disc "+(next+1)+" of "+count:"Load an M3U playlist to switch discs");});if(i==5)setTouchControls(!touchControls);if(i==6)finish();}).setNegativeButton("Resume",null).create();dialog.setOnDismissListener(d->{paused=false;hideBars();});dialog.show();Gamepad.dialog(dialog);}
+private void menu(){if(!running){finish();return;}paused=true;touch=keys=stick=0;clearAnalog();AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Libretro · "+GameFormats.label(coreName)).setItems(new String[]{"Resume",coreName.equals("scummvm")?"Save state (unsupported)":"Save state",coreName.equals("scummvm")?"Load state (unsupported)":"Load state","Reset game","Next disc","Touch controls: "+(touchControls?"On":"Off"),"Exit to library","Continue on TV"},(d,i)->{if((i==1||i==2)&&coreName.equals("scummvm")){toast("Use ScummVM's in-game save/load menu");return;}if(i==1)commands.add(()->toast(persist(".state",true)?"State saved":"Could not save state"));if(i==2)commands.add(()->toast(restore(".state",true)?"State loaded":"No saved state"));if(i==3)commands.add(RetroActivity::resetCore);if(i==4)commands.add(()->{int count=diskCount(),next=count>1?(diskIndex()+1)%count:0;toast(count>1&&swapDisk(next)?"Disc "+(next+1)+" of "+count:"Load an M3U playlist to switch discs");});if(i==5)setTouchControls(!touchControls);if(i==6)finish();if(i==7)continueOnTv();}).setNegativeButton("Resume",null).create();dialog.setOnDismissListener(d->{paused=false;hideBars();});dialog.show();Gamepad.dialog(dialog);}
     private void toast(String text){runOnUiThread(()->Toast.makeText(this,text,Toast.LENGTH_SHORT).show());}
+    private void continueOnTv(){
+        String source=coreName.equals("gambatte")?TvHandoff.SOURCE:coreName+":unverified";
+        TvHandoff.send(this,source,()->{
+            java.util.concurrent.CompletableFuture<File> captured=new java.util.concurrent.CompletableFuture<>();
+            commands.add(()->{if(captured.isCancelled())return;try{
+                handingOff=true;touch=keys=stick=0;clearAnalog();
+                org.json.JSONObject metadata=new org.json.JSONObject(handoffMetadata());
+                if((metadata.optLong("quirks")&125)!=0)throw new IOException("This core cannot transfer portable save states");
+                byte[] state=readMemory(true);if(state==null)throw new IOException("This core could not create a save state");
+                metadata.put("protocol",1).put("type","game").put("source",source).put("romSha256",TvHandoff.hash(rom)).put("stateSha256",TvHandoff.hex(java.security.MessageDigest.getInstance("SHA-256").digest(state)));
+                captured.complete(TvHandoff.archive(this,metadata,state));
+            }catch(Throwable error){handingOff=false;captured.completeExceptionally(error);}});
+            try{return captured.get(30,java.util.concurrent.TimeUnit.SECONDS);}catch(Exception error){captured.cancel(false);handingOff=false;throw error;}
+        },this::finish,()->handingOff=false);
+    }
     private int bit(int code){boolean ps=coreName.equals("pcsx_rearmed")||coreName.equals("ppsspp");switch(code){case KeyEvent.KEYCODE_BUTTON_A:return ps?0:8;case KeyEvent.KEYCODE_BUTTON_B:return ps?8:0;case KeyEvent.KEYCODE_BUTTON_X:return ps?1:9;case KeyEvent.KEYCODE_BUTTON_Y:return ps?9:1;case KeyEvent.KEYCODE_BUTTON_SELECT:return 2;case KeyEvent.KEYCODE_BUTTON_START:return 3;case KeyEvent.KEYCODE_DPAD_UP:return 4;case KeyEvent.KEYCODE_DPAD_DOWN:return 5;case KeyEvent.KEYCODE_DPAD_LEFT:return 6;case KeyEvent.KEYCODE_DPAD_RIGHT:return 7;case KeyEvent.KEYCODE_BUTTON_L1:return 10;case KeyEvent.KEYCODE_BUTTON_R1:return 11;case KeyEvent.KEYCODE_BUTTON_L2:return 12;case KeyEvent.KEYCODE_BUTTON_R2:return 13;default:return -1;}}
 @Override public boolean dispatchKeyEvent(KeyEvent e){if(e.getKeyCode()==KeyEvent.KEYCODE_BUTTON_THUMBR||e.getKeyCode()==KeyEvent.KEYCODE_MENU){if(e.getAction()==KeyEvent.ACTION_DOWN&&e.getRepeatCount()==0)menu();return true;}if(coreName.equals("scummvm")&&e.isFromSource(InputDevice.SOURCE_KEYBOARD)){int key=GameKeyboard.key(e.getKeyCode());if(key!=0){boolean down=e.getAction()==KeyEvent.ACTION_DOWN;int character=down?e.getUnicodeChar():0;if(e.getAction()==KeyEvent.ACTION_DOWN||e.getAction()==KeyEvent.ACTION_UP){int modifiers=GameKeyboard.modifiers(e.getMetaState());commands.add(()->sendKey(down,key,character,modifiers));}return true;}}int bit=bit(e.getKeyCode());if(bit>=0){if(e.getAction()==KeyEvent.ACTION_DOWN)keys|=1<<bit;else if(e.getAction()==KeyEvent.ACTION_UP)keys&=~(1<<bit);return true;}return super.dispatchKeyEvent(e);}
     @Override public boolean onGenericMotionEvent(MotionEvent e){if((e.getSource()&InputDevice.SOURCE_JOYSTICK)!=0){leftX=analog(e.getAxisValue(MotionEvent.AXIS_X));leftY=analog(e.getAxisValue(MotionEvent.AXIS_Y));rightX=analog(e.getAxisValue(MotionEvent.AXIS_Z));rightY=analog(e.getAxisValue(MotionEvent.AXIS_RZ));float x=e.getAxisValue(MotionEvent.AXIS_X),y=e.getAxisValue(MotionEvent.AXIS_Y),hatX=e.getAxisValue(MotionEvent.AXIS_HAT_X),hatY=e.getAxisValue(MotionEvent.AXIS_HAT_Y);if(Math.abs(hatX)>.5)x=hatX;if(Math.abs(hatY)>.5)y=hatY;stick=(x<-.35?1<<6:0)|(x>.35?1<<7:0)|(y<-.35?1<<4:0)|(y>.35?1<<5:0);return true;}return super.onGenericMotionEvent(e);}

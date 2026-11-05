@@ -38,6 +38,8 @@ type Client struct {
     httpServer *http.Server
     mu sync.Mutex
     closed bool
+    adbMu sync.Mutex
+    adb *adbBridge
 }
 
 var platformOnce sync.Once
@@ -92,7 +94,9 @@ func (c *Client) Status() (string,error) {
     for _,p:=range status.Peer {
         for _,ip:=range p.TailscaleIPs {if ip.Is4()&&tailRange.Contains(ip){peers=append(peers,map[string]any{"id":string(p.ID),"name":p.HostName,"ip":ip.String(),"online":p.Online});break}}
     }
-    out,err:=json.Marshal(map[string]any{"state":status.BackendState,"authUrl":status.AuthURL,"peers":peers,"id":c.identity})
+    ips:=[]string{}
+    if status.Self!=nil{for _,ip:=range status.Self.TailscaleIPs{if ip.Is4(){ips=append(ips,ip.String())}}}
+    out,err:=json.Marshal(map[string]any{"state":status.BackendState,"authUrl":status.AuthURL,"peers":peers,"id":c.identity,"ips":ips,"adb":c.adbStatus()})
     return string(out),err
 }
 
@@ -111,6 +115,7 @@ func (c *Client) Login() error {
 }
 
 func (c *Client) Disconnect() error {
+    c.StopADB()
     lc,err:=c.server.LocalClient();if err!=nil{return err}
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
     _,err=lc.EditPrefs(ctx,&ipn.MaskedPrefs{Prefs:ipn.Prefs{WantRunning:false},WantRunningSet:true})
@@ -118,6 +123,7 @@ func (c *Client) Disconnect() error {
 }
 
 func (c *Client) Logout() error {
+    c.StopADB()
     lc,err:=c.server.LocalClient();if err!=nil{return err}
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
     return lc.Logout(ctx)
@@ -171,6 +177,7 @@ func (c *Client) Request(method,address,upload string)(string,error){
 
 func (c *Client) Close() error {
     c.mu.Lock();c.closed=true;srv:=c.httpServer;c.mu.Unlock()
+    c.StopADB()
     if srv!=nil{_ = srv.Close()}
     return c.server.Close()
 }

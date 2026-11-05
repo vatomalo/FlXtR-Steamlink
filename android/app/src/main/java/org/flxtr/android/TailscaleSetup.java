@@ -14,8 +14,8 @@ final class TailscaleSetup {
     static String actionLabel(Context context){return "Built-in Tailscale";}
     static void show(Activity activity){
         Gamepad.dialog(new AlertDialog.Builder(activity).setTitle("Network and devices")
-            .setItems(new String[]{"Available FlXtR devices","Built-in Tailscale","Saved device"},(d,i)->{
-                if(i==0)DeviceDiscovery.show(activity,null);else if(i==1)open(activity);else savedTv(activity);
+            .setItems(new String[]{"Available FlXtR devices","Built-in Tailscale","Saved device","ADB through Tailscale"},(d,i)->{
+                if(i==0)DeviceDiscovery.show(activity,null);else if(i==1)open(activity);else if(i==2)savedTv(activity);else AdbSetup.show(activity);
             }).setNegativeButton("Close",null).show());
     }
     static void savedTv(Activity activity){

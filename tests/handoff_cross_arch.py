@@ -24,7 +24,16 @@ if '--cgb' in sys.argv[3:]:rom[0x143]=0x80
 rom[0x150:0x15b]=bytes.fromhex('f3 21 00 c0 34 18 fd 00 00 00 00')
 checksum=0
 for byte in rom[0x134:0x14d]:checksum=(checksum-byte-1)&255
-rom[0x14d]=checksum;(root/'fixture.gb').write_bytes(rom)
+rom[0x14d]=checksum
+nes='--nes' in sys.argv[3:]
+filename='fixture.nes' if nes else 'fixture.gb'
+if nes:
+    # Original NROM program increments zero-page RAM and displays a palette.
+    rom=bytearray(b'NES\x1a'+bytes([1,1])+bytes(10)+bytes(16384+8192))
+    code=bytes.fromhex('78 d8 a2 ff 9a a9 00 8d 00 20 8d 01 20 a9 3f 8d 06 20 a9 00 8d 06 20 a9 21 8d 07 20 e6 00 4c 1d 80')
+    rom[16:16+len(code)]=code
+    rom[16+0x3ffa:16+0x4000]=bytes.fromhex('00 80 00 80 00 80')
+(root/filename).write_bytes(rom)
 options={};strings=[];video_hash=0
 ENV=c.CFUNCTYPE(c.c_bool,c.c_uint,c.c_void_p)
 VIDEO=c.CFUNCTYPE(None,c.c_void_p,c.c_uint,c.c_uint,c.c_size_t)
@@ -66,12 +75,12 @@ for name,callback in [('environment',environment),('video_refresh',video),('audi
 core.retro_init()
 class Info(c.Structure):_fields_=[('name',c.c_char_p),('version',c.c_char_p),('extensions',c.c_char_p),('fullpath',c.c_bool),('extract',c.c_bool)]
 class Game(c.Structure):_fields_=[('path',c.c_char_p),('data',c.c_void_p),('size',c.c_size_t),('meta',c.c_char_p)]
-info=Info();core.retro_get_system_info(c.byref(info));buffer=c.create_string_buffer(bytes(rom));game=Game(str(root/'fixture.gb').encode(),c.cast(buffer,c.c_void_p),len(rom),None)
+info=Info();core.retro_get_system_info(c.byref(info));buffer=c.create_string_buffer(bytes(rom));game=Game(str(root/filename).encode(),c.cast(buffer,c.c_void_p),len(rom),None)
 core.retro_load_game.restype=c.c_bool;assert core.retro_load_game(c.byref(game))
 for _ in range(125):core.retro_run()
 core.retro_serialize_size.restype=c.c_size_t;size=core.retro_serialize_size();state=c.create_string_buffer(size);core.retro_serialize.argtypes=[c.c_void_p,c.c_size_t];core.retro_serialize.restype=c.c_bool;assert core.retro_serialize(state,size)
 (root/'state.bin').write_bytes(state.raw)
-metadata=dict(protocol=1,type='game',source='gambatte:77f2567d718b8973d02caa2daa8dce4953faf811',coreInfo=info.name.decode()+' '+info.version.decode(),quirks=0,options=options,rom=str(root/'fixture.gb'),state=str(root/'state.bin'),core=sys.argv[1],saveDirectory=str(root),romSha256=hashlib.sha256(rom).hexdigest(),stateSha256=hashlib.sha256(state.raw).hexdigest())
+metadata=dict(protocol=1,type='game',source='fceumm:e0f3086a8104f8fbbe49a2615b10401504a9533f' if nes else 'gambatte:77f2567d718b8973d02caa2daa8dce4953faf811',coreInfo=info.name.decode()+' '+info.version.decode(),quirks=0,options=options,rom=str(root/filename),state=str(root/'state.bin'),core=sys.argv[1],saveDirectory=str(root),romSha256=hashlib.sha256(rom).hexdigest(),stateSha256=hashlib.sha256(state.raw).hexdigest())
 (root/'session.json').write_text(json.dumps(metadata))
 for _ in range(5):core.retro_run()
 assert core.retro_serialize(state,size)

@@ -125,7 +125,7 @@ class Supervisor:
         if backend!='Running':
             clear('ready');(ROOT/'handoff/remote-url.txt').unlink(missing_ok=True)
             if backend=='NeedsMachineAuth':clear('auth-url.txt');status('APPROVE THIS DEVICE IN YOUR TAILSCALE ADMIN CONSOLE');return
-            if time.monotonic()-self.login_at>15:
+            if not login and time.monotonic()-self.login_at>15:
                 self.login_at=time.monotonic()
                 _,reply=cli('up','--json','--hostname=flxtr-steamlink','--accept-dns=false','--accept-routes=false','--timeout=1s',timeout=5)
                 # CLI JSON can contain several newline-delimited progress records.

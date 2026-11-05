@@ -41,6 +41,12 @@ class LinkTest(unittest.TestCase):
         with patch.object(link,'cli',side_effect=[(0,json.dumps(dict(BackendState='Running',TailscaleIPs=['100.70.1.2']))),(1,'')]):
             with self.assertRaises(ValueError):service.tick()
         self.assertFalse((self.root/'tailscale/ready').exists())
+    def test_pending_login_link_is_kept_without_restarting_login(self):
+        service=self.supervisor();url='https://login.tailscale.com/a/pending-device'
+        with patch.object(link,'cli',return_value=(1,json.dumps(dict(BackendState='NeedsLogin',AuthURL=url)))) as cli:
+            service.tick()
+            cli.assert_called_once_with('status','--json')
+        self.assertEqual((self.root/'tailscale/auth-url.txt').read_text().strip(),url)
     def test_disconnect_retains_identity_but_closes_remote_receiver(self):
         (self.root/'tailscale/tailscaled.state').write_text('private-identity')
         (self.root/'tailscale/ready').touch();(self.root/'handoff/remote-url.txt').write_text('private-link')

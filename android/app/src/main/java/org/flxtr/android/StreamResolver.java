@@ -63,7 +63,7 @@ final class StreamResolver {
                 String timestamp=Long.toString(time);byte[] random=new byte[16];new SecureRandom().nextBytes(random);
                 String nonce=Base64.getEncoder().withoutPadding().encodeToString(random).replace("/","").replace("+","");
                 Map<String,String> headers=new HashMap<>();headers.put("Origin","https://flixer.gd");headers.put("Referer","https://flixer.gd/");headers.put("Accept","text/plain");
-                headers.put("x-fingerprint-lite","b4f8a1fc72e905d63e");headers.put("X-Api-Key",key);headers.put("X-Request-Timestamp",timestamp);headers.put("X-Request-Nonce",nonce);
+                headers.put("x-fingerprint-lite","b4f8a1fc72e9O5d63e");headers.put("X-Api-Key",key);headers.put("X-Request-Timestamp",timestamp);headers.put("X-Request-Nonce",nonce);
                 headers.put("X-Request-Signature",StreamProtocol.signature(key,timestamp,nonce,path));headers.put("X-Client-Fingerprint",StreamProtocol.fingerprint());
                 if(server.isEmpty())headers.put("bW90aGFmYWth","1");else{if(!StreamProtocol.validServer(server))throw new IOException("Invalid server");headers.put("X-Only-Sources","1");headers.put("X-Server",server);}
                 String raw=text(StreamProtocol.BASE+path,headers,request);request.check();

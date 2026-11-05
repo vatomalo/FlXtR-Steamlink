@@ -84,7 +84,7 @@ static json_object *lookup(const char *path,const char *server){
     fingerprint(fp);snprintf(url,sizeof(url),BASE"%s",path);
     struct curl_slist *headers=NULL;
     headers=header(headers,"Origin","https://flixer.gd");headers=header(headers,"Referer","https://flixer.gd/");
-    headers=header(headers,"x-fingerprint-lite","b4f8a1fc72e905d63e");headers=header(headers,"Accept","text/plain");
+    headers=header(headers,"x-fingerprint-lite","b4f8a1fc72e9O5d63e");headers=header(headers,"Accept","text/plain");
     headers=header(headers,"X-Api-Key",key);headers=header(headers,"X-Request-Timestamp",ts);headers=header(headers,"X-Request-Nonce",nonce);
     headers=header(headers,"X-Request-Signature",sig);headers=header(headers,"X-Client-Fingerprint",fp);
     if(*server){headers=header(headers,"X-Only-Sources","1");headers=header(headers,"X-Server",server);}

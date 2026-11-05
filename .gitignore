@@ -1,4 +1,6 @@
 build/
+/tailscale/
+/handoff/
 dist/
 *.log
 catalog.local.tsv

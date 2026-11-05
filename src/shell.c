@@ -52,12 +52,37 @@ static char rom_phone_path[241];
 static uint8_t accounts_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];
 static uint8_t wifi_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(12)];
 static int wifi_qr_valid;
+static int handoff_remote;
+static char tailscale_status[128],tailscale_auth[512];
+static uint32_t tailscale_read_tick;
+static void tailscale_refresh(void){
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+    snprintf(tailscale_status,sizeof(tailscale_status),"USE THE OFFICIAL TAILSCALE APP ON THIS DEVICE");tailscale_auth[0]=0;return;
+#endif
+    uint32_t now=SDL_GetTicks();if(tailscale_read_tick&&now-tailscale_read_tick<1000)return;tailscale_read_tick=now;
+    char status_line[128]="PRESS A TO INSTALL / CONNECT TAILSCALE",url[512]={0};
+    FILE *f=fopen("tailscale/status.txt","r");if(f){if(!fgets(status_line,sizeof(status_line),f))status_line[0]=0;fclose(f);}
+    status_line[strcspn(status_line,"\r\n")]=0;snprintf(tailscale_status,sizeof(tailscale_status),"%s",status_line);
+    f=fopen("tailscale/auth-url.txt","r");if(f){if(!fgets(url,sizeof(url),f))url[0]=0;fclose(f);}url[strcspn(url,"\r\n")]=0;
+    if(strncmp(url,"https://login.tailscale.com/",sizeof("https://login.tailscale.com/")-1))url[0]=0;
+    if(strcmp(url,tailscale_auth)){snprintf(tailscale_auth,sizeof(tailscale_auth),"%s",url);memset(accounts_qr,0,sizeof(accounts_qr));
+        if(url[0]){uint8_t temp[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];if(!qrcodegen_encodeText(url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,16,qrcodegen_Mask_AUTO,true))tailscale_auth[0]=0;}}
+}
+static void tailscale_request(const char *command){
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+    (void)command;snprintf(tailscale_status,sizeof(tailscale_status),"USE THE OFFICIAL TAILSCALE APP ON THIS DEVICE");
+#else
+    if(mkdir("tailscale",0700)&&errno!=EEXIST)return;
+    FILE *f=fopen("tailscale/request.next","w");if(f){fprintf(f,"%s\n",command);if(!fclose(f))rename("tailscale/request.next","tailscale/request");}
+#endif
+}
 static void accounts_open(int party){
+    if(party==4){api_setup_close();accounts_on=1;party_entry=4;wifi_qr_valid=0;tailscale_auth[0]=0;tailscale_read_tick=0;tailscale_refresh();return;}
     if(party==3){
         api_setup_close();accounts_on=1;party_entry=3;wifi_qr_valid=0;
-        FILE *f=fopen("handoff/url.txt","r");char url[128]={0};
+        FILE *f=fopen(handoff_remote?"handoff/remote-url.txt":"handoff/url.txt","r");char url[128]={0};
         if(f){if(!fgets(url,sizeof(url),f))url[0]=0;fclose(f);url[strcspn(url,"\r\n")]=0;}
-        if(!url[0]){strcpy(api_setup.message,"RECEIVER STARTING - PRESS A TO RETRY");return;}
+        if(!url[0]){strcpy(api_setup.message,handoff_remote?"CONNECT TAILSCALE FIRST - Y SELECTS LAN":"RECEIVER STARTING - PRESS A TO RETRY");return;}
         snprintf(api_setup.url,sizeof(api_setup.url),"%s",url);
         uint8_t temp[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];
         if(!qrcodegen_encodeText(url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,16,qrcodegen_Mask_AUTO,true)){api_setup.url[0]=0;return;}
@@ -1432,15 +1457,22 @@ static void draw(Uint32 tick) {
     text(30,379,ui_hint("[SELECT] SETTINGS","F10 SETTINGS / F1 HELP"),1,dim,22);text(30,402,ui_hint("[X] LIBRARY","F2 LIBRARY"),1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?ui_hint("[Y] GENRE / SECTION","F6 GENRE / SECTION"):browse.mode==14?ui_hint("[L2] ROM FOLDERS","F8 ROM FOLDERS"):browse.mode==28?"[Y] DELETE ZIP":browse.mode==OFFLINE_MODE?"[Y] DELETE / CANCEL":total&&video_download_supported(&titles[visible[selection]])?"[Y] DOWNLOAD TO LOCAL":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?ui_hint("[START] SEARCH","F3 SEARCH"):browse.mode==14?ui_hint("[START] GET GAMES","F3 GET GAMES"):browse.mode==21?ui_hint("[START] GET GAMES","F3 GET GAMES"):ui_hint("[START] ABOUT","F1 HELP / I ABOUT"),1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":ui_hint("B BACK / L3 FAVORITE","ESC BACK / F FAVORITE"),1,dim,22);
     if(accounts_on){
         rect(184,80,746,410,(SDL_Color){12,20,14,255},1);
-        text(204,96,party_entry==3?"CONTINUE ON TV":party_entry==2?"ROMSGAMES / PHONE IMPORT":phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
-        if(party_entry==3){
+text(204,96,party_entry==4?"TAILSCALE":party_entry==3?"CONTINUE ON TV":party_entry==2?"ROMSGAMES / PHONE IMPORT":phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
+        if(party_entry==4){
+            text(204,128,"TAILSCALE / PRIVATE REMOTE PLAY",2,green,48);
+            if(tailscale_auth[0]){int size=qrcodegen_getSize(accounts_qr),scale=4;rect(204,160,(size+8)*scale,(size+8)*scale,(SDL_Color){255,255,255,255},1);
+                for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(qrcodegen_getModule(accounts_qr,x,y))rect(204+(x+4)*scale,160+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);}
+            wrap(524,180,"A INSTALL / CONNECT. SCAN THE QR TO SIGN IN. CONNECT YOUR PHONE TO THE SAME TAILSCALE ACCOUNT.",30,6,white);
+            wrap(204,410,tailscale_status,87,2,green);
+            text(204,470,"A CONNECT / X DISCONNECT / Y SIGN OUT / B BACK",1,white,90);
+        }else if(party_entry==3){
             text(204,128,"CONTINUE ON TV",2,green,40);
             if(api_setup.url[0]){
                 int size=qrcodegen_getSize(accounts_qr),scale=4;
                 rect(204,160,(size+8)*scale,(size+8)*scale,(SDL_Color){255,255,255,255},1);
                 for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(qrcodegen_getModule(accounts_qr,x,y))rect(204+(x+4)*scale,160+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);
                 wrap(524,180,"SCAN TO PAIR FLXTR. THEN USE CONTINUE ON TV IN THE PHONE VIDEO OR GAME MENU. KEEP THIS SCREEN OPEN.",30,6,white);
-                text(524,360,"SAME LAN OR TAILSCALE ADDRESS",1,white,40);
+                text(524,360,handoff_remote?"TAILSCALE / Y SELECTS LAN":"LOCAL LAN / Y SELECTS REMOTE",1,white,40);
                 text(524,385,"X RESUME LAST RECEIVED GAME",1,white,40);
                 text(204,420,api_setup.url,1,white,100);
             }
@@ -1495,8 +1527,10 @@ static void draw(Uint32 tick) {
             }else if(party_entry!=2)text(204,370,"WI-FI QR UNAVAILABLE",1,(SDL_Color){220,230,220,255},40);
             text(524,402,api_setup.url,1,(SDL_Color){220,230,220,255},65);
         }
-        text(204,443,api_setup.message,1,(SDL_Color){140,240,150,255},90);
-        text(204,473,"B CLOSE / A NEW ROOM / EXPIRES AFTER 10 MINUTES IDLE",1,(SDL_Color){220,230,220,255},90);
+        if(party_entry!=4){
+            text(204,443,api_setup.message,1,(SDL_Color){140,240,150,255},90);
+            text(204,473,"B CLOSE / A NEW ROOM / EXPIRES AFTER 10 MINUTES IDLE",1,(SDL_Color){220,230,220,255},90);
+        }
     }else if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
         const char *genre=browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
@@ -1531,11 +1565,11 @@ static void draw(Uint32 tick) {
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV"};
+const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE"};
 #else
-        const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV"};
+const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE"};
 #endif
-        char values[34][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+char values[35][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
@@ -1559,6 +1593,7 @@ static void draw(Uint32 tick) {
         snprintf(values[31],40,"EDIT ALL GENRE WEIGHTS");
         snprintf(values[32],40,"%s",mtv_fusion_name(mtv_fusion_genre));
         snprintf(values[33],40,"PAIR / RECEIVE SESSION");
+        snprintf(values[34],40,"INSTALL / CONNECT / SIGN IN");
 #if defined(FLXTR_DESKTOP) || defined(_WIN32)
         for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
 #endif
@@ -2364,7 +2399,8 @@ static int phone_dispatch(char *reply,size_t size){
 }
 /* The paired receiver owns the socket across shell/game process transitions. */
 static void handoff_poll(void){
-    if(player_pid||catalog_pid||update_pid||youtube_pid||usb_on)return;
+    if(player_pid||catalog_pid||update_pid||youtube_pid||usb_on){if(access("handoff/busy",F_OK)){FILE *busy=fopen("handoff/busy","w");if(busy)fclose(busy);}return;}
+    unlink("handoff/busy");
     FILE *f=fopen("handoff/pending","r");if(!f)return;
     char line[4096];if(!fgets(line,sizeof(line),f)){fclose(f);return;}fclose(f);unlink("handoff/pending");
     char *fields[7]={0},*p=line;int count=0;
@@ -2435,6 +2471,8 @@ static void action(SDL_Keycode key) {
         return;
     }
     if(accounts_on&&!player_pid){
+        if(party_entry==4){if(key==SDLK_RETURN)tailscale_request("connect");else if(key==SDLK_x||key==SDLK_F2)tailscale_request("disconnect");else if(key==SDLK_y||key==SDLK_F6)tailscale_request("logout");else if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){accounts_on=0;party_entry=0;}return;}
+        if(party_entry==3&&(key==SDLK_y||key==SDLK_F6)){handoff_remote=!handoff_remote;accounts_open(3);return;}
 if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last","r");char id[40]={0};if(last){if(!fgets(id,sizeof(id),last))id[0]=0;fclose(last);id[strcspn(id,"\r\n")]=0;}if(strlen(id)==32&&strspn(id,"0123456789abcdef")==32){FILE *pending=fopen("handoff/pending","w");if(pending){fprintf(pending,"game\t%s\n",id);fclose(pending);}}return;}
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){if(party_entry==3)unlink("handoff/armed");api_setup_close();accounts_on=0;
             if(party_entry==2||phone_rom_uploaded){phone_rom_uploaded=0;memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
@@ -2667,6 +2705,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
                     game_output=outputs[(index+step+5)%5];break;}
                 case 18:if(!set_auto_updates(!auto_updates_enabled()))snprintf(status,sizeof(status),"COULD NOT CHANGE AUTO UPDATE SETTING");break;
                 case 17:series_autoplay=!series_autoplay;break;
+                case 34:accounts_open(4);break;
                 case 33:accounts_open(3);break;
                 case 15:accounts_open(0);break;
                 case 16:accounts_open(1);break;
@@ -2846,7 +2885,7 @@ int main(int argc,char **argv) {
     if(weights_requested)mtv_weights_open();else if(usb_requested)usb_open();
     while(running) {
         handoff_poll();
-        if(accounts_on){api_setup_tick(SDL_GetTicks());if(SDL_GetTicks()-last_draw>=100)dirty=1;}
+        if(accounts_on){if(party_entry==4)tailscale_refresh();else api_setup_tick(SDL_GetTicks());if(SDL_GetTicks()-last_draw>=100)dirty=1;}
         SDL_Event event;
         if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;

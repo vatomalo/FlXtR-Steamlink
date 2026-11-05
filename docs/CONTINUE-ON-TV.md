@@ -17,12 +17,15 @@ It does not use Google Drive, screen mirroring or an external emulator app.
    not treated as successful playback.
 
 The pairing address contains a random bearer token. Share it only with your own
-devices. Transfers require the receiver screen to be open, expire after ten
+devices. LAN transfers require the receiver screen to be open, expire after ten
 minutes, and are disabled when that screen closes or a session is accepted.
-Restarting FlXtR rotates the token. Pairing uses HTTP on a trusted private LAN;
+Pairing tokens now persist privately so remote pairings survive restarts.
+Pairing uses HTTP on a trusted private LAN;
 the Android client rejects public addresses, DNS names and redirected requests.
-An already configured Tailscale private address can also be used; this feature
-does not install or configure Tailscale itself.
+The optional [Tailscale integration](TAILSCALE.md) installs a private userspace
+client on Steam Link, shows QR sign-in and supplies a remote pairing address.
+Private remote reception remains enabled while FlXtR and its Tailscale connection
+are running; regular LAN reception still uses the receive window.
 
 ## Videos
 

@@ -86,7 +86,8 @@ if [ -f build/music-runtime.tgz ]; then
     printf '1\n' > "$app/assets/music-required-v1"
 fi
 mkdir -p "$app/tools" "$app/scripts"
-cp tools/music.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py "$app/tools/"
+cp tools/music.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/tailscale_link.py "$app/tools/"
+cp packaging/tailscale-arm.json "$app/tailscale-arm.json"
 cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
 if [ -f build/greenlink-preview-arm ]; then cp build/greenlink-preview-arm "$app/greenlink-preview"; fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi
@@ -100,7 +101,7 @@ chmod +x "$app/greenlink" "$app/greenlink.sh"
 printf '%s\n' "$version" > "$app/build-version.txt"
 git diff --quiet && git diff --cached --quiet && source_dirty=0 || source_dirty=1
 printf '%s\n' "$source_dirty" > "$app/build-source-dirty.txt"
-(cd "$app"; for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh greenlink-handoff-game tools/handoff.py cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/GAMBATTE-COPYING.txt sources/gambatte-handoff-source.tar.gz; do
+(cd "$app"; for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh greenlink-handoff-game tools/handoff.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/GAMBATTE-COPYING.txt sources/gambatte-handoff-source.tar.gz; do
     if [ -f "$part" ]; then sha256sum "$part"; fi
 done) > "$app/build-sha256.txt"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink

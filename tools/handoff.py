@@ -136,17 +136,28 @@ class Receiver(http.server.BaseHTTPRequestHandler):
         self.send_header('Referrer-Policy', 'no-referrer'); self.end_headers(); self.wfile.write(data)
     def route(self):
         if not self.path.startswith(self.server.prefix): return None
+        allowed={self.server.address}
+        try:
+            remote=urllib.parse.urlsplit((ROOT/'handoff/remote-url.txt').read_text().strip())
+            if remote.scheme=='http' and remote.path==self.server.prefix:allowed.add(remote.netloc)
+        except OSError:pass
+        if self.headers.get('Host') not in allowed:return None
         origin = self.headers.get('Origin')
-        if origin and origin != 'http://' + self.server.address: return None
+        if origin and origin not in {'http://'+address for address in allowed}: return None
         return self.path[len(self.server.prefix):]
     def armed(self):
+        # Userspace Tailscale Serve connects to this receiver over loopback.
+        # Private remote access is explicitly enabled by the Tailscale Connect
+        # action; regular LAN clients still require the open receiver screen.
+        if self.client_address[0]=='127.0.0.1' and (ROOT/'tailscale/ready').is_file():return True
         try: return 0 <= time.time() - (ROOT / 'handoff/armed').stat().st_mtime < 600
         except OSError: return False
     def do_GET(self):
         route = self.route()
         if route is None: return self.reply(403, {'error':'Pair again on the TV'})
         if route == '':
-            link = 'flxtr://tv?url=' + urllib.parse.quote(self.server.url, safe='')
+            address='http://'+self.headers['Host']+self.server.prefix
+            link = 'flxtr://tv?url=' + urllib.parse.quote(address, safe='')
             return self.reply(200, '<!doctype html><meta name="viewport" content="width=device-width"><h1>Continue on TV</h1><p><a href="'+link+'">Pair with FlXtR on this phone</a></p><p>Or paste this page address into FlXtR’s Continue on TV menu.</p>', 'text/html; charset=utf-8')
         if route == 'capabilities': return self.reply(200, {'protocol':1, 'name':'Steam Link', 'armed':self.armed(), 'sources':[SOURCE], 'maxStateBytes':LIMIT})
         if route.startswith('status/'):
@@ -169,6 +180,7 @@ class Receiver(http.server.BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= LIMIT + 65536: raise ValueError('Transfer exceeds limit')
             if (ROOT/'handoff/pending').exists(): raise ValueError('TV is processing another session')
+            if (ROOT/'handoff/busy').exists():raise ValueError('The TV is busy. Stop its current playback before sending another session.')
             if shutil.disk_usage(ROOT).free < length + 32*1024*1024: raise ValueError('Not enough free TV storage')
             identity = secrets.token_hex(16); directory = ROOT/'handoff'/identity; directory.mkdir(mode=0o700)
             archive = directory/'transfer.zip'
@@ -197,10 +209,15 @@ def serve(ip=None):
             probe.connect(('192.0.2.1',9)); ip=probe.getsockname()[0]
     ipaddress.ip_address(ip)
     folder=ROOT/'handoff';folder.mkdir(mode=0o700,exist_ok=True)
-    # A new app launch expires all pairing links and unconsumed requests.
-    for name in ('armed','pending','launch'): (folder/name).unlink(missing_ok=True)
+    # Keep explicitly paired devices working after an app restart. The token is
+    # private local state; neither it nor the tailnet identity is published.
+    for name in ('armed','pending','launch','busy'): (folder/name).unlink(missing_ok=True)
     server=http.server.ThreadingHTTPServer(('0.0.0.0',0),Receiver)
-    server.prefix='/'+secrets.token_hex(16)+'/'
+    token_path=folder/'pairing-token'
+    token=token_path.read_text().strip() if token_path.exists() else ''
+    if len(token)!=32 or any(c not in '0123456789abcdef' for c in token):token=secrets.token_hex(16);token_path.write_text(token+'\n')
+    os.chmod(token_path,0o600)
+    server.prefix='/'+token+'/'
     server.address=ip+':'+str(server.server_port);server.url='http://'+server.address+server.prefix
     (folder/'url.txt').write_text(server.url+'\n')
     try: server.serve_forever()
@@ -217,7 +234,9 @@ def launch(identity):
             metadata.update(state=str(returned.resolve()),stateSha256=digest(returned))
             atomic(folder/'session.json',metadata)
         (ROOT/'handoff/last').write_text(identity+'\n')
-        result=subprocess.call(['./greenlink-handoff-game',str((folder/'session.json').resolve())],env=native_environment())
+        (ROOT/'handoff/busy').touch()
+        try:result=subprocess.call(['./greenlink-handoff-game',str((folder/'session.json').resolve())],env=native_environment())
+        finally:(ROOT/'handoff/busy').unlink(missing_ok=True)
         if result and not (folder/'started').exists(): (folder/'failed').write_text('The TV could not restore this save state')
         return result
     except (OSError,ValueError,KeyError) as error: (folder/'failed').write_text(str(error));return 2

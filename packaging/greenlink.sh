@@ -29,13 +29,20 @@ if [ -f tools/handoff.py ]; then
     sh scripts/music-runtime.sh tools/handoff.py serve >handoff.log 2>&1 &
     handoff_pid=$!
 fi
-trap '[ -z "$handoff_pid" ] || kill "$handoff_pid" 2>/dev/null; rm -f handoff/url.txt handoff/armed' EXIT
+tailscale_pid=
+if [ -f tools/tailscale_link.py ]; then
+    sh scripts/music-runtime.sh tools/tailscale_link.py >/dev/null 2>&1 &
+    tailscale_pid=$!
+fi
+trap '[ -z "$tailscale_pid" ] || { kill "$tailscale_pid" 2>/dev/null; wait "$tailscale_pid" 2>/dev/null; }; [ -z "$handoff_pid" ] || kill "$handoff_pid" 2>/dev/null; rm -f handoff/url.txt handoff/remote-url.txt handoff/armed tailscale/ready' EXIT
 while :; do
+    rm -f handoff/busy
     rm -f game-music-request
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
     if [ -r ./power-activity.sh ]; then sh ./power-activity.sh --idle >power-activity.log 2>&1 || true; fi
     if [ "$code" -eq 44 ]; then
+        mkdir -p handoff; : >handoff/busy
         # The UI passes a numeric catalog selection, never a shell command.
         game_id=$(cat gamez-request 2>/dev/null) || game_id=
         rm -f gamez-request
@@ -154,6 +161,7 @@ while :; do
         continue
     fi
     if [ "$code" -eq 43 ]; then
+        mkdir -p handoff; : >handoff/busy
         if [ -f handoff/launch ]; then
             read handoff_id <handoff/launch
             rm -f handoff/launch

@@ -59,6 +59,16 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(self.request('handoff',archive(metadata,state))[0],400)
         metadata.update(quirks=0,romSha256='0'*64);(self.root/'games.json').write_text('[]')
         self.assertEqual(self.request('handoff',archive(metadata,state))[0],400)
+    def test_tailnet_pairing_keeps_remote_address_and_requires_private_forward(self):
+        (self.root/'handoff/armed').unlink();(self.root/'tailscale').mkdir();(self.root/'tailscale/ready').touch()
+        remote='100.70.1.2:43927';(self.root/'handoff/remote-url.txt').write_text('http://'+remote+self.server.prefix)
+        code,page=self.request(headers={'Host':remote});self.assertEqual(code,200)
+        self.assertIn(b'100.70.1.2%3A43927',page)
+        self.assertTrue(json.loads(self.request('capabilities',headers={'Host':remote})[1])['armed'])
+        self.assertEqual(self.request('capabilities',headers={'Host':'evil.example'})[0],403)
+        (self.root/'handoff/busy').touch()
+        code,_=self.request('handoff',archive(dict(protocol=1,type='video',url='https://video.example/a.m3u8',positionMs=0,subtitle='')))
+        self.assertNotEqual(code,202)
     def test_state_bytes_preserved_and_existing_saves_untouched(self):
         rom=self.root/'test.gb';rom.write_bytes(b'owned game fixture');core=self.root/'cores';core.mkdir();(core/'gambatte_handoff_libretro.so').write_bytes(b'core fixture')
         (core/'gambatte-handoff.json').write_text(json.dumps(dict(source=handoff.SOURCE,sha256=handoff.digest(core/'gambatte_handoff_libretro.so'))))

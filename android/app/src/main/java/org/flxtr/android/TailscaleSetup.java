@@ -28,10 +28,23 @@ final class TailscaleSetup {
             :"Install the official Tailscale app, sign in to the same account as your Steam Link and SkyLoft, and approve Android's VPN prompt. Then return to FlXtR.";
         message+="\n\nFlXtR can find your Steam Link over Tailscale. No TV pairing code is needed.";
         boolean paired=!activity.getSharedPreferences("tv-handoff",0).getString("endpoint","").isEmpty();
+        if(paired)message+="\n\nYour TV connection is saved. It stays saved across restarts and updates, even while the TV is offline. Manage or forget it under Saved TV.";
         Gamepad.dialog(new AlertDialog.Builder(activity).setTitle("Tailscale")
             .setMessage(message).setPositiveButton(actionLabel(activity),(d,w)->open(activity))
-            .setNeutralButton(paired?"Check TV connection":"Find my TV",(d,w)->{
-                if(paired)checkTv(activity);else TvHandoff.findTv(activity,null);
+            .setNeutralButton(paired?"Saved TV":"Find my TV",(d,w)->{
+                if(paired)savedTv(activity);else TvHandoff.findTv(activity,null);
+            }).setNegativeButton("Close",null).show());
+    }
+
+    private static void savedTv(Activity activity){
+        Gamepad.dialog(new AlertDialog.Builder(activity).setTitle("Saved TV")
+            .setItems(new String[]{"Check connection","Find or replace TV","Forget TV"},(d,which)->{
+                if(which==0)checkTv(activity);
+                else if(which==1)TvHandoff.findTv(activity,null);
+                else{
+                    activity.getSharedPreferences("tv-handoff",0).edit().remove("endpoint").apply();
+                    Toast.makeText(activity,"Saved TV removed",Toast.LENGTH_LONG).show();
+                }
             }).setNegativeButton("Close",null).show());
     }
 

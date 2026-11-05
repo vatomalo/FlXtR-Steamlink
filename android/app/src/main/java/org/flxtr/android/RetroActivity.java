@@ -112,7 +112,7 @@ double[] av=startCore(coreName.equals("scummvm")&&getIntent().getBooleanExtra("c
 private void menu(){if(!running){finish();return;}paused=true;touch=keys=stick=0;clearAnalog();AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Libretro · "+GameFormats.label(coreName)).setItems(new String[]{"Resume",coreName.equals("scummvm")?"Save state (unsupported)":"Save state",coreName.equals("scummvm")?"Load state (unsupported)":"Load state","Reset game","Next disc","Touch controls: "+(touchControls?"On":"Off"),"Exit to library","Continue on TV"},(d,i)->{if((i==1||i==2)&&coreName.equals("scummvm")){toast("Use ScummVM's in-game save/load menu");return;}if(i==1)commands.add(()->toast(persist(".state",true)?"State saved":"Could not save state"));if(i==2)commands.add(()->toast(restore(".state",true)?"State loaded":"No saved state"));if(i==3)commands.add(RetroActivity::resetCore);if(i==4)commands.add(()->{int count=diskCount(),next=count>1?(diskIndex()+1)%count:0;toast(count>1&&swapDisk(next)?"Disc "+(next+1)+" of "+count:"Load an M3U playlist to switch discs");});if(i==5)setTouchControls(!touchControls);if(i==6)finish();if(i==7)continueOnTv();}).setNegativeButton("Resume",null).create();dialog.setOnDismissListener(d->{paused=false;hideBars();});dialog.show();Gamepad.dialog(dialog);}
     private void toast(String text){runOnUiThread(()->Toast.makeText(this,text,Toast.LENGTH_SHORT).show());}
     private void continueOnTv(){
-        String source=coreName.equals("gambatte")?TvHandoff.SOURCE:coreName+":unverified";
+        String source=coreName.equals("gambatte")?TvHandoff.SOURCE:coreName.equals("fceumm")?TvHandoff.NES_SOURCE:coreName+":unverified";
         TvHandoff.send(this,source,()->{
             java.util.concurrent.CompletableFuture<File> captured=new java.util.concurrent.CompletableFuture<>();
             commands.add(()->{if(captured.isCancelled())return;try{
@@ -121,7 +121,7 @@ private void menu(){if(!running){finish();return;}paused=true;touch=keys=stick=0
                 if((metadata.optLong("quirks")&125)!=0)throw new IOException("This core cannot transfer portable save states");
                 byte[] state=readMemory(true);if(state==null)throw new IOException("This core could not create a save state");
                 metadata.put("protocol",1).put("type","game").put("source",source).put("romSha256",TvHandoff.hash(rom)).put("stateSha256",TvHandoff.hex(java.security.MessageDigest.getInstance("SHA-256").digest(state)));
-                captured.complete(TvHandoff.archive(this,metadata,state));
+                captured.complete(TvHandoff.archive(this,metadata,state,rom));
             }catch(Throwable error){handingOff=false;captured.completeExceptionally(error);}});
             try{return captured.get(30,java.util.concurrent.TimeUnit.SECONDS);}catch(Exception error){captured.cancel(false);handingOff=false;throw error;}
         },this::finish,()->handingOff=false);

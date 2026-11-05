@@ -44,3 +44,5 @@ phone-files/
 /android/moonlight/AndroidManifest.xml
 /android/app/src/main/jniLibs/libflxtr_*
 /android/app/src/main/jniLibs/*/libflxtr_*.so
+/android/app/libs/*.aar
+/android/app/libs/tailnet.sha256

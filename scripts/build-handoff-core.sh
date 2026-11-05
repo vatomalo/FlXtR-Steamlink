@@ -25,6 +25,26 @@ cmake -S "$cache" -B "$cache/build" -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_C_FLAGS='-
 cmake --build "$cache/build" -- -j4
 cp "$cache/build/gambatte_handoff_libretro.so" build/cores/
 $STRIP build/cores/gambatte_handoff_libretro.so
+nes_revision=e0f3086a8104f8fbbe49a2615b10401504a9533f
+nes_dir="$cache/fceumm"
+if [ ! -d "$nes_dir/.git" ]; then git clone https://github.com/libretro/libretro-fceumm.git "$nes_dir"; fi
+git -C "$nes_dir" checkout --detach "$nes_revision"
+git -C "$nes_dir" submodule update --init --recursive
+mkdir -p "$cache/nes-cmake"
+printf 'cmake_minimum_required(VERSION 3.5)\nproject(NesHandoff C)\nset(CMAKE_POSITION_INDEPENDENT_CODE ON)\ninclude(core.cmake)\n' > "$cache/nes-cmake/CMakeLists.txt"
+python3 scripts/fceumm-cmake.py "$nes_dir" "$cache/nes-cmake/core.cmake"
+cmake -S "$cache/nes-cmake" -B "$cache/nes-build" -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_C_FLAGS='-O2 -fno-strict-aliasing -march=armv7-a -mfpu=neon -mfloat-abi=hard'
+cmake --build "$cache/nes-build" -- -j3
+cp "$cache/nes-build/libflxtr_fceumm.so" build/cores/fceumm_handoff_libretro.so
+$STRIP build/cores/fceumm_handoff_libretro.so
+cp "$nes_dir/Copying" build/cores/FCEUMM-COPYING.txt
+git -C "$nes_dir" archive --format=tar.gz --prefix=fceumm/ "$nes_revision" > dist/core-sources/fceumm-handoff-source.tar.gz
+python3 - <<'PY'
+import hashlib,json
+from pathlib import Path
+core=Path('build/cores/fceumm_handoff_libretro.so')
+Path('build/cores/fceumm-handoff.json').write_text(json.dumps(dict(source='fceumm:e0f3086a8104f8fbbe49a2615b10401504a9533f',sha256=hashlib.sha256(core.read_bytes()).hexdigest()),indent=2)+'\n')
+PY
 cp "$source_dir/COPYING" build/cores/GAMBATTE-COPYING.txt
 git -C "$source_dir" archive --format=tar.gz --prefix=gambatte/ "$revision" > dist/core-sources/gambatte-handoff-source.tar.gz
 python3 - <<'PY'

@@ -14,6 +14,7 @@ import org.json.*;
 /** Explicitly paired LAN transport, without changing global cleartext policy. */
 final class TvHandoff {
     static final String SOURCE="gambatte:77f2567d718b8973d02caa2daa8dce4953faf811";
+    static final String NES_SOURCE="fceumm:e0f3086a8104f8fbbe49a2615b10401504a9533f";
     static final ExecutorService NETWORK=Executors.newSingleThreadExecutor();
     interface Payload { File capture() throws Exception; }
     static URI endpoint(String value)throws Exception {
@@ -28,6 +29,7 @@ final class TvHandoff {
         endpoint(base.toString());return exchange(base,route,upload,10000,120000);
     }
     private static JSONObject exchange(URI base,String route,File upload,int connectTimeout,int readTimeout)throws Exception {
+        if(FlxtrDevice.tailnet(base.getHost())&&TailscaleRuntime.enabledForApp())return TailscaleRuntime.request(base,route,upload);
         // Raw sockets are intentionally limited to the validated paired address.
         // HTTPS media and the rest of the app retain their existing policies.
         try(Socket socket=new Socket()){
@@ -49,45 +51,14 @@ final class TvHandoff {
         return found;
     }
     static void findTv(Activity activity,Runnable accepted){
-        AlertDialog progress=new AlertDialog.Builder(activity).setTitle("Find my TV")
-            .setMessage("Looking for your Steam Link over Tailscale…").setNegativeButton("Cancel",null).show();
-        Gamepad.dialog(progress);
-        NETWORK.execute(()->{
-            URI found=null;
-            try{
-                for(InetAddress address:InetAddress.getAllByName("flxtr-steamlink")){
-                    byte[] ip=address.getAddress();
-                    if(ip.length!=4||(ip[0]&255)!=100||(ip[1]&255)<64||(ip[1]&255)>127)continue;
-                    try{
-                        String host=address.getHostAddress();URI base=new URI("http",null,host,43927,"/",null,null);
-                        URI candidate=discoveredEndpoint(exchange(base,".well-known/flxtr",null,5000,5000),host);
-                        JSONObject capabilities=request(candidate,"capabilities",null);
-                        if(capabilities.optInt("protocol")!=1||!capabilities.optBoolean("armed"))continue;
-                        found=candidate;break;
-                    }catch(Exception unavailable){/* Try the next private address. */}
-                }
-            }catch(Exception unavailable){/* Show connection guidance below. */}
-            URI endpoint=found;
-            activity.runOnUiThread(()->{
-                if(activity.isFinishing()||activity.isDestroyed()||!progress.isShowing())return;
-                progress.dismiss();
-                if(endpoint!=null){
-                    activity.getSharedPreferences("tv-handoff",0).edit().putString("endpoint",endpoint.toString()).apply();
-                    if(accepted!=null)accepted.run();
-                    else Toast.makeText(activity,"Steam Link found over Tailscale",Toast.LENGTH_LONG).show();
-                }else Gamepad.dialog(new AlertDialog.Builder(activity).setTitle("TV not reachable")
-                    .setMessage("Connect Tailscale on your phone and Steam Link using the same account, and leave FlXtR running on the TV. Tailscale DNS must be enabled on your phone. No pairing code is needed.")
-                    .setPositiveButton("Try again",(d,w)->findTv(activity,accepted))
-                    .setNeutralButton(TailscaleSetup.actionLabel(activity),(d,w)->TailscaleSetup.open(activity))
-                    .setNegativeButton("Close",null).show());
-            });
-        });
+        DeviceDiscovery.show(activity,accepted);
     }
     static String hash(File file)throws Exception {MessageDigest digest=MessageDigest.getInstance("SHA-256");try(InputStream input=new FileInputStream(file)){byte[] bytes=new byte[65536];int count;while((count=input.read(bytes))!=-1)digest.update(bytes,0,count);}return hex(digest.digest());}
     static String hex(byte[] bytes){StringBuilder value=new StringBuilder();for(byte b:bytes)value.append(String.format(Locale.ROOT,"%02x",b&255));return value.toString();}
-    static File archive(android.content.Context context,JSONObject metadata,byte[] state)throws Exception {
+    static File archive(android.content.Context context,JSONObject metadata,byte[] state)throws Exception {return archive(context,metadata,state,null);}
+    static File archive(android.content.Context context,JSONObject metadata,byte[] state,File rom)throws Exception {
         File result=File.createTempFile("tv-session-",".zip",context.getCacheDir());boolean complete=false;
-        try(ZipOutputStream zip=new ZipOutputStream(new FileOutputStream(result))){zip.setLevel(0);zip.putNextEntry(new ZipEntry("session.json"));zip.write(metadata.toString().getBytes(StandardCharsets.UTF_8));zip.closeEntry();if(state!=null){zip.putNextEntry(new ZipEntry("state.bin"));zip.write(state);zip.closeEntry();}complete=true;}finally{if(!complete)result.delete();}return result;
+        try(ZipOutputStream zip=new ZipOutputStream(new FileOutputStream(result))){zip.setLevel(0);zip.putNextEntry(new ZipEntry("session.json"));zip.write(metadata.toString().getBytes(StandardCharsets.UTF_8));zip.closeEntry();if(state!=null){zip.putNextEntry(new ZipEntry("state.bin"));zip.write(state);zip.closeEntry();}if(rom!=null){if(rom.length()>16*1024*1024)throw new IOException("Game exceeds the TV transfer limit");zip.putNextEntry(new ZipEntry("rom.bin"));try(InputStream input=new FileInputStream(rom)){byte[] buffer=new byte[65536];int n;while((n=input.read(buffer))!=-1)zip.write(buffer,0,n);}zip.closeEntry();}complete=true;}finally{if(!complete)result.delete();}return result;
     }
     static void pair(Activity activity,String proposed,Runnable accepted){
         EditText input=new EditText(activity);input.setSingleLine(true);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);input.setText(proposed==null?activity.getSharedPreferences("tv-handoff",0).getString("endpoint",""):proposed);input.setHint("http://TV-IP:PORT/pairing-code/");
@@ -102,7 +73,7 @@ dialog.setOnShowListener(d->{dialog.getButton(-3).setOnClickListener(v->openTail
         if(address.isEmpty()){findTv(activity,()->send(activity,source,capture,success,failure));return;}
         AlertDialog progress=new AlertDialog.Builder(activity).setTitle("Continue on TV").setMessage("Connecting to TV…").setCancelable(false).create();progress.show();
         NETWORK.execute(()->{File payload=null;try{
-            URI base=endpoint(address);JSONObject capabilities=request(base,"capabilities",null);if(!capabilities.optBoolean("armed"))throw new IOException("Open Continue on TV on the TV first");
+            URI base=endpoint(DeviceDiscovery.refreshSaved(activity,address));JSONObject capabilities=request(base,"capabilities",null);if(!capabilities.optBoolean("armed"))throw new IOException("Open Continue on TV on the TV first");
             if(!source.isEmpty()){JSONArray sources=capabilities.optJSONArray("sources");boolean found=false;if(sources!=null)for(int i=0;i<sources.length();i++)if(source.equals(sources.optString(i)))found=true;if(!found)throw new IOException("This TV has no matching portable core. Your game stays here.");}
             payload=capture.capture();activity.runOnUiThread(()->progress.setMessage("Sending session…"));JSONObject response=request(base,"handoff",payload);String id=response.getString("id");if(!id.matches("[0-9a-f]{32}"))throw new IOException("Invalid session receipt");
             activity.runOnUiThread(()->progress.setMessage("Waiting for the TV to resume…"));long deadline=System.currentTimeMillis()+90000;

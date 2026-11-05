@@ -18,8 +18,47 @@ import zipfile
 
 LIMIT = 128 * 1024 * 1024
 SOURCE = 'gambatte:77f2567d718b8973d02caa2daa8dce4953faf811'
+NES_SOURCE = 'fceumm:e0f3086a8104f8fbbe49a2615b10401504a9533f'
+CORES = {SOURCE: ('gambatte', ('.gb', '.gbc')), NES_SOURCE: ('fceumm', ('.nes',))}
 ROOT = Path('.')
 LOCK = threading.Lock()
+LAN_RANGES=tuple(ipaddress.ip_network(value) for value in ('10.0.0.0/8','172.16.0.0/12','192.168.0.0/16','169.254.0.0/16'))
+
+def lan_address(value):
+    try:return any(ipaddress.ip_address(value) in network for network in LAN_RANGES)
+    except ValueError:return False
+
+def local_discovery_reply(data,peer_ip,local_ip,port,prefix,identity,name):
+    if not lan_address(peer_ip) or not lan_address(local_ip) or len(data)>512:return None
+    try:
+        request=json.loads(data)
+        nonce=request.get('nonce','')
+        if request.get('app')!='FlXtR' or request.get('protocol')!=1 or request.get('op')!='discover' or not isinstance(nonce,str) or len(nonce)!=32 or any(c not in '0123456789abcdef' for c in nonce):return None
+        return dict(app='FlXtR',protocol=1,nonce=nonce,id=identity,name=name,platform='steamlink',roles=['receiver'],endpoint=f'http://{local_ip}:{port}{prefix}',armed=True)
+    except (ValueError,AttributeError):return None
+
+class LocalDiscovery(threading.Thread):
+    def __init__(self,server,port=43929):
+        super().__init__(daemon=True);self.server=server;self.stopping=threading.Event()
+        self.socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        self.socket.bind(('0.0.0.0',port));self.socket.settimeout(.5)
+    def close(self):self.stopping.set();self.socket.close()
+    def run(self):
+        while not self.stopping.is_set():
+            try:
+                data,peer=self.socket.recvfrom(1024)
+                if not lan_address(peer[0]):continue
+                with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as probe:
+                    probe.connect(peer);local_ip=probe.getsockname()[0]
+                reply=local_discovery_reply(data,peer[0],local_ip,self.server.server_port,self.server.prefix,self.server.device_id,self.server.device_name)
+                if reply:
+                    if len(self.server.lan_clients)>128:self.server.lan_clients.clear()
+                    self.server.lan_clients[peer[0]]=time.monotonic()
+                    self.socket.sendto(json.dumps(reply).encode(),peer)
+            except socket.timeout:pass
+            except OSError:
+                if self.stopping.is_set():return
 
 def native_environment():
     environment=dict(os.environ)
@@ -55,7 +94,7 @@ def prepare(archive, directory):
     """Do not extract caller-selected paths or change existing ROMs/saves."""
     with zipfile.ZipFile(archive) as bundle:
         names = bundle.namelist()
-        if len(names) != len(set(names)) or set(names) - {'session.json', 'state.bin'}:
+        if len(names) != len(set(names)) or set(names) - {'session.json', 'state.bin', 'rom.bin'}:
             raise ValueError('Invalid session archive')
         info = bundle.getinfo('session.json')
         if info.file_size > 32768: raise ValueError('Session metadata too large')
@@ -106,22 +145,31 @@ def prepare(archive, directory):
             if len(caption)>1023: raise ValueError('Subtitle link exceeds TV limit')
             metadata['captionUrl']=media_url(caption) if caption else ''
         elif kind == 'game':
-            if metadata.get('source') != SOURCE: raise ValueError('No matching portable core build on this TV. Game Boy/Game Boy Color is supported first.')
+            if metadata.get('source') not in CORES: raise ValueError('No matching portable core build on this TV. Update both devices; NES and Game Boy are supported.')
+            core_name, extensions = CORES[metadata['source']]
             if type(metadata.get('quirks')) is not int or metadata['quirks']<0 or metadata['quirks'] & 125: raise ValueError('This core does not provide portable save states')
             rom_hash = metadata.get('romSha256', '')
             if not isinstance(rom_hash,str) or len(rom_hash) != 64 or any(c not in '0123456789abcdef' for c in rom_hash): raise ValueError('Invalid ROM fingerprint')
             state = bundle.getinfo('state.bin')
             if not 0 < state.file_size <= LIMIT: raise ValueError('Invalid save-state size')
-            games = json.loads((ROOT / 'games.json').read_text())
+            games = json.loads((ROOT / 'games.json').read_text()) if (ROOT / 'games.json').is_file() else []
             rom = None
             for game in games[:2048]:
                 path = Path(game.get('rom', ''))
-                if path.suffix.lower() not in ('.gb', '.gbc') or not path.is_file() or path.stat().st_size > 16*1024*1024: continue
+                if path.suffix.lower() not in extensions or not path.is_file() or path.stat().st_size > 16*1024*1024: continue
                 if digest(path) == rom_hash: rom = path.resolve(); break
-            if rom is None: raise ValueError('Add and scan the identical ROM on the TV first')
-            core = (ROOT / 'cores/gambatte_handoff_libretro.so').resolve()
-            provenance = json.loads((ROOT / 'cores/gambatte-handoff.json').read_text())
-            if provenance.get('source') != SOURCE or provenance.get('sha256') != digest(core): raise ValueError('TV core build cannot be verified')
+            if rom is None and 'rom.bin' in names:
+                incoming=bundle.getinfo('rom.bin')
+                if not 0<incoming.file_size<=16*1024*1024:raise ValueError('Invalid ROM size')
+                rom=directory/('game'+extensions[0])
+                with bundle.open(incoming) as source,rom.open('wb') as output:
+                    shutil.copyfileobj(source,output,65536)
+                if digest(rom)!=rom_hash:raise ValueError('ROM checksum mismatch')
+                rom=rom.resolve()
+            if rom is None: raise ValueError('Update Android to send the ROM, or add the identical ROM on the TV first')
+            core = (ROOT / ('cores/'+core_name+'_handoff_libretro.so')).resolve()
+            provenance = json.loads((ROOT / ('cores/'+core_name+'-handoff.json')).read_text())
+            if provenance.get('source') != metadata['source'] or provenance.get('sha256') != digest(core): raise ValueError('TV core build cannot be verified')
             info = json.loads(subprocess.check_output(['./greenlink-handoff-game', '--info', str(core)], timeout=10,env=native_environment()))
             if info.get('coreInfo') != metadata.get('coreInfo'): raise ValueError('Core versions do not match')
             options = metadata.get('options', {})
@@ -153,6 +201,8 @@ class Receiver(http.server.BaseHTTPRequestHandler):
     def route(self):
         if not self.path.startswith(self.server.prefix): return None
         allowed={self.server.address}
+        local_ip,local_port=self.connection.getsockname()[:2]
+        if lan_address(local_ip):allowed.add(f'{local_ip}:{local_port}')
         try:
             remote=urllib.parse.urlsplit((ROOT/'handoff/remote-url.txt').read_text().strip())
             if remote.scheme=='http' and remote.path==self.server.prefix:allowed.add(remote.netloc)
@@ -166,6 +216,8 @@ class Receiver(http.server.BaseHTTPRequestHandler):
         # Private remote access is explicitly enabled by the Tailscale Connect
         # action; regular LAN clients still require the open receiver screen.
         if self.client_address[0]=='127.0.0.1' and (ROOT/'tailscale/ready').is_file():return True
+        seen=getattr(self.server,'lan_clients',{}).get(self.client_address[0],0)
+        if lan_address(self.client_address[0]) and 0<=time.monotonic()-seen<600:return True
         try: return 0 <= time.time() - (ROOT / 'handoff/armed').stat().st_mtime < 600
         except OSError: return False
     def tailnet_discovery(self):
@@ -184,14 +236,14 @@ class Receiver(http.server.BaseHTTPRequestHandler):
         if self.path=='/.well-known/flxtr':
             remote=self.tailnet_discovery()
             if not remote:return self.reply(403,{'error':'Connect through Tailscale to find this TV'})
-            return self.reply(200,{'protocol':1,'name':'Steam Link','endpoint':remote,'armed':self.armed()})
+            return self.reply(200,{'app':'FlXtR','protocol':1,'id':getattr(self.server,'device_id',''),'name':getattr(self.server,'device_name','Steam Link'),'platform':'steamlink','roles':['receiver'],'endpoint':remote,'armed':self.armed()})
         route = self.route()
         if route is None: return self.reply(403, {'error':'Pair again on the TV'})
         if route == '':
             address='http://'+self.headers['Host']+self.server.prefix
             link = 'flxtr://tv?url=' + urllib.parse.quote(address, safe='')
             return self.reply(200, '<!doctype html><meta name="viewport" content="width=device-width"><h1>Continue on TV</h1><p><a href="'+link+'">Pair with FlXtR on this phone</a></p><p>Or paste this page address into FlXtR’s Continue on TV menu.</p>', 'text/html; charset=utf-8')
-        if route == 'capabilities': return self.reply(200, {'protocol':1, 'name':'Steam Link', 'armed':self.armed(), 'sources':[SOURCE], 'maxStateBytes':LIMIT})
+        if route == 'capabilities': return self.reply(200, {'protocol':1, 'name':'Steam Link', 'armed':self.armed(), 'sources':list(CORES), 'maxStateBytes':LIMIT})
         if route.startswith('status/'):
             identity = route[7:]
             if len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity): return self.reply(400, {'error':'Invalid session'})
@@ -251,9 +303,19 @@ def serve(ip=None):
     os.chmod(token_path,0o600)
     server.prefix='/'+token+'/'
     server.address=ip+':'+str(server.server_port);server.url='http://'+server.address+server.prefix
+    identity_path=folder/'device-id'
+    identity=identity_path.read_text().strip() if identity_path.exists() else ''
+    if len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity):identity=secrets.token_hex(16);identity_path.write_text(identity+'\n')
+    os.chmod(identity_path,0o600)
+    server.device_id=identity;server.device_name='Steam Link ('+socket.gethostname()[:48]+')';server.lan_clients={}
+    discovery=None
+    try:discovery=LocalDiscovery(server);discovery.start()
+    except OSError:pass # Tailnet and explicit LAN connections remain available.
     (folder/'url.txt').write_text(server.url+'\n')
     try: server.serve_forever()
-    finally: server.server_close();(folder/'url.txt').unlink(missing_ok=True)
+    finally:
+        if discovery:discovery.close();discovery.join(timeout=1)
+        server.server_close();(folder/'url.txt').unlink(missing_ok=True)
 
 def launch(identity):
     if len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity): return 2

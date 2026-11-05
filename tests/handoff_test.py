@@ -24,6 +24,40 @@ def archive(metadata,state=None,extra=None):
     return output.getvalue()
 
 class HandoffTest(unittest.TestCase):
+    def test_nes_transfer_carries_rom_and_verifies_both_checksums(self):
+        rom=b'NES\x1a'+b'owned fixture'*100;state=b'portable NES state'
+        cores=self.root/'cores';cores.mkdir()
+        core=cores/'fceumm_handoff_libretro.so';core.write_bytes(b'pinned core')
+        (cores/'fceumm-handoff.json').write_text(json.dumps(dict(source=handoff.NES_SOURCE,sha256=handoff.digest(core))))
+        metadata=dict(protocol=1,type='game',source=handoff.NES_SOURCE,quirks=0,
+            romSha256=hashlib.sha256(rom).hexdigest(),stateSha256=hashlib.sha256(state).hexdigest(),coreInfo='FCEUmm pinned',options={})
+        def transfer():
+            output=io.BytesIO()
+            with zipfile.ZipFile(output,'w') as bundle:
+                bundle.writestr('session.json',json.dumps(metadata));bundle.writestr('state.bin',state);bundle.writestr('rom.bin',rom)
+            return output.getvalue()
+        with patch.object(handoff.subprocess,'check_output',return_value=b'{"coreInfo":"FCEUmm pinned"}'):
+            code,body=self.request('handoff',transfer());self.assertEqual(code,202,body)
+            session=self.root/'handoff'/json.loads(body)['id']
+            self.assertEqual((session/'game.nes').read_bytes(),rom)
+            self.assertEqual((session/'state.bin').read_bytes(),state)
+            (self.root/'handoff/pending').unlink();metadata['romSha256']='0'*64
+            self.assertEqual(self.request('handoff',transfer())[0],400)
+    def test_local_discovery_identifies_flxtr_and_rejects_nonlocal_or_invalid_probes(self):
+        packet=json.dumps(dict(app='FlXtR',protocol=1,op='discover',nonce='a'*32)).encode()
+        reply=handoff.local_discovery_reply(packet,'192.168.10.20','192.168.10.2',12345,'/'+'b'*32+'/','c'*32,'TV')
+        self.assertEqual(reply['app'],'FlXtR');self.assertEqual(reply['nonce'],'a'*32)
+        self.assertEqual(reply['endpoint'],'http://192.168.10.2:12345/'+'b'*32+'/')
+        self.assertIsNone(handoff.local_discovery_reply(packet,'8.8.8.8','192.168.10.2',12345,'/','c'*32,'TV'))
+        self.assertIsNone(handoff.local_discovery_reply(packet,'100.70.1.2','192.168.10.2',12345,'/','c'*32,'TV'))
+        self.assertIsNone(handoff.local_discovery_reply(b'{}','192.168.10.20','192.168.10.2',12345,'/','c'*32,'TV'))
+    def test_discovered_lan_client_is_ready_without_manual_tv_screen(self):
+        (self.root/'handoff/armed').unlink()
+        request=object.__new__(handoff.Receiver);request.server=self.server
+        request.client_address=('192.168.10.20',12345);self.server.lan_clients={'192.168.10.20':time.monotonic()}
+        self.assertTrue(request.armed())
+        self.server.lan_clients['192.168.10.20']=time.monotonic()-601
+        self.assertFalse(request.armed())
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);handoff.ROOT=self.root
         (self.root/'handoff').mkdir();(self.root/'handoff/armed').touch()

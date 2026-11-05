@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(FlXtRAndroid C CXX)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 get_filename_component(REPO "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLUTE)
+include("${REPO}/android/build/game-sources/fceumm.cmake")
 # The response decoder is built as a shared library, never an Android executable.
 set(RESOLVER "${REPO}/build/resolver")
 add_library(flxtr_resolver SHARED "${RESOLVER}/img_data.c" "${REPO}/src/resolver_bridge.c"

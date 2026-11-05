@@ -1,0 +1,8 @@
+FROM golang:1.27.3 AS golang
+FROM flxtr-android-builder:skyloft
+COPY --from=golang /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:/opt/go-tools/bin:$PATH
+ENV GOPATH=/opt/go-tools
+ENV GOMAXPROCS=2 GOFLAGS=-p=2
+RUN go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867 \
+    && go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867

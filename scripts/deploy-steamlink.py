@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 BINARIES = ("greenlink", "greenlink-catalog", "greenlink-player", "greenlink-handoff-game")
-PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh", "tools/usb_setup.py", "tools/usb_mount_template.sh", "tools/handoff.py", "tools/tailscale_link.py", "tailscale-arm.json", "cores/gambatte_handoff_libretro.so", "cores/gambatte-handoff.json", "cores/GAMBATTE-COPYING.txt", "sources/gambatte-handoff-source.tar.gz")
+PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh", "tools/usb_setup.py", "tools/usb_mount_template.sh", "tools/handoff.py", "tools/tailscale_link.py", "tailscale-arm.json", "cores/gambatte_handoff_libretro.so", "cores/gambatte-handoff.json", "cores/GAMBATTE-COPYING.txt", "sources/gambatte-handoff-source.tar.gz", "cores/fceumm_handoff_libretro.so", "cores/fceumm-handoff.json", "cores/FCEUMM-COPYING.txt", "sources/fceumm-handoff-source.tar.gz")
 
 
 def verified_payload(package, destination):

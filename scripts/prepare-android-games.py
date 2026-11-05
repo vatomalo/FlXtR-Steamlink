@@ -32,6 +32,8 @@ with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
 mk=native/'moonlight-core/Android.mk'
 mk.write_text(mk.read_text().replace('libopus libssl libcrypto','libopus libcrypto'))
 gb=checkout('gambatte','https://github.com/libretro/gambatte-libretro.git','77f2567d718b8973d02caa2daa8dce4953faf811')
+nes=checkout('fceumm','https://github.com/libretro/libretro-fceumm.git','e0f3086a8104f8fbbe49a2615b10401504a9533f')
+subprocess.run(['python3',str(root/'scripts/fceumm-cmake.py'),str(nes),str(deps/'fceumm.cmake')],check=True)
 android='{http://schemas.android.com/apk/res/android}'
 ET.register_namespace('android',android[1:-1])
 tree=ET.parse(moon/'app/src/main/AndroidManifest.xml');manifest=tree.getroot();app=manifest.find('application')
@@ -60,6 +62,7 @@ for line in text.splitlines():
 licenses=root/'android/build/media-runtime/runtime/licenses';licenses.mkdir(parents=True,exist_ok=True)
 shutil.copyfile(moon/'LICENSE.txt',licenses/'Moonlight.txt')
 shutil.copyfile(gb/'COPYING',licenses/'Gambatte.txt')
+shutil.copyfile(nes/'Copying',licenses/'FCEUmm.txt')
 shutil.copyfile(moon/'app/src/main/jni/moonlight-core/moonlight-common-c/LICENSE.txt',licenses/'Moonlight-common.txt')
 shutil.copyfile(moon/'app/src/main/jni/moonlight-core/moonlight-common-c/enet/LICENSE',licenses/'ENet.txt')
 opus=(native/'moonlight-core/libopus/include/opus.h').read_text()

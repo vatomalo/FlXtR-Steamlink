@@ -12,6 +12,10 @@ abis=os.environ.get('FLXTR_CORE_ABIS','arm64-v8a,armeabi-v7a').split(',')
 cache=root/'android/build/console-core-cache';cache.mkdir(parents=True,exist_ok=True)
 for abi in abis:
     for core in lock['cores']:
+        if core=='fceumm':
+            stale=root/'android/app/src/main/jniLibs'/abi/'libflxtr_fceumm.so'
+            stale.unlink(missing_ok=True)
+            continue # Built from the same pinned sources as the TV handoff core.
         item=lock['cores'][core][abi]
         archive=cache/f'{core}-{abi}.zip'
         if not archive.is_file():

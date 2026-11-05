@@ -11,7 +11,8 @@ inputs=[('moonlight-12.1',moon,'1b1b100e63e8ffcf1496e324ff7b57ee9f2db2a9',[]),
         ('moonlight-12.2-crypto-opus',moon,'b48494cb96bff23d8886c4775cc4f39a1075495d',['app/src/main/jni/moonlight-core/openssl','app/src/main/jni/moonlight-core/opus']),
         ('moonlight-common-c',common,'8af4562af672dd6b9ed28553ead172984fd9a683',[]),
         ('enet',common/'enet','d3a323fc8b9559786ee059205db74e8027c756f7',[]),
-        ('gambatte',deps/'gambatte','77f2567d718b8973d02caa2daa8dce4953faf811',[])]
+        ('gambatte',deps/'gambatte','77f2567d718b8973d02caa2daa8dce4953faf811',[]),
+        ('fceumm',deps/'fceumm','e0f3086a8104f8fbbe49a2615b10401504a9533f',[])]
 with zipfile.ZipFile(output,'a') as bundle:
     for name,path,revision,paths in inputs:
         data=subprocess.check_output(['git','-C',str(path),'archive','--format=tar.gz','--prefix='+name+'/',revision,*paths])

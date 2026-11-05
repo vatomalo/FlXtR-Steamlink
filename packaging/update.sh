@@ -30,7 +30,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     fi
     if [ -f assets/handoff-required-v1 ]; then
         [ -x greenlink-handoff-game ] && [ -f tools/handoff.py ] &&
-        [ -f cores/gambatte_handoff_libretro.so ] && [ -f cores/gambatte-handoff.json ] || music_complete=0
+        [ -f cores/gambatte_handoff_libretro.so ] && [ -f cores/gambatte-handoff.json ] && [ -f cores/fceumm_handoff_libretro.so ] && [ -f cores/fceumm-handoff.json ] || music_complete=0
     fi
     if [ -f assets/tailscale-required-v1 ]; then
         [ -f tools/tailscale_link.py ] && [ -f tailscale-arm.json ] || music_complete=0
@@ -76,7 +76,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     # Only our two optional cores; leave the user's RetroArch core tree untouched.
     if [ -d "$staged/cores" ]; then
         mkdir -p cores
-        for part in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt gambatte_handoff_libretro.so gambatte-handoff.json GAMBATTE-COPYING.txt; do
+        for part in snes9x2005_flxtr_libretro.so mame2003_plus_flxtr_libretro.so SNES9X-LICENSE.txt MAME2003-PLUS-LICENSE.md snes9x2005-build.txt mame2003-plus-build.txt gambatte_handoff_libretro.so gambatte-handoff.json GAMBATTE-COPYING.txt fceumm_handoff_libretro.so fceumm-handoff.json FCEUMM-COPYING.txt; do
             if [ -f "$staged/cores/$part" ]; then
                 cp "$staged/cores/$part" "cores/$part.new" && mv -f "cores/$part.new" "cores/$part"
             fi
@@ -94,7 +94,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     mv -f .update-backup greenlink.previous
     # A manual install can replace binaries while leaving the version marker.
     # Record hashes from the verified archive, then verify what is on disk.
-(cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so greenlink-handoff-game tools/handoff.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json; do
+(cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so greenlink-handoff-game tools/handoff.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/fceumm_handoff_libretro.so cores/fceumm-handoff.json; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
     for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh; do

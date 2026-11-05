@@ -72,7 +72,8 @@ int main(int argc,char **argv){
     API(RESOLVE)
     struct retro_system_info info={0};core_get_system_info(&info);char core_info[256];snprintf(core_info,sizeof(core_info),"%s %s",info.library_name,info.library_version);
     if(argc==3){if(strcmp(argv[1],"--info"))return 2;json_object *out=json_object_new_object();json_object_object_add(out,"coreInfo",json_object_new_string(core_info));puts(json_object_to_json_string(out));json_object_put(out);dlclose(handle);return 0;}
-    if(strcmp(field(session,"source"),"gambatte:77f2567d718b8973d02caa2daa8dce4953faf811")||strcmp(core_info,field(session,"coreInfo")))return 2;
+    const char *source=field(session,"source");
+    if((strcmp(source,"gambatte:77f2567d718b8973d02caa2daa8dce4953faf811")&&strcmp(source,"fceumm:e0f3086a8104f8fbbe49a2615b10401504a9533f"))||strcmp(core_info,field(session,"coreInfo")))return 2;
     if(!json_object_object_get_ex(session,"options",&options))return 2;
     save_dir=field(session,"saveDirectory");if(!*save_dir)save_dir="handoff";system_dir="system";
     SDL_Window *window=NULL;

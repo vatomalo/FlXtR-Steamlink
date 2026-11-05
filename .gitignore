@@ -45,4 +45,5 @@ phone-files/
 /android/app/src/main/jniLibs/libflxtr_*
 /android/app/src/main/jniLibs/*/libflxtr_*.so
 /android/app/libs/*.aar
+/android/app/libs/*-sources.jar
 /android/app/libs/tailnet.sha256

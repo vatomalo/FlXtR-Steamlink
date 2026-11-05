@@ -2021,7 +2021,7 @@ static void launch_player(const Title *t) {
     }
     if(!tv_preloading){unlink("adaptive-request");unlink("adaptive-ready");}
     snprintf(bookmark_file,sizeof(bookmark_file),"bookmarks/%s.txt",bookmark_key);
-    if(!tv_active&&strcmp(t->kind,"youtube")&&restart_position==0){
+    if(!tv_active&&strcmp(t->kind,"youtube")&&strcmp(t->kind,"handoff")&&restart_position==0){
         FILE *f=fopen(bookmark_file,"r");
         if(f){double saved=0;if(fscanf(f,"%lf",&saved)==1&&saved>=0&&saved<=86400)restart_position=saved;fclose(f);}
     }

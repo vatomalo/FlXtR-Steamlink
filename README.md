@@ -1,15 +1,15 @@
 # FlXtR-Steamlink
 
-**Downloads — November 4, 2026**
+**Downloads — November 5, 2026**
 
 | Platform | Package |
 | --- | --- |
-| Android 8+ | [Signed APK 0.10.24 — Turkish subtitles and embedded game engines](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1024-turkish-subtitles/FlXtR-Android-preview.apk) |
+| Android 8+ | [Signed APK 0.10.25 — Continue on TV](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1025-continue-on-tv/FlXtR-Android-preview.apk) |
 | Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-Windows-x86_64.zip) |
 | Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-Linux-x86_64.tgz) |
 | Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-SteamDeck-x86_64.tgz) |
 | PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/psp-49601dfa187deaa88e1452ad2a9d1eee2804d489/FlXtR-PSP-beta.zip) |
-| Steam Link | [Complete ARM package](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/steamlink-tv-2f94974ea7f4314ae690af0381c5eae9c1953490/greenlink.tgz) |
+| Steam Link | [Complete ARM package — Continue on TV receiver](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-9cc2caeee4e82e21680dce28aab7070c838dd587/greenlink.tgz) |
 
 [Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases).
 Each download above is pinned to its platform's most recent published package.
@@ -18,6 +18,12 @@ PSP device playback and physical Steam Deck validation remain experimental.
 Android: install the new APK directly once over your existing app; older previews
 cannot download this larger engine bundle through their updater. See
 [engine setup and device test results](docs/ANDROID-EMBEDDED-ENGINES.md).
+
+**Continue on TV:** pair Android with the Steam Link QR under **Settings →
+Services → Continue on TV**. Videos hand off their timestamp; Game Boy/Game Boy
+Color games hand off an exact save state using the matching bundled core and an
+identical ROM already scanned on TV. Other game cores are not yet supported for
+handoff. See [pairing, installation and limitations](docs/CONTINUE-ON-TV.md).
 
 Android 8+ phone/tablet media preview (movies/series, KissAnime, music/MTV, TV channels, archive, downloads, selectable original/touch themes and controller support): [build and testing](docs/ANDROID.md).
 

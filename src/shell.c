@@ -56,7 +56,7 @@ static void accounts_open(int party){
     if(party==3){
         api_setup_close();accounts_on=1;party_entry=3;wifi_qr_valid=0;
         FILE *f=fopen("handoff/url.txt","r");char url[128]={0};
-        if(f){fgets(url,sizeof(url),f);fclose(f);url[strcspn(url,"\r\n")]=0;}
+        if(f){if(!fgets(url,sizeof(url),f))url[0]=0;fclose(f);url[strcspn(url,"\r\n")]=0;}
         if(!url[0]){strcpy(api_setup.message,"RECEIVER STARTING - PRESS A TO RETRY");return;}
         snprintf(api_setup.url,sizeof(api_setup.url),"%s",url);
         uint8_t temp[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];
@@ -2435,7 +2435,7 @@ static void action(SDL_Keycode key) {
         return;
     }
     if(accounts_on&&!player_pid){
-if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last","r");char id[40]={0};if(last){fgets(id,sizeof(id),last);fclose(last);id[strcspn(id,"\r\n")]=0;}if(strlen(id)==32&&strspn(id,"0123456789abcdef")==32){FILE *pending=fopen("handoff/pending","w");if(pending){fprintf(pending,"game\t%s\n",id);fclose(pending);}}return;}
+if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last","r");char id[40]={0};if(last){if(!fgets(id,sizeof(id),last))id[0]=0;fclose(last);id[strcspn(id,"\r\n")]=0;}if(strlen(id)==32&&strspn(id,"0123456789abcdef")==32){FILE *pending=fopen("handoff/pending","w");if(pending){fprintf(pending,"game\t%s\n",id);fclose(pending);}}return;}
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){if(party_entry==3)unlink("handoff/armed");api_setup_close();accounts_on=0;
             if(party_entry==2||phone_rom_uploaded){phone_rom_uploaded=0;memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
         }

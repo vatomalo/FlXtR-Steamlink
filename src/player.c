@@ -730,6 +730,7 @@ done:
     if(menu_overlay){SLVideo_HideOverlay(menu_overlay);SLVideo_FreeOverlay(menu_overlay);}
     if(control_fd>=0)close(control_fd);
     if(requested_action)result=requested_action;
+    if(!frames){const char *ack=getenv("FLXTR_HANDOFF_ACK");if(ack&&strlen(ack)==48&&!strncmp(ack,"handoff/",8)&&strspn(ack+8,"0123456789abcdef")==32&&!strcmp(ack+40,"/started")){char failed[64];snprintf(failed,sizeof(failed),"%.40s/failed",ack);FILE *out=fopen(failed,"w");if(out){fputs(rc==AVERROR_HTTP_FORBIDDEN?"TV source returned HTTP 403. Retry the anime source.":"TV player could not start this stream. See player.log.",out);fclose(out);}}}
     fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
     if(subtitle_overlay){SLVideo_HideOverlay(subtitle_overlay);SLVideo_FreeOverlay(subtitle_overlay);subtitle_overlay=NULL;}
     avcodec_free_context(&sub_decoder);

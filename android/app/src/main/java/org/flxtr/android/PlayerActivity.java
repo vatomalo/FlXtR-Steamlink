@@ -154,6 +154,8 @@ private void options(){String[] labels={"Play / pause","Next episode / video","S
         if(current.offlineId!=null||!CatalogItem.validStream(current.url)){Toast.makeText(this,"This file must be accessible on the TV; local-only files cannot be handed off.",Toast.LENGTH_LONG).show();return;}
         try{
             JSONObject metadata=new JSONObject().put("protocol",1).put("type","video").put("item",(playingItem==null?item():playingItem).json()).put("url",current.url).put("positionMs",player.getCurrentPosition()).put("subtitle",settings.getString("subtitle-language","en"));
+            if(!current.handoffProvider.isEmpty())metadata.put("provider",current.handoffProvider);
+            if(!current.handoffVariant.isEmpty())metadata.put("variant",current.handoffVariant);
             String language=settings.getString("subtitle-language","en");for(MediaCaptions.Track track:current.subtitles)if(!language.isEmpty()&&language.equals(track.language)){metadata.put("captionUrl",track.url);break;}
             if(current.audioUrl!=null)metadata.put("audioUrl",current.audioUrl);
             TvHandoff.send(this,"",()->TvHandoff.archive(this,metadata,null),()->{if(player!=null)player.pause();},()->{});

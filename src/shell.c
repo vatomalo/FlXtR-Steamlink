@@ -2115,7 +2115,7 @@ static void launch_player(const Title *t) {
         info_text[strcspn(info_text,"\r\n")]=0;
         setenv("FLXTR_VIDEO_SYNOPSIS",info_text,1);
         setenv("FLXTR_BOOKMARK_KEY",bookmark_key,1);
-        if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
+        if(!strcmp(t->kind,"kiss-episode")||(!strcmp(t->kind,"handoff")&&!strcmp(t->meta,"MEGAPLAY / HANDOFF")))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
         else if(*source_provider(t->meta))setenv("FLXTR_MEDIA_PROVIDER",source_provider(t->meta),1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
         char height[16],buffer[16],disk[16],scale[16],delay[16],control[32],start[32];
@@ -2415,6 +2415,8 @@ static void handoff_poll(void){
     if(strcmp(fields[0],"video")||count!=7||strncmp(fields[2],"https://",8))return;
     char *end;double position=strtod(fields[3],&end)/1000.0;if(*end||position<0||position>86400)return;
     Title t;memset(&t,0,sizeof(t));snprintf(t.kind,sizeof(t.kind),"handoff");snprintf(t.title,sizeof(t.title),"%.79s",fields[5]);snprintf(t.url,sizeof(t.url),"%s",fields[2]);
+    char provider_path[96],provider[24]={0};snprintf(provider_path,sizeof(provider_path),"handoff/%s/provider",id);
+    f=fopen(provider_path,"r");if(f){if(fgets(provider,sizeof(provider),f)){provider[strcspn(provider,"\r\n")]=0;if(!strcmp(provider,"megaplay"))snprintf(t.meta,sizeof(t.meta),"MEGAPLAY / HANDOFF");}fclose(f);}
     subtitle_setting=!fields[4][0]?0:!strcmp(fields[4],"no")?3:!strcmp(fields[4],"es")?4:2;
     if(fields[6][0]&&!strncmp(fields[6],"https://",8)){snprintf(t.subs_eng,sizeof(t.subs_eng),"%s",fields[6]);subtitle_setting=2;}
     char ack[80];snprintf(ack,sizeof(ack),"handoff/%s/started",id);setenv("FLXTR_HANDOFF_ACK",ack,1);

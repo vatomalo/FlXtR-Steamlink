@@ -43,6 +43,20 @@ class HandoffTest(unittest.TestCase):
         (self.root/'handoff'/identity/'started').touch()
         self.assertEqual(json.loads(self.request('status/'+identity)[1])['status'],'started')
         self.assertNotEqual(self.request('handoff',archive(metadata))[0],202)
+    def test_anime_handoff_refreshes_source_and_preserves_provider_and_variant(self):
+        metadata=dict(protocol=1,type='video',url='https://cdn.example/expired.m3u8',positionMs=1000,subtitle='',variant='DUB',item=dict(kind='kiss-episode',id=42,episode=3,title='Anime'))
+        fresh='https://cdn.example/fresh.m3u8'
+        with patch.object(handoff.subprocess,'check_output',return_value='AUTO\t\t\t'+fresh+'\tsource\n') as resolve:
+            code,body=self.request('handoff',archive(metadata))
+        self.assertEqual(code,202)
+        self.assertEqual(resolve.call_args.args[0],['./greenlink-catalog','kiss-quality','1','','42','0','3','DUB'])
+        directory=self.root/'handoff'/json.loads(body)['id']
+        saved=json.loads((directory/'session.json').read_text())
+        self.assertEqual(saved['url'],fresh);self.assertEqual(saved['variant'],'DUB')
+        self.assertEqual((directory/'provider').read_text(),'megaplay\n')
+    def test_rejects_unrecognized_provider_profiles(self):
+        metadata=dict(protocol=1,type='video',url='https://video.example/a.m3u8',positionMs=0,subtitle='',provider='arbitrary-header')
+        self.assertEqual(self.request('handoff',archive(metadata))[0],400)
     def test_pairing_expiry_origin_and_invalid_archive(self):
         self.assertEqual(self.request('capabilities',prefix='/wrong/')[0],403)
         self.assertEqual(self.request('capabilities',headers={'Origin':'https://evil.example'})[0],403)

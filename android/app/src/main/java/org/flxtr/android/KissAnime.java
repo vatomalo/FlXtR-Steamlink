@@ -64,7 +64,7 @@ final class KissAnime {
                     }catch(Exception failure){request.check();}
                 }
             }
-            if(stream!=null){stream.headers.clear();stream.headers.put("User-Agent",StreamProtocol.UA);stream.headers.put("Referer",url.startsWith("https://megaplay.buzz/")?"https://megaplay.buzz/":referer);stream.headers.put("Origin",url.startsWith("https://megaplay.buzz/")?"https://megaplay.buzz":BASE);return stream;}
+            if(stream!=null){stream.handoffProvider=url.startsWith("https://megaplay.buzz/")?"megaplay":"";stream.handoffVariant=useDub?"DUB":"SUB";stream.headers.clear();stream.headers.put("User-Agent",StreamProtocol.UA);stream.headers.put("Referer",url.startsWith("https://megaplay.buzz/")?"https://megaplay.buzz/":referer);stream.headers.put("Origin",url.startsWith("https://megaplay.buzz/")?"https://megaplay.buzz":BASE);return stream;}
             frame=player.selectFirst("iframe[src]");if(frame==null)break;url=frame.absUrl("src");
         }throw new IOException("No anime source is currently available");
     }

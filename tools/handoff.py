@@ -71,6 +71,22 @@ def prepare(archive, directory):
             item = metadata.get('item', {})
             if not isinstance(item,dict): raise ValueError('Invalid video identity')
             url = media_url(metadata.get('url', ''))
+            provider=metadata.get('provider','megaplay' if item.get('kind')=='kiss-episode' else '')
+            if provider not in ('','megaplay') or provider=='megaplay' and item.get('kind')!='kiss-episode':raise ValueError('Unsupported video provider')
+            if item.get('kind')=='kiss-episode':
+                variant=metadata.get('variant','SUB')
+                if variant not in ('SUB','DUB'):raise ValueError('Unsupported anime variant')
+                if type(item.get('id')) is int and 0<item['id']<=2147483647:
+                    args=['./greenlink-catalog','kiss-quality','1','',str(item['id']),'0',str(max(0,int(item.get('episode',0)))),variant]
+                    try:
+                        output=subprocess.check_output(args,timeout=70,stderr=subprocess.DEVNULL,text=True)
+                        choices=[line.split('\t') for line in output.splitlines() if not line.startswith('#')]
+                        selected=next((row for row in choices if len(row)>4 and row[4]=='source' and row[3].startswith('https://')),None)
+                        if selected:url=media_url(selected[3]);provider='megaplay'
+                    except (OSError,subprocess.SubprocessError):pass
+                metadata['variant']=variant
+            metadata['provider']=provider
+            if provider:(directory/'provider').write_text(provider+'\n')
             if item.get('kind') in ('movie', 'episode') and type(item.get('id')) is int and item['id'] > 0:
                 args = ['./greenlink-catalog', 'source', '1', '', str(item['id']), str(int(item.get('season', 0))), str(int(item.get('episode', 0)))]
                 try:

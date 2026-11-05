@@ -38,6 +38,7 @@ final class StreamProtocol {
     }
     static final class Stream {
         final String url,server;
+        String handoffProvider="",handoffVariant="";
         String mime,audioUrl,offlineId;
         CatalogItem item;
         final List<MediaCaptions.Track> subtitles=new ArrayList<>();

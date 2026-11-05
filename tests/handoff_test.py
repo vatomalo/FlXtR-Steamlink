@@ -69,6 +69,21 @@ class HandoffTest(unittest.TestCase):
         (self.root/'handoff/busy').touch()
         code,_=self.request('handoff',archive(dict(protocol=1,type='video',url='https://video.example/a.m3u8',positionMs=0,subtitle='')))
         self.assertNotEqual(code,202)
+    def test_tailnet_discovery_needs_no_pairing_token_but_rejects_lan_and_origins(self):
+        remote='100.70.1.2:43927'
+        self.assertEqual(self.request('.well-known/flxtr',prefix='/',headers={'Host':remote})[0],403)
+        (self.root/'tailscale').mkdir();(self.root/'tailscale/ready').touch()
+        endpoint='http://'+remote+self.server.prefix
+        (self.root/'handoff/remote-url.txt').write_text(endpoint)
+        code,body=self.request('.well-known/flxtr',prefix='/',headers={'Host':remote})
+        self.assertEqual(code,200);self.assertEqual(json.loads(body)['endpoint'],endpoint)
+        self.assertEqual(self.request('.well-known/flxtr',prefix='/',headers={'Host':remote,'Origin':'https://evil.example'})[0],403)
+        request=object.__new__(handoff.Receiver);request.server=self.server
+        request.headers={'Host':remote};request.client_address=('192.168.10.50',1234)
+        self.assertIsNone(request.tailnet_discovery())
+        request.client_address=('127.0.0.1',1234)
+        (self.root/'handoff/remote-url.txt').write_text('http://192.168.10.2:43927'+self.server.prefix)
+        self.assertIsNone(request.tailnet_discovery())
     def test_state_bytes_preserved_and_existing_saves_untouched(self):
         rom=self.root/'test.gb';rom.write_bytes(b'owned game fixture');core=self.root/'cores';core.mkdir();(core/'gambatte_handoff_libretro.so').write_bytes(b'core fixture')
         (core/'gambatte-handoff.json').write_text(json.dumps(dict(source=handoff.SOURCE,sha256=handoff.digest(core/'gambatte_handoff_libretro.so'))))

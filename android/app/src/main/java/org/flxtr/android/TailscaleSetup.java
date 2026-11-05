@@ -26,12 +26,12 @@ final class TailscaleSetup {
         String message=present
             ?"Tailscale is installed. Open it, sign in to the same account as your Steam Link and SkyLoft, and connect. Then return to FlXtR."
             :"Install the official Tailscale app, sign in to the same account as your Steam Link and SkyLoft, and approve Android's VPN prompt. Then return to FlXtR.";
-        message+="\n\nInstallation alone does not confirm a connection. Check your paired TV to verify that FlXtR can reach it.";
+        message+="\n\nFlXtR can find your Steam Link over Tailscale. No TV pairing code is needed.";
         boolean paired=!activity.getSharedPreferences("tv-handoff",0).getString("endpoint","").isEmpty();
         Gamepad.dialog(new AlertDialog.Builder(activity).setTitle("Tailscale")
             .setMessage(message).setPositiveButton(actionLabel(activity),(d,w)->open(activity))
-            .setNeutralButton(paired?"Check TV connection":"Pair TV",(d,w)->{
-                if(paired)checkTv(activity);else TvHandoff.pair(activity,null,null);
+            .setNeutralButton(paired?"Check TV connection":"Find my TV",(d,w)->{
+                if(paired)checkTv(activity);else TvHandoff.findTv(activity,null);
             }).setNegativeButton("Close",null).show());
     }
 
@@ -59,21 +59,22 @@ final class TailscaleSetup {
     private static void checkTv(Activity activity){
         String address=activity.getSharedPreferences("tv-handoff",0).getString("endpoint","");
         AlertDialog progress=new AlertDialog.Builder(activity).setTitle("TV connection")
-            .setMessage("Checking your paired TV…").setNegativeButton("Close",null).show();
+            .setMessage("Checking your TV…").setNegativeButton("Close",null).show();
         Gamepad.dialog(progress);
         TvHandoff.NETWORK.execute(()->{
             String result;
             try{
                 JSONObject capabilities=TvHandoff.request(TvHandoff.endpoint(address),"capabilities",null);
                 if(capabilities.optInt("protocol")!=1)throw new java.io.IOException("Unsupported TV response");
-                result=capabilities.optBoolean("armed")?"Your paired TV is reachable and ready.":"Your paired TV is reachable. Open Continue on TV on the TV to receive a session.";
-            }catch(Exception unavailable){result="Could not reach your paired TV. Connect Tailscale on both devices using the same account, open Continue on TV on the TV, and retry. Pair the TV again if its address has changed.";}
+                result=capabilities.optBoolean("armed")?"Your TV is reachable and ready.":"Your TV is reachable. Open Continue on TV on the TV to receive a session.";
+            }catch(Exception unavailable){result="Could not reach your TV. Connect Tailscale on both devices using the same account and leave FlXtR running on the TV. Use Find my TV to refresh its address.";}
             String message=result;
             activity.runOnUiThread(()->{
                 if(activity.isFinishing()||activity.isDestroyed()||!progress.isShowing())return;
                 progress.dismiss();
                 Gamepad.dialog(new AlertDialog.Builder(activity).setTitle("TV connection").setMessage(message)
-                    .setPositiveButton("OK",null).setNeutralButton(actionLabel(activity),(d,w)->open(activity)).show());
+                    .setPositiveButton("OK",null).setNeutralButton(actionLabel(activity),(d,w)->open(activity))
+                    .setNegativeButton("Find my TV",(d,w)->TvHandoff.findTv(activity,null)).show());
             });
         });
     }

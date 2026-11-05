@@ -25,10 +25,13 @@ final class TvHandoff {
         return uri;
     }
     static JSONObject request(URI base,String route,File upload)throws Exception {
+        endpoint(base.toString());return exchange(base,route,upload,10000,120000);
+    }
+    private static JSONObject exchange(URI base,String route,File upload,int connectTimeout,int readTimeout)throws Exception {
         // Raw sockets are intentionally limited to the validated paired address.
         // HTTPS media and the rest of the app retain their existing policies.
-        endpoint(base.toString());try(Socket socket=new Socket()){
-            socket.connect(new InetSocketAddress(base.getHost(),base.getPort()),10000);socket.setSoTimeout(120000);
+        try(Socket socket=new Socket()){
+            socket.connect(new InetSocketAddress(base.getHost(),base.getPort()),connectTimeout);socket.setSoTimeout(readTimeout);
             OutputStream out=socket.getOutputStream();String host=base.getHost()+":"+base.getPort();
             String head=(upload==null?"GET ":"POST ")+base.getPath()+route+" HTTP/1.0\r\nHost: "+host+"\r\nConnection: close\r\n"+(upload==null?"":"Content-Type: application/octet-stream\r\nContent-Length: "+upload.length()+"\r\n")+"\r\n";
             out.write(head.getBytes(StandardCharsets.US_ASCII));if(upload!=null)try(InputStream input=new FileInputStream(upload)){byte[] buffer=new byte[65536];int count;while((count=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();out.write(buffer,0,count);}}out.flush();
@@ -36,6 +39,49 @@ final class TvHandoff {
             String status=header.toString("US-ASCII").split("\r\n",2)[0];ByteArrayOutputStream body=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int count;while((count=input.read(buffer))!=-1){if(body.size()+count>32768)throw new IOException("TV response too large");body.write(buffer,0,count);}
             JSONObject response=new JSONObject(body.toString("UTF-8"));if(!status.matches("HTTP/1\\.[01] 20[02] .*"))throw new IOException(response.optString("error","TV rejected the session"));return response;
         }
+    }
+    static URI discoveredEndpoint(JSONObject response,String host)throws Exception {
+        URI found=endpoint(response.getString("endpoint"));
+        byte[] ip=InetAddress.getByName(host).getAddress();
+        if(ip.length!=4||(ip[0]&255)!=100||(ip[1]&255)<64||(ip[1]&255)>127
+            ||response.optInt("protocol")!=1||!host.equals(found.getHost())||found.getPort()!=43927)
+            throw new IOException("Unexpected TV discovery address");
+        return found;
+    }
+    static void findTv(Activity activity,Runnable accepted){
+        AlertDialog progress=new AlertDialog.Builder(activity).setTitle("Find my TV")
+            .setMessage("Looking for your Steam Link over Tailscale…").setNegativeButton("Cancel",null).show();
+        Gamepad.dialog(progress);
+        NETWORK.execute(()->{
+            URI found=null;
+            try{
+                for(InetAddress address:InetAddress.getAllByName("flxtr-steamlink")){
+                    byte[] ip=address.getAddress();
+                    if(ip.length!=4||(ip[0]&255)!=100||(ip[1]&255)<64||(ip[1]&255)>127)continue;
+                    try{
+                        String host=address.getHostAddress();URI base=new URI("http",null,host,43927,"/",null,null);
+                        URI candidate=discoveredEndpoint(exchange(base,".well-known/flxtr",null,5000,5000),host);
+                        JSONObject capabilities=request(candidate,"capabilities",null);
+                        if(capabilities.optInt("protocol")!=1||!capabilities.optBoolean("armed"))continue;
+                        found=candidate;break;
+                    }catch(Exception unavailable){/* Try the next private address. */}
+                }
+            }catch(Exception unavailable){/* Show connection guidance below. */}
+            URI endpoint=found;
+            activity.runOnUiThread(()->{
+                if(activity.isFinishing()||activity.isDestroyed()||!progress.isShowing())return;
+                progress.dismiss();
+                if(endpoint!=null){
+                    activity.getSharedPreferences("tv-handoff",0).edit().putString("endpoint",endpoint.toString()).apply();
+                    if(accepted!=null)accepted.run();
+                    else Toast.makeText(activity,"Steam Link found over Tailscale",Toast.LENGTH_LONG).show();
+                }else Gamepad.dialog(new AlertDialog.Builder(activity).setTitle("TV not reachable")
+                    .setMessage("Connect Tailscale on your phone and Steam Link using the same account, and leave FlXtR running on the TV. Tailscale DNS must be enabled on your phone. No pairing code is needed.")
+                    .setPositiveButton("Try again",(d,w)->findTv(activity,accepted))
+                    .setNeutralButton(TailscaleSetup.actionLabel(activity),(d,w)->TailscaleSetup.open(activity))
+                    .setNegativeButton("Close",null).show());
+            });
+        });
     }
     static String hash(File file)throws Exception {MessageDigest digest=MessageDigest.getInstance("SHA-256");try(InputStream input=new FileInputStream(file)){byte[] bytes=new byte[65536];int count;while((count=input.read(bytes))!=-1)digest.update(bytes,0,count);}return hex(digest.digest());}
     static String hex(byte[] bytes){StringBuilder value=new StringBuilder();for(byte b:bytes)value.append(String.format(Locale.ROOT,"%02x",b&255));return value.toString();}
@@ -53,7 +99,7 @@ dialog.setOnShowListener(d->{dialog.getButton(-3).setOnClickListener(v->openTail
     }
     static void send(Activity activity,String source,Payload capture,Runnable success,Runnable failure){
         String address=activity.getSharedPreferences("tv-handoff",0).getString("endpoint","");
-        if(address.isEmpty()){pair(activity,null,()->send(activity,source,capture,success,failure));return;}
+        if(address.isEmpty()){findTv(activity,()->send(activity,source,capture,success,failure));return;}
         AlertDialog progress=new AlertDialog.Builder(activity).setTitle("Continue on TV").setMessage("Connecting to TV…").setCancelable(false).create();progress.show();
         NETWORK.execute(()->{File payload=null;try{
             URI base=endpoint(address);JSONObject capabilities=request(base,"capabilities",null);if(!capabilities.optBoolean("armed"))throw new IOException("Open Continue on TV on the TV first");
@@ -62,6 +108,6 @@ dialog.setOnShowListener(d->{dialog.getButton(-3).setOnClickListener(v->openTail
             activity.runOnUiThread(()->progress.setMessage("Waiting for the TV to resume…"));long deadline=System.currentTimeMillis()+90000;
             while(System.currentTimeMillis()<deadline){JSONObject status=request(base,"status/"+id,null);if(status.optString("status").equals("started")){activity.runOnUiThread(()->{progress.dismiss();new AlertDialog.Builder(activity).setTitle("Playing on TV").setMessage("The TV confirmed playback. Pause or exit on this device?").setPositiveButton("Pause / exit here",(d,w)->success.run()).setNegativeButton("Keep playing here",(d,w)->failure.run()).show();});return;}if(status.optString("status").equals("failed"))throw new IOException(status.optString("error","TV could not resume"));Thread.sleep(700);}
             throw new IOException("The TV has not confirmed playback. Your session is kept here; check the TV before retrying.");
-        }catch(Exception|OutOfMemoryError error){activity.runOnUiThread(()->{progress.dismiss();failure.run();new AlertDialog.Builder(activity).setTitle("Could not continue on TV").setMessage(error.getMessage()).setPositiveButton("OK",null).setNeutralButton("Pair another TV",(d,w)->pair(activity,null,null)).show();});}finally{if(payload!=null)payload.delete();}});
+        }catch(Exception|OutOfMemoryError error){activity.runOnUiThread(()->{progress.dismiss();failure.run();new AlertDialog.Builder(activity).setTitle("Could not continue on TV").setMessage(error.getMessage()).setPositiveButton("OK",null).setNeutralButton("Find my TV",(d,w)->findTv(activity,null)).show();});}finally{if(payload!=null)payload.delete();}});
     }
 }

@@ -152,7 +152,23 @@ class Receiver(http.server.BaseHTTPRequestHandler):
         if self.client_address[0]=='127.0.0.1' and (ROOT/'tailscale/ready').is_file():return True
         try: return 0 <= time.time() - (ROOT / 'handoff/armed').stat().st_mtime < 600
         except OSError: return False
+    def tailnet_discovery(self):
+        # Only the local Tailscale TCP proxy may expose the otherwise secret
+        # receiver URL. LAN clients keep their existing explicit pairing flow.
+        if self.client_address[0]!='127.0.0.1' or not (ROOT/'tailscale/ready').is_file():return None
+        try:
+            remote=urllib.parse.urlsplit((ROOT/'handoff/remote-url.txt').read_text().strip())
+            if remote.scheme!='http' or remote.path!=self.server.prefix or remote.port!=43927:return None
+            if ipaddress.ip_address(remote.hostname) not in ipaddress.ip_network('100.64.0.0/10'):return None
+            if self.headers.get('Host')!=remote.netloc:return None
+            if self.headers.get('Origin') not in (None,'http://'+remote.netloc):return None
+            return remote.geturl()
+        except (OSError,ValueError):return None
     def do_GET(self):
+        if self.path=='/.well-known/flxtr':
+            remote=self.tailnet_discovery()
+            if not remote:return self.reply(403,{'error':'Connect through Tailscale to find this TV'})
+            return self.reply(200,{'protocol':1,'name':'Steam Link','endpoint':remote,'armed':self.armed()})
         route = self.route()
         if route is None: return self.reply(403, {'error':'Pair again on the TV'})
         if route == '':

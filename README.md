@@ -4,12 +4,12 @@
 
 | Platform | Package |
 | --- | --- |
-| Android 8+ | [Signed APK 0.10.26 — movie/series source fix](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1026-source-recovery/FlXtR-Android-preview.apk) |
+| Android 8+ | [Signed APK 0.10.27 — Tailscale connection support](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1027-tailscale/FlXtR-Android-preview.apk) |
 | Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Windows-x86_64.zip) |
 | Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Linux-x86_64.tgz) |
 | Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-SteamDeck-x86_64.tgz) |
 | PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/psp-49601dfa187deaa88e1452ad2a9d1eee2804d489/FlXtR-PSP-beta.zip) |
-| Steam Link | [Complete ARM package — movie/series source fix](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-b0fffcf7fbdaafe8bd26da5beb0c717a4d51412f/greenlink.tgz) |
+| Steam Link | [Complete ARM package — Tailscale QR sign-in](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-ed1dcae98bd1e4440273bbb1353e9ff733f9a986/greenlink.tgz) |
 
 [Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases).
 Each download above is pinned to its platform's most recent published package.
@@ -26,6 +26,12 @@ Services → Continue on TV**. Videos hand off their timestamp; Game Boy/Game Bo
 Color games hand off an exact save state using the matching bundled core and an
 identical ROM already scanned on TV. Other game cores are not yet supported for
 handoff. See [pairing, installation and limitations](docs/CONTINUE-ON-TV.md).
+
+**Away from home:** open **Settings → Services → Tailscale** on Steam Link,
+press **A** to install/connect, then scan its sign-in QR. Connect the official
+Tailscale Android app to the same account. Under **Continue on TV**, press **Y**
+for the remote pairing QR. Local Wi-Fi pairing still works without Tailscale.
+No extra cloud server is needed. See [setup and test status](docs/TAILSCALE.md).
 
 Android 8+ phone/tablet media preview (movies/series, KissAnime, music/MTV, TV channels, archive, downloads, selectable original/touch themes and controller support): [build and testing](docs/ANDROID.md).
 
@@ -45,7 +51,8 @@ This is an **early prototype**. Native movie/series browsing, search, seasons,
 episodes, server lookup and direct playback run on the box. Selecting a title
 fetches its actual servers; selecting a server resolves a fresh playback link.
 Quality choices come from the source's HLS master playlist when available.
-No browser, Node, Python, or Docker runs on the box. WSL/Docker are build tools.
+The media shell and player are native. A bundled Python runtime handles phone
+pairing and optional Tailscale setup; WSL/Docker are build tools.
 
 ![Native shell](preview.png)
 

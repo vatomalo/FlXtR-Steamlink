@@ -18,6 +18,7 @@ core=c.CDLL(sys.argv[1]);root=Path(sys.argv[2]).resolve();root.mkdir(parents=Tru
 rom=bytearray(32768);rom[0x100:0x104]=bytes.fromhex('00 c3 50 01')
 rom[0x104:0x134]=bytes.fromhex('ce ed 66 66 cc 0d 00 0b 03 73 00 83 00 0c 00 0d 00 08 11 1f 88 89 00 0e dc cc 6e e6 dd dd d9 99 bb bb 67 63 6e 0e ec cc dd dc 99 9f bb b9 33 3e')
 rom[0x134:0x13b]=b'FLXTRTV';rom[0x147]=0;rom[0x148]=0;rom[0x149]=0
+if '--cgb' in sys.argv[3:]:rom[0x143]=0x80
 # Original program: increment WRAM continuously. Serialized CPU/RAM state
 # therefore proves exact continuation even if the screen is a solid colour.
 rom[0x150:0x15b]=bytes.fromhex('f3 21 00 c0 34 18 fd 00 00 00 00')
@@ -74,5 +75,6 @@ metadata=dict(protocol=1,type='game',source='gambatte:77f2567d718b8973d02caa2daa
 (root/'session.json').write_text(json.dumps(metadata))
 for _ in range(5):core.retro_run()
 assert core.retro_serialize(state,size)
+(root/'reference-state.bin').write_bytes(state.raw)
 reference=dict(stateHash=fnv(state.raw),frameHash=video_hash,stateBytes=size)
 (root/'reference.json').write_text(json.dumps(reference));print(json.dumps(reference));core.retro_unload_game();core.retro_deinit()

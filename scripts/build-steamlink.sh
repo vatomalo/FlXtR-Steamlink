@@ -100,7 +100,7 @@ chmod +x "$app/greenlink" "$app/greenlink.sh"
 printf '%s\n' "$version" > "$app/build-version.txt"
 git diff --quiet && git diff --cached --quiet && source_dirty=0 || source_dirty=1
 printf '%s\n' "$source_dirty" > "$app/build-source-dirty.txt"
-(cd "$app"; for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh; do
+(cd "$app"; for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh greenlink-handoff-game tools/handoff.py cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/GAMBATTE-COPYING.txt sources/gambatte-handoff-source.tar.gz; do
     if [ -f "$part" ]; then sha256sum "$part"; fi
 done) > "$app/build-sha256.txt"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink

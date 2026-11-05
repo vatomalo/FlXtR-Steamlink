@@ -21,6 +21,12 @@ SOURCE = 'gambatte:77f2567d718b8973d02caa2daa8dce4953faf811'
 ROOT = Path('.')
 LOCK = threading.Lock()
 
+def native_environment():
+    environment=dict(os.environ)
+    previous=environment.get('FLXTR_HOST_LIBRARY_PATH',environment.get('LD_LIBRARY_PATH',''))
+    environment['LD_LIBRARY_PATH']=str((ROOT/'retroarch-libs').resolve())+(':'+previous if previous else '')
+    return environment
+
 def atomic(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + '.next')
@@ -100,7 +106,7 @@ def prepare(archive, directory):
             core = (ROOT / 'cores/gambatte_handoff_libretro.so').resolve()
             provenance = json.loads((ROOT / 'cores/gambatte-handoff.json').read_text())
             if provenance.get('source') != SOURCE or provenance.get('sha256') != digest(core): raise ValueError('TV core build cannot be verified')
-            info = json.loads(subprocess.check_output(['./greenlink-handoff-game', '--info', str(core)], timeout=10))
+            info = json.loads(subprocess.check_output(['./greenlink-handoff-game', '--info', str(core)], timeout=10,env=native_environment()))
             if info.get('coreInfo') != metadata.get('coreInfo'): raise ValueError('Core versions do not match')
             options = metadata.get('options', {})
             if not isinstance(options, dict) or len(options) > 256: raise ValueError('Invalid core settings')
@@ -211,7 +217,7 @@ def launch(identity):
             metadata.update(state=str(returned.resolve()),stateSha256=digest(returned))
             atomic(folder/'session.json',metadata)
         (ROOT/'handoff/last').write_text(identity+'\n')
-        result=subprocess.call(['./greenlink-handoff-game',str((folder/'session.json').resolve())])
+        result=subprocess.call(['./greenlink-handoff-game',str((folder/'session.json').resolve())],env=native_environment())
         if result and not (folder/'started').exists(): (folder/'failed').write_text('The TV could not restore this save state')
         return result
     except (OSError,ValueError,KeyError) as error: (folder/'failed').write_text(str(error));return 2

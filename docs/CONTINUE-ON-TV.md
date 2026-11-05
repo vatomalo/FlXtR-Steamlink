@@ -70,3 +70,7 @@ acknowledgement timing, ROM/core compatibility, checksum validation, unsafe ZIP
 entries and preservation of existing saves. `tests/handoff_cross_arch.py` creates
 an original Game Boy fixture and a 64-bit reference state for comparison against
 the 32-bit runner's `--verify` mode. Physical TV playback is a separate check.
+
+Both the plain Game Boy and Game Boy Color fixtures restored on ARMv7 and matched
+their 64-bit frame output and all active CPU/RAM/graphics fields. Comparison omits
+only uninitialized fields for hardware absent from these original fixtures.

@@ -33,5 +33,5 @@ from pathlib import Path
 core=Path('build/cores/gambatte_handoff_libretro.so')
 Path('build/cores/gambatte-handoff.json').write_text(json.dumps(dict(source='gambatte:77f2567d718b8973d02caa2daa8dce4953faf811',sha256=hashlib.sha256(core.read_bytes()).hexdigest()),indent=2)+'\n')
 PY
-$CC -Os -std=gnu99 -Wall -Wextra $(pkg-config --cflags sdl2) src/handoff_game.c -o build/greenlink-handoff-game-arm $(pkg-config --libs sdl2) -ljson-c -ldl
+$CC -Os -std=gnu99 -Wall -Wextra -Werror $(pkg-config --cflags sdl2) src/handoff_game.c -o build/greenlink-handoff-game-arm $(pkg-config --libs sdl2) -ljson-c -ldl
 $STRIP build/greenlink-handoff-game-arm

@@ -14,8 +14,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
-BINARIES = ("greenlink", "greenlink-catalog", "greenlink-player")
-PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh", "tools/usb_setup.py", "tools/usb_mount_template.sh")
+BINARIES = ("greenlink", "greenlink-catalog", "greenlink-player", "greenlink-handoff-game")
+PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh", "tools/usb_setup.py", "tools/usb_mount_template.sh", "tools/handoff.py", "cores/gambatte_handoff_libretro.so", "cores/gambatte-handoff.json", "cores/GAMBATTE-COPYING.txt", "sources/gambatte-handoff-source.tar.gz")
 
 
 def verified_payload(package, destination):

@@ -50,6 +50,16 @@ static void poll(void){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id){(void)index;return !port&&device==RETRO_DEVICE_JOYPAD&&id<16?(buttons>>id)&1:0;}
 static void *read_file(const char *path,size_t maximum,size_t *size){FILE *f=fopen(path,"rb");if(!f)return NULL;if(fseek(f,0,SEEK_END)){fclose(f);return NULL;}long length=ftell(f);rewind(f);if(length<=0||(unsigned long)length>maximum){fclose(f);return NULL;}void *bytes=malloc((size_t)length);if(!bytes){fclose(f);return NULL;}if(fread(bytes,1,(size_t)length,f)!=(size_t)length){free(bytes);fclose(f);return NULL;}fclose(f);*size=(size_t)length;return bytes;}
 static const char *field(json_object *object,const char *key){json_object *v=NULL;return json_object_object_get_ex(object,key,&v)?json_object_get_string(v):"";}
+static bool write_state_file(const char *manifest,const char *name,const void *data,size_t size){
+    const char *slash=strrchr(manifest,'/');if(!slash)return false;
+    size_t prefix=(size_t)(slash-manifest)+1,n=strlen(name);char target[4096],temporary[4102];
+    if(prefix+n>=sizeof(target))return false;
+    memcpy(target,manifest,prefix);memcpy(target+prefix,name,n+1);
+    memcpy(temporary,target,prefix+n);memcpy(temporary+prefix+n,".next",6);
+    FILE *out=fopen(temporary,"wb");if(!out)return false;
+    bool written=fwrite(data,1,size,out)==size;if(fclose(out))written=false;
+    return written&&!rename(temporary,target);
+}
 #define API(X) X(init) X(deinit) X(set_environment) X(set_video_refresh) X(set_audio_sample) X(set_audio_sample_batch) X(set_input_poll) X(set_input_state) X(get_system_info) X(get_system_av_info) X(load_game) X(unload_game) X(run) X(serialize_size) X(serialize) X(unserialize)
 #define DECLARE(name) static __typeof__(&retro_##name) core_##name;
 API(DECLARE)
@@ -82,7 +92,7 @@ int main(int argc,char **argv){
     core_run();size_t size=0;void *state=read_file(field(session,"state"),128*1024*1024,&size);
     if(quirks&125||!state||size!=core_serialize_size()||!core_unserialize(state,size))return 2;
     free(state);frames=0;
-    if(verify_mode){for(int i=0;i<5;i++)core_run();size=core_serialize_size();state=malloc(size);if(!state||!core_serialize(state,size))return 2;uint32_t hash=2166136261u;for(size_t i=0;i<size;i++)hash=(hash^((uint8_t*)state)[i])*16777619u;free(state);printf("{\"restored\":true,\"frames\":%u,\"frameHash\":%u,\"stateHash\":%u}\n",frames,frame_hash,hash);core_unload_game();core_deinit();free(rom);json_object_put(session);dlclose(handle);return frames?0:2;}
+if(verify_mode){for(int i=0;i<5;i++)core_run();size=core_serialize_size();state=calloc(1,size);if(!state||!core_serialize(state,size))return 2;uint32_t hash=2166136261u;for(size_t i=0;i<size;i++)hash=(hash^((uint8_t*)state)[i])*16777619u;if(!write_state_file(argv[1],"verify-state.bin",state,size))return 2;free(state);printf("{\"restored\":true,\"frames\":%u,\"frameHash\":%u,\"stateHash\":%u}\n",frames,frame_hash,hash);core_unload_game();core_deinit();free(rom);json_object_put(session);dlclose(handle);return frames?0:2;}
     SDL_GameController *controller=NULL;for(int i=0;i<SDL_NumJoysticks();i++)if(SDL_IsGameController(i)){controller=SDL_GameControllerOpen(i);break;}
     const int map[]={SDL_CONTROLLER_BUTTON_B,SDL_CONTROLLER_BUTTON_Y,SDL_CONTROLLER_BUTTON_BACK,SDL_CONTROLLER_BUTTON_START,SDL_CONTROLLER_BUTTON_DPAD_UP,SDL_CONTROLLER_BUTTON_DPAD_DOWN,SDL_CONTROLLER_BUTTON_DPAD_LEFT,SDL_CONTROLLER_BUTTON_DPAD_RIGHT,SDL_CONTROLLER_BUTTON_A,SDL_CONTROLLER_BUTTON_X,SDL_CONTROLLER_BUTTON_LEFTSHOULDER,SDL_CONTROLLER_BUTTON_RIGHTSHOULDER};
     char ack[4096];snprintf(ack,sizeof(ack),"%s",argv[1]);char *slash=strrchr(ack,'/');if(!slash)return 2;strcpy(slash+1,"started");bool acknowledged=false,quit=false;Uint64 next=SDL_GetPerformanceCounter();double frequency=(double)SDL_GetPerformanceFrequency();
@@ -93,6 +103,6 @@ int main(int argc,char **argv){
         next+=(Uint64)(frequency/(av.timing.fps>1?av.timing.fps:60));Uint64 now=SDL_GetPerformanceCounter();if(next>now)SDL_Delay((Uint32)((next-now)*1000/frequency));else if(now-next>frequency)next=now;
     }
     /* Keep TV progress separate from the incoming state and all existing saves. */
-    if(acknowledged){size=core_serialize_size();if(size&&size<=128*1024*1024){state=malloc(size);if(state&&core_serialize(state,size)){char target[4096],temporary[4096];snprintf(target,sizeof(target),"%s",argv[1]);char *last=strrchr(target,'/');if(last){strcpy(last+1,"state-return.bin");snprintf(temporary,sizeof(temporary),"%s.next",target);FILE *out=fopen(temporary,"wb");if(out){bool written=fwrite(state,1,size,out)==size;if(fclose(out))written=false;if(written)rename(temporary,target);}}}free(state);}}
+    if(acknowledged){size=core_serialize_size();if(size&&size<=128*1024*1024){state=calloc(1,size);if(state&&core_serialize(state,size))write_state_file(argv[1],"state-return.bin",state,size);free(state);}}
     core_unload_game();core_deinit();if(controller)SDL_GameControllerClose(controller);if(audio)SDL_CloseAudioDevice(audio);if(texture)SDL_DestroyTexture(texture);SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_Quit();free(rom);json_object_put(session);dlclose(handle);return acknowledged?0:2;
 }

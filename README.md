@@ -4,15 +4,17 @@
 
 | Platform | Package |
 | --- | --- |
-| Android 8+ | [Signed APK 0.10.25 — Continue on TV](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1025-continue-on-tv/FlXtR-Android-preview.apk) |
-| Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-Windows-x86_64.zip) |
-| Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-Linux-x86_64.tgz) |
-| Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.03-7e48ecd/FlXtR-SteamDeck-x86_64.tgz) |
+| Android 8+ | [Signed APK 0.10.26 — movie/series source fix](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1026-source-recovery/FlXtR-Android-preview.apk) |
+| Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Windows-x86_64.zip) |
+| Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Linux-x86_64.tgz) |
+| Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-SteamDeck-x86_64.tgz) |
 | PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/psp-49601dfa187deaa88e1452ad2a9d1eee2804d489/FlXtR-PSP-beta.zip) |
-| Steam Link | [Complete ARM package — Continue on TV receiver](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-9cc2caeee4e82e21680dce28aab7070c838dd587/greenlink.tgz) |
+| Steam Link | [Complete ARM package — movie/series source fix](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-b0fffcf7fbdaafe8bd26da5beb0c717a4d51412f/greenlink.tgz) |
 
 [Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases).
 Each download above is pinned to its platform's most recent published package.
+The November 5 builds fix the provider request failure that blocked movies and
+series. See [source recovery and verification](docs/SOURCE-RECOVERY-2026-11-05.md).
 PSP device playback and physical Steam Deck validation remain experimental.
 
 Android: install the new APK directly once over your existing app; older previews

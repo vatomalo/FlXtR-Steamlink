@@ -40,12 +40,16 @@ final class TailscaleRuntime {
         Context app=context.getApplicationContext();application=app;Seq.setContext(app);
         String id=identity(app),model=Build.MODEL.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9-]+","-");if(model.length()>32)model=model.substring(0,32);
         File dir=new File(app.getNoBackupFilesDir(),"tailnet");
-        client=Flxtrnet.newClient(dir.getAbsolutePath(),"flxtr-android-"+model+"-"+id.substring(0,6),new Platform(){
+        android.content.SharedPreferences network=app.getSharedPreferences("flxtr-network",0);
+        // A native abort cannot run Java finally. Remember initialization until
+        // it finishes, so the next process can recover without clearing data.
+        network.edit().putBoolean("tailnet-starting",true).commit();
+        try{client=Flxtrnet.newClient(dir.getAbsolutePath(),"flxtr-android-"+model+"-"+id.substring(0,6),new Platform(){
             public String interfaces(){return interfacesJson();}
             public String defaultInterface(){
                 try{ConnectivityManager cm=(ConnectivityManager)app.getSystemService(Context.CONNECTIVITY_SERVICE);LinkProperties props=cm.getLinkProperties(cm.getActiveNetwork());return props==null||props.getInterfaceName()==null?"":props.getInterfaceName();}catch(Exception unavailable){return "";}
             }
-        });
+        });}finally{network.edit().putBoolean("tailnet-starting",false).commit();}
         ConnectivityManager cm=(ConnectivityManager)app.getSystemService(Context.CONNECTIVITY_SERVICE);
         callback=new ConnectivityManager.NetworkCallback(){
             private void changed(){Client active=client;if(active!=null)IO.execute(()->{try{active.networkChanged();}catch(Exception ignored){}});}
@@ -86,6 +90,8 @@ final class TailscaleRuntime {
     }
     static void install(Application app){
         application=app;
+        android.content.SharedPreferences network=app.getSharedPreferences("flxtr-network",0);
+        if(network.getBoolean("tailnet-starting",false))network.edit().putBoolean("tailnet-enabled",false).putBoolean("tailnet-starting",false).commit();
         if(enabled(app))IO.execute(()->{try{connect(app);}catch(Exception ignored){}});
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks(){
             private int started;

@@ -52,6 +52,7 @@ func NewClient(directory, hostname string, platform Platform) (*Client, error) {
     if directory=="" || hostname=="" { return nil,errors.New("missing private state directory or hostname") }
     if err:=os.MkdirAll(directory,0700); err!=nil{return nil,err}
     if err:=os.Chmod(directory,0700); err!=nil{return nil,err}
+    if err:=configurePrivateStorage(directory);err!=nil{return nil,err}
     identityPath:=filepath.Join(directory,"flxtr-device-id")
     data,_:=os.ReadFile(identityPath)
     identity:=strings.TrimSpace(string(data))

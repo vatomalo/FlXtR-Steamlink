@@ -27,9 +27,21 @@ public final class GameLibrary {
         for(String key:new String[]{"games","singles","index"}){JSONArray list=array(key);for(int i=0;i<list.length();i++){JSONObject game=list.getJSONObject(i);String core=GameFormats.core(game.optString("name"));if(core.isEmpty())continue;
             if(game.has("file")&&!new File(directory(),game.getString("file")).isFile())continue;
             if(seen.add(identity(game))){String chosen=context.getSharedPreferences("retro-options",0).getString("core:"+hash(identity(game)),"");if(GameFormats.compatible(game.optString("name"),chosen))core=chosen;game.put("core",core);result.add(game);}}}
+        File received=new File(directory(),"received");
+        for(String system:RomTransfer.SYSTEMS){File folder=new File(received,system);File[] files=folder.listFiles();if(files==null)continue;
+            for(File file:files){if(result.size()>=50000)break;if(!file.isFile()||file.getName().startsWith(".")||!system.equals(RomTransfer.system(file.getName())))continue;
+                String relative="received/"+system+"/"+file.getName();JSONObject game=new JSONObject().put("file",relative).put("name",file.getName()).put("core",GameFormats.core(file.getName()));
+                if(seen.add(identity(game)))result.add(game);
+            }
+        }
         result.sort(Comparator.comparing(g->g.optString("name").toLowerCase(Locale.ROOT)));return result;
     }
     public File directory(){return new File(context.getFilesDir(),"games");}
+    public void removeReceived(JSONObject game)throws Exception{
+        String relative=game.optString("file","");if(!relative.startsWith("received/"))throw new IOException("Only received copies can be removed here");
+        File file=new File(directory(),relative),root=new File(directory(),"received");
+        if(!file.getCanonicalPath().startsWith(root.getCanonicalPath()+File.separator)||!file.isFile()||!file.delete())throw new IOException("Could not remove this received ROM");
+    }
     public List<String> folders()throws Exception {ArrayList<String> result=new ArrayList<>();JSONArray a=array("folders");for(int i=0;i<a.length();i++)result.add(a.getString(i));return result;}
     public void addFolder(Uri uri)throws Exception {JSONArray a=array("folders");for(int i=0;i<a.length();i++)if(a.getString(i).equals(uri.toString()))return;a.put(uri.toString());prefs.edit().putString("folders",a.toString()).commit();}
     public void removeFolder(String tree)throws Exception {
@@ -80,10 +92,10 @@ public final class GameLibrary {
         JSONObject game=entry(tree,name+".scummvm",0,0).put("tree",tree.toString()).put("adventureTree",true);JSONArray singles=array("singles");for(int index=0;index<singles.length();index++)if(identity(singles.getJSONObject(index)).equals(identity(game)))return;singles.put(game);prefs.edit().putString("singles",singles.toString()).commit();
     }
     public static String identity(JSONObject game){return game.has("file")?"legacy:"+game.optString("file"):game.optString("uri");}
-    public String saveKey(JSONObject game)throws Exception{return game.has("file")?"":hash(identity(game));}
+    public String saveKey(JSONObject game)throws Exception{return game.has("file")&&!game.optString("file").startsWith("received/")?"":hash(identity(game));}
     public File stage(JSONObject game)throws Exception {
         if(game.optBoolean("adventureTree"))return stageScummVMFolder(game);
-        if(game.has("file")){File file=new File(directory(),game.getString("file"));if(!file.getCanonicalFile().getParentFile().equals(directory().getCanonicalFile()))throw new IOException("Invalid game path");return file;}
+        if(game.has("file")){File file=new File(directory(),game.getString("file"));if(!file.getCanonicalFile().getParentFile().equals(directory().getCanonicalFile())&&!file.getCanonicalPath().startsWith(new File(directory(),"received").getCanonicalPath()+File.separator))throw new IOException("Invalid game path");return file;}
         HashMap<String,JSONObject> entries=new HashMap<>();JSONArray index=array("index");for(int i=0;i<index.length();i++){JSONObject item=index.getJSONObject(i);if(item.optString("tree").equals(game.optString("tree")))entries.put(item.getString("path").toLowerCase(Locale.ROOT),item);}
         entries.put(game.getString("path").toLowerCase(Locale.ROOT),game);
         File root=new File(directory(),"imported/"+hash(game.optString("tree").isEmpty()?identity(game):game.getString("tree")));

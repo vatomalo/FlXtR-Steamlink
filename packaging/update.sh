@@ -29,7 +29,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
         [ -f scripts/music-runtime.sh ] && [ -x music-runtime/usr/bin/python3 ] || music_complete=0
     fi
     if [ -f assets/handoff-required-v1 ]; then
-        [ -x greenlink-handoff-game ] && [ -f tools/handoff.py ] &&
+        [ -x greenlink-handoff-game ] && [ -f tools/handoff.py ] && [ -f tools/rom_transfer.py ] &&
         [ -f cores/gambatte_handoff_libretro.so ] && [ -f cores/gambatte-handoff.json ] && [ -f cores/fceumm_handoff_libretro.so ] && [ -f cores/fceumm-handoff.json ] || music_complete=0
     fi
     if [ -f assets/tailscale-required-v1 ]; then
@@ -67,7 +67,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
         # Python bytecode validates source mtimes; preserve them on installation.
         if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -pR "$staged/$part/." "$part/"; fi
     done
-    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/tailscale_link.py; do
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py; do
         if [ -f "$staged/$part" ]; then
             mkdir -p "$(dirname "$part")"
             cp "$staged/$part" "$part.new" && chmod 755 "$part.new" && mv -f "$part.new" "$part"
@@ -94,7 +94,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
     mv -f .update-backup greenlink.previous
     # A manual install can replace binaries while leaving the version marker.
     # Record hashes from the verified archive, then verify what is on disk.
-(cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so greenlink-handoff-game tools/handoff.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/fceumm_handoff_libretro.so cores/fceumm-handoff.json; do
+(cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so greenlink-handoff-game tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/fceumm_handoff_libretro.so cores/fceumm-handoff.json; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
     for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh; do

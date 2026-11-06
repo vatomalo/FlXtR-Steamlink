@@ -122,6 +122,9 @@ static int game_music_keep;
 /* Every ROM can select any locally installed Libretro core. */
 #define ROM_CORE_LIMIT 128
 static int rom_options_menu,rom_options_row;
+static int rom_send_on,rom_send_row,rom_send_count,rom_send_stage;
+static pid_t rom_send_pid;
+static char rom_send_key[17],rom_send_names[16][96];
 static int rom_assets_on;
 static Title rom_options_title;
 static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count,rom_core_first;
@@ -1422,13 +1425,27 @@ static void draw(Uint32 tick) {
         text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
         SDL_RenderPresent(renderer);return;
     }
+    if(rom_send_on){
+        rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
+        text(200,95,"SEND ROM TO DEVICE",2,green,50);
+        text(200,127,rom_options_title.title,2,white,58);
+        int first=rom_send_row>5?rom_send_row-5:0;
+        for(int i=first;i<rom_send_count&&i<first+6;i++){
+            int y=181+(i-first)*32;if(i==rom_send_row)rect(194,y-5,718,28,green,0);
+            text(210,y,rom_send_names[i],2,i==rom_send_row?green:white,55);
+        }
+        if(!rom_send_count)text(210,181,rom_send_pid?"SEARCHING...":"NO ROM RECEIVERS FOUND / UPDATE FLXTR ON TARGET",1,dim,90);
+        text(200,399,"NES / SNES / GB / GBC / GBA - SAVED IN THE TARGET SYSTEM FOLDER",1,dim,100);
+        text(200,425,"A SEND / Y REFRESH / B BACK",1,green,90);
+        text(200,448,status,1,white,100);SDL_RenderPresent(renderer);return;
+    }
     if(rom_options_menu){
         rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
         text(200,95,"ROM OPTIONS",2,green,50);
         text(200,127,rom_options_title.title,2,white,58);
-        const char *labels[]={"PLAY","CORE"};
-        const char *values[]={"START GAME",rom_core_names[rom_core_selected]};
-        for(int row=0;row<2;row++){
+        const char *labels[]={"PLAY","CORE","SEND TO"};
+        const char *values[]={"START GAME",rom_core_names[rom_core_selected],"CHOOSE DEVICE"};
+        for(int row=0;row<3;row++){
             int y=181+row*43;
             if(row==rom_options_row)rect(194,y-8,718,32,green,0);
             text(210,y,labels[row],2,white,22);text(420,y,values[row],2,row==rom_options_row?green:white,40);
@@ -1755,6 +1772,42 @@ char values[35][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
     }
     rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(713,509,"DPAD MOVE / B BACK",1,green,30);
     SDL_RenderPresent(renderer);
+}
+static void rom_send_job(int stage,int device){
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+    (void)stage;(void)device;snprintf(status,sizeof(status),"ROM TRANSFER NEEDS THE STEAM LINK NETWORK RUNTIME");
+#else
+    if(rom_send_pid)return;
+    mkdir("rom-transfer",0700);unlink("rom-transfer/result.txt");
+    pid_t child=fork();if(child<0){snprintf(status,sizeof(status),"COULD NOT START ROM TRANSFER");return;}
+    if(!child){
+        int fd=open("rom-transfer/job.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
+        if(fd>=0){dup2(fd,STDOUT_FILENO);dup2(fd,STDERR_FILENO);close(fd);}
+        int input=open("/dev/null",O_RDONLY);if(input>=0){dup2(input,STDIN_FILENO);close(input);}
+        if(stage==1)execl("./scripts/music-runtime.sh","music-runtime.sh","tools/rom_transfer.py","devices",(char*)NULL);
+        else{char index[16];snprintf(index,sizeof(index),"%d",device);execl("./scripts/music-runtime.sh","music-runtime.sh","tools/rom_transfer.py","send",rom_send_key,index,(char*)NULL);}
+        _exit(127);
+    }
+    rom_send_pid=child;rom_send_stage=stage;
+    snprintf(status,sizeof(status),"%s",stage==1?"FINDING ROM RECEIVERS / TAILSCALE AND LOCAL NETWORK":"SENDING ROM / WAITING FOR STORAGE RECEIPT");
+#endif
+}
+static void rom_send_open(const Title *title){
+    if(strncmp(title->url,"romid:",6)||!rom_key_valid(title->url+6)){snprintf(status,sizeof(status),"RESCAN GAMES BEFORE SENDING THIS ROM");return;}
+    memcpy(rom_send_key,title->url+6,17);rom_send_on=1;rom_send_row=rom_send_count=0;rom_send_job(1,0);
+}
+static int rom_send_tick(void){
+    if(!rom_send_pid)return 0;
+    int code=0;pid_t done=waitpid(rom_send_pid,&code,WNOHANG);if(done!=rom_send_pid)return 0;
+    rom_send_pid=0;
+    if(rom_send_stage==1){
+        rom_send_count=0;FILE *file=fopen("rom-transfer/devices.tsv","r");
+        if(file){char line[256];while(rom_send_count<16&&fgets(line,sizeof(line),file)){line[strcspn(line,"\r\n")]=0;snprintf(rom_send_names[rom_send_count++],96,"%.95s",line);}fclose(file);}
+        rom_send_row=0;
+    }
+    FILE *file=fopen("rom-transfer/result.txt","r");if(file){char line[256];if(fgets(line,sizeof(line),file)){line[strcspn(line,"\r\n")]=0;snprintf(status,sizeof(status),"%.99s",line);}fclose(file);}
+    else snprintf(status,sizeof(status),"ROM TRANSFER FAILED / SEE ROM-TRANSFER/JOB.LOG");
+    rom_send_stage=0;return 1;
 }
 static void rom_launch(const Title *t){
         game_music_keep=!strncmp(t->url,"romid:",6)&&rom_background_music(t->url+6);
@@ -2515,12 +2568,25 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         }
         return;
     }
+    if(rom_send_on){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){
+            if(rom_send_pid){kill(rom_send_pid,SIGTERM);waitpid(rom_send_pid,NULL,0);rom_send_pid=0;rom_send_stage=0;snprintf(status,sizeof(status),"ROM TRANSFER STOPPED");}
+            rom_send_on=0;return;
+        }
+        if(rom_send_pid)return;
+        if(key==SDLK_UP&&rom_send_row>0)rom_send_row--;
+        if(key==SDLK_DOWN&&rom_send_row+1<rom_send_count)rom_send_row++;
+        if(key==SDLK_y||key==SDLK_F2||(key==SDLK_RETURN&&!rom_send_count))rom_send_job(1,0);
+        else if(key==SDLK_RETURN&&rom_send_count)rom_send_job(2,rom_send_row);
+        return;
+    }
     if(rom_options_menu){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){rom_options_menu=0;return;}
         if(key==SDLK_UP&&rom_options_row>0)rom_options_row--;
-        if(key==SDLK_DOWN&&rom_options_row<1)rom_options_row++;
+        if(key==SDLK_DOWN&&rom_options_row<2)rom_options_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_x||key==SDLK_F3||(key==SDLK_RETURN&&!rom_options_row)){rom_launch(&rom_options_title);return;}
+        if(key==SDLK_RETURN&&rom_options_row==2){rom_send_open(&rom_options_title);return;}
         if(key==SDLK_RETURN&&rom_options_row==1){rom_core_first=rom_core_selected>3?rom_core_selected-3:0;rom_core_menu=1;return;}
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
             if(rom_options_row==1&&rom_core_count){
@@ -2949,6 +3015,7 @@ int main(int argc,char **argv) {
         if(video_download_pid){video_download_finish();dirty=1;}
         if(favorites_art_tick())dirty=1;
         if(rom_assets_tick())dirty=1;
+        if(rom_send_tick())dirty=1;
         if(usb_poll())dirty=1;
         if(samba_poll())dirty=1;
         if(music_poll())dirty=1;
@@ -2975,7 +3042,7 @@ int main(int argc,char **argv) {
     youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
-    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid};
+    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid,rom_send_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
     SDL_Quit();return moonlight_exit?44:game_exit?43:restart_shell?42:0;

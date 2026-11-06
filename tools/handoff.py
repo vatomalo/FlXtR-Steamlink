@@ -15,6 +15,9 @@ import threading
 import time
 import urllib.parse
 import zipfile
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import rom_transfer
 
 LIMIT = 128 * 1024 * 1024
 SOURCE = 'gambatte:77f2567d718b8973d02caa2daa8dce4953faf811'
@@ -34,7 +37,7 @@ def local_discovery_reply(data,peer_ip,local_ip,port,prefix,identity,name):
         request=json.loads(data)
         nonce=request.get('nonce','')
         if request.get('app')!='FlXtR' or request.get('protocol')!=1 or request.get('op')!='discover' or not isinstance(nonce,str) or len(nonce)!=32 or any(c not in '0123456789abcdef' for c in nonce):return None
-        return dict(app='FlXtR',protocol=1,nonce=nonce,id=identity,name=name,platform='steamlink',roles=['receiver'],endpoint=f'http://{local_ip}:{port}{prefix}',armed=True)
+        return dict(app='FlXtR',protocol=1,nonce=nonce,id=identity,name=name,platform='steamlink',roles=['receiver','rom-receiver'],endpoint=f'http://{local_ip}:{port}{prefix}',armed=True)
     except (ValueError,AttributeError):return None
 
 class LocalDiscovery(threading.Thread):
@@ -236,14 +239,14 @@ class Receiver(http.server.BaseHTTPRequestHandler):
         if self.path=='/.well-known/flxtr':
             remote=self.tailnet_discovery()
             if not remote:return self.reply(403,{'error':'Connect through Tailscale to find this TV'})
-            return self.reply(200,{'app':'FlXtR','protocol':1,'id':getattr(self.server,'device_id',''),'name':getattr(self.server,'device_name','Steam Link'),'platform':'steamlink','roles':['receiver'],'endpoint':remote,'armed':self.armed()})
+            return self.reply(200,{'app':'FlXtR','protocol':1,'id':getattr(self.server,'device_id',''),'name':getattr(self.server,'device_name','Steam Link'),'platform':'steamlink','roles':['receiver','rom-receiver'],'endpoint':remote,'armed':self.armed()})
         route = self.route()
         if route is None: return self.reply(403, {'error':'Pair again on the TV'})
         if route == '':
             address='http://'+self.headers['Host']+self.server.prefix
             link = 'flxtr://tv?url=' + urllib.parse.quote(address, safe='')
             return self.reply(200, '<!doctype html><meta name="viewport" content="width=device-width"><h1>Continue on TV</h1><p><a href="'+link+'">Pair with FlXtR on this phone</a></p><p>Or paste this page address into FlXtR’s Continue on TV menu.</p>', 'text/html; charset=utf-8')
-        if route == 'capabilities': return self.reply(200, {'protocol':1, 'name':'Steam Link', 'armed':self.armed(), 'sources':list(CORES), 'maxStateBytes':LIMIT})
+        if route == 'capabilities': return self.reply(200, {'protocol':1, 'name':'Steam Link', 'armed':self.armed(), 'sources':list(CORES), 'maxStateBytes':LIMIT, 'romTransfer':1, 'romSystems':list(rom_transfer.SYSTEMS), 'maxRomBytes':rom_transfer.MAX_ROM})
         if route.startswith('status/'):
             identity = route[7:]
             if len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity): return self.reply(400, {'error':'Invalid session'})
@@ -254,6 +257,7 @@ class Receiver(http.server.BaseHTTPRequestHandler):
             return self.reply(404, {'error':'Unknown session'})
         self.reply(404, {'error':'Not found'})
     def do_POST(self):
+        if self.route() == 'roms':return self.receive_rom()
         if self.route() != 'handoff': return self.reply(403, {'error':'Pair again on the TV'})
         if not self.armed(): return self.reply(409, {'error':'Open Settings > Continue on TV on the TV first'})
         if not LOCK.acquire(False): return self.reply(409, {'error':'Another transfer is active'})
@@ -286,6 +290,30 @@ class Receiver(http.server.BaseHTTPRequestHandler):
             if directory: shutil.rmtree(directory, ignore_errors=True)
             self.reply(400, {'error':str(error)[:300]})
         finally: LOCK.release()
+    def receive_rom(self):
+        if not self.armed():return self.reply(409,{'error':'Open FlXtR on the receiving device'})
+        if not LOCK.acquire(False):return self.reply(409,{'error':'Another transfer is active'})
+        archive=None
+        try:
+            self.connection.settimeout(30)
+            if self.headers.get('Transfer-Encoding'):raise ValueError('Chunked uploads are unsupported')
+            length=int(self.headers.get('Content-Length','0'))
+            if not 0<length<=rom_transfer.MAX_ROM+65536:raise ValueError('ROM transfer exceeds limit')
+            folder=ROOT/'handoff';folder.mkdir(exist_ok=True)
+            import tempfile
+            with tempfile.NamedTemporaryFile(prefix='rom-upload-',dir=folder,delete=False) as output:
+                archive=Path(output.name);left=length
+                while left:
+                    block=self.rfile.read(min(left,65536))
+                    if not block:raise ValueError('ROM transfer interrupted')
+                    output.write(block);left-=len(block)
+            receipt=rom_transfer.receive(archive,ROOT)
+            self.reply(200,receipt)
+        except (ValueError,KeyError,OSError,zipfile.BadZipFile) as error:self.reply(400,{'error':str(error)[:300]})
+        finally:
+            if archive:archive.unlink(missing_ok=True)
+            LOCK.release()
+
 
 def serve(ip=None):
     if not ip:

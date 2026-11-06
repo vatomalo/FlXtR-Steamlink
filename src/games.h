@@ -54,7 +54,7 @@ static const char *game_core(const char *path){
     if(!strcasecmp(ext,"cso")||
        ((!strcasecmp(ext,"iso")||!strcasecmp(ext,"pbp"))&&
         (rom_path_contains(path,"/psp/")||rom_path_contains(path,"/pspiso/"))))return "ppsspp";
-    if(!strcasecmp(ext,"nes"))return "fceumm";
+    if(!strcasecmp(ext,"nes")||!strcasecmp(ext,"unf")||!strcasecmp(ext,"unif"))return "fceumm";
     if(!strcasecmp(ext,"sfc")||!strcasecmp(ext,"smc"))return "snes9x2005";
     if(!strcasecmp(ext,"gba"))return
 #ifdef FLXTR_DESKTOP
@@ -245,9 +245,10 @@ static int games_folders(int page){
 }
 static int games_list_filtered(int page,int refresh,int folder){
 
+    if(!access("games-transfer-dirty",F_OK)){rename("games-transfer-dirty","games-transfer-scanning");refresh=1;}
     json_object *games=refresh?NULL:games_read("games.json");
     if(games&&!json_object_is_type(games,json_type_array)){json_object_put(games);games=NULL;}
-    if(!games)games=games_import();
+    if(!games){games=games_import();unlink("games-transfer-scanning");}
     if(!games)return -1;
     int count=(int)json_object_array_length(games),matched=0;
     if(count>GAME_LIMIT)count=GAME_LIMIT;

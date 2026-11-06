@@ -47,3 +47,8 @@ phone-files/
 /android/app/libs/*.aar
 /android/app/libs/*-sources.jar
 /android/app/libs/tailnet.sha256
+
+/rom-transfer/
+/rom-receive-root.txt
+/games-transfer-dirty
+/games-transfer-scanning

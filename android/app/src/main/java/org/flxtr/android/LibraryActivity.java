@@ -108,6 +108,14 @@ adapter=new CatalogAdapter();grid.setAdapter(adapter);grid.addOnLayoutChangeList
     private void doSearch(){query=search.getText().toString().trim();if(kind.startsWith("kiss"))kind="kiss";else if(kind.startsWith("archive")){kind="archive";id=0;}else if(!kind.equals("movie")&&!kind.equals("tv")&&!kind.equals("music")){kind="movie";title="Movies";}history.clear();page=1;restorePosition=0;hideKeyboard();load();}
     private void hideKeyboard(){search.clearFocus();((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(search.getWindowToken(),0);}
     private void open(CatalogItem item){
+        if(item.kind.equals("archive-folder")||item.kind.equals("archive-item")){browse(item);return;}
+        if(!MediaStart.group(item)){playCatalogue(item);return;}
+        StreamResolver.Request resolve=new StreamResolver.Request();
+        AlertDialog progress=dialog().setTitle(item.title).setMessage("Finding your episode…").setNegativeButton("Cancel",(d,w)->resolve.cancel()).show();Gamepad.dialog(progress);
+        network.execute(()->{try{CatalogItem episode=MediaStart.select(this,item,resolve);runOnUiThread(()->{if(!progress.isShowing()||destroyed||resolve.cancelled)return;progress.dismiss();playCatalogue(episode);});}
+            catch(Exception failure){runOnUiThread(()->{if(!progress.isShowing()||destroyed)return;progress.dismiss();Gamepad.dialog(dialog().setTitle("Could not start episode").setMessage(failure.getMessage()).setPositiveButton("Browse episodes",(d,w)->browse(item)).setNegativeButton("Close",null).show());});}});
+    }
+    private void browse(CatalogItem item){
         String target=null;if(item.kind.equals("tv"))target="season";if(item.kind.equals("season"))target="episode";if(item.kind.equals("kiss"))target="kiss-episodes";if(item.kind.equals("archive-folder"))target="archive";if(item.kind.equals("archive-item"))target="archive-files";
         if(target!=null){if(history.size()==10)history.removeFirst();history.addLast(navigation());kind=target;title=item.title;id=item.id;season=item.season;link=item.link;query="";page=1;restorePosition=0;search.setText("");load();}else details(item);
     }
@@ -130,7 +138,7 @@ adapter=new CatalogAdapter();grid.setAdapter(adapter);grid.addOnLayoutChangeList
     private void finishPage(boolean cached){
         adapter.notifyDataSetChanged();renderFlow();grid.setSelection(restorePosition);if(covers==null&&!search.hasFocus())grid.requestFocus();restorePosition=0;
         status.setText(rows.isEmpty()?(kind.equals("favorites")?"No favorites yet. Hold a poster to add one.":"No titles found."):
-            (cached?"Saved page · ":"")+"Tap to open · hold for details");
+            (cached?"Saved page · ":"")+"Tap to play · hold for actions");
         previous.setEnabled(page>1);next.setEnabled(page<pages);pageLabel.setText("Page "+page+" of "+pages);
     }
     private List<CatalogItem> favorites(){ArrayList<CatalogItem> items=new ArrayList<>();try{JSONArray array=new JSONArray(prefs.getString("favorites","[]"));for(int i=0;i<array.length();i++)items.add(CatalogItem.saved(array.getJSONObject(i)));}catch(Exception invalid){status.setText("Saved favorites could not be read.");}return items;}
@@ -141,14 +149,15 @@ adapter=new CatalogAdapter();grid.setAdapter(adapter);grid.addOnLayoutChangeList
         if(kind.equals("favorites"))load();else adapter.notifyDataSetChanged();
     }
     private void details(CatalogItem item){
-        if(java.util.Arrays.asList("tv","season","kiss","archive-folder","archive-item").contains(item.kind)){open(item);return;}
+        if(item.kind.equals("archive-folder")||item.kind.equals("archive-item")){browse(item);return;}
         ScrollView scroll=new ScrollView(this);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);scroll.addView(content);TextView description=label(item.meta+"\n\n"+(item.overview.isEmpty()?"No description available.":item.overview),16,INK);description.setPadding(dp(22),dp(10),dp(22),dp(12));content.addView(description);
         AlertDialog.Builder dialog=dialog().setTitle(item.title).setView(scroll).setNegativeButton("Close",null)
             .setNeutralButton(isFavorite(item)?"Remove favorite":"Favorite",(d,w)->toggleFavorite(item));
-        if(item.kind.equals("tv")||item.kind.equals("season"))dialog.setPositiveButton("Browse",(d,w)->open(item));
-        else dialog.setPositiveButton("Play",(d,w)->playCatalogue(item));
+        dialog.setPositiveButton("Play",(d,w)->open(item));
         AlertDialog shown=dialog.show();
         Gamepad.dialog(shown);
+        if(MediaStart.group(item))content.addView(button(item.kind.equals("tv")?"Browse seasons / episodes":"Browse episodes",()->{shown.dismiss();browse(item);}));
+        if(!item.kind.equals("local")&&!item.kind.equals("offline"))content.addView(button("Send to TV",()->{shown.dismiss();TvHandoff.fromLibrary(this,item);}));
         if(item.kind.equals("offline")){
             shown.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(OfflineMedia.complete(this,item.link));
             content.addView(button("Retry download",()->{CatalogItem original=OfflineMedia.original(this,item.link);if(original!=null){OfflineMedia.queue(this,original);shown.dismiss();}}));

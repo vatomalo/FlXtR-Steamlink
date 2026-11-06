@@ -22,7 +22,7 @@ final class TvHandoff {
         if(!"http".equals(uri.getScheme())||host==null||uri.getUserInfo()!=null||uri.getQuery()!=null||uri.getFragment()!=null||uri.getPort()<1||uri.getPort()>65535||!uri.getPath().matches("/[0-9a-f]{32}/"))throw new IOException("Paste the full pairing address shown on the TV");
         if(!host.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}"))throw new IOException("Use the TV's LAN or Tailscale IP address");
         byte[] ip=InetAddress.getByName(host).getAddress();int a=ip[0]&255,b=ip[1]&255;
-        if(!(a==10||a==192&&b==168||a==172&&b>=16&&b<=31||a==100&&b>=64&&b<=127||a==127))throw new IOException("Pairing requires a private LAN or Tailscale address");
+        if(!(a==10||a==192&&b==168||a==172&&b>=16&&b<=31||a==100&&b>=64&&b<=127||a==127||a==169&&b==254))throw new IOException("Pairing requires a private LAN or Tailscale address");
         return uri;
     }
     static JSONObject request(URI base,String route,File upload)throws Exception {
@@ -68,16 +68,36 @@ dialog.setOnShowListener(d->{dialog.getButton(-3).setOnClickListener(v->openTail
     static void openTailscale(Activity activity){
         TailscaleSetup.open(activity);
     }
+    static JSONObject videoMetadata(android.content.Context context,CatalogItem item,StreamProtocol.Stream stream,long position)throws Exception{
+        if(stream.offlineId!=null||!CatalogItem.validStream(stream.url))throw new IOException("This file must be accessible on the TV");
+        String language=context.getSharedPreferences("android-settings",0).getString("subtitle-language","en");
+        JSONObject meta=new JSONObject().put("protocol",1).put("type","video").put("item",item.json()).put("url",stream.url).put("positionMs",Math.max(0,position)).put("subtitle",language);
+        if(!stream.handoffProvider.isEmpty())meta.put("provider",stream.handoffProvider);
+        if(!stream.handoffVariant.isEmpty())meta.put("variant",stream.handoffVariant);
+        for(MediaCaptions.Track track:stream.subtitles)if(!language.isEmpty()&&language.equals(track.language)){meta.put("captionUrl",track.url);break;}
+        if(stream.audioUrl!=null)meta.put("audioUrl",stream.audioUrl);return meta;
+    }
+    static void fromLibrary(Activity activity,CatalogItem item){
+        send(activity,"",()->{
+            StreamResolver.Request request=new StreamResolver.Request();CatalogItem selected=MediaStart.select(activity,item,request);
+            StreamProtocol.Stream stream=new StreamResolver.Session(selected).next(request,message->{});
+            CatalogItem resolved=stream.item==null?selected:stream.item;
+            return archive(activity,videoMetadata(activity,resolved,stream,MediaStart.position(activity,resolved)),null);
+        },()->{},()->{},false);
+    }
     static void send(Activity activity,String source,Payload capture,Runnable success,Runnable failure){
+        send(activity,source,capture,success,failure,true);
+    }
+    static void send(Activity activity,String source,Payload capture,Runnable success,Runnable failure,boolean playingHere){
         String address=activity.getSharedPreferences("tv-handoff",0).getString("endpoint","");
-        if(address.isEmpty()){findTv(activity,()->send(activity,source,capture,success,failure));return;}
+        if(address.isEmpty()){findTv(activity,()->send(activity,source,capture,success,failure,playingHere));return;}
         AlertDialog progress=new AlertDialog.Builder(activity).setTitle("Continue on TV").setMessage("Connecting to TV…").setCancelable(false).create();progress.show();
         NETWORK.execute(()->{File payload=null;try{
             URI base=endpoint(DeviceDiscovery.refreshSaved(activity,address));JSONObject capabilities=request(base,"capabilities",null);if(!capabilities.optBoolean("armed"))throw new IOException("Open Continue on TV on the TV first");
             if(!source.isEmpty()){JSONArray sources=capabilities.optJSONArray("sources");boolean found=false;if(sources!=null)for(int i=0;i<sources.length();i++)if(source.equals(sources.optString(i)))found=true;if(!found)throw new IOException("This TV has no matching portable core. Your game stays here.");}
-            payload=capture.capture();activity.runOnUiThread(()->progress.setMessage("Sending session…"));JSONObject response=request(base,"handoff",payload);String id=response.getString("id");if(!id.matches("[0-9a-f]{32}"))throw new IOException("Invalid session receipt");
+            activity.runOnUiThread(()->progress.setMessage("Preparing session…"));payload=capture.capture();activity.runOnUiThread(()->progress.setMessage("Sending session…"));JSONObject response=request(base,"handoff",payload);String id=response.getString("id");if(!id.matches("[0-9a-f]{32}"))throw new IOException("Invalid session receipt");
             activity.runOnUiThread(()->progress.setMessage("Waiting for the TV to resume…"));long deadline=System.currentTimeMillis()+90000;
-            while(System.currentTimeMillis()<deadline){JSONObject status=request(base,"status/"+id,null);if(status.optString("status").equals("started")){activity.runOnUiThread(()->{progress.dismiss();new AlertDialog.Builder(activity).setTitle("Playing on TV").setMessage("The TV confirmed playback. Pause or exit on this device?").setPositiveButton("Pause / exit here",(d,w)->success.run()).setNegativeButton("Keep playing here",(d,w)->failure.run()).show();});return;}if(status.optString("status").equals("failed"))throw new IOException(status.optString("error","TV could not resume"));Thread.sleep(700);}
+            while(System.currentTimeMillis()<deadline){JSONObject status=request(base,"status/"+id,null);if(status.optString("status").equals("started")){activity.runOnUiThread(()->{progress.dismiss();if(!playingHere){success.run();Toast.makeText(activity,"Playing on TV",Toast.LENGTH_LONG).show();return;}new AlertDialog.Builder(activity).setTitle("Playing on TV").setMessage("The TV confirmed playback. Pause or exit on this device?").setPositiveButton("Pause / exit here",(d,w)->success.run()).setNegativeButton("Keep playing here",(d,w)->failure.run()).show();});return;}if(status.optString("status").equals("failed"))throw new IOException(status.optString("error","TV could not resume"));Thread.sleep(700);}
             throw new IOException("The TV has not confirmed playback. Your session is kept here; check the TV before retrying.");
         }catch(Exception|OutOfMemoryError error){activity.runOnUiThread(()->{progress.dismiss();failure.run();new AlertDialog.Builder(activity).setTitle("Could not continue on TV").setMessage(error.getMessage()).setPositiveButton("OK",null).setNeutralButton("Find my TV",(d,w)->findTv(activity,null)).show();});}finally{if(payload!=null)payload.delete();}});
     }

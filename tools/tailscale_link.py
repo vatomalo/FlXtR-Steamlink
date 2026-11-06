@@ -94,7 +94,7 @@ class Supervisor:
         install()
         environment=dict(os.environ,GOMEMLIMIT='64MiB',GOGC='50')
         if (ROOT/'certs/cacert.pem').exists():environment['SSL_CERT_FILE']=str((ROOT/'certs/cacert.pem').resolve())
-        self.daemon=subprocess.Popen([str((folder()/'bin/tailscaled').resolve()),'--tun=userspace-networking','--port=0','--socket='+str((folder()/'tailscaled.sock').resolve()),'--statedir='+str(folder().resolve()),'--state='+str((folder()/'tailscaled.state').resolve())],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=environment)
+        self.daemon=subprocess.Popen([str((folder()/'bin/tailscaled').resolve()),'--tun=userspace-networking','--socks5-server=127.0.0.1:43928','--port=0','--socket='+str((folder()/'tailscaled.sock').resolve()),'--statedir='+str(folder().resolve()),'--state='+str((folder()/'tailscaled.state').resolve())],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=environment)
         status('CONNECTING TO TAILSCALE')
     def disconnect(self,logout=False):
         if self.daemon is not None and self.daemon.poll() is None:

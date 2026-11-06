@@ -40,13 +40,14 @@ type Client struct {
     closed bool
     adbMu sync.Mutex
     adb *adbBridge
+    rom romReceiver
 }
 
 var platformOnce sync.Once
 var platformMu sync.Mutex
 var currentPlatform Platform
 var tailRange = netip.MustParsePrefix("100.64.0.0/10")
-var routes = regexp.MustCompile(`^/(\.well-known/flxtr|[0-9a-f]{32}/(capabilities|handoff|status/[0-9a-f]{32})?)$`)
+var routes = regexp.MustCompile(`^/(\.well-known/flxtr|[0-9a-f]{32}/(capabilities|handoff|roms|status/[0-9a-f]{32})?)$`)
 
 func NewClient(directory, hostname string, platform Platform) (*Client, error) {
     if directory=="" || hostname=="" { return nil,errors.New("missing private state directory or hostname") }
@@ -71,18 +72,14 @@ func NewClient(directory, hostname string, platform Platform) (*Client, error) {
     server:=&tsnet.Server{Dir:directory,Hostname:hostname,Logf:quiet,UserLogf:quiet}
     if err:=server.Start();err!=nil{return nil,err}
     c:=&Client{server:server,platform:platform,identity:identity}
+    c.rom.name=hostname
     go c.announce(hostname)
     return c,nil
 }
 
 func (c *Client) announce(name string) {
     listener,err:=c.server.Listen("tcp",":43927");if err!=nil{return}
-    handler:=http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
-        if r.Method!="GET" || r.URL.Path!="/.well-known/flxtr" {http.NotFound(w,r);return}
-        w.Header().Set("Content-Type","application/json");w.Header().Set("Cache-Control","no-store")
-        json.NewEncoder(w).Encode(map[string]any{"protocol":1,"app":"FlXtR","id":c.identity,"name":name,"roles":[]string{"sender"},"platform":"android"})
-    })
-    srv:=&http.Server{Handler:handler,ReadHeaderTimeout:5*time.Second,IdleTimeout:10*time.Second,MaxHeaderBytes:8192}
+    srv:=newROMHTTPServer(c.romHTTP)
     c.mu.Lock();if c.closed{c.mu.Unlock();listener.Close();return};c.httpServer=srv;c.mu.Unlock()
     _=srv.Serve(listener)
 }
@@ -141,14 +138,14 @@ func validRequest(method,address string)(*url.URL,error){
     if iperr!=nil||!ip.Is4()||!tailRange.Contains(ip)||u.Scheme!="http"||u.Port()!="43927"||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||!routes.MatchString(u.Path)||(method!="GET"&&method!="POST") {
         return nil,errors.New("request is not a private FlXtR peer endpoint")
     }
-    if method=="POST"&&!strings.HasSuffix(u.Path,"/handoff"){return nil,errors.New("unsupported upload route")}
+    if method=="POST"&&!(strings.HasSuffix(u.Path,"/handoff")||strings.HasSuffix(u.Path,"/roms")){return nil,errors.New("unsupported upload route")}
     return u,nil
 }
 
 // Request streams uploads through the embedded node, never the device's global VPN.
 func (c *Client) Request(method,address,upload string)(string,error){
     u,err:=validRequest(method,address);if err!=nil{return "",err}
-    timeout:=120*time.Second;if method=="GET"{timeout=5*time.Second}
+    timeout:=120*time.Second;if strings.HasSuffix(u.Path,"/roms"){timeout=5*time.Minute};if method=="GET"{timeout=5*time.Second}
     ctx,cancel:=context.WithTimeout(context.Background(),timeout);defer cancel()
     var body io.Reader
     var size int64
@@ -179,6 +176,7 @@ func (c *Client) Request(method,address,upload string)(string,error){
 func (c *Client) Close() error {
     c.mu.Lock();c.closed=true;srv:=c.httpServer;c.mu.Unlock()
     c.StopADB()
+    c.rom.mu.Lock();lan:=c.rom.server;c.rom.server=nil;c.rom.mu.Unlock();if lan!=nil{_ = lan.Close()}
     if srv!=nil{_ = srv.Close()}
     return c.server.Close()
 }

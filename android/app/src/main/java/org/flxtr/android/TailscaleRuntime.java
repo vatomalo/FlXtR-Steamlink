@@ -49,7 +49,7 @@ final class TailscaleRuntime {
             public String defaultInterface(){
                 try{ConnectivityManager cm=(ConnectivityManager)app.getSystemService(Context.CONNECTIVITY_SERVICE);LinkProperties props=cm.getLinkProperties(cm.getActiveNetwork());return props==null||props.getInterfaceName()==null?"":props.getInterfaceName();}catch(Exception unavailable){return "";}
             }
-        });}finally{network.edit().putBoolean("tailnet-starting",false).commit();}
+        });client.setROMDirectory(new File(app.getFilesDir(),"games/received").getCanonicalPath());}finally{network.edit().putBoolean("tailnet-starting",false).commit();}
         ConnectivityManager cm=(ConnectivityManager)app.getSystemService(Context.CONNECTIVITY_SERVICE);
         callback=new ConnectivityManager.NetworkCallback(){
             private void changed(){Client active=client;if(active!=null)IO.execute(()->{try{active.networkChanged();}catch(Exception ignored){}});}
@@ -82,6 +82,9 @@ final class TailscaleRuntime {
     static void disconnect(Context context,boolean logout)throws Exception{
         if(client!=null){if(logout)client.logout();else client.disconnect();}
         context.getSharedPreferences("flxtr-network",0).edit().putBoolean("tailnet-enabled",false).apply();
+    }
+    static JSONObject localAnnouncement(String host)throws Exception{
+        Client active=client;return active==null?null:new JSONObject(active.announcement(host));
     }
     static JSONObject request(URI base,String route,File upload)throws Exception{
         Context context=application;

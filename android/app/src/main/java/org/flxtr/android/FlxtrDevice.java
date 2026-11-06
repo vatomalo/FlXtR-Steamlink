@@ -9,8 +9,8 @@ import org.json.JSONObject;
 final class FlxtrDevice {
     final String id,name,transport,platform;
     final URI endpoint;
-    final boolean receiver;
-    FlxtrDevice(String id,String name,String transport,String platform,URI endpoint,boolean receiver){this.id=id;this.name=name;this.transport=transport;this.platform=platform;this.endpoint=endpoint;this.receiver=receiver;}
+    final boolean receiver,romReceiver;
+    FlxtrDevice(String id,String name,String transport,String platform,URI endpoint,boolean receiver,boolean romReceiver){this.id=id;this.name=name;this.transport=transport;this.platform=platform;this.endpoint=endpoint;this.receiver=receiver;this.romReceiver=romReceiver;}
     static boolean tailnet(String host){
         try{String[] parts=host.split("\\.");return parts.length==4&&Integer.parseInt(parts[0])==100&&Integer.parseInt(parts[1])>=64&&Integer.parseInt(parts[1])<=127&&octet(parts[2])&&octet(parts[3]);}catch(Exception invalid){return false;}
     }
@@ -22,11 +22,12 @@ final class FlxtrDevice {
         if(reply.optInt("protocol")!=1||!reply.optString("app","FlXtR").equals("FlXtR")||!(remote?tailnet(host):lan(host)))throw new IOException("Not a FlXtR device");
         JSONArray roles=reply.optJSONArray("roles");boolean receiver=roles==null&&reply.has("endpoint");
         if(roles!=null)for(int i=0;i<roles.length();i++)if(roles.optString(i).equals("receiver"))receiver=true;
+        boolean romReceiver=false;if(roles!=null)for(int i=0;i<roles.length();i++)if(roles.optString(i).equals("rom-receiver"))romReceiver=true;
         URI endpoint=null;
-        if(receiver){endpoint=TvHandoff.endpoint(reply.getString("endpoint"));if(!host.equals(endpoint.getHost())||remote&&endpoint.getPort()!=43927)throw new IOException("Device redirected to another address");}
+        if(receiver||romReceiver){endpoint=TvHandoff.endpoint(reply.getString("endpoint"));if(!host.equals(endpoint.getHost())||remote&&endpoint.getPort()!=43927)throw new IOException("Device redirected to another address");}
         String id=reply.optString("id","");if(!id.matches("[a-zA-Z0-9._:-]{1,128}"))id=host;
         String name=reply.optString("name","FlXtR").replaceAll("[\\p{Cntrl}]","").trim();if(name.isEmpty())name="FlXtR";if(name.length()>80)name=name.substring(0,80);
-        return new FlxtrDevice(id,name,remote?"Tailscale":"Local",reply.optString("platform","device"),endpoint,receiver);
+        return new FlxtrDevice(id,name,remote?"Tailscale":"Local",reply.optString("platform","device"),endpoint,receiver,romReceiver);
     }
     static java.util.List<String> arpNeighbors(String contents){
         java.util.ArrayList<String> found=new java.util.ArrayList<>();

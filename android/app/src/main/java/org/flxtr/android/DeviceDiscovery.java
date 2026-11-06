@@ -34,6 +34,10 @@ final class DeviceDiscovery {
                             JSONObject query=new JSONObject(new String(bytes,0,packet.getLength(),StandardCharsets.UTF_8));String nonce=query.optString("nonce");
                             if(!query.optString("app").equals("FlXtR")||query.optInt("protocol")!=1||!query.optString("op").equals("discover")||!nonce.matches("[0-9a-f]{32}"))continue;
                             JSONObject reply=new JSONObject().put("app","FlXtR").put("protocol",1).put("nonce",nonce).put("id",id).put("name",Build.MODEL).put("platform","android").put("roles",new JSONArray().put("sender"));
+                            try(DatagramSocket route=new DatagramSocket()){
+                                route.connect(packet.getAddress(),packet.getPort());JSONObject receiver=TailscaleRuntime.localAnnouncement(route.getLocalAddress().getHostAddress());
+                                if(receiver!=null)reply=receiver.put("nonce",nonce).put("name",Build.MODEL);
+                            }catch(Exception unavailable){}
                             byte[] data=reply.toString().getBytes(StandardCharsets.UTF_8);server.send(new DatagramPacket(data,data.length,packet.getAddress(),packet.getPort()));
                         }catch(JSONException malformed){}
                     }
@@ -47,7 +51,7 @@ final class DeviceDiscovery {
     }
     private static void add(Map<String,FlxtrDevice> devices,FlxtrDevice device,String self){
         if(device.id.equals(self))return;
-        devices.compute(device.id,(key,previous)->previous==null||device.transport.equals("Local")?device:previous);
+        devices.compute(device.id,(key,previous)->previous==null||device.transport.equals("Tailscale")?device:previous);
     }
     private static void local(Map<String,FlxtrDevice> devices,String self){
         String nonce=UUID.randomUUID().toString().replace("-","");

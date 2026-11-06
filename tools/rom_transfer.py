@@ -90,8 +90,8 @@ def receive(archive,root):
                 output.flush();os.fsync(output.fileno())
             # O_EXCL works on USB FAT filesystems too. An existing file is never
             # replaced; only the verified temporary data is copied into our file.
-            with destination.open('xb') as output,temporary.open('rb') as source:
-                created=True;inode=os.fstat(output.fileno()).st_ino
+            output=destination.open('xb');created=True;inode=os.fstat(output.fileno()).st_ino
+            with output,temporary.open('rb') as source:
                 shutil.copyfileobj(source,output,65536);output.flush();os.fsync(output.fileno())
             (Path(root)/'games-transfer-dirty').write_text(checksum+'\n')
             return dict(status='stored',system=system,name=name,path=str(destination),sha256=checksum,size=size,alreadyPresent=False)

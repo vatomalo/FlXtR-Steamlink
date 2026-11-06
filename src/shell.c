@@ -1801,7 +1801,7 @@ static int rom_send_tick(void){
     int code=0;pid_t done=waitpid(rom_send_pid,&code,WNOHANG);if(done!=rom_send_pid)return 0;
     rom_send_pid=0;
     if(rom_send_stage==1){
-        rom_send_count=0;FILE *file=fopen("rom-transfer/devices.tsv","r");
+        rom_send_count=0;FILE *file=WIFEXITED(code)&&!WEXITSTATUS(code)?fopen("rom-transfer/devices.tsv","r"):NULL;
         if(file){char line[256];while(rom_send_count<16&&fgets(line,sizeof(line),file)){line[strcspn(line,"\r\n")]=0;snprintf(rom_send_names[rom_send_count++],96,"%.95s",line);}fclose(file);}
         rom_send_row=0;
     }

@@ -1,5 +1,11 @@
 #!/bin/sh
 cd "$(dirname "$0")" || exit 1
+# Keep the lock through player/game restarts and release it automatically on exit.
+# Two SDL sessions can exhaust the Link's small graphics/memory budget.
+if command -v flock >/dev/null 2>&1; then
+    exec 9>./.session-lock || exit 1
+    flock -n 9 || exit 0
+fi
 # The box has no reliable clock after some cold boots. Keep HTTPS validation on.
 if [ "$(date +%Y)" -lt 2024 ] && command -v ntpd >/dev/null 2>&1; then
     ntpd -n -q -p pool.ntp.org >clock.log 2>&1 &

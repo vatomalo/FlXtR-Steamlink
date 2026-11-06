@@ -111,7 +111,7 @@ adapter=new CatalogAdapter();grid.setAdapter(adapter);grid.addOnLayoutChangeList
         if(item.kind.equals("archive-folder")||item.kind.equals("archive-item")){browse(item);return;}
         if(!MediaStart.group(item)){playCatalogue(item);return;}
         StreamResolver.Request resolve=new StreamResolver.Request();
-        AlertDialog progress=dialog().setTitle(item.title).setMessage("Finding your episode…").setNegativeButton("Cancel",(d,w)->resolve.cancel()).show();Gamepad.dialog(progress);
+        AlertDialog progress=dialog().setTitle(item.title).setMessage("Finding your episode…").setNegativeButton("Cancel",(d,w)->resolve.cancel()).show();progress.setOnCancelListener(d->resolve.cancel());Gamepad.dialog(progress);
         network.execute(()->{try{CatalogItem episode=MediaStart.select(this,item,resolve);runOnUiThread(()->{if(!progress.isShowing()||destroyed||resolve.cancelled)return;progress.dismiss();playCatalogue(episode);});}
             catch(Exception failure){runOnUiThread(()->{if(!progress.isShowing()||destroyed)return;progress.dismiss();Gamepad.dialog(dialog().setTitle("Could not start episode").setMessage(failure.getMessage()).setPositiveButton("Browse episodes",(d,w)->browse(item)).setNegativeButton("Close",null).show());});}});
     }
@@ -156,8 +156,8 @@ adapter=new CatalogAdapter();grid.setAdapter(adapter);grid.addOnLayoutChangeList
         dialog.setPositiveButton("Play",(d,w)->open(item));
         AlertDialog shown=dialog.show();
         Gamepad.dialog(shown);
-        if(MediaStart.group(item))content.addView(button(item.kind.equals("tv")?"Browse seasons / episodes":"Browse episodes",()->{shown.dismiss();browse(item);}));
-        if(!item.kind.equals("local")&&!item.kind.equals("offline"))content.addView(button("Send to TV",()->{shown.dismiss();TvHandoff.fromLibrary(this,item);}));
+        if(MediaStart.group(item))content.addView(button(item.kind.equals("tv")?"Browse seasons / episodes":"Browse episodes",()->{shown.dismiss();browse(item);}),0);
+        if(!item.kind.equals("local")&&!item.kind.equals("offline"))content.addView(button("Send to TV",()->{shown.dismiss();TvHandoff.fromLibrary(this,item);}),0);
         if(item.kind.equals("offline")){
             shown.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(OfflineMedia.complete(this,item.link));
             content.addView(button("Retry download",()->{CatalogItem original=OfflineMedia.original(this,item.link);if(original!=null){OfflineMedia.queue(this,original);shown.dismiss();}}));

@@ -1801,7 +1801,7 @@ static int rom_send_tick(void){
     int code=0;pid_t done=waitpid(rom_send_pid,&code,WNOHANG);if(done!=rom_send_pid)return 0;
     rom_send_pid=0;
     if(rom_send_stage==1){
-        rom_send_count=0;FILE *file=fopen("rom-transfer/devices.tsv","r");
+        rom_send_count=0;FILE *file=WIFEXITED(code)&&!WEXITSTATUS(code)?fopen("rom-transfer/devices.tsv","r"):NULL;
         if(file){char line[256];while(rom_send_count<16&&fgets(line,sizeof(line),file)){line[strcspn(line,"\r\n")]=0;snprintf(rom_send_names[rom_send_count++],96,"%.95s",line);}fclose(file);}
         rom_send_row=0;
     }
@@ -2451,6 +2451,19 @@ static int phone_dispatch(char *reply,size_t size){
     return code;
 }
 /* The paired receiver owns the socket across shell/game process transitions. */
+static void handoff_video_settings(Title *title,const char *language,const char *caption){
+    /* A remote sender selects the title and resume position. Playback starts
+     * from this TV's preferences, including after a differently scaled video. */
+    viewing=default_viewing;
+    const char *languages[]={"","auto","en","no","es"};
+    const char *preferred=languages[subtitle_setting];
+    if(subtitle_setting&&caption[0]&&!strncmp(caption,"https://",8)&&
+       (!strcmp(language,"en")||!strcmp(language,"no")||!strcmp(language,"es"))&&
+       (subtitle_setting==1||!strcmp(preferred,language))){
+        char *target=!strcmp(language,"no")?title->subs_nor:!strcmp(language,"es")?title->subs_spa:title->subs_eng;
+        snprintf(target,1024,"%s",caption);
+    }
+}
 static void handoff_poll(void){
     if(player_pid||catalog_pid||update_pid||youtube_pid||usb_on){if(access("handoff/busy",F_OK)){FILE *busy=fopen("handoff/busy","w");if(busy)fclose(busy);}return;}
     unlink("handoff/busy");
@@ -2470,8 +2483,7 @@ static void handoff_poll(void){
     Title t;memset(&t,0,sizeof(t));snprintf(t.kind,sizeof(t.kind),"handoff");snprintf(t.title,sizeof(t.title),"%.79s",fields[5]);snprintf(t.url,sizeof(t.url),"%s",fields[2]);
     char provider_path[96],provider[24]={0};snprintf(provider_path,sizeof(provider_path),"handoff/%s/provider",id);
     f=fopen(provider_path,"r");if(f){if(fgets(provider,sizeof(provider),f)){provider[strcspn(provider,"\r\n")]=0;if(!strcmp(provider,"megaplay"))snprintf(t.meta,sizeof(t.meta),"MEGAPLAY / HANDOFF");}fclose(f);}
-    subtitle_setting=!fields[4][0]?0:!strcmp(fields[4],"no")?3:!strcmp(fields[4],"es")?4:2;
-    if(fields[6][0]&&!strncmp(fields[6],"https://",8)){snprintf(t.subs_eng,sizeof(t.subs_eng),"%s",fields[6]);subtitle_setting=2;}
+    handoff_video_settings(&t,fields[4],fields[6]);
     char ack[80];snprintf(ack,sizeof(ack),"handoff/%s/started",id);setenv("FLXTR_HANDOFF_ACK",ack,1);
     auto_active=tv_active=0;restart_position=position;launch_player(&t);unsetenv("FLXTR_HANDOFF_ACK");
     if(!player_pid){char failed[80];snprintf(failed,sizeof(failed),"handoff/%s/failed",id);f=fopen(failed,"w");if(f){fputs("TV player could not start",f);fclose(f);}}

@@ -199,6 +199,8 @@ test-rom-menu: all
 .PHONY: test-rom-menu
 
 test-settings: all
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/handoff_video_settings_test.c -o build/handoff-video-settings-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/handoff-video-settings-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/settings_tabs_test.c -o build/settings-tabs-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/settings-tabs-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/samba_service_test.c -o build/samba-service-test $(SDL_LIBS) -lSDL2_image -lcurl

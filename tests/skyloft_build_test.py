@@ -94,6 +94,14 @@ class BuildCommandTest(unittest.TestCase):
         result = self.run_build('--all', '--branch', 'older/branch')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nandroid\nsigned\nsteamlink\n')
+        # A branch's older server runner must not replace the installed runner.
+        (self.producer / 'scripts').mkdir()
+        (self.producer / 'scripts/build-skyloft-android.sh').write_text('exit 99\n')
+        self.git(self.producer, 'add', '.')
+        self.git(self.producer, 'commit', '-qm', 'legacy runner')
+        self.git(self.producer, 'push', '-q', 'origin', 'older/branch')
+        result = self.run_build('--android')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_local_commit_is_not_reset(self):
         (self.repo / 'local').write_text('unpublished work\n')

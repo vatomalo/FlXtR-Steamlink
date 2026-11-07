@@ -59,7 +59,9 @@ export FLXTR_BUILD_SOURCE="$PWD"
 helpers="$storage/tools/libexec/flxtr-build"
 mkdir -p "$helpers"
 for runner in build-skyloft-android.sh build-skyloft-steamlink.sh; do
-    if [[ -f "scripts/$runner" ]]; then install -m 0755 "scripts/$runner" "$helpers/$runner"; fi
+    if [[ ! -f "$helpers/$runner" && -f "scripts/$runner" ]]; then
+        install -m 0755 "scripts/$runner" "$helpers/$runner"
+    fi
 done
 if ((android)); then
     echo '=== Android ==='

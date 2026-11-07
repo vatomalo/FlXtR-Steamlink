@@ -61,7 +61,15 @@ not auto-launch unreviewed executables. Preserve stable IDs across rescans.
 
 ## Status
 
-**Design only.** The Windows companion, authenticated protocol, game discovery,
-single-entry Sunshine configuration, and Moonlight routing are not implemented
-by this commit. Do not change the device's Sunshine or Steam Link deployment
-based solely on this document.
+The Steam Link package has an **opt-in single-entry route** when
+`gamez-bridge.conf` is installed: FlXtR passes its numeric selection to the
+Windows companion over the authenticated LAN endpoint, then opens the configured
+single Sunshine app. Without that local config, the legacy per-game Sunshine
+route remains active. `tools/install_gamez_companion.ps1` registers the
+companion to start at the current user's sign-in.
+
+The companion currently launches from an explicit numeric-ID allowlist. The
+directory discovery/review UI, process-tree supervision, crash recovery, and
+full Explorer/VitaBar cleanup described above are not implemented. The path
+still needs end-to-end verification on the Windows host and Steam Link before
+it should be treated as deployed.

@@ -9,6 +9,7 @@ sources.local.tsv
 catalog-cache/
 posters/
 __pycache__/
+tools/gamez.local.json
 
 settings.cfg*
 playback-cache/

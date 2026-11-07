@@ -1,13 +1,15 @@
-# Gamez bridge: experimental FFVII reuse
+# Gamez bridge: one Sunshine entry
 
-This branch includes an **opt-in prototype**, not an installed or verified
-Windows/Steam Link deployment. By default, the previous per-game Moonlight
-mapping is unchanged. Do not overwrite your working FFVII Sunshine registration.
+The Steam Link package has an **opt-in single-entry bridge**. FlXtR sends the
+selected catalog ID to the Windows companion; the companion resolves that ID
+against its explicit allowlist and starts the configured executable. Moonlight
+then opens one dedicated Sunshine application. This does not create a Sunshine
+application for every title. The feature remains opt-in until both host and
+Steam Link are configured.
 
 ## Windows (CafeLeBlanc)
 
-Install Python 3 and run `python tools/gamez_companion.py` from the checkout.
-Next to it, create ignored/private `tools/gamez.local.json`:
+Install Python 3 and configure ignored/private `tools/gamez.local.json`:
 
 ```json
 {
@@ -28,6 +30,16 @@ Only allow TCP 47777 from the Steam Link IP in Windows Firewall. HTTP carries
 the bearer token in plaintext on the LAN; do not expose this service to the
 internet or untrusted networks. The bridge accepts numeric IDs only; it cannot
 execute network-supplied paths or shell strings.
+
+From PowerShell in the checkout, install the current-user startup task:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/install_gamez_companion.ps1
+```
+
+This starts the companion at sign-in, without elevation, and restarts it after
+an unexpected exit. Its log is written beside the script as
+`tools/gamez-companion.log`.
 
 ## Steam Link
 
@@ -50,10 +62,17 @@ The companion starts the game **before** Moonlight opens the `FlXtR Gamez`
 session. Sunshine still needs a suitable session lifecycle/cleanup configuration;
 that integration is not automated by this prototype.
 
-Only game IDs explicitly entered in `gamez.local.json` can launch. An unknown
+Only game IDs explicitly entered in `gamez.local.json` can launch. In bridge
+mode FlXtR's numeric catalog ID is sent directly, so adding titles to FlXtR no
+longer requires extending the old 69-title Moonlight-name switch. An unknown
 ID, missing game, invalid token or an already-running game causes an error; the
 Steam Link will **not** open the dummy Sunshine session. For now the error is
 written to `moonlight-gamez.log`, not rendered in the Gamez UI.
+
+The companion exposes an authenticated `GET /v1/status` endpoint for checking
+whether its tracked game process is still running. The bearer token remains
+restricted to the trusted LAN; HTTP is not encrypted, so do not expose the
+listener beyond that network.
 
 ### Disable/rollback
 
@@ -62,8 +81,8 @@ Sunshine application-per-game behavior. The original FFVII entry was not edited.
 
 ### Limitations
 
-The initial companion does not auto-discover executables, track process trees,
-provide a secure encrypted channel, manage crashes/Explorer restoration, or
-confirm controller operation. Games that launch a child process may require a
-different executable. This code has **not** been tested on CafeLeBlanc or the
-Steam Link. Do not treat it as a completed 69-game deployment.
+The companion does not auto-discover executables or track child-process trees,
+and it does not manage crashes/Explorer restoration or confirm controller
+operation. Games that launch a child process may require configuring the
+long-lived game executable. This code still needs an end-to-end run on
+CafeLeBlanc and the Steam Link before treating the bridge as deployed.

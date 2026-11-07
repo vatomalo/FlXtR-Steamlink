@@ -53,6 +53,14 @@ while :; do
         game_id=$(cat gamez-request 2>/dev/null) || game_id=
         rm -f gamez-request
         case "$game_id" in
+            ''|*[!0-9]*) printf '%s\n' 'Invalid Gamez selection' >moonlight-gamez.log; set -- --library games; continue ;;
+        esac
+        # Bridge mode passes FlXtR's catalog ID directly to the Windows
+        # companion. Keep the name translation only for legacy per-game apps.
+        bridge_mode=0
+        [ ! -f gamez-bridge.conf ] || bridge_mode=1
+        if [ "$bridge_mode" -eq 0 ]; then
+        case "$game_id" in
             1) game='Final Fantasy VII Remake' ;;
             2) game='Ghost of Tsushima' ;;
             3) game='Nioh 2 Complete Edition' ;;
@@ -126,9 +134,10 @@ while :; do
                set -- --library games
                continue ;;
         esac
+        fi
         # Optional single-entry Gamez bridge. Disabled unless locally configured.
         # Never launch the FFVII dummy session if the Windows companion rejects a game.
-        if [ -f gamez-bridge.conf ]; then
+        if [ "$bridge_mode" -eq 1 ]; then
             GAMEZ_HOST= GAMEZ_TOKEN_FILE= GAMEZ_SUNSHINE_APP=
             . ./gamez-bridge.conf
             case "$GAMEZ_HOST" in

@@ -162,8 +162,24 @@ class BuildCommandTest(unittest.TestCase):
         self.assertFalse((self.repo / 'build-events').exists())
 
     def test_invalid_arguments(self):
-        for args in [[], ['--branch'], ['--android', '--branch', '../invalid'], ['--windows']]:
+        for args in [[], ['--branch'], ['--android', '--branch', '../invalid'], ['--windows'],
+                     ['--steamlink', '--arch', 'arm64'], ['--android', '--arch', 'x86'], ['--android', '--notes-file', '/nonexistent-notes']]:
             self.assertEqual(self.run_build(*args).returncode, 2)
+
+    def test_architecture_and_notes_are_forwarded_as_data(self):
+        runner = self.repo / 'scripts/build-skyloft-android.sh'
+        runner.write_text('printf "%s\\n" "$FLXTR_ANDROID_ABIS" >> build-events\n')
+        self.git(self.repo, 'add', '.')
+        self.git(self.repo, 'commit', '-qm', 'ABI fixture')
+        self.git(self.repo, 'push', '-q', 'origin', 'main')
+        notes = self.project / 'notes.md'
+        notes.write_text('- Literal $(touch not-a-command)\n')
+        result = self.run_build('--android', '--arch', 'arm64', '--notes-file', str(notes),
+                                '--release-title', 'New build; still a title')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.repo / 'build-events').read_text(), 'arm64-v8a\nsigned\n')
+        self.assertEqual(notes.read_text(), '- Literal $(touch not-a-command)\n')
+        self.assertFalse((self.repo / 'not-a-command').exists())
 
 
 if __name__ == '__main__':

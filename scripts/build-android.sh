@@ -16,6 +16,7 @@ cp "$repo/android/build/runtime/runtime/licenses/WABT.txt" "$runtime/WABT.txt"
 printf 'sdk.dir=%s\n' "$ANDROID_HOME" > "$repo/android/local.properties"
 cd "$repo/android"
 version_args=()
+if [[ -n "${FLXTR_ANDROID_ABIS:-}" ]]; then version_args+=("-PflxtrAbis=$FLXTR_ANDROID_ABIS"); fi
 if [[ -n "${FLXTR_ANDROID_VERSION_CODE:-}" ]]; then version_args+=("-PflxtrVersionCode=$FLXTR_ANDROID_VERSION_CODE"); fi
 if [[ -n "${FLXTR_ANDROID_VERSION_NAME:-}" ]]; then version_args+=("-PflxtrVersionName=$FLXTR_ANDROID_VERSION_NAME"); fi
 ./gradlew --no-daemon "${version_args[@]}" assembleDebug testDebugUnitTest lintDebug

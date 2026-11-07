@@ -26,7 +26,12 @@ sha=$(git rev-parse HEAD)
 if [[ "$action" == --android ]]; then
     echo 'Publishing Android update…'
     bash "$storage/projects/FlXtR/check-signing.sh"
-    docker run --rm -e GH_TOKEN -e "GITHUB_SHA=$sha" \
+    notes_mount=()
+    if [[ -n ${FLXTR_RELEASE_NOTES_FILE:-} ]]; then
+        notes_mount=(-v "$FLXTR_RELEASE_NOTES_FILE:/release/notes.md:ro" -e FLXTR_RELEASE_NOTES_FILE=/release/notes.md)
+    fi
+    docker run --rm -e GH_TOKEN -e "GITHUB_SHA=$sha" -e FLXTR_RELEASE_TITLE -e FLXTR_RELEASE_ARCH \
+        "${notes_mount[@]}" \
         -v "$repo:/src" -v "$cli:/usr/local/bin/gh:ro" \
         flxtr-android-builder:skyloft python3 scripts/publish-android.py \
         --apk dist/FlXtR-Android-preview.apk --sha "$sha"
@@ -42,6 +47,10 @@ if release['isDraft']:
     raise SystemExit('A draft exists for this commit. Finish or remove it before retrying publication.')
 print('This Steam Link commit is already published; existing release kept: ' + release['url'])
 EXISTING
+        edit=()
+        if [[ -n ${FLXTR_RELEASE_TITLE:-} ]]; then edit+=(--title "$FLXTR_RELEASE_TITLE"); fi
+        if [[ -n ${FLXTR_RELEASE_NOTES_FILE:-} ]]; then edit+=(--notes-file "$FLXTR_RELEASE_NOTES_FILE"); fi
+        if ((${#edit[@]})); then "$cli" release edit "$tag" -R "$project" "${edit[@]}"; fi
     else
         echo 'Publishing Steam Link update…'
         python3 scripts/publish-package.py

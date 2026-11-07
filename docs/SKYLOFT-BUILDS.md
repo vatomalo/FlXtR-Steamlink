@@ -1,5 +1,15 @@
 # SkyLoft builds
 
+The private build page is at **http://100.69.7.81/** while connected to Tailscale.
+Apache serves `/var/www/html/index.html`; the build API runs on loopback port
+8787 as `flxtr-build-portal.service`. The page and API allow tailnet/loopback
+addresses only. No separate web account is required.
+
+Choose Android, Steam Link, or both, then a branch, Android architecture, release
+title, and Markdown change notes. Jobs run in the background, with persistent
+history, live logs, per-build downloads, and GitHub release links. Closing the
+browser does not stop a build. One build runs at a time, including CLI builds.
+
 After connecting to SkyLoft over SSH, run from any directory:
 
 ```sh
@@ -8,6 +18,7 @@ flxtr-build --steamlink
 flxtr-build --android --branch codex/send-to-tv-settings
 flxtr-build --all --branch codex/send-to-tv-settings
 flxtr-build --android --no-publish
+flxtr-build --android --arch arm64 --release-title "Phone improvements" --notes-file changes.md
 ```
 
 `--branch NAME` selects and pulls that branch from `origin`. Without it, the
@@ -28,6 +39,10 @@ failure returns an error and leaves the built files available for inspection.
 Publishing requires SkyLoft's own `gh auth login`; access is checked before
 building. Rebuilding an already published Steam Link commit keeps its existing
 release rather than overwriting it.
+Custom titles and change notes are applied to GitHub releases. Android `--arch`
+accepts `universal`, `arm64`, or `armv7`; Steam Link always uses ARMv7. Single-ABI
+Android builds publish to their own release download, leaving the universal
+auto-update channel unchanged. Choose Universal for the normal Android rollout.
 
 Artifacts are in `/opt/dockers/storage/projects/FlXtR/source/dist/`:
 
@@ -48,3 +63,8 @@ nohup flxtr-build --android --branch codex/send-to-tv-settings > /opt/dockers/st
 The installed command is `/usr/local/bin/flxtr-build`, copied from
 `scripts/flxtr-build`. SkyLoft's existing Docker images, SDK cache, signing key,
 and project configuration are required; this is not a new-server installer.
+
+Install/update the page and service as root on SkyLoft with
+`bash scripts/install-skyloft-build-portal.sh` after pulling `main`. This also
+refreshes the installed build command and runners. The installer backs up the
+previous web page under `/opt/dockers/storage/build-portal/backups/`.

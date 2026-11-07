@@ -39,6 +39,8 @@ docker run --rm --name flxtr-android-build --cpus=3 --memory=5g \
     -e GOPATH=/build-home/go -e GOCACHE=/build-home/.cache/go-build \
     -e FLXTR_ANDROID_RELEASE=1 -e FLXTR_ANDROID_KEYSTORE=/signing/android.keystore \
     -e "FLXTR_ANDROID_VERSION_CODE=$version" \
+    -e "FLXTR_ANDROID_ABIS=${FLXTR_ANDROID_ABIS:-armeabi-v7a,arm64-v8a}" \
+    -e "FLXTR_CORE_ABIS=${FLXTR_ANDROID_ABIS:-armeabi-v7a,arm64-v8a}" \
     -e "FLXTR_ANDROID_VERSION_NAME=0.10.28-skyloft.$version" \
     -v "$repo:/src" -v "$storage/build-home/android:/build-home" \
     -v "$key:/signing/android.keystore:ro" flxtr-embedded-android-builder:skyloft

@@ -27,7 +27,7 @@ docker run --rm --name "flxtr-$target-build" --cpus=3 --memory=5g \
     -v "$storage/build-cache/desktop-music:/src/build/desktop-music" \
     flxtr-desktop-builder:skyloft bash -c '
         set -euo pipefail
-        if [[ "$1" == linux ]]; then bash scripts/build-desktop.sh --inside;
+        if [[ "$1" == linux ]]; then FLXTR_DESKTOP_EDITION=Linux bash scripts/build-desktop.sh --inside;
         else python3 scripts/build-windows-app.py; fi
     ' bash "$target"
 mkdir -p "$repo/dist"

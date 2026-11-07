@@ -13,6 +13,6 @@ if [[ "${1:-}" != --inside ]]; then
 fi
 [[ $(uname -m) == x86_64 ]] || { echo "Steam Deck requires x86_64" >&2; exit 1; }
 bash scripts/build-linux.sh
-python3 scripts/package-desktop.py
+python3 scripts/package-desktop.py --edition "${FLXTR_DESKTOP_EDITION:-both}"
 python3 tests/linux_update_test.py
 python3 tests/linux_install_test.py dist/linux-x86_64.json

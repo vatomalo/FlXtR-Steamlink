@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Bundle desktop dependencies, retaining system glibc and graphics drivers."""
+import argparse
 import hashlib
 import json
 import re
@@ -9,13 +10,16 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser()
+parser.add_argument('--edition', choices=('both', 'Linux', 'SteamDeck'), default='both')
+edition = parser.parse_args().edition
 DIST = ROOT / 'dist'
 version = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 source = DIST / 'FlXtR-linux-x86_64'
 names = ('greenlink', 'greenlink-catalog', 'greenlink-player', 'greenlink-resolver', 'greenlink-audio', 'greenlink-download')
 # These components must match the host kernel, glibc and installed GPU drivers.
 system = re.compile(r'^(ld-linux|lib(c|m|dl|pthread|rt|resolv|nss_[^.]+)\.so|lib(stdc\+\+|gcc_s)\.so|lib(GL|EGL|GLES|GLX|OpenGL|GLdispatch|glapi|drm|gbm|vulkan|va)[-.0-9a-z_]*\.so)')
-for edition in ('Linux', 'SteamDeck'):
+for edition in (('Linux', 'SteamDeck') if edition == 'both' else (edition,)):
     name = 'FlXtR-' + edition + '-x86_64'
     dest = DIST / name
     if dest.exists():
@@ -98,7 +102,7 @@ for edition in ('Linux', 'SteamDeck'):
         if output != version:
             raise SystemExit('Version smoke test failed: ' + binary)
     archive = DIST / (name + '.tgz')
-    with tarfile.open(archive, 'w:gz') as tar:
+    with tarfile.open(archive, 'w:gz', compresslevel=6) as tar:
         tar.add(dest, arcname=name)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     (DIST / (name + '.tgz.sha256')).write_text(digest + '  ' + archive.name + '\n')

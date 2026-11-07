@@ -14,7 +14,7 @@ install -d -m 0700 "$backup"
 if [[ -f /var/www/html/index.html ]]; then cp -p /var/www/html/index.html "$backup/index.html"; fi
 if [[ -f /etc/apache2/conf-available/flxtr-build.conf ]]; then cp -p /etc/apache2/conf-available/flxtr-build.conf "$backup/"; fi
 install -d -m 0755 /var/www/html "$storage/tools/libexec/flxtr-portal" "$storage/tools/libexec/flxtr-build"
-install -m 0644 "$repo/web/build/index.html" /var/www/html/index.html
+install -m 0644 "$repo/web/skyloft/index.html" /var/www/html/index.html
 install -m 0755 "$repo/tools/build_portal.py" "$storage/tools/libexec/flxtr-portal/build_portal.py"
 install -m 0755 "$repo/scripts/flxtr-build" /usr/local/bin/flxtr-build
 for runner in build-skyloft-android.sh build-skyloft-steamlink.sh publish-skyloft.sh; do

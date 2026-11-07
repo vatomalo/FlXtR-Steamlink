@@ -85,6 +85,16 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual(note.read_text(), 'keep me\n')
         self.assertFalse((self.repo / 'build-events').exists())
 
+    def test_branch_predating_build_command_uses_installed_runner(self):
+        self.assertEqual(self.run_build('--android').returncode, 0)
+        self.git(self.producer, 'switch', '-qc', 'older/branch')
+        self.git(self.producer, 'rm', '-qr', 'scripts')
+        self.git(self.producer, 'commit', '-qm', 'older source without server runners')
+        self.git(self.producer, 'push', '-q', 'origin', 'older/branch')
+        result = self.run_build('--all', '--branch', 'older/branch')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nandroid\nsigned\nsteamlink\n')
+
     def test_local_commit_is_not_reset(self):
         (self.repo / 'local').write_text('unpublished work\n')
         self.git(self.repo, 'add', '.')

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-repo=$(cd "$(dirname "$0")/.." && pwd)
+repo=${FLXTR_BUILD_SOURCE:-$(cd "$(dirname "$0")/.." && pwd)}
 storage=/opt/dockers/storage
 mountpoint -q "$storage" || { echo 'Docker storage disk is not mounted.' >&2; exit 1; }
 mkdir -p "$storage/build-home/android" "$storage/build-logs"

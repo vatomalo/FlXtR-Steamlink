@@ -2,7 +2,7 @@
 set -euo pipefail
 storage=/opt/dockers/storage
 project=$storage/projects/FlXtR
-repo=$(cd "$(dirname "$0")/.." && pwd)
+repo=${FLXTR_BUILD_SOURCE:-$(cd "$(dirname "$0")/.." && pwd)}
 mountpoint -q "$storage"
 mkdir -p "$storage/toolchains/steamlink-sdk" "$storage/build-cache/steamlink" "$storage/build-home/steamlink"
 if [[ ${FLXTR_BUILD_LOCK_HELD:-0} != 1 ]]; then

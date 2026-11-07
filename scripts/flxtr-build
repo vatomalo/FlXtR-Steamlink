@@ -54,13 +54,20 @@ else
     git switch --no-track -c "$branch" "$remote"
 fi
 printf 'Building branch %s, commit %s\n' "$branch" "$(git rev-parse HEAD)"
+# Keep server runners outside the checkout: older branches may predate them.
+export FLXTR_BUILD_SOURCE="$PWD"
+helpers="$storage/tools/libexec/flxtr-build"
+mkdir -p "$helpers"
+for runner in build-skyloft-android.sh build-skyloft-steamlink.sh; do
+    if [[ -f "scripts/$runner" ]]; then install -m 0755 "scripts/$runner" "$helpers/$runner"; fi
+done
 if ((android)); then
     echo '=== Android ==='
-    bash scripts/build-skyloft-android.sh
+    bash "$helpers/build-skyloft-android.sh"
     bash "$storage/projects/FlXtR/check-signing.sh"
 fi
 if ((steamlink)); then
     echo '=== Steam Link ==='
-    bash scripts/build-skyloft-steamlink.sh
+    bash "$helpers/build-skyloft-steamlink.sh"
 fi
 printf '\nBuild complete. Artifacts: %s/dist\nLog: %s\n' "$repo" "$log"

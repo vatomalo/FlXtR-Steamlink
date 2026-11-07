@@ -13,6 +13,8 @@ flxtr-build --all --branch codex/send-to-tv-settings
 command pulls the currently selected branch. Updates use fast-forward only;
 local changes and unpushed/diverging commits stop the command without resetting
 anything. The selected branch remains checked out after the build.
+Server runners are also retained outside the checkout so branches that predate
+this command can use them, provided they have compatible platform build scripts.
 
 Android and Steam Link builds share a lock and run sequentially with `--all`.
 Android builds use the existing signing key and select a version code newer

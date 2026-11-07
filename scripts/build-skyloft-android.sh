@@ -44,5 +44,7 @@ docker run --rm --name flxtr-android-build --cpus=3 --memory=5g \
     -e "FLXTR_ANDROID_VERSION_NAME=0.10.28-skyloft.$version" \
     -v "$repo:/src" -v "$storage/build-home/android:/build-home" \
     -v "$key:/signing/android.keystore:ro" flxtr-embedded-android-builder:skyloft
+
+python3 "$storage/tools/libexec/flxtr-build/verify-android-abis.py" "$repo/dist/FlXtR-Android-preview.apk" "${FLXTR_ANDROID_ABIS:-armeabi-v7a,arm64-v8a}"
 echo "Signed APK built on SkyLoft: $repo/dist/FlXtR-Android-preview.apk"
 echo 'Publishing to the update channel is a separate step after verification.'

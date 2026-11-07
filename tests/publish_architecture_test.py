@@ -57,6 +57,17 @@ class AndroidPublicationTest(unittest.TestCase):
         calls = self.publish(['arm64-v8a', 'armeabi-v7a'])
         self.assertTrue(any(command[:4] == ['gh', 'release', 'upload', 'android-latest'] for command in calls))
 
+    def test_stale_universal_apk_cannot_satisfy_arm64_request(self):
+        verify = runpy.run_path(str(SCRIPT.parent / 'verify-android-abis.py'))['verify']
+        with tempfile.TemporaryDirectory() as directory:
+            apk = Path(directory) / 'fixture.apk'
+            with zipfile.ZipFile(apk, 'w') as archive:
+                for abi in ('arm64-v8a', 'armeabi-v7a'):
+                    archive.writestr(f'lib/{abi}/libtest.so', b'fixture')
+            with self.assertRaises(ValueError):
+                verify(apk, 'arm64-v8a')
+            self.assertEqual(verify(apk, 'armeabi-v7a,arm64-v8a'), {'arm64-v8a', 'armeabi-v7a'})
+
 
 if __name__ == '__main__':
     unittest.main()

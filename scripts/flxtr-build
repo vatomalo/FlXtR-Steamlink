@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# SkyLoft command: update the selected branch without discarding local work.
+set -euo pipefail
+usage(){
+    cat <<'HELP'
+Usage: flxtr-build --android|--steamlink|--all [--branch NAME]
+
+Pulls the selected branch from origin using fast-forward only, then builds.
+Without --branch, builds the currently checked-out branch. Multiple targets
+run sequentially. Logs are saved on SkyLoft. This does not publish updates.
+
+Examples:
+  flxtr-build --android
+  flxtr-build --steamlink --branch codex/send-to-tv-settings
+  flxtr-build --all --branch main
+HELP
+}
+android=0 steamlink=0 branch=
+while (($#)); do
+    case "$1" in
+        --android) android=1; shift;;
+        --steamlink) steamlink=1; shift;;
+        --all) android=1; steamlink=1; shift;;
+        --branch) [[ $# -ge 2 && -n "$2" ]] || { echo '--branch requires a name.' >&2; exit 2; }; branch=$2; shift 2;;
+        --branch=*) branch=${1#*=}; [[ -n "$branch" ]] || { echo '--branch requires a name.' >&2; exit 2; }; shift;;
+        -h|--help) usage; exit 0;;
+        *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 2;;
+    esac
+done
+((android||steamlink)) || { usage >&2; exit 2; }
+storage=${FLXTR_STORAGE:-/opt/dockers/storage}
+repo=${FLXTR_BUILD_SOURCE:-$storage/projects/FlXtR/source}
+mountpoint -q "$storage" || { echo 'Docker storage disk is not mounted.' >&2; exit 1; }
+mkdir -p "$storage/build-home" "$storage/build-logs"
+exec 9>"$storage/build-home/flxtr-build.lock"
+flock -n 9 || { echo 'Another FlXtR build is running. Try again after it finishes.' >&2; exit 1; }
+export FLXTR_BUILD_LOCK_HELD=1
+log="$storage/build-logs/flxtr-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+exec > >(tee -a "$log") 2>&1
+printf 'Build log: %s\n' "$log"
+trap 'result=$?; if ((result)); then printf "Build failed (exit %s). Log: %s\n" "$result" "$log"; fi' EXIT
+cd "$repo"
+[[ -z "$(git status --porcelain)" ]] || { echo 'Local changes found. Commit or stash them first; nothing was overwritten.' >&2; exit 1; }
+[[ -n "$branch" ]] || branch=$(git branch --show-current)
+[[ -n "$branch" && "$branch" != -* ]] && git check-ref-format "refs/heads/$branch" || { echo 'Specify a valid branch name with --branch NAME.' >&2; exit 2; }
+printf 'Pulling origin/%s…\n' "$branch"
+git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+remote="refs/remotes/origin/$branch"
+if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git merge-base --is-ancestor "refs/heads/$branch" "$remote" || { echo 'Local branch has unpushed or conflicting commits. Nothing was reset.' >&2; exit 1; }
+    git switch -- "$branch"
+    git merge --ff-only --no-edit "$remote"
+else
+    git switch --no-track -c "$branch" "$remote"
+fi
+printf 'Building branch %s, commit %s\n' "$branch" "$(git rev-parse HEAD)"
+if ((android)); then
+    echo '=== Android ==='
+    bash scripts/build-skyloft-android.sh
+    bash "$storage/projects/FlXtR/check-signing.sh"
+fi
+if ((steamlink)); then
+    echo '=== Steam Link ==='
+    bash scripts/build-skyloft-steamlink.sh
+fi
+printf '\nBuild complete. Artifacts: %s/dist\nLog: %s\n' "$repo" "$log"

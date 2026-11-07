@@ -1,0 +1,117 @@
+"""Exercise branch updates and build dispatch against real disposable Git repos."""
+import fcntl
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+COMMAND = Path(__file__).resolve().parents[1] / 'scripts/flxtr-build'
+
+
+class BuildCommandTest(unittest.TestCase):
+    def git(self, directory, *args):
+        return subprocess.check_output(['git', '-C', str(directory), *args], stderr=subprocess.DEVNULL, text=True).strip()
+
+    def identity(self, directory):
+        self.git(directory, 'config', 'user.name', 'Build Test')
+        self.git(directory, 'config', 'user.email', 'test@example.invalid')
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.storage = root / 'storage'
+        self.project = self.storage / 'projects/FlXtR'
+        self.project.mkdir(parents=True)
+        self.producer = root / 'producer'
+        self.producer.mkdir()
+        self.remote = root / 'remote.git'
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', str(self.remote)], check=True)
+        subprocess.run(['git', 'init', '-q', '-b', 'main', str(self.producer)], check=True)
+        self.identity(self.producer)
+        (self.producer / 'scripts').mkdir()
+        for name, target in [('build-skyloft-android.sh', 'android'), ('build-skyloft-steamlink.sh', 'steamlink')]:
+            (self.producer / 'scripts' / name).write_text(
+                f'#!/bin/bash\nprintf "{target}\\n" >> build-events\n'
+                f'if [[ ${{FAIL_TARGET:-}} == {target} ]]; then exit 23; fi\n')
+        (self.producer / '.gitignore').write_text('build-events\n')
+        self.git(self.producer, 'add', '.')
+        self.git(self.producer, 'commit', '-qm', 'fixture')
+        self.git(self.producer, 'remote', 'add', 'origin', str(self.remote))
+        self.git(self.producer, 'push', '-q', 'origin', 'main')
+        self.repo = self.project / 'source'
+        subprocess.run(['git', 'clone', '-q', str(self.remote), str(self.repo)], check=True)
+        self.identity(self.repo)
+        (self.project / 'check-signing.sh').write_text('printf "signed\\n" >> "$FLXTR_BUILD_SOURCE/build-events"\n')
+        commands = root / 'bin'
+        commands.mkdir()
+        mountpoint = commands / 'mountpoint'
+        mountpoint.write_text('#!/bin/sh\nexit 0\n')
+        mountpoint.chmod(0o755)
+        self.env = dict(os.environ, FLXTR_STORAGE=str(self.storage), FLXTR_BUILD_SOURCE=str(self.repo),
+                        PATH=str(commands) + ':' + os.environ['PATH'])
+        self.env.pop('FLXTR_BUILD_LOCK_HELD', None)
+
+    def run_build(self, *args, **env):
+        return subprocess.run(['bash', str(COMMAND), *args], env=dict(self.env, **env),
+                              capture_output=True, text=True)
+
+    def test_pull_and_dispatch_both(self):
+        (self.producer / 'new-source').write_text('updated\n')
+        self.git(self.producer, 'add', '.')
+        self.git(self.producer, 'commit', '-qm', 'update')
+        self.git(self.producer, 'push', '-q', 'origin', 'main')
+        result = self.run_build('--all')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), self.git(self.producer, 'rev-parse', 'HEAD'))
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nsteamlink\n')
+
+    def test_select_remote_branch_with_slash(self):
+        self.git(self.producer, 'switch', '-qc', 'feature/phone')
+        (self.producer / 'feature').write_text('phone build\n')
+        self.git(self.producer, 'add', '.')
+        self.git(self.producer, 'commit', '-qm', 'feature')
+        self.git(self.producer, 'push', '-q', 'origin', 'feature/phone')
+        result = self.run_build('--steamlink', '--branch', 'feature/phone')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.git(self.repo, 'branch', '--show-current'), 'feature/phone')
+        self.assertEqual((self.repo / 'build-events').read_text(), 'steamlink\n')
+
+    def test_dirty_checkout_is_preserved(self):
+        note = self.repo / 'private-notes'
+        note.write_text('keep me\n')
+        self.assertNotEqual(self.run_build('--android').returncode, 0)
+        self.assertEqual(note.read_text(), 'keep me\n')
+        self.assertFalse((self.repo / 'build-events').exists())
+
+    def test_local_commit_is_not_reset(self):
+        (self.repo / 'local').write_text('unpublished work\n')
+        self.git(self.repo, 'add', '.')
+        self.git(self.repo, 'commit', '-qm', 'local')
+        before = self.git(self.repo, 'rev-parse', 'HEAD')
+        self.assertNotEqual(self.run_build('--android').returncode, 0)
+        self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), before)
+
+    def test_build_error_propagates_and_stops_next_target(self):
+        result = self.run_build('--all', FAIL_TARGET='android')
+        self.assertEqual(result.returncode, 23)
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\n')
+
+    def test_concurrent_build_is_rejected(self):
+        folder = self.storage / 'build-home'
+        folder.mkdir()
+        with (folder / 'flxtr-build.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.run_build('--android')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Another FlXtR build', result.stderr)
+        self.assertFalse((self.repo / 'build-events').exists())
+
+    def test_invalid_arguments(self):
+        for args in [[], ['--branch'], ['--android', '--branch', '../invalid'], ['--windows']]:
+            self.assertEqual(self.run_build(*args).returncode, 2)
+
+
+if __name__ == '__main__':
+    unittest.main()

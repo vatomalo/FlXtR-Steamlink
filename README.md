@@ -1,7 +1,8 @@
 # FlXtR-Steamlink
 
 **Build on SkyLoft:** `flxtr-build --android` or `flxtr-build --steamlink`.
-Add `--branch NAME` to pull and build another branch. See
+Add `--branch NAME` to select a branch; add `--no-publish` to skip the default
+publication to auto-update channels. See
 [commands, build logs and artifacts](docs/SKYLOFT-BUILDS.md).
 
 **Downloads — November 5, 2026**

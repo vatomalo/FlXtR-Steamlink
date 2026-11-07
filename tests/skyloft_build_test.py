@@ -35,6 +35,11 @@ class BuildCommandTest(unittest.TestCase):
             (self.producer / 'scripts' / name).write_text(
                 f'#!/bin/bash\nprintf "{target}\\n" >> build-events\n'
                 f'if [[ ${{FAIL_TARGET:-}} == {target} ]]; then exit 23; fi\n')
+        (self.producer / 'scripts/publish-skyloft.sh').write_text(
+            '#!/bin/bash\n'
+            'if [[ $1 == --check ]]; then [[ ${FAIL_AUTH:-0} != 1 ]] || exit 17; exit 0; fi\n'
+            'printf "publish-%s\\n" "${1#--}" >> build-events\n'
+            'if [[ ${FAIL_PUBLISH:-0} == 1 ]]; then exit 42; fi\n')
         (self.producer / '.gitignore').write_text('build-events\n')
         self.git(self.producer, 'add', '.')
         self.git(self.producer, 'commit', '-qm', 'fixture')
@@ -53,8 +58,11 @@ class BuildCommandTest(unittest.TestCase):
                         PATH=str(commands) + ':' + os.environ['PATH'])
         self.env.pop('FLXTR_BUILD_LOCK_HELD', None)
 
-    def run_build(self, *args, **env):
-        return subprocess.run(['bash', str(COMMAND), *args], env=dict(self.env, **env),
+    def run_build(self, *args, publish=False, **env):
+        options = list(args)
+        if not publish:
+            options.append('--no-publish')
+        return subprocess.run(['bash', str(COMMAND), *options], env=dict(self.env, **env),
                               capture_output=True, text=True)
 
     def test_pull_and_dispatch_both(self):
@@ -112,9 +120,36 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), before)
 
     def test_build_error_propagates_and_stops_next_target(self):
-        result = self.run_build('--all', FAIL_TARGET='android')
+        result = self.run_build('--all', publish=True, FAIL_TARGET='android')
         self.assertEqual(result.returncode, 23)
         self.assertEqual((self.repo / 'build-events').read_text(), 'android\n')
+
+    def test_default_publishes_after_both_builds(self):
+        result = self.run_build('--all', publish=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.repo / 'build-events').read_text(),
+                         'android\nsigned\nsteamlink\npublish-android\npublish-steamlink\n')
+
+    def test_no_publish_needs_no_github_auth(self):
+        result = self.run_build('--all', '--no-publish', publish=True, FAIL_AUTH='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nsteamlink\n')
+
+    def test_missing_auth_stops_before_build(self):
+        result = self.run_build('--android', publish=True, FAIL_AUTH='1')
+        self.assertEqual(result.returncode, 17)
+        self.assertFalse((self.repo / 'build-events').exists())
+
+    def test_failed_second_build_publishes_nothing(self):
+        result = self.run_build('--all', publish=True, FAIL_TARGET='steamlink')
+        self.assertEqual(result.returncode, 23)
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nsteamlink\n')
+
+    def test_publish_failure_is_reported(self):
+        result = self.run_build('--all', publish=True, FAIL_PUBLISH='1')
+        self.assertEqual(result.returncode, 42)
+        self.assertEqual((self.repo / 'build-events').read_text(),
+                         'android\nsigned\nsteamlink\npublish-android\n')
 
     def test_concurrent_build_is_rejected(self):
         folder = self.storage / 'build-home'

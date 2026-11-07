@@ -3,7 +3,8 @@
 set -euo pipefail
 usage(){
     cat <<'HELP'
-Usage: flxtr-build --android|--steamlink|--all [--branch NAME] [--arch ARCH]
+Usage: flxtr-build --android|--steamlink|--linux|--windows|--desktop|--all
+                   [--branch NAME] [--arch ARCH]
                    [--release-title TEXT] [--notes-file PATH] [--no-publish]
 
 Pulls the selected branch from origin using fast-forward only, then builds.
@@ -11,6 +12,7 @@ Without --branch, builds the currently checked-out branch. Multiple targets
 run sequentially. Successful builds publish to the normal update channels.
 Use --no-publish to keep builds local. Logs are saved on SkyLoft.
 Android architectures: universal (default), arm64, armv7. Steam Link is armv7.
+Linux and Windows are x86_64. --desktop builds both; --all builds all four.
 Single-architecture APKs publish as separate downloads, keeping the universal
 auto-update channel compatible with both Android architectures.
 
@@ -21,12 +23,15 @@ Examples:
   flxtr-build --android --no-publish
 HELP
 }
-android=0 steamlink=0 branch= publish=1 arch=auto notes= title= output=
+android=0 steamlink=0 linux=0 windows=0 branch= publish=1 arch=auto notes= title= output=
 while (($#)); do
     case "$1" in
         --android) android=1; shift;;
         --steamlink) steamlink=1; shift;;
-        --all) android=1; steamlink=1; shift;;
+        --linux) linux=1; shift;;
+        --windows|--win) windows=1; shift;;
+        --desktop) linux=1; windows=1; shift;;
+        --all) android=1; steamlink=1; linux=1; windows=1; shift;;
         --no-publish) publish=0; shift;;
         --arch|--notes-file|--release-title|--output-dir)
             [[ $# -ge 2 && -n "$2" ]] || { echo "$1 requires a value." >&2; exit 2; }
@@ -38,10 +43,14 @@ while (($#)); do
         *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 2;;
     esac
 done
-((android||steamlink)) || { usage >&2; exit 2; }
-if [[ "$arch" == auto ]]; then if ((android)); then arch=universal; else arch=armv7; fi; fi
-case "$arch" in universal|arm64|armv7) ;; *) echo 'Architecture must be universal, arm64 or armv7.' >&2; exit 2;; esac
-if ((!android)) && [[ "$arch" != armv7 ]]; then echo 'Steam Link uses armv7.' >&2; exit 2; fi
+((android||steamlink||linux||windows)) || { usage >&2; exit 2; }
+if [[ "$arch" == auto ]]; then
+    if ((android)); then arch=universal; elif ((linux||windows)); then arch=x86_64; else arch=armv7; fi
+fi
+case "$arch" in universal|arm64|armv7|x86_64) ;; *) echo 'Unsupported architecture.' >&2; exit 2;; esac
+if ((android)) && [[ "$arch" == x86_64 ]]; then echo 'Android uses universal, arm64 or armv7.' >&2; exit 2; fi
+if ((!android && (linux||windows))) && [[ "$arch" != x86_64 ]]; then echo 'Desktop builds use x86_64.' >&2; exit 2; fi
+if ((!android && !linux && !windows)) && [[ "$arch" != armv7 ]]; then echo 'Steam Link uses armv7.' >&2; exit 2; fi
 if [[ -n "$notes" ]]; then
     [[ -f "$notes" && -r "$notes" && $(wc -c < "$notes") -le 16384 ]] || { echo 'Release notes must be a readable file of at most 16 KiB.' >&2; exit 2; }
     notes=$(realpath "$notes")
@@ -80,7 +89,7 @@ printf 'Building branch %s, commit %s\n' "$branch" "$(git rev-parse HEAD)"
 export FLXTR_BUILD_SOURCE="$PWD"
 helpers="$storage/tools/libexec/flxtr-build"
 mkdir -p "$helpers"
-for runner in build-skyloft-android.sh build-skyloft-steamlink.sh publish-skyloft.sh; do
+for runner in build-skyloft-android.sh build-skyloft-steamlink.sh build-skyloft-desktop.sh publish-skyloft.sh; do
     if [[ ! -f "$helpers/$runner" && -f "scripts/$runner" ]]; then
         install -m 0755 "scripts/$runner" "$helpers/$runner"
     fi
@@ -98,15 +107,27 @@ if ((steamlink)); then
     echo '=== Steam Link ==='
     bash "$helpers/build-skyloft-steamlink.sh"
 fi
+if ((linux)); then
+    echo '=== Linux x86-64 ==='
+    bash "$helpers/build-skyloft-desktop.sh" --linux
+fi
+if ((windows)); then
+    echo '=== Windows x86-64 ==='
+    bash "$helpers/build-skyloft-desktop.sh" --windows
+fi
 if [[ -n "$output" ]]; then
     mkdir -p "$output"
     if ((android)); then cp -- "$repo/dist/FlXtR-Android-preview.apk" "$output/"; fi
     if ((steamlink)); then cp -- "$repo/dist/greenlink.tgz" "$output/"; fi
+    if ((linux)); then cp -- "$repo/dist/FlXtR-Linux-x86_64.tgz" "$output/"; fi
+    if ((windows)); then cp -- "$repo/dist/FlXtR-Windows-x86_64.zip" "$output/"; fi
 fi
 if ((publish)); then
     # With --all, finish both builds before advancing either update channel.
     if ((android)); then bash "$helpers/publish-skyloft.sh" --android; fi
     if ((steamlink)); then bash "$helpers/publish-skyloft.sh" --steamlink; fi
+    if ((linux)); then bash "$helpers/publish-skyloft.sh" --linux; fi
+    if ((windows)); then bash "$helpers/publish-skyloft.sh" --windows; fi
     echo 'Publishing complete.'
 else
     echo 'Publishing skipped (--no-publish).'

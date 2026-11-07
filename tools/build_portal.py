@@ -16,9 +16,9 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-PLATFORMS = {'android', 'steamlink', 'all'}
-ARCHES = {'universal', 'arm64', 'armv7'}
-ARTIFACTS = ('FlXtR-Android-preview.apk', 'greenlink.tgz')
+PLATFORMS = {'android', 'steamlink', 'linux', 'windows', 'desktop', 'all'}
+ARCHES = {'universal', 'arm64', 'armv7', 'x86_64'}
+ARTIFACTS = ('FlXtR-Android-preview.apk', 'greenlink.tgz', 'FlXtR-Linux-x86_64.tgz', 'FlXtR-Windows-x86_64.zip')
 JOB_ID = re.compile(r'^[0-9a-f]{32}$')
 
 
@@ -50,6 +50,10 @@ def validate(payload):
         raise ValueError('Choose a supported platform and architecture.')
     if platform == 'steamlink' and arch != 'armv7':
         raise ValueError('Steam Link uses ARMv7.')
+    if platform in ('linux', 'windows', 'desktop') and arch != 'x86_64':
+        raise ValueError('Desktop packages use x86-64.')
+    if platform in ('android', 'all') and arch == 'x86_64':
+        raise ValueError('Choose an Android architecture; desktop targets remain x86-64.')
     if not isinstance(branch, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,199}', branch):
         raise ValueError('Enter a valid Git branch name.')
     if subprocess.run(['git', 'check-ref-format', 'refs/heads/' + branch], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:

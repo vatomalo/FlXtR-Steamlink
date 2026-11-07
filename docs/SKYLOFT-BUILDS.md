@@ -5,7 +5,8 @@ Apache serves `/var/www/html/index.html`; the build API runs on loopback port
 8787 as `flxtr-build-portal.service`. The page and API allow tailnet/loopback
 addresses only. No separate web account is required.
 
-Choose Android, Steam Link, or both, then a branch, Android architecture, release
+Choose Android, Steam Link, Linux, Windows, the desktop pair, or all platforms,
+then a branch, Android architecture, release
 title, and Markdown change notes. Jobs run in the background, with persistent
 history, live logs, per-build downloads, and GitHub release links. Closing the
 browser does not stop a build. One build runs at a time, including CLI builds.
@@ -15,6 +16,9 @@ After connecting to SkyLoft over SSH, run from any directory:
 ```sh
 flxtr-build --android
 flxtr-build --steamlink
+flxtr-build --linux --no-publish
+flxtr-build --windows --no-publish
+flxtr-build --desktop --no-publish
 flxtr-build --android --branch codex/send-to-tv-settings
 flxtr-build --all --branch codex/send-to-tv-settings
 flxtr-build --android --no-publish
@@ -28,7 +32,11 @@ anything. The selected branch remains checked out after the build.
 Server runners are also retained outside the checkout so branches that predate
 this command can use them, provided they have compatible platform build scripts.
 
-Android and Steam Link builds share a lock and run sequentially with `--all`.
+All targets share a lock and run sequentially with `--all`. `--desktop` builds
+Linux and Windows together. Desktop builds support x86-64; each includes the
+complete application and its packaged dependencies. Linux requires the normal
+host graphics drivers, glibc 2.35+ and Python 3.10+; Windows bundles its Python
+runtime and DLL dependencies. No build tools are needed on the receiving device.
 Android builds use the existing signing key and select a version code newer
 than both the published channel and the previous local build.
 
@@ -48,6 +56,13 @@ Artifacts are in `/opt/dockers/storage/projects/FlXtR/source/dist/`:
 
 - Android: `FlXtR-Android-preview.apk`
 - Steam Link: `greenlink.tgz`
+- Linux: `FlXtR-Linux-x86_64.tgz` (extract, run `FlXtR.sh`)
+- Windows: `FlXtR-Windows-x86_64.zip` (extract, run `FlXtR.exe`)
+
+All of these appear as per-build downloads on the website, even when Publish
+is unchecked. Desktop publication creates a GitHub release with the finished
+archive, checksum, title, and change notes. It does not replace the Steam Link
+update channel. `--no-publish` does not require GitHub publishing credentials.
 
 Logs are in `/opt/dockers/storage/build-logs/flxtr-*.log`. The command displays
 the current log path when it starts. Android signatures are verified before

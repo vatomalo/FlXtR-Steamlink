@@ -40,7 +40,13 @@ class BuildCommandTest(unittest.TestCase):
             'if [[ $1 == --check ]]; then [[ ${FAIL_AUTH:-0} != 1 ]] || exit 17; exit 0; fi\n'
             'printf "publish-%s\\n" "${1#--}" >> build-events\n'
             'if [[ ${FAIL_PUBLISH:-0} == 1 ]]; then exit 42; fi\n')
-        (self.producer / '.gitignore').write_text('build-events\n')
+        (self.producer / 'scripts/build-skyloft-desktop.sh').write_text(
+            '#!/bin/bash\ntarget=${1#--}\nprintf "%s\\n" "$target" >> build-events\n'
+            'if [[ ${FAIL_TARGET:-} == "$target" ]]; then exit 23; fi\n'
+            'mkdir -p dist\n'
+            'if [[ $target == linux ]]; then name=FlXtR-Linux-x86_64.tgz; else name=FlXtR-Windows-x86_64.zip; fi\n'
+            'printf "finished fixture package" > "dist/$name"\n')
+        (self.producer / '.gitignore').write_text('build-events\ndist/\n')
         self.git(self.producer, 'add', '.')
         self.git(self.producer, 'commit', '-qm', 'fixture')
         self.git(self.producer, 'remote', 'add', 'origin', str(self.remote))
@@ -73,7 +79,7 @@ class BuildCommandTest(unittest.TestCase):
         result = self.run_build('--all')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), self.git(self.producer, 'rev-parse', 'HEAD'))
-        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nsteamlink\n')
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nsteamlink\nlinux\nwindows\n')
 
     def test_select_remote_branch_with_slash(self):
         self.git(self.producer, 'switch', '-qc', 'feature/phone')
@@ -101,7 +107,7 @@ class BuildCommandTest(unittest.TestCase):
         self.git(self.producer, 'push', '-q', 'origin', 'older/branch')
         result = self.run_build('--all', '--branch', 'older/branch')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nandroid\nsigned\nsteamlink\n')
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nandroid\nsigned\nsteamlink\nlinux\nwindows\n')
         # A branch's older server runner must not replace the installed runner.
         (self.producer / 'scripts').mkdir()
         (self.producer / 'scripts/build-skyloft-android.sh').write_text('exit 99\n')
@@ -128,12 +134,12 @@ class BuildCommandTest(unittest.TestCase):
         result = self.run_build('--all', publish=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.repo / 'build-events').read_text(),
-                         'android\nsigned\nsteamlink\npublish-android\npublish-steamlink\n')
+                         'android\nsigned\nsteamlink\nlinux\nwindows\npublish-android\npublish-steamlink\npublish-linux\npublish-windows\n')
 
     def test_no_publish_needs_no_github_auth(self):
         result = self.run_build('--all', '--no-publish', publish=True, FAIL_AUTH='1')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nsteamlink\n')
+        self.assertEqual((self.repo / 'build-events').read_text(), 'android\nsigned\nsteamlink\nlinux\nwindows\n')
 
     def test_missing_auth_stops_before_build(self):
         result = self.run_build('--android', publish=True, FAIL_AUTH='1')
@@ -149,7 +155,7 @@ class BuildCommandTest(unittest.TestCase):
         result = self.run_build('--all', publish=True, FAIL_PUBLISH='1')
         self.assertEqual(result.returncode, 42)
         self.assertEqual((self.repo / 'build-events').read_text(),
-                         'android\nsigned\nsteamlink\npublish-android\n')
+                         'android\nsigned\nsteamlink\nlinux\nwindows\npublish-android\n')
 
     def test_concurrent_build_is_rejected(self):
         folder = self.storage / 'build-home'
@@ -162,7 +168,7 @@ class BuildCommandTest(unittest.TestCase):
         self.assertFalse((self.repo / 'build-events').exists())
 
     def test_invalid_arguments(self):
-        for args in [[], ['--branch'], ['--android', '--branch', '../invalid'], ['--windows'],
+        for args in [[], ['--branch'], ['--android', '--branch', '../invalid'], ['--macos'],
                      ['--steamlink', '--arch', 'arm64'], ['--android', '--arch', 'x86'], ['--android', '--notes-file', '/nonexistent-notes']]:
             self.assertEqual(self.run_build(*args).returncode, 2)
 
@@ -180,6 +186,19 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual((self.repo / 'build-events').read_text(), 'arm64-v8a\nsigned\n')
         self.assertEqual(notes.read_text(), '- Literal $(touch not-a-command)\n')
         self.assertFalse((self.repo / 'not-a-command').exists())
+
+    def test_desktop_packages_are_available_without_publishing(self):
+        output = self.project / 'downloads'
+        result = self.run_build('--desktop', '--output-dir', str(output), FAIL_AUTH='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.repo / 'build-events').read_text(), 'linux\nwindows\n')
+        self.assertEqual(sorted(path.name for path in output.iterdir()),
+                         ['FlXtR-Linux-x86_64.tgz', 'FlXtR-Windows-x86_64.zip'])
+
+    def test_windows_publication_is_optional(self):
+        result = self.run_build('--windows', '--arch', 'x86_64', publish=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.repo / 'build-events').read_text(), 'windows\npublish-windows\n')
 
 
 if __name__ == '__main__':

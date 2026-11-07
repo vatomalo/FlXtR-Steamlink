@@ -6,7 +6,7 @@ storage=${FLXTR_STORAGE:-/opt/dockers/storage}
 repo=${FLXTR_BUILD_SOURCE:-$storage/projects/FlXtR/source}
 cli=$storage/tools/bin/gh
 [[ -x "$cli" ]] || cli=$(command -v gh)
-case "${1:-}" in --check|--android|--steamlink) action=$1;; *) echo 'Usage: publish-skyloft.sh --check|--android|--steamlink' >&2; exit 2;; esac
+case "${1:-}" in --check|--android|--steamlink|--linux|--windows) action=$1;; *) echo 'Choose --check, --android, --steamlink, --linux or --windows.' >&2; exit 2;; esac
 GH_TOKEN=${GH_TOKEN:-${GITHUB_TOKEN:-}}
 if [[ -z "$GH_TOKEN" ]]; then GH_TOKEN=$("$cli" auth token --hostname github.com 2>/dev/null) || true; fi
 [[ -n "$GH_TOKEN" ]] || { echo 'SkyLoft needs GitHub login. Run: gh auth login --hostname github.com --git-protocol https --web (or build with --no-publish).' >&2; exit 1; }
@@ -23,6 +23,10 @@ fi
 cd "$repo"
 [[ -z "$(git status --porcelain)" ]] || { echo 'Source changed during the build; refusing to publish.' >&2; exit 1; }
 sha=$(git rev-parse HEAD)
+if [[ "$action" == --linux || "$action" == --windows ]]; then
+    python3 scripts/publish-desktop.py "${action#--}"
+    exit 0
+fi
 if [[ "$action" == --android ]]; then
     echo 'Publishing Android update…'
     bash "$storage/projects/FlXtR/check-signing.sh"

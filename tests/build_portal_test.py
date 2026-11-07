@@ -33,7 +33,8 @@ if '--notes-file' in args:
     pathlib.Path('received-notes.md').write_text(pathlib.Path(args[args.index('--notes-file')+1]).read_text())
 time.sleep(0.3)
 out=pathlib.Path(args[args.index('--output-dir')+1]);out.mkdir()
-(out/'FlXtR-Android-preview.apk').write_bytes(b'test APK fixture')
+name='FlXtR-Windows-x86_64.zip' if '--windows' in args else 'FlXtR-Android-preview.apk'
+(out/name).write_bytes(b'test APK fixture')
 print('Build complete.',flush=True)
 ''')
         self.command.chmod(0o755)
@@ -102,11 +103,23 @@ print('Build complete.',flush=True)
         self.assertEqual(status, 404)
 
     def test_invalid_build_never_starts(self):
-        for values in [dict(platform='windows'), dict(arch='x86'), dict(branch='main; echo bad'),
+        for values in [dict(platform='macos'), dict(arch='x86'), dict(branch='main; echo bad'),
                        dict(branch='../main'), dict(platform='steamlink', arch='arm64'), dict(publish='yes')]:
             status, _ = self.create(**values)
             self.assertEqual(status, 400, values)
         self.assertEqual(self.store.list(), [])
+
+    def test_windows_package_without_publication(self):
+        status, job = self.create(platform='windows', arch='x86_64', publish=False)
+        self.assertEqual(status, 202)
+        for _ in range(100):
+            job = self.store.read(self.store.folder(job['id']))
+            if job['status'] not in ('queued', 'running'):
+                break
+            time.sleep(0.05)
+        self.assertEqual(job['status'], 'succeeded', job)
+        self.assertEqual(job['artifacts'][0]['name'], 'FlXtR-Windows-x86_64.zip')
+        self.assertIn('--no-publish', json.loads((self.source / 'arguments.json').read_text()))
 
     def test_second_job_is_rejected(self):
         folder = self.store.jobs / ('a' * 32)

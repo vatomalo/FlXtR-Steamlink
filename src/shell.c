@@ -307,9 +307,11 @@ static int set_auto_updates(int enabled){
 }
 static int viewing=VIEW_FIT,default_viewing=VIEW_FIT; /* Session view and persistent preference. */
 static int library_genre[3],library_order[3];
+#include "streaming_settings.h"
 static const char *const library_filter_names[]={"movie","series","anime"};
 static int library_filter_slot(int mode){return mode==1?0:mode==2?1:mode==7?2:-1;}
 static void save_settings(void){
+    if(settings_tab==SETTINGS_STREAMING)streaming_save();
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
     fprintf(f,"series_autoplay=%d\nvideo_view=%d\n",series_autoplay,default_viewing);
     fprintf(f,"mtv_genre=%d\nmtv_fusion_genre=%d\n",mtv_genre,mtv_fusion_genre);
@@ -328,6 +330,7 @@ static void save_settings(void){
     if(fclose(f)==0)rename("settings.cfg.next","settings.cfg");
 }
 static void load_settings(void){
+    streaming_load();
     mtv_fusion_genre=access("mtv-fusion-style.txt",R_OK)?0:MTV_FUSION_CUSTOM;
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
@@ -1582,11 +1585,11 @@ text(204,96,party_entry==4?"TAILSCALE":party_entry==3?"CONTINUE ON TV":party_ent
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE"};
+const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE"};
 #else
-const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE"};
+const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE"};
 #endif
-char values[35][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+char values[40][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
@@ -1611,6 +1614,11 @@ char values[35][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
         snprintf(values[32],40,"%s",mtv_fusion_name(mtv_fusion_genre));
         snprintf(values[33],40,"PAIR / RECEIVE SESSION");
         snprintf(values[34],40,"INSTALL / CONNECT / SIGN IN");
+        snprintf(values[35],40,"%.39s",streaming_audio_label());
+        snprintf(values[36],40,"PLAY LEFT / RIGHT TONES");
+        snprintf(values[37],40,"%dP",stream_resolution);
+        snprintf(values[38],40,"%d FPS",stream_fps);
+        snprintf(values[39],40,"%d MBPS",stream_bitrate/1000);
 #if defined(FLXTR_DESKTOP) || defined(_WIN32)
         for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
 #endif
@@ -1630,7 +1638,7 @@ char values[35][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
         text(194,430,"LB/RB OR TAB: TABS / DOWN: OPTIONS / LEFT/RIGHT: CHANGE",1,green,110);
         text(194,452,"A SELECT / B SAVE AND RETURN",1,dim,90);
         text(194,474,settings_tab==SETTINGS_SERVICES?samba_message:
-            settings_tab==SETTINGS_VIDEO?
+            settings_tab==SETTINGS_STREAMING?status:settings_tab==SETTINGS_VIDEO?
             "QUALITY AND SUBTITLES APPLY TO ALL VIDEO":status,1,dim,110);
     }else if(search_on){
         text(194,100,"SEARCH",3,green,30);
@@ -2764,6 +2772,21 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
             int id=settings_id();
             if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id==27||(id>=23&&id<=25)))return;
             switch(id){
+                case 35:streaming_audio_step(step);break;
+                case 36:
+#if defined(FLXTR_DESKTOP) || defined(_WIN32) || defined(__ANDROID__)
+                    snprintf(status,sizeof(status),"STREAM AUDIO TEST IS FOR STEAM LINK");
+#else
+                    if(key==SDLK_RETURN){
+                        if(access("moonlight/flxtr-audio-test",X_OK))snprintf(status,sizeof(status),"INSTALL BUNDLED MOONLIGHT FIRST");
+                        else{stream_audio_test=1;running=0;}
+                    }
+#endif
+                    break;
+                case 37:stream_resolution=stream_resolution==720?1080:720;break;
+                case 38:stream_fps=stream_fps==60?30:60;break;
+                case 39:{int index=1;for(int i=0;i<6;i++)if(stream_bitrate==stream_bitrates[i])index=i;
+                    stream_bitrate=stream_bitrates[(index+step+6)%6];break;}
                 case 28:game_performance=(game_performance+step+3)%3;break;
                 case 27:if(key==SDLK_RETURN)platform_core_open();break;
                 case 26:default_viewing=(default_viewing+step+VIEW_COUNT)%VIEW_COUNT;break;
@@ -2953,6 +2976,12 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--library")&&i+1<argc){const char *v=argv[++i];initial_library=!strcmp(v,"movies")?1:!strcmp(v,"series")?2:!strcmp(v,"anime")?7:!strcmp(v,"archive")?30:!strcmp(v,"tv")?11:!strcmp(v,"games")?21:!strcmp(v,"downloads")?OFFLINE_MODE:0;if(!initial_library)return 2;}
         else {fprintf(stderr,"Usage: %s [--catalog file] [--screenshot file.bmp] [--frames N] [--no-stars]\n",argv[0]);return 2;}
     }
+    if(settings_on&&settings_tab==SETTINGS_STREAMING){
+        FILE *test=fopen("moonlight/audio-test-status.txt","r");int code=-1;
+        if(test){if(fscanf(test,"%d",&code)!=1)code=-1;fclose(test);}
+        snprintf(status,sizeof(status),code==0?"TEST FINISHED / DID YOU HEAR LEFT AND RIGHT TONES?":
+            code>0?"AUDIO TEST FAILED / SEE MOONLIGHT/AUDIO-TEST.LOG":"CHOOSE OUTPUT / TEST SOUND WITHOUT CONNECTING TO PC");
+    }
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
     if(SDL_Init(SDL_INIT_GAMECONTROLLER|SDL_INIT_TIMER)) {fprintf(stderr,"SDL: %s\n",SDL_GetError());return 1;}
     if(open_ui()){fprintf(stderr,"Renderer: %s\n",SDL_GetError());SDL_Quit();return 1;}
@@ -3057,7 +3086,7 @@ int main(int argc,char **argv) {
     pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid,rom_send_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
-    SDL_Quit();return moonlight_exit?44:game_exit?43:restart_shell?42:0;
+    SDL_Quit();return stream_audio_test?45:moonlight_exit?44:game_exit?43:restart_shell?42:0;
 }
 
 #ifdef _WIN32

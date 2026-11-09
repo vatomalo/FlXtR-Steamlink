@@ -27,11 +27,18 @@ int main(void){
     action(SDLK_RETURN);assert(!samba_pid&&strstr(samba_message,"STEAM LINK"));
     settings_row=2;action(SDLK_RETURN);assert(!samba_password_on);
     settings_tab=SETTINGS_GENERAL;settings_row=-1;action(SDLK_TAB);assert(settings_tab==SETTINGS_VIDEO);
+    /* Exercise the receiving-device settings while retaining desktop guards. */
+    settings_tab=SETTINGS_STREAMING;settings_row=-1;
+    action(SDLK_DOWN);assert(settings_id()==35);
+    action(SDLK_RIGHT);assert(!strcmp(stream_audio,"hdmi"));
+    action(SDLK_DOWN);assert(settings_id()==36);
+    action(SDLK_RETURN);assert(!stream_audio_test); /* Desktop cannot take the Steam Link exit path. */
+    settings_tab=SETTINGS_GENERAL;action(SDLK_TAB);assert(settings_tab==SETTINGS_VIDEO&&settings_row==-1);
     settings_row=0;action(SDLK_ESCAPE);assert(!settings_on);
     samba_password_text("Test password 123");assert(!strcmp(samba_password,"Test password 123"));
     samba_password_on=1;samba_password_action(SDLK_BACKSPACE);assert(!strcmp(samba_password,"Test password 12"));
     samba_password_action(SDLK_ESCAPE);assert(!samba_password_on&&!samba_password[0]);
-    unlink("settings.cfg");assert(!chdir("/tmp"));rmdir(temp);
+    unlink("settings.cfg");unlink("streaming.cfg");unlink("streaming-audio.txt");unlink("tv-gambits.cfg");assert(!chdir("/tmp"));assert(!rmdir(temp));
     puts("PASS: tab/row focus, keyboard and shoulder navigation, settings persistence, 240p, desktop service guard and password input");
     return 0;
 }

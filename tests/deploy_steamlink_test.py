@@ -14,12 +14,18 @@ spec.loader.exec_module(deploy)
 
 
 class DeploymentTest(unittest.TestCase):
-    def package(self, root, *, dirty=b"0\n", corrupt=False, extra=None, duplicate=False):
+    def package(self, root, *, dirty=b"0\n", corrupt=False, extra=None, duplicate=False, moonlight=False, partial=False):
         elf = b"\x7fELF\x01" + bytes(13) + b"\x28\x00" + bytes(44)
         files = {name: elf if name in deploy.BINARIES else b"#!/bin/sh\nexit 0\n" for name in deploy.PAYLOAD_FILES}
+        if moonlight:
+            for name in deploy.MOONLIGHT_FILES:
+                files[name] = elf if name in ("moonlight/moonlight", "moonlight/flxtr-audio-test") else b"license or source\n"
+            if partial:
+                del files["moonlight/LICENSE"]
         files["build-version.txt"] = b"a" * 40 + b"\n"
         files["build-source-dirty.txt"] = dirty
-        files["build-sha256.txt"] = "".join(f"{hashlib.sha256(files[name]).hexdigest()}  {name}\n" for name in deploy.PAYLOAD_FILES).encode()
+        names = list(deploy.PAYLOAD_FILES) + [name for name in deploy.MOONLIGHT_FILES if name in files]
+        files["build-sha256.txt"] = "".join(f"{hashlib.sha256(files[name]).hexdigest()}  {name}\n" for name in names).encode()
         files["settings.cfg"] = b"must not be installed\n"
         if corrupt:
             files["greenlink"] += b"corrupt"
@@ -53,6 +59,19 @@ class DeploymentTest(unittest.TestCase):
     def test_remote_shell_syntax(self):
         script = deploy.REMOTE.replace("TOKEN", "a" * 32).replace("VERSION", "b" * 40).replace("REQUIRED_KB", "12345")
         subprocess.run(["sh", "-n"], input=script, text=True, check=True)
+
+    def test_bundled_client_is_in_verified_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deploy.verified_payload(self.package(root, moonlight=True), root / "payload.tgz")
+            with tarfile.open(root / "payload.tgz") as archive:
+                self.assertTrue(set(deploy.MOONLIGHT_FILES).issubset(archive.getnames()))
+
+    def test_incomplete_bundle_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaises(ValueError):
+                deploy.verified_payload(self.package(root, moonlight=True, partial=True), root / "payload.tgz")
 
 
 if __name__ == "__main__":

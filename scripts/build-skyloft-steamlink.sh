@@ -27,5 +27,5 @@ docker run --rm --name flxtr-steamlink-build --cpus=3 --memory=5g \
     -v "$repo:/src" -v "$sdk:/opt/steamlink-sdk" \
     -v "$storage/build-cache/steamlink:/var/cache/flxtr-steamlink" \
     -v "$storage/build-home/steamlink:/build-home" \
-    flxtr-steamlink-builder:skyloft bash scripts/autocompile --steamlink --no-update
+    flxtr-steamlink-builder:skyloft bash -c 'bash scripts/build-moonlight.sh && bash scripts/autocompile --steamlink --no-update'
 echo 'Complete Steam Link package built on SkyLoft.'

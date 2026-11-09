@@ -1,5 +1,8 @@
 #!/bin/sh
 cd "$(dirname "$0")" || exit 1
+if [ -r assets/moonlight-bootstrap.sh ]; then
+    sh assets/moonlight-bootstrap.sh >moonlight-bootstrap.log 2>&1 || true
+fi
 # Keep the lock through player/game restarts and release it automatically on exit.
 # Two SDL sessions can exhaust the Link's small graphics/memory budget.
 if command -v flock >/dev/null 2>&1; then
@@ -23,7 +26,7 @@ if [ "$#" -eq 0 ] && [ -f catalog.local.tsv ]; then
     set -- --catalog catalog.local.tsv
 fi
 # A failed/offline check must never prevent launch. No credentials on the device.
-if [ ! -f .no-auto-update ]; then sh ./update.sh >update.log 2>&1 || true; fi
+if [ ! -f .no-auto-update ] && [ "${FLXTR_SKIP_UPDATE:-0}" != 1 ]; then sh ./update.sh >update.log 2>&1 || true; fi
 if [ -f samba/.enabled ] && [ -f samba-server.sh ]; then
     sh ./samba-server.sh start >samba-start.log 2>&1 || true
 fi
@@ -41,12 +44,26 @@ if [ -f tools/tailscale_link.py ]; then
     tailscale_pid=$!
 fi
 trap '[ -z "$tailscale_pid" ] || { kill "$tailscale_pid" 2>/dev/null; wait "$tailscale_pid" 2>/dev/null; }; [ -z "$handoff_pid" ] || kill "$handoff_pid" 2>/dev/null; rm -f handoff/url.txt handoff/remote-url.txt handoff/armed tailscale/ready' EXIT
+if [ -x moonlight/flxtr-audio-test ]; then
+    if sh ./moonlight-run.sh list >moonlight/audio-devices.txt.next 2>moonlight/audio-enumeration.log; then
+        mv -f moonlight/audio-devices.txt.next moonlight/audio-devices.txt
+    else
+        rm -f moonlight/audio-devices.txt.next moonlight/audio-devices.txt
+    fi
+fi
 while :; do
     rm -f handoff/busy
     rm -f game-music-request
     ./greenlink "$@" >>greenlink.log 2>&1
     code=$?
     if [ -r ./power-activity.sh ]; then sh ./power-activity.sh --idle >power-activity.log 2>&1 || true; fi
+    if [ "$code" -eq 45 ]; then
+        mkdir -p moonlight handoff; : >handoff/busy
+        sh ./moonlight-run.sh test >moonlight/audio-test.log 2>&1
+        printf '%d\n' "$?" >moonlight/audio-test-status.txt
+        set -- --settings-tab STREAM
+        continue
+    fi
     if [ "$code" -eq 44 ]; then
         mkdir -p handoff; : >handoff/busy
         # The UI passes a numeric catalog selection, never a shell command.
@@ -164,13 +181,7 @@ while :; do
         fi
         # Legacy route remains available when gamez-bridge.conf is absent.
         # Sunshine must have an application registered with this exact title.
-        (
-            cd /home/apps/moonlight || exit 127
-            export HOME=/usr/local/moonlight
-            export SDL_ENABLE_STEAM_CONTROLLERS=1
-            export SENSOR_REPORT_RATE_LIMIT_HZ=0
-            exec ./bin/moonlight stream 192.168.10.187 "$game" --1080 --fps 60
-        ) >moonlight-gamez.log 2>&1
+        sh ./moonlight-run.sh stream 192.168.10.187 "$game" >moonlight-gamez.log 2>&1
         printf '%d\n' "$?" >game-exit-status
         set -- --library games
         continue

@@ -67,6 +67,13 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
         # Python bytecode validates source mtimes; preserve them on installation.
         if [ -d "$staged/$part" ]; then mkdir -p "$part"; cp -pR "$staged/$part/." "$part/"; fi
     done
+    if [ -f "$staged/moonlight/SHA256SUMS" ]; then
+        (cd "$staged/moonlight" && sha256sum -c SHA256SUMS) || exit 1
+        mkdir -p moonlight
+        for part in moonlight flxtr-audio-test LICENSE BUILD.txt SHA256SUMS; do
+            cp "$staged/moonlight/$part" "moonlight/$part.new" && mv -f "moonlight/$part.new" "moonlight/$part"
+        done
+    fi
     for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py; do
         if [ -f "$staged/$part" ]; then
             mkdir -p "$(dirname "$part")"
@@ -88,7 +95,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
             cp "$staged/retroarch-libs/$part" "retroarch-libs/$part.new" && mv -f "retroarch-libs/$part.new" "retroarch-libs/$part"
         done
     fi
-    for part in deceptive-dice.sh deceptive-dice-release.conf update.sh greenlink.sh power-activity.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh samba-paths.so samba-packages.json tailscale-arm.json toc.txt catalog.tsv WABT-LICENSE.txt LIBRETRO-API-LICENSE.txt; do
+    for part in moonlight-run.sh deceptive-dice.sh deceptive-dice-release.conf update.sh greenlink.sh power-activity.sh controller-idle.sh samba-run.sh samba-server.sh reset-scummvm-config.sh samba-paths.so samba-packages.json tailscale-arm.json toc.txt catalog.tsv WABT-LICENSE.txt LIBRETRO-API-LICENSE.txt; do
         if [ -f "$staged/$part" ]; then cp "$staged/$part" "./$part.new" && mv -f "./$part.new" "./$part"; fi
     done
     mv -f .update-backup greenlink.previous

@@ -13,6 +13,12 @@ $STRIP build/greenlink-arm
 $CC -Os -std=c99 -Wall -Wextra -Werror -DFLXTR_VERSION=\"$version\" $(pkg-config --cflags sdl2) src/catalog.c -o build/greenlink-catalog-arm -lcurl -ljson-c -lcrypto -lSDL2_image $(pkg-config --libs sdl2)
 $STRIP build/greenlink-catalog-arm
 app=dist/steamlink/apps/greenlink
+if [ -x build/moonlight/moonlight ]; then
+    mkdir -p "$app/moonlight" "$app/sources"
+    cp build/moonlight/moonlight build/moonlight/flxtr-audio-test build/moonlight/LICENSE build/moonlight/BUILD.txt build/moonlight/SHA256SUMS "$app/moonlight/"
+    cp dist/core-sources/moonlight-flxtr-source.tar.gz "$app/sources/"
+fi
+cp packaging/moonlight-run.sh "$app/"
 if [ -f build/greenlink-handoff-game-arm ]; then
     cp build/greenlink-handoff-game-arm "$app/greenlink-handoff-game"
     mkdir -p "$app/cores" "$app/sources"
@@ -60,6 +66,12 @@ if [ -f build/retroarch-audio/retroarch.exec ]; then
 fi
 
 if [ -d assets ]; then cp -R assets "$app/"; fi
+if [ -x "$app/moonlight/moonlight" ]; then
+    cp packaging/moonlight-bootstrap.sh "$app/assets/"
+    tar -C "$app" -czf "$app/assets/moonlight-bootstrap.tgz" moonlight-run.sh \
+        moonlight/moonlight moonlight/flxtr-audio-test moonlight/LICENSE moonlight/BUILD.txt moonlight/SHA256SUMS
+    (cd "$app" && sha256sum assets/moonlight-bootstrap.tgz >assets/moonlight-bootstrap.sha256)
+fi
 if [ -f build/greenlink-player-arm ]; then cp build/greenlink-player-arm "$app/greenlink-player"; fi
 if [ -f build/greenlink-download-arm ]; then cp build/greenlink-download-arm "$app/greenlink-download"; fi
 if [ -f build/greenlink-resolver-arm ]; then
@@ -106,7 +118,7 @@ chmod +x "$app/greenlink" "$app/greenlink.sh"
 printf '%s\n' "$version" > "$app/build-version.txt"
 git diff --quiet && git diff --cached --quiet && source_dirty=0 || source_dirty=1
 printf '%s\n' "$source_dirty" > "$app/build-source-dirty.txt"
-(cd "$app"; for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh greenlink-handoff-game tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/GAMBATTE-COPYING.txt sources/gambatte-handoff-source.tar.gz cores/fceumm_handoff_libretro.so cores/fceumm-handoff.json cores/FCEUMM-COPYING.txt sources/fceumm-handoff-source.tar.gz; do
+(cd "$app"; for part in moonlight-run.sh moonlight/moonlight moonlight/flxtr-audio-test moonlight/LICENSE moonlight/BUILD.txt moonlight/SHA256SUMS sources/moonlight-flxtr-source.tar.gz greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh greenlink-handoff-game tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/GAMBATTE-COPYING.txt sources/gambatte-handoff-source.tar.gz cores/fceumm_handoff_libretro.so cores/fceumm-handoff.json cores/FCEUMM-COPYING.txt sources/fceumm-handoff-source.tar.gz; do
     if [ -f "$part" ]; then sha256sum "$part"; fi
 done) > "$app/build-sha256.txt"
 tar -C dist/steamlink/apps -czf dist/greenlink.tgz greenlink

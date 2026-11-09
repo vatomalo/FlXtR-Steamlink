@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 BINARIES = ("greenlink", "greenlink-catalog", "greenlink-player", "greenlink-handoff-game")
+MOONLIGHT_FILES = ("moonlight-run.sh", "moonlight/moonlight", "moonlight/flxtr-audio-test", "moonlight/LICENSE", "moonlight/BUILD.txt", "moonlight/SHA256SUMS", "sources/moonlight-flxtr-source.tar.gz")
 PAYLOAD_FILES = BINARIES + ("greenlink.sh", "power-activity.sh", "tools/usb_setup.py", "tools/usb_mount_template.sh", "tools/handoff.py", "tools/rom_transfer.py", "tools/tailscale_link.py", "tailscale-arm.json", "cores/gambatte_handoff_libretro.so", "cores/gambatte-handoff.json", "cores/GAMBATTE-COPYING.txt", "sources/gambatte-handoff-source.tar.gz", "cores/fceumm_handoff_libretro.so", "cores/fceumm-handoff.json", "cores/FCEUMM-COPYING.txt", "sources/fceumm-handoff-source.tar.gz")
 
 
@@ -44,16 +45,17 @@ def verified_payload(package, destination):
         expected = {}
         for line in manifest.decode().splitlines():
             digest, name = line.split()
-            if name not in PAYLOAD_FILES or name in expected or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            if name not in PAYLOAD_FILES + MOONLIGHT_FILES or name in expected or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 raise ValueError("Invalid binary manifest")
             expected[name] = digest
-        if set(expected) != set(PAYLOAD_FILES):
+        optional = set(expected) & set(MOONLIGHT_FILES[1:])
+        if not set(PAYLOAD_FILES).issubset(expected) or (optional and (optional != set(MOONLIGHT_FILES[1:]) or "moonlight-run.sh" not in expected)):
             raise ValueError("Incomplete binary manifest")
-        files = {name: read(name) for name in PAYLOAD_FILES}
+        files = {name: read(name) for name in expected}
         for name, data in files.items():
             if hashlib.sha256(data).hexdigest() != expected[name]:
                 raise ValueError(f"Package hash mismatch: {name}")
-            if name in BINARIES and (data[:5] != b"\x7fELF\x01" or int.from_bytes(data[18:20], "little") != 40):
+            if name in BINARIES + ("moonlight/moonlight", "moonlight/flxtr-audio-test") and (data[:5] != b"\x7fELF\x01" or int.from_bytes(data[18:20], "little") != 40):
                 raise ValueError(f"Not a 32-bit ARM ELF executable: {name}")
         files["build-version.txt"] = (version + "\n").encode()
         files["build-sha256.txt"] = manifest
@@ -66,7 +68,7 @@ def verified_payload(package, destination):
             for name, data in files.items():
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
-                info.mode = 0o755 if name in PAYLOAD_FILES else 0o644
+                info.mode = 0o755 if name in PAYLOAD_FILES + MOONLIGHT_FILES else 0o644
                 payload.addfile(info, io.BytesIO(data))
         return version
 
@@ -91,7 +93,7 @@ done
 cd "$app"
 test -x ./greenlink.sh
 # Back up exactly the files being replaced, plus private configuration for recovery.
-for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh build-version.txt build-sha256.txt .no-auto-update; do
+for part in DEPLOY_FILES .no-auto-update; do
     mkdir -p "$backup/$(dirname "$part")"
     if test -e "$part"; then cp -p "$part" "$backup/$part"; fi
 done
@@ -102,7 +104,7 @@ changed=0
 rollback() {
     result=$?
     if test "$result" -ne 0 && test "$changed" -eq 1; then
-        for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh build-version.txt build-sha256.txt .no-auto-update; do
+        for part in DEPLOY_FILES .no-auto-update; do
             if test -f "$backup/$part"; then
                 cp -p "$backup/$part" "$app/$part.rollback"
                 mv -f "$app/$part.rollback" "$app/$part"
@@ -114,7 +116,7 @@ rollback() {
 trap rollback EXIT
 changed=1
 printf 'Manual feature-branch test; preserve this build until testing is complete.\n' > .no-auto-update
-for part in greenlink greenlink-catalog greenlink-player greenlink.sh power-activity.sh tools/usb_setup.py tools/usb_mount_template.sh build-version.txt build-sha256.txt; do
+for part in DEPLOY_FILES; do
     mkdir -p "$(dirname "$part")"
     cp -p "$stage/$part" "$part.deploy-new"
     mv -f "$part.deploy-new" "$part"
@@ -160,6 +162,9 @@ def main():
         with payload.open("rb") as source:
             subprocess.run(["ssh", *options, args.host, "cat > " + shlex.quote(remote)], stdin=source, check=True)
         script = REMOTE.replace("TOKEN", token).replace("VERSION", shlex.quote(version)).replace("REQUIRED_KB", str(required_kb))
+        with tarfile.open(payload) as archive:
+            deployment_files = " ".join(shlex.quote(m.name) for m in archive if m.isfile())
+        script = script.replace("DEPLOY_FILES", deployment_files)
         subprocess.run(["ssh", *options, args.host, "sh -s"], input=script, text=True, check=True)
 
 

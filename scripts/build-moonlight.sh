@@ -32,7 +32,7 @@ make -j"${JOBS:-3}" release
 cp app/moonlight "$project/build/moonlight/moonlight"
 $STRIP "$project/build/moonlight/moonlight" "$project/build/moonlight/flxtr-audio-test"
 cp "$tree/LICENSE" "$project/build/moonlight/LICENSE"
-printf 'upstream=%s\npatch=flxtr-audio-device-v1\n' "$rev" > "$project/build/moonlight/BUILD.txt"
+printf 'upstream=%s\npatch=flxtr-audio-device-v2\n' "$rev" > "$project/build/moonlight/BUILD.txt"
 # Corresponding source includes all checked-out submodules and our modification.
 tar --exclude=.git --exclude=./build --exclude=./libs -czf \
     "$project/dist/core-sources/moonlight-flxtr-source.tar.gz" -C "$tree" .

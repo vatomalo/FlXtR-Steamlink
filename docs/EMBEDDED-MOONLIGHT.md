@@ -52,6 +52,14 @@ Logs are `moonlight/audio-test.log`, `moonlight/audio-test-status.txt` and
 BusyBox `timeout -t` syntax and GNU timeout and bounds audio tests to eight
 seconds. Streaming logs remain in `moonlight-gamez.log`.
 
+The SLAudio context is shared across the preliminary audio probe, playback and
+renderer recovery, and released at process exit. On the tested firmware,
+destroying the probe's context could leave audio-device callbacks using invalid
+state; the resulting crash returned the user to the Steam Link menu. The live
+trace identified `CSLAudioDeviceManager::BShouldOpenDevice` during a device-added
+event. The lifetime regression test compiles the actual patched upstream
+renderer and checks probe/playback/recovery plus final cleanup.
+
 Launch through Valve's app launcher or FlXtR's wrapper so that the stock Steam
 Link GUI is absent while the stream owns video/audio. A direct background
 launch alongside that GUI is not a valid playback test.
@@ -63,6 +71,7 @@ Run `python3 tests/streaming_integration_test.py` and
 literal device/application names, HDMI driver selection, quality arguments,
 invalid-profile defaults, BusyBox timeout and output-preference persistence.
 The package verifier rejects incomplete bundled-client payloads.
+After building Moonlight, also run `python3 tests/moonlight_lifetime_test.py`.
 
 The native Windows application does not need rebuilding for a receiving-client
 audio change. Windows/Sunshine's captured audio source is a separate setting:

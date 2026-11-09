@@ -51,4 +51,11 @@ Current mappings: Start+Back toggles the keyboard; D-pad navigates; left shoulde
 
 ## Status
 
-This file defines the integration contract and regression criteria. The uploaded XInputOSK sources have **not yet been imported into GitHub or rebuilt**; do not treat this document as a completed companion implementation.
+The existing .NET companion source is now under `companion/`, imported from
+the previously built scanner/controller companion (source revision
+`507a8a800bd3654b3f4129d98748e1f59df6e640`). It includes a background mode,
+reviewed executable discovery, controller overlay and authenticated launch API.
+`companion/Connect-SteamLink.ps1` connects the installed app to the receiving
+device; host configuration and direct game launch still require end-to-end
+verification. The integration contract above describes additional lifecycle
+and recovery work and must not be read as a completed acceptance checklist.

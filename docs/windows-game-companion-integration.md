@@ -56,6 +56,7 @@ the previously built scanner/controller companion (source revision
 `507a8a800bd3654b3f4129d98748e1f59df6e640`). It includes a background mode,
 reviewed executable discovery, controller overlay and authenticated launch API.
 `companion/Connect-SteamLink.ps1` connects the installed app to the receiving
-device; host configuration and direct game launch still require end-to-end
-verification. The integration contract above describes additional lifecycle
+device. Direct FFVII launch from the TV's FlXtR selection, with picture, audio
+and controller input, was confirmed on 2026-11-09. Other titles still require
+approval and mapping. The integration contract above describes additional lifecycle
 and recovery work and must not be read as a completed acceptance checklist.

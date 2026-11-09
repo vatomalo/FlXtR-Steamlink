@@ -81,7 +81,9 @@ installed companion and catalog. It backs up the catalog, maps the unique
 **Final Fantasy VII Remake** entry to FlXtR game ID `1`, fingerprints that
 selected executable, and preserves all other game approvals. It enables the
 authenticated listener for the Steam Link, starts the companion invisibly at
-sign-in, and reuses the existing `Desktop_1080` Sunshine entry for streaming.
+sign-in through a scheduled task with **Limited** run level, and reuses the
+existing `Desktop_1080` Sunshine entry for streaming. Administrator rights are
+used for network setup, not for running the companion or launching games.
 
 The script uploads private connection settings with SCP. Enter the Steam Link
 root password in the SSH prompt; the token is not printed or published. Codex
@@ -91,6 +93,13 @@ install a second game-launching service or start Playnite.
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Connect-SteamLink.ps1
 ```
+
+Use `-StartupOnly` to correct an older elevated startup without modifying game
+approvals, the network listener or private device settings. An existing private
+`steamlink-setup/known_hosts` file is reused for SCP with strict checking.
+
+Direct FFVII launch from FlXtR was confirmed on CafeLeBlanc and Steam Link on
+2026-11-09. Other discovered games remain unapproved until separately configured.
 
 The sections below describe manual configuration and other deployments.
 

@@ -1,6 +1,7 @@
 param(
     [string]$HostAddress = '192.168.10.187',
-    [string]$SteamLinkAddress = '192.168.10.2'
+    [string]$SteamLinkAddress = '192.168.10.2',
+    [switch]$StartupOnly
 )
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -23,6 +24,29 @@ $config = Join-Path $directory 'catalog.json'
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Companion missing: $executable" }
 if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "Catalog missing: $config" }
 foreach ($command in @('netsh.exe', 'tar.exe', 'scp.exe')) { Get-Command $command -ErrorAction Stop | Out-Null }
+function Start-GamezLimited {
+    # The network setup is elevated; the launcher and games must run normally.
+    $taskName = 'FlXtR Gamez Companion'
+    $action = New-ScheduledTaskAction -Execute $executable -Argument '--background' -WorkingDirectory (Split-Path -Parent $executable)
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
+    $taskPrincipal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $taskPrincipal -Settings $settings -Force | Out-Null
+    $running = @(Get-Process -Name 'FlXtR.Gamez' -ErrorAction SilentlyContinue)
+    foreach ($item in $running) {
+        if ($item.Path -ne $executable) { throw 'A companion is running from another location; close it before changing startup.' }
+        Stop-Process -Id $item.Id -Force
+        Wait-Process -Id $item.Id -Timeout 5 -ErrorAction SilentlyContinue
+    }
+    Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'FlXtR Gamez' -ErrorAction SilentlyContinue
+    Start-ScheduledTask -TaskName $taskName
+    Write-Host 'Gamez startup uses the signed-in user with Limited run level.'
+}
+if ($StartupOnly) {
+    Start-GamezLimited
+    Write-Host 'Background companion restarted. Existing game processes were left running.'
+    return
+}
 $catalog = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
 $games = @($catalog.Games | Where-Object { $_.Title -eq 'Final Fantasy VII Remake' })
 if ($games.Count -ne 1) { throw 'Expected exactly one Final Fantasy VII Remake entry; review the companion catalog first.' }
@@ -81,10 +105,7 @@ $catalog.AllowedClients = @($SteamLinkAddress, $HostAddress, '127.0.0.1')
 $encoding = New-Object Text.UTF8Encoding($false)
 [IO.File]::WriteAllText("$config.next", ($catalog | ConvertTo-Json -Depth 12), $encoding)
 Move-Item -LiteralPath "$config.next" -Destination $config -Force
-$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-New-Item -Path $runKey -Force | Out-Null
-Set-ItemProperty -Path $runKey -Name 'FlXtR Gamez' -Value ('"' + $executable + '" --background')
-Start-Process -FilePath $executable -ArgumentList '--background' -WindowStyle Hidden
+Start-GamezLimited
 $ready = $false
 for ($attempt = 0; $attempt -lt 10; $attempt++) {
     try {
@@ -103,6 +124,11 @@ $archive = Join-Path $link 'gamez-link-setup.tar'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the private device configuration.' }
 Write-Host 'Companion ready. Copying its private connection settings to the Steam Link.'
 Write-Host 'Enter the Steam Link root password if SSH asks; do not paste it into chat.'
-& scp.exe -O $archive "root@${SteamLinkAddress}:/home/apps/greenlink/gamez-link-setup.tar"
+$copyOptions = @('-O')
+$knownHosts = Join-Path $link 'known_hosts'
+if (Test-Path -LiteralPath $knownHosts -PathType Leaf) {
+    $copyOptions += @('-o', "UserKnownHostsFile=$knownHosts", '-o', 'StrictHostKeyChecking=yes')
+}
+& scp.exe @copyOptions $archive "root@${SteamLinkAddress}:/home/apps/greenlink/gamez-link-setup.tar"
 if ($LASTEXITCODE -ne 0) { throw 'Companion is configured, but copying the device settings failed. Retry this script to complete it.' }
 Write-Host 'Setup uploaded. Reply done in Codex so the Steam Link side can be activated.'

@@ -39,6 +39,9 @@ public sealed class CompanionWindow : Form
     private readonly Catalog catalog;
     private readonly Bridge bridge;
     private readonly ListBox games = new() { Dock = DockStyle.Fill, Font = new Font("Segoe UI", 13) };
+    private readonly List<Game> shownGames=[];
+    private readonly TextBox gameFilter=new(){Width=530,PlaceholderText="Find a game by name or executable path…"};
+    private readonly ComboBox approvalFilter=new(){Width=190,DropDownStyle=ComboBoxStyle.DropDownList};
     private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 52 };
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 40 };
     private readonly NotifyIcon tray;
@@ -50,6 +53,7 @@ public sealed class CompanionWindow : Form
     private readonly FlowLayoutPanel actions;
     private long lastScan = Environment.TickCount64;
     private bool scanning;
+    private bool reviewing;
     private CancellationTokenSource? scanCancellation;
     private readonly Label scanStatus = new() { Dock = DockStyle.Bottom, Height = 48, AutoEllipsis = true };
     private readonly Button cancelScan;
@@ -61,9 +65,11 @@ public sealed class CompanionWindow : Form
         Text = "FlXtR Gamez — review discovered games";
         Size = new Size(1050, 650);
         actions = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 80, AutoSize = true };
+        Add(actions,"Add game…",()=>AddGame());
+        Add(actions,"Add library folder…",AddLibrary);
         scan = Add(actions, "Scan libraries", async () => await Scan());
-        Add(actions, "Approve selected", () => Review(true));
-        Add(actions, "Disable selected", () => Review(false));
+        AddTask(actions, "Approve selected", () => Review(true));
+        AddTask(actions, "Disable selected", () => Review(false));
         Add(actions, "Rename selected", RenameSelected);
         Add(actions, "Launch selected", Launch);
         Add(actions, "Exit game", bridge.CloseGame);
@@ -74,7 +80,18 @@ public sealed class CompanionWindow : Form
         Controls.Add(status);
         Controls.Add(scanStatus);
         Controls.Add(cancelScan);
+        var find=new FlowLayoutPanel{Dock=DockStyle.Top,Height=38};
+        approvalFilter.Items.AddRange(["All games","Needs review","Approved"]);approvalFilter.SelectedIndex=0;
+        find.Controls.AddRange([gameFilter,approvalFilter]);Controls.Add(find);
+        gameFilter.TextChanged+=(_,_)=>RefreshGames();approvalFilter.SelectedIndexChanged+=(_,_)=>RefreshGames();
         Controls.Add(actions);
+        AllowDrop=true;
+        DragEnter+=(_,eventArgs)=>{if(eventArgs.Data?.GetDataPresent(DataFormats.FileDrop)==true)eventArgs.Effect=DragDropEffects.Copy;};
+        DragDrop+=(_,eventArgs)=>{
+            if(eventArgs.Data?.GetData(DataFormats.FileDrop) is not string[] paths)return;
+            try{bool folders=false;foreach(var path in paths){if(File.Exists(path)&&Path.GetExtension(path).Equals(".exe",StringComparison.OrdinalIgnoreCase))AddGame(path);else if(Directory.Exists(path)){catalog.AddLibrary(path);folders=true;}}if(folders)_ = Scan();}
+            catch(Exception error){MessageBox.Show(this,error.Message,"Add game library");}
+        };
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "FlXtR Gamez", Visible = true };
         tray.DoubleClick += (_, _) => { Show(); Activate(); };
         var menu = new ContextMenuStrip();
@@ -98,7 +115,7 @@ public sealed class CompanionWindow : Form
 
     private async Task Scan()
     {
-        if (scanning) return;
+        if (scanning||reviewing) return;
         scanning = true;
         scanCancellation = new CancellationTokenSource();
         actions.Enabled = games.Enabled = false;
@@ -124,40 +141,70 @@ public sealed class CompanionWindow : Form
 
     private void RefreshGames()
     {
-        var selected = games.SelectedIndex;
+        var selected=SelectedGame()?.Id;
+        Game[] snapshot;lock(catalog)snapshot=catalog.Games.Where(game=>(approvalFilter.SelectedIndex!=1||!game.Approved)&&(approvalFilter.SelectedIndex!=2||game.Approved)&&
+            (game.Title.Contains(gameFilter.Text,StringComparison.OrdinalIgnoreCase)||game.Exe.Contains(gameFilter.Text,StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(game=>game.Title,StringComparer.OrdinalIgnoreCase).ToArray();
+        games.BeginUpdate();
         games.Items.Clear();
-        foreach (var game in catalog.Games) games.Items.Add($"{(game.Approved ? "READY" : "REVIEW")} | {game.Title} | {game.Id} | {game.Exe}");
-        if (games.Items.Count > 0) games.SelectedIndex = Math.Clamp(selected, 0, games.Items.Count - 1);
+        shownGames.Clear();shownGames.AddRange(snapshot);
+        foreach (var game in shownGames) games.Items.Add($"{(game.Approved ? "READY" : "REVIEW")} | {game.Title} | {game.Exe}");
+        if(games.Items.Count>0)games.SelectedIndex=Math.Max(0,shownGames.FindIndex(game=>game.Id==selected));
+        games.EndUpdate();
+    }
+    private Game? SelectedGame()=>games.SelectedIndex>=0&&games.SelectedIndex<shownGames.Count?shownGames[games.SelectedIndex]:null;
+    private void AddGame(string? path=null){
+        using var dialog=new AddGameDialog(catalog,path);
+        if(dialog.ShowDialog(this)!=DialogResult.OK||dialog.AddedGame is null)return;
+        gameFilter.Text="";approvalFilter.SelectedIndex=0;RefreshGames();
+        games.SelectedIndex=shownGames.FindIndex(game=>game.Id==dialog.AddedGame.Id);
+    }
+    private void AddLibrary(){
+        using var picker=new FolderBrowserDialog{Description="Choose a game library folder to scan",UseDescriptionForTitle=true,ShowNewFolderButton=false};
+        if(picker.ShowDialog(this)==DialogResult.OK){catalog.AddLibrary(picker.SelectedPath);_ = Scan();}
     }
     internal void RefreshCatalog() => RefreshGames();
 
-    private void Review(bool approved)
+    private static Button AddTask(Control panel,string text,Func<Task> action){
+        var button=new Button{Text=text,AutoSize=true,Height=36};
+        button.Click+=async(_,_)=>{try{await action();}catch(Exception error){MessageBox.Show(error.Message,"FlXtR Gamez");}};
+        panel.Controls.Add(button);return button;
+    }
+    private async Task Review(bool approved)
     {
         if (games.SelectedIndex < 0) return;
-        var game = catalog.Games[games.SelectedIndex];
+        var game = SelectedGame();if(game is null)return;
         if (approved)
         {
-            if (!Catalog.Supported(game.Exe)) throw new InvalidDataException("Choose an executable inside a Gamez root, without directory links");
             if (MessageBox.Show($"Allow this executable to launch?\n\n{game.Exe}\n\nID: {game.Id}", "Review game", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
-            game.Hash = Catalog.Fingerprint(game.Exe);
-            var info = new FileInfo(game.Exe);
-            game.ReviewedLength = info.Length;
-            game.ReviewedWriteTime = info.LastWriteTimeUtc.Ticks;
         }
-        game.Approved = approved;
-        catalog.Save();
-        RefreshGames();
+        reviewing=true;actions.Enabled=games.Enabled=false;
+        try{
+            string hash="";long length=0,modified=0;
+            if(approved){
+                var check=await Task.Run(()=>{
+                    if(!catalog.Supports(game.Exe))throw new InvalidDataException("Choose an executable in a configured library or use Add game");
+                    var info=new FileInfo(game.Exe);var size=info.Length;var time=info.LastWriteTimeUtc.Ticks;
+                    var fingerprint=Catalog.Fingerprint(game.Exe);info.Refresh();
+                    if(info.Length!=size||info.LastWriteTimeUtc.Ticks!=time)throw new IOException("Executable changed while being checked; try again");
+                    return (fingerprint,size,time);
+                });
+                (hash,length,modified)=check;
+            }
+            lock(catalog){if(approved){game.Hash=hash;game.ReviewedLength=length;game.ReviewedWriteTime=modified;}game.Approved=approved;catalog.Save();}
+            RefreshGames();
+        }finally{reviewing=false;if(!IsDisposed)actions.Enabled=games.Enabled=true;}
     }
 
     private void Launch()
     {
-        if (games.SelectedIndex >= 0) bridge.Launch(catalog.Games[games.SelectedIndex].Id);
+        var game=SelectedGame();if(game is not null)bridge.Launch(game.Id);
     }
 
     private void RenameSelected()
     {
         if(games.SelectedIndex<0)return;
-        var game=catalog.Games[games.SelectedIndex];
+        var game=SelectedGame();if(game is null)return;
         using var dialog=new Form { Text="Rename game",FormBorderStyle=FormBorderStyle.FixedDialog,
             StartPosition=FormStartPosition.CenterParent,ClientSize=new Size(460,115),MinimizeBox=false,MaximizeBox=false,ShowInTaskbar=false };
         var name=new TextBox { Text=game.Title,Left=16,Top=16,Width=428,MaxLength=79 };

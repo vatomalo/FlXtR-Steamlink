@@ -51,6 +51,19 @@ internal static class SessionSelfTest
             store.Unapprove("Revoke1");Check(!store.Games[0].Approved,"Repeated unapproval reapproved a game");
             var unknown=false;try{store.Unapprove("Unknown");}catch(InvalidDataException){unknown=true;}
             Check(unknown,"Unknown unapproval changed the catalog");
+            var library=Path.Combine(directory,"Fresh.Library");var nested=Path.Combine(library,"Example.Game-v20240101-P2P","Binaries","Win64");Directory.CreateDirectory(nested);
+            var importedExe=Path.Combine(nested,"Example-Win64-Shipping.exe");File.Copy(Environment.ProcessPath!,importedExe);
+            var imports=new Catalog{StoragePath=Path.Combine(directory,"imports.json")};
+            Check(GameNames.Guess(importedExe)=="Example Game","Generic executable folder was used as the display name");
+            var imported=imports.AddGame(importedExe,"Example's Game",true);
+            Check(imported.Approved&&imported.Imported&&imports.Supports(importedExe),"Explicit executable could not be approved outside default libraries");
+            var importedId=imported.Id;imports.AddGame(importedExe,"Renamed example",true);
+            Check(imports.Games.Count==1&&imports.Games[0].Id==importedId,"Readding an executable duplicated or changed its ID");
+            var loadedImports=JsonSerializer.Deserialize<Catalog>(File.ReadAllText(imports.StoragePath))!;
+            Check(loadedImports.Supports(importedExe)&&loadedImports.Games[0].Title=="Renamed example","Explicit import did not survive persistence");
+            Check(!imports.LibraryRoots.Contains(nested),"Adding one executable unexpectedly enrolled the whole folder for scanning");
+            imports.AddLibrary(library);Check(imports.LibraryRoots.Contains(library),"Custom library folder was not saved");
+            File.Delete(importedExe);Directory.Delete(nested);Directory.Delete(Path.GetDirectoryName(nested)!);Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(nested)!)!);Directory.Delete(library);
             using(var job=new GameJob(@"Local\FlXtR.Gamez.Test-"+Guid.NewGuid().ToString("N")))
             {
                 job.Start(Environment.ProcessPath!,AppContext.BaseDirectory,["--job-test-parent",marker]);

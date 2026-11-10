@@ -12,6 +12,7 @@ public sealed record Game
     public string Hash { get; set; } = "";
     public string Cwd { get; set; } = "";
     public bool Approved { get; set; }
+    public bool Imported {get;set;}
     public List<string> Args { get; set; } = [];
     public long ReviewedLength { get; set; }
     public long ReviewedWriteTime { get; set; }
@@ -31,6 +32,7 @@ public sealed class Catalog
     public static readonly string FilePath = Path.Combine(DirectoryPath, "catalog.json");
     public static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
     public List<Game> Games { get; set; } = [];
+    public List<string> LibraryRoots {get;set;}=Roots.ToList();
     public string Token { get; set; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     public string Bind { get; set; } = "127.0.0.1";
     public int Port { get; set; } = 47777;
@@ -42,6 +44,7 @@ public sealed class Catalog
     {
         var catalog = File.Exists(FilePath)
             ? JsonSerializer.Deserialize<Catalog>(File.ReadAllText(FilePath)) ?? throw new InvalidDataException("Invalid catalog") : new();
+        catalog.LibraryRoots??=Roots.ToList();
         if (catalog.Games.Any(game => game.Id.Length is < 1 or > 32 || !game.Id.All(char.IsAsciiLetterOrDigit)) ||
             catalog.Games.Select(game => game.Id).Distinct().Count() != catalog.Games.Count)
             throw new InvalidDataException("Game IDs must be unique ASCII letters/digits, 1–32 characters");
@@ -76,10 +79,16 @@ public sealed class Catalog
         }
     }
 
-    public static bool Supported(string path)
+    public static bool Supported(string path)=>SupportedWithin(path,Roots);
+    public bool Supports(string path){
+        var full=Path.GetFullPath(path);string[] roots;bool imported;
+        lock(this){roots=LibraryRoots.ToArray();imported=Games.Any(game=>game.Imported&&game.Exe.Equals(full,StringComparison.OrdinalIgnoreCase));}
+        return SupportedWithin(full,imported?new[]{Path.GetDirectoryName(full)!}:roots);
+    }
+    private static bool SupportedWithin(string path,IEnumerable<string> roots)
     {
         var full = Path.GetFullPath(path);
-        if (!Roots.Any(root => full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))) return false;
+        if (!roots.Any(root => full.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))) return false;
         for (var item = new FileInfo(full) as FileSystemInfo; item != null; item = item is FileInfo file ? file.Directory : ((DirectoryInfo)item).Parent)
             if ((item.Attributes & FileAttributes.ReparsePoint) != 0) return false;
         return Path.GetExtension(full).Equals(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(full);
@@ -91,6 +100,30 @@ public sealed class Catalog
         string[] blocked = ["setup", "install", "unins", "redist", "crash", "report", "update", "patch", "helper", "service", "config", "benchmark", "dxweb", "vcredist", "unitycrash", "cheat"];
         if (blocked.Any(name.Contains)) return false;
         return !path.Split(Path.DirectorySeparatorChar).Any(part => new[] { "_commonredist", "redist", "support", "installer", "directx" }.Contains(part.ToLowerInvariant()));
+    }
+
+    public void AddLibrary(string directory)
+    {
+        directory=Path.GetFullPath(directory);
+        if(!Directory.Exists(directory))throw new InvalidDataException("Library folder does not exist");
+        lock(this){if(!LibraryRoots.Contains(directory,StringComparer.OrdinalIgnoreCase))LibraryRoots.Add(directory);Save();}
+    }
+    public Game AddGame(string executable,string title,bool approved)
+    {
+        executable=Path.GetFullPath(executable);var directory=Path.GetDirectoryName(executable)!;
+        if(!SupportedWithin(executable,new[]{directory}))throw new InvalidDataException("Choose an executable file without directory links");
+        using(var stream=File.OpenRead(executable))ValidateExecutable(stream);
+        var info=new FileInfo(executable);var length=info.Length;var modified=info.LastWriteTimeUtc.Ticks;
+        var hash=approved?Fingerprint(executable):"";
+        info.Refresh();if(info.Length!=length||info.LastWriteTimeUtc.Ticks!=modified)throw new IOException("Executable changed while being checked; try again");
+        var candidate=new Game{Id=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(executable.ToUpperInvariant())))[..24],Exe=executable,Cwd=directory};
+        candidate.Rename(title);
+        lock(this){
+            var game=Games.Find(game=>game.Exe.Equals(executable,StringComparison.OrdinalIgnoreCase));
+            if(game is null){game=candidate;Games.Add(game);}else game.Rename(title);
+            game.Imported=true;game.Approved=approved;game.Hash=hash;game.ReviewedLength=length;game.ReviewedWriteTime=modified;
+            Save();return game;
+        }
     }
 
     public static string Fingerprint(string path)
@@ -121,7 +154,8 @@ public sealed class Catalog
         long lastProgress = 0;
         try
         {
-            foreach (var root in Roots)
+            string[] roots;lock(this)roots=LibraryRoots.ToArray();
+            foreach (var root in roots)
             {
                 cancellation.ThrowIfCancellationRequested();
                 progress?.Report($"Checking {root} …");
@@ -138,7 +172,7 @@ public sealed class Catalog
                     }
                     try
                     {
-                        if (!Candidate(path) || !Supported(path)) continue;
+                        if (!Candidate(path) || !Supports(path)) continue;
                         using (var stream = File.OpenRead(path)) ValidateExecutable(stream);
                         var info = new FileInfo(path);
                         lock (this)
@@ -150,7 +184,7 @@ public sealed class Catalog
                                 continue;
                             }
                             var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path.ToUpperInvariant())))[..24];
-                            Games.Add(new Game { Id = id, Title = info.Directory!.Name, Exe = path });
+                            Games.Add(new Game { Id = id, Title = GameNames.Guess(path), Exe = path });
                         }
                     }
                     catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException) { }

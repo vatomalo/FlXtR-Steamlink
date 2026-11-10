@@ -78,6 +78,23 @@ companion process. Slow launch verification gets up to three minutes before it
 is treated as stalled. Rapid crash loops use a longer restart delay. A Windows
 mutex and the task's IgnoreNew policy prevent duplicate supervisors.
 
+The companion's Add game dialog accepts an executable and editable display name,
+with an explicit approval checkbox. Dropping executable files opens the same
+dialog. Individual imports register only that executable; they do not enroll its
+parent directory. Add library folder (or dropping a folder) adds a persistent
+scan root. Name/path search and approval filters help review larger libraries.
+Executable hashing runs off the UI thread and rejects files changed during review.
+
+PC cover lookup treats separators as spaces, splits joined names, and tries up
+to eight deduplicated word-order variants within a bounded search budget. It
+preserves sequel numbers and rejects unrelated results and soundtrack entries.
+Old failed lookups are retried with this search version. Display punctuation is
+handled separately, preserving apostrophes and quotes in captions and subtitles.
+
+Coverflow uses a larger central cover, tapered side covers, spines, shadows and
+fading mirrored reflections. It retains the existing six-texture cache and SDL
+renderer. Grid view remains available.
+
 Game window positioning uses asynchronous requests, and session/health reads do
 not marshal through the Windows UI thread. Named game jobs are held by a small
 helper for the game's lifetime. The companion persists the job name, game ID,

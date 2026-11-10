@@ -1,16 +1,12 @@
 #define KISS "https://kissanime.com.cv"
+#include "display_text.h"
 /* Bounded HTML adapters for the site's public catalog and episode embeds.
  * No scripts, adverts, browser state or obfuscated code are executed. */
 static void kiss_unescape(char *out,size_t cap,const char *in){
     size_t n=0;
     while(*in&&n+1<cap){
-        if(!strncmp(in,"&amp;",5)){out[n++]='&';in+=5;}
-        else if(!strncmp(in,"&quot;",6)){out[n++]='"';in+=6;}
-        else if(!strncmp(in,"&#039;",6)){out[n++]='\'';in+=6;}
-        else if(!strncmp(in,"&apos;",6)){out[n++]='\'';in+=6;}
-        else if(!strncmp(in,"&#",2)){char *end;int hex=in[2]=='x'||in[2]=='X';long ch=strtol(in+2+hex,&end,hex?16:10);if(*end==';'){out[n++]=ch>=32&&ch<127?(char)ch:'?';in=end+1;}else out[n++]=*in++;}
-        else if(in[0]=='\\'&&in[1]=='/'){out[n++]='/';in+=2;}
-        else {unsigned char c=(unsigned char)*in++;if(c>=128){if((c&0xc0)!=0x80)out[n++]='?';}else out[n++]=c<32?' ':(char)c;}
+        if(in[0]=='\\'&&in[1]=='/'){out[n++]='/';in+=2;}
+        else {unsigned char c=display_next(&in);out[n++]=c<32?' ':(char)c;}
     }out[n]=0;
 }
 static int kiss_attr(const char *tag,const char *name,char *out,size_t cap){

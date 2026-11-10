@@ -8,7 +8,10 @@ static void gamez_info_path(const char *title,char *out,size_t size){
 }
 static int gamez_info_stale(const char *title){
     char path[80];gamez_info_path(title,path,sizeof(path));struct stat st;
-    return stat(path,&st)||time(NULL)-st.st_mtime>86400;
+    if(stat(path,&st)||time(NULL)-st.st_mtime>86400)return 1;
+    json_object *info=json_object_from_file(path);int stale=!info||number(info,"search_version")<2;
+    if(info)json_object_put(info);
+    return stale;
 }
 static void gamez_queue_info(const char *title){
     if(!gamez_info_stale(title))return;

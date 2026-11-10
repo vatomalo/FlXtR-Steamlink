@@ -24,6 +24,8 @@
 #include "android_bridge.h"
 #endif
 #include "font.h"
+#include "display_text.h"
+#include "coverflow_layout.h"
 #include "video_layout.h"
 #include "tv_schedule.h"
 #include "tv_airing.h"
@@ -734,12 +736,12 @@ static void rect(int x,int y,int w,int h,SDL_Color c,int fill) {
 }
 static void text(int x,int y,const char *str,int scale,SDL_Color c,int limit) {
     int n=0; color(c);
-    for(;*str && n<limit; str++,n++,x+=6*scale) {
-        unsigned char ch=(unsigned char)toupper((unsigned char)*str);
+    for(;*str && n<limit; n++,x+=6*scale) {
+        unsigned char ch=(unsigned char)toupper(display_next(&str));
         size_t i;
         if(ch==' ') continue;
         for(i=0;i<sizeof(glyphs)/sizeof(glyphs[0]);i++) if(glyphs[i].c==ch) break;
-        if(i==sizeof(glyphs)/sizeof(glyphs[0])) i=sizeof(glyphs)/sizeof(glyphs[0])-5;
+        if(i==sizeof(glyphs)/sizeof(glyphs[0]))for(i=0;i<sizeof(glyphs)/sizeof(glyphs[0]);i++)if(glyphs[i].c=='?')break;
         for(int y1=0;y1<7;y1++) for(int x1=0;x1<5;x1++) if(glyphs[i].row[y1]&(16>>x1)) {
             SDL_Rect r={x+x1*scale,y+y1*scale,scale,scale}; SDL_RenderFillRect(renderer,&r);
         }
@@ -1264,6 +1266,7 @@ static SDL_Texture *load_poster(const char *path) {
     int32_t height=(int32_t)((uint32_t)header[22]|(uint32_t)header[23]<<8|(uint32_t)header[24]<<16|(uint32_t)header[25]<<24);
     if(width<1||width>192||height==0||height>288||height< -288)return NULL;
     image=SDL_LoadBMP(path);if(!image)return NULL;
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"linear");
     texture=SDL_CreateTextureFromSurface(renderer,image);SDL_FreeSurface(image);return texture;
 }
 static void cache_page(int page) {
@@ -1315,40 +1318,71 @@ static void placeholder(int x,int y,int w,int h,int seed) {
     text(x+10,y+12,"NO ART",1,(SDL_Color){150,190,160,255},12);
     char code[16];snprintf(code,sizeof(code),"%03d",seed+1);text(x+10,y+h-28,code,2,(SDL_Color){116,255,132,255},5);
 }
-/* Six textures, depth ordering and mirrored reflections; no 3D context. */
+/* Perspective strips keep six cover textures and the existing SDL renderer. */
+static void flow_face(SDL_Texture *poster,const FlowCard *card,Uint8 light,int flip){
+    int tw,th;if(SDL_QueryTexture(poster,NULL,NULL,&tw,&th))return;
+    int strips=card->skew?14:1;
+    for(int i=0;i<strips;i++){
+        float u=((float)i+0.5f)/strips,far=card->direction<0?1.0f-u:u;
+        int inset=(int)(card->skew*far);
+        int x0=card->x+i*card->w/strips,x1=card->x+(i+1)*card->w/strips;
+        SDL_Rect source={i*tw/strips,0,(i+1)*tw/strips-i*tw/strips,th};
+        SDL_Rect target={x0,card->y+inset,x1-x0+(i+1<strips),card->h-inset*2};
+        Uint8 shade=(Uint8)(light*(1.0f-far*(card->skew?0.20f:0.0f)));
+        SDL_SetTextureColorMod(poster,shade,shade,shade);
+        SDL_RenderCopyEx(renderer,poster,&source,&target,0,NULL,flip?SDL_FLIP_VERTICAL:SDL_FLIP_NONE);
+    }
+}
+/* Larger center case, angled side faces, soft shadows and a fading mirror floor. */
 static void draw_coverflow(void) {
     int page=selection/VISIBLE;cache_page(page);
     float delta=(float)selection-flow_position;
     flow_position+=delta*0.24f;
     if(delta<0.02f&&delta> -0.02f)flow_position=(float)selection;
-    SDL_Rect clip={184,118,746,296};SDL_RenderSetClipRect(renderer,&clip);
+    SDL_Rect clip={184,96,746,348};SDL_RenderSetClipRect(renderer,&clip);
+    SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+    rect(184,111,746,333,(SDL_Color){0,0,0,95},1);
+    for(int band=0;band<8;band++)rect(210,396+band*6,694,6,(SDL_Color){0,0,0,(Uint8)(25+band*12)},1);
+    SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     /* Farthest cards first so the centered cover stays in front. */
     for(int depth=6;depth>=0;depth--)for(int slot=0;slot<VISIBLE&&page*VISIBLE+slot<total;slot++) {
         int index=page*VISIBLE+slot;float d=(float)index-flow_position,a=d<0?-d:d;
         if((int)(a+0.5f)!=depth)continue;
-        float scale=1.0f/(1.0f+a*0.27f);
-        int h=(int)(236*scale),w=(int)(158*scale/(1+a*0.28f));
-        int center=554+(int)(d*132);
-        SDL_Rect dst={center-w/2,151+(236-h)/2,w,h};
-        Uint8 light=(Uint8)(255/(1+a*0.45f));
-        rect(dst.x-3,dst.y-3,w+6,h+6,index==selection?green:dim,0);
+        FlowCard card=flow_card(d);int w=card.w,h=card.h;
+        SDL_Rect dst={card.x,card.y,w,h};
+        Uint8 light=(Uint8)(255/(1+a*0.25f));
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+        for(int shadow=10;shadow>=2;shadow-=2)rect(dst.x+shadow,dst.y+shadow,w,h,(SDL_Color){0,0,0,30},1);
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
+        int spine=card.direction<0?dst.x-5:dst.x+w;
+        rect(spine,dst.y+card.skew,5,h-card.skew*2,(SDL_Color){20,26,31,255},1);
         if(posters[slot]) {
-            SDL_SetTextureColorMod(posters[slot],light,light,light);
             SDL_SetTextureBlendMode(posters[slot],SDL_BLENDMODE_BLEND);
             SDL_SetTextureAlphaMod(posters[slot],255);
-            SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
-            SDL_Rect reflection={dst.x,dst.y+h+8,w,h};
-            SDL_SetTextureAlphaMod(posters[slot],40);
-            SDL_RenderCopyEx(renderer,posters[slot],NULL,&reflection,0,NULL,SDL_FLIP_VERTICAL);
+            flow_face(posters[slot],&card,light,0);
+            FlowCard reflection=card;reflection.y=dst.y+h+5;
+            int tw,th;SDL_QueryTexture(posters[slot],NULL,NULL,&tw,&th);
+            for(int band=0;band<8;band++){
+                SDL_Rect mirror={clip.x,reflection.y+band*5,clip.w,5};
+                if(mirror.y>=clip.y+clip.h)break;
+                if(mirror.y+mirror.h>clip.y+clip.h)mirror.h=clip.y+clip.h-mirror.y;
+                SDL_RenderSetClipRect(renderer,&mirror);SDL_SetTextureAlphaMod(posters[slot],(Uint8)(105-band*13));
+                int bottom=th-band*5*th/h,top=th-(band+1)*5*th/h;
+                SDL_Rect source={0,top,tw,bottom-top},target={dst.x,mirror.y,w,mirror.h};
+                SDL_SetTextureColorMod(posters[slot],light,light,light);
+                SDL_RenderCopyEx(renderer,posters[slot],&source,&target,0,NULL,SDL_FLIP_VERTICAL);
+            }
+            SDL_RenderSetClipRect(renderer,&clip);
             SDL_SetTextureAlphaMod(posters[slot],255);SDL_SetTextureColorMod(posters[slot],255,255,255);
         }else {rect(dst.x,dst.y,w,h,(SDL_Color){8,23,14,255},1);text(dst.x+6,dst.y+h/2,"FLXTR",1,(SDL_Color){150,190,160,255},w/6-1);}
+        if(index==selection){rect(dst.x-2,dst.y-2,w+4,h+4,green,0);rect(dst.x-3,dst.y-3,w+6,h+6,green,0);}
     }
     SDL_RenderSetClipRect(renderer,NULL);
     Title *t=&titles[visible[selection]];
     text(194,95,browse.name[0]?browse.name:browse_labels[browse.mode],2,dim,60);
-    text(194,427,t->title,2,green,60);text(194,454,t->meta,1,white,78);
-    char line[90];snprintf(line,sizeof(line),"PAGE %d / %d   A OPEN   UP/DOWN PAGE",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
-    text(194,475,line,1,dim,120);
+    text(194,450,t->title,2,green,60);text(194,474,t->meta,1,white,100);
+    char line[90];snprintf(line,sizeof(line),"%d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
+    text(850,95,line,1,dim,12);
 }
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {

@@ -58,7 +58,7 @@ public sealed class Bridge(Catalog catalog) : IDisposable
                 if(gameId!=id)return false;
                 shell?.Prepare();current.Activate();return true; // Resume, never duplicate.
             }
-            if (!Catalog.Supported(game.Exe) || Catalog.Fingerprint(game.Exe) != game.Hash) throw new InvalidDataException("Executable changed; review again");
+            if (!catalog.Supports(game.Exe) || Catalog.Fingerprint(game.Exe) != game.Hash) throw new InvalidDataException("Executable changed; review again");
             var directory = string.IsNullOrEmpty(game.Cwd) ? Path.GetDirectoryName(game.Exe)! : game.Cwd;
             if (!Path.IsPathFullyQualified(directory) || !Directory.Exists(directory)) throw new InvalidDataException("Working directory missing");
             current?.Dispose();

@@ -26,6 +26,7 @@
 #include "response_cache.h"
 #include "browse_filters.h"
 #include "game_metadata.h"
+#include "display_text.h"
 #define API "https://plsdontscrapemelove.flixer.gd/api/tmdb"
 #define PAGE_SIZE 6
 typedef struct {char title[80],meta[96],poster[512],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode;} Entry;
@@ -111,10 +112,9 @@ static json_object *field(json_object *obj,const char *name){json_object *v=NULL
 static const char *string(json_object *obj,const char *name){json_object *v=field(obj,name);return v&&json_object_is_type(v,json_type_string)?json_object_get_string(v):"";}
 static int number(json_object *obj,const char *name){json_object *v=field(obj,name);return v&&json_object_is_type(v,json_type_int)?json_object_get_int(v):0;}
 static void clean(char *out,size_t cap,const char *in){
-    size_t n=0;for(;*in&&n+1<cap;in++){
-        unsigned char c=(unsigned char)*in;
-        if(c>=128){if((c&0xc0)!=0x80)out[n++]='?';}
-        else out[n++]=c<32||c==127?' ':c;
+    size_t n=0;for(;*in&&n+1<cap;){
+        unsigned char c=display_next(&in);
+        out[n++]=c<32||c==127?' ':c;
     }out[n]=0;
 }
 static int positive(const char *s,int allow_zero){
@@ -479,7 +479,7 @@ static void poster(Entry *e,int slot){
     if(!kiss&&!archive&&path[0]!='/')return;
     for(size_t i=archive?sizeof(ARCHIVE)-1:kiss?sizeof(KISS)-1:1;path[i];i++)if(!isalnum((unsigned char)path[i])&&path[i]!='.'&&path[i]!='_'&&path[i]!='-'&&!((kiss||archive)&&path[i]=='/'))return;
     if(strstr(path,".."))return;
-    char url[768];if(kiss||archive)snprintf(url,sizeof(url),"%s",path);else snprintf(url,sizeof(url),"https://image.tmdb.org/t/p/w154%s",path);
+    char url[768];if(kiss||archive)snprintf(url,sizeof(url),"%s",path);else snprintf(url,sizeof(url),"https://image.tmdb.org/t/p/w185%s",path);
     Buffer b={NULL,0,(kiss||archive)?512*1024:128*1024};
     if(!fetch(url,&b)){
         /* JPEG dimensions are checked before decoding; reject other formats. */

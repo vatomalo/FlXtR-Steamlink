@@ -18,6 +18,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: android/tailnet/go.mod
+          cache-dependency-path: android/tailnet/go.sum
+      - name: Install pinned Android Go bindings
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools

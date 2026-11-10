@@ -175,7 +175,8 @@ static int gamez_list(int page,int genre,int order){
         snprintf(entry->meta,sizeof(entry->meta),"%.60s / %s",item->genres[0]?item->genres:"APPROVED PC GAME",gamez_orders[order]);
         strcpy(entry->kind,"moonlight-game");
         snprintf(entry->url,sizeof(entry->url),"gamez:%s",id);
-        snprintf(entry->poster,sizeof(entry->poster),"gameart:PC|%s",entry->title);
+        char poster_title[sizeof(entry->title)];memcpy(poster_title,entry->title,sizeof(poster_title));
+        snprintf(entry->poster,sizeof(entry->poster),"gameart:PC|%s",poster_title);
     }
     if(history)json_object_put(history);
     if(names)json_object_put(names);

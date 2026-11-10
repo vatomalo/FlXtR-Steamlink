@@ -170,8 +170,8 @@ Path('stream.json').write_text(json.dumps({'args':sys.argv[1:], 'managed':os.get
     def test_genres_latest_and_popularity_sort_only_approved_games(self):
         self.games = [{'id':'A','title':'Alpha'}, {'id':'B','title':'Beta'}, {'id':'C','title':'Unknown'}]
         self.metadata('Alpha', 20200101, 900, ['3'])
-        self.metadata('Beta', 20240101, 100, ['19'])
-        self.metadata('Removed', 20250101, 9999, ['19'])
+        self.metadata('Beta', 20240101, 100, ['1', '25'])
+        self.metadata('Removed', 20250101, 9999, ['1'])
         latest = self.catalog(order=1).stdout
         self.assertLess(latest.index('gamez:B'), latest.index('gamez:A'))
         popular = self.catalog(order=2).stdout
@@ -181,6 +181,9 @@ Path('stream.json').write_text(json.dumps({'args':sys.argv[1:], 'managed':os.get
         self.assertNotIn('gamez:B', self.catalog(genre=3).stdout)
         self.assertIn('gamez:C', self.catalog(genre=11).stdout)
         self.assertNotIn('Removed', latest + popular)
+        action = self.catalog(genre=1).stdout
+        self.assertIn('ACTION / ADVENTURE', action)
+        self.assertNotIn('FREE TO PLAY', action)
 
     def test_recent_history_is_persistent_and_uses_ids_after_rename(self):
         self.launch(GAME['id'])

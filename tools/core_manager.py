@@ -27,6 +27,7 @@ CORES = [
     ('picodrive', 'MEGA DRIVE + SEGA CD / PicoDrive'),
     ('genesis_plus_gx', 'MEGA DRIVE + MASTER SYSTEM / Genesis Plus GX'),
     ('mednafen_psx', 'PLAYSTATION / Beetle PSX'),
+    ('pcsx_rearmed', 'PLAYSTATION / PCSX ReARMed (dynarec)'),
     ('stella', 'ATARI 2600 / Stella'),
     ('fbneo', 'NEO GEO + ARCADE / FinalBurn Neo'),
     ('mame2003_plus', 'ARCADE / MAME 2003 Plus'),

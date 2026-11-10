@@ -33,6 +33,7 @@ struct Core {
 } core;
 static void *coreHandle;
 static ANativeWindow *window;
+static unsigned bufferWidth,bufferHeight;
 static std::vector<uint8_t> rom;
 static std::vector<int16_t> sound;
 static std::map<std::string,std::string> options;
@@ -87,7 +88,10 @@ static void video(const void *data,unsigned width,unsigned height,size_t pitch){
     if(data==RETRO_HW_FRAME_BUFFER_VALID){if(hardwareReset&&eglSwapBuffers(hardwareDisplay,hardwareSurface))renderedFrames.fetch_add(1,std::memory_order_relaxed);return;}
     if(!window||!data||data==RETRO_HW_FRAME_BUFFER_VALID||!width||!height||width>2048||height>2048)return;
     if(pitch<width*(pixel==RETRO_PIXEL_FORMAT_XRGB8888?4:2))return;
-    ANativeWindow_setBuffersGeometry(window,width,height,WINDOW_FORMAT_RGBA_8888);
+    if(bufferWidth!=width||bufferHeight!=height){
+        if(ANativeWindow_setBuffersGeometry(window,width,height,WINDOW_FORMAT_RGBA_8888))return;
+        bufferWidth=width;bufferHeight=height;
+    }
     ANativeWindow_Buffer buffer;if(ANativeWindow_lock(window,&buffer,nullptr))return;
     if(buffer.width<(int)width||buffer.height<(int)height){ANativeWindow_unlockAndPost(window);return;}
     for(unsigned y=0;y<height;y++){
@@ -104,7 +108,7 @@ static void sample(int16_t l,int16_t r){if(sound.size()<32768){sound.push_back(l
 static size_t batch(const int16_t *data,size_t frames){if(frames<=16384&&sound.size()+frames*2<=32768)sound.insert(sound.end(),data,data+frames*2);return frames;}
 static void poll(){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id){if(port)return 0;device&=RETRO_DEVICE_MASK;if(device==RETRO_DEVICE_POINTER){if(index)return 0;return id==RETRO_DEVICE_ID_POINTER_X?pointerX:id==RETRO_DEVICE_ID_POINTER_Y?pointerY:id==RETRO_DEVICE_ID_POINTER_PRESSED?pointerPressed:0;}if(device==RETRO_DEVICE_MOUSE)return id==RETRO_DEVICE_ID_MOUSE_X?mouseX:id==RETRO_DEVICE_ID_MOUSE_Y?mouseY:id==RETRO_DEVICE_ID_MOUSE_LEFT?(pointerPressed||((buttons>>8)&1)):id==RETRO_DEVICE_ID_MOUSE_RIGHT?(buttons&1):0;if(device==RETRO_DEVICE_ANALOG)return index<2&&id<2?analogAxes[index*2+id]:0;if(device!=RETRO_DEVICE_JOYPAD)return 0;if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)buttons;return id<16?((buttons>>id)&1):0;}
-static void cleanup(){if(loaded)core.unload_game();hardwareClose();if(initialized)core.deinit();loaded=initialized=false;if(window)ANativeWindow_release(window);window=nullptr;if(coreHandle)dlclose(coreHandle);coreHandle=nullptr;rom.clear();sound.clear();options.clear();disks={};pixel=RETRO_PIXEL_FORMAT_0RGB1555;core=Core();}
+static void cleanup(){if(loaded)core.unload_game();hardwareClose();if(initialized)core.deinit();loaded=initialized=false;if(window)ANativeWindow_release(window);window=nullptr;bufferWidth=bufferHeight=0;if(coreHandle)dlclose(coreHandle);coreHandle=nullptr;rom.clear();sound.clear();options.clear();disks={};pixel=RETRO_PIXEL_FORMAT_0RGB1555;core=Core();}
 static std::string string(JNIEnv *env,jstring value){if(!value)return "";const char *s=env->GetStringUTFChars(value,nullptr);if(!s)return "";std::string result=s;env->ReleaseStringUTFChars(value,s);return result;}
 extern "C" JNIEXPORT jstring JNICALL Java_org_flxtr_android_RetroActivity_coreInfo(JNIEnv *env,jclass,jstring library){
     if(initialized)return nullptr;std::string path=string(env,library);void *handle=dlopen(path.c_str(),RTLD_NOW|RTLD_LOCAL);if(!handle)return nullptr;

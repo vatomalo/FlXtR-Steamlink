@@ -1,12 +1,12 @@
 name: Android preview
 on:
   push:
-    branches: [main, feature/android, codex/steamlink-game-menus]
+    branches: [main, feature/android, codex/steamlink-game-menus, optimization]
   workflow_dispatch:
 permissions:
   contents: write
 concurrency:
-  group: android-startup-channel
+  group: android-startup-${{ github.ref_name == 'optimization' && 'optimization' || 'channel' }}
   cancel-in-progress: false
 jobs:
   apk:
@@ -54,6 +54,7 @@ jobs:
           path: dist/FlXtR-Android-preview.apk
           if-no-files-found: error
       - name: Publish signed startup update
+        if: github.ref != 'refs/heads/optimization'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/publish-android.py --apk dist/FlXtR-Android-preview.apk

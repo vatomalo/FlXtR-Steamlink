@@ -1,6 +1,6 @@
 /* Bounded cache of public catalogue responses, shared by short-lived workers.
  * Never use for signed playback URLs, credentials or download responses. */
-#define RESPONSE_CACHE_SLOTS 16
+#define RESPONSE_CACHE_SLOTS 128
 #define RESPONSE_CACHE_LIMIT (512*1024)
 #define RESPONSE_CACHE_TTL (6*60*60)
 static void response_cache_path(const char *url,char *path,size_t cap){

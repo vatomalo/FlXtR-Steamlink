@@ -1,7 +1,8 @@
 /* Steam supplies public title search and portrait library artwork; no API key. */
 #include "game_title_search.h"
 static int pc_game_fetch(const char *url,Buffer *response){
-    CURL *client=curl_easy_init();if(!client)return -1;
+    if(!catalog_http)catalog_http=curl_easy_init();
+    CURL *client=catalog_http;if(!client)return -1;curl_easy_reset(client);
     curl_easy_setopt(client,CURLOPT_URL,url);curl_easy_setopt(client,CURLOPT_FOLLOWLOCATION,1L);curl_easy_setopt(client,CURLOPT_MAXREDIRS,3L);
     curl_easy_setopt(client,CURLOPT_WRITEFUNCTION,receive);curl_easy_setopt(client,CURLOPT_WRITEDATA,response);
     curl_easy_setopt(client,CURLOPT_CONNECTTIMEOUT,3L);curl_easy_setopt(client,CURLOPT_TIMEOUT,4L);
@@ -11,7 +12,7 @@ static int pc_game_fetch(const char *url,Buffer *response){
 #else
     curl_easy_setopt(client,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(client,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
 #endif
-    CURLcode result=curl_easy_perform(client);curl_easy_cleanup(client);return result==CURLE_OK?0:-1;
+    CURLcode result=curl_easy_perform(client);return result==CURLE_OK?0:-1;
 }
 static int pc_game_release(const char *date){
     int day=0,year=0;char month[4]="";

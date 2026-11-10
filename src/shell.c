@@ -3131,7 +3131,9 @@ int main(int argc,char **argv) {
         handoff_poll();
         if(accounts_on){if(party_entry==4)tailscale_refresh();else api_setup_tick(SDL_GetTicks());if(SDL_GetTicks()-last_draw>=100)dirty=1;}
         SDL_Event event;
-        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
+        /* Worker completion has no SDL event: poll it promptly without a busy loop. */
+        int worker_pending=catalog_pid||update_pid||video_download_pid||rom_send_pid||favorite_art_pid;
+        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:worker_pending?25:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT){if(!usb_on||usb_stage!=5)running=0;}
             else if(event.type==SDL_KEYDOWN){if(!usb_on||!event.key.repeat){keyboard_used=1;desktop_key(event.key.keysym.sym,(SDL_Keymod)event.key.keysym.mod);}}

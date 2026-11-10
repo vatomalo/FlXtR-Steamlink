@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.widget.ImageView;
+import android.util.LruCache;
 import java.io.File;
 import java.net.URLEncoder;
 import java.nio.file.Files;
@@ -14,6 +15,10 @@ import org.json.JSONObject;
 
 final class GameCovers {
     private final Activity activity;
+    private final LruCache<String,Bitmap> bitmaps=new LruCache<String,Bitmap>(4*1024*1024){
+        @Override protected int sizeOf(String key,Bitmap bitmap){return bitmap.getAllocationByteCount();}
+    };
+    private volatile boolean closed;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final StreamResolver.Request request=new StreamResolver.Request();
     GameCovers(Activity activity){this.activity=activity;}
@@ -22,8 +27,14 @@ final class GameCovers {
         String core=game.optString("core"),system;
 switch(core){case "ppsspp":system="Sony - PlayStation Portable";break;case "dolphin":system=game.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".wbfs")?"Nintendo - Wii":"Nintendo - GameCube";break;case "scummvm":return;case "fceumm":system="Nintendo - Nintendo Entertainment System";break;case "snes9x":system="Nintendo - Super Nintendo Entertainment System";break;case "mgba":system="Nintendo - Game Boy Advance";break;case "pcsx_rearmed":system="Sony - PlayStation";break;default:system=game.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".gbc")?"Nintendo - Game Boy Color":"Nintendo - Game Boy";}
         final String platform=system;
-        worker.execute(()->{try{
+        try{
             String url="https://thumbnails.libretro.com/"+URLEncoder.encode(platform,"UTF-8").replace("+","%20")+"/Named_Boxarts/"+URLEncoder.encode(name.replaceAll("[&*/:`<>?\\\\|]","_"),"UTF-8").replace("+","%20")+".png";
+            image.setTag(url);
+            Bitmap ready=bitmaps.get(url);
+            if(ready!=null){image.setImageBitmap(ready);show.run();return;}
+            if(closed)return;
+            worker.execute(()->{try{
+            if(closed)return;
             File cache=new File(activity.getCacheDir(),"game-covers");cache.mkdirs();
             File[] cached=cache.listFiles();if(cached!=null&&cached.length>256){java.util.Arrays.sort(cached,java.util.Comparator.comparingLong(File::lastModified));for(int index=0;index<cached.length-256;index++)cached[index].delete();}
             File file=new File(cache,GameLibrary.hash(url)+".png"),miss=new File(cache,file.getName()+".miss");
@@ -35,8 +46,9 @@ switch(core){case "ppsspp":system="Sony - PlayStation Portable";break;case "dolp
             if(bounds.outWidth<1||bounds.outHeight<1||bounds.outWidth>4096||bounds.outHeight>4096){file.delete();return;}
             BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=Math.max(1,Math.max(bounds.outWidth,bounds.outHeight)/256);options.inPreferredConfig=Bitmap.Config.RGB_565;
             Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
-            if(bitmap!=null)activity.runOnUiThread(()->{if(!activity.isFinishing()&&!activity.isDestroyed()){image.setImageBitmap(bitmap);show.run();}});
+            if(bitmap!=null&&!closed){bitmaps.put(url,bitmap);activity.runOnUiThread(()->{if(!closed&&!activity.isFinishing()&&!activity.isDestroyed()&&url.equals(image.getTag())){image.setImageBitmap(bitmap);show.run();}});}
         }catch(Exception ignored){}});
+        }catch(Exception ignored){}
     }
-    void close(){request.cancel();worker.shutdownNow();}
+    void close(){closed=true;request.cancel();worker.shutdownNow();bitmaps.evictAll();}
 }

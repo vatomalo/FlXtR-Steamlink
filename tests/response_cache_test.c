@@ -20,6 +20,19 @@ int main(void){
     for(int i=0;i<1000;i++){snprintf(other,sizeof(other),"https://example.invalid/%d",i);response_cache_path(other,other_path,sizeof(other_path));if(!strcmp(path,other_path)){collision=1;break;}}
     assert(collision);assert(!response_cache_load(other));response_cache_store(other,"different");assert(!response_cache_load(url));
     char *huge=malloc(RESPONSE_CACHE_LIMIT+2);assert(huge);memset(huge,'x',RESPONSE_CACHE_LIMIT+1);huge[RESPONSE_CACHE_LIMIT+1]=0;response_cache_store(url,huge);free(huge);assert(!response_cache_load(url));
+    int old_slot[16],hits=0,old_hits=0;for(int i=0;i<16;i++)old_slot[i]=-1;
+    for(int i=0;i<96;i++){
+        char key[128];snprintf(key,sizeof(key),"https://example.invalid/catalog/page/%d",i);
+        unsigned long hash=2166136261UL;for(const unsigned char *p=(const unsigned char*)key;*p;p++)hash=((hash^*p)*16777619UL)&0xffffffffUL;
+        old_slot[hash%16]=i;response_cache_store(key,"public metadata");
+    }
+    for(int i=0;i<96;i++){
+        char key[128];snprintf(key,sizeof(key),"https://example.invalid/catalog/page/%d",i);
+        unsigned long hash=2166136261UL;for(const unsigned char *p=(const unsigned char*)key;*p;p++)hash=((hash^*p)*16777619UL)&0xffffffffUL;
+        if(old_slot[hash%16]==i)old_hits++;
+        char *value=response_cache_load(key);if(value){assert(!strcmp(value,"public metadata"));hits++;free(value);}
+    }
+    printf("Warm browse cache: old=%d/96 new=%d/96 hits (no network)\n",old_hits,hits);assert(hits>old_hits*3);
     DIR *d=opendir("catalog-cache");assert(d);struct dirent *e;while((e=readdir(d)))if(e->d_name[0]!='.'){char file[512];snprintf(file,sizeof(file),"catalog-cache/%s",e->d_name);unlink(file);}closedir(d);rmdir("catalog-cache");assert(!chdir("/tmp"));rmdir(dir);
     puts("Public response cache: reuse, expiry, corruption, collision and size bounds passed");return 0;
 }

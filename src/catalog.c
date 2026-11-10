@@ -222,6 +222,7 @@ static int sources(int page,int id,int season,int episode){
 #include "kissanime.h"
 #include "archive.h"
 #include "tv_catalog.h"
+#include "gamez_catalog.h"
 #include "games.h"
 #include "romsgames.h"
 #include "series_navigation.h"
@@ -312,8 +313,12 @@ static size_t art_normalize(const char *src,char *dst,size_t cap){
     }
     dst[n]=0;return n;
 }
+#include "pc_game_art.h"
 static void poster(Entry *e,int slot){
     char path[512];strcpy(path,e->poster);e->poster[0]=0;
+    if(!strncmp(path,"gameart:PC|",11)){
+        pc_game_art(e,slot,path+11);return;
+    }
     if(!strncmp(path,"localthumb:",11)){
         const char *source=path+11;
         const char *home=games_home();size_t hlen=strlen(home);

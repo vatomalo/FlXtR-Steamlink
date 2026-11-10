@@ -12,6 +12,16 @@ its undo command restores Explorer. Existing Sunshine applications are preserved
 Switch the Steam Link's private `GAMEZ_SUNSHINE_APP` to this name only after
 Moonlight discovers the installed application.
 
+FlXtR's GAMEZ folder reads the companion's authenticated `/v1/games` endpoint
+each time it is opened. Only approved entries are shown, with their original
+string IDs carried through selection and launch. Approving or disabling a game
+in the Windows launcher updates the list on the next open; no Sunshine entry
+per game is required. An unavailable companion shows no old static game links.
+The companion checks approval and the executable hash again before launching.
+PC cover art is matched against Steam's public title search and downloaded from
+its portrait library artwork. Covers load through the existing background art
+queue and persistent cache; missing artwork leaves the normal placeholder.
+
 Before creating the game process, the companion shows a black cover and stops
 Explorer in the current user's Windows session. Owned game windows are raised
 above that cover, including windows created after a bootstrap exits. Explorer

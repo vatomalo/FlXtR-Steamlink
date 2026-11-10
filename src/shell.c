@@ -34,6 +34,7 @@
 #include "server_preferences.h"
 #include "mtv_preferences.h"
 #include "game_metadata.h"
+#include "gamez_id.h"
 #include "child_process.h"
 #include "phone_media.h"
 #include "native_sdl_runtime.h"
@@ -1880,9 +1881,12 @@ static void play(void) {
         game_exit=1;running=0;return;
     }
     if(!strcmp(t->kind,"moonlight-game")){
+        if(strncmp(t->url,"gamez:",6)||!gamez_valid_id(t->url+6)){
+            snprintf(status,sizeof(status),"REFRESH GAMEZ / INVALID GAME LINK");return;
+        }
         FILE *request=fopen("gamez-request","w");
         if(!request){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
-        fprintf(request,"%d\n",t->id);
+        fprintf(request,"%s\n",t->url+6);
         if(fclose(request)){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
         moonlight_exit=1;
         running=0;

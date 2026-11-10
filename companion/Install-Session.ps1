@@ -29,7 +29,7 @@ if (-not $SunshineAppsPath) {
             if ([IO.Path]::IsPathRooted($argument) -and $argument.EndsWith('.conf')) { $configurations += $argument }
         }
     }
-    $matches = @()
+    $appCandidates = @()
     foreach ($configuration in ($configurations | Select-Object -Unique)) {
         if (-not (Test-Path -LiteralPath $configuration -PathType Leaf)) { continue }
         $line = @(Get-Content -LiteralPath $configuration | Where-Object { $_ -match '^\s*file_apps\s*=' } | Select-Object -Last 1)
@@ -37,12 +37,12 @@ if (-not $SunshineAppsPath) {
         if (-not [IO.Path]::IsPathRooted($file)) { $file = Join-Path (Split-Path -Parent $configuration) $file }
         if (Test-Path -LiteralPath $file -PathType Leaf) {
             $data = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
-            if (@($data.apps | Where-Object name -eq 'Desktop_1080').Count -eq 1) { $matches += [IO.Path]::GetFullPath($file) }
+            if (@($data.apps | Where-Object name -eq 'Desktop_1080').Count -eq 1) { $appCandidates += [IO.Path]::GetFullPath($file) }
         }
     }
-    $matches = @($matches | Select-Object -Unique)
-    if ($matches.Count -ne 1) { throw 'Could not uniquely locate the active Sunshine apps file. Re-run with -SunshineAppsPath and its actual full path.' }
-    $SunshineAppsPath = $matches[0]
+    $appCandidates = @($appCandidates | Select-Object -Unique)
+    if ($appCandidates.Count -ne 1) { throw 'Could not uniquely locate the active Sunshine apps file. Re-run with -SunshineAppsPath and its actual full path.' }
+    $SunshineAppsPath = $appCandidates[0]
 }
 $apps = Get-Content -LiteralPath $SunshineAppsPath -Raw | ConvertFrom-Json
 if (@($apps.apps | Where-Object name -eq 'Desktop_1080').Count -ne 1) { throw 'Sunshine configuration does not match the verified Desktop_1080 host.' }

@@ -51,7 +51,7 @@ internal sealed class GameShell : IDisposable
         try
         {
             foreach(var process in Explorers())
-                using(process) { process.Kill(); if(!process.WaitForExit(3000)) throw new IOException("Explorer did not stop"); }
+                using(process) { if(!process.HasExited)process.Kill(); if(!process.WaitForExit(3000)) throw new IOException("Explorer did not stop"); }
         }
         catch { Restore(); throw; }
     }
@@ -65,7 +65,7 @@ internal sealed class GameShell : IDisposable
     {
         if(!hidden)return;
         foreach(var process in Explorers())
-            using(process) { process.Kill(); }
+            using(process) { try { if(!process.HasExited)process.Kill(); } catch(InvalidOperationException) { } }
     }
 
     public static void RestoreExplorer()

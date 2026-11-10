@@ -87,7 +87,7 @@ public sealed class Bridge(Catalog catalog) : IDisposable
             if((state=="running"&&!viewer&&now-phaseAt>30000)||(state=="ended"&&now-phaseAt>15000))
                 shell?.Restore(); // Startup/host failure recovery, never kill the game.
         }
-        catch(Exception error) when(error is System.ComponentModel.Win32Exception or IOException)
+        catch(Exception error) when(error is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
         { state="failed";Status=error.Message;shell?.Restore(); }
     }
 

@@ -828,7 +828,8 @@ static int read_catalog(const char *path) {
         if(strlen(fields[0])>=sizeof(t->title)||strlen(fields[1])>=sizeof(t->meta)||strlen(fields[2])>=sizeof(t->poster)||strlen(fields[3])>=sizeof(t->url))continue;
         int rom_key=nf>=8&&!strcmp(fields[4],"game")&&!strncmp(fields[3],"romid:",6)&&rom_key_valid(fields[3]+6);
         int offline=nf>=8&&!strcmp(fields[4],"offline")&&phone_local_media(fields[3]);
-        if(fields[3][0]&&!rom_key&&!offline&&strncmp(fields[3],"https://",8)&&strncmp(fields[3],"http://",7))continue;
+        int gamez=nf>=8&&!strcmp(fields[4],"moonlight-game")&&!strncmp(fields[3],"gamez:",6)&&gamez_valid_id(fields[3]+6);
+        if(fields[3][0]&&!rom_key&&!offline&&!gamez&&strncmp(fields[3],"https://",8)&&strncmp(fields[3],"http://",7))continue;
         strcpy(t->title,fields[0]);strcpy(t->meta,fields[1]);strcpy(t->poster,fields[2]);strcpy(t->url,fields[3]);count++;
         if(nf>=8){snprintf(t->kind,sizeof(t->kind),"%s",fields[4]);t->id=atoi(fields[5]);t->season=atoi(fields[6]);t->episode=atoi(fields[7]);}
         if(nf>=9){t->height=atoi(fields[8]);if(t->height<0||t->height>1080)t->height=0;}
@@ -866,6 +867,7 @@ static int library_page_equals(const Browse *a,const Browse *b){
         !strcmp(a->query,b->query);
 }
 static void library_cache_store(const Browse *key){
+    if(key->mode==22&&key->id==11)return; /* Live approval list. */
     if(!library_cacheable(key->mode)||count>VISIBLE)return;
     LibraryPage *p=NULL;
     for(int i=0;i<LIBRARY_RAM_CACHE;i++)
@@ -878,6 +880,7 @@ static void library_cache_store(const Browse *key){
     memcpy(p->rows,titles,(size_t)count*sizeof(Title));
 }
 static int library_cache_restore(Browse next,int push,int pop){
+    if(next.mode==22&&next.id==11)return 0;
     if(!library_cacheable(next.mode))return 0;
     for(int i=0;i<LIBRARY_RAM_CACHE;i++){
         LibraryPage *p=&library_pages[i];

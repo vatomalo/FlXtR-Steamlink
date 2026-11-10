@@ -27,7 +27,12 @@ foreach ($command in @('netsh.exe', 'tar.exe', 'scp.exe')) { Get-Command $comman
 function Start-GamezLimited {
     # The network setup is elevated; the launcher and games must run normally.
     $taskName = 'FlXtR Gamez Companion'
-    $action = New-ScheduledTaskAction -Execute $executable -Argument '--background' -WorkingDirectory (Split-Path -Parent $executable)
+    $updater = Join-Path $directory 'Update-And-Start.ps1'
+    if (Test-Path -LiteralPath $updater) {
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $updater + '"') -WorkingDirectory $directory
+    } else {
+        $action = New-ScheduledTaskAction -Execute $executable -Argument '--background' -WorkingDirectory (Split-Path -Parent $executable)
+    }
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)

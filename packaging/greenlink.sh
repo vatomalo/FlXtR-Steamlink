@@ -181,7 +181,9 @@ while :; do
         fi
         # Legacy route remains available when gamez-bridge.conf is absent.
         # Sunshine must have an application registered with this exact title.
-        sh ./moonlight-run.sh stream 192.168.10.187 "$game" >moonlight-gamez.log 2>&1
+        managed=0
+        if [ "$bridge_mode" -eq 1 ] && [ "$game" = 'FlXtR Gamez' ]; then managed=1; fi
+        FLXTR_GAMEZ_MANAGED_SESSION=$managed sh ./moonlight-run.sh stream 192.168.10.187 "$game" >moonlight-gamez.log 2>&1
         printf '%d\n' "$?" >game-exit-status
         set -- --library games
         continue

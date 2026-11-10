@@ -62,6 +62,8 @@ export SDL_ENABLE_STEAM_CONTROLLERS=1 SENSOR_REPORT_RATE_LIMIT_HZ=0
 echo "FlXtR stream: ${resolution}p/$fps, $bitrate Kbps, audio=$audio"
 dimensions=1280x720
 [ "$resolution" != 1080 ] || dimensions=1920x1080
+quit=--no-quit-after
+[ "${FLXTR_GAMEZ_MANAGED_SESSION:-0}" != 1 ] || quit=--quit-after
 exec "$binary" stream "$1" "$2" --resolution "$dimensions" --fps "$fps" \
     --bitrate "$bitrate" --video-codec H.264 --video-decoder hardware \
-    --audio-config stereo --no-hdr --display-mode fullscreen
+    --audio-config stereo --no-hdr --display-mode fullscreen "$quit"

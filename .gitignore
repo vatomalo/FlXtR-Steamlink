@@ -53,3 +53,5 @@ phone-files/
 /rom-receive-root.txt
 /games-transfer-dirty
 /games-transfer-scanning
+companion/**/bin/
+companion/**/obj/

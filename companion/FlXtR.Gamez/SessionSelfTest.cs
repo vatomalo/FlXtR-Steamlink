@@ -1,0 +1,58 @@
+using System.Diagnostics;
+using System.Text.Json;
+
+namespace FlXtR.Gamez;
+
+internal static class SessionSelfTest
+{
+    public static bool Handle(string[] args)
+    {
+        if(args.Length==0)return false;
+        if(args[0]=="--job-test-sleep") { Thread.Sleep(int.Parse(args[1]));return true; }
+        if(args[0]=="--job-test-parent")
+        {
+            Process.Start(new ProcessStartInfo(Environment.ProcessPath!) {
+                ArgumentList={"--job-test-sleep","1500"},UseShellExecute=false,CreateNoWindow=true })!.Dispose();
+            File.WriteAllText(args[1],"child started");Thread.Sleep(100);return true;
+        }
+        if(args[0]=="--job-test-args") { File.WriteAllText(args[1],JsonSerializer.Serialize(args.Skip(2)));return true; }
+        if(args[0]!="--session-self-test")return false;
+        var result=args[1];var count=0;
+        void Check(bool condition,string text) { if(!condition)throw new IOException(text);count++; }
+        var directory=Path.Combine(Path.GetTempPath(),"FlXtR-session-test-"+Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var marker=Path.Combine(directory,"parent.txt");
+            using(var job=new GameJob())
+            {
+                job.Start(Environment.ProcessPath!,AppContext.BaseDirectory,["--job-test-parent",marker]);
+                var timer=Stopwatch.StartNew();
+                while(!File.Exists(marker)&&timer.ElapsedMilliseconds<10000)Thread.Sleep(20);
+                Check(File.Exists(marker),"Test bootstrap did not start");
+                Thread.Sleep(250);
+                Check(job.Running,"Bootstrap exit lost the still-running game child");
+                while(job.Running&&timer.ElapsedMilliseconds<15000)Thread.Sleep(20);
+                Check(!job.Running,"Game job failed to finish after its child exited");
+            }
+            var argumentFile=Path.Combine(directory,"arguments.json");
+            string[] expected=["", "a b", "quote\"inside", "C:\\folder with space\\", "literal;$(command)"];
+            using(var job=new GameJob())
+            {
+                job.Start(Environment.ProcessPath!,AppContext.BaseDirectory,["--job-test-args",argumentFile,..expected]);
+                var timer=Stopwatch.StartNew();
+                while(job.Running&&timer.ElapsedMilliseconds<10000)Thread.Sleep(20);
+                Check(!job.Running,"Argument test process did not finish");
+                Check(JsonSerializer.Deserialize<string[]>(File.ReadAllText(argumentFile))!.SequenceEqual(expected),"Windows argument quoting changed arguments");
+            }
+            File.WriteAllText(result,JsonSerializer.Serialize(new {ok=true,checks=count}));
+        }
+        catch(Exception error) { File.WriteAllText(result,JsonSerializer.Serialize(new {ok=false,error=error.Message,checks=count}));Environment.ExitCode=1; }
+        finally
+        {
+            foreach(var file in Directory.EnumerateFiles(directory))File.Delete(file);
+            Directory.Delete(directory);
+        }
+        return true;
+    }
+}

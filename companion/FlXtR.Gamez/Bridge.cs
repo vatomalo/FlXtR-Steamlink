@@ -10,23 +10,45 @@ namespace FlXtR.Gamez;
 public sealed class Bridge(Catalog catalog) : IDisposable
 {
     private readonly HttpListener listener = new();
-    private Process? current;
+    private GameJob? current;
+    private Control? dispatcher;
+    private GameShell? shell;
+    private string? gameId,sessionId;
+    private string state="idle";
+    private bool viewer;
+    private long phaseAt,lastPoll,lastShellCheck;
     public string Status { get; private set; } = "Ready";
 
-    public bool Launch(string id)
+    internal void AttachShell(Control control,GameShell gameShell) { dispatcher=control;shell=gameShell; _=control.Handle; }
+    private T OnUI<T>(Func<T> operation) => dispatcher is {IsDisposed:false,InvokeRequired:true}
+        ? (T)dispatcher.Invoke(operation) : operation();
+
+    public bool Launch(string id) => OnUI(() => LaunchCore(id));
+    private bool LaunchCore(string id)
     {
         lock (catalog)
         {
             var game = catalog.Games.SingleOrDefault(item => item.Id == id);
             if (game == null || !game.Approved) throw new InvalidDataException("Unknown or unapproved game");
             if (!Catalog.Supported(game.Exe) || Catalog.Fingerprint(game.Exe) != game.Hash) throw new InvalidDataException("Executable changed; review again");
-            if (current is { HasExited: false }) return false;
+            if (current is not null && current.Running)
+            {
+                if(gameId!=id)return false;
+                shell?.Prepare();current.Activate();return true; // Resume, never duplicate.
+            }
             var directory = string.IsNullOrEmpty(game.Cwd) ? Path.GetDirectoryName(game.Exe)! : game.Cwd;
             if (!Path.IsPathFullyQualified(directory) || !Directory.Exists(directory)) throw new InvalidDataException("Working directory missing");
-            var start = new ProcessStartInfo(game.Exe) { WorkingDirectory = directory, UseShellExecute = false };
-            foreach (var argument in game.Args) start.ArgumentList.Add(argument);
             current?.Dispose();
-            current = Process.Start(start) ?? throw new IOException("Could not start game");
+            current = null;
+            var job=new GameJob();
+            try
+            {
+                shell?.Prepare(); // Black first, Explorer stopped before CreateProcess.
+                job.Start(game.Exe,directory,game.Args);
+                current=job;gameId=id;sessionId=Guid.NewGuid().ToString("N");
+                state="running";viewer=false;phaseAt=Environment.TickCount64;
+            }
+            catch { job.Dispose();shell?.Restore();throw; }
             Status = "Launched " + game.Title;
             return true;
         }
@@ -34,15 +56,49 @@ public sealed class Bridge(Catalog catalog) : IDisposable
 
     public void CloseGame()
     {
-        lock (catalog)
+        OnUI(() =>
         {
-            if (current is { HasExited: false })
+            if (current is not null && current.Running)
             {
-                current.CloseMainWindow();
+                current.RequestClose();
                 Status = "Requested game exit; save your progress";
             }
-        }
+            return true;
+        });
     }
+
+    internal void PollSession()
+    {
+        var now=Environment.TickCount64;
+        if(now-lastPoll<200)return;lastPoll=now;
+        try
+        {
+            if(state=="running"&&current is not null)
+            {
+                if(now-lastShellCheck>1000) { shell?.KeepExplorerStopped();lastShellCheck=now; }
+                current.ShowNewWindows();
+            }
+            if(state=="running" && current is not null && !current.Running)
+            {
+                state="ended";phaseAt=now;Status="Game ended / returning to FlXtR";
+                shell?.CoverExit();
+                if(!viewer)shell?.Restore();
+            }
+            if((state=="running"&&!viewer&&now-phaseAt>30000)||(state=="ended"&&now-phaseAt>15000))
+                shell?.Restore(); // Startup/host failure recovery, never kill the game.
+        }
+        catch(Exception error) when(error is System.ComponentModel.Win32Exception or IOException)
+        { state="failed";Status=error.Message;shell?.Restore(); }
+    }
+
+    public object SessionStatus() => OnUI<object>(() => {
+        PollSession();return new {state,game_id=gameId,session_id=sessionId};
+    });
+    public bool PrepareViewer() => OnUI(() => {
+        PollSession();if(state!="running")return false;
+        shell?.Prepare();current!.Activate();viewer=true;return true;
+    });
+    public void RestoreSession() => OnUI(() => { viewer=false;shell?.Restore();return true; });
 
     public void Start()
     {
@@ -75,6 +131,9 @@ public sealed class Bridge(Catalog catalog) : IDisposable
             {
                 lock (catalog) payload = new { games = catalog.Games.Where(game => game.Approved).Select(game => new { id = game.Id, title = game.Title }).ToArray() };
             }
+            else if(request.HttpMethod=="GET" && request.Url?.AbsolutePath=="/v1/session") payload=SessionStatus();
+            else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/prepare") code=PrepareViewer()?200:409;
+            else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/restore") RestoreSession();
             else if (request.HttpMethod == "POST" && request.Url?.AbsolutePath == "/v1/launch")
             {
                 if (request.ContentLength64 is < 1 or > 32) code = 400;

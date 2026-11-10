@@ -8,6 +8,8 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if(SessionSelfTest.Handle(args))return;
+        if(SunshineSessionCli.IsCommand(args)) { Environment.ExitCode=SunshineSessionCli.Run(args);return; }
         ApplicationConfiguration.Initialize();
         using var mutex = new Mutex(true, @"Local\FlXtR.Gamez", out var first);
         if (!first) return;
@@ -20,8 +22,10 @@ internal static class Program
                 using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
                 key.SetValue("FlXtR Gamez", $"\"{Environment.ProcessPath}\" --background");
             }
+            using var shell = new GameShell();
             using var bridge = new Bridge(catalog);
             using var window = new CompanionWindow(catalog, bridge);
+            bridge.AttachShell(window,shell);
             try { bridge.Start(); }
             catch (Exception error) { MessageBox.Show("Gamez network integration unavailable: " + error.Message); }
             Application.Run(window);
@@ -150,6 +154,7 @@ public sealed class CompanionWindow : Form
 
     private void Poll()
     {
+        bridge.PollSession();
         if (!scanning && Environment.TickCount64 - lastScan > 300000) _ = Scan();
         if (!Native.State(out var pad)) { previous = 0; return; }
         var pressed = (ushort)(pad.Buttons & ~previous);

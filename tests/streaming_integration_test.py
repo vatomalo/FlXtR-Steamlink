@@ -51,6 +51,18 @@ print(json.dumps({"args": sys.argv[1:], "backend": os.getenv("ML_AUDIO"),
         self.assertEqual(result["backend"], "sdl")
         self.assertEqual(result["driver"], "marvell")
 
+    def test_desktop_session_does_not_quit_host_application(self):
+        self.assertIn("--no-quit-after", self.run_launcher()["args"])
+
+    def test_managed_session_quits_sunshine_monitor_on_disconnect(self):
+        previous = os.environ.get("FLXTR_GAMEZ_MANAGED_SESSION")
+        os.environ["FLXTR_GAMEZ_MANAGED_SESSION"] = "1"
+        try:
+            self.assertIn("--quit-after", self.run_launcher()["args"])
+        finally:
+            if previous is None: os.environ.pop("FLXTR_GAMEZ_MANAGED_SESSION", None)
+            else: os.environ["FLXTR_GAMEZ_MANAGED_SESSION"] = previous
+
     def test_profile_changes_real_stream_arguments(self):
         result = self.run_launcher(profile="resolution=1080\nfps=30\nbitrate=20000\n")
         args = result["args"]

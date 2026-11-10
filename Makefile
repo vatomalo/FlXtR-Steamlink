@@ -87,6 +87,11 @@ test: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/kissanime_test.c -o build/kissanime-test $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
 	./build/kissanime-test
 	python3 tests/games_test.py
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_routes_test.c -o build/rom-routes-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/rom-routes-test
+	python3 tests/rom_library_test.py
+	python3 tests/psp_core_test.py
+	python3 tests/rom_helper_upgrade_test.py
 	python3 tests/playstation_iso_test.py
 	python3 tests/catalog_test.py
 	python3 tests/update_test.py
@@ -125,6 +130,11 @@ test-games: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/shutdown_test.c -o build/shutdown-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/shutdown-test
 	python3 tests/games_test.py
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_routes_test.c -o build/rom-routes-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/rom-routes-test
+	python3 tests/rom_library_test.py
+	python3 tests/psp_core_test.py
+	python3 tests/rom_helper_upgrade_test.py
 	python3 tests/game_watchdog_test.py
 .PHONY: test-games
 
@@ -195,6 +205,11 @@ test-rom-menu: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_menu_test.c -o build/rom-menu-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/rom-menu-test
 	python3 tests/games_test.py
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/rom_routes_test.c -o build/rom-routes-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/rom-routes-test
+	python3 tests/rom_library_test.py
+	python3 tests/psp_core_test.py
+	python3 tests/rom_helper_upgrade_test.py
 
 .PHONY: test-rom-menu
 

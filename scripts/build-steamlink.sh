@@ -100,11 +100,16 @@ if [ -f build/music-runtime.tgz ]; then
     printf '1\n' > "$app/assets/music-required-v1"
 fi
 mkdir -p "$app/tools" "$app/scripts"
-cp tools/music.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py "$app/tools/"
+cp tools/music.py tools/psp_core.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py "$app/tools/"
 # Older updaters copy the complete Python runtime before they know new tools.
 mkdir -p "$app/music-runtime/usr/lib/python3.12/site-packages"
 cp tools/rom_transfer.py "$app/music-runtime/usr/lib/python3.12/site-packages/rom_transfer.py"
+for tool in rom_assets state_guard rom_music psp_core; do
+    cp "tools/$tool.py" "$app/music-runtime/usr/lib/python3.12/site-packages/$tool.py"
+done
 cp packaging/tailscale-arm.json "$app/tailscale-arm.json"
+mkdir -p "$app/assets"
+cp packaging/psp-core.json "$app/assets/psp-core.json"
 cp scripts/music-runtime.sh scripts/music-qjs.sh "$app/scripts/"
 if [ -f build/greenlink-preview-arm ]; then cp build/greenlink-preview-arm "$app/greenlink-preview"; fi
 if [ -f build/player-menu-v1 ]; then cp build/player-menu-v1 "$app/player-menu-v1"; fi

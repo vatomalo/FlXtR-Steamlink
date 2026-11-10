@@ -74,7 +74,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
             cp "$staged/moonlight/$part" "moonlight/$part.new" && mv -f "moonlight/$part.new" "moonlight/$part"
         done
     fi
-    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py; do
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/psp_core.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py; do
         if [ -f "$staged/$part" ]; then
             mkdir -p "$(dirname "$part")"
             cp "$staged/$part" "$part.new" && chmod 755 "$part.new" && mv -f "$part.new" "$part"
@@ -104,7 +104,7 @@ if fetch "$base/latest/download/package-manifest.txt" .update-package-manifest; 
 (cd "$staged"; for part in greenlink greenlink-catalog greenlink-player greenlink-download greenlink-audio greenlink-resolver player-menu-v1 greenlink.sh power-activity.sh update.sh controller-idle.sh retroarch-libs/libSDL2-2.0.so.0 cores/snes9x2005_flxtr_libretro.so cores/mame2003_plus_flxtr_libretro.so greenlink-handoff-game tools/handoff.py tools/rom_transfer.py tools/tailscale_link.py tailscale-arm.json cores/gambatte_handoff_libretro.so cores/gambatte-handoff.json cores/fceumm_handoff_libretro.so cores/fceumm-handoff.json; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
-    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh; do
+    for part in scripts/music-runtime.sh scripts/music-qjs.sh tools/music.py tools/psp_core.py tools/rom_assets.py tools/state_guard.py tools/rom_music.py tools/samba_install.py tools/usb_setup.py tools/usb_mount_template.sh; do
         if [ -f "$part" ]; then sha256sum "$part"; fi
     done
     if [ -d music-runtime ]; then find music-runtime -type f -exec sha256sum {} \;; fi

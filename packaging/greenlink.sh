@@ -9,6 +9,16 @@ if command -v flock >/dev/null 2>&1; then
     exec 9>./.session-lock || exit 1
     flock -n 9 || exit 0
 fi
+# Older updaters copy the complete runtime but only a fixed list of tools.
+# Recover newly packaged helpers from that verified runtime on first launch.
+mkdir -p tools
+for tool in rom_assets state_guard rom_music psp_core; do
+    bundled="music-runtime/usr/lib/python3.12/site-packages/$tool.py"
+    if [ -f "$bundled" ] && ! cmp -s "$bundled" "tools/$tool.py"; then
+        cp "$bundled" "tools/$tool.py.new" && mv -f "tools/$tool.py.new" "tools/$tool.py"
+    fi
+done
+
 # The box has no reliable clock after some cold boots. Keep HTTPS validation on.
 if [ "$(date +%Y)" -lt 2024 ] && command -v ntpd >/dev/null 2>&1; then
     ntpd -n -q -p pool.ntp.org >clock.log 2>&1 &

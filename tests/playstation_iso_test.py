@@ -25,12 +25,12 @@ with tempfile.TemporaryDirectory() as tmp:
                        cwd=root, env=env, check=True, capture_output=True)
         return json.loads((root / 'games.json').read_text())
 
-    assert scan() == [], 'An installed matching core is required'
+    assert len(scan()) == 3, 'Recognized discs must remain visible when cores are missing'
     core = cores / 'pcsx_rearmed_libretro.so'
     core.write_bytes(b'core fixture')
     games = scan()
-    assert {g['rom'] for g in games} == {str(psx / 'Disc.iso'), str(psx / 'Uppercase.ISO')}
-    assert all(g['core'] == str(core) for g in games)
+    assert {g['rom'] for g in games} == {str(psx / 'Disc.iso'), str(psx / 'Uppercase.ISO'), str(psp / 'Portable.iso')}
+    assert all(g['core'] == str(core) for g in games if g['rom'].startswith(str(psx)))
     folder = subprocess.run([str(worker), 'games-system', '1', '', '6', '0', '0'],
                             cwd=root, env=env, check=True, capture_output=True, text=True)
     assert 'total=2' in folder.stdout
@@ -38,10 +38,11 @@ with tempfile.TemporaryDirectory() as tmp:
     runtime = home / 'retroarch.exec'
     runtime.write_text('#!/usr/bin/env python3\nimport json,sys\nopen("argv.json","w").write(json.dumps(sys.argv[1:]))\n')
     runtime.chmod(0o755)
-    (root / 'game-request').write_text('1 4 6\n')
+    selected=next(i for i,g in enumerate(games,1) if g['core']==str(core))
+    (root / 'game-request').write_text(f'{selected} 4 6\n')
     subprocess.run([str(worker), '--run-game'], cwd=root, env=env, check=True)
     args = json.loads((home / 'argv.json').read_text())
-    assert args[-3:] == ['--libretro', str(core), games[0]['rom']]
+    assert args[-3:] == ['--libretro', str(core), games[selected-1]['rom']]
     psp_core = cores / 'ppsspp_libretro.so'
     psp_core.write_bytes(b'core fixture')
     pspiso = home / 'roms/PSPISO'
@@ -54,5 +55,12 @@ with tempfile.TemporaryDirectory() as tmp:
     folder = subprocess.run([str(worker), 'games-system', '1', '', '7', '0', '0'],
                             cwd=root, env=env, check=True, capture_output=True, text=True)
     assert 'total=4' in folder.stdout
+    # A manually installed external PSP core remains selected; optional FlXtR setup
+    # must not download or substitute its own core merely because the name matches.
+    (root/'assets').mkdir();(root/'assets/psp-core.json').write_text('{invalid optional manifest')
+    selected=next(i for i,g in enumerate(games,1) if g['core']==str(psp_core))
+    (root/'game-request').write_text(f'{selected} 4 6\n')
+    subprocess.run([str(worker),'--run-game'],cwd=root,env=env,check=True)
+    assert json.loads((home/'argv.json').read_text())[-2]==str(psp_core)
 print('PASS: PSP ISO/PBP/CSO import and PSP folder routing with an installed PPSSPP core')
 print('PASS: PlayStation .iso/.ISO import, matching core, PSP isolation and launch')

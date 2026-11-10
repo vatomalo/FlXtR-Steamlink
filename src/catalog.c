@@ -728,6 +728,7 @@ int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
     if(argc==3&&!strcmp(argv[1],"--record-gamez-play"))return gamez_record_play(argv[2]);
     if(argc==3&&!strcmp(argv[1],"--unapprove-gamez")){if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;int result=gamez_unapprove(argv[2]);catalog_http_close();return result;}
+    if(argc==4&&!strcmp(argv[1],"--rename-rom"))return games_rename_rom(argv[2],argv[3]);
     if(argc==4&&!strcmp(argv[1],"--rename-gamez")){if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;int result=gamez_rename(argv[2],argv[3]);catalog_http_close();return result;}
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);

@@ -4,7 +4,8 @@ static int pc_game_art_id(json_object *root,const char *title){
     if(!root||!json_object_object_get_ex(root,"items",&items)||!json_object_is_type(items,json_type_array))return 0;
     char wanted[256];size_t length=art_normalize(title,wanted,sizeof(wanted));
     int chosen=0,best=10000;
-    for(size_t i=0;i<json_object_array_length(items);i++){
+    size_t count=json_object_array_length(items);
+    for(size_t i=0;i<count;i++){
         json_object *item=json_object_array_get_idx(items,i);
         const char *name=string(item,"name");
         if(strcmp(string(item,"type"),"app")||strcasestr(name,"soundtrack")||strcasestr(name,"arrangement")||strcasestr(name,"demo"))continue;

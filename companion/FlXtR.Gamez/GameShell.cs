@@ -47,6 +47,7 @@ internal sealed class GameShell : IDisposable
             backdrop.TopMost=true;
             backdrop.Show(); backdrop.BringToFront(); backdrop.Refresh();
         }
+        if(backdrop is {IsDisposed:false})backdrop.Bounds=Screen.PrimaryScreen!.Bounds;
         hidden=true;
         try
         {

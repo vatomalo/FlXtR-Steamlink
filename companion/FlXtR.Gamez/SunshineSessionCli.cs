@@ -28,7 +28,7 @@ internal static class SunshineSessionCli
                 return 0;
             }
             string? session=null;
-            var failures=0;
+            var failures=0;var displayChecks=0;var connected=Stopwatch.StartNew();
             while(true)
             {
                 try
@@ -39,6 +39,12 @@ internal static class SunshineSessionCli
                     var id=root.GetProperty("session_id").GetString();
                     session ??= id;
                     if(state is not ("running" or "starting") || id!=session)return 0;
+                    // Sunshine/display changes can settle after prep. Re-check only
+                    // during startup; never keep stealing focus during gameplay.
+                    if(displayChecks<2&&connected.ElapsedMilliseconds>=(displayChecks==0?1000:3000)){
+                        using var prepared=client.PostAsync("/v1/session/prepare",new ByteArrayContent([])).GetAwaiter().GetResult();
+                        if(prepared.IsSuccessStatusCode)displayChecks++;
+                    }
                     failures=0;
                 }
                 catch(Exception error) when(error is HttpRequestException or TaskCanceledException or JsonException)

@@ -44,6 +44,13 @@ internal sealed class GameJob : IDisposable
     [DllImport("kernel32.dll", SetLastError=true)] private static extern bool IsProcessInJob(IntPtr process, SafeFileHandle job, out bool member);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    [StructLayout(LayoutKind.Sequential)] private struct WindowRect {public int Left,Top,Right,Bottom;}
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window,out WindowRect rectangle);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr window,int command);
+    [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")] private static extern IntPtr WindowStyle(IntPtr window,int index);
+    internal sealed record WindowInfo(int Pid,string Process,int X,int Y,int Width,int Height,bool Minimized);
+    private bool fullscreenWindows;
     private readonly HashSet<IntPtr> visibleWindows = [];
     private readonly SafeFileHandle handle;
     public string? Name {get;}
@@ -93,23 +100,47 @@ internal sealed class GameJob : IDisposable
     }
 
     public void RequestClose() => VisitProcesses(process => process.CloseMainWindow());
-    public bool Activate()
+    public bool Activate(bool fullscreen=false)
     {
-        var found=false;
-        VisitProcesses(process => {
-            if(found || process.MainWindowHandle==IntPtr.Zero)return;
-            ShowGameWindow(process.MainWindowHandle);found=true;
+        fullscreenWindows|=fullscreen;
+        var windows=new List<(IntPtr Handle,long Area)>();
+        VisitProcesses(process=>{
+            var window=process.MainWindowHandle;
+            if(window!=IntPtr.Zero&&GetWindowRect(window,out var bounds))
+                windows.Add((window,(long)Math.Max(0,bounds.Right-bounds.Left)*Math.Max(0,bounds.Bottom-bounds.Top)));
         });
-        return found;
+        // Launchers/splash windows must not win over the main game when resuming.
+        var ordered=windows.DistinctBy(item=>item.Handle).OrderBy(item=>item.Area).ToArray();
+        for(int i=0;i<ordered.Length;i++)ShowGameWindow(ordered[i].Handle,i==ordered.Length-1);
+        return ordered.Length>0;
     }
-    private void ShowGameWindow(IntPtr window)
+    internal static int FitAction(long style,long extendedStyle,int width,int height,int screenWidth,int screenHeight)
     {
-        // The black cover stays above unrelated Windows apps. Only owned game
-        // windows are raised over it; a bootstrap may hand off to a new window.
+        // Do not stretch dialogs, tool windows or tiny launch splashes.
+        if((extendedStyle&0x80)!=0||width<640||height<360||screenWidth<=0||screenHeight<=0)return 0;
+        if(Math.Abs(width-screenWidth)<=32&&Math.Abs(height-screenHeight)<=32)return 0;
+        if((style&(0x40000|0x10000))!=0)return 3; // SW_MAXIMIZE for ordinary sizable games.
+        return (style&0xC00000)==0?1:0; // Fit a borderless game; leave fixed-size captioned dialogs.
+    }
+    private void ShowGameWindow(IntPtr window,bool focus=true)
+    {
+        if(IsIconic(window))ShowWindowAsync(window,9); // SW_RESTORE; never leave a game minimized behind black.
+        if(fullscreenWindows&&GetWindowRect(window,out var rectangle)&&Screen.PrimaryScreen is {} screen){
+            var bounds=screen.Bounds;
+            int action=FitAction(WindowStyle(window,-16).ToInt64(),WindowStyle(window,-20).ToInt64(),
+                rectangle.Right-rectangle.Left,rectangle.Bottom-rectangle.Top,bounds.Width,bounds.Height);
+            if(action==3)ShowWindowAsync(window,3);
+            else if(action==1)SetWindowPos(window,new IntPtr(-1),bounds.X,bounds.Y,bounds.Width,bounds.Height,0x10|0x4000);
+        }
         SetWindowPos(window,new IntPtr(-1),0,0,0,0,0x1|0x2|0x10|0x4000);
-        // Never wait on the game's window thread from our UI/API dispatcher.
-        _=Task.Run(()=>SetForegroundWindow(window));
+        if(focus)_=Task.Run(()=>SetForegroundWindow(window));
         visibleWindows.Add(window);
+    }
+    internal WindowInfo[] WindowDiagnostics(){
+        var result=new List<WindowInfo>();
+        VisitProcesses(process=>{var window=process.MainWindowHandle;if(window!=IntPtr.Zero&&GetWindowRect(window,out var rect))
+            result.Add(new WindowInfo(process.Id,process.ProcessName,rect.Left,rect.Top,rect.Right-rect.Left,rect.Bottom-rect.Top,IsIconic(window)));});
+        return result.ToArray();
     }
     public void ShowNewWindows() => VisitProcesses(process => {
         var window=process.MainWindowHandle;

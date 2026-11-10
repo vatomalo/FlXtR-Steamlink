@@ -119,10 +119,13 @@ public sealed class Bridge(Catalog catalog) : IDisposable
     }
 
     public object SessionStatus() => new {state,game_id=gameId,session_id=sessionId};
+    public object DisplayStatus()=>OnUI<object>(()=>new {state,game_id=gameId,
+        screens=Screen.AllScreens.Select(screen=>new {screen.Primary,screen.Bounds.X,screen.Bounds.Y,screen.Bounds.Width,screen.Bounds.Height}).ToArray(),
+        windows=current?.WindowDiagnostics()??[]});
     public object Health(){var now=Environment.TickCount64;var started=Interlocked.Read(ref launchingAt);return new {state,pid=Environment.ProcessId,ui_age_ms=Math.Max(0,now-Interlocked.Read(ref heartbeat)),launching_for_ms=started==0?0:Math.Max(0,now-started)};}
     public bool PrepareViewer() => OnUI(() => {
         PollSession();if(state!="running")return false;
-        shell?.Prepare();current!.Activate();viewer=true;SaveSession();return true;
+        shell?.Prepare();current!.Activate(true);viewer=true;SaveSession();return true;
     });
     public void RestoreSession() => OnUI(() => { viewer=false;if(state=="running")SaveSession();shell?.Restore();return true; });
 
@@ -159,6 +162,7 @@ public sealed class Bridge(Catalog catalog) : IDisposable
             }
             else if(request.HttpMethod=="GET" && request.Url?.AbsolutePath=="/v1/session") payload=SessionStatus();
             else if(request.HttpMethod=="GET" && request.Url?.AbsolutePath=="/v1/health") payload=Health();
+            else if(request.HttpMethod=="GET" && request.Url?.AbsolutePath=="/v1/display") payload=DisplayStatus();
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/prepare") code=PrepareViewer()?200:409;
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/restore") RestoreSession();
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/rename")

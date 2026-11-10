@@ -103,3 +103,17 @@ does not stop the scheduled task or terminate game processes. Native job tests
 cover reopening an existing job and keeping a game alive after the launcher's
 handle closes. `Test-Watchdog.ps1` runs the actual PowerShell supervisor against
 isolated test children to exercise both exit and hung-UI restart paths.
+
+
+Managed stream preparation restores minimized owned game windows and prioritizes
+larger game windows over launcher/splash windows when resuming. Sizable game
+windows are maximized; undersized borderless game windows are fitted to the
+primary capture display. Fixed-size captioned dialogs, tool windows and tiny
+splashes keep their dimensions. Startup rechecks at one and three seconds cover
+late display-mode changes; foreground recovery does not run continuously during
+play. The black backdrop follows primary display size changes.
+
+The authenticated `/v1/display` diagnostic endpoint reports display rectangles
+and owned game-window rectangles/minimized state. It does not expose tokens or
+change the game. Physical confirmation is required when distinguishing a host
+window issue from a client decoder/display issue.

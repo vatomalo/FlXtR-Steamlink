@@ -1,0 +1,32 @@
+name: Gamez session regression
+on:
+  push:
+    branches: [optimization]
+    paths: ['companion/**', '.github/workflows/gamez-session.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-session:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Build companion
+        run: dotnet publish companion/FlXtR.Gamez -c Release -r win-x64 --self-contained true -o build/gamez-session
+      - name: Test real Windows game window recovery and session lifecycle
+        shell: pwsh
+        run: |
+          $exe = Join-Path $pwd 'build/gamez-session/FlXtR.Gamez.exe'
+          $result = Join-Path $pwd 'build/session-result.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--session-self-test', $result) -PassThru -Wait
+          Get-Content $result
+          if ($process.ExitCode -ne 0 -or !(Get-Content $result -Raw | ConvertFrom-Json).ok) { throw 'Gamez regression failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Gamez-session-results
+          path: build/session-result.json

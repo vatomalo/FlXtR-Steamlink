@@ -15,6 +15,12 @@ internal static class SessionSelfTest
             if(attempt==1)Environment.ExitCode=19;else Thread.Sleep(60000);
             return true;
         }
+        if(args[0]=="--job-test-window"){
+            ApplicationConfiguration.Initialize();
+            using var window=new Form{Text="FlXtR isolated game window test",Bounds=new Rectangle(80,80,800,450),WindowState=FormWindowState.Minimized};
+            using var timer=new System.Windows.Forms.Timer{Interval=15000};timer.Tick+=(_,_)=>window.Close();timer.Start();
+            window.Shown+=(_,_)=>File.WriteAllText(args[1],"ready");Application.Run(window);return true;
+        }
         if(args[0]=="--job-test-sleep") { Thread.Sleep(int.Parse(args[1]));return true; }
         if(args[0]=="--job-test-parent")
         {
@@ -38,6 +44,23 @@ internal static class SessionSelfTest
             {
                 var rejected=false;try { renamed.Rename(invalid); }catch(InvalidDataException) { rejected=true; }
                 Check(rejected&&renamed.Title=="Sifu","Invalid rename changed the title");
+            }
+            Check(GameJob.FitAction(0x40000,0,800,450,1920,1080)==3,"Resizable game did not request maximization");
+            Check(GameJob.FitAction(0x80000000,0,960,540,1920,1080)==1,"Quarter-screen borderless game did not request fitting");
+            Check(GameJob.FitAction(0xC00000,0,800,450,1920,1080)==0,"Fixed-size dialog was stretched");
+            Check(GameJob.FitAction(0x40000,0x80,800,450,1920,1080)==0,"Tool window was stretched");
+            Check(GameJob.FitAction(0x40000,0,1920,1080,1920,1080)==0,"Already fullscreen window was resized");
+            var readyFile=Path.Combine(directory,"window-ready.txt");
+            using(var windowJob=new GameJob()){
+                windowJob.Start(Environment.ProcessPath!,AppContext.BaseDirectory,["--job-test-window",readyFile]);
+                var deadline=Stopwatch.StartNew();while(!File.Exists(readyFile)&&deadline.ElapsedMilliseconds<10000)Thread.Sleep(20);
+                Check(File.Exists(readyFile),"Test game window did not appear");
+                Check(windowJob.Activate(true),"Minimized game window was not found");
+                Thread.Sleep(500);windowJob.Activate(true);Thread.Sleep(500);
+                var windows=windowJob.WindowDiagnostics();var screen=Screen.PrimaryScreen!.Bounds;
+                Check(windows.Any(window=>!window.Minimized&&window.Width>=screen.Width-32&&window.Height>=screen.Height-64),"Game retry did not restore and maximize the game window");
+                windowJob.RequestClose();var close=Stopwatch.StartNew();while(windowJob.Running&&close.ElapsedMilliseconds<10000)Thread.Sleep(20);
+                Check(!windowJob.Running,"Test game window did not close normally");
             }
             var marker=Path.Combine(directory,"parent.txt");
             var gameFile=Path.Combine(directory,"installed-game.exe");File.WriteAllText(gameFile,"installed game data");

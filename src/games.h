@@ -284,7 +284,6 @@ static int games_rename_rom(const char *key,const char *title){
 static int games_list_filtered(int page,int refresh,int folder){
 
     FILE *version=fopen("games-import-version","r");int imported=0;if(version){if(fscanf(version,"%d",&imported)!=1)imported=0;fclose(version);}if(imported!=2)refresh=1;
-    struct stat index_stat;if(!stat("games.json",&index_stat)&&time(NULL)-index_stat.st_mtime>300)refresh=1;
     if(!access("games-transfer-dirty",F_OK)){rename("games-transfer-dirty","games-transfer-scanning");refresh=1;}
     json_object *games=refresh?NULL:games_read("games.json");
     if(games&&!json_object_is_type(games,json_type_array)){json_object_put(games);games=NULL;}

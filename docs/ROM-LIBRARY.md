@@ -16,8 +16,9 @@ cores (including catsfc for SNES and older FBA/MAME arcade cores), and retains
 recognized ROMs whose engine is missing. Such entries explicitly say CORE
 MISSING. Unknown/unsupported file extensions and BIOS ZIPs remain excluded. L2 returns
 to folders and requests a rescan; device transfers invalidate cached ROM pages.
-ROM pages expire from the RAM cache after a minute, and the disk index is
-rescanned when older than five minutes.
+ROM pages expire from the RAM cache after a minute. Manual filesystem copies
+are discovered with L2; downloads/transfers mark the index dirty automatically.
+Unchanged large ROM collections are not repeatedly rescanned on a timer.
 
 PPSSPP is a separate optional ARMv7/GLES2 core with ARM dynarec, built against
 the Steam Link SDK rather than a modern generic Linux ABI. Its pinned upstream

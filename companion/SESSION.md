@@ -21,6 +21,9 @@ The companion checks approval and the executable hash again before launching.
 PC cover art is matched against Steam's public title search and downloaded from
 its portrait library artwork. Covers load through the existing background art
 queue and persistent cache; missing artwork leaves the normal placeholder.
+Use **Rename selected** in the Windows launcher to edit a game's display title.
+Its ID, executable, arguments and approval remain unchanged. Reopen GAMEZ on
+the TV to load the new title and its matching cover.
 
 Before creating the game process, the companion shows a black cover and stops
 Explorer in the current user's Windows session. Owned game windows are raised

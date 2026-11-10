@@ -23,6 +23,15 @@ internal static class SessionSelfTest
         Directory.CreateDirectory(directory);
         try
         {
+            var renamed=new Game {Id="ABC123",Title="Win64",Approved=true,Exe=@"D:\Gamez\Sifu\game.exe",Hash="original",Args=["--example"]};
+            renamed.Rename("  Sifu  ");
+            Check(renamed.Title=="Sifu","Rename failed to trim title");
+            Check(renamed.Id=="ABC123"&&renamed.Approved&&renamed.Hash=="original"&&renamed.Exe.EndsWith("game.exe")&&renamed.Args.SequenceEqual(new[]{"--example"}),"Rename changed launch configuration or approval");
+            foreach(var invalid in new[]{" ","bad\nname",new string('x',80)})
+            {
+                var rejected=false;try { renamed.Rename(invalid); }catch(InvalidDataException) { rejected=true; }
+                Check(rejected&&renamed.Title=="Sifu","Invalid rename changed the title");
+            }
             var marker=Path.Combine(directory,"parent.txt");
             using(var job=new GameJob())
             {

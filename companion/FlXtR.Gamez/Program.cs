@@ -64,6 +64,7 @@ public sealed class CompanionWindow : Form
         scan = Add(actions, "Scan libraries", async () => await Scan());
         Add(actions, "Approve selected", () => Review(true));
         Add(actions, "Disable selected", () => Review(false));
+        Add(actions, "Rename selected", RenameSelected);
         Add(actions, "Launch selected", Launch);
         Add(actions, "Exit game", bridge.CloseGame);
         Add(actions, "Open settings / overrides", () => Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { Catalog.FilePath } }));
@@ -150,6 +151,24 @@ public sealed class CompanionWindow : Form
     private void Launch()
     {
         if (games.SelectedIndex >= 0) bridge.Launch(catalog.Games[games.SelectedIndex].Id);
+    }
+
+    private void RenameSelected()
+    {
+        if(games.SelectedIndex<0)return;
+        var game=catalog.Games[games.SelectedIndex];
+        using var dialog=new Form { Text="Rename game",FormBorderStyle=FormBorderStyle.FixedDialog,
+            StartPosition=FormStartPosition.CenterParent,ClientSize=new Size(460,115),MinimizeBox=false,MaximizeBox=false,ShowInTaskbar=false };
+        var name=new TextBox { Text=game.Title,Left=16,Top=16,Width=428,MaxLength=79 };
+        var save=new Button {Text="Save",Left=264,Top=62,Width=85,DialogResult=DialogResult.None};
+        var cancel=new Button {Text="Cancel",Left=359,Top=62,Width=85,DialogResult=DialogResult.Cancel};
+        save.Click+=(_,_)=>{
+            try { catalog.Rename(game.Id,name.Text);dialog.DialogResult=DialogResult.OK; }
+            catch(InvalidDataException error) { MessageBox.Show(dialog,error.Message,"Rename game"); }
+        };
+        dialog.Controls.AddRange([name,save,cancel]);dialog.AcceptButton=save;dialog.CancelButton=cancel;
+        dialog.Shown+=(_,_)=>{name.Focus();name.SelectAll();};
+        if(dialog.ShowDialog(this)==DialogResult.OK)RefreshGames();
     }
 
     private void Poll()

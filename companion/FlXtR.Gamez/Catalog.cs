@@ -15,6 +15,13 @@ public sealed record Game
     public List<string> Args { get; set; } = [];
     public long ReviewedLength { get; set; }
     public long ReviewedWriteTime { get; set; }
+    public void Rename(string title)
+    {
+        title=title.Trim();
+        if(title.Length==0||Encoding.UTF8.GetByteCount(title)>79||title.Any(char.IsControl))
+            throw new InvalidDataException("Enter a game title without line breaks; use a shorter title if it is too long.");
+        Title=title;
+    }
 }
 
 public sealed class Catalog
@@ -44,6 +51,16 @@ public sealed class Catalog
         Directory.CreateDirectory(DirectoryPath);
         File.WriteAllText(FilePath + ".tmp", JsonSerializer.Serialize(this, Json));
         File.Move(FilePath + ".tmp", FilePath, true);
+    }
+
+    public void Rename(string id,string title)
+    {
+        lock(this)
+        {
+            var game=Games.SingleOrDefault(game=>game.Id==id)??throw new InvalidDataException("Game is no longer in the catalog");
+            game.Rename(title);
+            Save();
+        }
     }
 
     public static bool Supported(string path)

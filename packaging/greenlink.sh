@@ -93,7 +93,9 @@ while :; do
                 continue
             fi
             token=$(cat "$GAMEZ_TOKEN_FILE")
-            if ! curl --fail --silent --show-error --connect-timeout 3 --max-time 12 \
+            # Windows may need longer to hash a large game executable. Once
+            # accepted, a retry resumes the same game instead of launching twice.
+            if ! curl --fail --silent --show-error --connect-timeout 3 --max-time 120 \
                 -X POST -H "Authorization: Bearer $token" \
                 --data-binary "$game_id" "http://$GAMEZ_HOST/v1/launch" \
                 >gamez-bridge-response.json 2>moonlight-gamez.log; then

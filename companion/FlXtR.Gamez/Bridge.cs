@@ -30,12 +30,12 @@ public sealed class Bridge(Catalog catalog) : IDisposable
         {
             var game = catalog.Games.SingleOrDefault(item => item.Id == id);
             if (game == null || !game.Approved) throw new InvalidDataException("Unknown or unapproved game");
-            if (!Catalog.Supported(game.Exe) || Catalog.Fingerprint(game.Exe) != game.Hash) throw new InvalidDataException("Executable changed; review again");
             if (current is not null && current.Running)
             {
                 if(gameId!=id)return false;
                 shell?.Prepare();current.Activate();return true; // Resume, never duplicate.
             }
+            if (!Catalog.Supported(game.Exe) || Catalog.Fingerprint(game.Exe) != game.Hash) throw new InvalidDataException("Executable changed; review again");
             var directory = string.IsNullOrEmpty(game.Cwd) ? Path.GetDirectoryName(game.Exe)! : game.Cwd;
             if (!Path.IsPathFullyQualified(directory) || !Directory.Exists(directory)) throw new InvalidDataException("Working directory missing");
             current?.Dispose();

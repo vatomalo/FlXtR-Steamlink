@@ -134,7 +134,7 @@ static void game_infer(json_object *games,const char *rom,const char *label){
     const char *options[12]={name,NULL};int option_count=1;
     const char *alternatives=!strcmp(name,"snes9x2005")?"snes9x2005_flxtr snes9x2005_plus_flxtr snes9x2010 snes9x_next snes9x catsfc":
         !strcmp(name,"fbneo")?"fbalpha2012_neogeo fbalpha2012 mame2003_plus mame2003 mame2000":
-        !strcmp(name,"gpsp")?"mgba":!strcmp(name,"pcsx_rearmed")?"mednafen_psx":
+        !strcmp(name,"fceumm")?"nestopia quicknes":!strcmp(name,"gambatte")?"gearboy":!strcmp(name,"gpsp")?"mgba":!strcmp(name,"pcsx_rearmed")?"mednafen_psx":
         !strcmp(name,"mednafen_psx")?"pcsx_rearmed":!strcmp(name,"picodrive")?"genesis_plus_gx":"";
     char choices[256];snprintf(choices,sizeof(choices),"%s",alternatives);char *save=NULL;
     for(char *part=strtok_r(choices," ",&save);part&&option_count<11;part=strtok_r(NULL," ",&save))options[option_count++]=part;
@@ -210,14 +210,14 @@ static json_object *games_import(void){
 }
 static const char *const local_folders[]={"NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","NEO GEO","ARCADE","OTHER"};
 static int local_category(const char *core,const char *rom){
-    if(strstr(core,"fceumm"))return 1;
+    if(strstr(core,"fceumm")||strstr(core,"nestopia")||strstr(core,"quicknes"))return 1;
     if(strstr(core,"snes9x")||strstr(core,"catsfc"))return 2;
-    if(strstr(core,"gambatte"))return strcasestr(rom,".gbc")?4:3;
+    if(strstr(core,"gambatte")||strstr(core,"gearboy"))return strcasestr(rom,".gbc")?4:3;
     if(strstr(core,"gpsp")||strstr(core,"mgba"))return 5;
     if(strstr(core,"pcsx_rearmed")||strstr(core,"mednafen_psx"))return 6;
     if(strstr(core,"ppsspp"))return 7;
-    if(strstr(core,"fbneo")||strcasestr(rom,"/neogeo/"))return 8;
-    if(strstr(core,"mame"))return 9;
+    if(strcasestr(core,"neogeo")||strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/"))return 8;
+    if(strstr(core,"mame")||strstr(core,"fbneo")||strstr(core,"fbalpha"))return 9;
     return 10;
 }
 static int games_folders(int page){

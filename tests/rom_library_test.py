@@ -40,6 +40,13 @@ with tempfile.TemporaryDirectory() as directory:
  (root/'games-import-version').unlink();run('games',1,'',1,0,0)
  assert any(g['rom']==str(outside) for g in json.loads((root/'games.json').read_text()))
  assert name in page('games-system',folder=2)
+ games=json.loads((root/'games.json').read_text())
+ for filename,core_name,title in [('quick.nes','quicknes','QuickNES entry'),('arcade.zip','fbalpha2012','FBA entry')]:
+  rom=root/filename;rom.write_bytes(b'fixture');core_path=home/'cores'/f'{core_name}_libretro.so';core_path.write_bytes(b'fixture')
+  games.append({'rom':str(rom),'core':str(core_path),'title':title})
+ (root/'games.json').write_text(json.dumps(games))
+ assert 'QuickNES entry' in page('games-system',folder=1)
+ assert 'FBA entry' in page('games-system',folder=9)
  for invalid in ('','   ','bad\nname','a'*80):assert run('--rename-rom',key,invalid,good=False).returncode!=0
  assert run('--rename-rom','0000000000000000','Unknown',good=False).returncode!=0
  assert run('--rename-rom','../bad','Unknown',good=False).returncode!=0

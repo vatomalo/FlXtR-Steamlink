@@ -57,3 +57,4 @@ companion/**/bin/
 companion/**/obj/
 gamez-metadata/
 gamez-history.json*
+gamez-names.json*

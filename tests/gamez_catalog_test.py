@@ -195,9 +195,13 @@ Path('stream.json').write_text(json.dumps({'args':sys.argv[1:], 'managed':os.get
         title = "Sifu's name; $(literal)"
         result = subprocess.run([str(self.binary), '--rename-gamez', GAME['id'], title], cwd=self.app, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.games[0], {'id': GAME['id'], 'title': title})
+        self.assertEqual(self.games[0], GAME)
+        self.assertEqual(json.loads((self.app / 'gamez-names.json').read_text())[GAME['id']], title)
+        self.assertEqual(self.requests, [])
         self.assertFalse((self.app / 'gamez-history.json').exists())
         self.assertIn(title, self.catalog().stdout)
+        self.games = []
+        self.assertIn('total=0', self.catalog().stdout)
 
 
 if __name__ == '__main__':

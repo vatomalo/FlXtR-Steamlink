@@ -26,9 +26,10 @@ Its ID, executable, arguments and approval remain unchanged. Reopen GAMEZ on
 the TV to load the new title and its matching cover.
 
 On the TV, Triangle/Y opens a rename keyboard for the selected approved game;
-Start opens genre and sort controls. Rename uses the authenticated companion
-endpoint and requires the matching Windows update. It preserves approval and
-launch configuration. Genre and sort choices persist across restarts.
+Start opens genre and sort controls. TV names are cosmetic overrides saved in
+`gamez-names.json` by companion ID. They do not require a PC update or alter the
+PC catalog, approval or launch configuration. The override also drives artwork
+and metadata matching. Genre and sort choices persist across restarts.
 
 Latest orders by Steam release date. Most Popular orders by Steam recommendation
 totals. These public metadata fields refresh through the background artwork queue

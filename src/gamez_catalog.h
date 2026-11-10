@@ -84,14 +84,18 @@ static int gamez_request(const char *path,const char *body,Buffer *response,long
 }
 static int gamez_rename(const char *id,const char *title){
     if(!gamez_valid_id(id)||!title[0]||strlen(title)>79)return 2;
-    json_object *request=json_object_new_object();
-    json_object_object_add(request,"id",json_object_new_string(id));
-    json_object_object_add(request,"title",json_object_new_string(title));
-    Buffer response={.limit=4096};long status=0;
-    int result=gamez_request("/v1/rename",json_object_to_json_string(request),&response,&status);
-    json_object_put(request);free(response.data);
-    if(!result&&status==200)return 0;
-    puts(status==404?"UPDATE GAMEZ LAUNCHER ON PC TO RENAME":"COULD NOT RENAME / CHECK PC LAUNCHER");return 1;
+    for(const unsigned char *p=(const unsigned char *)title;*p;p++)if(*p<32||*p==127)return 2;
+    char name[80];snprintf(name,sizeof(name),"%s",title);
+    size_t length=strlen(name);while(length&&name[length-1]==' ')name[--length]=0;
+    char *first=name;while(*first==' ')first++;
+    if(!*first)return 2;
+    json_object *names=json_object_from_file("gamez-names.json");
+    if(!names||!json_object_is_type(names,json_type_object)){if(names)json_object_put(names);names=json_object_new_object();}
+    json_object_object_add(names,id,json_object_new_string(first));
+    int ok=!json_object_to_file("gamez-names.json.next",names)&&!rename("gamez-names.json.next","gamez-names.json");
+    json_object_put(names);
+    if(!ok)puts("COULD NOT SAVE GAME NAME");
+    return ok?0:1;
 }
 static int gamez_list(int page,int genre,int order){
     if(genre<0||genre>=GAMEZ_GENRES||order<0||order>=GAMEZ_ORDERS)return -1;
@@ -109,7 +113,7 @@ static int gamez_list(int page,int genre,int order){
     if(count>5000){json_object_put(root);return -1;}
     GamezItem *items=calloc(count?count:1,sizeof(*items));
     if(!items){json_object_put(root);return -1;}
-    json_object *history=json_object_from_file("gamez-history.json");size_t kept=0;
+    json_object *history=json_object_from_file("gamez-history.json"),*names=json_object_from_file("gamez-names.json");size_t kept=0;
     for(size_t i=0;i<count;i++){
         json_object *game=json_object_array_get_idx(games,i),*id_value=NULL,*title_value=NULL;
         if(!json_object_object_get_ex(game,"id",&id_value)||!json_object_object_get_ex(game,"title",&title_value)||
@@ -122,6 +126,11 @@ static int gamez_list(int page,int genre,int order){
             if(json_object_object_get_ex(other,"id",&other_id)&&json_object_is_type(other_id,json_type_string)&&!strcmp(json_object_get_string(other_id),id)){duplicate=1;break;}
         }
         if(duplicate)continue;
+        json_object *alias=NULL;
+        if(names&&json_object_object_get_ex(names,id,&alias)&&json_object_is_type(alias,json_type_string)){
+            const char *name=json_object_get_string(alias);
+            if(name[0]&&strlen(name)<=79)title=name;
+        }
         gamez_queue_info(title);
         char path[80];gamez_info_path(title,path,sizeof(path));
         json_object *info=json_object_from_file(path),*tags=NULL,*value=NULL;
@@ -157,5 +166,6 @@ static int gamez_list(int page,int genre,int order){
         snprintf(entry->poster,sizeof(entry->poster),"gameart:PC|%s",entry->title);
     }
     if(history)json_object_put(history);
+    if(names)json_object_put(names);
     free(items);json_object_put(root);return 0;
 }

@@ -189,7 +189,7 @@ static json_object *games_import(void){
     /* Preserve valid explicitly imported entries and their order during migration.
      * Directory rescans add discoveries; they must not erase custom library paths. */
     json_object *previous=games_read("games.json");
-    if(previous&&json_object_is_type(previous,json_type_array))for(size_t i=0;i<json_object_array_length(previous)&&i<GAME_LIMIT;i++){
+    if(previous&&json_object_is_type(previous,json_type_array))for(size_t i=0;i<(size_t)json_object_array_length(previous)&&i<GAME_LIMIT;i++){
         json_object *item=json_object_array_get_idx(previous,i);
         const char *rom=string(item,"rom"),*core=string(item,"core"),*label=string(item,"title");
         if(!game_file(rom))continue;
@@ -269,7 +269,7 @@ static int games_rename_rom(const char *key,const char *title){
     char name[80];snprintf(name,sizeof(name),"%s",title);size_t n=strlen(name);while(n&&name[n-1]==' ')name[--n]=0;
     char *first=name;while(*first==' ')first++;if(!*first)return 2;
     json_object *games=games_read("games.json");int found=0;
-    if(games&&json_object_is_type(games,json_type_array))for(size_t i=0;i<json_object_array_length(games);i++){
+    if(games&&json_object_is_type(games,json_type_array))for(size_t i=0;i<(size_t)json_object_array_length(games);i++){
         const char *path=string(json_object_array_get_idx(games,i),"rom");char id[17];rom_identity(path,id);
         if(!strcmp(id,key)){found=1;break;}
     }

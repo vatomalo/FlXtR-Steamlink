@@ -8,13 +8,14 @@
 #include <dirent.h>
 static volatile sig_atomic_t stopped;
 static int64_t deadline;
-static int generated,fail_at_end;
+static int generated,fail_at_end,disk_read_wait_count,packet_size=65536;
 static int fake_read(AVFormatContext *fmt,AVPacket *p){
     (void)fmt;
     if(generated==2200)return fail_at_end?AVERROR(EIO):AVERROR_EOF;
-    assert(!av_new_packet(p,65536));memset(p->data,generated%251,65536);
+    assert(!av_new_packet(p,packet_size));memset(p->data,generated%251,(size_t)packet_size);
     p->stream_index=generated%2;p->pts=p->dts=generated*20;p->duration=20;p->pos=generated*65536;
     uint8_t *side=av_packet_new_side_data(p,AV_PKT_DATA_STRINGS_METADATA,8);assert(side);memcpy(side,"key\0val\0",8);
+    p->flags=generated%100==0?AV_PKT_FLAG_KEY:0;
     generated++;return 0;
 }
 #define av_read_frame fake_read
@@ -34,15 +35,40 @@ int main(void){
             av_packet_unref(p);
         }
         assert(disk_packet(q,p)==(pass?AVERROR(EIO):AVERROR_EOF));
+#ifdef DISK_RAM
+        assert(q->ram&&q->fd==-1&&q->capacity<=64*1024*1024);
+#else
         struct stat st;assert(!fstat(q->fd,&st)&&st.st_size<=64*1024*1024);
+#endif
         disk_close(q);av_packet_free(&p);
     }
     stopped=0;generated=0;DiskBuffer *q=disk_start(fmt,0,1,-1,30,64);assert(q);
     av_usleep(100000);disk_close(q); /* also wakes a producer blocked on a full ring */
+#ifdef DISK_RAM
+    stopped=0;generated=0;fail_at_end=0;packet_size=256;q=disk_start(fmt,0,1,-1,15,16);assert(q);
+    for(int n=0;n<100;n++){
+        pthread_mutex_lock(&q->mutex);int ready=q->primed;pthread_mutex_unlock(&q->mutex);
+        if(ready)break;
+        av_usleep(10000);
+    }
+    pthread_mutex_lock(&q->mutex);assert(q->newest-q->records[q->head].time>=15000000);pthread_mutex_unlock(&q->mutex);
+    int64_t actual=-1;assert(disk_seek_forward(q,2100000,&actual)&&actual==4000000);
+    AVPacket *packet=av_packet_alloc();assert(!disk_packet(q,packet));
+    assert(packet->stream_index==0&&(packet->flags&AV_PKT_FLAG_KEY)&&packet->pts==4000);
+    av_packet_unref(packet);int count=q->count;
+    assert(!disk_seek_forward(q,900000000,&actual)&&q->count>=count);
+    disk_close(q);av_packet_free(&packet);
+    assert(access("playback-cache",F_OK));
+#else
     DIR *d=opendir("playback-cache");assert(d);struct dirent *entry;int files=0;
     while((entry=readdir(d)))if(entry->d_name[0]!='.')files++;
     closedir(d);assert(!files);
+#endif
     avformat_free_context(fmt);rmdir("playback-cache");chdir("/tmp");rmdir(dir);
-    puts("PASS: disk FIFO wraparound, packet/side-data integrity, bounded file, EOF/error draining, cancellation and cleanup");
+    #ifdef DISK_RAM
+    puts("PASS: RAM FIFO wraparound/integrity, 15s prefill, keyframe seek/miss, memory cap, EOF/error and cancellation without disk files");
+#else
+    puts("PASS: disk FIFO wraparound/integrity, bounded file, EOF/error draining, cancellation and cleanup");
+#endif
     return 0;
 }

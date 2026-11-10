@@ -11,10 +11,11 @@ import tempfile
 from urllib.parse import urlsplit, urlencode
 
 root = Path(__file__).resolve().parent.parent
-binary = root / 'build/api-setup-test'
-subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-Werror', str(root / 'tests/api_setup_server.c'), '-o', str(binary)], check=True)
+binary = Path(os.environ.get('FLXTR_API_TEST_BINARY', str(root / 'build/api-setup-test')))
+if 'FLXTR_API_TEST_BINARY' not in os.environ:
+    subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-Werror', str(root / 'tests/api_setup_server.c'), '-o', str(binary)], check=True)
 subprocess.run([str(binary), 'expire'], check=True)
-with tempfile.TemporaryDirectory() as directory:
+with tempfile.TemporaryDirectory(prefix='flxtr phone ø ') as directory:
     app = Path(directory)
     shutil.copytree(root / 'assets', app / 'assets')
     server = subprocess.Popen([str(binary)], cwd=app, stdout=subprocess.PIPE, text=True)
@@ -41,7 +42,8 @@ with tempfile.TemporaryDirectory() as directory:
             code, text = request('POST', urlencode({field: key}), headers=headers)
             assert code == 200 and key not in text
             assert (app / filename).read_text() == key + '\n'
-            assert (app / filename).stat().st_mode & 0o777 == 0o600
+            if os.name != 'nt':
+                assert (app / filename).stat().st_mode & 0o777 == 0o600
         original = (app / 'subdl-api-key.txt').read_bytes()
         for bad in ['subdl=short', 'subdl=bad%0Ainjection', 'subdl=bad%00injection', 'subdl=bad%GGencoding', 'subdl=' + 'a'*201, 'subdl=aaaaaaaa&gamesdb=bbbbbbbb', 'password=aaaaaaaa', '../key=aaaaaaaa']:
             assert request('POST', bad, headers=headers)[0] == 400, bad
@@ -71,7 +73,14 @@ with tempfile.TemporaryDirectory() as directory:
         assert (app/'phone-files/test.mp4').read_bytes()==payload
         assert request('POST',b'bad',path=url.path+'upload/../evil.mp4',headers=raw)[0]==400
         assert request('POST',b'bad',path=url.path+'upload/run.sh',headers=raw)[0]==400
+        for name in ('CON.mp4', 'nul.srt', 'COM9.extra.mp4'):
+            assert request('POST', b'bad', path=url.path+'upload/'+name, headers=raw)[0] == 400
+        (app/'games.json').write_text('[]')
         assert request('POST',b'rom',path=url.path+'upload/test.nes',headers=raw)[0]==200
+        assert not (app/'games.json').exists()
+        for extension in ['md','sms','gg','chd','cue','bin','a26']:
+            assert request('POST',b'rom',path=url.path+'upload/test.'+extension,headers=raw)[0]==200
+            assert (app/('roms/phone/test.'+extension)).read_bytes()==b'rom'
         assert (app/'roms/phone/test.nes').read_bytes()==b'rom'
         conn=socket.create_connection((url.hostname,url.port),timeout=4)
         conn.sendall(f'POST {url.path}upload/interrupted.mp4 HTTP/1.1\r\nHost: {url.netloc}\r\nContent-Type: application/octet-stream\r\nContent-Length: 100000\r\n\r\npartial'.encode())

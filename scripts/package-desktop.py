@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Bundle desktop dependencies, retaining system glibc and graphics drivers."""
+import argparse
 import hashlib
 import json
 import re
@@ -9,13 +10,16 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser()
+parser.add_argument('--edition', choices=('both', 'Linux', 'SteamDeck'), default='both')
+edition = parser.parse_args().edition
 DIST = ROOT / 'dist'
 version = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 source = DIST / 'FlXtR-linux-x86_64'
-names = ('greenlink', 'greenlink-catalog', 'greenlink-player', 'greenlink-resolver')
+names = ('greenlink', 'greenlink-catalog', 'greenlink-player', 'greenlink-resolver', 'greenlink-audio', 'greenlink-download')
 # These components must match the host kernel, glibc and installed GPU drivers.
 system = re.compile(r'^(ld-linux|lib(c|m|dl|pthread|rt|resolv|nss_[^.]+)\.so|lib(stdc\+\+|gcc_s)\.so|lib(GL|EGL|GLES|GLX|OpenGL|GLdispatch|glapi|drm|gbm|vulkan|va)[-.0-9a-z_]*\.so)')
-for edition in ('Linux', 'SteamDeck'):
+for edition in (('Linux', 'SteamDeck') if edition == 'both' else (edition,)):
     name = 'FlXtR-' + edition + '-x86_64'
     dest = DIST / name
     if dest.exists():
@@ -52,6 +56,10 @@ for edition in ('Linux', 'SteamDeck'):
         executable = app / binary
         executable.rename(app / (binary + '.bin'))
         executable.write_text('#!/bin/sh\napp=$(dirname -- "$(readlink -f -- "$0")")\n'
+                              'if [ -z "${FLXTR_HOST_LIBRARY_PATH_SET+x}" ]; then\n'
+                              '  export FLXTR_HOST_LIBRARY_PATH="${LD_LIBRARY_PATH-}"\n'
+                              '  export FLXTR_HOST_LIBRARY_PATH_SET=1\n'
+                              'fi\n'
                               'export LD_LIBRARY_PATH="$app/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
                               'exec "$app/' + binary + '.bin" "$@"\n')
         executable.chmod(0o755)
@@ -68,6 +76,7 @@ for edition in ('Linux', 'SteamDeck'):
     if edition == 'SteamDeck':
         launcher = dest / 'FlXtR-SteamDeck.sh'
         launcher.write_text('#!/bin/sh\nexport SDL_VIDEODRIVER=x11\n'
+                            'export FLXTR_STEAMDECK=1\nunset WAYLAND_DISPLAY\n'
                             'root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
                             'exec "$root/FlXtR.sh" "$@"\n')
         launcher.chmod(0o755)
@@ -77,18 +86,23 @@ for edition in ('Linux', 'SteamDeck'):
         ('FlXtR-SteamDeck.sh' if edition == 'SteamDeck' else 'FlXtR.sh') + '.\n'
         'Steam Deck: in Desktop Mode, add FlXtR-SteamDeck.sh to Steam as a non-Steam game.\n'
         'Leave compatibility/Proton disabled. Use the Gamepad controller layout.\n'
-        'Built on Ubuntu 22.04; requires glibc 2.35+, Python 3, system certificates,\n'
+        'The Deck launcher uses X11/EGL and software video decoding for compatibility.\n'
+        'For troubleshooting, share the last lines of data/greenlink.log.\n'
+        'Built on Ubuntu 22.04; requires glibc 2.35+, Python 3.10+, system certificates,\n'
         'a desktop display/audio session and system OpenGL/VA-API/Vulkan drivers.\n'
+        'Music includes yt-dlp, EJS and QuickJS.\n'
         'Application libraries are bundled under current/lib with dependency licenses.\n'
         'Automatic updates are disabled to retain bundled libraries. For upgrades,\n'
         'extract a new release separately and copy your data folder across.\n'
+        'Games > DOWNLOAD LIBRETRO CORES installs missing cores. RetroArch is required.\n'
+        'See current/CORES.md for native/Flatpak setup and data paths.\n'
         'Physical Steam Deck and interactive playback validation remains necessary.\n')
     for binary in ('greenlink', 'greenlink-player'):
         output = subprocess.check_output([str(app / binary), '--version'], text=True).strip()
         if output != version:
             raise SystemExit('Version smoke test failed: ' + binary)
     archive = DIST / (name + '.tgz')
-    with tarfile.open(archive, 'w:gz') as tar:
+    with tarfile.open(archive, 'w:gz', compresslevel=6) as tar:
         tar.add(dest, arcname=name)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     (DIST / (name + '.tgz.sha256')).write_text(digest + '  ' + archive.name + '\n')

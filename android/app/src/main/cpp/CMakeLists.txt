@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.22)
+project(FlXtRAndroid C CXX)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+get_filename_component(REPO "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLUTE)
+include("${REPO}/android/build/game-sources/fceumm.cmake")
+# The response decoder is built as a shared library, never an Android executable.
+set(RESOLVER "${REPO}/build/resolver")
+add_library(flxtr_resolver SHARED "${RESOLVER}/img_data.c" "${REPO}/src/resolver_bridge.c"
+    "${RESOLVER}/wasm-rt-impl.c" "${RESOLVER}/wasm-rt-mem-impl.c" "${RESOLVER}/wasm-rt-exceptions-impl.c" decoder_jni.c)
+target_include_directories(flxtr_resolver PRIVATE "${RESOLVER}" "${REPO}/src")
+target_compile_features(flxtr_resolver PRIVATE c_std_11)
+target_compile_definitions(flxtr_resolver PRIVATE _POSIX_C_SOURCE=200809L NDEBUG WASM_RT_USE_MMAP=0 WASM_RT_MEMCHECK_BOUNDS_CHECK=1)
+target_link_libraries(flxtr_resolver PRIVATE m)
+
+set(GAMBATTE "${REPO}/android/build/game-sources/gambatte")
+include("${REPO}/android/build/game-sources/gambatte-sources.cmake")
+add_library(flxtr_retro SHARED retro_jni.cpp ${GAMBATTE_SOURCES})
+target_include_directories(flxtr_retro PRIVATE "${GAMBATTE}/libgambatte/src" "${GAMBATTE}/libgambatte/include" "${GAMBATTE}/common" "${GAMBATTE}/common/resample" "${GAMBATTE}/libgambatte/libretro" "${GAMBATTE}/libgambatte/libretro-common/include")
+target_compile_definitions(flxtr_retro PRIVATE __LIBRETRO__ HAVE_STDINT_H HAVE_INTTYPES_H CC_RESAMPLER_NO_HIGHPASS VIDEO_RGB565 VFS_FRONTEND)
+target_compile_features(flxtr_retro PRIVATE cxx_std_11)
+target_compile_options(flxtr_retro PRIVATE -O2 -fno-strict-aliasing)
+target_link_libraries(flxtr_retro PRIVATE android log m dl EGL GLESv2)

@@ -1,16 +1,12 @@
 #define KISS "https://kissanime.com.cv"
+#include "display_text.h"
 /* Bounded HTML adapters for the site's public catalog and episode embeds.
  * No scripts, adverts, browser state or obfuscated code are executed. */
 static void kiss_unescape(char *out,size_t cap,const char *in){
     size_t n=0;
     while(*in&&n+1<cap){
-        if(!strncmp(in,"&amp;",5)){out[n++]='&';in+=5;}
-        else if(!strncmp(in,"&quot;",6)){out[n++]='"';in+=6;}
-        else if(!strncmp(in,"&#039;",6)){out[n++]='\'';in+=6;}
-        else if(!strncmp(in,"&apos;",6)){out[n++]='\'';in+=6;}
-        else if(!strncmp(in,"&#",2)){char *end;int hex=in[2]=='x'||in[2]=='X';long ch=strtol(in+2+hex,&end,hex?16:10);if(*end==';'){out[n++]=ch>=32&&ch<127?(char)ch:'?';in=end+1;}else out[n++]=*in++;}
-        else if(in[0]=='\\'&&in[1]=='/'){out[n++]='/';in+=2;}
-        else {unsigned char c=(unsigned char)*in++;if(c>=128){if((c&0xc0)!=0x80)out[n++]='?';}else out[n++]=c<32?' ':(char)c;}
+        if(in[0]=='\\'&&in[1]=='/'){out[n++]='/';in+=2;}
+        else {unsigned char c=display_next(&in);out[n++]=c<32?' ':(char)c;}
     }out[n]=0;
 }
 static int kiss_attr(const char *tag,const char *name,char *out,size_t cap){
@@ -95,6 +91,21 @@ static int kiss_cards(char *html,int first){
         }p=stop+10;
     }return n;
 }
+static void kiss_background_summaries(void){
+        for(int i=0;i<used;i++){
+            if(strcmp(entries[i].kind,"kiss")||entries[i].id<=0)continue;
+            char cached[100],url[128];
+            snprintf(cached,sizeof(cached),"media-info-cache/anime-%d.txt",entries[i].id);
+            FILE *old=fopen(cached,"r");
+            if(old){char content[400]="";if(!fgets(content,sizeof(content),old))content[0]=0;fclose(old);
+                if(!kiss_is_promo(content))continue;
+                unlink(cached);
+            }
+            snprintf(url,sizeof(url),KISS"/?post_type=anime&p=%d",entries[i].id);
+            char *html=kiss_fetch(url);
+            if(html){kiss_cache_description(entries[i].id,html);free(html);}
+        }
+}
 static int kiss_list_filtered(int page,const char *query,int genre,int order){
     if(genre<0||genre>=BROWSE_GENRES||order<0||order>=BROWSE_ORDERS)return -1;
     int first=(page-1)*PAGE_SIZE,last=(first+PAGE_SIZE-1)/20+1;char *escaped=curl_easy_escape(NULL,query,0);if(!escaped)return -1;
@@ -109,6 +120,9 @@ static int kiss_list_filtered(int page,const char *query,int genre,int order){
     }curl_free(escaped);
     /* Fetch missing anime summaries separately, never blocking catalog navigation.
      * Use a detached worker so page selection stays instantaneous. */
+#ifdef _WIN32
+    flxtr_background("anime");
+#else
     pid_t worker=fork();
     if(worker==0){
         pid_t detached=fork();
@@ -116,22 +130,11 @@ static int kiss_list_filtered(int page,const char *query,int genre,int order){
         if(detached>0)_exit(0);
         int devnull=open("/dev/null",O_RDWR);
         if(devnull>=0){dup2(devnull,0);dup2(devnull,1);dup2(devnull,2);if(devnull>2)close(devnull);}
-        for(int i=0;i<used;i++){
-            if(strcmp(entries[i].kind,"kiss")||entries[i].id<=0)continue;
-            char cached[100],url[128];
-            snprintf(cached,sizeof(cached),"media-info-cache/anime-%d.txt",entries[i].id);
-            FILE *old=fopen(cached,"r");
-            if(old){char content[400]="";if(!fgets(content,sizeof(content),old))content[0]=0;fclose(old);
-                if(!kiss_is_promo(content))continue;
-                unlink(cached);
-            }
-            snprintf(url,sizeof(url),KISS"/?post_type=anime&p=%d",entries[i].id);
-            char *html=kiss_fetch(url);
-            if(html){kiss_cache_description(entries[i].id,html);free(html);}
-        }
+        kiss_background_summaries();
         _exit(0);
     }
     if(worker>0)waitpid(worker,NULL,0);
+#endif
     return 0;
 }
 static inline int kiss_list(int page,const char *query){return kiss_list_filtered(page,query,0,0);}

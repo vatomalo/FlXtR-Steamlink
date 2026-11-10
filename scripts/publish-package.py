@@ -34,11 +34,12 @@ def request(url, data, content_type='application/json', method='POST'):
 release = request(api + '/releases', json.dumps({
     'tag_name': 'package-' + version,
     'target_commitish': version,
-    'name': 'Steam Link package ' + version[:8],
+    'name': os.environ.get('FLXTR_RELEASE_TITLE') or 'Steam Link package ' + version[:8],
     'draft': True,
-    'body': 'Complete ARM Steam Link package: menu, catalog, player, resolver, art and launch helpers. '
+    'body': (pathlib.Path(os.environ['FLXTR_RELEASE_NOTES_FILE']).read_text() if os.environ.get('FLXTR_RELEASE_NOTES_FILE') else
+            'Complete ARM Steam Link package: menu, catalog, player, resolver, art and launch helpers. '
             'Install through SSH once to seed the new updater; subsequent full-package releases '
-            'are SHA-256 checked and applied at launch. Local settings and ROMs are not in the package.'
+            'are SHA-256 checked and applied at launch. Local settings and ROMs are not in the package.') + '\n\nSource: `' + version + '`\nArchitecture: ARMv7 (Steam Link)\n'
 }).encode())
 upload = release['upload_url'].split('{')[0]
 for name, data, mime in [('greenlink.tgz', package, 'application/gzip'),

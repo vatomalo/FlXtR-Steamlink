@@ -8,10 +8,11 @@ if [[ "${1:-}" != --inside ]]; then
     exec docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" \
         --mount "type=bind,src=$PWD,dst=/src" --env HOME=/tmp \
         --env GREENLINK_BUILD_CACHE=/src/build/desktop-cache \
+        --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory --env GIT_CONFIG_VALUE_0=/src \
         flxtr-desktop-builder:local bash scripts/build-desktop.sh --inside
 fi
 [[ $(uname -m) == x86_64 ]] || { echo "Steam Deck requires x86_64" >&2; exit 1; }
 bash scripts/build-linux.sh
-python3 scripts/package-desktop.py
+python3 scripts/package-desktop.py --edition "${FLXTR_DESKTOP_EDITION:-both}"
 python3 tests/linux_update_test.py
 python3 tests/linux_install_test.py dist/linux-x86_64.json

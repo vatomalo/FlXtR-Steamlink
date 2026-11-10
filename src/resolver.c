@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <time.h>
+#include "windows_runtime.h"
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
 typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024];int height;} Choice;
@@ -41,7 +42,7 @@ static char *request(const char *url,struct curl_slist *headers,int media){
     curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,5L);curl_easy_setopt(c,CURLOPT_TIMEOUT,20L);curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);
     curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,media?1L:0L);curl_easy_setopt(c,CURLOPT_MAXREDIRS,5L);
     curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L);
-    curl_easy_setopt(c,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
+    curl_easy_setopt(c,CURLOPT_CAINFO,FLXTR_CA_BUNDLE);
     curl_easy_setopt(c,CURLOPT_USERAGENT,RESOLVER_UA);curl_easy_setopt(c,CURLOPT_ACCEPT_ENCODING,"");
 #if LIBCURL_VERSION_NUM >= 0x075500
     curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,media?"http,https":"https");curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"http,https");
@@ -65,7 +66,7 @@ static int valid_server(const char *s){size_t n=strlen(s);if(!n||n>31)return 0;f
 static int valid_url(const char *url){if(strlen(url)>=2048||(strncmp(url,"https://",8)&&strncmp(url,"http://",7)))return 0;for(const unsigned char *p=(const unsigned char*)url;*p;p++)if(*p<32||*p==127)return 0;return 1;}
 static void base36(uint32_t n,char *out){char rev[16];int k=0;do{rev[k++]="0123456789abcdefghijklmnopqrstuvwxyz"[n%36];n/=36;}while(n);for(int i=0;i<k;i++)out[i]=rev[k-i-1];out[k]=0;}
 static void fingerprint(char *out){
-    char input[256];snprintf(input,sizeof(input),"1920x1080:24:%.50s:Linux armv7l:en-US:0:%.28s",RESOLVER_UA,RESOLVER_CANVAS+22);
+    char input[256];snprintf(input,sizeof(input),"1920x1080:24:%.50s:Linux armv7l:en-US:0:%.28s",RESOLVER_UA,&RESOLVER_CANVAS[22]);
     uint32_t h=0;for(const unsigned char *p=(const unsigned char*)input;*p;p++)h=h*31+*p;
     if(h&0x80000000u)h=0-h;
     base36(h,out);
@@ -83,7 +84,7 @@ static json_object *lookup(const char *path,const char *server){
     fingerprint(fp);snprintf(url,sizeof(url),BASE"%s",path);
     struct curl_slist *headers=NULL;
     headers=header(headers,"Origin","https://flixer.gd");headers=header(headers,"Referer","https://flixer.gd/");
-    headers=header(headers,"x-fingerprint-lite","b4f8a1fc72e905d63e");headers=header(headers,"Accept","text/plain");
+    headers=header(headers,"x-fingerprint-lite","b4f8a1fc72e9O5d63e");headers=header(headers,"Accept","text/plain");
     headers=header(headers,"X-Api-Key",key);headers=header(headers,"X-Request-Timestamp",ts);headers=header(headers,"X-Request-Nonce",nonce);
     headers=header(headers,"X-Request-Signature",sig);headers=header(headers,"X-Client-Fingerprint",fp);
     if(*server){headers=header(headers,"X-Only-Sources","1");headers=header(headers,"X-Server",server);}
@@ -342,6 +343,10 @@ static void independent_subtitles(int id,int season,int episode,Choice *c){
         id,season,episode,c->subs_eng[0]?"yes":"no",
         c->subs_nor[0]?"yes":"no",c->subs_spa[0]?"yes":"no");
 }
+#include "web_providers.h"
+#ifdef _WIN32
+#define main flxtr_resolver_main
+#endif
 int main(int argc,char **argv){
     if(argc!=8|| (strcmp(argv[1],"servers")&&strcmp(argv[1],"source")) ||(strcmp(argv[2],"movie")&&strcmp(argv[2],"tv")))return 2;
     int id=atoi(argv[3]),season=atoi(argv[4]),episode=atoi(argv[5]),page=atoi(argv[7]);
@@ -350,9 +355,12 @@ int main(int argc,char **argv){
     subtitle_log("invoke mode=%s media=%s",resolving?"source":"servers",argv[2]);
     char path[256];if(!strcmp(argv[2],"movie"))snprintf(path,sizeof(path),"/api/tmdb/movie/%d/images",id);
     else {if(!episode)return 2;snprintf(path,sizeof(path),"/api/tmdb/tv/%d/season/%d/episode/%d/images",id,season,episode);}
-    if(curl_global_init(CURL_GLOBAL_DEFAULT)||resolver_init())return 1;
-    json_object *root=lookup(path,resolving?argv[6]:"");int rc=1;
-    if(root){if(resolving){if(qualities(root,argv[6]))goto done;
+    if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;
+    int web=resolving&&provider_rank(argv[6]);
+    int initialized=web?0:!resolver_init();
+    json_object *root=initialized?lookup(path,resolving?argv[6]:""):NULL;int rc=1;
+    if(web){if(web_provider(argv[6],id,season,episode))goto done;}
+    else if(root&&resolving){if(qualities(root,argv[6]))goto done;
             flixer_subtitles(id,season,episode,&choices[0]);
             if(!strcmp(argv[2],"tv")){
                 independent_subtitles(id,season,episode,&choices[0]);
@@ -363,7 +371,9 @@ int main(int argc,char **argv){
                     snprintf(choices[i].subs_nor,sizeof(choices[i].subs_nor),"%s",choices[0].subs_nor);
                     snprintf(choices[i].subs_spa,sizeof(choices[i].subs_spa),"%s",choices[0].subs_spa);
                 }
-        }else servers(root);
+        }
+    else if(!resolving){if(root)servers(root);web_servers();}
+    if(count){
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
         for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor,c->subs_spa);
             else printf("%s\t%s\t\t%s\tserver\t%d\t%d\t%d\t%d\n",c->label,c->meta,c->url,id,season,episode,c->height);}
@@ -371,7 +381,12 @@ int main(int argc,char **argv){
     }
 done:subtitle_log("completed mode=%s success=%s rows=%d",resolving?"source":"servers",rc==0?"yes":"no",count);
     if(root)json_object_put(root);
-    resolver_free();
+    if(initialized)resolver_free();
     curl_global_cleanup();
     return rc;
 }
+
+#ifdef _WIN32
+#undef main
+FLXTR_WINDOWS_CONSOLE_ENTRY(flxtr_resolver_main)
+#endif

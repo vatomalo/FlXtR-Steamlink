@@ -60,3 +60,18 @@ with tempfile.TemporaryDirectory() as temporary:
     try: updater.unpack(bad, home / 'stage'); raise AssertionError('Traversal accepted')
     except ValueError: pass
 print('PASS: platform, rollback, checksum, startup, path validation, atomic update and data preservation')
+
+# The packaged YouTube runtime contains nested Python packages (up to ten parts).
+with tempfile.TemporaryDirectory() as directory:
+    root=Path(directory)
+    archive=root/'deep.tgz'
+    import io
+    with tarfile.open(archive,'w:gz') as bundle:
+        entry=tarfile.TarInfo('/'.join(['nested']*13))
+        entry.size=1
+        bundle.addfile(entry,io.BytesIO(b'x'))
+    try:
+        updater.unpack(archive,root/'stage')
+        raise AssertionError('Excessive nesting accepted')
+    except ValueError as error:
+        assert 'limits' in str(error)

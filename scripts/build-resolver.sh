@@ -48,6 +48,7 @@ fi
 echo "6942482ff310cee739b250cb9eeee7bc373121fb1580c598405899ca61b2e4e5  $wasm" | sha256sum -c -
 "$cache/wabt-host/wasm2c" "$wasm" -o build/resolver/img_data.c --module-name img_data
 python3 tools/resolver_imports.py build/resolver/img_data.h build/resolver/resolver_imports.inc
+if [[ "${1:-}" == --prepare-only ]]; then exit 0; fi
 output=build/greenlink-resolver-arm
 if [ "${FLXTR_BUILD_PLATFORM:-steamlink}" = linux ]; then
     CC=cc

@@ -13,28 +13,86 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 #include <unistd.h>
 #include <time.h>
+#include "windows_runtime.h"
+#include "windows_archive.h"
+#ifdef __ANDROID__
+#include "android_bridge.h"
+#endif
 #include "font.h"
+#include "display_text.h"
+#include "coverflow_layout.h"
 #include "video_layout.h"
 #include "tv_schedule.h"
 #include "tv_airing.h"
 #include "tv_progress.h"
 #include "tv_history.h"
+#include "tv_play_history.h"
 #include "browse_filters.h"
+#include "server_preferences.h"
+#include "mtv_preferences.h"
 #include "game_metadata.h"
+#include "gamez_id.h"
+#include "gamez_filters.h"
 #include "child_process.h"
+#include "phone_media.h"
+#include "native_sdl_runtime.h"
+static int phone_dispatch(char *reply,size_t size);
+#define FLXTR_PHONE_DISPATCH phone_dispatch
 #include "api_setup.h"
 #include "vendor/qrcodegen.c"
 #include "wifi_pairing.h"
+#ifdef _WIN32
+#define IMG_Load(path) IMG_Load(flxtr_win_resource(path))
+#define SDL_RWFromFile(path,mode) SDL_RWFromFile(flxtr_win_resource(path),mode)
+#endif
 
 static int accounts_on,party_entry,about_row;
 static char rom_phone_path[241];
 static uint8_t accounts_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];
 static uint8_t wifi_qr[qrcodegen_BUFFER_LEN_FOR_VERSION(12)];
 static int wifi_qr_valid;
+static int handoff_remote;
+static char tailscale_status[128],tailscale_auth[512];
+static uint32_t tailscale_read_tick;
+static void tailscale_refresh(void){
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+    snprintf(tailscale_status,sizeof(tailscale_status),"USE THE OFFICIAL TAILSCALE APP ON THIS DEVICE");tailscale_auth[0]=0;return;
+#endif
+    uint32_t now=SDL_GetTicks();if(tailscale_read_tick&&now-tailscale_read_tick<1000)return;tailscale_read_tick=now;
+    char status_line[128]="PRESS A TO INSTALL / CONNECT TAILSCALE",url[512]={0};
+    FILE *f=fopen("tailscale/status.txt","r");if(f){if(!fgets(status_line,sizeof(status_line),f))status_line[0]=0;fclose(f);}
+    status_line[strcspn(status_line,"\r\n")]=0;snprintf(tailscale_status,sizeof(tailscale_status),"%s",status_line);
+    f=fopen("tailscale/auth-url.txt","r");if(f){if(!fgets(url,sizeof(url),f))url[0]=0;fclose(f);}url[strcspn(url,"\r\n")]=0;
+    if(strncmp(url,"https://login.tailscale.com/",sizeof("https://login.tailscale.com/")-1))url[0]=0;
+    if(strcmp(url,tailscale_auth)){snprintf(tailscale_auth,sizeof(tailscale_auth),"%s",url);memset(accounts_qr,0,sizeof(accounts_qr));
+        if(url[0]){uint8_t temp[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];if(!qrcodegen_encodeText(url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,16,qrcodegen_Mask_AUTO,true))tailscale_auth[0]=0;}}
+}
+static void tailscale_request(const char *command){
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+    (void)command;snprintf(tailscale_status,sizeof(tailscale_status),"USE THE OFFICIAL TAILSCALE APP ON THIS DEVICE");
+#else
+    if(mkdir("tailscale",0700)&&errno!=EEXIST)return;
+    FILE *f=fopen("tailscale/request.next","w");if(f){fprintf(f,"%s\n",command);if(!fclose(f))rename("tailscale/request.next","tailscale/request");}
+#endif
+}
 static void accounts_open(int party){
+    if(party==4){api_setup_close();accounts_on=1;party_entry=4;wifi_qr_valid=0;tailscale_auth[0]=0;tailscale_read_tick=0;tailscale_refresh();return;}
+    if(party==3){
+        api_setup_close();accounts_on=1;party_entry=3;wifi_qr_valid=0;
+        FILE *f=fopen(handoff_remote?"handoff/remote-url.txt":"handoff/url.txt","r");char url[128]={0};
+        if(f){if(!fgets(url,sizeof(url),f))url[0]=0;fclose(f);url[strcspn(url,"\r\n")]=0;}
+        if(!url[0]){strcpy(api_setup.message,handoff_remote?"CONNECT TAILSCALE FIRST - Y SELECTS LAN":"RECEIVER STARTING - PRESS A TO RETRY");return;}
+        snprintf(api_setup.url,sizeof(api_setup.url),"%s",url);
+        uint8_t temp[qrcodegen_BUFFER_LEN_FOR_VERSION(16)];
+        if(!qrcodegen_encodeText(url,temp,accounts_qr,qrcodegen_Ecc_MEDIUM,1,16,qrcodegen_Mask_AUTO,true)){api_setup.url[0]=0;return;}
+        f=fopen("handoff/armed","w");if(f){fputs("ready\n",f);fclose(f);}
+        strcpy(api_setup.message,"READY FOR A VIDEO TIMESTAMP OR COMPATIBLE SAVE STATE");return;
+    }
     party_entry=party;
     if(party!=2)rom_phone_path[0]=0;
     char ip[INET_ADDRSTRLEN];uint8_t temp[sizeof(accounts_qr)];accounts_on=1;
@@ -60,10 +118,22 @@ static void accounts_open(int party){
 #define FAVORITES_MODE 25
 #define VISIBLE 6
 #define STARS 56
+#include "provider_order.h"
 typedef struct { char title[80],meta[96],poster[192],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024],kind[16];int id,season,episode,height; } Title;
+#include "rom_core_preferences.h"
+#include "rom_audio_preferences.h"
+static int game_music_keep;
 /* Every ROM can select any locally installed Libretro core. */
-#define ROM_CORE_LIMIT 64
+#define ROM_CORE_LIMIT 128
+static int rom_options_menu,rom_options_row;
+static int rom_send_on,rom_send_row,rom_send_count,rom_send_stage;
+static pid_t rom_send_pid;
+static char rom_send_key[17],rom_send_names[16][96];
+static int rom_assets_on;
+static Title rom_options_title;
 static int rom_core_menu,rom_core_id,rom_core_selected,rom_core_count,rom_core_first;
+static int platform_core_menu,platform_core_selecting,platform_core_index,platform_core_choice,platform_core_first;
+static char rom_core_key[17];
 static char rom_core_title[80],rom_core_names[ROM_CORE_LIMIT][96];
 static void rom_core_scan(const char *dir){
     DIR *d=opendir(dir);
@@ -71,45 +141,76 @@ static void rom_core_scan(const char *dir){
     struct dirent *e;
     while((e=readdir(d))&&rom_core_count<ROM_CORE_LIMIT){
         size_t len=strlen(e->d_name);
-        const char suffix[]="_libretro.so";
+        const char suffix[]="_libretro" FLXTR_CORE_EXT;
         if(len<=sizeof(suffix)-1||strcmp(e->d_name+len-(sizeof(suffix)-1),suffix))continue;
         len-=sizeof(suffix)-1;
-        if(!len||len>=sizeof(rom_core_names[0]))continue;
+        if(!len||len>=80||len>=sizeof(rom_core_names[0]))continue;
         char name[96];memcpy(name,e->d_name,len);name[len]=0;
         int duplicate=0;
         for(int i=0;i<rom_core_count;i++)if(!strcmp(rom_core_names[i],name))duplicate=1;
         if(duplicate)continue;
-        char path[256];
-        if(snprintf(path,sizeof(path),"%s/%s",dir,e->d_name)>=(int)sizeof(path)||access(path,R_OK))continue;
+        int valid=1;
+        for(size_t j=0;j<len;j++)if(!isalnum((unsigned char)name[j])&&name[j]!='_'&&name[j]!='-')valid=0;
+        if(!valid)continue;
+        char path[PATH_MAX];
+        struct stat st;
+        if(snprintf(path,sizeof(path),"%s/%s",dir,e->d_name)>=(int)sizeof(path)||access(path,R_OK)||stat(path,&st)||!S_ISREG(st.st_mode))continue;
         snprintf(rom_core_names[rom_core_count++],sizeof(rom_core_names[0]),"%s",name);
     }
     closedir(d);
 }
-static void rom_core_open(const Title *t){
-    if(strcmp(t->kind,"game"))return;
-    rom_core_id=t->id;
-    snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
-    rom_core_count=rom_core_selected=rom_core_first=0;
+static int rom_core_compare(const void *a,const void *b){return strcmp(a,b);}
+static void platform_core_open(void){
+    platform_core_menu=1;platform_core_selecting=0;platform_core_index=0;
+}
+static void platform_core_choices(void){
+    rom_core_count=1;strcpy(rom_core_names[0],"AUTOMATIC");
     rom_core_scan("cores");
+    const char *root=getenv("FLXTR_RETROARCH_HOME");
+    if(root&&*root){char path[PATH_MAX];snprintf(path,sizeof(path),"%s/cores",root);rom_core_scan(path);}
     rom_core_scan("/home/apps/retroarch/cores");
     rom_core_scan("/home/apps/retroarch/.home/.config/retroarch/cores");
+    qsort(rom_core_names+1,(size_t)(rom_core_count-1),sizeof(rom_core_names[0]),rom_core_compare);
+    char preferred[96]={0};rom_platform_core_get(platform_core_index,preferred,sizeof(preferred));
+    platform_core_choice=0;platform_core_first=0;
+    for(int i=1;i<rom_core_count;i++)if(!strcmp(preferred,rom_core_names[i]))platform_core_choice=i;
+    platform_core_first=platform_core_choice>3?platform_core_choice-3:0;
+    platform_core_selecting=1;
+}
+static void rom_core_open(const Title *t){
+    if(strcmp(t->kind,"game"))return;
+    rom_core_id=t->id;rom_core_key[0]=0;
+    if(!strncmp(t->url,"romid:",6)&&rom_key_valid(t->url+6))memcpy(rom_core_key,t->url+6,17);
+    snprintf(rom_core_title,sizeof(rom_core_title),"%s",t->title);
+    rom_core_count=1;rom_core_selected=rom_core_first=0;
+    strcpy(rom_core_names[0],"AUTOMATIC");
+    rom_core_scan("cores");
+    const char *retroarch_home=getenv("FLXTR_RETROARCH_HOME");
+    if(retroarch_home&&*retroarch_home){char path[PATH_MAX];snprintf(path,sizeof(path),"%s/cores",retroarch_home);rom_core_scan(path);}
+    rom_core_scan("/home/apps/retroarch/cores");
+    rom_core_scan("/home/apps/retroarch/.home/.config/retroarch/cores");
+    qsort(rom_core_names+1,(size_t)(rom_core_count-1),sizeof(rom_core_names[0]),rom_core_compare);
     /* Open on the previously chosen core, if any. */
     FILE *f=fopen("game-cores.tsv","r");
     if(f){char line[256],title[80],core[96];int id;
         while(fgets(line,sizeof(line),f)){
             if(sscanf(line,"%d\t%79[^\t]\t%95[^\n]",&id,title,core)!=3)continue;
-            if(id==rom_core_id)
+            if(id==rom_core_id&&!strcmp(title,rom_core_title))
                 for(int i=0;i<rom_core_count;i++)
                     if(!strcmp(core,rom_core_names[i]))rom_core_selected=i;
         }
         fclose(f);
     }
+    char preferred[96];
+    if(rom_core_preference(rom_core_key,preferred,sizeof(preferred)))
+        for(int i=1;i<rom_core_count;i++)if(!strcmp(preferred,rom_core_names[i]))rom_core_selected=i;
     rom_core_first=rom_core_selected>3?rom_core_selected-3:0;
     if(rom_core_count)rom_core_menu=1;
 }
-static void rom_core_save(void){
+static int rom_core_save(void){
+    if(rom_core_selected<0||rom_core_selected>=rom_core_count)return 0;
     FILE *in=fopen("game-cores.tsv","r"),*out=fopen("game-cores.tsv.next","w");
-    if(!out){if(in)fclose(in);return;}
+    if(!out){if(in)fclose(in);return 0;}
     if(in){char line[256],title[80],core[96];int id;
         while(fgets(line,sizeof(line),in)){
             if(sscanf(line,"%d\t%79[^\t]\t%95[^\n]",&id,title,core)!=3)continue;
@@ -117,39 +218,80 @@ static void rom_core_save(void){
                 fprintf(out,"%d\t%s\t%s\n",id,title,core);
         }fclose(in);
     }
-    fprintf(out,"%d\t%s\t%s\n",rom_core_id,rom_core_title,rom_core_names[rom_core_selected]);
-    if(fclose(out)==0)rename("game-cores.tsv.next","game-cores.tsv");
+    if(rom_core_selected)fprintf(out,"%d\t%s\t%s\n",rom_core_id,rom_core_title,rom_core_names[rom_core_selected]);
+    if(fclose(out))return 0;
+    if(rename("game-cores.tsv.next","game-cores.tsv"))return 0;
+    return !rom_core_key[0]||rom_core_preference_save(rom_core_key,rom_core_selected?rom_core_names[rom_core_selected]:NULL);
 }
 static Title titles[MAX_TITLES];
 static int count, selection, ready_only, about, stars_on=1, running=1;
+static int usb_on,usb_stage;
+static int mtv_fusion_genre;
 static int visible[MAX_TITLES], total, cached_page=-1;
 static SDL_Renderer *renderer;
 static SDL_Window *window;
 static SDL_Texture *posters[VISIBLE],*background;
 static SDL_GameController *pads[4];
-static pid_t player_pid, update_pid;
-static int restart_shell,game_exit, coverflow=1;
-static int player_control=-1,play_after_load,player_menu;
+static pid_t player_pid, update_pid, samba_pid;
+static int restart_shell,game_exit,moonlight_exit, coverflow=1;
+#ifdef _WIN32
+typedef FlxtrPipeHandle PlayerPipe;
+#define player_pipe_close flxtr_pipe_close
+#define player_pipe_write flxtr_pipe_write
+#else
+typedef int PlayerPipe;
+#define player_pipe_close close
+#define player_pipe_write write
+#endif
+static PlayerPipe player_control=-1;
+static int play_after_load,player_menu;
 static Title playing_title,bios_archive_title;
 static double restart_position,auto_resume;
 static TvBlock tv_blocks[TV_BLOCKS];
 static int tv_active,tv_attempts,tv_schedule_on,tv_row,tv_column,tv_quality_retry,kiss_1080_pass;
+#include "game_output.h"
+#include "game_scaling.h"
+static int game_output=GAME_OUTPUT_DEFAULT,game_view=GAME_FIT,game_performance=1;
+static const char *const game_performance_names[]={"PERFORMANCE","BALANCED","LOW LATENCY"};
 static int game_autostate,tv_breaks=1,tv_break_due,tv_in_break,tv_prepared,filters_on,filter_row,filter_original_genre,filter_original_order;
 static Uint32 tv_next_at;
 static void tv_candidate(void);
 static void tv_tick(void);
 static void tv_begin_prepared(void);
+static void bookmark_path(const Title *t,char *path,size_t capacity);
+static void tv_history_prepare(const Title *t);
 static void tv_cancel_prepared(void);
 static void tv_stage_source(const Title *source);
 static int tv_joining,tv_preloading;
 static long long tv_air_start,tv_last_block;
 static Title tv_next_title,tv_last_title;
 static pid_t tv_buffer_pid;
-static int tv_buffer_control=-1,tv_gate=-1;
+static PlayerPipe tv_buffer_control=-1,tv_gate=-1;
 static int tv_rating_weight=5,tv_popularity_weight=2,tv_variety_weight=4;
 static int series_autoplay;
-static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,settings_row,quality_setting=1,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
-static const int qualities[]={480,720,1080},buffer_seconds[]={5,15,20,25,30,45,60,80,128},disk_megabytes[]={64,128,256};
+enum {MENU_THEMES=6};
+#if !defined(FLXTR_DESKTOP)||defined(FLXTR_ADAPTIVE_TEST)
+#define QUALITY_CHOICES 4
+#define DEFAULT_QUALITY 3
+#else
+#define QUALITY_CHOICES 3
+#define DEFAULT_QUALITY 1
+#endif
+static int adaptive_height=720,adaptive_blocked,adaptive_previous=720,adaptive_pending;
+static double adaptive_position;
+static char adaptive_title_key[16];
+static int quality_height(void);
+static int adaptive_lookup_fallback(void);
+#include "settings_tabs.h"
+static int music_autoplay=1;
+static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,quality_setting=DEFAULT_QUALITY,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
+static const int qualities[]={480,720,1080,720},buffer_seconds[]={15,15,20,25,30,45,60,80,128};
+#ifdef FLXTR_DESKTOP
+static const int disk_megabytes[]={64,128,256};
+#else
+static const int disk_megabytes[]={16,32,64};
+#endif
+static int quality_height(void){return quality_setting==3?adaptive_height:qualities[quality_setting];}
 static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
 static void subtitle_route_log(const char *route,const Title *t){
     FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
@@ -167,10 +309,21 @@ static int set_auto_updates(int enabled){
     if(fd<0)return 0;
     return close(fd)==0;
 }
+static int viewing=VIEW_FIT,default_viewing=VIEW_FIT; /* Session view and persistent preference. */
+static int library_genre[3],library_order[3];
+static int gamez_genre,gamez_order;
+#include "streaming_settings.h"
+static const char *const library_filter_names[]={"movie","series","anime"};
+static int library_filter_slot(int mode){return mode==1?0:mode==2?1:mode==7?2:-1;}
 static void save_settings(void){
+    if(settings_tab==SETTINGS_STREAMING)streaming_save();
     FILE *f=fopen("settings.cfg.next","w");if(!f)return;
-    fprintf(f,"series_autoplay=%d\n",series_autoplay);
+    fprintf(f,"series_autoplay=%d\nvideo_view=%d\n",series_autoplay,default_viewing);
+    fprintf(f,"mtv_genre=%d\nmtv_fusion_genre=%d\n",mtv_genre,mtv_fusion_genre);
+    fprintf(f,"gamez_genre=%d\ngamez_order=%d\n",gamez_genre,gamez_order);
+    for(int i=0;i<3;i++)fprintf(f,"%s_genre=%d\n%s_order=%d\n",library_filter_names[i],library_genre[i],library_filter_names[i],library_order[i]);
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
+    fprintf(f,"game_output=%d\ngame_view=%d\ngame_performance=%d\nmusic_autoplay=%d\n",game_output,game_view,game_performance,music_autoplay);
     fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
     fprintf(f,"menu_theme=%d\n",menu_theme);
     fprintf(f,"tv_rating=%d\ntv_popularity=%d\ntv_variety=%d\n",tv_rating_weight,tv_popularity_weight,tv_variety_weight);
@@ -183,19 +336,41 @@ static void save_settings(void){
     if(fclose(f)==0)rename("settings.cfg.next","settings.cfg");
 }
 static void load_settings(void){
+    streaming_load();
+    mtv_fusion_genre=access("mtv-fusion-style.txt",R_OK)?0:MTV_FUSION_CUSTOM;
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));
     FILE *f=fopen("settings.cfg","r");if(!f)return;char line[80],key[32];int value;
     int theme_found=0,old_tv_schedule=0,schedule_version=0;
     while(fgets(line,sizeof(line),f))if(sscanf(line,"%31[^=]=%d",key,&value)==2){
-        if(!strcmp(key,"tv_schedule_version"))schedule_version=value;
+        int handled=0;
+        for(int i=0;i<3;i++){
+            char filter_key[32];snprintf(filter_key,sizeof(filter_key),"%s_genre",library_filter_names[i]);
+            if(!strcmp(key,filter_key)){
+                if(value>=0&&value<BROWSE_GENRES&&(i!=1||series_genres[value]>=0))library_genre[i]=value;
+                handled=1;
+            }
+            snprintf(filter_key,sizeof(filter_key),"%s_order",library_filter_names[i]);
+            if(!strcmp(key,filter_key)){if(value>=0&&value<BROWSE_ORDERS)library_order[i]=value;handled=1;}
+        }
+        if(handled)continue;
+        if(!strcmp(key,"gamez_genre")){if(value>=0&&value<GAMEZ_GENRES)gamez_genre=value;continue;}
+        if(!strcmp(key,"gamez_order")){if(value>=0&&value<GAMEZ_ORDERS)gamez_order=value;continue;}
+        if(!strcmp(key,"video_view")&&value>=0&&value<VIEW_COUNT)viewing=default_viewing=value;
+        else if(!strcmp(key,"mtv_genre")&&value>=0&&value<MTV_GENRES)mtv_genre=value;
+        else if(!strcmp(key,"mtv_fusion_genre")&&mtv_fusion_valid(value))mtv_fusion_genre=value;
+        else if(!strcmp(key,"tv_schedule_version"))schedule_version=value;
         else if(!strcmp(key,"tv_rating")&&value>=1&&value<=5)tv_rating_weight=value;
         else if(!strcmp(key,"tv_popularity")&&value>=0&&value<=5)tv_popularity_weight=value;
         else if(!strcmp(key,"tv_variety")&&value>=0&&value<=5)tv_variety_weight=value;
+        else if(!strcmp(key,"game_view")&&game_view_valid(value))game_view=value;
+        else if(!strcmp(key,"game_performance")&&value>=0&&value<3)game_performance=value;
+        else if(!strcmp(key,"game_output")&&game_output_valid(value))game_output=value;
+        else if(!strcmp(key,"music_autoplay")&&(value==0||value==1))music_autoplay=value;
         else if(!strcmp(key,"game_autostate")&&(value==0||value==1))game_autostate=value;
         else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"menu_monochrome")&&(value==0||value==1))monochrome_menu=value;
-        else if(!strcmp(key,"menu_theme")&&value>=0&&value<=2){menu_theme=value;theme_found=1;}
-        else if(!strcmp(key,"quality")&&value>=0&&value<3)quality_setting=value;
+        else if(!strcmp(key,"menu_theme")&&value>=0&&value<MENU_THEMES){menu_theme=value;theme_found=1;}
+        else if(!strcmp(key,"quality")&&value>=0&&value<QUALITY_CHOICES)quality_setting=value;
         else if(!strcmp(key,"buffer")&&value>=0&&value<9)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
         else if(!strcmp(key,"coverflow")&&(value==0||value==1))coverflow=value;
@@ -238,7 +413,6 @@ static void load_settings(void){
 }
 static float flow_position;
 static int stopping_player;
-static int viewing=VIEW_FIT;
 static Uint32 stop_time;
 typedef struct {int mode,page,id,season,episode,selected;char query[2048],name[80];} Browse;
 static Browse browse={0,1,0,0,0,0,"",""},pending,history[4];
@@ -250,6 +424,7 @@ static Uint32 controller_activity;
 static int controller_slept;
 static int auto_active,auto_count,auto_index;
 static char auto_servers[40][32];
+static char playback_server[32];
 static Title auto_title;
 static Uint32 catalog_started;
 static int download_background;
@@ -258,11 +433,16 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE","LIBRETRO CORES","INSTALLING CORE","OFFLINE DOWNLOADS"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent","core-list","core-install",""};
 static int search_on,search_key;
+static int gamez_rename_on,gamez_rename_pending;
+static int gamez_unapprove_confirm,gamez_unapprove_pending;
+static int gamez_options_on,gamez_options_row;
+static char gamez_unapprove_id[33],gamez_unapprove_title[80];
+static char gamez_rename_id[33];
 static int favorite_remove_confirm;
-static char search_text[65];
+static char search_text[80];
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
 /* Persistent index of distinct titles encountered across every catalog page.
  * Append only new titles; no old entries are evicted when browsing. */
@@ -310,8 +490,25 @@ static char status[100]="SELECT A TITLE / Y GENRE AND MOST POPULAR";
 static unsigned char star_x[STARS], star_y[STARS], star_speed[STARS];
 static SDL_Color green={116,255,132,255}, dim={66,126,77,255}, white={212,226,214,255};
 
+static int keyboard_used=
+#ifdef FLXTR_DESKTOP
+1;
+#else
+0;
+#endif
+static const char *ui_hint(const char *controller,const char *keyboard){return keyboard_used?keyboard:controller;}
+#include "desktop_theme.h"
 static void apply_menu_theme(void) {
-    if(menu_theme==2){
+    theme_canvas=(SDL_Color){0,0,0,255};theme_panel=(SDL_Color){255,255,255,255};
+    if(menu_theme>=3){
+        green=menu_theme==4?(SDL_Color){255,185,66,255}:(SDL_Color){101,201,255,255};
+        white=menu_theme==4?(SDL_Color){255,226,173,255}:(SDL_Color){231,237,245,255};
+        dim=menu_theme==4?(SDL_Color){173,129,64,255}:(SDL_Color){139,155,175,255};
+        theme_canvas=menu_theme==4?(SDL_Color){16,10,2,255}:(SDL_Color){9,17,31,255};
+        theme_panel=menu_theme==4?(SDL_Color){37,25,8,255}:(SDL_Color){17,30,51,255};
+        if(menu_theme==5)theme_custom();
+    }else if(menu_theme==2){
+        theme_panel=(SDL_Color){12,5,10,255};
         green=(SDL_Color){243,44,66,255};
         dim=(SDL_Color){181,116,125,255};
         white=(SDL_Color){248,235,235,255};
@@ -328,6 +525,15 @@ static void apply_menu_theme(void) {
 static void load_menu_background(void){
     if(!renderer)return;
     SDL_DestroyTexture(background);background=NULL;
+    if(menu_theme>=3){
+        if(menu_theme==5){theme_create_custom();struct stat st;
+            if(!stat("themes/custom/background.png",&st)&&st.st_size<=8*1024*1024){
+                SDL_Surface *custom=IMG_Load("themes/custom/background.png");
+                if(custom){if(custom->w<=4096&&custom->h<=4096)background=SDL_CreateTextureFromSurface(renderer,custom);SDL_FreeSurface(custom);}
+            }
+        }
+        apply_menu_theme();return;
+    }
     if(menu_theme==1){apply_menu_theme();return;}
     const char *path=menu_theme==2?
         "assets/backgrounds/romantic_crimson_skulls.png":
@@ -368,6 +574,11 @@ static int bios_download(void){
     snprintf(tmp,sizeof(tmp),"system/.%s.download",bios_files[bios_selected]);
     if(access(target,F_OK)==0)return 4;
     unlink(tmp);
+#ifdef _WIN32
+    const char *args[]={"curl","-fLsS","--proto","=https","--proto-redir","=https","--connect-timeout","10","--max-time","90","--max-filesize","16777216","--cacert",flxtr_win_resource("certs/cacert.pem"),"-o",tmp,url,NULL};
+    if(flxtr_win_run("curl",args,"NUL","bios.log")){unlink(tmp);return 5;}
+    if(!flxtr_digest_matches(tmp,sha,EVP_sha256())){unlink(tmp);return 6;}
+#else
     pid_t child=shell_fork();if(child<0)return 3;
     if(!child){execlp("curl","curl","-fLsS","--proto","=https","--proto-redir","=https","--connect-timeout","10","--max-time","90","--max-filesize","16777216","--cacert","certs/cacert.pem","-o",tmp,url,(char*)NULL);_exit(127);}
     int code=0;if(waitpid(child,&code,0)!=child||!WIFEXITED(code)||WEXITSTATUS(code)){unlink(tmp);return 5;}
@@ -377,6 +588,7 @@ static int bios_download(void){
     if(!child){int devnull=open("/dev/null",O_WRONLY);if(devnull>=0){dup2(devnull,STDOUT_FILENO);close(devnull);}execlp("sha256sum","sha256sum","-c","bios-check.txt",(char*)NULL);_exit(127);}
     code=0;int ok=waitpid(child,&code,0)==child&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
     unlink("bios-check.txt");if(!ok){unlink(tmp);return 6;}
+#endif
     if(link(tmp,target)<0){unlink(tmp);return 4;}
     unlink(tmp);return 0;
 }
@@ -419,7 +631,7 @@ static int bios_archive_download(const Title *item){
     curl_easy_setopt(curl,CURLOPT_TIMEOUT,120L);
     curl_easy_setopt(curl,CURLOPT_LOW_SPEED_LIMIT,1024L);
     curl_easy_setopt(curl,CURLOPT_LOW_SPEED_TIME,45L);
-    curl_easy_setopt(curl,CURLOPT_CAINFO,access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem");
+    curl_easy_setopt(curl,CURLOPT_CAINFO,FLXTR_CA_BUNDLE);
     curl_easy_setopt(curl,CURLOPT_SSL_VERIFYPEER,1L);
     curl_easy_setopt(curl,CURLOPT_SSL_VERIFYHOST,2L);
 #if LIBCURL_VERSION_NUM >= 0x075500
@@ -439,6 +651,9 @@ static int bios_archive_download(const Title *item){
         fprintf(stderr,"BIOS Archive transfer failed: HTTP %ld / curl %d / %s / URL %s\\n",http,(int)result,curl_error[0]?curl_error:curl_easy_strerror(result),item->url);
         unlink(temp);return 5;
     }
+#ifdef _WIN32
+    int verified=flxtr_digest_matches(temp,item->meta+5,EVP_sha1());
+#else
     pid_t pid;int code=0;
     FILE *f=fopen("bios-archive-check.txt","w");if(!f){unlink(temp);return 3;}
     fprintf(f,"%s  %s\n",item->meta+5,temp);fclose(f);
@@ -449,10 +664,14 @@ static int bios_archive_download(const Title *item){
     }
     code=0;int verified=waitpid(pid,&code,0)==pid&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
     unlink("bios-archive-check.txt");
+#endif
     if(!verified){unlink(temp);return 6;}
     if(is_zip){
         /* BusyBox unzip supports -l, not Info-ZIP's -Z -1.
          * Parse only properly formatted listing rows and extract one exact member. */
+#ifdef _WIN32
+        FILE *listing=flxtr_archive_listing(temp);char line[512],member[512]="";
+#else
         int pipes[2];if(pipe(pipes)<0){unlink(temp);return 3;}
         pid=shell_fork();if(pid<0){close(pipes[0]);close(pipes[1]);unlink(temp);return 3;}
         if(!pid){
@@ -461,6 +680,7 @@ static int bios_archive_download(const Title *item){
         }
         close(pipes[1]);
         FILE *listing=fdopen(pipes[0],"r");char line[512],member[512]="";
+#endif
         if(listing){
             while(fgets(line,sizeof(line),listing)){
                 size_t n=strcspn(line,"\r\n");
@@ -476,19 +696,28 @@ static int bios_archive_download(const Title *item){
                     snprintf(member,sizeof(member),"%s",path);
             }
             fclose(listing);
-        }else close(pipes[0]);
+        }
+#ifndef _WIN32
+        else close(pipes[0]);
         int listcode=0;waitpid(pid,&listcode,0);
+#else
+        int listcode=listing?0:256;
+#endif
         if(!member[0]||!WIFEXITED(listcode)||WEXITSTATUS(listcode)!=0){unlink(temp);return 7;}
         char extracted[128];snprintf(extracted,sizeof(extracted),"system/.%s.extracted",name);
         unlink(extracted);
         int fd=open(extracted,O_WRONLY|O_CREAT|O_EXCL,0600);
         if(fd<0){unlink(temp);return 3;}
+#ifdef _WIN32
+        int extractcode=flxtr_archive_extract(temp,member,fd,16777216)?256:0;close(fd);
+#else
         pid=shell_fork();if(pid<0){close(fd);unlink(extracted);unlink(temp);return 3;}
         if(!pid){
             dup2(fd,STDOUT_FILENO);close(fd);
             execlp("unzip","unzip","-p",temp,member,(char*)NULL);_exit(127);
         }
         close(fd);int extractcode=0;waitpid(pid,&extractcode,0);
+#endif
         struct stat contents;
         int good=WIFEXITED(extractcode)&&WEXITSTATUS(extractcode)==0&&
             !stat(extracted,&contents)&&contents.st_size==((item->id==5)?16384:524288);
@@ -507,12 +736,12 @@ static void rect(int x,int y,int w,int h,SDL_Color c,int fill) {
 }
 static void text(int x,int y,const char *str,int scale,SDL_Color c,int limit) {
     int n=0; color(c);
-    for(;*str && n<limit; str++,n++,x+=6*scale) {
-        unsigned char ch=(unsigned char)toupper((unsigned char)*str);
+    for(;*str && n<limit; n++,x+=6*scale) {
+        unsigned char ch=(unsigned char)toupper(display_next(&str));
         size_t i;
         if(ch==' ') continue;
         for(i=0;i<sizeof(glyphs)/sizeof(glyphs[0]);i++) if(glyphs[i].c==ch) break;
-        if(i==sizeof(glyphs)/sizeof(glyphs[0])) i=sizeof(glyphs)/sizeof(glyphs[0])-5;
+        if(i==sizeof(glyphs)/sizeof(glyphs[0]))for(i=0;i<sizeof(glyphs)/sizeof(glyphs[0]);i++)if(glyphs[i].c=='?')break;
         for(int y1=0;y1<7;y1++) for(int x1=0;x1<5;x1++) if(glyphs[i].row[y1]&(16>>x1)) {
             SDL_Rect r={x+x1*scale,y+y1*scale,scale,scale}; SDL_RenderFillRect(renderer,&r);
         }
@@ -539,6 +768,26 @@ static void wrap_detail(int x,int y,const char *str,int lines,SDL_Color ink){
         str+=n;while(*str==' ')str++;
     }
 }
+/* Page synopsis within the 236px-wide detail column without crossing the footer. */
+static void wrap_description(int x,int y,const char *str,int lines,SDL_Color ink,int identity){
+    char chunks[96][32];int count=0;
+    while(*str&&count<96){
+        size_t n=strlen(str);if(n>27){n=27;while(n>1&&str[n]!=' ')n--;}
+        if(!n)break;
+        memcpy(chunks[count],str,n);chunks[count][n]=0;count++;
+        str+=n;while(*str==' ')str++;
+    }
+    static int previous_identity=-1;static Uint32 selected_at;
+    if(previous_identity!=identity){previous_identity=identity;selected_at=SDL_GetTicks();}
+    int pages=(count+lines-1)/lines;
+    int page=pages>1?(int)(((SDL_GetTicks()-selected_at)/8500U)%(unsigned)pages):0;
+    for(int i=0;i<lines&&page*lines+i<count;i++)
+        text(x,y+i*18,chunks[page*lines+i],1,ink,27);
+    if(pages>1){char info[40];snprintf(info,sizeof(info),"MORE %d/%d",page+1,pages);
+        text(922-(int)strlen(info)*6,434,info,1,dim,27);}
+}
+static void preview_stop(void);
+static void rom_assets_stop(void);
 static void clear_posters(void) {
     for(int i=0;i<VISIBLE;i++) { if(posters[i])SDL_DestroyTexture(posters[i]); posters[i]=NULL; }
     cached_page=-1;
@@ -546,6 +795,8 @@ static void clear_posters(void) {
 /* SDL_HideWindow leaves the last graphics frame over the hardware video plane
  * on Steam Link. Release the graphics backend before handing over to SLVideo. */
 static void close_ui(void) {
+    preview_stop();
+    rom_assets_stop();
     clear_posters();
     SDL_DestroyTexture(background);background=NULL;
     SDL_DestroyRenderer(renderer);renderer=NULL;
@@ -559,7 +810,7 @@ static int open_ui(void) {
     const char *driver=SDL_GetCurrentVideoDriver();int dummy=driver&&!strcmp(driver,"dummy");
     SDL_DisplayMode display;int width=W,height=H;
     if(!dummy&&!SDL_GetCurrentDisplayMode(0,&display)&&display.w>0&&display.h>0){width=display.w;height=display.h;}
-    window=SDL_CreateWindow("FlXtR Steamlink",dummy?SDL_WINDOWPOS_CENTERED:0,dummy?SDL_WINDOWPOS_CENTERED:0,width,height,SDL_WINDOW_SHOWN | (dummy?0:SDL_WINDOW_FULLSCREEN_DESKTOP));
+    window=SDL_CreateWindow("FlXtR",dummy?SDL_WINDOWPOS_CENTERED:0,dummy?SDL_WINDOWPOS_CENTERED:0,width,height,SDL_WINDOW_SHOWN | (dummy?0:SDL_WINDOW_FULLSCREEN_DESKTOP));
     if(window)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
     if(window&&!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
     if(!renderer){close_ui();return -1;}
@@ -587,7 +838,10 @@ static int read_catalog(const char *path) {
         if((nf!=4&&nf!=8&&nf!=9&&nf!=11&&nf!=12)||!fields[0][0]||strchr(fields[nf-1],'\t'))continue;
         Title *t=&titles[count];
         if(strlen(fields[0])>=sizeof(t->title)||strlen(fields[1])>=sizeof(t->meta)||strlen(fields[2])>=sizeof(t->poster)||strlen(fields[3])>=sizeof(t->url))continue;
-        if(fields[3][0] && strncmp(fields[3],"https://",8) && strncmp(fields[3],"http://",7))continue;
+        int rom_key=nf>=8&&!strcmp(fields[4],"game")&&!strncmp(fields[3],"romid:",6)&&rom_key_valid(fields[3]+6);
+        int offline=nf>=8&&!strcmp(fields[4],"offline")&&phone_local_media(fields[3]);
+        int gamez=nf>=8&&!strcmp(fields[4],"moonlight-game")&&!strncmp(fields[3],"gamez:",6)&&gamez_valid_id(fields[3]+6);
+        if(fields[3][0]&&!rom_key&&!offline&&!gamez&&strncmp(fields[3],"https://",8)&&strncmp(fields[3],"http://",7))continue;
         strcpy(t->title,fields[0]);strcpy(t->meta,fields[1]);strcpy(t->poster,fields[2]);strcpy(t->url,fields[3]);count++;
         if(nf>=8){snprintf(t->kind,sizeof(t->kind),"%s",fields[4]);t->id=atoi(fields[5]);t->season=atoi(fields[6]);t->episode=atoi(fields[7]);}
         if(nf>=9){t->height=atoi(fields[8]);if(t->height<0||t->height>1080)t->height=0;}
@@ -601,6 +855,9 @@ static int read_catalog(const char *path) {
     for(int i=0;i<count;i++)search_dict_remember(titles[i].title);
     filter();return count;
 }
+#include "video_download_ui.h"
+#include "favorite_art_ui.h"
+
 /* A small RAM-only LRU catalog. Reuse loaded pages until process restart.
  * We never cache playback sources or actions that mutate downloaded files. */
 #define LIBRARY_RAM_CACHE 16
@@ -622,6 +879,7 @@ static int library_page_equals(const Browse *a,const Browse *b){
         !strcmp(a->query,b->query);
 }
 static void library_cache_store(const Browse *key){
+    if(key->mode==22&&key->id==11)return; /* Live approval list. */
     if(!library_cacheable(key->mode)||count>VISIBLE)return;
     LibraryPage *p=NULL;
     for(int i=0;i<LIBRARY_RAM_CACHE;i++)
@@ -634,6 +892,7 @@ static void library_cache_store(const Browse *key){
     memcpy(p->rows,titles,(size_t)count*sizeof(Title));
 }
 static int library_cache_restore(Browse next,int push,int pop){
+    if(next.mode==22&&next.id==11)return 0;
     if(!library_cacheable(next.mode))return 0;
     for(int i=0;i<LIBRARY_RAM_CACHE;i++){
         LibraryPage *p=&library_pages[i];
@@ -652,6 +911,17 @@ static int library_cache_restore(Browse next,int push,int pop){
     return 0;
 }
 static void request_catalog(Browse next,int push,int pop){
+#ifdef __ANDROID__
+    if(next.mode&&next.mode!=FAVORITES_MODE){
+        play_after_load=0;snprintf(status,sizeof(status),"ANDROID PREVIEW / ONLINE CATALOG NOT PORTED YET");return;
+    }
+#endif
+    if(next.mode==OFFLINE_MODE){if(catalog_pid)return;tv_active=auto_active=0;about=ready_only=0;browse=next;history_size=0;video_download_list();return;}
+    int slot=library_filter_slot(next.mode);
+    if(next.mode==22&&next.id==11&&next.page==1&&!pop){next.episode=gamez_genre;next.season=gamez_order;}
+    if(slot>=0&&!pop&&browse.mode!=next.mode&&next.page==1&&!next.query[0]&&!next.id&&!next.season){
+        next.id=library_genre[slot];next.season=library_order[slot];
+    }
     if(next.mode!=5&&next.mode!=6&&next.mode!=12&&next.mode!=13)tv_active=0;
     if(next.mode==FAVORITES_MODE){
         browse=next;history_size=0;count=0;selection=0;ready_only=0;
@@ -693,7 +963,7 @@ static void request_catalog(Browse next,int push,int pop){
             }
         }
         else {filter();snprintf(status,sizeof(status),"FAVORITES EMPTY / L3 TO ADD");}
-        return;
+        favorites_prepare_art();return;
     }
     if(next.mode==11){browse=next;history_size=0;about=0;total=count=0;prefetch_left=0;snprintf(status,sizeof(status),"A START TV / SELECT SETTINGS / OSLO TIME");return;}
     if(catalog_pid)return;
@@ -709,14 +979,13 @@ static void request_catalog(Browse next,int push,int pop){
     catalog_started=SDL_GetTicks();
     download_background=0;
     if(next.mode==19||next.mode==16)unlink("catalog-cache/download-progress");
-    catalog_pid=shell_fork();
-    if(!catalog_pid){
-        int out=open("catalog-cache/result.tsv",O_WRONLY|O_CREAT|O_TRUNC,0600),log=open("catalog.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
-        if(out<0||log<0)_exit(126);
-        dup2(out,STDOUT_FILENO);dup2(log,STDERR_FILENO);close(out);close(log);
-        char pg[16],id[16],sn[16],ep[16];snprintf(pg,sizeof(pg),"%d",next.page);snprintf(id,sizeof(id),"%d",next.id);snprintf(sn,sizeof(sn),"%d",next.season);snprintf(ep,sizeof(ep),"%d",next.episode);
-        execl("./greenlink-catalog","greenlink-catalog",auto_active&&!strcmp(auto_title.kind,"kiss-episode")?(next.mode==5?"kiss-source":"kiss-quality"):browse_kinds[next.mode],pg,next.query,id,sn,ep,next.mode==6?next.query:"",(char*)NULL);_exit(127);
-    }
+    char pg[16],id[16],sn[16],ep[16];
+    snprintf(pg,sizeof(pg),"%d",next.page);snprintf(id,sizeof(id),"%d",next.id);
+    snprintf(sn,sizeof(sn),"%d",next.season);snprintf(ep,sizeof(ep),"%d",next.episode);
+    const char *args[]={"greenlink-catalog",auto_active&&!strcmp(auto_title.kind,"kiss-episode")?
+        (next.mode==5?"kiss-source":"kiss-quality"):browse_kinds[next.mode],
+        pg,next.query,id,sn,ep,next.mode==6?next.query:"",NULL};
+    catalog_pid=shell_spawn("./greenlink-catalog",args,"catalog-cache/result.tsv","catalog.log");
     if(catalog_pid<0){catalog_pid=0;snprintf(status,sizeof(status),"COULD NOT LOAD CATALOG");}
     else snprintf(status,sizeof(status),"LOADING %s - X SKIP / B CANCEL",browse_labels[next.mode]);
 }
@@ -726,13 +995,29 @@ static void auto_request(Browse next){
     if(!catalog_pid)auto_active=0;
 }
 static void auto_prefer_flixer_server(void){
-    if(strcmp(auto_title.kind,"movie")&&strcmp(auto_title.kind,"episode"))return;
-    /* Flixer's fifth server is echo. Keep all remaining fallbacks in order. */
-    for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],"echo")){
+    char preferred_name[32];server_preference_read(auto_title.kind,preferred_name);
+    int found=0;for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],preferred_name)&&(!provider_rank(preferred_name)||server_group(auto_title.kind)!=0))found=1;
+    if(!found){
+        if(server_group(auto_title.kind)!=0)return;
+        strcpy(preferred_name,"echo");
+    }
+    /* A playback-confirmed server wins; preserve all remaining fallbacks. */
+    for(int i=0;i<auto_count;i++)if(!strcmp(auto_servers[i],preferred_name)){
         char preferred[32];strcpy(preferred,auto_servers[i]);
         memmove(auto_servers+1,auto_servers,(size_t)i*sizeof(auto_servers[0]));
         strcpy(auto_servers[0],preferred);break;
     }
+}
+static void tv_source_failed(void){
+    if(!tv_active)return;
+    /* Source discovery happens before playback history starts. Close the
+     * failed airing explicitly, or joining TV forces this same episode
+     * again on every retry and every new visit to the channel. */
+    if(!strcmp(auto_title.kind,"episode")&&auto_title.id>0&&auto_title.season>0&&auto_title.episode>0){
+        char key[96];snprintf(key,sizeof(key),"episode:%d:%d:%d",auto_title.id,auto_title.season,auto_title.episode);
+        tv_play_append("failed","episode",auto_title.id,auto_title.season,auto_title.episode,0,key,auto_title.title);
+    }
+    tv_joining=0;
 }
 static void auto_next(void){
     if(auto_index>=auto_count&&auto_count>0&&
@@ -741,7 +1026,7 @@ static void auto_next(void){
         auto_index=0;
         fprintf(stderr,"KissAnime: all sources exhausted; trying 1080p across all servers\n");
     }
-    if(auto_index>=auto_count){auto_active=0;snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
+    if(auto_index>=auto_count){auto_active=0;tv_source_failed();snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
     Browse next={6,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
     strcpy(next.query,auto_servers[auto_index]);auto_request(next);
     if(auto_active)snprintf(status,sizeof(status),"TRYING SERVER %d OF %d - B TO CANCEL",auto_index+1,auto_count);
@@ -749,7 +1034,7 @@ static void auto_next(void){
 static void auto_result(int success){
     if(!success){
         if(pending.mode==6){auto_index++;auto_next();}
-        else {auto_active=0;snprintf(status,sizeof(status),"SERVER DISCOVERY FAILED - SEE CATALOG.LOG");}
+        else {auto_active=0;tv_source_failed();snprintf(status,sizeof(status),"SERVER DISCOVERY FAILED - SEE CATALOG.LOG");}
         return;
     }
     FILE *f=fopen("catalog-cache/result.tsv","r");char line[6000];int pages=1;
@@ -769,6 +1054,7 @@ static void auto_result(int success){
                  (!strncmp(field[3],"https://",8)||!strncmp(field[3],"http://",7))){
             /* First row is AUTO: player chooses the best compatible H.264 stream. */
             strcpy(source.url,field[3]);
+            if(provider_rank(pending.query))snprintf(source.meta,sizeof(source.meta),"%s",field[1]);
             if(nf>=11){if(strlen(field[9])<sizeof(source.subs_eng))strcpy(source.subs_eng,field[9]);
                 if(strlen(field[10])<sizeof(source.subs_nor))strcpy(source.subs_nor,field[10]);}
             if(nf==12&&strlen(field[11])<sizeof(source.subs_spa))strcpy(source.subs_spa,field[11]);
@@ -787,7 +1073,27 @@ static void finish_catalog(void){
     int code;pid_t p=waitpid(catalog_pid,&code,WNOHANG);if(p!=catalog_pid)return;
     catalog_pid=0;
     download_background=0;
-    if(auto_active){auto_result(WIFEXITED(code)&&!WEXITSTATUS(code));return;}
+    if(gamez_unapprove_pending){
+        gamez_unapprove_pending=0;
+        if(WIFEXITED(code)&&!WEXITSTATUS(code)){Browse next=browse;next.page=1;request_catalog(next,0,0);}
+        else {
+            FILE *result=fopen("catalog-cache/unapprove-result.txt","r");
+            snprintf(status,sizeof(status),"COULD NOT UNAPPROVE / CHECK PC LAUNCHER");
+            if(result){char line[100];if(fgets(line,sizeof(line),result)){line[strcspn(line,"\r\n")]=0;snprintf(status,sizeof(status),"%s",line);}fclose(result);}
+        }
+        return;
+    }
+    if(gamez_rename_pending){
+        gamez_rename_pending=0;
+        if(WIFEXITED(code)&&!WEXITSTATUS(code)){Browse next=browse;next.page=1;request_catalog(next,0,0);}
+        else {
+            FILE *result=fopen("catalog-cache/rename-result.txt","r");
+            snprintf(status,sizeof(status),"COULD NOT RENAME / CHECK PC LAUNCHER");
+            if(result){char line[100];if(fgets(line,sizeof(line),result)){line[strcspn(line,"\r\n")]=0;snprintf(status,sizeof(status),"%s",line);}fclose(result);}
+        }
+        return;
+    }
+    if(auto_active){auto_result(WIFEXITED(code)&&!WEXITSTATUS(code));if(!auto_active&&!catalog_pid)video_download_requested=0;return;}
     if(pending.mode==13){
         if(tv_active&&WIFEXITED(code)&&!WEXITSTATUS(code)){
             count=total=0;selection=0;read_catalog("catalog-cache/result.tsv");
@@ -802,24 +1108,44 @@ static void finish_catalog(void){
         else snprintf(status,sizeof(status),"TV: NO EPISODE FOUND / TRYING ANOTHER SHOW");
         tv_next_at=SDL_GetTicks()+10000;return;
     }
-    if(!WIFEXITED(code)||WEXITSTATUS(code)){play_after_load=0;snprintf(status,sizeof(status),(pending.mode==16||pending.mode==19)?"ROM DOWNLOAD FAILED - SEE CATALOG.LOG":pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
+    if(!WIFEXITED(code)||WEXITSTATUS(code)){
+        if(pending.mode==36){
+            FILE *error=fopen("core-error.txt","r");char detail[140]="SEE CATALOG.LOG";
+            if(error){if(!fgets(detail,sizeof(detail),error))strcpy(detail,"SEE CATALOG.LOG");fclose(error);}
+            detail[strcspn(detail,"\r\n")]=0;
+            snprintf(status,sizeof(status),"CORE INSTALL FAILED: %.76s",detail);return;
+        }
+        play_after_load=0;snprintf(status,sizeof(status),(pending.mode==16||pending.mode==19)?"ROM DOWNLOAD FAILED - SEE CATALOG.LOG":pending.mode==6?"SERVER UNAVAILABLE - SELECT ANOTHER SERVER":"COULD NOT LOAD - CHECK CONNECTION / CATALOG.LOG");return;}
     for(int i=0;i<VISIBLE;i++){char src[80],dst[80];snprintf(src,sizeof(src),"catalog-cache/poster-%d.next.bmp",i);snprintf(dst,sizeof(dst),"catalog-cache/poster-%d.bmp",i);rename(src,dst);}
     if(pending_push&&history_size<4)history[history_size++]=browse;
     if(pending_pop&&history_size)history_size--;
     if(pending.mode==16||pending.mode==19||pending.mode==27)pending.mode=14;
     if(pending.mode==29)pending.mode=28;
+    if(pending.mode==36){
+        for(int i=0;i<LIBRARY_RAM_CACHE;i++)if(library_pages[i].key.mode==14||library_pages[i].key.mode==22)library_pages[i].valid=0;
+        pending.mode=35;
+    }
     if(pending.mode==14)pending.id=0;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
     library_cache_store(&browse);
-    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
+    if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24&&browse.mode<35){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
     if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"KISSANIME: BROWSING WORKS / SOME VIDEO HOSTS ARE NOT SUPPORTED");
-    if(browse.mode==14)snprintf(status,sizeof(status),"Y IMPORT / START LICENSED DOWNLOADS / SHARE+OPTIONS EXIT GAME");
+    if(browse.mode==14)snprintf(status,sizeof(status),"A ROM OPTIONS / Y CORE PICKER / SHARE+OPTIONS EXIT GAME");
     if(browse.mode==17&&!total)snprintf(status,sizeof(status),"NO ARCHIVE TITLES FOUND - TRY ANOTHER PLATFORM");
     if(browse.mode==18&&!total)snprintf(status,sizeof(status),"NO SUPPORTED ROM FILES IN THIS ARCHIVE ITEM");
-    if(browse.mode==14){FILE *f=fopen("game-exit-status","r");int code=0;if(f){int got=fscanf(f,"%d",&code);fclose(f);unlink("game-exit-status");if(got==1&&code)snprintf(status,sizeof(status),"GAME COULD NOT START / SEE GAME.LOG / Y REIMPORT");}}
+    if(browse.mode==14||browse.mode==21){
+        FILE *f=fopen("game-exit-status","r");int code=0;
+        if(f){int got=fscanf(f,"%d",&code);fclose(f);unlink("game-exit-status");
+            if(got==1&&code){
+                snprintf(status,sizeof(status),"GAME COULD NOT START / SEE GAME.LOG / Y REIMPORT");
+                f=fopen("game-error.txt","r");
+                if(f){char message[100]="";if(fgets(message,sizeof(message),f))snprintf(status,sizeof(status),"%.99s",message);fclose(f);unlink("game-error.txt");}
+            }
+        }
+    }
     if(browse.mode==10&&!total)snprintf(status,sizeof(status),"NO PUBLIC H.264 / MPEG4 FILES IN THIS ITEM");
     if(play_after_load){play_after_load=0;if(total)play();else if(browse.mode==34)snprintf(status,sizeof(status),"END OF AVAILABLE SERIES");}
 }
@@ -834,7 +1160,7 @@ static void prefetch_pages(void){
         next_prefetch_at=SDL_GetTicks()+1500;
     }
     if(!prefetch_left||catalog_pid||player_pid||auto_active||update_pid||
-       settings_on||about||search_on||tv_active||browse.mode!=prefetch_browse.mode||
+       settings_on||rom_options_menu||rom_core_menu||about||search_on||tv_active||browse.mode!=prefetch_browse.mode||
        browse.id!=prefetch_browse.id||browse.season!=prefetch_browse.season||
        browse.episode!=prefetch_browse.episode||strcmp(browse.query,prefetch_browse.query))return;
     Uint32 now=SDL_GetTicks();
@@ -842,31 +1168,28 @@ static void prefetch_pages(void){
     if(!library_cacheable(browse.mode)){prefetch_left=0;return;}
     if(prefetch_browse.page>=listing_pages){prefetch_left=0;return;}
     Browse target=prefetch_browse;target.page++;
-    prefetch_pid=shell_fork();
-    if(!prefetch_pid){
-        int out=open("/dev/null",O_WRONLY);if(out>=0){dup2(out,STDOUT_FILENO);dup2(out,STDERR_FILENO);close(out);}
-        char pg[16],id[16],sn[16],ep[16];
-        snprintf(pg,sizeof(pg),"%d",target.page);
-        snprintf(id,sizeof(id),"%d",target.id);
-        snprintf(sn,sizeof(sn),"%d",target.season);
-        snprintf(ep,sizeof(ep),"%d",target.episode);
-        execl("./greenlink-catalog","greenlink-catalog",browse_kinds[target.mode],
-              pg,target.query,id,sn,ep,"",(char*)NULL);
-        _exit(127);
-    }
+    char pg[16],id[16],sn[16],ep[16];
+    snprintf(pg,sizeof(pg),"%d",target.page);snprintf(id,sizeof(id),"%d",target.id);
+    snprintf(sn,sizeof(sn),"%d",target.season);snprintf(ep,sizeof(ep),"%d",target.episode);
+    const char *args[]={"greenlink-catalog",browse_kinds[target.mode],pg,target.query,id,sn,ep,"",NULL};
+    prefetch_pid=shell_spawn("./greenlink-catalog",args,"/dev/null","/dev/null");
     if(prefetch_pid<0){prefetch_pid=0;prefetch_left=0;return;}
     prefetch_browse.page=target.page;
     prefetch_left--;
 }
 static void controller_used(void){controller_activity=SDL_GetTicks();controller_slept=0;}
 static void controller_idle(void){
+#ifdef _WIN32
+    return;
+#else
     if(idle_pid){if(waitpid(idle_pid,NULL,WNOHANG)==idle_pid)idle_pid=0;else return;}
     if(controller_slept||SDL_GetTicks()-controller_activity<300000)return;
     controller_slept=1;
     if(access("./controller-idle.sh",R_OK))return;
-    idle_pid=shell_fork();
-    if(!idle_pid){int log=open("controller.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./controller-idle.sh",(char*)NULL);_exit(127);}
+    const char *args[]={"sh","./controller-idle.sh",NULL};
+    idle_pid=shell_spawn("/bin/sh",args,"controller.log","controller.log");
     if(idle_pid<0)idle_pid=0;
+#endif
 }
 /* User-curated mixed library. Store the same bounded TSV fields used by
  * the catalog; no account or remote service is required. */
@@ -943,6 +1266,7 @@ static SDL_Texture *load_poster(const char *path) {
     int32_t height=(int32_t)((uint32_t)header[22]|(uint32_t)header[23]<<8|(uint32_t)header[24]<<16|(uint32_t)header[25]<<24);
     if(width<1||width>192||height==0||height>288||height< -288)return NULL;
     image=SDL_LoadBMP(path);if(!image)return NULL;
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"linear");
     texture=SDL_CreateTextureFromSurface(renderer,image);SDL_FreeSurface(image);return texture;
 }
 static void cache_page(int page) {
@@ -955,7 +1279,7 @@ static void cache_page(int page) {
             for(int i=0;i<VISIBLE&&page*VISIBLE+i<total;i++){
                 if(posters[i])continue;
                 const char *art=titles[visible[page*VISIBLE+i]].poster;
-                if(!strncmp(art,"game-art-cache/",15))posters[i]=load_poster(art);
+                if(!strncmp(art,"game-art-cache/",15)||browse.mode==FAVORITES_MODE)posters[i]=load_poster(art);
             }
         }
         return;
@@ -994,64 +1318,138 @@ static void placeholder(int x,int y,int w,int h,int seed) {
     text(x+10,y+12,"NO ART",1,(SDL_Color){150,190,160,255},12);
     char code[16];snprintf(code,sizeof(code),"%03d",seed+1);text(x+10,y+h-28,code,2,(SDL_Color){116,255,132,255},5);
 }
-/* Six textures, depth ordering and mirrored reflections; no 3D context. */
+/* Perspective strips keep six cover textures and the existing SDL renderer. */
+static void flow_face(SDL_Texture *poster,const FlowCard *card,Uint8 light,int flip){
+    int tw,th;if(SDL_QueryTexture(poster,NULL,NULL,&tw,&th))return;
+    int strips=card->skew?14:1;
+    for(int i=0;i<strips;i++){
+        float u=((float)i+0.5f)/strips,far=card->direction<0?1.0f-u:u;
+        int inset=(int)(card->skew*far);
+        int x0=card->x+i*card->w/strips,x1=card->x+(i+1)*card->w/strips;
+        SDL_Rect source={i*tw/strips,0,(i+1)*tw/strips-i*tw/strips,th};
+        SDL_Rect target={x0,card->y+inset,x1-x0+(i+1<strips),card->h-inset*2};
+        Uint8 shade=(Uint8)(light*(1.0f-far*(card->skew?0.20f:0.0f)));
+        SDL_SetTextureColorMod(poster,shade,shade,shade);
+        SDL_RenderCopyEx(renderer,poster,&source,&target,0,NULL,flip?SDL_FLIP_VERTICAL:SDL_FLIP_NONE);
+    }
+}
+/* Larger center case, angled side faces, soft shadows and a fading mirror floor. */
 static void draw_coverflow(void) {
     int page=selection/VISIBLE;cache_page(page);
     float delta=(float)selection-flow_position;
     flow_position+=delta*0.24f;
     if(delta<0.02f&&delta> -0.02f)flow_position=(float)selection;
-    SDL_Rect clip={184,118,746,296};SDL_RenderSetClipRect(renderer,&clip);
+    SDL_Rect clip={184,96,746,348};SDL_RenderSetClipRect(renderer,&clip);
+    SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+    rect(184,111,746,333,(SDL_Color){0,0,0,95},1);
+    for(int band=0;band<8;band++)rect(210,396+band*6,694,6,(SDL_Color){0,0,0,(Uint8)(25+band*12)},1);
+    SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     /* Farthest cards first so the centered cover stays in front. */
     for(int depth=6;depth>=0;depth--)for(int slot=0;slot<VISIBLE&&page*VISIBLE+slot<total;slot++) {
         int index=page*VISIBLE+slot;float d=(float)index-flow_position,a=d<0?-d:d;
         if((int)(a+0.5f)!=depth)continue;
-        float scale=1.0f/(1.0f+a*0.27f);
-        int h=(int)(236*scale),w=(int)(158*scale/(1+a*0.28f));
-        int center=554+(int)(d*132);
-        SDL_Rect dst={center-w/2,151+(236-h)/2,w,h};
-        Uint8 light=(Uint8)(255/(1+a*0.45f));
-        rect(dst.x-3,dst.y-3,w+6,h+6,index==selection?green:dim,0);
+        FlowCard card=flow_card(d);int w=card.w,h=card.h;
+        SDL_Rect dst={card.x,card.y,w,h};
+        Uint8 light=(Uint8)(255/(1+a*0.25f));
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+        for(int shadow=10;shadow>=2;shadow-=2)rect(dst.x+shadow,dst.y+shadow,w,h,(SDL_Color){0,0,0,30},1);
+        SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
+        int spine=card.direction<0?dst.x-5:dst.x+w;
+        rect(spine,dst.y+card.skew,5,h-card.skew*2,(SDL_Color){20,26,31,255},1);
         if(posters[slot]) {
-            SDL_SetTextureColorMod(posters[slot],light,light,light);
             SDL_SetTextureBlendMode(posters[slot],SDL_BLENDMODE_BLEND);
             SDL_SetTextureAlphaMod(posters[slot],255);
-            SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
-            SDL_Rect reflection={dst.x,dst.y+h+8,w,h};
-            SDL_SetTextureAlphaMod(posters[slot],40);
-            SDL_RenderCopyEx(renderer,posters[slot],NULL,&reflection,0,NULL,SDL_FLIP_VERTICAL);
+            flow_face(posters[slot],&card,light,0);
+            FlowCard reflection=card;reflection.y=dst.y+h+5;
+            int tw,th;SDL_QueryTexture(posters[slot],NULL,NULL,&tw,&th);
+            for(int band=0;band<8;band++){
+                SDL_Rect mirror={clip.x,reflection.y+band*5,clip.w,5};
+                if(mirror.y>=clip.y+clip.h)break;
+                if(mirror.y+mirror.h>clip.y+clip.h)mirror.h=clip.y+clip.h-mirror.y;
+                SDL_RenderSetClipRect(renderer,&mirror);SDL_SetTextureAlphaMod(posters[slot],(Uint8)(105-band*13));
+                int bottom=th-band*5*th/h,top=th-(band+1)*5*th/h;
+                SDL_Rect source={0,top,tw,bottom-top},target={dst.x,mirror.y,w,mirror.h};
+                SDL_SetTextureColorMod(posters[slot],light,light,light);
+                SDL_RenderCopyEx(renderer,posters[slot],&source,&target,0,NULL,SDL_FLIP_VERTICAL);
+            }
+            SDL_RenderSetClipRect(renderer,&clip);
             SDL_SetTextureAlphaMod(posters[slot],255);SDL_SetTextureColorMod(posters[slot],255,255,255);
         }else {rect(dst.x,dst.y,w,h,(SDL_Color){8,23,14,255},1);text(dst.x+6,dst.y+h/2,"FLXTR",1,(SDL_Color){150,190,160,255},w/6-1);}
+        if(index==selection){rect(dst.x-2,dst.y-2,w+4,h+4,green,0);rect(dst.x-3,dst.y-3,w+6,h+6,green,0);}
     }
     SDL_RenderSetClipRect(renderer,NULL);
     Title *t=&titles[visible[selection]];
     text(194,95,browse.name[0]?browse.name:browse_labels[browse.mode],2,dim,60);
-    text(194,427,t->title,2,green,60);text(194,454,t->meta,1,white,78);
-    char line[90];snprintf(line,sizeof(line),"PAGE %d / %d   A OPEN   UP/DOWN PAGE",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
-    text(194,475,line,1,dim,120);
+    text(194,450,t->title,2,green,60);text(194,474,t->meta,1,white,100);
+    char line[90];snprintf(line,sizeof(line),"%d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
+    text(850,95,line,1,dim,12);
 }
 static int flow_animating(void){return coverflow&&!settings_on&&!about&&!search_on&&(browse.mode<5||browse.mode>=7)&&total&&flow_position!=(float)selection;}
 static void start_update(void) {
+#ifdef __ANDROID__
+    snprintf(status,sizeof(status),"ANDROID PREVIEW / INSTALL A NEW APK TO UPDATE");return;
+#endif
+    if(samba_pid){snprintf(status,sizeof(status),"WAIT FOR SAMBA INSTALL/SERVICE WORKER");return;}
+#ifdef _WIN32
+    ShellExecuteW(NULL,L"open",L"https://github.com/vatomalo/FlXtR-Steamlink/releases",NULL,NULL,SW_SHOWNORMAL);
+    snprintf(status,sizeof(status),"DOWNLOAD AND EXTRACT THE WINDOWS UPDATE FROM GITHUB");return;
+#else
     if(access("./update.sh",R_OK)){snprintf(status,sizeof(status),"UPDATER NOT INSTALLED");return;}
-    update_pid=shell_fork();
-    if(!update_pid){int log=open("update.log",O_WRONLY|O_CREAT|O_TRUNC,0600);if(log>=0){dup2(log,1);dup2(log,2);close(log);}execl("/bin/sh","sh","./update.sh",(char*)NULL);_exit(127);}
+    const char *args[]={"sh","./update.sh",NULL};
+    update_pid=shell_spawn("/bin/sh",args,"update.log","update.log");
     if(update_pid<0){update_pid=0;snprintf(status,sizeof(status),"COULD NOT START UPDATER");return;}
     snprintf(status,sizeof(status),"CHECKING GITHUB FOR A SHELL UPDATE...");
+#endif
 }
 #include "music_ui.h"
+#include "preview_inset.h"
+#include "rom_assets_ui.h"
+#include "youtube_video.h"
+#include "power_activity.h"
+#include "settings_services.h"
+#include "usb_setup_ui.h"
+#include "mtv_weights_ui.h"
+static int keyboard_help;
 static void draw(Uint32 tick) {
+    if(mtv_weights_on){mtv_weights_draw();SDL_RenderPresent(renderer);return;}
+    if(usb_on){usb_draw();SDL_RenderPresent(renderer);return;}
+    if(keyboard_help){
+        SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
+        text(45,35,"KEYBOARD CONTROLS",3,green,50);
+        const char *lines[]={"ARROWS / ENTER   Navigate / select","ESC              Back / stop video","SPACE / K        Pause / resume playback","J / L            Seek backward / forward 10 seconds","F / M IN VIDEO   Fullscreen / mute","TAB IN VIDEO     Playback menu","F2               Next library","F3 / CTRL+F      Search / TAB completes typed text","F10              Settings / F4 next theme","M / T / G        Music / TV / Games","CTRL+P           Phone setup / CTRL+Q quit","F1 / ESC         Close this help"};
+        for(size_t i=0;i<sizeof(lines)/sizeof(lines[0]);i++)text(45,95+(int)i*33,lines[i],1,white,100);
+        SDL_RenderPresent(renderer);return;
+    }
+    if(samba_password_on){
+        SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
+        text(194,94,"SAMBA PASSWORD / USER ROOT",2,green,50);
+        char masked[65];size_t length=strlen(samba_password);memset(masked,'*',length);masked[length]=0;
+        text(194,146,masked,2,white,56);
+        char input_hint[64];snprintf(input_hint,sizeof(input_hint),"%u CHARACTERS / CASE %s",(unsigned)length,samba_password_lower?"LOWER":"UPPER");
+        text(194,176,input_hint,1,dim,80);
+        for(int i=0;i<40;i++){
+            int x=194+(i%10)*64,y=202+(i/10)*48;char key[2]={search_keys[i],0};
+            if(samba_password_lower)key[0]=(char)tolower((unsigned char)key[0]);
+            rect(x,y,48,38,i==samba_password_key?green:dim,0);text(x+15,y+10,key,2,i==samba_password_key?green:white,1);
+        }
+        text(194,420,"A TYPE / X CASE / START SAVE / B CANCEL",1,green,90);
+        text(194,446,"8-64 CHARACTERS / SAVING ENABLES LOCAL SHARING",1,white,90);
+        text(194,474,samba_message,1,dim,90);
+        SDL_RenderPresent(renderer);return;
+    }
     if(music_on){music_draw();SDL_RenderPresent(renderer);return;}
-    SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
-    if(background&&!monochrome_menu){
-        SDL_RenderCopy(renderer,background,NULL,NULL);
+    SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
+    if((background&&!monochrome_menu)||menu_theme>=3){
+        if(background)SDL_RenderCopy(renderer,background,NULL,NULL);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
-        SDL_Color pane=menu_theme==2?(SDL_Color){12,5,10,210}:(SDL_Color){255,255,255,180};
-        SDL_Color side=menu_theme==2?(SDL_Color){12,5,10,225}:(SDL_Color){255,255,255,208};
-        SDL_Color foot=menu_theme==2?(SDL_Color){12,5,10,232}:(SDL_Color){255,255,255,224};
+        SDL_Color pane=theme_pane(210);
+        SDL_Color side=theme_pane(225);
+        SDL_Color foot=theme_pane(232);
         rect(20,16,920,55,pane,1);
         rect(20,80,155,400,side,1);
         rect(20,483,920,43,foot,1);
         rect(184,419,746,63,side,1);
-        if(settings_on||bios_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,menu_theme==2?(SDL_Color){12,5,10,225}:(SDL_Color){255,255,255,200},1);
+        if(settings_on||bios_on||filters_on||gamez_options_on||gamez_unapprove_confirm||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,theme_pane(225),1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
     if(stars_on&&(!background||monochrome_menu))for(int i=0;i<STARS;i++) {
@@ -1066,9 +1464,31 @@ static void draw(Uint32 tick) {
         text(200,307,"A CONFIRM REMOVE / B CANCEL",2,green,55);
         SDL_RenderPresent(renderer);return;
     }
+    if(rom_assets_on&&!rom_core_menu){rom_assets_draw();return;}
+    if(platform_core_menu){
+        rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
+        text(200,95,platform_core_selecting?"DEFAULT CORE":"DEFAULT CORES BY SYSTEM",2,green,40);
+        if(platform_core_selecting){
+            text(200,126,rom_platform_names[platform_core_index],2,white,40);
+            for(int i=platform_core_first;i<rom_core_count&&i<platform_core_first+7;i++){
+                char line[112];snprintf(line,sizeof(line),"%c %s",i==platform_core_choice?'>':' ',rom_core_names[i]);
+                text(205,162+(i-platform_core_first)*32,line,2,i==platform_core_choice?green:white,58);
+            }
+            text(200,408,"A SAVE / B SYSTEMS",1,green,75);
+        }else{
+            for(int i=0;i<ROM_PLATFORM_COUNT;i++){
+                char preferred[96]={0},line[160];
+                if(!rom_platform_core_get(i,preferred,sizeof(preferred)))strcpy(preferred,"AUTOMATIC");
+                snprintf(line,sizeof(line),"%s: %s",rom_platform_names[i],preferred);
+                text(205,145+i*29,line,1,i==platform_core_index?green:white,90);
+            }
+            text(200,435,"A CHOOSE CORE / B SETTINGS / Y ROM CORE OVERRIDES DEFAULT",1,green,80);
+        }
+        SDL_RenderPresent(renderer);return;
+    }
     if(rom_core_menu){
         rect(184,80,746,339,(SDL_Color){0,0,0,235},1);
-        text(200,95,"CORE OPTIONS / ROM",2,green,50);
+        text(200,95,"SELECT INSTALLED CORE",2,green,50);
         text(200,125,rom_core_title,1,white,70);
         for(int i=rom_core_first;i<rom_core_count&&i<rom_core_first+7;i++){
             char line[112];snprintf(line,sizeof(line),"%c %s",i==rom_core_selected?'>':' ',rom_core_names[i]);
@@ -1077,26 +1497,75 @@ static void draw(Uint32 tick) {
         text(200,395,"A SAVE CORE / B CANCEL",1,green,65);
         SDL_RenderPresent(renderer);return;
     }
+    if(rom_send_on){
+        rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
+        text(200,95,"SEND ROM TO DEVICE",2,green,50);
+        text(200,127,rom_options_title.title,2,white,58);
+        int first=rom_send_row>5?rom_send_row-5:0;
+        for(int i=first;i<rom_send_count&&i<first+6;i++){
+            int y=181+(i-first)*32;if(i==rom_send_row)rect(194,y-5,718,28,green,0);
+            text(210,y,rom_send_names[i],2,i==rom_send_row?green:white,55);
+        }
+        if(!rom_send_count)text(210,181,rom_send_pid?"SEARCHING...":"NO ROM RECEIVERS FOUND / UPDATE FLXTR ON TARGET",1,dim,90);
+        text(200,399,"NES / SNES / GB / GBC / GBA - SAVED IN THE TARGET SYSTEM FOLDER",1,dim,100);
+        text(200,425,"A SEND / Y REFRESH / B BACK",1,green,90);
+        text(200,448,status,1,white,100);SDL_RenderPresent(renderer);return;
+    }
+    if(rom_options_menu){
+        rect(184,80,746,399,(SDL_Color){0,0,0,235},1);
+        text(200,95,"ROM OPTIONS",2,green,50);
+        text(200,127,rom_options_title.title,2,white,58);
+        const char *labels[]={"PLAY","CORE","SEND TO"};
+        const char *values[]={"START GAME",rom_core_names[rom_core_selected],"CHOOSE DEVICE"};
+        for(int row=0;row<3;row++){
+            int y=181+row*43;
+            if(row==rom_options_row)rect(194,y-8,718,32,green,0);
+            text(210,y,labels[row],2,white,22);text(420,y,values[row],2,row==rom_options_row?green:white,40);
+        }
+        text(200,377,"CORE IS SAVED FOR THIS ROM / GAME SCALING AND OUTPUT IN SETTINGS",1,dim,110);
+        text(200,408,"A OPEN / LEFT-RIGHT CORE / X PLAY / B BACK",1,green,100);
+        text(200,448,status,1,dim,100);
+        SDL_RenderPresent(renderer);return;
+    }
     text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
     if(music_job==3||music_job==2){text(737,22,"[R1] MUSIC / NOW PLAYING",1,dim,32);music_now_playing(737,43,31,green);}
-    else text(737,32,"[R1] MUSIC",2,dim,17);
+    else text(737,32,ui_hint("[R1] MUSIC","[M] MUSIC"),2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
     int root_mode=history_size?history[0].mode:browse.mode;
     if(root_mode==14||root_mode==22)root_mode=21;
     if(root_mode==9||root_mode==10||root_mode==31)root_mode=30;
-    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,21,30,0};
-    const char *const menu_names[]={"TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","LOCAL"};
-    for(int i=0;i<8;i++){
+    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
+    const char *const menu_names[]={"TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","DOWNLOADS","LOCAL"};
+    for(int i=0;i<9;i++){
         char line[32];snprintf(line,sizeof(line),"%c %s",root_mode==menu_modes[i]?'>':' ',menu_names[i]);
         text(30,124+i*21,line,1,root_mode==menu_modes[i]?green:dim,18);
     }
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
-    text(30,379,"[SELECT] SETTINGS",1,dim,22);text(30,402,"[X] LIBRARY",1,dim,22);text(30,421,browse.mode==1||browse.mode==2||browse.mode==7?"[Y] GENRE / SECTION":browse.mode==14?"[L2] ROM FOLDERS":browse.mode==28?"[Y] DELETE ZIP":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?"[START] SEARCH":browse.mode==14?"[START] GET GAMES":browse.mode==21?"[START] GET GAMES":"[START] ABOUT",1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":"B BACK / L3 FAVORITE",1,dim,22);
+    if(total&&video_download_offer(&titles[visible[selection]]))text(30,357,ui_hint("[L1] DOWNLOAD TO LOCAL","D DOWNLOAD TO LOCAL"),1,green,24);
+    text(30,379,ui_hint("[SELECT] SETTINGS","F10 SETTINGS / F1 HELP"),1,dim,22);text(30,402,ui_hint("[X] LIBRARY","F2 LIBRARY"),1,dim,22);text(30,421,browse.mode==22&&browse.id==11?ui_hint("[Y] GAME OPTIONS","F6 GAME OPTIONS"):browse.mode==1||browse.mode==2||browse.mode==7?ui_hint("[Y] GENRE / SECTION","F6 GENRE / SECTION"):browse.mode==14?ui_hint("[L2] ROM FOLDERS","F8 ROM FOLDERS"):browse.mode==28?"[Y] DELETE ZIP":browse.mode==OFFLINE_MODE?"[Y] DELETE / CANCEL":total&&video_download_supported(&titles[visible[selection]])?"[Y] DOWNLOAD TO LOCAL":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==22&&browse.id==11?ui_hint("[START] GAME OPTIONS","F3 GAME OPTIONS"):browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?ui_hint("[START] SEARCH","F3 SEARCH"):browse.mode==14?ui_hint("[START] GET GAMES","F3 GET GAMES"):browse.mode==21?ui_hint("[START] GET GAMES","F3 GET GAMES"):ui_hint("[START] ABOUT","F1 HELP / I ABOUT"),1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":ui_hint("B BACK / L3 FAVORITE","ESC BACK / F FAVORITE"),1,dim,22);
     if(accounts_on){
         rect(184,80,746,410,(SDL_Color){12,20,14,255},1);
-        text(204,96,party_entry==2?"ROMSGAMES / PHONE IMPORT":phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
-        if(phone_party.phase&&party_entry!=2){
+text(204,96,party_entry==4?"TAILSCALE":party_entry==3?"CONTINUE ON TV":party_entry==2?"ROMSGAMES / PHONE IMPORT":phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
+        if(party_entry==4){
+            text(204,128,"TAILSCALE / PRIVATE REMOTE PLAY",2,green,48);
+            if(tailscale_auth[0]){int size=qrcodegen_getSize(accounts_qr),scale=4;rect(204,160,(size+8)*scale,(size+8)*scale,(SDL_Color){255,255,255,255},1);
+                for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(qrcodegen_getModule(accounts_qr,x,y))rect(204+(x+4)*scale,160+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);}
+            wrap(524,180,"A INSTALL / CONNECT. SCAN THE QR TO SIGN IN. CONNECT YOUR PHONE TO THE SAME TAILSCALE ACCOUNT.",30,6,white);
+            wrap(204,410,tailscale_status,87,2,green);
+            text(204,470,"A CONNECT / X DISCONNECT / Y SIGN OUT / B BACK",1,white,90);
+        }else if(party_entry==3){
+            text(204,128,"CONTINUE ON TV",2,green,40);
+            if(api_setup.url[0]){
+                int size=qrcodegen_getSize(accounts_qr),scale=4;
+                rect(204,160,(size+8)*scale,(size+8)*scale,(SDL_Color){255,255,255,255},1);
+                for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(qrcodegen_getModule(accounts_qr,x,y))rect(204+(x+4)*scale,160+(y+4)*scale,scale,scale,(SDL_Color){0,0,0,255},1);
+                wrap(524,180,"SCAN TO PAIR FLXTR. THEN USE CONTINUE ON TV IN THE PHONE VIDEO OR GAME MENU. KEEP THIS SCREEN OPEN.",30,6,white);
+                text(524,360,handoff_remote?"TAILSCALE / Y SELECTS LAN":"LOCAL LAN / Y SELECTS REMOTE",1,white,40);
+                text(524,385,"X RESUME LAST RECEIVED GAME",1,white,40);
+                text(204,420,api_setup.url,1,white,100);
+            }
+        }else if(phone_party.phase&&party_entry!=2){
             const PhoneQuestion *q=phone_question();char caption[96];
             int last=phone_party.round>=6,answered=0;
             for(int i=0;i<phone_party.count;i++)if(phone_party.players[i].answer>=0)answered++;
@@ -1127,7 +1596,7 @@ static void draw(Uint32 tick) {
                 text(204,245,"REMATCH FROM YOUR PHONE / FRESH QUESTIONS",1,(SDL_Color){220,230,220,255},70);
             }
             for(int i=0;i<phone_party.count;i++){int p=order[i];snprintf(caption,sizeof(caption),"%s: %d +%d",phone_party.players[p].name,phone_party.players[p].score,phone_party.phase==2?phone_party.players[p].gain:0);text(204+(i%2)*350,355+(i/2)*22,caption,2,(SDL_Color){220,230,220,255},28);}
-        }else if(api_setup.listener>=0){
+        }else if(flxtr_socket_valid(api_setup.listener)){
             int size=qrcodegen_getSize(accounts_qr),scale=party_entry==2?280/(size+8):4,left=204,top=130;
             if(scale>4)scale=4;
             if(scale<1)scale=1;
@@ -1147,17 +1616,34 @@ static void draw(Uint32 tick) {
             }else if(party_entry!=2)text(204,370,"WI-FI QR UNAVAILABLE",1,(SDL_Color){220,230,220,255},40);
             text(524,402,api_setup.url,1,(SDL_Color){220,230,220,255},65);
         }
-        text(204,443,api_setup.message,1,(SDL_Color){140,240,150,255},90);
-        text(204,473,"B CLOSE / A NEW ROOM / EXPIRES AFTER 10 MINUTES IDLE",1,(SDL_Color){220,230,220,255},90);
+        if(party_entry!=4){
+            text(204,443,api_setup.message,1,(SDL_Color){140,240,150,255},90);
+            text(204,473,"B CLOSE / A NEW ROOM / EXPIRES AFTER 10 MINUTES IDLE",1,(SDL_Color){220,230,220,255},90);
+        }
+    }else if(gamez_options_on){
+        text(194,100,"GAME OPTIONS",3,green,40);
+        if(total)text(194,150,titles[visible[selection]].title,1,white,70);
+        const char *labels[]={"RENAME","UNAPPROVE","GENRES / SORTING"};
+        for(int i=0;i<3;i++){
+            char line[64];snprintf(line,sizeof(line),"%c %s",gamez_options_row==i?'>':' ',labels[i]);
+            text(204,210+i*55,line,2,(!total&&i<2)?dim:gamez_options_row==i?green:white,55);
+        }
+        text(194,420,"UP/DOWN SELECT / A OPEN / B CLOSE",1,green,80);
+    }else if(gamez_unapprove_confirm){
+        text(194,100,"UNAPPROVE GAME?",3,green,40);
+        text(194,165,gamez_unapprove_title,2,white,60);
+        wrap(194,235,"REMOVE THIS GAME FROM THE PC LAUNCHER'S APPROVED LIST. GAME FILES STAY INSTALLED.",60,4,dim);
+        text(194,390,"A CONFIRM / B CANCEL",2,green,50);
     }else if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
-        const char *genre=browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
+        int pc=browse.mode==22&&browse.id==11;
+        const char *genre=pc?gamez_genres[browse.episode]:browse.mode==7&&browse.id==11?"KIDS":browse_genres[browse.id];
         text(204,180,filter_row==0?"> GENRE":"  GENRE",2,green,30);text(500,180,genre,2,white,30);
-        text(204,240,filter_row==1?"> SECTION":"  SECTION",2,green,30);text(500,240,browse_orders[browse.season],2,white,30);
+        text(204,240,filter_row==1?"> SECTION":"  SECTION",2,green,30);text(500,240,pc?gamez_orders[browse.season]:browse_orders[browse.season],2,white,30);
         text(194,350,"UP/DOWN ROW / LEFT/RIGHT CHANGE",2,green,60);
         text(194,400,"A APPLY / B OR X SKIP",2,green,60);
     }else if(tv_schedule_on||(browse.mode==11&&!settings_on&&!about)){
-        text(194,94,tv_schedule_on?"EDIT TV SCHEDULE":"TV MODE / OSLO TIME",2,green,55);
+        text(194,94,tv_schedule_on?"EDIT TV SCHEDULE":mtv_override?"MTV / MUSIC VIDEOS":"TV MODE / OSLO TIME",2,green,55);
         int active=tv_block_at(tv_blocks,tv_hour());
         for(int i=0;i<TV_BLOCKS;i++){
             char line[80];snprintf(line,sizeof(line),"%c %02d-%02d  %s %s",i==active?'>':' ',tv_blocks[i].hour,i+1<TV_BLOCKS?tv_blocks[i+1].hour:24,tv_genres[tv_blocks[i].genre],tv_blocks[i].marathon?"[MARATHON]":"");
@@ -1165,8 +1651,8 @@ static void draw(Uint32 tick) {
             text(202,y,line,2,i==active||i==tv_row?green:white,58);
             if(tv_schedule_on&&i==tv_row)text(840,y,tv_column==2?"RUN":tv_column?"GENRE":"HOUR",1,green,10);
         }
-        text(194,427,tv_schedule_on?"LEFT/RIGHT: CHANGE  /  A: HOUR, GENRE, MARATHON":"A START TV / SELECT EDIT SCHEDULE",1,green,90);
-        text(194,452,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":"EPISODES FINISH BEFORE THE NEXT GENRE BLOCK",1,dim,90);
+        text(194,427,tv_schedule_on?"LEFT/RIGHT: CHANGE  /  A: HOUR, GENRE, MARATHON":"ENTER/A START TV / F10 EDIT SCHEDULE",1,green,90);
+        text(194,452,tv_schedule_on?"UP/DOWN: SELECT BLOCK   B: SAVE & EXIT":ui_hint("Y: MTV / SCHEDULE   MUSIC QUERY: MTV-QUERY.TXT","F6: MTV / SCHEDULE   MUSIC QUERY: MTV-QUERY.TXT"),1,dim,90);
     }else if(bios_on){
         text(194,94,"GAME BIOS STATUS",3,green,40);
         const char *const *files=bios_files;
@@ -1183,25 +1669,63 @@ static void draw(Uint32 tick) {
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-        const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES"};
+const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE"};
 #else
-        const char *labels[]={"QUALITY","PREBUFFER","DISK LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES"};
+const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE"};
 #endif
-        char values[19][40];snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+char values[40][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
-        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme==2?"RomanticCrimsonSkulls":menu_theme==1?"CLASSIC MONOCHROME":"WHITE METAL");snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
+        snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
         snprintf(values[12],40,"%d / 5",tv_rating_weight);snprintf(values[13],40,"%d / 5",tv_popularity_weight);snprintf(values[14],40,"%d / 5",tv_variety_weight);
         snprintf(values[15],40,"SCAN QR WITH PHONE");
         snprintf(values[16],40,"POCKET QUIZ");
         snprintf(values[17],40,"%s",series_autoplay?"ON":"OFF");snprintf(values[18],40,"%s",auto_updates_enabled()?"ON":"OFF");
+        if(game_output)snprintf(values[19],40,"%dP / %d X %d",game_output,game_output_width(game_output),game_output);
+        else snprintf(values[19],40,"NATIVE / RETROARCH");
+        snprintf(values[20],40,"%s",music_autoplay?"ON":"OFF");
+        snprintf(values[21],40,"OPEN MUSIC BROWSER");
+        snprintf(values[22],40,"%s",game_view_names[game_view]);
+        snprintf(values[23],40,"%s",samba_pid?"WORKING...":samba_installed()?"INSTALLED":"DOWNLOAD AND INSTALL");
+        snprintf(values[24],40,"SET / CHANGE PASSWORD");
+        snprintf(values[25],40,"%s",!access("samba/.enabled",R_OK)?"STARTUP ON":"OFF");
+        snprintf(values[26],40,"%s",view_names[default_viewing]);
+        snprintf(values[27],40,"CHOOSE BY SYSTEM");
+        snprintf(values[28],40,"%s",game_performance_names[game_performance]);
+        snprintf(values[29],40,"%s",mtv_genre_names[mtv_genre]);
+        snprintf(values[30],40,"MOUNTS / LINKS / PREPARE");
+        snprintf(values[31],40,"EDIT ALL GENRE WEIGHTS");
+        snprintf(values[32],40,"%s",mtv_fusion_name(mtv_fusion_genre));
+        snprintf(values[33],40,"PAIR / RECEIVE SESSION");
+        snprintf(values[34],40,"INSTALL / CONNECT / SIGN IN");
+        snprintf(values[35],40,"%.39s",streaming_audio_label());
+        snprintf(values[36],40,"PLAY LEFT / RIGHT TONES");
+        snprintf(values[37],40,"%dP",stream_resolution);
+        snprintf(values[38],40,"%d FPS",stream_fps);
+        snprintf(values[39],40,"%d MBPS",stream_bitrate/1000);
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+        for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
+#endif
         text(194,94,"SETTINGS",3,green,40);
-        int first=settings_row>14?settings_row-14:0;
-        for(int i=first;i<first+15&&i<19;i++){int y=120+(i-first)*22;if(i==settings_row)rect(190,y-8,724,21,green,0);text(204,y,labels[i],2,white,24);text(566,y,values[i],2,i==settings_row?green:dim,28);}
-        text(194,452,"LEFT/RIGHT CHANGE / B SAVE AND RETURN",1,green,90);
-        text(194,474,"TEXT SUBTITLES WHEN INCLUDED IN THE STREAM",1,dim,90);
+        for(int i=0;i<SETTINGS_TABS;i++){
+            int x=194+i*103;
+            if(i==settings_tab)rect(x-4,122,99,25,green,0);
+            text(x,130,settings_tabs[i].name,1,i==settings_tab?green:dim,16);
+        }
+        const SettingsTab *tab=&settings_tabs[settings_tab];
+        for(int row=0;row<tab->count;row++){
+            int id=tab->ids[row],y=174+row*32;
+            if(row==settings_row)rect(190,y-8,724,29,green,0);
+            text(204,y,labels[id],2,white,24);
+            text(566,y,values[id],2,row==settings_row?green:dim,28);
+        }
+        text(194,430,"LB/RB OR TAB: TABS / DOWN: OPTIONS / LEFT/RIGHT: CHANGE",1,green,110);
+        text(194,452,"A SELECT / B SAVE AND RETURN",1,dim,90);
+        text(194,474,settings_tab==SETTINGS_SERVICES?samba_message:
+            settings_tab==SETTINGS_STREAMING?status:settings_tab==SETTINGS_VIDEO?
+            "QUALITY AND SUBTITLES APPLY TO ALL VIDEO":status,1,dim,110);
     }else if(search_on){
-        text(194,100,"SEARCH",3,green,30);
+        text(194,100,gamez_rename_on?"RENAME GAME":"SEARCH",3,green,30);
         const char *completion=search_completion();
         /* Phone-style prediction strip directly above the active input. */
         if(completion){
@@ -1216,8 +1740,8 @@ static void draw(Uint32 tick) {
             int x=194+(i%10)*64,y=202+(i/10)*48;char ch[2]={search_keys[i],0};
             rect(x,y,48,38,i==search_key?green:dim,0);text(x+15,y+10,ch,2,i==search_key?green:white,1);
         }
-        text(194,442,completion?"Y ACCEPT SUGGESTION / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",1,green,76);
-        text(194,467,"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
+        text(194,442,gamez_rename_on?"A TYPE / B DELETE / START SAVE":completion?"Y ACCEPT SUGGESTION / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",1,green,76);
+        text(194,467,gamez_rename_on?"< DELETE    > SAVE    ESC CANCEL":"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
     }else if(about) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
         wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. WHITE METAL, WATER DROPS, AND GREEN PIXELS.",53,4,white);
@@ -1236,7 +1760,7 @@ static void draw(Uint32 tick) {
             rect(190,y-8,726,37,i==selection?green:dim,0);
             text(204,y,t->title,2,i==selection?green:white,35);text(652,y,t->meta,1,dim,39);
         }
-        text(194,460,browse.mode==6?"A PLAY / B CHANGE SERVER":"A SELECT SERVER / B RETURN",1,green,70);
+        text(194,460,browse.mode==6?"A PLAY / Y DOWNLOAD TO LOCAL / B CHANGE SERVER":"A SELECT SERVER / B RETURN",1,green,70);
     } else if(coverflow) {
         draw_coverflow();
     } else {
@@ -1251,14 +1775,18 @@ static void draw(Uint32 tick) {
                 SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
             } else placeholder(dst.x,dst.y,dst.w,dst.h,visible[index]);
             text(x,y+162,t->title,1,index==selection?green:white,22);
-            const char *label=!strcmp(t->kind,"rg-game")?"A PHONE DOWNLOAD / QR":!strcmp(t->kind,"rg-source")||!strcmp(t->kind,"rg-platform")?"A BROWSE ROMSGAMES":!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"download-zip")?"A BROWSE ZIP / Y DELETE":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A PLAY GAME":t->url[0]?"PLAYABLE SOURCE":"A PLAY / AUTO SERVER";
+            const char *label=!strcmp(t->kind,"core-manager")?"A OPEN CORE DOWNLOADER":!strcmp(t->kind,"core-download")?"A INSTALL MISSING CORE":!strcmp(t->kind,"rg-game")?"A PHONE DOWNLOAD / QR":!strcmp(t->kind,"rg-source")||!strcmp(t->kind,"rg-platform")?"A BROWSE ROMSGAMES":!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"download-zip")?"A BROWSE ZIP / Y DELETE":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A ROM OPTIONS":!strcmp(t->kind,"offline")?"A PLAY OFFLINE / Y DELETE":t->url[0]?"A PLAY / Y DOWNLOAD TO LOCAL":"A PLAY / AUTO SERVER";
             text(x,y+177,label,1,dim,22);
         }
         Title *t=&titles[visible[selection]];
         rect(665,94,1,378,dim,1);text(690,97,"NOW SELECTED",1,dim,30);
-        wrap_detail(690,126,t->title,4,green);
+        /* Actual inset video frames are drawn by preview_draw(). */
+        rect(688,121,238,119,dim,0);
+        rect(690,123,234,115,(SDL_Color){9,13,17,255},1);
+        preview_draw();
+        wrap_detail(690,249,t->title,2,green);
         /* PSP-style detail pane: consume only local metadata, never wait for web. */
-        char detail[400]="",detail_path[128];
+        char detail[1024]="",detail_path[128];
         if((!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv"))&&t->id>0){
             snprintf(detail_path,sizeof(detail_path),"media-info-cache/%s-%d.txt",t->kind,t->id);
             FILE *f=fopen(detail_path,"r");
@@ -1291,15 +1819,17 @@ static void draw(Uint32 tick) {
             }
         }
         detail[strcspn(detail,"\r\n")]=0;
-        wrap_detail(690,205,t->meta,2,white);
-        if(detail[0])wrap_detail(690,250,detail,6,white);
+        /* Give the synopsis all space below the title. Footer metadata stays
+         * separate from the description and right-aligned with MORE / PAGE. */
+        rect(690,277,232,1,dim,1);
+        if(detail[0])wrap_description(690,287,detail,7,white,visible[selection]+browse.mode*100000+browse.id);
         else if(!strcmp(t->kind,"movie")||!strcmp(t->kind,"tv")||
                 !strcmp(t->kind,"game")||!strcmp(t->kind,"kiss"))
-            text(690,260,"DESCRIPTION NOT CACHED",1,dim,28);
-        text(690,354,t->url[0]?"[A] PLAY":t->kind[0]?"[A] OPEN":"NO STREAM YET",2,t->kind[0]||t->url[0]?green:dim,20);
-        text(690,395,"[LB/RB] VIEW",1,dim,25);
-        /* Aspect ratio is controlled only while video is playing. */
-        snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);text(690,455,num,1,dim,25);
+            text(690,291,"DESCRIPTION NOT CACHED",1,dim,28);
+        const int meta_chars=(int)strlen(t->meta)>35?35:(int)strlen(t->meta);
+        text(922-meta_chars*6,414,t->meta,1,white,35);
+        snprintf(num,sizeof(num),"PAGE %d / %d",browse.mode?browse.page:page+1,browse.mode?listing_pages:(total+5)/6);
+        text(922-(int)strlen(num)*6,455,num,1,dim,25);
     }
     if(bios_archive_confirm){rect(190,210,680,110,green,0);text(207,225,"ARCHIVE BIOS / COPYRIGHT WARNING",2,green,45);text(207,259,"CONFIRM RIGHTS AND SOURCE BEFORE INSTALL",1,white,75);text(207,289,"A DOWNLOAD / B OR X CANCEL",2,green,42);}
     if(catalog_pid&&!download_background){
@@ -1325,13 +1855,81 @@ static void draw(Uint32 tick) {
             text(212,287,"X HIDE PROGRESS / B CANCEL",1,green,65);
         }else text(212,250,auto_active?"FINDING A WORKING SERVER... B CANCEL":"LOADING... B TO CANCEL",2,green,50);
     }
+    if(video_download_message[0])text(194,475,video_download_message,1,green,80);
+    if(video_download_delete_confirm){
+        rect(190,210,720,130,(SDL_Color){12,20,14,255},1);
+        text(210,230,"DELETE LOCAL VIDEO?",2,green,40);
+        text(210,270,video_download_delete_title.title,1,white,80);
+        text(210,310,"A DELETE / B CANCEL",2,green,40);
+    }
     rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(713,509,"DPAD MOVE / B BACK",1,green,30);
     SDL_RenderPresent(renderer);
 }
+static void rom_send_job(int stage,int device){
+#if defined(FLXTR_DESKTOP) || defined(_WIN32)
+    (void)stage;(void)device;snprintf(status,sizeof(status),"ROM TRANSFER NEEDS THE STEAM LINK NETWORK RUNTIME");
+#else
+    if(rom_send_pid)return;
+    mkdir("rom-transfer",0700);unlink("rom-transfer/result.txt");
+    pid_t child=fork();if(child<0){snprintf(status,sizeof(status),"COULD NOT START ROM TRANSFER");return;}
+    if(!child){
+        int fd=open("rom-transfer/job.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
+        if(fd>=0){dup2(fd,STDOUT_FILENO);dup2(fd,STDERR_FILENO);close(fd);}
+        int input=open("/dev/null",O_RDONLY);if(input>=0){dup2(input,STDIN_FILENO);close(input);}
+        if(stage==1)execl("./scripts/music-runtime.sh","music-runtime.sh","tools/rom_transfer.py","devices",(char*)NULL);
+        else{char index[16];snprintf(index,sizeof(index),"%d",device);execl("./scripts/music-runtime.sh","music-runtime.sh","tools/rom_transfer.py","send",rom_send_key,index,(char*)NULL);}
+        _exit(127);
+    }
+    rom_send_pid=child;rom_send_stage=stage;
+    snprintf(status,sizeof(status),"%s",stage==1?"FINDING ROM RECEIVERS / TAILSCALE AND LOCAL NETWORK":"SENDING ROM / WAITING FOR STORAGE RECEIPT");
+#endif
+}
+static void rom_send_open(const Title *title){
+    if(strncmp(title->url,"romid:",6)||!rom_key_valid(title->url+6)){snprintf(status,sizeof(status),"RESCAN GAMES BEFORE SENDING THIS ROM");return;}
+    memcpy(rom_send_key,title->url+6,17);rom_send_on=1;rom_send_row=rom_send_count=0;rom_send_job(1,0);
+}
+static int rom_send_tick(void){
+    if(!rom_send_pid)return 0;
+    int code=0;pid_t done=waitpid(rom_send_pid,&code,WNOHANG);if(done!=rom_send_pid)return 0;
+    rom_send_pid=0;
+    if(rom_send_stage==1){
+        rom_send_count=0;FILE *file=WIFEXITED(code)&&!WEXITSTATUS(code)?fopen("rom-transfer/devices.tsv","r"):NULL;
+        if(file){char line[256];while(rom_send_count<16&&fgets(line,sizeof(line),file)){line[strcspn(line,"\r\n")]=0;snprintf(rom_send_names[rom_send_count++],96,"%.95s",line);}fclose(file);}
+        rom_send_row=0;
+    }
+    FILE *file=fopen("rom-transfer/result.txt","r");if(file){char line[256];if(fgets(line,sizeof(line),file)){line[strcspn(line,"\r\n")]=0;snprintf(status,sizeof(status),"%.99s",line);}fclose(file);}
+    else snprintf(status,sizeof(status),"ROM TRANSFER FAILED / SEE ROM-TRANSFER/JOB.LOG");
+    rom_send_stage=0;return 1;
+}
+static void rom_launch(const Title *t){
+        game_music_keep=!strncmp(t->url,"romid:",6)&&rom_background_music(t->url+6);
+        int back=-1,start=-1,load=-1,save=-1;
+        for(int i=0;i<4;i++)if(pads[i]){
+            SDL_GameControllerButtonBind b=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_BACK),a=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_START);
+            SDL_GameControllerButtonBind l=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_LEFTSHOULDER),r=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+            if(b.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON&&a.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON){
+                back=b.value.button;start=a.value.button;
+                if(l.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON)load=l.value.button;
+                if(r.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON)save=r.value.button;
+                break;
+            }
+        }
+        FILE *f=fopen("game-request","w");if(!f){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}
+        fprintf(f,"%d %d %d %d %d\n",t->id,back,start,load,save);if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}game_exit=1;running=0;return;
+}
 static void play(void) {
-    if(settings_on||about||!total||player_pid)return;
+    if(settings_on||rom_assets_on||rom_options_menu||rom_core_menu||about||!total||player_pid)return;
     restart_position=auto_resume=0;
+    viewing=default_viewing; /* Each freshly selected item starts from the saved preference. */
     Title *t=&titles[visible[selection]];
+#ifdef FLXTR_DESKTOP
+    if(!strcmp(t->kind,"core-manager")){Browse next={35,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
+    if(!strcmp(t->kind,"core-download")){
+        Browse next={36,browse.page,0,0,0,0,"",""};
+        snprintf(next.query,sizeof(next.query),"%.64s",t->url);
+        request_catalog(next,0,0);return;
+    }
+#endif
     if(!strcmp(t->kind,"bios-item")){
         const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
         if(strncmp(t->url,prefix,n)||strlen(t->url+n)>=129){snprintf(status,sizeof(status),"INVALID BIOS ARCHIVE ITEM");return;}
@@ -1351,12 +1949,31 @@ static void play(void) {
         snprintf(next.name,sizeof(next.name),"%s",t->title);
         request_catalog(next,1,0);return;
     }
+    if(!strcmp(t->kind,"deceptive-dice")){
+        FILE *f=fopen("game-request","w");
+        if(!f){snprintf(status,sizeof(status),"COULD NOT START DECEPTIVE DICE");return;}
+        fprintf(f,"2049 -1 -1\n");
+        if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START DECEPTIVE DICE");return;}
+        game_exit=1;running=0;return;
+    }
     if(!strcmp(t->kind,"scummvm-launch")){
         FILE *f=fopen("game-request","w");
         if(!f){snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");return;}
         fprintf(f,"0 -1 -1\n");
         if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START SCUMMVM");return;}
         game_exit=1;running=0;return;
+    }
+    if(!strcmp(t->kind,"moonlight-game")){
+        if(strncmp(t->url,"gamez:",6)||!gamez_valid_id(t->url+6)){
+            snprintf(status,sizeof(status),"REFRESH GAMEZ / INVALID GAME LINK");return;
+        }
+        FILE *request=fopen("gamez-request","w");
+        if(!request){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
+        fprintf(request,"%s\n",t->url+6);
+        if(fclose(request)){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
+        moonlight_exit=1;
+        running=0;
+        return;
     }
     if(!strcmp(t->kind,"game-folder")){
         Browse next={22,1,t->id,0,0,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);
@@ -1412,10 +2029,7 @@ static void play(void) {
         request_catalog(next,0,0);return;
     }
     if(!strcmp(t->kind,"game")){
-        int back=-1,start=-1;
-        for(int i=0;i<4;i++)if(pads[i]){SDL_GameControllerButtonBind b=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_BACK),a=SDL_GameControllerGetBindForButton(pads[i],SDL_CONTROLLER_BUTTON_START);if(b.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON&&a.bindType==SDL_CONTROLLER_BINDTYPE_BUTTON){back=b.value.button;start=a.value.button;break;}}
-        FILE *f=fopen("game-request","w");if(!f){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}
-        fprintf(f,"%d %d %d\n",t->id,back,start);if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}game_exit=1;running=0;return;
+        rom_launch(t);return;
     }
     if(!strcmp(t->kind,"archive")){
         const char *prefix="https://archive.org/details/";size_t n=strlen(prefix);
@@ -1448,9 +2062,10 @@ static void tv_candidate(void){
     Browse next={5,1,t->id,t->season,t->episode,0,"",""};snprintf(next.name,sizeof(next.name),"%s",t->title);auto_request(next);
 }
 static void tv_cancel_prepared(void){
-    if(tv_gate>=0)close(tv_gate);
+    if(youtube_preparing){youtube_stop();youtube_preparing=0;}
+    if(tv_gate>=0)player_pipe_close(tv_gate);
     tv_gate=-1;
-    if(tv_buffer_control>=0)close(tv_buffer_control);
+    if(tv_buffer_control>=0)player_pipe_close(tv_buffer_control);
     tv_buffer_control=-1;
     if(tv_buffer_pid){kill(tv_buffer_pid,SIGKILL);waitpid(tv_buffer_pid,NULL,0);}tv_buffer_pid=0;tv_prepared=0;
 }
@@ -1458,7 +2073,11 @@ static void tv_begin_prepared(void){
     if(!tv_prepared)return;
     tv_prepared=0;auto_active=1;auto_resume=0;playing_title=tv_next_title;
     player_pid=tv_buffer_pid;player_control=tv_buffer_control;tv_buffer_pid=0;tv_buffer_control=-1;
-    close_ui();char go='G';if(tv_gate>=0){ssize_t n=write(tv_gate,&go,1);(void)n;close(tv_gate);}tv_gate=-1;
+    bookmark_path(&playing_title,adaptive_title_key,sizeof(adaptive_title_key));
+    adaptive_blocked=adaptive_pending=0;unlink("adaptive-ready");unlink("adaptive-request");
+    tv_history_prepare(&playing_title);unlink("playback-started");unlink("playback-position");
+    close_ui();char go='G';if(tv_gate>=0){ssize_t n=player_pipe_write(tv_gate,&go,1);(void)n;player_pipe_close(tv_gate);}tv_gate=-1;
+    if(!strcmp(playing_title.kind,"youtube")){strcpy(youtube_audio,youtube_next_audio);strcpy(youtube_agent,youtube_next_agent);auto_active=0;return;}
     TvAiring a;if(tv_airing_read(&a)&&a.id==auto_title.id){a.start=(long long)time(NULL);tv_airing_save(&a);}
 }
 static void tv_stage_source(const Title *source){
@@ -1470,9 +2089,14 @@ static void tv_stage_source(const Title *source){
     if(!catalog_pid)tv_begin_prepared();
 }
 static void tv_tick(void){
-    if(!tv_active||catalog_pid||player_pid||auto_active||settings_on||tv_schedule_on||(Sint32)(SDL_GetTicks()-tv_next_at)<0)return;
+    if(!tv_active||youtube_pid||catalog_pid||player_pid||auto_active||settings_on||tv_schedule_on||(Sint32)(SDL_GetTicks()-tv_next_at)<0)return;
     if(tv_attempts++>=12){tv_active=0;tv_cancel_prepared();snprintf(status,sizeof(status),"TV: NO WORKING SOURCES / A RETRY");return;}
     time_t now=time(NULL);int block=tv_block_at(tv_blocks,tv_hour());long long anchor=(long long)tv_block_start(tv_blocks,now);
+    if(mtv_override||tv_blocks[block].genre==TV_MUSIC_VIDEOS){
+        char query[221];mtv_query(query,sizeof(query));
+        if(youtube_spawn(query,1))tv_active=0;
+        return;
+    }
     int forced=tv_blocks[block].marathon&&tv_last_block==anchor?tv_last_title.id:0;
     int seed=tv_joining?(int)(anchor/3600)%100000+tv_attempts-1:tv_sequence("tv-sequence.txt");
     Browse next={12,1,seed,forced,0,0,"",""};
@@ -1489,26 +2113,112 @@ static void bookmark_path(const Title *t,char *path,size_t capacity){
     hash=((hash^(unsigned)t->episode)*16777619UL)&0xffffffffUL;
     snprintf(path,capacity,"%08lx",hash);
 }
+static Title tv_history_title;
+static int tv_history_active,tv_history_confirmed;
+static double tv_history_position;
+static char tv_history_key[96],tv_history_token[16];
+static void tv_history_prepare(const Title *t){
+    char token[16],key[96];bookmark_path(t,token,sizeof(token));
+    if(!strcmp(t->kind,"episode"))snprintf(key,sizeof(key),"episode:%d:%d:%d",t->id,t->season,t->episode);
+    else if(!strcmp(t->kind,"youtube")&&!strncmp(t->meta,"https://www.youtube.com/watch?v=",32)&&
+            strlen(t->meta+32)==11&&strspn(t->meta+32,"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")==11)
+        snprintf(key,sizeof(key),"youtube:%s",t->meta+32);
+    else snprintf(key,sizeof(key),"%.15s:%s",t->kind,token);
+    if(tv_history_active&&!strcmp(tv_history_key,key))return; /* seek/quality retry */
+    tv_history_title=*t;tv_history_active=1;tv_history_confirmed=0;tv_history_position=0;
+    snprintf(tv_history_key,sizeof(tv_history_key),"%s",key);snprintf(tv_history_token,sizeof(tv_history_token),"%s",token);
+}
+static void tv_history_poll(void){
+    FILE *f=fopen("playback-started","r");if(!f)return;
+    char token[16],expected[16];double position=-1;
+    bookmark_path(&playing_title,expected,sizeof(expected));
+    int good=fscanf(f,"%15s %lf",token,&position)==2&&position>=0&&position<=86400&&
+        (!strcmp(token,expected)||(tv_history_active&&!strcmp(token,tv_history_token)));
+    fclose(f);unlink("playback-started");if(!good)return;
+    if(playback_server[0]&&!strcmp(token,expected)){
+        if(!server_preference_save(playing_title.kind,playback_server))fprintf(stderr,"Could not save working server preference\n");
+        playback_server[0]=0;
+    }
+    if(!tv_history_active||strcmp(token,tv_history_token))return;
+    tv_history_position=position;
+    if(tv_history_confirmed)return;
+    tv_history_confirmed=1;
+    if(!tv_play_append("started",tv_history_title.kind,tv_history_title.id,tv_history_title.season,
+                       tv_history_title.episode,position,tv_history_key,tv_history_title.title))
+        fprintf(stderr,"TV history: could not append playback start\n");
+}
+static double tv_history_last_position(void){
+    double position=tv_history_position;FILE *f=fopen("playback-position","r");
+    if(f){double p=-1;if(fscanf(f,"%lf",&p)==1&&p>=0&&p<=86400)position=p;fclose(f);}
+    return position;
+}
+static void tv_history_finish(const char *event,double position){
+    tv_history_poll();
+    if(tv_history_active&&tv_history_confirmed&&!tv_play_append(event,tv_history_title.kind,tv_history_title.id,
+       tv_history_title.season,tv_history_title.episode,position,tv_history_key,tv_history_title.title))
+        fprintf(stderr,"TV history: could not append playback outcome\n");
+    tv_history_active=tv_history_confirmed=0;
+}
 static void launch_player(const Title *t) {
+#ifdef __ANDROID__
+    if(flxtr_android_play(t->url,t->title))snprintf(status,sizeof(status),"ANDROID PLAYBACK REQUIRES A DIRECT HTTPS MEDIA URL");
+    else snprintf(status,sizeof(status),"ANDROID PLAYER / BACK RETURNS TO FLXTR");
+    return;
+#endif
+    if(video_download_requested){video_download_requested=0;auto_active=0;video_download_start(t);return;}
+    if(!tv_preloading)unlink("youtube-playback-outcome");
+    if(!strcmp(t->kind,"youtube")){
+        setenv("FLXTR_YOUTUBE_PLAYBACK","1",1);
+        if(youtube_audio[0])setenv("FLXTR_EXTERNAL_AUDIO",youtube_audio,1);else unsetenv("FLXTR_EXTERNAL_AUDIO");
+        setenv("FLXTR_VIDEO_USER_AGENT",youtube_agent,1);
+    }else{unsetenv("FLXTR_EXTERNAL_AUDIO");unsetenv("FLXTR_VIDEO_USER_AGENT");unsetenv("FLXTR_YOUTUBE_PLAYBACK");}
     if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}prefetch_left=0;
     if(access("./greenlink-player",X_OK)) { snprintf(status,sizeof(status),"PLAYER NOT BUILT - RUN SCRIPTS/BUILD-PLAYER.SH");return; }
+#ifdef _WIN32
+    FlxtrPipe controls={-1,-1},gate={-1,-1};
+    if(flxtr_pipe_create(&controls)||(tv_preloading&&flxtr_pipe_create(&gate))){
+        flxtr_pipe_close(controls.reader);flxtr_pipe_close(controls.writer);
+        snprintf(status,sizeof(status),"PLAYER CONTROL PIPE FAILED");return;
+    }
+    FlxtrPipeHandle inherited_control=flxtr_pipe_export(controls.reader);
+    FlxtrPipeHandle inherited_gate=tv_preloading?flxtr_pipe_export(gate.reader):-1;
+    if(inherited_control<0||(tv_preloading&&inherited_gate<0)){
+        flxtr_pipe_close(inherited_control);flxtr_pipe_close(inherited_gate);
+        flxtr_pipe_close(controls.reader);flxtr_pipe_close(controls.writer);
+        flxtr_pipe_close(gate.reader);flxtr_pipe_close(gate.writer);return;
+    }
+    if(!tv_preloading){unlink("playback-request");unlink("playback-position");}
+#else
     int gate[2]={-1,-1};if(tv_preloading&&pipe(gate))return;
     int controls[2];if(pipe(controls)){if(gate[0]>=0){close(gate[0]);close(gate[1]);}snprintf(status,sizeof(status),"PLAYER CONTROL PIPE FAILED");return;}
     fcntl(controls[1],F_SETFL,O_NONBLOCK);fcntl(controls[1],F_SETFD,FD_CLOEXEC);
-    signal(SIGPIPE,SIG_IGN);unlink("playback-request");unlink("playback-position");
+    signal(SIGPIPE,SIG_IGN);if(!tv_preloading){unlink("playback-request");unlink("playback-position");}
+#endif
     if(auto_active)restart_position=auto_resume;
     /* Resume only an explicit bookmark for this title, not TV channel output. */
     char bookmark_key[16],bookmark_file[64];
     bookmark_path(t,bookmark_key,sizeof(bookmark_key));
+    if(!tv_preloading&&strcmp(adaptive_title_key,bookmark_key)){
+        snprintf(adaptive_title_key,sizeof(adaptive_title_key),"%s",bookmark_key);
+        adaptive_blocked=adaptive_pending=0;
+    }
+    if(!tv_preloading){unlink("adaptive-request");unlink("adaptive-ready");}
     snprintf(bookmark_file,sizeof(bookmark_file),"bookmarks/%s.txt",bookmark_key);
-    if(!tv_active&&restart_position==0){
+    if(!tv_active&&strcmp(t->kind,"youtube")&&strcmp(t->kind,"handoff")&&restart_position==0){
         FILE *f=fopen(bookmark_file,"r");
         if(f){double saved=0;if(fscanf(f,"%lf",&saved)==1&&saved>=0&&saved<=86400)restart_position=saved;fclose(f);}
     }
+    if(tv_active&&!tv_preloading)tv_history_prepare(t);
+    if(!tv_preloading)unlink("playback-started");
     playing_title=*t;player_menu=1; /* Native controller menu is always available. */
+    playback_server[0]=0;
+    if(auto_active&&auto_index>=0&&auto_index<auto_count&&!strcmp(t->kind,auto_title.kind)&&
+       t->id==auto_title.id&&t->season==auto_title.season&&t->episode==auto_title.episode)
+        strcpy(playback_server,auto_servers[auto_index]);
     subtitle_route_log("launch-player",t);
     music_video_pause(0);
-    close_ui();
+    if(!tv_preloading)close_ui();
+#ifndef _WIN32
     player_pid=shell_fork();
     if(player_pid==0) {
         close(controls[1]);
@@ -1518,6 +2228,12 @@ static void launch_player(const Title *t) {
         signal(SIGUSR1,SIG_IGN); /* Ignore a controller press before exec is ready. */
         int log=open(tv_preloading?"tv-preload.log":"player.log",O_WRONLY|O_CREAT|O_TRUNC,0600);
         if(log>=0){dup2(log,STDERR_FILENO);dup2(log,STDOUT_FILENO);close(log);}
+#ifndef FLXTR_DESKTOP
+        native_sdl_runtime("Video");
+#endif
+#else
+    {
+#endif
         const char *modes[]={"fit","stretch","pixel"};
         /* Keep externally supplied caption URLs separate from media URLs.
          * The player chooses a track according to the subtitle setting. */
@@ -1530,6 +2246,10 @@ static void launch_player(const Title *t) {
         /* Metadata is passed to the video child via environment, never via
          * the video URL. Prefer parent-series synopsis for an episode. */
         setenv("FLXTR_VIDEO_TITLE",t->title,1);
+        setenv("FLXTR_VIDEO_KIND",t->kind,1);
+        char auto_mask[16];snprintf(auto_mask,sizeof(auto_mask),"%d",tv_preloading?0:adaptive_blocked);
+        setenv("FLXTR_ADAPTIVE_BLOCKED",auto_mask,1);
+        setenv("FLXTR_ADAPTIVE_RESOLVE",!strcmp(t->kind,"youtube")&&t->meta[0]?"1":"0",1);
         char info_path[128],info_text[512]="";
         const char *info_kind=t->kind;
         if(!strcmp(info_kind,"episode"))info_kind="tv";
@@ -1543,32 +2263,77 @@ static void launch_player(const Title *t) {
         info_text[strcspn(info_text,"\r\n")]=0;
         setenv("FLXTR_VIDEO_SYNOPSIS",info_text,1);
         setenv("FLXTR_BOOKMARK_KEY",bookmark_key,1);
-        if(!strcmp(t->kind,"kiss-episode"))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
+        if(!strcmp(t->kind,"kiss-episode")||(!strcmp(t->kind,"handoff")&&!strcmp(t->meta,"MEGAPLAY / HANDOFF")))setenv("FLXTR_MEDIA_PROVIDER","megaplay",1);
+        else if(*source_provider(t->meta))setenv("FLXTR_MEDIA_PROVIDER",source_provider(t->meta),1);
         else unsetenv("FLXTR_MEDIA_PROVIDER");
-        char height[16],buffer[16],disk[16],scale[16],delay[16],control[16],start[32];
-        int requested_height=t->height?t->height:qualities[quality_setting];
-        if(auto_active&&!strcmp(t->kind,"kiss-episode")&&kiss_1080_pass)requested_height=1080;
-        /* TV prefers an efficient decode resolution but must also support
-         * sources that only provide 1080p. Retry the SAME source at higher
-         * resolutions only when the player reports no compatible track. */
+        char height[16],buffer[16],disk[16],scale[16],delay[16],control[32],start[32];
+        int requested_height=quality_setting==3?adaptive_height:(t->height?t->height:qualities[quality_setting]);
+        if(auto_active&&!strcmp(t->kind,"kiss-episode")&&kiss_1080_pass&&quality_setting!=3)requested_height=1080;
+        /* Honor the selected TV target, including 1080p. Older players can
+         * still request a higher-resolution retry for a missing rendition. */
         if(tv_active){
-            int preferred=qualities[quality_setting];
-            if(preferred>720)preferred=720;
+            int preferred=quality_height();
+
             requested_height=tv_quality_retry>=2?1080:tv_quality_retry==1?720:preferred;
         }
-        snprintf(control,sizeof(control),"%d",controls[0]);snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",requested_height);
+#ifdef _WIN32
+        snprintf(control,sizeof(control),"%" PRIuPTR,(uintptr_t)inherited_control);
+#else
+        snprintf(control,sizeof(control),"%d",controls[0]);
+#endif
+        snprintf(start,sizeof(start),"%.3f",restart_position);snprintf(height,sizeof(height),"%d",requested_height);
         snprintf(buffer,sizeof(buffer),"%d",buffer_seconds[buffer_setting]);snprintf(disk,sizeof(disk),"%d",disk_megabytes[disk_setting]);
         snprintf(scale,sizeof(scale),"%d",subtitle_scale);snprintf(delay,sizeof(delay),"%d",subtitle_delay);
+#ifndef _WIN32
         if(!player_menu)execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)NULL);
-        char gate_arg[16];snprintf(gate_arg,sizeof(gate_arg),"%d",gate[0]);
-        char *args[28]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,"--control-fd",control,"--start",start,NULL,NULL,NULL};
-        int n=20;if(tv_preloading){args[n++]="--preload-fd";args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||!strcmp(t->kind,"episode")||!strcmp(t->kind,"kiss-episode"))args[n++]="--episodes";if(auto_active)args[n++]="--servers";args[n]=NULL;
+#endif
+        char gate_arg[32];
+#ifdef _WIN32
+        snprintf(gate_arg,sizeof(gate_arg),"%" PRIuPTR,(uintptr_t)inherited_gate);
+        const char *control_option="--control-handle",*gate_option="--preload-handle";
+#else
+        snprintf(gate_arg,sizeof(gate_arg),"%d",gate[0]);
+        const char *control_option="--control-fd",*gate_option="--preload-fd";
+#endif
+        char *args[30]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)control_option,control,"--start",start,NULL,NULL,NULL};
+        int n=20;
+#ifndef FLXTR_DESKTOP
+        if(quality_setting==3)args[n++]="--adaptive";
+#endif
+        if(tv_preloading){args[n++]=(char*)gate_option;args[n++]=gate_arg;}if(tv_in_break)args[n++]="120";if(tv_active||!strcmp(t->kind,"episode")||!strcmp(t->kind,"kiss-episode"))args[n++]="--episodes";if(auto_active)args[n++]="--servers";
+#ifdef FLXTR_APP_TEST
+        args[n++]="--headless";
+#endif
+        args[n]=NULL;
+#ifdef _WIN32
+        uintptr_t pass[2]={(uintptr_t)inherited_control,(uintptr_t)inherited_gate};
+        const char *log=tv_preloading?"tv-preload.log":"player.log";
+        player_pid=flxtr_win_spawn("./greenlink-player",(const char *const*)args,log,log,pass,tv_preloading?2:1,0);
+#else
         execv("./greenlink-player",args);_exit(127);
+#endif
     }
-    if(tv_preloading){close(gate[0]);tv_gate=gate[1];}
+#ifdef _WIN32
+    flxtr_pipe_close(inherited_control);flxtr_pipe_close(inherited_gate);
+    flxtr_pipe_close(controls.reader);flxtr_pipe_close(gate.reader);
+    player_control=controls.writer;
+    if(tv_preloading)tv_gate=gate.writer;
+    restart_position=0;
+#else
+    if(tv_preloading){close(gate[0]);tv_gate=gate[1];fcntl(tv_gate,F_SETFD,FD_CLOEXEC);}
     close(controls[0]);player_control=controls[1];restart_position=0;
-    if(player_pid<0){close(player_control);player_control=-1;player_pid=0;if(open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
+#endif
+    if(player_pid<0){player_pipe_close(player_control);player_control=-1;player_pid=0;if(!tv_preloading&&open_ui())running=0;snprintf(status,sizeof(status),"COULD NOT START PLAYER");}
     else snprintf(status,sizeof(status),"PLAYING - B TO STOP");
+}
+static int adaptive_lookup_fallback(void){
+    if(quality_setting!=3||!adaptive_pending)return 0;
+    adaptive_pending=0;
+    adaptive_blocked|=adaptive_height<=480?7:adaptive_height<=720?6:4;
+    adaptive_height=adaptive_previous;tv_cancel_prepared();
+    restart_position=auto_resume=adaptive_position;playing_title.height=0;
+    fprintf(stderr,"Auto quality: resolver failed; retaining previous %dp stream\n",adaptive_height);
+    launch_player(&playing_title);return 1;
 }
 static void series_advance(int direction){
     auto_active=0;restart_position=auto_resume=0;
@@ -1585,19 +2350,59 @@ static void series_advance(int direction){
     snprintf(status,sizeof(status),"END OF AVAILABLE EPISODES");
 }
 static void finish_player(int code){
+    tv_history_poll();
     int cancelled=stopping_player;
-    player_pid=0;stopping_player=0;if(player_control>=0)close(player_control);player_control=-1;
+    player_pid=0;stopping_player=0;if(player_control>=0)player_pipe_close(player_control);player_control=-1;
     if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;auto_active=0;return;}
-    music_video_pause(1);
+    if(!tv_active||strcmp(playing_title.kind,"youtube"))music_video_pause(1);
+    if(!cancelled&&quality_setting==3&&WIFEXITED(code)&&WEXITSTATUS(code)==46){
+        int target=0,blocked=0,actual=0,reason=0;double position=-1;
+        FILE *f=fopen("adaptive-request","r");
+        int good=f&&fscanf(f,"%d %lf %d %d %d",&target,&position,&blocked,&actual,&reason)==5;
+        if(f)fclose(f);
+        unlink("adaptive-request");
+        if(!good||(target!=480&&target!=720&&target!=1080)||!(position>=0&&position<=86400)||
+           blocked<0||blocked>7||actual<1||actual>1080||reason<1||reason>4){
+            tv_history_finish("failed",tv_history_last_position());
+            tv_active=auto_active=0;tv_cancel_prepared();snprintf(status,sizeof(status),"INVALID AUTO QUALITY REQUEST");return;
+        }
+        adaptive_previous=actual<=480?480:actual<=720?720:1080;
+        adaptive_height=target;adaptive_blocked=blocked;adaptive_position=position;adaptive_pending=1;
+        tv_cancel_prepared();tv_quality_retry=0;playing_title.height=0;
+        fprintf(stderr,"Auto quality: %dp -> %dp at %.3f sec (%s)\n",actual,target,position,
+            reason==1?"buffer starvation":reason==2?"decoder stalls":reason==3?"audio underruns":"stable playback");
+        if(!strcmp(playing_title.kind,"youtube")&&playing_title.meta[0]){
+            if(!youtube_spawn(playing_title.meta,0)){youtube_for_tv=tv_active;youtube_resume=position;}
+            return;
+        }
+        restart_position=auto_resume=position;launch_player(&playing_title);return;
+    }
+    if(adaptive_pending){
+        int failed=!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)!=0&&WEXITSTATUS(code)!=40&&access("adaptive-ready",F_OK);
+        adaptive_pending=0;
+        if(failed){
+            adaptive_blocked|=adaptive_height<=480?7:adaptive_height<=720?6:4;
+            adaptive_height=adaptive_previous;tv_cancel_prepared();playing_title.height=0;tv_quality_retry=0;
+            fprintf(stderr,"Auto quality: switch failed; reverting to %dp\n",adaptive_height);
+            if(!strcmp(playing_title.kind,"youtube")&&playing_title.meta[0]){
+                if(!youtube_spawn(playing_title.meta,0)){youtube_for_tv=tv_active;youtube_resume=adaptive_position;}
+                return;
+            }
+            restart_position=auto_resume=adaptive_position;launch_player(&playing_title);return;
+        }
+    }
     if(!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==40){
         int command,view,sub,scale,delay;double position;FILE *f=fopen("playback-request","r");
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;
         if(f)fclose(f);
         unlink("playback-request");
-        if(!valid||command<1||command>9||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
-        viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings();
+        if(!valid||command<1||command>10||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;tv_history_finish("failed",tv_history_last_position());snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
+        if(command>=5)tv_history_finish(command==5||command==6?"skipped":"stopped",position);
+        if(command==10){tv_active=auto_active=0;running=0;return;}
+        if(viewing!=view)tv_cancel_prepared(); /* Preloaded MTV worker has the old --view argument. */
+        viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings(); /* Only default_viewing is persisted. */
         /* TV is a channel, not a resume-based episode player. */
-        if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
+        if(command==7){tv_cancel_prepared();tv_active=0;auto_active=0;tv_in_break=tv_break_due=0;music_video_pause(1);snprintf(status,sizeof(status),"PLAYBACK STOPPED");return;}
         if(command==9){
             auto_active=0;tv_active=0;
             snprintf(status,sizeof(status),"FROZEN TO BACKGROUND / REOPEN TITLE TO RESUME");
@@ -1612,7 +2417,12 @@ static void finish_player(int code){
             return;
         }
         if(command<=3){
-            if(command>1){quality_setting=(quality_setting+(command==2?1:2))%3;playing_title.height=0;save_settings();}
+            if(command>1){quality_setting=(quality_setting+(command==2?1:QUALITY_CHOICES-1))%QUALITY_CHOICES;playing_title.height=0;save_settings();}
+            if(command>1&&!strcmp(playing_title.kind,"youtube")&&playing_title.meta[0]){
+                tv_cancel_prepared();
+                if(!youtube_spawn(playing_title.meta,0)){youtube_for_tv=tv_active;youtube_resume=position;}
+                return;
+            }
             restart_position=auto_resume=position;
             if(auto_active&&!strcmp(playing_title.kind,"kiss-episode"))auto_next();
             else launch_player(&playing_title);
@@ -1622,8 +2432,53 @@ static void finish_player(int code){
         if(tv_active&&(command==5||command==6)){tv_cancel_prepared();auto_active=0;tv_in_break=tv_break_due=0;tv_attempts=0;tv_next_at=0;return;}
         series_advance(command==5?-1:1);return;
     }
+    tv_history_finish(!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)?"completed":cancelled?"stopped":"failed",tv_history_last_position());
+    if(!strcmp(playing_title.kind,"youtube")){
+        int eof=!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code);
+        /* Standalone streams can terminate on expired/failed media URLs.
+         * Re-resolve the canonical watch URL, never a signed stream URL. */
+        if(!tv_active&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)!=0&&
+           WEXITSTATUS(code)!=40&&WEXITSTATUS(code)!=46&&
+           playing_title.meta[0]&&youtube_recovery_attempts<3){
+            double position=0.0,duration=0.0;int outcome=0;
+            FILE *f=fopen("youtube-playback-outcome","r");
+            if(f){
+                if(fscanf(f,"%lf %lf %d",&position,&duration,&outcome)!=3)position=0;
+                fclose(f);
+            }
+            unlink("youtube-playback-outcome");
+            if(!(position>=0&&position<86400))position=0;
+            if(position>1.0)position-=1.0;
+            youtube_recovery_pending=1;
+            int spawned=youtube_spawn(playing_title.meta,0);
+            youtube_recovery_pending=0;
+            if(!spawned){
+                youtube_resume=position;
+                youtube_recovery_attempts++;
+                fprintf(stderr,"YouTube recovery %u/3: resume %.3f / duration %.3f (exit %d)\n",
+                        youtube_recovery_attempts,position,duration,WEXITSTATUS(code));
+                snprintf(status,sizeof(status),"YOUTUBE RECONNECTING (%u/3)",youtube_recovery_attempts);
+                return;
+            }
+        }
+        if(eof&&tv_active&&tv_prepared){tv_begin_prepared();return;}
+        if(tv_active&&!cancelled){
+            /* MTV should continue with a different result on EOF or a failed URL.
+             * The TV scheduler caps consecutive attempts, so unavailable YouTube
+             * results cannot create an infinite respawn loop. */
+            tv_cancel_prepared();
+            if(eof)tv_attempts=0;
+            tv_next_at=SDL_GetTicks()+(eof?200:2500);
+            tv_break_due=0;
+            snprintf(status,sizeof(status),eof?"MTV: FINDING NEXT VIDEO":"MTV: VIDEO STOPPED / TRYING ANOTHER");
+            return;
+        }
+        tv_active=0;tv_cancel_prepared();music_video_pause(1);
+        tv_attempts=0;tv_next_at=0;tv_break_due=0;
+        snprintf(status,sizeof(status),eof?"YOUTUBE VIDEO FINISHED":"YOUTUBE PLAYBACK STOPPED / SEE PLAYER.LOG");return;
+    }
     if(tv_active&&!tv_in_break&&!cancelled&&WIFEXITED(code)&&WEXITSTATUS(code)==45&&tv_quality_retry<2){
-        int current=tv_quality_retry>=1?720:(qualities[quality_setting]>720?720:qualities[quality_setting]);
+        int current=tv_quality_retry>=1?720:quality_height();
         tv_quality_retry=current<720?1:2;
         fprintf(stderr,"TV source has no compatible %dp track; retrying at %dp\n",current,tv_quality_retry==1?720:1080);
         launch_player(&playing_title);
@@ -1649,31 +2504,150 @@ static void finish_player(int code){
     }
     snprintf(status,sizeof(status),cancelled?"PLAYBACK STOPPED":WIFEXITED(code)&&!WEXITSTATUS(code)?"PLAYBACK FINISHED":"PLAYER STOPPED - SEE PLAYER.LOG");
 }
-static void phone_dispatch(void){
-    if(!phone_pending[0])return;
+static int phone_dispatch(char *reply,size_t size){
+    if(usb_on){snprintf(reply,size,"USB setup is open. Close it on the TV before starting playback.");return 409;}
+    int code=200;
+    snprintf(reply,size,"Playback requested. Check FlXtR for playback errors.");
     if(!strcmp(phone_pending,"control")){
         char c=phone_value[0];c=c=='p'?'P':c=='f'?'F':c=='r'?'R':c=='s'?'S':c;
-        if(player_pid&&player_control>=0){ssize_t sent=write(player_control,&c,1);(void)sent;}
+        if(youtube_pid&&!youtube_preparing&&c=='S'){
+            youtube_stop();tv_active=0;music_video_pause(1);snprintf(reply,size,"YouTube lookup cancelled.");
+        }else if(player_pid&&player_control>=0){
+            if(player_pipe_write(player_control,&c,1)!=1){code=503;snprintf(reply,size,"Player control is unavailable.");}
+            else snprintf(reply,size,"Playback control sent.");
+        }else if(music_job==3&&(c=='P'||c=='S')){
+            if(c=='S'){music_stop();snprintf(music_message,sizeof(music_message),"MUSIC STOPPED");}
+            else{kill(music_pid,SIGUSR1);music_paused=!music_paused;}
+            snprintf(reply,size,c=='S'?"Music stopped.":"Music pause toggled.");
+        }else{code=409;snprintf(reply,size,"No active player supports this control.");}
     }else if(!strcmp(phone_pending,"music")){
-        if(!player_pid&&!music_job&&!update_pid){
+        if(!player_pid&&!catalog_pid&&!update_pid&&!youtube_pid){
             snprintf(music_query,sizeof(music_query),"%.220s",phone_value);
-            music_edit=0;music_on=1;
-            music_spawn(1);
-        }else snprintf(status,sizeof(status),"FINISH CURRENT PLAYBACK BEFORE IMPORTING MUSIC");
-    }else if(!player_pid&&!catalog_pid&&!update_pid){
+            music_edit=0;music_on=1;music_phone_play=1;music_spawn(1);
+            if(!music_pid){code=503;music_phone_play=0;snprintf(reply,size,"Music worker could not start.");}
+            else snprintf(reply,size,"Searching YouTube; the first matching track will play automatically.");
+        }else{code=409;snprintf(reply,size,"FlXtR is busy. Stop playback or wait for the current operation.");}
+    }else if(!player_pid&&!catalog_pid&&!update_pid&&!youtube_pid){
+        if(!strcmp(phone_pending,"url")&&youtube_link(phone_value)){
+            tv_active=auto_active=0;
+            code=youtube_spawn(phone_value,0)?503:200;
+            snprintf(reply,size,code==200?"Resolving YouTube video for FlXtR.":"YouTube worker could not start.");
+            phone_pending[0]=phone_value[0]=0;return code;
+        }
         Title t;memset(&t,0,sizeof(t));snprintf(t.title,sizeof(t.title),"PHONE VIDEO");
         if(!strcmp(phone_pending,"play"))snprintf(t.url,sizeof(t.url),"phone-files/%.100s",phone_value);
         else snprintf(t.url,sizeof(t.url),"%s",phone_value);
         snprintf(t.subs_eng,sizeof(t.subs_eng),"%s",phone_subtitle);
         if(phone_subtitle[0])subtitle_setting=2;
         auto_active=tv_active=0;restart_position=0;launch_player(&t);
-    }
+        if(!player_pid){code=503;snprintf(reply,size,"Player could not start. Check player.log on FlXtR.");}
+    }else{code=409;snprintf(reply,size,"FlXtR is busy. Stop playback or wait for the current operation.");}
     phone_pending[0]=phone_value[0]=0;
+    return code;
+}
+/* The paired receiver owns the socket across shell/game process transitions. */
+static void handoff_video_settings(Title *title,const char *language,const char *caption){
+    /* A remote sender selects the title and resume position. Playback starts
+     * from this TV's preferences, including after a differently scaled video. */
+    viewing=default_viewing;
+    const char *languages[]={"","auto","en","no","es"};
+    const char *preferred=languages[subtitle_setting];
+    if(subtitle_setting&&caption[0]&&!strncmp(caption,"https://",8)&&
+       (!strcmp(language,"en")||!strcmp(language,"no")||!strcmp(language,"es"))&&
+       (subtitle_setting==1||!strcmp(preferred,language))){
+        char *target=!strcmp(language,"no")?title->subs_nor:!strcmp(language,"es")?title->subs_spa:title->subs_eng;
+        snprintf(target,1024,"%s",caption);
+    }
+}
+static void handoff_poll(void){
+    if(player_pid||catalog_pid||update_pid||youtube_pid||usb_on){if(access("handoff/busy",F_OK)){FILE *busy=fopen("handoff/busy","w");if(busy)fclose(busy);}return;}
+    unlink("handoff/busy");
+    FILE *f=fopen("handoff/pending","r");if(!f)return;
+    char line[4096];if(!fgets(line,sizeof(line),f)){fclose(f);return;}fclose(f);unlink("handoff/pending");
+    char *fields[7]={0},*p=line;int count=0;
+    while(count<7){fields[count++]=p;char *tab=strchr(p,'\t');if(!tab)break;*tab=0;p=tab+1;}
+    if(count<2)return;
+    fields[count-1][strcspn(fields[count-1],"\r\n")]=0;
+    const char *id=fields[1];if(strlen(id)!=32||strspn(id,"0123456789abcdef")!=32)return;
+    unlink("handoff/armed");
+    if(!strcmp(fields[0],"game")){
+        f=fopen("handoff/launch","w");if(!f)return;fprintf(f,"%s\n",id);fclose(f);game_exit=1;running=0;return;
+    }
+    if(strcmp(fields[0],"video")||count!=7||strncmp(fields[2],"https://",8))return;
+    char *end;double position=strtod(fields[3],&end)/1000.0;if(*end||position<0||position>86400)return;
+    Title t;memset(&t,0,sizeof(t));snprintf(t.kind,sizeof(t.kind),"handoff");snprintf(t.title,sizeof(t.title),"%.79s",fields[5]);snprintf(t.url,sizeof(t.url),"%s",fields[2]);
+    char provider_path[96],provider[24]={0};snprintf(provider_path,sizeof(provider_path),"handoff/%s/provider",id);
+    f=fopen(provider_path,"r");if(f){if(fgets(provider,sizeof(provider),f)){provider[strcspn(provider,"\r\n")]=0;if(!strcmp(provider,"megaplay"))snprintf(t.meta,sizeof(t.meta),"MEGAPLAY / HANDOFF");}fclose(f);}
+    handoff_video_settings(&t,fields[4],fields[6]);
+    char ack[80];snprintf(ack,sizeof(ack),"handoff/%s/started",id);setenv("FLXTR_HANDOFF_ACK",ack,1);
+    auto_active=tv_active=0;restart_position=position;launch_player(&t);unsetenv("FLXTR_HANDOFF_ACK");
+    if(!player_pid){char failed[80];snprintf(failed,sizeof(failed),"handoff/%s/failed",id);f=fopen(failed,"w");if(f){fputs("TV player could not start",f);fclose(f);}}
 }
 static void action(SDL_Keycode key) {
+    if(gamez_options_on){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2||key==SDLK_y||key==SDLK_F6||key==SDLK_F3){gamez_options_on=0;return;}
+        if(key==SDLK_UP||key==SDLK_DOWN)gamez_options_row=total?(gamez_options_row+(key==SDLK_UP?2:1))%3:2;
+        if(key==SDLK_RETURN){
+            if(gamez_options_row==2){
+                gamez_options_on=0;filters_on=1;filter_row=0;
+                filter_original_genre=browse.episode;filter_original_order=browse.season;
+            }else if(total){
+                Title *game=&titles[visible[selection]];
+                if(strncmp(game->url,"gamez:",6)||!gamez_valid_id(game->url+6))return;
+                gamez_options_on=0;
+                if(gamez_options_row==0){
+                    strcpy(gamez_rename_id,game->url+6);snprintf(search_text,sizeof(search_text),"%.79s",game->title);
+                    gamez_rename_on=search_on=1;search_key=0;SDL_StartTextInput();
+                }else {
+                    strcpy(gamez_unapprove_id,game->url+6);snprintf(gamez_unapprove_title,sizeof(gamez_unapprove_title),"%.79s",game->title);
+                    gamez_unapprove_confirm=1;
+                }
+            }
+        }
+        return;
+    }
+    if(gamez_unapprove_confirm){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){gamez_unapprove_confirm=0;return;}
+        if(key==SDLK_RETURN){
+            mkdir("catalog-cache",0700);pending=browse;
+            const char *args[]={"greenlink-catalog","--unapprove-gamez",gamez_unapprove_id,NULL};
+            catalog_pid=shell_spawn("./greenlink-catalog",args,"catalog-cache/unapprove-result.txt","catalog.log");
+            gamez_unapprove_pending=catalog_pid>0;catalog_started=SDL_GetTicks();gamez_unapprove_confirm=0;
+            snprintf(status,sizeof(status),gamez_unapprove_pending?"SAVING APPROVAL CHANGE":"COULD NOT START UNAPPROVAL");
+        }
+        return;
+    }
+#ifdef __ANDROID__
+    if(key==SDLK_AC_BACK)key=SDLK_ESCAPE;
+    /* Device services and external Linux workers have no Android backend yet. */
+    if(!settings_on&&(key==SDLK_m||key==SDLK_t||key==SDLK_g)){
+        snprintf(status,sizeof(status),"ANDROID PREVIEW / ONLINE CATALOG AND GAMES COMING NEXT");return;
+    }
+#endif
+    if(video_download_delete_confirm){
+        if(key==SDLK_RETURN){video_download_delete_confirm=0;video_download_delete(&video_download_delete_title);}
+        else if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE)video_download_delete_confirm=0;
+        return;
+    }
+    if(mtv_weights_on){mtv_weights_action(key);return;}
+    if(usb_on){usb_action(key);return;}
+    if(rom_assets_action(key))return;
+    if(samba_password_on){samba_password_action(key);return;}
+    if(youtube_pid&&!youtube_preparing){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){youtube_stop();tv_active=0;music_video_pause(1);snprintf(status,sizeof(status),"YOUTUBE LOOKUP CANCELLED");}
+        return;
+    }
     if(music_on){music_action(key);return;}
-    if(key==SDLK_m&&!player_pid&&!catalog_pid&&!update_pid&&!settings_on&&!about&&!accounts_on&&!search_on){
-        if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access("music-runtime/usr/bin/python3",X_OK))){start_update();return;}
+    if(key==SDLK_m&&!player_pid&&!catalog_pid&&!update_pid&&!settings_on&&!rom_options_menu&&!rom_core_menu&&!about&&!accounts_on&&!search_on){
+        if(!access("assets/music-required-v1",R_OK)&&(access("greenlink-audio",X_OK)||access("tools/music.py",R_OK)||access(
+#ifdef _WIN32
+        "music-runtime/bin/python.exe"
+#elif defined(FLXTR_DESKTOP)
+        "scripts/music-runtime.sh"
+#else
+        "music-runtime/usr/bin/python3"
+#endif
+        ,X_OK))){start_update();return;}
         tv_active=0;tv_cancel_prepared();music_on=1;return;
     }
     if(favorite_remove_confirm){
@@ -1692,10 +2666,34 @@ static void action(SDL_Keycode key) {
         return;
     }
     if(accounts_on&&!player_pid){
-        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){api_setup_close();accounts_on=0;
-            if(party_entry==2){memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
+        if(party_entry==4){if(key==SDLK_RETURN)tailscale_request("connect");else if(key==SDLK_x||key==SDLK_F2)tailscale_request("disconnect");else if(key==SDLK_y||key==SDLK_F6)tailscale_request("logout");else if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){accounts_on=0;party_entry=0;}return;}
+        if(party_entry==3&&(key==SDLK_y||key==SDLK_F6)){handoff_remote=!handoff_remote;accounts_open(3);return;}
+if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last","r");char id[40]={0};if(last){if(!fgets(id,sizeof(id),last))id[0]=0;fclose(last);id[strcspn(id,"\r\n")]=0;}if(strlen(id)==32&&strspn(id,"0123456789abcdef")==32){FILE *pending=fopen("handoff/pending","w");if(pending){fprintf(pending,"game\t%s\n",id);fclose(pending);}}return;}
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){if(party_entry==3)unlink("handoff/armed");api_setup_close();accounts_on=0;
+            if(party_entry==2||phone_rom_uploaded){phone_rom_uploaded=0;memset(library_pages,0,sizeof(library_pages));Browse next={14,1,1,0,0,0,"",""};request_catalog(next,1,0);}
         }
         else if(key==SDLK_RETURN)accounts_open(party_entry);
+        return;
+    }
+    if(platform_core_menu){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){
+            if(platform_core_selecting)platform_core_selecting=0;else platform_core_menu=0;
+            return;
+        }
+        if(platform_core_selecting){
+            if(key==SDLK_UP&&platform_core_choice>0)platform_core_choice--;
+            if(key==SDLK_DOWN&&platform_core_choice+1<rom_core_count)platform_core_choice++;
+            if(platform_core_choice<platform_core_first)platform_core_first=platform_core_choice;
+            if(platform_core_choice>=platform_core_first+7)platform_core_first=platform_core_choice-6;
+            if(key==SDLK_RETURN){
+                int saved=rom_platform_core_save(platform_core_index,platform_core_choice?rom_core_names[platform_core_choice]:NULL);
+                platform_core_selecting=0;snprintf(status,sizeof(status),saved?"DEFAULT CORE SAVED":"COULD NOT SAVE DEFAULT CORE");
+            }
+        }else{
+            if(key==SDLK_UP&&platform_core_index>0)platform_core_index--;
+            if(key==SDLK_DOWN&&platform_core_index+1<ROM_PLATFORM_COUNT)platform_core_index++;
+            if(key==SDLK_RETURN)platform_core_choices();
+        }
         return;
     }
     if(rom_core_menu){
@@ -1704,7 +2702,39 @@ static void action(SDL_Keycode key) {
         if(key==SDLK_DOWN&&rom_core_selected+1<rom_core_count)rom_core_selected++;
         if(rom_core_selected<rom_core_first)rom_core_first=rom_core_selected;
         if(rom_core_selected>=rom_core_first+7)rom_core_first=rom_core_selected-6;
-        if(key==SDLK_RETURN){rom_core_save();rom_core_menu=0;snprintf(status,sizeof(status),"ROM CORE SAVED");}
+        if(key==SDLK_RETURN){
+            int saved=rom_core_save();rom_core_menu=0;
+            snprintf(status,sizeof(status),"%s",saved?"ROM CORE SAVED":"COULD NOT SAVE ROM CORE");
+        }
+        return;
+    }
+    if(rom_send_on){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){
+            if(rom_send_pid){kill(rom_send_pid,SIGTERM);waitpid(rom_send_pid,NULL,0);rom_send_pid=0;rom_send_stage=0;snprintf(status,sizeof(status),"ROM TRANSFER STOPPED");}
+            rom_send_on=0;return;
+        }
+        if(rom_send_pid)return;
+        if(key==SDLK_UP&&rom_send_row>0)rom_send_row--;
+        if(key==SDLK_DOWN&&rom_send_row+1<rom_send_count)rom_send_row++;
+        if(key==SDLK_y||key==SDLK_F2||(key==SDLK_RETURN&&!rom_send_count))rom_send_job(1,0);
+        else if(key==SDLK_RETURN&&rom_send_count)rom_send_job(2,rom_send_row);
+        return;
+    }
+    if(rom_options_menu){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){rom_options_menu=0;return;}
+        if(key==SDLK_UP&&rom_options_row>0)rom_options_row--;
+        if(key==SDLK_DOWN&&rom_options_row<2)rom_options_row++;
+        int step=key==SDLK_LEFT?-1:1;
+        if(key==SDLK_x||key==SDLK_F3||(key==SDLK_RETURN&&!rom_options_row)){rom_launch(&rom_options_title);return;}
+        if(key==SDLK_RETURN&&rom_options_row==2){rom_send_open(&rom_options_title);return;}
+        if(key==SDLK_RETURN&&rom_options_row==1){rom_core_first=rom_core_selected>3?rom_core_selected-3:0;rom_core_menu=1;return;}
+        if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
+            if(rom_options_row==1&&rom_core_count){
+                rom_core_selected=(rom_core_selected+step+rom_core_count)%rom_core_count;
+                if(!rom_core_save())snprintf(status,sizeof(status),"COULD NOT SAVE ROM CORE");
+            }
+            save_settings();
+        }
         return;
     }
     if(bios_archive_confirm){
@@ -1721,12 +2751,18 @@ static void action(SDL_Keycode key) {
     if(player_pid) {
         if(!player_menu){
             if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE)tv_active=0;
-            if(key==SDLK_i||key==SDLK_y||key==SDLK_v)kill(player_pid,SIGUSR1);
+            if(key==SDLK_i||key==SDLK_y||key==SDLK_v){
+#ifdef _WIN32
+                char menu='m';if(player_control>=0)player_pipe_write(player_control,&menu,1);
+#else
+                kill(player_pid,SIGUSR1);
+#endif
+            }
             if((key==SDLK_ESCAPE||key==SDLK_BACKSPACE)&&!stopping_player){auto_active=0;kill(player_pid,SIGTERM);stopping_player=1;stop_time=SDL_GetTicks();}
             return;
         }
         char command=key==SDLK_F2?'n':key==SDLK_i?'m':key==SDLK_ESCAPE||key==SDLK_BACKSPACE?'b':key==SDLK_UP?'u':key==SDLK_DOWN?'d':key==SDLK_LEFT?'l':key==SDLK_RIGHT?'r':key==SDLK_RETURN?'a':key==SDLK_y||key==SDLK_v?'v':0;
-        if(command&&player_control>=0){ssize_t sent=write(player_control,&command,1);(void)sent;}
+        if(command&&player_control>=0){ssize_t sent=player_pipe_write(player_control,&command,1);(void)sent;}
         return;
     }
     if(catalog_pid){
@@ -1739,25 +2775,34 @@ static void action(SDL_Keycode key) {
         }
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){
             kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
-            tv_cancel_prepared();if(!renderer)open_ui();auto_active=0;tv_active=0;play_after_load=0;
+            tv_cancel_prepared();if(!renderer)open_ui();auto_active=0;tv_active=0;play_after_load=0;video_download_requested=0;
             snprintf(status,sizeof(status),key==SDLK_F2?"LOAD SKIPPED":"LOAD CANCELLED");
         }
         return;
     }
     if(search_on){
         size_t n=strlen(search_text);
-        if(key==SDLK_ESCAPE){search_on=0;SDL_StopTextInput();}
-        else if(key==SDLK_BACKSPACE){if(n)search_text[n-1]=0;else {search_on=0;SDL_StopTextInput();}}
-        else if(key==SDLK_y){
+        if(key==SDLK_ESCAPE){gamez_rename_on=search_on=0;SDL_StopTextInput();}
+        else if(key==SDLK_BACKSPACE){if(n)search_text[n-1]=0;else {gamez_rename_on=search_on=0;SDL_StopTextInput();}}
+        else if(key==SDLK_TAB){
             const char *completion=search_completion();
-            if(completion)snprintf(search_text,sizeof(search_text),"%s",completion);
+            if(completion)snprintf(search_text,gamez_rename_on?sizeof(search_text):65,"%s",completion);
         }
         else if(key==SDLK_RIGHT&&search_key<39)search_key++;
         else if(key==SDLK_LEFT&&search_key>0)search_key--;
         else if(key==SDLK_DOWN&&search_key<30)search_key+=10;
         else if(key==SDLK_UP&&search_key>=10)search_key-=10;
-        else if(key==SDLK_F4){char c=search_keys[search_key];if(c=='<'){if(n)search_text[n-1]=0;}else if(c=='>')action(SDLK_RETURN);else if(n<64){search_text[n]=c;search_text[n+1]=0;}}
-        else if(key==SDLK_RETURN||key==SDLK_F3){Browse next=browse;next.page=1;next.selected=0;strcpy(next.query,search_text);search_on=0;SDL_StopTextInput();request_catalog(next,0,0);}
+        else if(key==SDLK_F4){char c=search_keys[search_key];if(c=='<'){if(n)search_text[n-1]=0;}else if(c=='>')action(SDLK_RETURN);else if(n<(gamez_rename_on?79:64)){search_text[n]=c;search_text[n+1]=0;}}
+        else if(key==SDLK_RETURN||key==SDLK_F3){
+            if(gamez_rename_on){
+                if(!search_text[0]){snprintf(status,sizeof(status),"ENTER A GAME TITLE");return;}
+                mkdir("catalog-cache",0700);pending=browse;
+                const char *args[]={"greenlink-catalog","--rename-gamez",gamez_rename_id,search_text,NULL};
+                catalog_pid=shell_spawn("./greenlink-catalog",args,"catalog-cache/rename-result.txt","catalog.log");
+                gamez_rename_pending=catalog_pid>0;catalog_started=SDL_GetTicks();gamez_rename_on=search_on=0;SDL_StopTextInput();
+                snprintf(status,sizeof(status),gamez_rename_pending?"SAVING GAME TITLE":"COULD NOT START RENAME");
+            }else {Browse next=browse;next.page=1;next.selected=0;strcpy(next.query,search_text);search_on=0;SDL_StopTextInput();request_catalog(next,0,0);}
+        }
         return;
     }
     if(tv_schedule_on){
@@ -1774,18 +2819,32 @@ static void action(SDL_Keycode key) {
         }return;
     }
     if(filters_on){
+        int pc=browse.mode==22&&browse.id==11;
         if(key==SDLK_UP||key==SDLK_DOWN)filter_row=!filter_row;
         if(key==SDLK_LEFT||key==SDLK_RIGHT){int step=key==SDLK_LEFT?-1:1;
             if(filter_row)browse.season=(browse.season+step+BROWSE_ORDERS)%BROWSE_ORDERS;
+            else if(pc)browse.episode=(browse.episode+step+GAMEZ_GENRES)%GAMEZ_GENRES;
             else do {browse.id=(browse.id+step+BROWSE_GENRES)%BROWSE_GENRES;}while(browse.mode==2&&series_genres[browse.id]<0);
         }
-        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){filters_on=0;browse.id=filter_original_genre;browse.season=filter_original_order;return;}
-        if(key==SDLK_RETURN){filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);}
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){filters_on=0;if(pc)browse.episode=filter_original_genre;else browse.id=filter_original_genre;browse.season=filter_original_order;return;}
+        if(key==SDLK_RETURN){
+            int slot=library_filter_slot(browse.mode);
+            if(pc){gamez_genre=browse.episode;gamez_order=browse.season;save_settings();}
+            if(slot>=0){library_genre[slot]=browse.id;library_order[slot]=browse.season;save_settings();}
+            filters_on=0;Browse next=browse;next.page=1;next.query[0]=0;request_catalog(next,0,0);
+        }
         return;
     }
+    if(video_download_pid&&!settings_on&&!player_pid&&!catalog_pid&&
+       (key==SDLK_d||(key==SDLK_y&&browse.mode==OFFLINE_MODE))){
+        kill(video_download_pid,SIGTERM);snprintf(status,sizeof(status),"CANCELLING VIDEO DOWNLOAD");return;
+    }
+    if(!settings_on&&!player_pid&&!catalog_pid&&!about&&!search_on&&!music_on&&total&&
+       (key==SDLK_d||(key==SDLK_v&&video_download_offer(&titles[visible[selection]]))||(key==SDLK_y&&video_download_supported(&titles[visible[selection]])))){video_download_selected(&titles[visible[selection]]);return;}
+    if(!settings_on&&!player_pid&&!catalog_pid&&browse.mode==OFFLINE_MODE&&key==SDLK_y&&total){video_download_delete_title=titles[visible[selection]];video_download_delete_confirm=1;return;}
     if(!settings_on&&!about&&(browse.mode==14||browse.mode==22||browse.mode==FAVORITES_MODE)&&key==SDLK_y&&total&&
        !strcmp(titles[visible[selection]].kind,"game")){
-        rom_core_open(&titles[visible[selection]]);return;
+        rom_assets_open(&titles[visible[selection]]);return;
     }
     if(!settings_on&&!about&&key==SDLK_F8&&(browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28)){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&(key==SDLK_f||key==SDLK_F7)){favorites_toggle();return;}
@@ -1794,11 +2853,14 @@ static void action(SDL_Keycode key) {
         request_catalog(next,0,0);return;
     }
     if(!settings_on&&!about&&browse.mode==21&&key==SDLK_y){Browse next={14,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
-    if(!settings_on&&!about&&(browse.mode==21||browse.mode==22)&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
+    if(!settings_on&&!about&&(browse.mode==21||(browse.mode==22&&browse.id!=11))&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_SLASH){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F6){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
-    if(!settings_on&&!about&&(key==SDLK_F6||key==SDLK_y)&&(browse.mode==1||browse.mode==2||browse.mode==7)){filters_on=1;filter_row=0;filter_original_genre=browse.id;filter_original_order=browse.season;return;}
+    if(!settings_on&&!about&&!search_on&&!catalog_pid&&!player_pid&&browse.mode==22&&browse.id==11&&(key==SDLK_y||key==SDLK_F6||key==SDLK_F3)){
+        gamez_options_on=1;gamez_options_row=total?0:2;return;
+    }
+    if(!settings_on&&!about&&(key==SDLK_F6||key==SDLK_y)&&(browse.mode==1||browse.mode==2||browse.mode==7)){filters_on=1;filter_row=0;filter_original_genre=browse.mode==22?browse.episode:browse.id;filter_original_order=browse.season;return;}
     if(bios_on){
         if(bios_confirm){
             if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){bios_confirm=0;return;}
@@ -1830,23 +2892,69 @@ static void action(SDL_Keycode key) {
     }
     if(settings_on){
         if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F5){settings_on=0;save_settings();return;}
-        if(key==SDLK_UP&&settings_row>0)settings_row--;
-        if(key==SDLK_DOWN&&settings_row<18)settings_row++;
+        if(key==SDLK_TAB||key==SDLK_PAGEDOWN||key==SDLK_m){settings_switch(1);return;}
+        if(key==SDLK_PAGEUP||key==SDLK_v){settings_switch(-1);return;}
+        if(settings_row<0){
+            if(key==SDLK_LEFT)settings_switch(-1);
+            else if(key==SDLK_RIGHT)settings_switch(1);
+            else if(key==SDLK_DOWN||key==SDLK_RETURN)settings_row=0;
+            return;
+        }
+        if(key==SDLK_UP)settings_row--;
+        if(key==SDLK_DOWN&&settings_row+1<settings_tabs[settings_tab].count)settings_row++;
         int step=key==SDLK_LEFT?-1:1;
         if(key==SDLK_LEFT||key==SDLK_RIGHT||key==SDLK_RETURN){
-            switch(settings_row){
+            int id=settings_id();
+            if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id==27||(id>=23&&id<=25)))return;
+            switch(id){
+                case 35:streaming_audio_step(step);break;
+                case 36:
+#if defined(FLXTR_DESKTOP) || defined(_WIN32) || defined(__ANDROID__)
+                    snprintf(status,sizeof(status),"STREAM AUDIO TEST IS FOR STEAM LINK");
+#else
+                    if(key==SDLK_RETURN){
+                        if(access("moonlight/flxtr-audio-test",X_OK))snprintf(status,sizeof(status),"INSTALL BUNDLED MOONLIGHT FIRST");
+                        else{stream_audio_test=1;running=0;}
+                    }
+#endif
+                    break;
+                case 37:stream_resolution=stream_resolution==720?1080:720;break;
+                case 38:stream_fps=stream_fps==60?30:60;break;
+                case 39:{int index=1;for(int i=0;i<6;i++)if(stream_bitrate==stream_bitrates[i])index=i;
+                    stream_bitrate=stream_bitrates[(index+step+6)%6];break;}
+                case 28:game_performance=(game_performance+step+3)%3;break;
+                case 27:if(key==SDLK_RETURN)platform_core_open();break;
+                case 26:default_viewing=(default_viewing+step+VIEW_COUNT)%VIEW_COUNT;break;
+                case 31:if(key==SDLK_RETURN)mtv_weights_open();break;
+                case 32:mtv_fusion_step(step);break;
+                case 30:if(key==SDLK_RETURN)usb_open();break;
+                case 29:mtv_genre=(mtv_genre+step+MTV_GENRES)%MTV_GENRES;break;
+                case 22:game_view=(game_view+step+GAME_VIEWS)%GAME_VIEWS;break;
+                case 20:music_autoplay=!music_autoplay;break;
+                case 21:settings_on=0;music_on=1;break;
+                case 23:if(key==SDLK_RETURN&&!samba_installed())samba_service("install");break;
+                case 24:if(key==SDLK_RETURN)samba_password_open();break;
+                case 25:if(key==SDLK_RETURN){
+                    if(access("samba/.configured",R_OK))samba_password_open();
+                    else samba_service(access("samba/.enabled",R_OK)?"enable":"disable");
+                }break;
+                case 19:{const int outputs[]={0,240,480,720,1080};int index=0;
+                    for(int i=0;i<5;i++)if(game_output==outputs[i])index=i;
+                    game_output=outputs[(index+step+5)%5];break;}
                 case 18:if(!set_auto_updates(!auto_updates_enabled()))snprintf(status,sizeof(status),"COULD NOT CHANGE AUTO UPDATE SETTING");break;
                 case 17:series_autoplay=!series_autoplay;break;
+                case 34:accounts_open(4);break;
+                case 33:accounts_open(3);break;
                 case 15:accounts_open(0);break;
                 case 16:accounts_open(1);break;
-                case 0:quality_setting=(quality_setting+step+3)%3;break;
-                case 1:buffer_setting=(buffer_setting+step+9)%9;break;
+                case 0:quality_setting=(quality_setting+step+QUALITY_CHOICES)%QUALITY_CHOICES;break;
+                case 1:if(!buffer_setting)buffer_setting=1;buffer_setting=1+(buffer_setting-1+step+8)%8;break;
                 case 2:disk_setting=(disk_setting+step+3)%3;break;
                 case 3:coverflow=!coverflow;break;
                 case 4:subtitle_setting=(subtitle_setting+step+5)%5;break;
                 case 5:subtitle_scale=subtitle_scale==2?3:2;break;
                 case 8:tv_breaks=!tv_breaks;break;
-                case 9:menu_theme=(menu_theme+step+3)%3;monochrome_menu=menu_theme==1;load_menu_background();break;
+                case 9:menu_theme=(menu_theme+step+MENU_THEMES)%MENU_THEMES;monochrome_menu=menu_theme==1;load_menu_background();break;
                 case 10:bios_on=1;break;
                 case 11:game_autostate=!game_autostate;break;
                 case 12:tv_rating_weight=(tv_rating_weight-1+step+5)%5+1;break;
@@ -1857,24 +2965,26 @@ static void action(SDL_Keycode key) {
             }save_settings();
         }return;
     }
-    if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){tv_cancel_prepared();tv_joining=1;tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=tv_prepared=0;tv_tick();return;}
+    if(browse.mode==11&&!about&&(key==SDLK_F6||key==SDLK_y)){mtv_override=!mtv_override;snprintf(status,sizeof(status),mtv_override?"MTV MUSIC VIDEOS / A START":"TV SCHEDULE / A START");return;}
+    if(browse.mode==11&&!about&&(key==SDLK_RETURN||key==SDLK_SPACE)){viewing=default_viewing;tv_cancel_prepared();tv_joining=1;tv_active=1;tv_attempts=0;tv_next_at=0;tv_break_due=tv_in_break=tv_prepared=0;tv_tick();return;}
     if(about&&(key==SDLK_UP||key==SDLK_DOWN)){about_row=!about_row;return;}
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){if(about_row==1&&key!=SDLK_u)accounts_open(1);else start_update();return;}
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){
-        const int modes[]={11,FAVORITES_MODE,1,2,7,21,30,0};
+        const int modes[]={11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
         int current=history_size?history[0].mode:browse.mode,index=0;
         if(current==14||current==22)current=21;
         if(current==9||current==10||current==31)current=30;
-        for(int i=0;i<8;i++)if(modes[i]==current){index=i;break;}
-        Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%8];
+        for(int i=0;i<9;i++)if(modes[i]==current){index=i;break;}
+        Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%9];
         history_size=0;request_catalog(next,0,0);
     }
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
+    else if(key==SDLK_x&&!about&&total&&!strcmp(titles[visible[selection]].kind,"game"))rom_launch(&titles[visible[selection]]);
     else if(key==SDLK_y)stars_on=!stars_on;
     else if(key==SDLK_v){snprintf(status,sizeof(status),"VIEW OPTIONS ARE AVAILABLE DURING VIDEO PLAYBACK");}
     else if(key==SDLK_TAB&&!browse.mode){ready_only=!ready_only;filter();}
@@ -1892,6 +3002,33 @@ static void action(SDL_Keycode key) {
     }
     if(key==SDLK_PAGEDOWN)next_catalog_page(1);
     if(key==SDLK_PAGEUP)next_catalog_page(-1);
+}
+static void desktop_key(SDL_Keycode key,SDL_Keymod modifiers){
+    if(mtv_weights_on){mtv_weights_action(key);return;}
+    if(usb_on){usb_action(key);return;}
+    int typing=samba_password_on||search_on||(music_on&&music_edit);
+    if(key==SDLK_q&&(modifiers&KMOD_CTRL)){running=0;return;}
+    if(!typing&&key==SDLK_F1){keyboard_help=!keyboard_help;return;}
+    if(keyboard_help){if(key==SDLK_ESCAPE)keyboard_help=0;return;}
+    if(typing){action(key);return;}
+    if(youtube_pid&&!youtube_preparing){action(key);return;}
+    if(player_pid){
+        char c=(key==SDLK_SPACE||key==SDLK_k)?'P':key==SDLK_j?'R':key==SDLK_l?'F':key==SDLK_LEFT?'l':key==SDLK_RIGHT?'r':key==SDLK_f?'t':key==SDLK_m?'o':key==SDLK_TAB?'m':0;
+        if(c&&player_control>=0){ssize_t n=player_pipe_write(player_control,&c,1);(void)n;return;}
+        action(key);return;
+    }
+    if((key==SDLK_SPACE||key==SDLK_k)&&music_job==3){kill(music_pid,SIGUSR1);music_paused=!music_paused;return;}
+    if(key==SDLK_F10){music_on=0;settings_on=1;about=0;return;}
+    if(key==SDLK_F4){menu_theme=(menu_theme+1)%MENU_THEMES;monochrome_menu=menu_theme==1;load_menu_background();save_settings();return;}
+    if(key==SDLK_p&&(modifiers&KMOD_CTRL)){music_on=0;accounts_open(0);return;}
+    if(key==SDLK_f&&(modifiers&KMOD_CTRL)){action(SDLK_F3);return;}
+    if(!music_on&&!settings_on&&!rom_options_menu&&!rom_core_menu&&!accounts_on&&!catalog_pid&&(key==SDLK_t||key==SDLK_g)){
+        Browse next={key==SDLK_t?11:21,1,0,0,0,0,"",""};history_size=0;request_catalog(next,0,0);return;
+    }
+    if(key==SDLK_ESCAPE&&!music_on&&!settings_on&&!accounts_on&&!about&&!history_size&&!browse.mode){
+        snprintf(status,sizeof(status),"CTRL+Q TO QUIT / F1 KEYBOARD HELP");return;
+    }
+    action(key);
 }
 static void add_pad(int device) {
     if(!SDL_IsGameController(device))return;
@@ -1930,21 +3067,55 @@ static void shutdown_children(pid_t *children,size_t count){
     }
 }
 
+#ifdef _WIN32
+#define main flxtr_shell_main
+#endif
 int main(int argc,char **argv) {
-    const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0;Uint32 start,last_draw=0;int dirty=1;
+    const char *catalog="catalog.tsv",*shot=NULL;int frames=0,seen=0,initial_library=0,usb_requested=0,weights_requested=0;Uint32 start,last_draw=0;int dirty=1;
+#ifdef __ANDROID__
+    /* Android can re-enter SDL_main after an Activity was finished. */
+    running=1;count=total=selection=0;settings_on=about=search_on=music_on=0;
+    memset(pads,0,sizeof(pads));memset(titles,0,sizeof(titles));
+    const char *private_dir=SDL_AndroidGetInternalStoragePath();
+    if(!private_dir||chdir(private_dir)){SDL_Log("Cannot open Android app storage");return 1;}
+#endif
     load_settings();search_dict_load();
     for(int i=1;i<argc;i++) {
+#ifdef _WIN32
+        if(!strcmp(argv[i],"--ui-worker"))continue;
+#endif
         if(!strcmp(argv[i],"--version")){puts(FLXTR_VERSION);return 0;}
+        else if(!strcmp(argv[i],"--mtv-genres")){
+            for(int genre=0;genre<MTV_GENRES;genre++)printf("%d\t%s\n",genre,mtv_genre_names[genre]);
+            return 0;
+        }
         else if(!strcmp(argv[i],"--grid"))coverflow=0;
         else if(!strcmp(argv[i],"--settings"))settings_on=1;
-        else if(!strcmp(argv[i],"--api-accounts")){settings_on=1;accounts_on=1;settings_row=15;}
+        else if(!strcmp(argv[i],"--usb-setup")){usb_requested=1;settings_on=1;}
+        else if(!strcmp(argv[i],"--mtv-weights")){weights_requested=1;settings_on=1;}
+        else if(!strcmp(argv[i],"--settings-tab")&&i+1<argc){
+            const char *tab=argv[++i];int found=0;
+            for(int k=0;k<SETTINGS_TABS;k++)if(!strcasecmp(tab,settings_tabs[k].name)){settings_tab=k;found=1;break;}
+            if(!found)return 2;
+            settings_on=1;
+        }
+        else if(!strcmp(argv[i],"--api-accounts")){settings_on=1;accounts_on=1;settings_tab=SETTINGS_SERVICES;settings_row=3;}
         else if(!strcmp(argv[i],"--catalog")&&i+1<argc)catalog=argv[++i];
         else if(!strcmp(argv[i],"--screenshot")&&i+1<argc)shot=argv[++i];
         else if(!strcmp(argv[i],"--frames")&&i+1<argc)frames=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--no-stars"))stars_on=0;
+        else if(!strcmp(argv[i],"--mtv")){initial_library=11;mtv_override=tv_active=1;}
         else if(!strcmp(argv[i],"--music"))music_on=1;
-        else if(!strcmp(argv[i],"--library")&&i+1<argc){const char *v=argv[++i];initial_library=!strcmp(v,"movies")?1:!strcmp(v,"series")?2:!strcmp(v,"anime")?7:!strcmp(v,"archive")?30:!strcmp(v,"tv")?11:!strcmp(v,"games")?21:0;if(!initial_library)return 2;}
+        else if(!strcmp(argv[i],"--keyboard-help"))keyboard_help=1;
+        else if(!strcmp(argv[i],"--theme")&&i+1<argc){char *end;long theme=strtol(argv[++i],&end,10);if(*end||theme<0||theme>=MENU_THEMES)return 2;menu_theme=(int)theme;monochrome_menu=menu_theme==1;load_menu_background();}
+        else if(!strcmp(argv[i],"--library")&&i+1<argc){const char *v=argv[++i];initial_library=!strcmp(v,"movies")?1:!strcmp(v,"series")?2:!strcmp(v,"anime")?7:!strcmp(v,"archive")?30:!strcmp(v,"tv")?11:!strcmp(v,"games")?21:!strcmp(v,"downloads")?OFFLINE_MODE:0;if(!initial_library)return 2;}
         else {fprintf(stderr,"Usage: %s [--catalog file] [--screenshot file.bmp] [--frames N] [--no-stars]\n",argv[0]);return 2;}
+    }
+    if(settings_on&&settings_tab==SETTINGS_STREAMING){
+        FILE *test=fopen("moonlight/audio-test-status.txt","r");int code=-1;
+        if(test){if(fscanf(test,"%d",&code)!=1)code=-1;fclose(test);}
+        snprintf(status,sizeof(status),code==0?"TEST FINISHED / DID YOU HEAR LEFT AND RIGHT TONES?":
+            code>0?"AUDIO TEST FAILED / SEE MOONLIGHT/AUDIO-TEST.LOG":"CHOOSE OUTPUT / TEST SOUND WITHOUT CONNECTING TO PC");
     }
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
     if(SDL_Init(SDL_INIT_GAMECONTROLLER|SDL_INIT_TIMER)) {fprintf(stderr,"SDL: %s\n",SDL_GetError());return 1;}
@@ -1955,19 +3126,22 @@ int main(int argc,char **argv) {
     for(int i=0;i<STARS;i++){seed=seed*1664525u+1013904223u;star_x[i]=seed>>24;star_y[i]=seed>>16;star_speed[i]=1+(seed%3);}
     local_catalog=catalog;read_catalog(catalog);start=SDL_GetTicks();controller_used();
     if(initial_library){Browse next={initial_library,1,0,0,0,0,"",""};request_catalog(next,0,0);}
+    if(weights_requested)mtv_weights_open();else if(usb_requested)usb_open();
     while(running) {
-        if(accounts_on){api_setup_tick(SDL_GetTicks());phone_dispatch();if(SDL_GetTicks()-last_draw>=100)dirty=1;}
+        handoff_poll();
+        if(accounts_on){if(party_entry==4)tailscale_refresh();else api_setup_tick(SDL_GetTicks());if(SDL_GetTicks()-last_draw>=100)dirty=1;}
         SDL_Event event;
         if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
             dirty=1;
-            if(event.type==SDL_QUIT)running=0;
-            else if(event.type==SDL_KEYDOWN)action(event.key.keysym.sym);
+            if(event.type==SDL_QUIT){if(!usb_on||usb_stage!=5)running=0;}
+            else if(event.type==SDL_KEYDOWN){if(!usb_on||!event.key.repeat){keyboard_used=1;desktop_key(event.key.keysym.sym,(SDL_Keymod)event.key.keysym.mod);}}
             else if(event.type==SDL_MOUSEBUTTONDOWN&&event.button.button==SDL_BUTTON_LEFT){
                 int ww,wh;SDL_GetWindowSize(window,&ww,&wh);
                 if(ww>0&&wh>0&&event.button.x*W/ww>=730&&event.button.y*H/wh>=16&&event.button.y*H/wh<71)action(SDLK_m);
             }
+            else if(event.type==SDL_TEXTINPUT&&samba_password_on)samba_password_text(event.text.text);
             else if(event.type==SDL_TEXTINPUT&&music_on&&music_edit)music_text(event.text.text);
-            else if(event.type==SDL_TEXTINPUT&&search_on){for(const char *p=event.text.text;*p;p++){size_t n=strlen(search_text);if(n<64&&(isalnum((unsigned char)*p)||*p==' '||*p=='-')){search_text[n]=(char)toupper((unsigned char)*p);search_text[n+1]=0;}}}
+            else if(event.type==SDL_TEXTINPUT&&search_on){for(const char *p=event.text.text;*p;p++){size_t n=strlen(search_text);if(n<(gamez_rename_on?79:64)&&(gamez_rename_on?(unsigned char)*p>=32:(isalnum((unsigned char)*p)||*p==' '||*p=='-'))){search_text[n]=gamez_rename_on?*p:(char)toupper((unsigned char)*p);search_text[n+1]=0;}}}
             else if(event.type==SDL_CONTROLLERDEVICEADDED)add_pad(event.cdevice.which);
             else if(event.type==SDL_CONTROLLERDEVICEREMOVED){for(int i=0;i<4;i++)if(pads[i]&&SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i]))==event.cdevice.which){SDL_GameControllerClose(pads[i]);pads[i]=NULL;}}
             else if(event.type==SDL_CONTROLLERAXISMOTION){
@@ -1983,6 +3157,7 @@ int main(int argc,char **argv) {
             }
             else if(event.type==SDL_CONTROLLERBUTTONUP)controller_used();
             else if(event.type==SDL_CONTROLLERBUTTONDOWN) {
+                keyboard_used=0;
                 /* Suppress duplicate controller button-down bursts during playback.
                  * Distinct buttons remain independent for normal navigation. */
                 static Uint32 last_play_button[32];
@@ -1993,14 +3168,14 @@ int main(int argc,char **argv) {
                 if(player_pid&&button<32)last_play_button[button]=pressed_at;
                 controller_used();
                 switch(event.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_A:action(search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
-                    case SDL_CONTROLLER_BUTTON_B:action(search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
-                    case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
-                    case SDL_CONTROLLER_BUTTON_Y:action(SDLK_y);break;
+                    case SDL_CONTROLLER_BUTTON_A:action(samba_password_on||search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
+                    case SDL_CONTROLLER_BUTTON_B:action(samba_password_on?SDLK_ESCAPE:search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
+                    case SDL_CONTROLLER_BUTTON_X:action(!settings_on&&!rom_options_menu&&!rom_core_menu&&!player_pid&&!music_on&&total&&!strcmp(titles[visible[selection]].kind,"game")?SDLK_x:SDLK_F2);break;
+                    case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_TAB:SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
-                    case SDL_CONTROLLER_BUTTON_START:action(player_pid?SDLK_i:SDLK_F3);break;
+                    case SDL_CONTROLLER_BUTTON_START:action(samba_password_on?SDLK_RETURN:player_pid?SDLK_i:SDLK_F3);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(player_pid?SDLK_RIGHT:SDLK_m);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:action(SDLK_UP);break;
@@ -2013,25 +3188,70 @@ int main(int argc,char **argv) {
         if(update_pid){int code;pid_t done=waitpid(update_pid,&code,WNOHANG);
             if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
+        if(video_download_pid){video_download_finish();dirty=1;}
+        if(favorites_art_tick())dirty=1;
+        if(rom_assets_tick())dirty=1;
+        if(rom_send_tick())dirty=1;
+        if(usb_poll())dirty=1;
+        if(samba_poll())dirty=1;
         if(music_poll())dirty=1;
-        if(!music_on){prefetch_pages();tv_tick();}controller_idle();
+        if(youtube_poll())dirty=1;
+        tv_history_poll();
+        youtube_prefetch();
+        power_activity_tick(player_pid>0||(tv_active&&(youtube_pid>0||tv_buffer_pid>0))||(usb_on&&usb_stage==5),SDL_GetTicks());
+        if(!music_on&&!usb_on){prefetch_pages();tv_tick();}controller_idle();
         if(player_pid){int code;pid_t p=waitpid(player_pid,&code,WNOHANG);
             if(p==player_pid){finish_player(code);dirty=1;}
             else if(stopping_player&&SDL_GetTicks()-stop_time>3000)kill(player_pid,SIGKILL);
             SDL_Delay(30);continue;
         }
+        if(preview_tick())dirty=1;
         Uint32 now=SDL_GetTicks();
-        if(dirty||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
-            if(shot&&!catalog_pid){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
+        if(dirty||(usb_on&&now-last_draw>=250)||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+            if(shot&&!catalog_pid&&(!usb_on||usb_stage!=1)){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;
         }
     }
-    music_stop();
+    tv_history_finish("interrupted",tv_history_last_position());
+    if(!game_exit||!game_music_keep||!music_rom_handoff())music_stop();
+    youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
-    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid};
+    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid,rom_send_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
-    SDL_Quit();return game_exit?43:restart_shell?42:0;
+    SDL_Quit();return stream_audio_test?45:moonlight_exit?44:game_exit?43:restart_shell?42:0;
 }
+
+#ifdef _WIN32
+#undef main
+static int windows_supervisor(int argc,char **argv){
+    const char **args=(const char **)calloc((size_t)argc+4,sizeof(*args));if(!args)return 126;
+    args[0]="FlXtR";args[1]="--ui-worker";
+    for(int i=1;i<argc;i++)args[i+1]=argv[i];
+    int code;
+    for(;;){
+        code=flxtr_win_run("FlXtR",args,"greenlink.log","greenlink.log");
+        if(code==43){
+            const char *game_args[]={"greenlink-catalog","--run-game",NULL};
+            int result=flxtr_win_run("greenlink-catalog",game_args,"game.log","game.log");
+            FILE *f=fopen("game-exit-status","w");if(f){fprintf(f,"%d\n",result);fclose(f);}
+            memset(args,0,((size_t)argc+4)*sizeof(*args));
+            args[0]="FlXtR";args[1]="--ui-worker";args[2]="--library";args[3]="games";continue;
+        }
+        if(code==42)continue;
+        break;
+    }
+    free(args);return code<0?1:code;
+}
+int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,PWSTR command,int show){
+    (void)instance;(void)previous;(void)command;(void)show;
+    int argc=0;wchar_t **argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+    if(!argv)return 126;
+    SDL_SetMainReady();
+    int worker=argc>1&&!wcscmp(argv[1],L"--ui-worker");
+    int code=flxtr_win_entry(worker?flxtr_shell_main:windows_supervisor,argc,argv,!worker);
+    LocalFree(argv);return code;
+}
+#endif

@@ -65,3 +65,8 @@ plus missing Music components and modified runtime repair.
 Device checks: all three sizing modes read back correctly and were visually
 confirmed by the user; yt-dlp starts in about three seconds; live YouTube search,
 audio link resolution and a short native AAC playback succeeded.
+# YouTube coordinate regression repair
+
+YouTube/MTV playback uses the display-space scaler path validated in PR #21. The source window is the full HDMI display plane, and Fit/Stretch/1:1 destination rectangles are sent directly in that coordinate system. Mapping those rectangles back into the initial firmware underscan bounds makes Stretch retain borders (observed: 1920×1080 requested, 1844×1037 applied). Encoded video dimensions still determine Fit and 1:1 geometry; they do not crop the display-sized source window.
+
+The existing native-coordinate adapter remains in use for other playback. Both paths validate scaler readback, roll back failed changes, and restore the original state on exit. Regression coverage includes the observed underscan bounds, 4:3 Fit, 1:1, non-1080p input, and rollback.

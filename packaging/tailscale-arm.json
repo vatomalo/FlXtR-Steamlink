@@ -1,0 +1,7 @@
+{
+  "version": "1.104.5",
+  "url": "https://pkgs.tailscale.com/stable/tailscale_1.104.5_arm.tgz",
+  "sha256": "39e2bdf0042f38bf49beec357375c11c711f9c60f8e7242f385b5616c63dcd6e",
+  "directory": "tailscale_1.104.5_arm",
+  "maxDownloadBytes": 67108864
+}

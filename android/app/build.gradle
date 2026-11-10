@@ -1,0 +1,42 @@
+plugins { id 'com.android.application' }
+def nativeDirectory = providers.gradleProperty('flxtrNativeDir').orNull
+android {
+    namespace 'org.flxtr.android'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    if (nativeDirectory == null) { ndkVersion '28.0.13004108' }
+    defaultConfig {
+        applicationId 'org.flxtr.android'
+        minSdk 26
+        targetSdk 35
+        versionCode = Integer.parseInt(project.findProperty('flxtrVersionCode')?.toString() ?: '1027')
+        versionName = project.findProperty('flxtrVersionName')?.toString() ?: '0.10.27-tailscale'
+        ndk { abiFilters.addAll((project.findProperty('flxtrAbis') ?: 'armeabi-v7a,arm64-v8a').split(',')) }
+        if (nativeDirectory == null) { externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_shared' } } }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8; coreLibraryDesugaringEnabled true }
+    if (nativeDirectory == null) { externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' } } }
+    sourceSets.main {
+        assets.srcDirs += '../build/media-runtime'
+        if (nativeDirectory != null) { jniLibs.srcDirs = [nativeDirectory] }
+    }
+    packaging { jniLibs { useLegacyPackaging true }; resources { excludes += ['META-INF/versions/**','META-INF/*.md'] } }
+    lint { lintConfig file('../lint.xml') }
+    buildTypes { release { minifyEnabled false } }
+}
+
+dependencies {
+    implementation files('libs/flxtr-tailnet.aar')
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    implementation project(':moonlight')
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'org.jsoup:jsoup:1.18.3'
+    implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
+    implementation 'androidx.media3:media3-exoplayer:1.5.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.5.1'
+    implementation 'androidx.media3:media3-ui:1.5.1'
+    implementation 'androidx.media3:media3-database:1.5.1'
+    implementation 'androidx.media3:media3-session:1.5.1'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}

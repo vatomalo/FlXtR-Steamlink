@@ -11,7 +11,7 @@ int main(void){
     tv_progress_save(1396,1,1);tv_progress_save(1396,1,2);TvProgress rows[256];assert(tv_progress_read(rows)==1&&rows[0].episode==2);
     unlink("tv-progress.tsv");
     SDL_setenv("SDL_VIDEODRIVER","dummy",1);assert(!SDL_Init(SDL_INIT_TIMER));assert(!open_ui());browse.mode=11;
-    settings_on=1;settings_row=7;action(SDLK_RETURN);assert(tv_schedule_on);tv_column=0;tv_row=0;action(SDLK_RIGHT);assert(!tv_blocks[0].hour);action(SDLK_ESCAPE);settings_on=0;
+    settings_on=1;settings_tab=SETTINGS_TV;settings_row=0;action(SDLK_RETURN);assert(tv_schedule_on);tv_column=0;tv_row=0;action(SDLK_RIGHT);assert(!tv_blocks[0].hour);action(SDLK_ESCAPE);settings_on=0;
     script("greenlink-catalog","#!/bin/sh\ncase \"$1\" in\ntv-pick) printf 'TEST SHOW\\tTV\\t\\t\\tepisode\\t1396\\t1\\t2\\n';;\nsource) printf 'alpha\\tSERVER\\t\\t\\tserver\\t1396\\t1\\t2\\n';;\nquality) printf 'AUTO\\tBEST\\t\\thttps://example.org/video.mp4\\tsource\\t1396\\t1\\t2\\n';;\nesac\n");
     script("greenlink-player","#!/bin/sh\nexit 0\n");
     tv_active=1;player_pid=123;tv_tick();assert(!catalog_pid);player_pid=0;

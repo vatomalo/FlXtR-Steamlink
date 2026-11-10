@@ -37,7 +37,7 @@ int main(void) {
     assert(open_ui()==0);selection=1;draw(0);
     assert(cached_page==0);
     assert(quality_setting==1&&qualities[quality_setting]==720);
-    assert(coverflow);action(SDLK_F5);assert(settings_on);settings_row=3;action(SDLK_RIGHT);assert(!coverflow);draw(0);
+    assert(coverflow);action(SDLK_F5);assert(settings_on);settings_tab=SETTINGS_GENERAL;settings_row=0;action(SDLK_RIGHT);assert(!coverflow);draw(0);
     action(SDLK_RIGHT);assert(coverflow);action(SDLK_ESCAPE);assert(!settings_on);
     quality_setting=2;load_settings();assert(quality_setting==1);unlink("settings.cfg");
     action(SDLK_LEFT);draw(33);
@@ -65,7 +65,7 @@ int main(void) {
     controller_activity=SDL_GetTicks()-300001;controller_idle();assert(controller_slept&&!idle_pid);
     controller_used();assert(!controller_slept);
     browse.mode=14;total=count=1;visible[0]=selection=0;running=1;
-    titles[0]=(Title){.title="GAME",.kind="game",.id=7};play();assert(game_exit&&!running&&!player_pid);
+    titles[0]=(Title){.title="GAME",.kind="game",.id=7};play();assert(rom_options_menu);action(SDLK_RETURN);assert(game_exit&&!running&&!player_pid);
     f=fopen("game-request","r");assert(f);int game_id=0;assert(fscanf(f,"%d",&game_id)==1&&game_id==7);fclose(f);unlink("game-request");game_exit=0;running=1;
     browse.mode=0;history_size=0;
     close_ui();

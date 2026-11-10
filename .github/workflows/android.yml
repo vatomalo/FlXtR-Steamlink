@@ -1,0 +1,59 @@
+name: Android preview
+on:
+  push:
+    branches: [main, feature/android, codex/steamlink-game-menus]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: android-startup-channel
+  cancel-in-progress: false
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: android/tailnet/go.mod
+          cache-dependency-path: android/tailnet/go.sum
+      - name: Install pinned Android Go bindings
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.0.13004108' 'cmake;3.22.1'
+      - name: Restore Android signing identity
+        env:
+          FLXTR_SIGNING_KEY: ${{ secrets.FLXTR_ANDROID_SIGNING_KEY }}
+        run: |
+          test -n "$FLXTR_SIGNING_KEY"
+          mkdir -p "$HOME/.android"
+          printf '%s' "$FLXTR_SIGNING_KEY" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+      - name: Build and lint
+        env:
+          FLXTR_ANDROID_RELEASE: '1'
+        run: |
+          export FLXTR_ANDROID_VERSION_CODE="$((1000 + GITHUB_RUN_NUMBER))"
+          export FLXTR_ANDROID_VERSION_NAME="0.9-steamlink-menus.${GITHUB_RUN_NUMBER}"
+          bash scripts/build-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlXtR-Android-preview
+          path: dist/FlXtR-Android-preview.apk
+          if-no-files-found: error
+      - name: Publish signed startup update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-android.py --apk dist/FlXtR-Android-preview.apk

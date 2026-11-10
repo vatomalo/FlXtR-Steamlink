@@ -1,0 +1,9 @@
+#!/bin/sh
+# Run from the installed app; scope the private SDL runtime to this process.
+set -eu
+app=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+if [ "${FLXTR_USE_SYSTEM_SDL:-0}" != 1 ] && [ -f "$app/retroarch-libs/libSDL2-2.0.so.0" ]; then
+    LD_LIBRARY_PATH="$app/retroarch-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH
+fi
+exec "$app/test-steamlink-audio" "$@"

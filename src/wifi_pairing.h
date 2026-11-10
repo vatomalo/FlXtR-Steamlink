@@ -1,9 +1,11 @@
 #ifndef FLXTR_WIFI_PAIRING_H
 #define FLXTR_WIFI_PAIRING_H
+#ifndef _WIN32
 #include <poll.h>
+#endif
 #include <signal.h>
 /* Read only the active ConnMan Wi-Fi service. Credentials never leave the TV. */
-static int wifi_escape(char *out,size_t size,const char *input){
+static inline int wifi_escape(char *out,size_t size,const char *input){
     size_t n=0;
     for(const char *p=input;*p;p++){
         if(n+3>=size)return -1;
@@ -11,7 +13,7 @@ static int wifi_escape(char *out,size_t size,const char *input){
         out[n++]=*p;
     }out[n]=0;return 0;
 }
-static int wifi_ini_decode(char *value){
+static inline int wifi_ini_decode(char *value){
     char *out=value;
     for(char *p=value;*p;p++){
         if(*p=='\\'){
@@ -21,6 +23,9 @@ static int wifi_ini_decode(char *value){
     }*out=0;return 0;
 }
 static int wifi_payload(char *payload,size_t size){
+#ifdef _WIN32
+    (void)payload;(void)size;return -1;
+#else
     int pipes[2];if(pipe(pipes))return -1;
     pid_t child=shell_fork();
     if(child<0){close(pipes[0]);close(pipes[1]);return -1;}
@@ -63,5 +68,6 @@ static int wifi_payload(char *payload,size_t size){
     if(ok){int n=snprintf(payload,size,"WIFI:T:%s;S:%s;P:%s;;",open_wifi?"nopass":"WPA",escaped_ssid,escaped_password);ok=n>0&&(size_t)n<size;}
     memset(password,0,sizeof(password));memset(escaped_password,0,sizeof(escaped_password));memset(line,0,sizeof(line));
     return ok?0:-1;
+#endif
 }
 #endif

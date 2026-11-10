@@ -1,3 +1,5 @@
 {
     MV_PE_VideoSetUnderScanWindow;
+    MV_PE_GetRendererStatistics;
+    MV_PE_GetDecoderStatistics;
 };

@@ -1,0 +1,40 @@
+<resources>
+    <item type="id" name="flxtr_controller_bound"/>
+    <style name="FlxtrConsole" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">@font/flxtr_pixel</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:colorBackground">#000000</item>
+        <item name="android:textColorPrimary">#d4e2d6</item>
+        <item name="android:textColorSecondary">#74a77c</item>
+        <item name="android:colorAccent">#74ff84</item>
+        <item name="android:colorControlActivated">#74ff84</item>
+        <item name="android:colorControlNormal">#74ff84</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:alertDialogTheme">@style/FlxtrConsoleDialog</item>
+    </style>
+    <!-- Overrides only the embedded Moonlight frontend theme. -->
+    <style name="AppTheme" parent="FlxtrConsole"/>
+    <style name="FlxtrConsoleDialog" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:fontFamily">@font/flxtr_pixel</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:colorBackground">#000000</item>
+        <item name="android:textColorPrimary">#d4e2d6</item>
+        <item name="android:textColorSecondary">#74a77c</item>
+        <item name="android:colorAccent">#74ff84</item>
+    </style>
+    <style name="FlxtrConsoleText">
+        <item name="android:fontFamily">@font/flxtr_pixel</item>
+        <item name="android:textColor">#d4e2d6</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+    <style name="FlxtrConsoleButton" parent="android:style/Widget.Material.Button.Borderless">
+        <item name="android:background">@drawable/flxtr_console_focus</item>
+        <item name="android:fontFamily">@font/flxtr_pixel</item>
+        <item name="android:textColor">#74ff84</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:minHeight">44dp</item>
+        <item name="android:padding">8dp</item>
+    </style>
+</resources>

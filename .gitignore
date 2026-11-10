@@ -1,4 +1,6 @@
 build/
+/tailscale/
+/handoff/
 dist/
 *.log
 catalog.local.tsv
@@ -7,6 +9,7 @@ sources.local.tsv
 catalog-cache/
 posters/
 __pycache__/
+tools/gamez.local.json
 
 settings.cfg*
 playback-cache/
@@ -38,3 +41,20 @@ phone-files/
 
 /tv-airing.tsv*
 /tv-preload.log
+
+/android/moonlight/AndroidManifest.xml
+/android/app/src/main/jniLibs/libflxtr_*
+/android/app/src/main/jniLibs/*/libflxtr_*.so
+/android/app/libs/*.aar
+/android/app/libs/*-sources.jar
+/android/app/libs/tailnet.sha256
+
+/rom-transfer/
+/rom-receive-root.txt
+/games-transfer-dirty
+/games-transfer-scanning
+companion/**/bin/
+companion/**/obj/
+gamez-metadata/
+gamez-history.json*
+gamez-names.json*

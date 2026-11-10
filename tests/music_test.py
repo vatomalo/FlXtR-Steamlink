@@ -6,6 +6,8 @@ import unittest
 from unittest.mock import patch
 import contextlib
 import io
+import sys
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('music', Path(__file__).resolve().parents[1] / 'tools/music.py')
 music = importlib.util.module_from_spec(spec)
@@ -34,9 +36,162 @@ class MusicTest(unittest.TestCase):
             self.assertEqual(search.call_count, 4)
             self.assertEqual(len(list(Path(root).glob('*.json'))), 3)
 
+    def test_youtube_phone_share_links(self):
+        expected='https://www.youtube.com/watch?v=abcdefghijk'
+        for value in ['https://youtu.be/abcdefghijk?si=shared',
+                      'https://www.youtube.com/watch?si=shared&v=abcdefghijk&t=30',
+                      'https://music.youtube.com/watch?v=abcdefghijk&si=shared',
+                      'https://www.youtube.com/shorts/abcdefghijk?feature=share']:
+            self.assertEqual(music.youtube_address(value), expected)
+        self.assertEqual(music.youtube_address(expected+'&list=PLtest&si=shared'), expected+'&list=PLtest')
+        for value in ['https://youtube.com.evil/watch?v=abcdefghijk',
+                      'https://user@youtube.com/watch?v=abcdefghijk',
+                      'https://youtube.com:443/watch?v=abcdefghijk',
+                      'file:///etc/passwd']:
+            self.assertIsNone(music.youtube_address(value))
+
+    def test_recommendations_skip_history_and_invalid_ids(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
+            (music.CACHE/'history.txt').write_text(json.dumps(['abcdefghijk', 'lmnopqrstuv']))
+            from unittest.mock import MagicMock
+            client = MagicMock()
+            client.__enter__.return_value.extract_info.return_value = {'entries': iter([
+                None, {'id':'invalid'}, {'id':'abcdefghijk'}, {'id':'lmnopqrstuv'}, {'id':'12345678901'}])}
+            with patch.object(music, 'youtube_client', return_value=client), patch.object(music, 'resolve') as resolve:
+                music.run(['next'])
+                resolve.assert_called_once_with('video', '12345678901')
+                query=client.__enter__.return_value.extract_info.call_args.args[0]
+                self.assertEqual(query, 'https://www.youtube.com/watch?v=lmnopqrstuv&list=RDlmnopqrstuv')
+
+    def test_resolve_records_bounded_history_and_signed_stream(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.return_value={
+            'id':'abcdefghijk','url':'https://example.test/audio?'+'x'*12000,'title':'Test song'}
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)), patch.object(music, 'youtube_client', return_value=client):
+            (music.CACHE/'history.txt').write_text(json.dumps(['12345678901']*60))
+            music.run(['resolve','video','abcdefghijk'])
+            history=json.loads((music.CACHE/'history.txt').read_text())
+            self.assertEqual(len(history), 50)
+            self.assertEqual(history[-1], 'abcdefghijk')
+            self.assertGreater(len((music.CACHE/'stream.txt').read_text()), 12000)
+
+    def test_no_recommendation_stops_instead_of_repeating(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.return_value={'entries':[{'id':'abcdefghijk'}]*30}
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)), patch.object(music, 'youtube_client', return_value=client):
+            (music.CACHE/'history.txt').write_text('["abcdefghijk"]')
+            with self.assertRaisesRegex(ValueError, 'No new'):
+                music.run(['next'])
+
+    def test_music_video_keeps_separate_audio_and_quality(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.return_value={
+            'id':'abcdefghijk','title':'A music video','duration':200,
+            'requested_formats':[
+                {'url':'https://example.test/video','vcodec':'avc1','acodec':'none'},
+                {'url':'https://example.test/audio','vcodec':'none','acodec':'aac'}]}
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            music.run(['video','https://youtu.be/abcdefghijk?si=share','480'])
+            lines=(music.CACHE/'video.txt').read_text().splitlines()
+            self.assertEqual(lines[:3],['A music video','https://example.test/video','https://example.test/audio'])
+            self.assertIn('height<=480',module.YoutubeDL.call_args.args[0]['format'])
+            self.assertEqual(lines[4],'https://www.youtube.com/watch?v=abcdefghijk')
+            with self.assertRaisesRegex(ValueError,'quality'):
+                music.run(['video','https://youtu.be/abcdefghijk','999'])
+
+    def test_mtv_skips_recent_long_and_live_entries(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.side_effect=[
+            {'entries':[{'id':'abcdefghijk','duration':200},
+                        {'id':'12345678901','duration':7200},
+                        {'id':'live1234567','is_live':True},
+                        {'id':'lmnopqrstuv','duration':180}]},
+            {'id':'lmnopqrstuv','title':'New clip','duration':180,
+             'vcodec':'avc1','acodec':'aac','url':'https://example.test/video'}]
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            (music.CACHE/'video-history.txt').write_text('["abcdefghijk"]')
+            music.run(['tv-video','rock music videos'])
+            self.assertEqual(client.__enter__.return_value.extract_info.call_args.args[0],'https://www.youtube.com/watch?v=lmnopqrstuv')
+            self.assertEqual(json.loads((music.CACHE/'video-history.txt').read_text()),['abcdefghijk','lmnopqrstuv'])
+
+    def test_music_video_rejects_local_or_injected_stream_addresses(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            for bad in ['file:///etc/passwd','https://example.test/video\nInjected','https://example.test/'+'x'*2100]:
+                client.__enter__.return_value.extract_info.return_value={'id':'abcdefghijk','vcodec':'avc1','url':bad}
+                with self.assertRaisesRegex(ValueError,'address'):
+                    music.run(['video','https://youtu.be/abcdefghijk'])
+                self.assertFalse((music.CACHE/'video.txt').exists())
+
+    def test_permanent_tv_history_outlives_recent_fifty(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)/'music-cache'):
+            ledger = Path(root)/'tv-play-history.tsv'
+            old = 'abcdefghijk'
+            fresh = 'lmnopqrstuv'
+            rows = [f'1\tstarted\tyoutube\t0\t0\t0\t0\tyoutube:{old}\tOld clip\n']
+            rows += [f'1\tstarted\tyoutube\t0\t0\t0\t0\tyoutube:{i:011d}\tOther clip\n' for i in range(100)]
+            rows += [f'1\tfailed\tyoutube\t0\t0\t0\t0\tyoutube:{fresh}\tNever started\n']
+            ledger.write_text(''.join(rows))
+            self.assertEqual(music.unplayed_tv_videos([('video',old),('video',fresh)]), [('video',fresh)])
+            # Malformed and torn records cannot hide the following valid row.
+            with ledger.open('a') as out:
+                out.write('x'*1000+'\n'+'1\tstarted\tyoutube\t0\t0\t0\t0\tyoutube:'+fresh+'\tNew\n')
+            self.assertEqual(music.unplayed_tv_videos([('video',fresh)]), [])
+
     def test_unavailable_playlist_has_clear_error(self):
         with self.assertRaisesRegex(ValueError, 'public playlist'):
             music.spotify_rows('<html>Sign in</html>')
+
+    def test_mtv_reuses_candidates_and_skips_failed_candidate(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        info=lambda ident: dict(id=ident,title='Clip',duration=180,vcodec='avc1',acodec='aac',url='https://example.test/video')
+        client.__enter__.return_value.extract_info.side_effect=[
+            {'entries':[{'id':key,'duration':180} for key in ('abcdefghijk','lmnopqrstuv','12345678901')]},
+            ValueError('Unavailable clip'),info('lmnopqrstuv'),info('12345678901')]
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            music.run(['tv-video','official rock music videos'])
+            self.assertIn('abcdefghijk',json.loads((music.CACHE/'video-failures.txt').read_text()))
+            music.run(['tv-video','official rock music videos'])
+            queries=[call.args[0] for call in client.__enter__.return_value.extract_info.call_args_list]
+            self.assertEqual(sum(query.startswith('ytsearch') for query in queries),1)
+            self.assertEqual(queries[-1],'https://www.youtube.com/watch?v=12345678901')
+            self.assertEqual(json.loads((music.CACHE/'video-history.txt').read_text()),['lmnopqrstuv','12345678901'])
+
+    def test_preview_command_uses_flat_search_and_bounded_avc(self):
+        from unittest.mock import MagicMock
+        client=MagicMock()
+        client.__enter__.return_value.extract_info.side_effect=[
+            {'entries':[{'id':'abcdefghijk','duration':180}]},
+            {'title':'Trailer','http_headers':{'User-Agent':'Trailer agent'},
+             'url':'https://example.test/trailer?return=normal','vcodec':'avc1','height':360}]
+        module=SimpleNamespace(YoutubeDL=MagicMock(return_value=client))
+        extractors=SimpleNamespace(YoutubeIE=MagicMock(),YoutubeSearchIE=MagicMock(),YoutubeTabIE=MagicMock())
+        with tempfile.TemporaryDirectory() as root, patch.object(music,'CACHE',Path(root)), patch.dict(sys.modules,{'yt_dlp':module,'yt_dlp.extractor.youtube':extractors}):
+            music.run(['preview','movie','The Matrix'])
+            lines=(music.CACHE/'preview.txt').read_text().splitlines()
+            self.assertEqual(lines[1],'https://example.test/trailer?return=normal')
+            self.assertEqual(lines[2],'Trailer agent')
+            options=module.YoutubeDL.call_args.args[0]
+            self.assertTrue(options['extract_flat'])
+            self.assertIn('height<=360',options['format'])
+            self.assertTrue(options['format'].startswith('bestvideo[vcodec^=avc1][height<=144]'))
+            self.assertNotIn('720',options['format'])
+            music.run(['preview','movie','The Matrix'])
+            self.assertEqual(client.__enter__.return_value.extract_info.call_count,2)
 
 if __name__ == '__main__':
     unittest.main()

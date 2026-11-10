@@ -6,6 +6,9 @@
 #include "../src/wifi_pairing.h"
 #include "../src/phone_media.h"
 int main(int argc,char **argv){
+    assert(phone_filename("Disc.iso")&&phone_is_rom("Disc.iso"));
+    assert(phone_filename("Disc.ISO")&&phone_is_rom("Disc.ISO"));
+    assert(!phone_filename("../Disc.iso")&&!phone_filename("Disc.iso.exe"));
     char text[800];
     assert(!wifi_escape(text,sizeof(text),"a;b:c,d\\e\"f"));assert(!strcmp(text,"a\\;b\\:c\\,d\\\\e\\\"f"));
     if(argc>1&&!strcmp(argv[1],"wifi")){int ok=!wifi_payload(text,sizeof(text));memset(text,0,sizeof(text));puts(ok?"Active Wi-Fi QR payload available":"Wi-Fi payload unavailable");return 0;}

@@ -1,5 +1,5 @@
 /* Direct H.264 player. Video stays compressed until Valve SLVideo decodes it.
- * Hardware playback with disk prefill, restart-based seeking and controller overlay.
+ * Hardware playback with bounded RAM prefill, cached forward seeking and controller overlay.
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -22,7 +22,13 @@
 #include <time.h>
 #include <sys/stat.h>
 #include "hardware_layout.h"
+#include "steamlink_video_stats.h"
 #include "font.h"
+#include "steamlink_av_sync.h"
+#include "provider_http.h"
+#ifndef FLXTR_VERSION
+#define FLXTR_VERSION "development"
+#endif
 
 static volatile sig_atomic_t stopped;
 static volatile sig_atomic_t change_view;
@@ -34,12 +40,27 @@ static int64_t deadline;
 static const char *ca_file;
 static int megaplay;
 static uint64_t audio_samples;
-static int64_t origin=AV_NOPTS_VALUE,clock_start;
-/* Disk prefill and rebuffering must not advance subtitle presentation. */
+static int64_t origin=AV_NOPTS_VALUE,clock_start,media_offset;
+static uint8_t *audio_pcm;static unsigned audio_pcm_capacity;
+static int timing_actual,timing_target,timing_available,subtitle_fine_delay_ms;
+static void timing_poll(void);
+static double timing_position(void){return av_sync.initialized?fmax(0,sync_position()/1000000.0):0;}
+#define PLAYBACK_POSITION() timing_position()
+#define PLAYBACK_AUDIO_PAUSE(value) sync_pause(value)
+#define SUBTITLE_PRESENTATION_TIME_US(external) (sync_position()+((external)?0:media_offset))
+#define SUBTITLE_TIME_US(external) (SUBTITLE_PRESENTATION_TIME_US(external)-(int64_t)subtitle_fine_delay_ms*1000)
+/* RAM prefill and rebuffering must not advance subtitle presentation. */
 static int subtitle_buffering,disk_read_wait_count;
 static void playback_controls(void);
+static void playback_buffer_wait(int64_t waited);
+static int playback_seek(double position);
+static int64_t ram_seek=-1,adaptive_resume_at;
+static int adaptive_on,adaptive_started,adaptive_slow,adaptive_audio;
+static int64_t adaptive_decoding_since;
+#define PLAYBACK_ADAPTIVE adaptive_on
+#define PLAYBACK_SEEK(position) playback_seek(position)
 #define DISK_POLL() playback_controls()
-#include "disk_buffer.h"
+#define DISK_WAITED(waited) playback_buffer_wait(waited)
 #include "subtitles.h"
 static void stop(int sig) { (void)sig;stopped=1; }
 static void next_view(int sig) { (void)sig;change_view=1; }
@@ -68,7 +89,8 @@ static void show_view(const char *label) {
 static void apply_view(int notify) {
     VideoRect rect;
     int rc=video_rect(viewing,source_w,source_h,sar_n,sar_d,screen_w,screen_h,&rect);
-    if(!rc)rc=hardware_viewport(&rect,screen_w,screen_h,source_w,source_h);
+    if(!rc)rc=getenv("FLXTR_YOUTUBE_PLAYBACK")?hardware_youtube_viewport(&rect,screen_w,screen_h):
+        hardware_viewport(&rect,screen_w,screen_h,source_w,source_h);
     if(rc){fprintf(stderr,"Viewing mode unavailable: %s\n",view_names[viewing]);if(notify)show_view("VIEW MODE UNAVAILABLE");}
     else {
         fprintf(stderr,"Viewport %s: %d,%d %dx%d (readback verified)\n",view_names[viewing],rect.x,rect.y,rect.w,rect.h);
@@ -76,8 +98,12 @@ static void apply_view(int notify) {
     }
 }
 #include "playback_menu.h"
+#include "playback_started.h"
 static void playback_controls(void) {
+    int64_t controls_began=av_gettime_relative();
+    timing_poll();
     menu_poll();
+    if(av_gettime_relative()-controls_began>250000)adaptive_resume_at=av_gettime_relative();
     /* Atomic, rate-limited position checkpoint for TV resume. */
     static Uint32 last_checkpoint;
     Uint32 tick=SDL_GetTicks();
@@ -112,48 +138,71 @@ static int interrupt_io(void *opaque) { (void)opaque;return stopped||(deadline&&
 static const char *local_media;
 #include "phone_media.h"
 static int open_io(AVFormatContext *fmt,AVIOContext **pb,const char *url,int flags,AVDictionary **opts) {
+    provider_http_options(opts);
     if(megaplay){av_dict_set(opts,"referer","https://megaplay.buzz/",0);av_dict_set(opts,"user_agent","FlXtR-Steamlink/0.2",0);}
+    const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");if(agent&&strlen(agent)<=500&&!strpbrk(agent,"\r\n"))av_dict_set(opts,"user_agent",agent,0);
     av_dict_set(opts,"tls_verify","1",0);
     av_dict_set(opts,"ca_file",ca_file,0);
     av_dict_set(opts,"rw_timeout","15000000",0);
     av_dict_set(opts,"protocol_whitelist",local_media&&!strcmp(local_media,url)?"file":"http,https,tcp,tls,crypto",0);
     return avio_open2(pb,url,flags,&fmt->interrupt_callback,opts);
 }
-/* Avoid holding the single demux/decoder thread behind a distant timestamp.
- * A stalled packet can otherwise prevent queued audio from being fed.
- * Keep the cap short and log hits for device-side performance diagnosis. */
-static void wait_until(int64_t when) {
-    const int64_t max_wait_us=40000;
-    int64_t began=av_gettime_relative();
-    while(!stopped&&av_gettime_relative()<when){
-        playback_controls();
-        if(av_gettime_relative()-began>=max_wait_us){
-            static unsigned pace_caps;
-            if(pace_caps++<30)
-                fprintf(stderr,"Playback pacing capped: future=%.1f ms\n",
-                    (when-av_gettime_relative())/1000.0);
-            break;
-        }
-        SDL_Delay(2);
-    }
-}
+/* Decode/feed audio on the UI thread. Video submission is independent, so
+ * hardware waits no longer starve the output queue. PCM reserve permits the
+ * configured video decode lead without delaying the 200 ms audio start;
+ * the compressed RAM FIFO retains the much larger network reserve. */
 static int queue_audio(AVCodecContext *codec,SwrContext *swr,AVPacket *pkt,AVFrame *frame,SDL_AudioDeviceID device) {
     int rc=avcodec_send_packet(codec,pkt);
     if(rc<0&&rc!=AVERROR_EOF)return rc;
     while((rc=avcodec_receive_frame(codec,frame))>=0) {
-        int out_count=av_rescale_rnd(swr_get_delay(swr,codec->sample_rate)+frame->nb_samples,48000,codec->sample_rate,AV_ROUND_UP);
+        int64_t delay=swr_get_delay(swr,codec->sample_rate);
+        int out_count=av_rescale_rnd(delay+frame->nb_samples,48000,codec->sample_rate,AV_ROUND_UP);
         if(out_count<0||out_count>48000){av_frame_unref(frame);return AVERROR(EINVAL);}
-        uint8_t *pcm=NULL;
-        if(av_samples_alloc(&pcm,NULL,2,out_count,AV_SAMPLE_FMT_S16,0)<0){av_frame_unref(frame);return AVERROR(ENOMEM);}
-        int samples=swr_convert(swr,&pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
+        av_fast_malloc(&audio_pcm,&audio_pcm_capacity,(size_t)out_count*4);
+        if(!audio_pcm){av_frame_unref(frame);return AVERROR(ENOMEM);}
+        int samples=swr_convert(swr,&audio_pcm,out_count,(const uint8_t**)frame->extended_data,frame->nb_samples);
         if(samples>0) {
-            /* Bound SDL audio latency near 250 ms instead of 500 ms.
-             * Excess queued audio otherwise trails the video clock. */
-            while(!stopped&&SDL_GetQueuedAudioSize(device)>48000*4/4){playback_controls();SDL_Delay(2);}
+            while(!stopped&&SDL_GetQueuedAudioSize(device)>av_sync.pcm_limit){playback_controls();SDL_Delay(2);}
+            int64_t timestamp=frame->best_effort_timestamp;
+            if(timestamp!=AV_NOPTS_VALUE)
+                timestamp=av_rescale_q(timestamp,codec->pkt_timebase,AV_TIME_BASE_Q)-media_offset-
+                    av_rescale(delay,1000000,codec->sample_rate);
+            else{
+                pthread_mutex_lock(&av_sync.mutex);timestamp=av_sync.clock.tail;pthread_mutex_unlock(&av_sync.mutex);
+            }
+            /* Preserve a short intentional audio start offset with PCM
+             * silence, so video is not jumped straight to the first sound. */
+            pthread_mutex_lock(&av_sync.mutex);
+            int first=!av_sync.clock.ready;int64_t initial=av_sync.clock.position;
+            pthread_mutex_unlock(&av_sync.mutex);
+            if(first&&timestamp>initial&&timestamp-initial<=2000000){
+                static const uint8_t silence[4800*4]={0};
+                int64_t missing=(timestamp-initial)*48000/1000000;
+                while(missing>0&&!stopped){
+                    while(!stopped&&SDL_GetQueuedAudioSize(device)>av_sync.pcm_limit){playback_controls();SDL_Delay(2);}
+                    int n=missing>4800?4800:(int)missing;
+                    if(sync_audio_queue(silence,n,initial)<0){av_frame_unref(frame);return AVERROR(EIO);}
+                    audio_samples+=(unsigned)n;missing-=n;
+                }
+            }
+            pthread_mutex_lock(&av_sync.mutex);
+            int discontinuity=av_sync.clock.ready&&llabs(timestamp-av_sync.clock.tail)>250000;
+            int64_t expected=av_sync.clock.tail;
+            pthread_mutex_unlock(&av_sync.mutex);
+            if(discontinuity){
+                fprintf(stderr,"Audio timestamp discontinuity: expected=%.3f actual=%.3f; drain and reanchor\n",
+                    expected/1000000.0,timestamp/1000000.0);
+                sync_audio_start(1);
+                while(!stopped&&SDL_GetQueuedAudioSize(device)){playback_controls();SDL_Delay(2);}
+                pthread_mutex_lock(&av_sync.mutex);
+                audio_master_reset(&av_sync.clock,timestamp,av_sync.clock.latency);
+                sync_clear_video_locked();av_sync.recover=1;
+                pthread_mutex_unlock(&av_sync.mutex);
+            }
+            if(!stopped&&sync_audio_queue(audio_pcm,samples,timestamp)<0){av_frame_unref(frame);return AVERROR(EIO);}
             audio_samples+=(unsigned)samples;
-            if(!stopped&&SDL_QueueAudio(device,pcm,samples*4)<0){av_freep(&pcm);av_frame_unref(frame);return AVERROR(EIO);}
         }
-        av_freep(&pcm);av_frame_unref(frame);
+        av_frame_unref(frame);
         if(samples<0)return samples;
         if(stopped)break;
     }
@@ -169,6 +218,120 @@ static void player_subtitle_log(const char *phase,const char *english,const char
         english&&*english?"yes":"no",norwegian&&*norwegian?"yes":"no",
         selected&&*selected?"yes":"no");
     fclose(f);
+}
+#include "youtube_demux.h"
+#define DISK_RAM
+#include "disk_buffer.h"
+#include "video_quality.h"
+#include "adaptive_video.h"
+static AdaptiveVideo adaptive_policy;
+static DiskBuffer *active_buffer;
+static void adaptive_trace(const char *line){
+    fputs(line,stderr);
+    struct stat st;
+    if(!stat("adaptive-quality.log",&st)&&st.st_size>1048576)
+        rename("adaptive-quality.log","adaptive-quality.previous.log");
+    FILE *log=fopen("adaptive-quality.log","a");
+    if(log){fprintf(log,"%lld %s",(long long)time(NULL),line);fclose(log);}
+}
+static void adaptive_begin(int actual,int target,int available){
+    int blocked=0;const char *mask=getenv("FLXTR_ADAPTIVE_BLOCKED");
+    if(mask&&strlen(mask)==1&&mask[0]>='0'&&mask[0]<='7')blocked=mask[0]-'0';
+    adaptive_init(&adaptive_policy,actual,target,available,blocked,av_gettime_relative());
+    adaptive_policy.report=av_gettime_relative();adaptive_started=1;
+}
+static void adaptive_evaluate(int64_t starvation){
+    if(!adaptive_on||!adaptive_started||stopped)return;
+    int64_t now=av_gettime_relative();
+    if(adaptive_resume_at){adaptive_hold(&adaptive_policy,now);adaptive_resume_at=0;adaptive_slow=adaptive_audio=0;return;}
+    if(adaptive_decoding_since&&now-adaptive_decoding_since>=10000000&&now>=adaptive_policy.armed&&access("adaptive-ready",F_OK)){
+        FILE *ready=fopen("adaptive-ready","w");if(ready){fputs("1\n",ready);fclose(ready);}
+    }
+    pthread_mutex_lock(&active_buffer->mutex);
+    int64_t newest=active_buffer->video_newest;
+    pthread_mutex_unlock(&active_buffer->mutex);
+    double position=playback_position();
+    double ahead=newest==AV_NOPTS_VALUE?0:(newest-media_offset)/(double)AV_TIME_BASE-position;
+    if(ahead<0)ahead=0;
+    int reason=0;
+    int target=adaptive_sample(&adaptive_policy,now,starvation,adaptive_slow,adaptive_audio,ahead,
+                              media_duration<=0||media_duration-position>=30,&reason);
+    adaptive_slow=adaptive_audio=0;
+    if(now-adaptive_policy.report>=10000000||reason){
+        adaptive_policy.report=now;
+        char line[256];snprintf(line,sizeof(line),"Auto health: actual=%dp target=%dp ahead=%.1fs starvation=%.0fms decoder=%d audio=%d blocked=%d%s\n",
+            adaptive_policy.actual,adaptive_policy.target,ahead,((reason>0&&reason<4)?adaptive_policy.last_starved:adaptive_policy.starved)/1000.0,
+            (reason>0&&reason<4)?adaptive_policy.last_slow:adaptive_policy.slow,(reason>0&&reason<4)?adaptive_policy.last_underruns:adaptive_policy.underruns,adaptive_policy.blocked,
+            reason&&!target?" / no lower usable rendition":"");
+        adaptive_trace(line);
+    }
+    if(!target)return;
+    FILE *f=fopen("adaptive-request.next","w");
+    if(!f)return;
+    fprintf(f,"%d %.3f %d %d %d\n",target,position,adaptive_policy.blocked,adaptive_policy.actual,reason);
+    if(fclose(f)||rename("adaptive-request.next","adaptive-request"))return;
+    char message[64];snprintf(message,sizeof(message),"AUTO QUALITY: %dP",target);show_view(message);
+    char line[160];snprintf(line,sizeof(line),"Auto decision: %dp -> %dp reason=%d at %.3f sec\n",adaptive_policy.actual,target,reason,position);adaptive_trace(line);
+    requested_action=46;stopped=1;
+}
+/* Rate-limited diagnostics and worker->UI handoff. Never manipulate overlays
+ * or adaptive policy from the video worker. */
+static void timing_poll(void){
+    if(!av_sync.initialized)return;
+    static unsigned seen_frames,seen_resets;
+    static int64_t next_log;static int reported_error;static unsigned seen_epoch,seen_underflows;
+    pthread_mutex_lock(&av_sync.mutex);
+    if(seen_epoch!=av_sync.epoch){seen_epoch=av_sync.epoch;seen_frames=seen_resets=seen_underflows=0;reported_error=0;}
+    unsigned underflows=av_sync.underflows;
+    unsigned frames=av_sync.frames,drops=av_sync.dropped,resets=av_sync.resets,slow=av_sync.slow,hardware_ms=av_sync.hardware_ms;
+    int error=av_sync.error,count=av_sync.count;
+    int64_t position=sync_position_locked(),video=av_sync.last_video,late=av_sync.maximum_late;
+    av_sync.slow=0;
+    pthread_mutex_unlock(&av_sync.mutex);
+    int64_t now=av_gettime_relative();
+    Uint32 queued=SDL_GetQueuedAudioSize(av_sync.device);
+    adaptive_audio+=(int)(underflows-seen_underflows);seen_underflows=underflows;
+    adaptive_slow+=(int)slow;
+    if(frames&&!seen_frames){
+        playback_mark_started(timing_position());apply_view(0);
+        if(adaptive_on){adaptive_decoding_since=now;adaptive_begin(timing_actual,timing_target,timing_available);}
+    }
+    if(resets!=seen_resets&&frames)apply_view(0);
+    if(now>=next_log||error){
+        next_log=now+1000000;
+        char line[256];
+        snprintf(line,sizeof(line),"AV sync: audio=%.3f queued=%.0fms video_pts=%.3f delta=%.0fms packets=%d frames=%u dropped=%u resets=%u max_late=%.0fms underruns=%u hardware_queue=%ums%s\n",
+            position/1000000.0,queued*1000.0/(48000*4),video/1000000.0,(video-position)/1000.0,
+            count,frames,drops,resets,late/1000.0,underflows,hardware_ms,error?" decoder_error":"");
+        fputs(line,stderr);
+        struct stat st;if(!stat("timing.log",&st)&&st.st_size>1048576)rename("timing.log","timing.previous.log");
+        FILE *log=fopen("timing.log","a");if(log){fputs(line,log);fclose(log);}
+    }
+    seen_frames=frames;seen_resets=resets;
+    if(error&&!reported_error){
+        reported_error=1;fprintf(stderr,"Hardware decoder rejected frame %u\n",frames);
+        if(adaptive_on){
+            if(!adaptive_started)adaptive_begin(timing_actual,timing_target,timing_available);
+            adaptive_policy.armed=0;adaptive_resume_at=0;adaptive_slow+=3;adaptive_evaluate(0);
+        }
+        stopped=1;
+    }
+}
+static void playback_buffer_wait(int64_t waited){
+    /* Called with the FIFO unlocked, even while the network demux is stalled.
+     * React before the socket's long timeout; exclude tiny scheduling waits. */
+    if(waited>=25000&&av_sync.initialized&&SDL_GetQueuedAudioSize(av_sync.device)<48000*4/50)adaptive_evaluate(waited);
+}
+static int playback_seek(double position){
+    int64_t actual;
+    if(active_buffer&&position>playback_position()&&
+       disk_seek_forward(active_buffer,(int64_t)(position*AV_TIME_BASE)+media_offset,&actual)){
+        ram_seek=actual-media_offset;paused=0;seek_scrubbing=0;menu_open=0;
+        if(menu_overlay)SLVideo_HideOverlay(menu_overlay);
+        fprintf(stderr,"RAM seek: %.3f -> %.3f seconds; no network restart\n",position,(actual-media_offset)/(double)AV_TIME_BASE);
+        return 1;
+    }
+    menu_restart(1,position);return 0;
 }
 static int load_external_subtitles(const char *url){
     int local=phone_local_media(url);const char *ext=url?strrchr(url,'.'):NULL;
@@ -226,12 +389,15 @@ static int load_external_subtitles(const char *url){
     return 0;
 }
 int main(int argc,char **argv) {
+    if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
+    fprintf(stderr,"Native player build: %s\n",FLXTR_VERSION);
     DiskBuffer *buffer=NULL;
     AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL,*sub_decoder=NULL;AVBSFContext *bsf=NULL;
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;
     CSLVideoContext *context=NULL;CSLVideoStream *video=NULL;
+    int audio_period=1024;
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
-    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=128,si=-1;const char *sub_language="auto";
+    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=32,si=-1;const char *sub_language="auto";
     if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
     int preload_fd=-1;
     int buffer_probe=!strcmp(argv[1],"--probe-buffer");
@@ -241,6 +407,7 @@ int main(int argc,char **argv) {
     local_media=phone_local_media(url)?url:NULL;
     ca_file=access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem";
     for(int i=probe?3:2;i<argc;i++){
+        if(!strcmp(argv[i],"--adaptive")){adaptive_on=1;continue;}
         if(!strcmp(argv[i],"--view")&&i+1<argc){
             const char *v=argv[++i];
             if(!strcmp(v,"fit"))viewing=VIEW_FIT;
@@ -254,21 +421,31 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--servers")){menu_servers=1;}
         else if(!strcmp(argv[i],"--start")&&i+1<argc){char *end;playback_start=strtod(argv[++i],&end);if(*end||!isfinite(playback_start)||playback_start<0||playback_start>86400)return 2;}
         else if(!strcmp(argv[i],"--buffer-seconds")&&i+1<argc){buffer_secs=atoi(argv[++i]);if(buffer_secs!=5&&buffer_secs!=15&&buffer_secs!=20&&buffer_secs!=25&&buffer_secs!=30&&buffer_secs!=45&&buffer_secs!=60&&buffer_secs!=80&&buffer_secs!=128)return 2;}
-        else if(!strcmp(argv[i],"--buffer-mb")&&i+1<argc){buffer_mb=atoi(argv[++i]);if(buffer_mb!=64&&buffer_mb!=128&&buffer_mb!=256)return 2;}
+        else if(!strcmp(argv[i],"--buffer-mb")&&i+1<argc){buffer_mb=atoi(argv[++i]);if(buffer_mb!=16&&buffer_mb!=32&&buffer_mb!=64&&buffer_mb!=128&&buffer_mb!=256)return 2;}
         else if(!strcmp(argv[i],"--subtitles")&&i+1<argc){sub_language=argv[++i];if(strcmp(sub_language,"off")&&strcmp(sub_language,"auto")&&strcmp(sub_language,"eng")&&strcmp(sub_language,"nor")&&strcmp(sub_language,"spa"))return 2;}
         else if(!strcmp(argv[i],"--subtitle-size")&&i+1<argc){subtitle_size=atoi(argv[++i]);if(subtitle_size<2||subtitle_size>3)return 2;}
         else if(!strcmp(argv[i],"--subtitle-delay")&&i+1<argc){subtitle_delay=atoi(argv[++i]);if(subtitle_delay< -5||subtitle_delay>5)return 2;}
         else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
     }
+    if(buffer_secs<15)buffer_secs=15;
+    if(buffer_mb>64)buffer_mb=64;
+    FILE *fine=fopen("subtitle-delay-ms","r");
+    if(fine){
+        int requested;char extra;
+        if(fscanf(fine,"%d %c",&requested,&extra)==1&&requested>=-5000&&requested<=5000)subtitle_fine_delay_ms=requested;
+        fclose(fine);
+    }
+    fprintf(stderr,"Subtitle fine delay: %+dms (added to menu delay)\n",subtitle_fine_delay_ms);
     megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
-    /* Performance experiment: honor the configured prebuffer for MegaPlay too.
-     * Keep the existing disk-buffer size cap and all quality fallbacks. */
-    if(megaplay)fprintf(stderr,"MegaPlay: honoring configured prebuffer of %d seconds (disk cap %d MiB)\n",buffer_secs,buffer_mb);
+    /* All providers use at least 15 seconds of bounded compressed RAM prefill. */
+    if(megaplay)fprintf(stderr,"MegaPlay: honoring configured prebuffer of %d seconds (RAM cap %d MiB)\n",buffer_secs,buffer_mb);
     menu_height=height_limit;for(int i=0;i<5;i++)if(!strcmp(sub_language,(const char*[]){"off","auto","eng","nor","spa"}[i]))menu_subtitles=i;
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
     fmt=avformat_alloc_context();if(!fmt)goto done;
     fmt->interrupt_callback.callback=interrupt_io;fmt->io_open=open_io;
+    provider_http_options(&opts);
+    const char *agent=getenv("FLXTR_VIDEO_USER_AGENT");if(agent&&strlen(agent)<=500&&!strpbrk(agent,"\r\n"))av_dict_set(&opts,"user_agent",agent,0);
     av_dict_set(&opts,"rw_timeout","15000000",0);
     av_dict_set(&opts,"tls_verify","1",0);
     av_dict_set(&opts,"ca_file",ca_file,0);
@@ -284,12 +461,20 @@ int main(int argc,char **argv) {
     rc=avformat_open_input(&fmt,url,NULL,&opts);av_dict_free(&opts);
     if(rc<0){fprintf(stderr,"Could not open stream (%d)\n",rc);goto done;}
     rc=avformat_find_stream_info(fmt,NULL);if(rc<0){fprintf(stderr,"Could not inspect stream (%d)\n",rc);goto done;}
-    int best_pixels=0;
+    int best_w=0,best_h=0,available=0;
     for(unsigned i=0;i<fmt->nb_streams;i++){
         AVCodecParameters *v=fmt->streams[i]->codecpar;const AVPixFmtDescriptor *p=av_pix_fmt_desc_get(v->format);
-        if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>(height_limit<=480?854:height_limit<=720?1280:1920)||v->height>height_limit)continue;
+        if(v->codec_type!=AVMEDIA_TYPE_VIDEO||v->codec_id!=AV_CODEC_ID_H264||v->width<1||v->height<1||v->width>1920||v->height>1080)continue;
         if(p&&(p->comp[0].depth>8||p->log2_chroma_w!=1||p->log2_chroma_h!=1))continue;
-        if(v->width*v->height>best_pixels){best_pixels=v->width*v->height;vi=(int)i;}
+        available|=adaptive_bit(v->height);
+        if(video_quality_better(v->width,v->height,height_limit,best_w,best_h)){best_w=v->width;best_h=v->height;vi=(int)i;}
+    }
+    if(vi>=0&&best_h>height_limit)fprintf(stderr,"No %dp H.264 rendition; using available %dp without transcoding\n",height_limit,best_h);
+    const char *separate=getenv("FLXTR_EXTERNAL_AUDIO");
+    if(separate&&*separate){
+        deadline=av_gettime_relative()+20000000;
+        rc=youtube_demux_open(&fmt,separate,ca_file,getenv("FLXTR_VIDEO_USER_AGENT"));deadline=0;
+        if(rc<0){fprintf(stderr,"Could not open separate YouTube audio (%d)\n",rc);goto done;}
     }
     AVCodec *audio_decoder=NULL;
     ai=av_find_best_stream(fmt,AVMEDIA_TYPE_AUDIO,-1,vi,&audio_decoder,0);
@@ -348,10 +533,17 @@ int main(int argc,char **argv) {
         fprintf(stderr,"Requires 8-bit 4:2:0 H.264, at most 1920x1080\n");goto done;
     }
     fprintf(stderr,"Video: H.264 %dx%d; audio track %d\n",vp->width,vp->height,ai);
+    if(adaptive_on){
+        const char *can_resolve=getenv("FLXTR_ADAPTIVE_RESOLVE");
+        if(can_resolve&&!strcmp(can_resolve,"1"))available=7;
+        menu_height=vp->height;
+        fprintf(stderr,"Auto quality enabled: actual=%dp requested=%dp renditions=%d\n",vp->height,height_limit,available);
+    }
+    media_offset=fmt->start_time!=AV_NOPTS_VALUE?fmt->start_time:0;
     media_duration=fmt->duration>0?fmt->duration/(double)AV_TIME_BASE:0;
     if(playback_start>0){
         deadline=av_gettime_relative()+20000000;
-        rc=av_seek_frame(fmt,-1,(int64_t)(playback_start*AV_TIME_BASE),AVSEEK_FLAG_BACKWARD);
+        rc=youtube_demux_seek(fmt,(int64_t)(playback_start*AV_TIME_BASE)+media_offset);
         deadline=0;
         if(rc<0){fprintf(stderr,"Server does not support seeking (%d)\n",rc);result=44;goto done;}
         fprintf(stderr,"Seek accepted: %.3f seconds (keyframe)\n",playback_start);
@@ -369,7 +561,7 @@ int main(int argc,char **argv) {
     if(preload_fd>=0){
         deadline=0;buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
         fprintf(stderr,"TV preloading compressed packets; hardware decoder remains closed\n");
-        int ready=0;int64_t until=av_gettime_relative()+180000000;
+        int ready=0;int64_t until=av_gettime_relative()+1800000000LL;
         while(!stopped&&av_gettime_relative()<until){
             char go;ssize_t n=read(preload_fd,&go,1);
             if(n==1){ready=go=='G';break;}
@@ -390,6 +582,10 @@ int main(int argc,char **argv) {
     SLVideo_GetDisplayResolution(context,&screen_w,&screen_h);
     /* The hardware viewport does not exist until the first decoded frame. */
     AVRational fps=av_guess_frame_rate(fmt,vs,NULL);
+    fprintf(stderr,"Video cadence: target=%d/%d avg=%d/%d nominal=%d/%d timebase=%d/%d SAR=%d/%d display=%dx%d profile=%d level=%d\n",
+        fps.num,fps.den,vs->avg_frame_rate.num,vs->avg_frame_rate.den,
+        vs->r_frame_rate.num,vs->r_frame_rate.den,vs->time_base.num,vs->time_base.den,
+        sar_n,sar_d,screen_w,screen_h,vp->profile,vp->level);
     if(fps.num>0&&fps.den>0)SLVideo_SetStreamTargetFramerate(video,fps.num,fps.den);
     rc=av_bsf_alloc(av_bsf_get_by_name("h264_mp4toannexb"),&bsf);if(rc<0)goto done;
     rc=avcodec_parameters_copy(bsf->par_in,vp);if(rc<0)goto done;
@@ -400,37 +596,56 @@ int main(int argc,char **argv) {
         const AVCodec *codec=avcodec_find_decoder(ap->codec_id);
         if(!codec){fprintf(stderr,"Unsupported audio codec\n");goto done;}
         audio=avcodec_alloc_context3(codec);if(!audio)goto done;
-        if(avcodec_parameters_to_context(audio,ap)<0||avcodec_open2(audio,codec,NULL)<0)goto done;
+        if(avcodec_parameters_to_context(audio,ap)<0)goto done;
+        audio->pkt_timebase=fmt->streams[ai]->time_base;
+        if(avcodec_open2(audio,codec,NULL)<0)goto done;
         int64_t layout=audio->channel_layout?(int64_t)audio->channel_layout:av_get_default_channel_layout(audio->channels);
         swr=swr_alloc_set_opts(NULL,AV_CH_LAYOUT_STEREO,AV_SAMPLE_FMT_S16,48000,layout,audio->sample_fmt,audio->sample_rate,0,NULL);
         if(!swr||swr_init(swr)<0)goto done;
         SDL_AudioSpec wanted;SDL_zero(wanted);wanted.freq=48000;wanted.format=AUDIO_S16SYS;wanted.channels=2;wanted.samples=1024;
-        device=SDL_OpenAudioDevice(NULL,0,&wanted,NULL,0);
+        SDL_AudioSpec obtained;
+        device=SDL_OpenAudioDevice(NULL,0,&wanted,&obtained,0);
         if(!device){fprintf(stderr,"Audio output unavailable: %s\n",SDL_GetError());goto done;}
+        audio_period=obtained.samples;
     }
+    if(sync_open(device,audio_period,context,video,fps,(int64_t)(playback_start*AV_TIME_BASE))<0)goto done;
+    timing_actual=vp->height;timing_target=height_limit;timing_available=available;
+    origin=media_offset;clock_start=av_gettime_relative();
+    fprintf(stderr,"Audio-master timing: 48 kHz stereo; output period=%d samples; timestamp offset=%.3f\n",
+        audio_period,media_offset/1000000.0);
     menu_audio=device;
     packet=av_packet_alloc();filtered=av_packet_alloc();frame=av_frame_alloc();
     if(!packet||!filtered||!frame)goto done;
     deadline=0;
     if(!buffer)buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);
-    if(!buffer){fprintf(stderr,"Disk buffer unavailable or insufficient free space\n");goto done;}
-    fprintf(stderr,"Disk buffer: %d MiB / %d seconds prefill\n",buffer_mb,buffer_secs);
+    if(!buffer){fprintf(stderr,"RAM packet buffer allocation failed\n");goto done;}
+    fprintf(stderr,"RAM buffer: %d MiB / %d seconds prefill\n",buffer_mb,buffer_secs);
+    active_buffer=buffer;
     show_view("BUFFERING...");
     while(!stopped) {
         playback_controls();
-        disk_read_wait_count=0;
-        subtitle_buffering=1;
-        int64_t wait_start=av_gettime_relative();rc=disk_packet(buffer,packet);
-        int64_t waited=av_gettime_relative()-wait_start;
-        /* Only genuine FIFO starvation pauses the presentation clock.
-         * Short disk reads must not accumulate arbitrary subtitle drift. */
-        if(clock_start&&disk_read_wait_count>0)clock_start+=waited;
-        subtitle_buffering=0;
+        if(ram_seek>=0){
+            int64_t target=ram_seek;ram_seek=-1;
+            video=sync_close();SDL_PauseAudioDevice(device,1);
+            SDL_ClearQueuedAudio(device);avcodec_flush_buffers(audio);
+            swr_close(swr);if(swr_init(swr)<0)goto done;
+            av_bsf_flush(bsf);subtitle_seek_us=target;
+            if(sub_decoder)avcodec_flush_buffers(sub_decoder);
+            SLVideo_FreeStream(video);video=SLVideo_CreateStream(context,k_ESLVideoFormatH264,0);
+            if(!video)goto done;
+            if(fps.num>0&&fps.den>0)SLVideo_SetStreamTargetFramerate(video,fps.num,fps.den);
+            if(sync_open(device,audio_period,context,video,fps,target)<0)goto done;
+            origin=media_offset;clock_start=av_gettime_relative();playback_start=target/(double)AV_TIME_BASE;
+            frames=0;subtitle_visible=-2;adaptive_decoding_since=0;adaptive_started=0;adaptive_slow=adaptive_audio=0;
+        }
+        disk_read_wait_count=0;subtitle_buffering=0;
+        rc=disk_packet(buffer,packet);
+        if(ram_seek>=0){av_packet_unref(packet);continue;}
         if(overlay_until&&frames==0){if(!menu_open)SLVideo_HideOverlay(view_overlay);overlay_until=0;subtitle_visible=-2;}
         if(rc<0){
             char message[AV_ERROR_MAX_STRING_SIZE];
             av_strerror(rc,message,sizeof(message));
-            fprintf(stderr,"Disk packet read stopped: %d (%s), video frames=%u\n",rc,message,frames);
+            fprintf(stderr,"RAM packet read stopped: %d (%s), video frames=%u\n",rc,message,frames);
             break;
         }
         int track=packet->stream_index;
@@ -446,82 +661,77 @@ int main(int argc,char **argv) {
                 fprintf(stderr,"Video PTS-DTS difference: %.3f s frame=%u\n",
                     delta/1000000.0,frames);
         }
-        int64_t ts=packet->dts!=AV_NOPTS_VALUE?packet->dts:packet->pts;
-        if(ts!=AV_NOPTS_VALUE){
-            ts=av_rescale_q(ts,fmt->streams[track]->time_base,AV_TIME_BASE_Q);
-            if(origin==AV_NOPTS_VALUE){origin=ts;clock_start=av_gettime_relative();}
-            int64_t elapsed=ts-origin;
-            /* Audio needs time to reach the output device; video needs time
-             * to pass through the hardware decoder. Queue both ahead of
-             * presentation instead of treating packet submission as display. */
-            const int64_t audio_lead_us=180000;
-            const int64_t video_lead_us=100000;
-            int64_t lead=track==ai?audio_lead_us:video_lead_us;
-            if(elapsed>=0 && elapsed<86400LL*AV_TIME_BASE)
-                wait_until(clock_start+elapsed-lead);
-            if(limit>0&&elapsed>limit*AV_TIME_BASE){av_packet_unref(packet);rc=AVERROR_EOF;break;}
-        }
+        if(limit>0&&playback_position()>playback_start+limit){av_packet_unref(packet);rc=AVERROR_EOF;break;}
         if(stopped){av_packet_unref(packet);break;}
+        if(ram_seek>=0){av_packet_unref(packet);continue;}
         if(track==vi){
             rc=av_bsf_send_packet(bsf,packet);if(rc<0)break;
             while((rc=av_bsf_receive_packet(bsf,filtered))>=0){
-                int64_t handoff_start=av_gettime_relative();
-                if(filtered->size>8*1024*1024||SLVideo_BeginFrame(video,filtered->size)<0||
-                   SLVideo_WriteFrameData(video,filtered->data,filtered->size)<0||SLVideo_SubmitFrame(video)<0){
-                    fprintf(stderr,"Hardware decoder rejected frame %u\n",frames);av_packet_unref(filtered);goto done;
-                }
-                static unsigned slow_submissions;
-                /* Time the hardware handoff, not just CPU utilization. */
-                int64_t submitted_at=av_gettime_relative();
-                if(submitted_at-handoff_start>20000&&slow_submissions++<30)
-                    fprintf(stderr,"Hardware frame submission delay: %.1f ms frame=%u\n",
-                        (submitted_at-handoff_start)/1000.0,frames);
-                frames++;
-                if(frames==1)apply_view(0);
+                if(sync_video_queue(filtered,bsf->time_base_out,media_offset)<0){av_packet_unref(filtered);goto done;}
                 av_packet_unref(filtered);
             }
             if(rc==AVERROR(EAGAIN)||rc==AVERROR_EOF)rc=0;
         }else {
             rc=queue_audio(audio,swr,packet,frame,device);
-            if(device)SDL_PauseAudioDevice(device,0);
-            /* Compare the queued audio tail with its expected media position.
-             * Apply small bounded corrections rather than allowing seconds of
-             * audio latency to silently accumulate after stalls. */
-            if(device&&ts!=AV_NOPTS_VALUE&&origin!=AV_NOPTS_VALUE&&clock_start){
-                static int64_t last_sync;
-                int64_t now=av_gettime_relative();
-                if(now-last_sync>500000){
-                    last_sync=now;
-                    int64_t queued_us=(int64_t)SDL_GetQueuedAudioSize(device)*1000000LL/(48000*4);
-                    int64_t media_us=ts-origin-queued_us;
-                    int64_t wall_us=now-clock_start;
-                    int64_t error=media_us-wall_us;
-                    if(error>80000||error< -80000){
-                        if(error>20000)error=20000;
-                        if(error< -20000)error=-20000;
-                        clock_start-=error;
-                    }
-                }
-            }
         }
+        pthread_mutex_lock(&av_sync.mutex);frames=av_sync.frames;pthread_mutex_unlock(&av_sync.mutex);
+        if(frames){const char *ack=getenv("FLXTR_HANDOFF_ACK");if(ack&&strlen(ack)==48&&!strncmp(ack,"handoff/",8)&&strspn(ack+8,"0123456789abcdef")==32&&!strcmp(ack+40,"/started")){FILE *out=fopen(ack,"w");if(out){fputs("playing\n",out);fclose(out);}unsetenv("FLXTR_HANDOFF_ACK");}}
         av_packet_unref(packet);if(rc<0)break;
+        adaptive_evaluate(0);
         if(frames>200&&clock_start&&av_gettime_relative()-clock_start>20000000&&!audio_samples){
             fprintf(stderr,"No audio decoded after 20 seconds; try another server\n");goto done;
         }
     }
     if(rc==AVERROR_EOF&&!stopped){
         if(audio&&queue_audio(audio,swr,NULL,frame,device)<0)goto done;
+        sync_audio_start(1);
+        pthread_mutex_lock(&av_sync.mutex);av_sync.eof=1;pthread_mutex_unlock(&av_sync.mutex);
         while(device&&SDL_GetQueuedAudioSize(device)&&!stopped){playback_controls();SDL_Delay(5);}
+        int64_t drain_until=av_gettime_relative()+2000000;
+        for(;;){
+            pthread_mutex_lock(&av_sync.mutex);int pending=av_sync.count+av_sync.busy;pthread_mutex_unlock(&av_sync.mutex);
+            if(!pending||stopped||av_gettime_relative()>=drain_until)break;
+            playback_controls();SDL_Delay(2);
+        }
         SDL_Delay(150);
     }
     result=(stopped||rc==AVERROR_EOF)?0:1;
-    fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
+    /* FFmpeg can report EOF before the expected end of a remote stream.
+     * Only flag early EOF if an actual finite duration is known. */
+    if(!stopped && rc==AVERROR_EOF && getenv("FLXTR_YOUTUBE_PLAYBACK") &&
+       media_duration>30.0 && playback_position()+fmax(20.0,media_duration*0.04)<media_duration){
+        fprintf(stderr,"YouTube premature EOF: position=%.3f expected=%.3f\n",
+                playback_position(),media_duration);
+        result=47;
+    }
 done:
+    /* Atomic per-player outcome for the shell. Read BEFORE releasing sync
+     * objects so resume uses the last valid audio-master position. */
+    if(getenv("FLXTR_YOUTUBE_PLAYBACK")){
+        double last=av_sync.initialized?playback_position():playback_start;
+        if(!isfinite(last)||last<0||last>86400)last=0;
+        FILE *out=fopen("youtube-playback-outcome.next","w");
+        if(out){
+            fprintf(out,"%.3f %.3f %d\n",last,media_duration,result);
+            if(!fclose(out))rename("youtube-playback-outcome.next","youtube-playback-outcome");
+            else unlink("youtube-playback-outcome.next");
+        }
+        fprintf(stderr,"YouTube playback outcome: position=%.3f duration=%.3f result=%d\n",
+                last,media_duration,result);
+    }
+    if(av_sync.initialized){
+        timing_poll();
+        pthread_mutex_lock(&av_sync.mutex);frames=av_sync.frames;int decoder_error=av_sync.error;pthread_mutex_unlock(&av_sync.mutex);
+        video=sync_close();if(decoder_error&&!requested_action)result=1;
+    }
+    av_freep(&audio_pcm);
     if(preload_fd>=0)close(preload_fd);
-    disk_close(buffer);
+    active_buffer=NULL;disk_close(buffer);youtube_demux_close();
     if(menu_overlay){SLVideo_HideOverlay(menu_overlay);SLVideo_FreeOverlay(menu_overlay);}
     if(control_fd>=0)close(control_fd);
     if(requested_action)result=requested_action;
+    if(!frames){const char *ack=getenv("FLXTR_HANDOFF_ACK");if(ack&&strlen(ack)==48&&!strncmp(ack,"handoff/",8)&&strspn(ack+8,"0123456789abcdef")==32&&!strcmp(ack+40,"/started")){char failed[64];snprintf(failed,sizeof(failed),"%.40s/failed",ack);FILE *out=fopen(failed,"w");if(out){fputs(rc==AVERROR_HTTP_FORBIDDEN?"TV source returned HTTP 403. Retry the anime source.":"TV player could not start this stream. See player.log.",out);fclose(out);}}}
+    fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
     if(subtitle_overlay){SLVideo_HideOverlay(subtitle_overlay);SLVideo_FreeOverlay(subtitle_overlay);subtitle_overlay=NULL;}
     avcodec_free_context(&sub_decoder);
     fprintf(stderr,"Audio samples queued: %llu\n",(unsigned long long)audio_samples);

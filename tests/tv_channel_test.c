@@ -36,6 +36,22 @@ int main(void){
     assert(tv_airing_read(&a)&&a.episode==2&&a.start==101800); /* Continuous playback starts at zero. */
     assert(tv_pick("2:100000:99999:1:1:1",1,0)<0);
     FILE *f=fopen("tv-airing.tsv","w");assert(f);fputs("broken",f);fclose(f);assert(!tv_airing_read(&a));
-    unlink("tv-airing.tsv");unlink("tv-progress.tsv");unlink("tv-recent.tsv");chdir("/tmp");rmdir(dir);
-    puts("PASS: wall-clock join, stable rejoin, ad spacing, marathon season rollover, overtime, continuous playback, invalid guide");
+    unlink("tv-airing.tsv");unlink("tv-progress.tsv");unlink("tv-recent.tsv");
+    assert(tv_play_append("started","episode",42,1,1,0,"episode:42:1:1","Show"));
+    assert(tv_pick("2:100000:101800:0:1:1",2,42)==0&&entries[0].episode==2);
+    assert(tv_play_append("started","episode",42,1,2,0,"episode:42:1:2","Show"));
+    assert(tv_pick("2:100000:101900:1:1:1",2,42)==0&&entries[0].episode==2); /* Still-live rejoin. */
+    assert(tv_play_append("stopped","episode",42,1,2,100,"episode:42:1:2","Show"));
+    assert(tv_pick("2:100000:101950:1:1:1",2,42)==0&&entries[0].episode==3);
+    assert(tv_play_append("started","episode",42,1,3,0,"episode:42:1:3","Show"));
+    assert(tv_play_append("completed","episode",42,1,3,1800,"episode:42:1:3","Show"));
+    assert(tv_pick("2:100000:102000:0:1:1",2,42)==0&&entries[0].season==2&&entries[0].episode==1);
+    /* Thousands of other shows cannot evict the original show's cursor. */
+    for(int i=100;i<500;i++)assert(tv_play_append("started","episode",i,1,1,0,"fixture","Other"));
+    int season,episode;assert(tv_play_cursor(42,&season,&episode)&&season==1&&episode==3);
+    f=fopen("tv-play-history.tsv","a");assert(f);fputs("torn row",f);fclose(f);
+    assert(tv_play_append("started","episode",42,2,1,0,"episode:42:2:1","Show\tcleaned"));
+    assert(tv_play_cursor(42,&season,&episode)&&season==2&&episode==1);
+    unlink("tv-play-history.tsv");unlink("tv-airing.tsv");chdir("/tmp");rmdir(dir);
+    puts("PASS: wall-clock join, stable rejoin, ad spacing, marathon season rollover, overtime, continuous playback, invalid guide, permanent playback cursor, stopped airing, unbounded show history and torn-row recovery");
 }

@@ -1,0 +1,5 @@
+package org.flxtr.android;
+final class GameKeyboard {
+    static int key(int code){if(code>=29&&code<=54)return 'a'+code-29;if(code>=7&&code<=16)return '0'+code-7;if(code>=131&&code<=142)return 282+code-131;switch(code){case 19:return 273;case 20:return 274;case 21:return 276;case 22:return 275;case 55:return 44;case 56:return 46;case 57:return 308;case 58:return 307;case 59:return 304;case 60:return 303;case 61:return 9;case 62:return 32;case 66:return 13;case 67:return 8;case 68:return 96;case 69:return 45;case 70:return 61;case 71:return 91;case 72:return 93;case 73:return 92;case 74:return 59;case 75:return 39;case 76:return 47;case 81:return 43;case 111:return 27;case 112:return 127;case 113:return 306;case 114:return 305;case 122:return 278;case 123:return 279;case 92:return 280;case 93:return 281;default:return 0;}}
+    static int modifiers(int meta){return ((meta&1)!=0?3:0)|((meta&2)!=0?0x300:0)|((meta&0x1000)!=0?0xc0:0)|((meta&0x10000)!=0?0xc00:0)|((meta&0x100000)!=0?0x2000:0)|((meta&0x200000)!=0?0x1000:0)|((meta&0x400000)!=0?0x4000:0);}
+}

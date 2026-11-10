@@ -1,0 +1,429 @@
+{
+  "version": "samba-4.22.10-r0-alpine3.23-armv7",
+  "packages": [
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/acl-2.3.2-r1.apk",
+      "size": 20826,
+      "sha256": "05f18d3a193e5f5c1651da3461f205988d1030a6cd352cfa5e2851dbdac77fc7",
+      "license": "LGPL-2.1-or-later AND GPL-2.0-or-later",
+      "origin": "acl",
+      "source_commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/acl-libs-2.3.2-r1.apk",
+      "size": 12726,
+      "sha256": "b556be267d3c5c415bb1e2183e362b38f49144d7b4a1bc9ac4fe991e43b1432a",
+      "license": "LGPL-2.1-or-later AND GPL-2.0-or-later",
+      "origin": "acl",
+      "source_commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/avahi-libs-0.8-r23.apk",
+      "size": 38295,
+      "sha256": "183bf63c555c04dee17e90c82d61a949ce6c3d05f4797e46d49c9efd4fa050f7",
+      "license": "LGPL-2.1-or-later",
+      "origin": "avahi",
+      "source_commit": "45af0264ed78dab217fee950d0c954ded2f75b45"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/brotli-libs-1.2.0-r0.apk",
+      "size": 383507,
+      "sha256": "6b21d204a5527b65358fd5f40a6b1f25fab607cbd345c4c42a75e655a9d54ca1",
+      "license": "MIT",
+      "origin": "brotli",
+      "source_commit": "e1a74d1bc0c4e0308990de2e9ec9d82529fcac8f"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/busybox-1.37.0-r30.apk",
+      "size": 504859,
+      "sha256": "b285c2b5b36670e17bbf0944ef19cfcefea9561bb8bd9646d8b9c094d7e46c9c",
+      "license": "GPL-2.0-only",
+      "origin": "busybox",
+      "source_commit": "1e823a60eb85606954b3a5af5f8e5bbd1ea680cf"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/busybox-binsh-1.37.0-r30.apk",
+      "size": 1538,
+      "sha256": "165d752d6d8df35eb4c4dfa33c63f2295fbd1e1ebdd9515f77a048ebc6e421fb",
+      "license": "GPL-2.0-only",
+      "origin": "busybox",
+      "source_commit": "1e823a60eb85606954b3a5af5f8e5bbd1ea680cf"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/cups-libs-2.4.18-r0.apk",
+      "size": 207985,
+      "sha256": "6ba29e2915a9c70a857d9d48696dd207d7323f430265a470be09fa1cc125473e",
+      "license": "Apache-2.0",
+      "origin": "cups",
+      "source_commit": "657e9f721531055df6710f92c4b2767da052beca"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/dbus-libs-1.16.2-r1.apk",
+      "size": 110143,
+      "sha256": "ae28359cadf446024eb56bfa7bbf13c2852ace93135c8a49d5e4864d48ec5157",
+      "license": "AFL-2.1 OR GPL-2.0-or-later",
+      "origin": "dbus",
+      "source_commit": "6bd45b53fb316dc01bda59f5feaf1e127eb64f22"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/gdbm-1.26-r0.apk",
+      "size": 29517,
+      "sha256": "2a6dcc5f27844435b530dca38b4d885c017b164c3346b9ade49efd498b96bd08",
+      "license": "GPL-3.0-or-later",
+      "origin": "gdbm",
+      "source_commit": "1ea03990396db618edfcc8a9a0bc6b72662bac8f"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/gmp-6.3.0-r4.apk",
+      "size": 181705,
+      "sha256": "02415b2c9b0641b2da5a2d40d8973d8e48c1f8beef06ef3208af82e8beb83767",
+      "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+      "origin": "gmp",
+      "source_commit": "8bfc27fafbf6c27761b150c571c3075a5a3db0de"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/gnutls-3.8.13-r0.apk",
+      "size": 915697,
+      "sha256": "43cf313e039af3a2d31d85dc3437d8d9856b7de130731f79cd5979580d2f5ffa",
+      "license": "LGPL-2.1-or-later",
+      "origin": "gnutls",
+      "source_commit": "11978fd1db52d131990ca146b81213b17edd41a5"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/icu-data-en-76.1-r1.apk",
+      "size": 1016014,
+      "sha256": "3042eb6e8df9c6301a5d57a59ae39edad7a2964f6554413e60f207be0019c7ae",
+      "license": "ICU",
+      "origin": "icu",
+      "source_commit": "f69cb964d00aba2d395adce1733a78f1318f3da8"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/icu-libs-76.1-r1.apk",
+      "size": 1970758,
+      "sha256": "58decb1193cb5da54d2c517703e7d150687615902bc5b9be611723432e716821",
+      "license": "ICU",
+      "origin": "icu",
+      "source_commit": "f69cb964d00aba2d395adce1733a78f1318f3da8"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/jansson-2.14.1-r0.apk",
+      "size": 44904,
+      "sha256": "f06a3072bbacd2583e2dd5bce56d6da724338fcc625cab89b72318f09ed09fc3",
+      "license": "MIT",
+      "origin": "jansson",
+      "source_commit": "9161ac3604718ebb3c85b5795f0a084d45362571"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/ldb-4.22.10-r0.apk",
+      "size": 128221,
+      "sha256": "1105198d644338530636fbc5fb6412e8dcb2fd1c3465d158f5ecfb483178c851",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libauth-samba-4.22.10-r0.apk",
+      "size": 60012,
+      "sha256": "0b8a104d4c2a3ab5bfd11036982cc3cb8a3e2d7e797e7c0a8b5e0a3553304fff",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libcap2-2.78-r0.apk",
+      "size": 18472,
+      "sha256": "2e9aae9185f6295b6d74f774aeac813d2c7283960ed69e733ba30861661d42b5",
+      "license": "BSD-3-Clause OR GPL-2.0-only",
+      "origin": "libcap",
+      "source_commit": "91f6971a1590396adc8c65ddf45c324f9540a1a0"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libcrypto3-3.5.9-r0.apk",
+      "size": 1554059,
+      "sha256": "1767c3187d08087bcb60b2cbe710698c3e191784a3960363912f3655e12fcfb8",
+      "license": "Apache-2.0",
+      "origin": "openssl",
+      "source_commit": "adcf4978067013c3c0917e54542f3b762d7bfc48"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libffi-3.5.2-r0.apk",
+      "size": 15153,
+      "sha256": "4b0f307b82abc99736d79da2671061c7598e9ad766a470b8cea839c858a21495",
+      "license": "MIT",
+      "origin": "libffi",
+      "source_commit": "23e88e3bbd62064573a028ed8f6acef216a829b6"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libgcc-15.2.0-r2.apk",
+      "size": 20021,
+      "sha256": "da0c58a4a46d9dea40db4cead48dc327ba3261422a21dc3d36dff6a57aa59ba1",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "origin": "gcc",
+      "source_commit": "7fa6e7fd3465c5ff89cc33a56d20bf4d59105aaf"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libidn2-2.3.8-r0.apk",
+      "size": 100525,
+      "sha256": "c674235c50c62b04ac2b7064c2a98d76409b98d50892e7c4de5f3c1550d56f18",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "origin": "libidn2",
+      "source_commit": "8240e09aa2fdd8f9979b2016be082273965aff0c"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libintl-0.24.1-r1.apk",
+      "size": 33100,
+      "sha256": "5dbf46b952e2a8d2e805c51b9522230adcc1c4262a40387b181b632bf9009ee5",
+      "license": "LGPL-2.1-or-later",
+      "origin": "gettext",
+      "source_commit": "c82bd9e35f215c0e39ee43d1aa8c55c230bfbeec"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libldap-2.6.13-r0.apk",
+      "size": 147106,
+      "sha256": "45b349afc6f88699bd113ff9d86fab78d1aa2a4a2d4a573d113409a38536c305",
+      "license": "OLDAP-2.8",
+      "origin": "openldap",
+      "source_commit": "6275d971a54ed1d0672e2d56443319533727a2ea"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libncursesw-6.5_p20251123-r0.apk",
+      "size": 140171,
+      "sha256": "41587c01180053c7c773f83dea9d77c02571b3658f0897ee75e3ff6e6400770f",
+      "license": "X11",
+      "origin": "ncurses",
+      "source_commit": "f7479f62dcb52ace52d99650c80de275010ec3ac"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libsasl-2.1.28-r9.apk",
+      "size": 54780,
+      "sha256": "a67711ec948a43e49b9038f920afac39b33f29eef5a4b389f0430370fc1a89e8",
+      "license": "BSD-3-Clause-Attribution AND BSD-4-Clause",
+      "origin": "cyrus-sasl",
+      "source_commit": "fac808c0fddf93e8980ec1f55972e6f69b78ba6f"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libssl3-3.5.9-r0.apk",
+      "size": 341362,
+      "sha256": "616949ab2f76d94cb81236cfb3a7f266eb75164251f29517b2e8e53bad9f6544",
+      "license": "Apache-2.0",
+      "origin": "openssl",
+      "source_commit": "adcf4978067013c3c0917e54542f3b762d7bfc48"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libstdc++-15.2.0-r2.apk",
+      "size": 842094,
+      "sha256": "3b766f1ad227b8ee7f60ee7f245517d64b320da90c863aee555adba337f7dc04",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "origin": "gcc",
+      "source_commit": "7fa6e7fd3465c5ff89cc33a56d20bf4d59105aaf"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libtasn1-4.21.0-r0.apk",
+      "size": 30533,
+      "sha256": "106025bef439111919fb06142816c26aeffcbc6fd81ac6322592c20011d2cfda",
+      "license": "LGPL-2.1-or-later",
+      "origin": "libtasn1",
+      "source_commit": "d24da2882e7c664f0896af597d09a6ec0c6d1658"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libunistring-1.4.1-r0.apk",
+      "size": 720803,
+      "sha256": "3d9350acd636f24f51205e8f19020857fcaff15a5cf929839e5f8ad4975ebf24",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "origin": "libunistring",
+      "source_commit": "cd5407e1341869af38d836fe83f9dbc98799f43a"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/liburing-2.12-r0.apk",
+      "size": 10436,
+      "sha256": "0c5205a7f2e4b08d0cebbe9940350e8cf36458a93af02fe3eb5134cc04be8fec",
+      "license": "LGPL-2.1-or-later OR MIT",
+      "origin": "liburing",
+      "source_commit": "98b2c63eb23ce3daa01e58e035a16a0701731594"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/libwbclient-4.22.10-r0.apk",
+      "size": 25626,
+      "sha256": "025f451b628063214137e3c313df921183b3cd2c24ed80caba201fdb46c2ce3b",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/linux-pam-1.7.1-r2.apk",
+      "size": 182181,
+      "sha256": "2184a3b56710a2e8d03f07a58e6dc58367d4b5f1d42657f3e7745405f625022d",
+      "license": "BSD-3-Clause",
+      "origin": "linux-pam",
+      "source_commit": "4ef877c167a641c30520d7e7a7feeefedcbc53fa"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/musl-1.2.5-r23.apk",
+      "size": 388732,
+      "sha256": "0f2f5029a9f401a4f10ca8c6ef03afe3aa4b521fc0ed44f1d6a2c6911eedc329",
+      "license": "MIT",
+      "origin": "musl",
+      "source_commit": "8aef0c37b0ad23dc4137f0e4755b97a59dc698b8"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/ncurses-terminfo-base-6.5_p20251123-r0.apk",
+      "size": 21853,
+      "sha256": "2a3e642e6f120e3ec5f0a7e79e31ebc9269f7c55d1b7fcd9fa16f0d8a845fe7a",
+      "license": "X11",
+      "origin": "ncurses",
+      "source_commit": "f7479f62dcb52ace52d99650c80de275010ec3ac"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/nettle-3.10.2-r0.apk",
+      "size": 337647,
+      "sha256": "8df81adb6bbc26b07352992ca1af7e619fa0396d0e1f9e2bba0ab9e19f284394",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "origin": "nettle",
+      "source_commit": "bf898e6d067c1c0ecc0f5ff39c79fc893399acd8"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/p11-kit-0.26.2-r0.apk",
+      "size": 371298,
+      "sha256": "9c51d01d98c0000a0a17ab6156082b6b88c59712c8b024455e8278004e4b15f0",
+      "license": "BSD-3-Clause",
+      "origin": "p11-kit",
+      "source_commit": "aed5e711c81fd743df6b736f30c43625410b613b"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/popt-1.19-r4.apk",
+      "size": 18317,
+      "sha256": "a7ab23cca7957b820c9f5171a802725c950844b57710941b33e6d480b29a933d",
+      "license": "MIT",
+      "origin": "popt",
+      "source_commit": "d3abe30d43524bed75a29a3006e703ab51836548"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/readline-8.3.1-r0.apk",
+      "size": 112808,
+      "sha256": "e52fc30f150328ea6672fecbd3c2d4ccb60002dac67744e233b14fed3e7f2e87",
+      "license": "GPL-3.0-or-later",
+      "origin": "readline",
+      "source_commit": "1d76ecdcac4abea004f7946038405cdb8b214522"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/samba-client-libs-4.22.10-r0.apk",
+      "size": 367564,
+      "sha256": "e9a363438469ab9cb1a43a26528f86aea42f25462402ee5b8be35b1a8b9cc29a",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/samba-common-4.22.10-r0.apk",
+      "size": 5483,
+      "sha256": "8a9419adfded8310b9108eaaebf8993f71663ec47de1889c78795464b43c03fd",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/samba-common-server-libs-4.22.10-r0.apk",
+      "size": 975496,
+      "sha256": "ca11ae79d4db989f1b22b10d7f5e8979faddd607928a8ccaddea931b0e3e0965",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/samba-common-tools-4.22.10-r0.apk",
+      "size": 453981,
+      "sha256": "00071c6c062444ced3924b56c36d3997f37681faf5ea06fd9c3c0c21417cd40f",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/samba-libs-4.22.10-r0.apk",
+      "size": 5327785,
+      "sha256": "47a72af596b82d0210a453d4ee78180914f1e8866de396b51a65498dd8b830c2",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/samba-server-4.22.10-r0.apk",
+      "size": 1780520,
+      "sha256": "d0f9f3b1fec3e3d7023551ad8c64df70ecdaac8162f962490b2c0f288099cefc",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/samba-util-libs-4.22.10-r0.apk",
+      "size": 344810,
+      "sha256": "e8a11397b87ca7f746a5afd9b9a846da2b84676744d5bf54082184d141d7d675",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later",
+      "origin": "samba",
+      "source_commit": "0492819ba5c0d0da111c0499fb5903f0944b9599"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/skalibs-libs-2.14.4.0-r0.apk",
+      "size": 80758,
+      "sha256": "d2fc44c03520314c3d58ff55c7c9222532d4700bfe94993ea63fd4361edd304b",
+      "license": "ISC",
+      "origin": "skalibs",
+      "source_commit": "b9c5072464571b09666b65869410ee3d40d2ebb2"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/ssl_client-1.37.0-r30.apk",
+      "size": 4473,
+      "sha256": "0f6f5160838a6b791c9c6ebf6ef2466e1a41747da47eea8c276896253a09b3cc",
+      "license": "GPL-2.0-only",
+      "origin": "busybox",
+      "source_commit": "1e823a60eb85606954b3a5af5f8e5bbd1ea680cf"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/talloc-2.4.3-r0.apk",
+      "size": 15580,
+      "sha256": "51bfe40882e8879ffbc3d72cd2ae08ce505a75c3648c8f1862cf605fc603db16",
+      "license": "LGPL-3.0-or-later",
+      "origin": "talloc",
+      "source_commit": "80739e9ec0682399ed55876d26966ea77d6242fb"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/tdb-libs-1.4.14-r0.apk",
+      "size": 36679,
+      "sha256": "90c99be5fcb154f7dee6c38fb309a69f1a7d6e6d21fcf5992a7616c9a6b98431",
+      "license": "LGPL-3.0-or-later",
+      "origin": "tdb",
+      "source_commit": "c1337fd6426b2cdbd1f7be6c9909c5460750ba48"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/tevent-0.17.1-r0.apk",
+      "size": 28593,
+      "sha256": "bec61e66f8498c4ae2dcd63ff6ef679ada63f8fb50d0ef20e0b8d893d8250ee5",
+      "license": "LGPL-3.0-or-later",
+      "origin": "tevent",
+      "source_commit": "ff8603dcae6b7aa18f9a69c9caf29bc4bf030e8c"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/utmps-libs-0.1.3.1-r0.apk",
+      "size": 5333,
+      "sha256": "a99550087fc3db665aa2721059db4e77aef7d264c2dba5518075b4d695f5c610",
+      "license": "ISC",
+      "origin": "utmps",
+      "source_commit": "b8ca1510561d9fa9594fd4e3b5223d7749e6da0a"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/zlib-1.3.2-r1.apk",
+      "size": 43948,
+      "sha256": "6d27f826e69dbf3cc2b10780f91f89cf3958f45294c008914863f79626f808ce",
+      "license": "Zlib",
+      "origin": "zlib",
+      "source_commit": "b92621a82657b055485976b304462bddf9aa9183"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/armv7/zstd-libs-1.5.7-r2.apk",
+      "size": 333900,
+      "sha256": "b73e73b9654688c889b527a479c9f33d515586a854375e15553b630c4df677bd",
+      "license": "BSD-3-Clause OR GPL-2.0-or-later",
+      "origin": "zstd",
+      "source_commit": "3c6e2ee2b16f403d53eab39c4426eb61f003c322"
+    }
+  ]
+}

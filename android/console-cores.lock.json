@@ -1,0 +1,89 @@
+{
+  "origin": "Official Libretro archives, verified by SHA-256; includes immutable mirrors and pinned buildbot snapshots",
+  "cores": {
+    "ppsspp": {
+      "arm64-v8a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-engines-2026.11.04/ppsspp-arm64-v8a.zip",
+        "sha256": "c8ae1de36357c4efabe6265bc869337cd22ceb5416dfd7a4e2538e87652008dd",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/ppsspp_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-engines-2026.11.04/ppsspp-armeabi-v7a.zip",
+        "sha256": "dc05035f53685ac4d6b66f3b9899492518500ba9ef3890a89d2e5cf8bdc8cb44",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/ppsspp_libretro_android.so.zip"
+      }
+    },
+    "scummvm": {
+      "arm64-v8a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-engines-2026.11.04/scummvm-arm64-v8a.zip",
+        "sha256": "8d212d01af90ccd4f99cbb9b409a045d57c2d079f5de19b3a0e10bcbb9849b4d",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/scummvm_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-engines-2026.11.04/scummvm-armeabi-v7a.zip",
+        "sha256": "8f4211bfcaf68ade7dbffcec603dd35df478b65d6e7720c0a439d6dcbd27f345",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/scummvm_libretro_android.so.zip"
+      }
+    },
+    "dolphin": {
+      "arm64-v8a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-engines-2026.11.04/dolphin-arm64-v8a.zip",
+        "sha256": "d53ed704a8fb5d337f80ae29b8df80f8634bb75d4880b9ea87cd0fb0e3d22235",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/dolphin_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-engines-2026.11.04/dolphin-armeabi-v7a.zip",
+        "sha256": "09072e5a3dbc6b7f85ba4724becc0737caa479f93bdc39b404e0be514b0e6ef1",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/dolphin_libretro_android.so.zip"
+      }
+    },
+    "fceumm": {
+      "arm64-v8a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/fceumm-arm64-v8a.zip",
+        "sha256": "a14ea16fe7709beb1ef8bbc9288646c1d8bd6e00b6c5e2667526d9745c18aed8",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/fceumm_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/fceumm-armeabi-v7a.zip",
+        "sha256": "dc4dffcdffe25e50ed96b30908ec01e66bcc93f46efc716aacc15b24d5403e4f",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/fceumm_libretro_android.so.zip"
+      }
+    },
+    "snes9x": {
+      "arm64-v8a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/snes9x-arm64-v8a.zip",
+        "sha256": "09c2ae926cf3ba23f65bff125a709604f1fb73591e78fb4d928fad66b1979233",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/snes9x_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/snes9x-armeabi-v7a.zip",
+        "sha256": "dee4aa4bbac1cedf9551937e4fa1de6f232a3400ae064c961b67d10428cabfa0",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/snes9x_libretro_android.so.zip"
+      }
+    },
+    "mgba": {
+      "arm64-v8a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/mgba-arm64-v8a.zip",
+        "sha256": "2189872d0fa9ff9656358ddf761e76d99919c731a8e4a6f3ad243b5239353435",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/mgba_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/mgba-armeabi-v7a.zip",
+        "sha256": "b0a67ffcf217ece486907d34427a1078cffa51dcb56ca61cda944f85385e7c24",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/mgba_libretro_android.so.zip"
+      }
+    },
+    "pcsx_rearmed": {
+      "arm64-v8a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/pcsx_rearmed-arm64-v8a.zip",
+        "sha256": "68c695c7d22c400cfc3b7f9e78f35dd870ea9a19f69441991d04723a4ad83c20",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/pcsx_rearmed_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/pcsx_rearmed-armeabi-v7a.zip",
+        "sha256": "bd49fb4e82f96ce2232146307507db39fbf9a7f71ef1af3625e2aa03b09cbf93",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/pcsx_rearmed_libretro_android.so.zip"
+      }
+    }
+  }
+}

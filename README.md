@@ -1,5 +1,49 @@
 # FlXtR-Steamlink
 
+**Build on SkyLoft:** `flxtr-build --android` or `flxtr-build --steamlink`.
+Add `--branch NAME` to select a branch; add `--no-publish` to skip the default
+publication to auto-update channels. See
+[commands, build logs and artifacts](docs/SKYLOFT-BUILDS.md).
+
+**Downloads — November 5, 2026**
+
+| Platform | Package |
+| --- | --- |
+| Android 8+ | [Signed APK 0.10.27 — Tailscale connection support](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1027-tailscale/FlXtR-Android-preview.apk) |
+| Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Windows-x86_64.zip) |
+| Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Linux-x86_64.tgz) |
+| Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-SteamDeck-x86_64.tgz) |
+| PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/psp-49601dfa187deaa88e1452ad2a9d1eee2804d489/FlXtR-PSP-beta.zip) |
+| Steam Link | [Complete ARM package — Tailscale QR sign-in](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-ed1dcae98bd1e4440273bbb1353e9ff733f9a986/greenlink.tgz) |
+
+[Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases).
+Each download above is pinned to its platform's most recent published package.
+The November 5 builds fix the provider request failure that blocked movies and
+series. See [source recovery and verification](docs/SOURCE-RECOVERY-2026-11-05.md).
+PSP device playback and physical Steam Deck validation remain experimental.
+
+Android: install the new APK directly once over your existing app; older previews
+cannot download this larger engine bundle through their updater. See
+[engine setup and device test results](docs/ANDROID-EMBEDDED-ENGINES.md).
+
+**Continue on TV:** pair Android with the Steam Link QR under **Settings →
+Services → Continue on TV**. Videos hand off their timestamp; Game Boy/Game Boy
+Color games hand off an exact save state using the matching bundled core and an
+identical ROM already scanned on TV. Other game cores are not yet supported for
+handoff. See [pairing, installation and limitations](docs/CONTINUE-ON-TV.md).
+
+**Away from home:** open **Settings → Services → Tailscale** on Steam Link,
+press **A** to install/connect, then scan its sign-in QR. Connect the official
+Tailscale Android app to the same account. Under **Continue on TV**, press **Y**
+for the remote pairing QR. Local Wi-Fi pairing still works without Tailscale.
+No extra cloud server is needed. See [setup and test status](docs/TAILSCALE.md).
+
+Android 8+ phone/tablet media preview (movies/series, KissAnime, music/MTV, TV channels, archive, downloads, selectable original/touch themes and controller support): [build and testing](docs/ANDROID.md).
+
+
+Steam Link shared SDL audio investigation, optional queued RetroArch driver and
+on-device diagnostics: [SDL audio validation](docs/steamlink-sdl-audio.md).
+
 Phone setup for subtitle and game metadata API keys is available under
 **Settings → API Accounts**. Scan the QR code, sign in on SubDL or TheGamesDB,
 then paste the key on your phone. See [API account setup](docs/api-accounts.md).
@@ -12,7 +56,8 @@ This is an **early prototype**. Native movie/series browsing, search, seasons,
 episodes, server lookup and direct playback run on the box. Selecting a title
 fetches its actual servers; selecting a server resolves a fresh playback link.
 Quality choices come from the source's HLS master playlist when available.
-No browser, Node, Python, or Docker runs on the box. WSL/Docker are build tools.
+The media shell and player are native. A bundled Python runtime handles phone
+pairing and optional Tailscale setup; WSL/Docker are build tools.
 
 ![Native shell](preview.png)
 
@@ -142,6 +187,8 @@ Unknown imports or changed downloads fail the build. Downloaded modules and
 generated code stay in the build cache; they are not committed to this repository.
 
 ## Install
+
+For USB mounts, symbolic links, boot recovery, and guarded drive preparation, open **Settings → Services → USB Storage Setup**. See [USB storage setup](docs/USB-STORAGE-SETUP.md). Existing-drive repair is the default; erase-and-prepare is a separate confirmed operation.
 
 Copy the `dist/steamlink` folder onto a FAT32 USB drive, insert it into the Steam
 Link, then power-cycle it. The FlXtR Steamlink entry appears in the native menu. Existing
@@ -434,9 +481,13 @@ If a cold boot resets the clock before 2024, the Steam Link launcher makes a bou
 
 TV channel scheduling, marathons and preloading: [TV channel mode](docs/tv-channel.md).
 
+## Windows port in progress
+
+The native Windows C port now includes process handling, player IPC, phone-server
+networking and filesystem backends. These can be cross-compiled directly in WSL
+and tested on Windows. The full Windows UI and linked player are not available yet. See [Windows port status and build instructions](docs/WINDOWS.md).
+
 ## Native Linux and Steam Deck packages
 
-Run `bash scripts/build-desktop.sh` (or `make steamdeck`) in WSL with Docker.
-This builds both x86_64 editions with bundled application libraries.
-See [desktop package instructions](docs/DESKTOP-RELEASE.md) for installation,
-Steam setup, requirements and validation limits.
+Run `bash scripts/build-desktop.sh` (or `make steamdeck`) with Docker.
+See [desktop package instructions](docs/DESKTOP-RELEASE.md) for installation.

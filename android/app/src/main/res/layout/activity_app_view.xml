@@ -1,0 +1,12 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#000000" android:padding="14dp">
+    <TextView android:id="@+id/flxtr_console_title" style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="42dp" android:gravity="center_vertical" android:text="FLXTR / PC GAMES" android:textSize="23sp" android:textColor="#74ff84"/>
+    <TextView android:id="@+id/appListText" style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="36dp" android:layout_below="@id/flxtr_console_title" android:gravity="center_vertical" android:textSize="14sp"/>
+    <LinearLayout android:id="@+id/flxtr_console_footer" android:layout_width="match_parent" android:layout_height="72dp" android:layout_alignParentBottom="true" android:orientation="vertical">
+        <TextView style="@style/FlxtrConsoleText" android:layout_width="match_parent" android:layout_height="28dp" android:gravity="center_vertical" android:text="A PLAY / Y OPTIONS / START SETTINGS" android:textColor="#74ff84" android:textSize="10sp"/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="44dp" android:orientation="horizontal">
+            <Button android:id="@+id/flxtr_console_back" style="@style/FlxtrConsoleButton" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="B BACK"/>
+            <Button android:id="@+id/flxtr_console_settings" style="@style/FlxtrConsoleButton" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="SETTINGS"/>
+        </LinearLayout>
+    </LinearLayout>
+    <FrameLayout android:id="@+id/appFragmentContainer" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/appListText" android:layout_above="@id/flxtr_console_footer"/>
+</RelativeLayout>

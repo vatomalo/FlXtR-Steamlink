@@ -35,6 +35,8 @@ public sealed class Catalog
     public string Bind { get; set; } = "127.0.0.1";
     public int Port { get; set; } = 47777;
     public string[] AllowedClients { get; set; } = ["127.0.0.1"];
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal string StoragePath {get;set;}=FilePath;
 
     public static Catalog Load()
     {
@@ -48,9 +50,9 @@ public sealed class Catalog
 
     public void Save()
     {
-        Directory.CreateDirectory(DirectoryPath);
-        File.WriteAllText(FilePath + ".tmp", JsonSerializer.Serialize(this, Json));
-        File.Move(FilePath + ".tmp", FilePath, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(StoragePath)!);
+        File.WriteAllText(StoragePath + ".tmp", JsonSerializer.Serialize(this, Json));
+        File.Move(StoragePath + ".tmp", StoragePath, true);
     }
 
     public void Rename(string id,string title)
@@ -60,6 +62,17 @@ public sealed class Catalog
             var game=Games.SingleOrDefault(game=>game.Id==id)??throw new InvalidDataException("Game is no longer in the catalog");
             game.Rename(title);
             Save();
+        }
+    }
+
+    public void Unapprove(string id)
+    {
+        lock(this)
+        {
+            var game=Games.SingleOrDefault(game=>game.Id==id)??throw new InvalidDataException("Unknown game");
+            var previous=game.Approved;
+            game.Approved=false;
+            try{Save();}catch{game.Approved=previous;throw;}
         }
     }
 

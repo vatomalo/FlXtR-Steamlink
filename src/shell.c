@@ -435,6 +435,9 @@ static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","E
 static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent","core-list","core-install",""};
 static int search_on,search_key;
 static int gamez_rename_on,gamez_rename_pending;
+static int gamez_unapprove_confirm,gamez_unapprove_pending;
+static int gamez_options_on,gamez_options_row;
+static char gamez_unapprove_id[33],gamez_unapprove_title[80];
 static char gamez_rename_id[33];
 static int favorite_remove_confirm;
 static char search_text[80];
@@ -1068,6 +1071,16 @@ static void finish_catalog(void){
     int code;pid_t p=waitpid(catalog_pid,&code,WNOHANG);if(p!=catalog_pid)return;
     catalog_pid=0;
     download_background=0;
+    if(gamez_unapprove_pending){
+        gamez_unapprove_pending=0;
+        if(WIFEXITED(code)&&!WEXITSTATUS(code)){Browse next=browse;next.page=1;request_catalog(next,0,0);}
+        else {
+            FILE *result=fopen("catalog-cache/unapprove-result.txt","r");
+            snprintf(status,sizeof(status),"COULD NOT UNAPPROVE / CHECK PC LAUNCHER");
+            if(result){char line[100];if(fgets(line,sizeof(line),result)){line[strcspn(line,"\r\n")]=0;snprintf(status,sizeof(status),"%s",line);}fclose(result);}
+        }
+        return;
+    }
     if(gamez_rename_pending){
         gamez_rename_pending=0;
         if(WIFEXITED(code)&&!WEXITSTATUS(code)){Browse next=browse;next.page=1;request_catalog(next,0,0);}
@@ -1402,7 +1415,7 @@ static void draw(Uint32 tick) {
         rect(20,80,155,400,side,1);
         rect(20,483,920,43,foot,1);
         rect(184,419,746,63,side,1);
-        if(settings_on||bios_on||filters_on||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,theme_pane(225),1);
+        if(settings_on||bios_on||filters_on||gamez_options_on||gamez_unapprove_confirm||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,theme_pane(225),1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
     if(stars_on&&(!background||monochrome_menu))for(int i=0;i<STARS;i++) {
@@ -1496,7 +1509,7 @@ static void draw(Uint32 tick) {
     }
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
     if(total&&video_download_offer(&titles[visible[selection]]))text(30,357,ui_hint("[L1] DOWNLOAD TO LOCAL","D DOWNLOAD TO LOCAL"),1,green,24);
-    text(30,379,ui_hint("[SELECT] SETTINGS","F10 SETTINGS / F1 HELP"),1,dim,22);text(30,402,ui_hint("[X] LIBRARY","F2 LIBRARY"),1,dim,22);text(30,421,browse.mode==22&&browse.id==11?ui_hint("[Y] RENAME","F6 RENAME"):browse.mode==1||browse.mode==2||browse.mode==7?ui_hint("[Y] GENRE / SECTION","F6 GENRE / SECTION"):browse.mode==14?ui_hint("[L2] ROM FOLDERS","F8 ROM FOLDERS"):browse.mode==28?"[Y] DELETE ZIP":browse.mode==OFFLINE_MODE?"[Y] DELETE / CANCEL":total&&video_download_supported(&titles[visible[selection]])?"[Y] DOWNLOAD TO LOCAL":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==22&&browse.id==11?ui_hint("[START] GENRE / SORT","F3 GENRE / SORT"):browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?ui_hint("[START] SEARCH","F3 SEARCH"):browse.mode==14?ui_hint("[START] GET GAMES","F3 GET GAMES"):browse.mode==21?ui_hint("[START] GET GAMES","F3 GET GAMES"):ui_hint("[START] ABOUT","F1 HELP / I ABOUT"),1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":ui_hint("B BACK / L3 FAVORITE","ESC BACK / F FAVORITE"),1,dim,22);
+    text(30,379,ui_hint("[SELECT] SETTINGS","F10 SETTINGS / F1 HELP"),1,dim,22);text(30,402,ui_hint("[X] LIBRARY","F2 LIBRARY"),1,dim,22);text(30,421,browse.mode==22&&browse.id==11?ui_hint("[Y] GAME OPTIONS","F6 GAME OPTIONS"):browse.mode==1||browse.mode==2||browse.mode==7?ui_hint("[Y] GENRE / SECTION","F6 GENRE / SECTION"):browse.mode==14?ui_hint("[L2] ROM FOLDERS","F8 ROM FOLDERS"):browse.mode==28?"[Y] DELETE ZIP":browse.mode==OFFLINE_MODE?"[Y] DELETE / CANCEL":total&&video_download_supported(&titles[visible[selection]])?"[Y] DOWNLOAD TO LOCAL":browse.mode==21?"[Y] ALL GAMES / [A] FOLDER":background?"WHITE METAL":"[Y] STARS",1,dim,22);text(30,440,browse.mode==22&&browse.id==11?ui_hint("[START] GAME OPTIONS","F3 GAME OPTIONS"):browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==31?ui_hint("[START] SEARCH","F3 SEARCH"):browse.mode==14?ui_hint("[START] GET GAMES","F3 GET GAMES"):browse.mode==21?ui_hint("[START] GET GAMES","F3 GET GAMES"):ui_hint("[START] ABOUT","F1 HELP / I ABOUT"),1,dim,22);text(30,459,browse.mode==14||browse.mode==21||browse.mode==22||browse.mode==26||browse.mode==28?"B BACK / L2 ROM FOLDERS":ui_hint("B BACK / L3 FAVORITE","ESC BACK / F FAVORITE"),1,dim,22);
     if(accounts_on){
         rect(184,80,746,410,(SDL_Color){12,20,14,255},1);
 text(204,96,party_entry==4?"TAILSCALE":party_entry==3?"CONTINUE ON TV":party_entry==2?"ROMSGAMES / PHONE IMPORT":phone_party.phase||party_entry?"POCKET QUIZ":"PHONE / API ACCOUNTS",3,(SDL_Color){140,240,150,255},40);
@@ -1573,6 +1586,20 @@ text(204,96,party_entry==4?"TAILSCALE":party_entry==3?"CONTINUE ON TV":party_ent
             text(204,443,api_setup.message,1,(SDL_Color){140,240,150,255},90);
             text(204,473,"B CLOSE / A NEW ROOM / EXPIRES AFTER 10 MINUTES IDLE",1,(SDL_Color){220,230,220,255},90);
         }
+    }else if(gamez_options_on){
+        text(194,100,"GAME OPTIONS",3,green,40);
+        if(total)text(194,150,titles[visible[selection]].title,1,white,70);
+        const char *labels[]={"RENAME","UNAPPROVE","GENRES / SORTING"};
+        for(int i=0;i<3;i++){
+            char line[64];snprintf(line,sizeof(line),"%c %s",gamez_options_row==i?'>':' ',labels[i]);
+            text(204,210+i*55,line,2,(!total&&i<2)?dim:gamez_options_row==i?green:white,55);
+        }
+        text(194,420,"UP/DOWN SELECT / A OPEN / B CLOSE",1,green,80);
+    }else if(gamez_unapprove_confirm){
+        text(194,100,"UNAPPROVE GAME?",3,green,40);
+        text(194,165,gamez_unapprove_title,2,white,60);
+        wrap(194,235,"REMOVE THIS GAME FROM THE PC LAUNCHER'S APPROVED LIST. GAME FILES STAY INSTALLED.",60,4,dim);
+        text(194,390,"A CONFIRM / B CANCEL",2,green,50);
     }else if(filters_on){
         text(194,100,"BROWSE FILTERS",3,green,40);
         int pc=browse.mode==22&&browse.id==11;
@@ -2523,6 +2550,39 @@ static void handoff_poll(void){
     if(!player_pid){char failed[80];snprintf(failed,sizeof(failed),"handoff/%s/failed",id);f=fopen(failed,"w");if(f){fputs("TV player could not start",f);fclose(f);}}
 }
 static void action(SDL_Keycode key) {
+    if(gamez_options_on){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2||key==SDLK_y||key==SDLK_F6||key==SDLK_F3){gamez_options_on=0;return;}
+        if(key==SDLK_UP||key==SDLK_DOWN)gamez_options_row=total?(gamez_options_row+(key==SDLK_UP?2:1))%3:2;
+        if(key==SDLK_RETURN){
+            if(gamez_options_row==2){
+                gamez_options_on=0;filters_on=1;filter_row=0;
+                filter_original_genre=browse.episode;filter_original_order=browse.season;
+            }else if(total){
+                Title *game=&titles[visible[selection]];
+                if(strncmp(game->url,"gamez:",6)||!gamez_valid_id(game->url+6))return;
+                gamez_options_on=0;
+                if(gamez_options_row==0){
+                    strcpy(gamez_rename_id,game->url+6);snprintf(search_text,sizeof(search_text),"%.79s",game->title);
+                    gamez_rename_on=search_on=1;search_key=0;SDL_StartTextInput();
+                }else {
+                    strcpy(gamez_unapprove_id,game->url+6);snprintf(gamez_unapprove_title,sizeof(gamez_unapprove_title),"%.79s",game->title);
+                    gamez_unapprove_confirm=1;
+                }
+            }
+        }
+        return;
+    }
+    if(gamez_unapprove_confirm){
+        if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){gamez_unapprove_confirm=0;return;}
+        if(key==SDLK_RETURN){
+            mkdir("catalog-cache",0700);pending=browse;
+            const char *args[]={"greenlink-catalog","--unapprove-gamez",gamez_unapprove_id,NULL};
+            catalog_pid=shell_spawn("./greenlink-catalog",args,"catalog-cache/unapprove-result.txt","catalog.log");
+            gamez_unapprove_pending=catalog_pid>0;catalog_started=SDL_GetTicks();gamez_unapprove_confirm=0;
+            snprintf(status,sizeof(status),gamez_unapprove_pending?"SAVING APPROVAL CHANGE":"COULD NOT START UNAPPROVAL");
+        }
+        return;
+    }
 #ifdef __ANDROID__
     if(key==SDLK_AC_BACK)key=SDLK_ESCAPE;
     /* Device services and external Linux workers have no Android backend yet. */
@@ -2763,15 +2823,10 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_SLASH){Browse next={21,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F3){Browse next={15,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!settings_on&&!about&&browse.mode==14&&key==SDLK_F6){Browse next=browse;next.page=1;next.id=1;request_catalog(next,0,0);return;}
-    if(!settings_on&&!about&&!catalog_pid&&browse.mode==22&&browse.id==11&&(key==SDLK_y||key==SDLK_F6)&&total){
-        Title *game=&titles[visible[selection]];
-        if(!strncmp(game->url,"gamez:",6)&&gamez_valid_id(game->url+6)){
-            strcpy(gamez_rename_id,game->url+6);snprintf(search_text,sizeof(search_text),"%.79s",game->title);
-            gamez_rename_on=search_on=1;search_key=0;SDL_StartTextInput();
-        }
-        return;
+    if(!settings_on&&!about&&!search_on&&!catalog_pid&&!player_pid&&browse.mode==22&&browse.id==11&&(key==SDLK_y||key==SDLK_F6||key==SDLK_F3)){
+        gamez_options_on=1;gamez_options_row=total?0:2;return;
     }
-    if(!settings_on&&!about&&(((key==SDLK_F6||key==SDLK_y)&&(browse.mode==1||browse.mode==2||browse.mode==7))||(key==SDLK_F3&&browse.mode==22&&browse.id==11))){filters_on=1;filter_row=0;filter_original_genre=browse.mode==22?browse.episode:browse.id;filter_original_order=browse.season;return;}
+    if(!settings_on&&!about&&(key==SDLK_F6||key==SDLK_y)&&(browse.mode==1||browse.mode==2||browse.mode==7)){filters_on=1;filter_row=0;filter_original_genre=browse.mode==22?browse.episode:browse.id;filter_original_order=browse.season;return;}
     if(bios_on){
         if(bios_confirm){
             if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_F2){bios_confirm=0;return;}

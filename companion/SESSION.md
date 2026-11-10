@@ -25,11 +25,18 @@ Use **Rename selected** in the Windows launcher to edit a game's display title.
 Its ID, executable, arguments and approval remain unchanged. Reopen GAMEZ on
 the TV to load the new title and its matching cover.
 
-On the TV, Triangle/Y opens a rename keyboard for the selected approved game;
-Start opens genre and sort controls. TV names are cosmetic overrides saved in
+On the TV, Triangle/Y and Start open the same Game options menu with Rename,
+Unapprove, and Genres / sorting. TV names are cosmetic overrides saved in
 `gamez-names.json` by companion ID. They do not require a PC update or alter the
 PC catalog, approval or launch configuration. The override also drives artwork
 and metadata matching. Genre and sort choices persist across restarts.
+
+Unapprove asks for confirmation, then saves `Approved=false` in the PC launcher
+through its authenticated API. It requires the companion update that adds
+`/v1/unapprove`. Only a successful response refreshes the TV list; failures leave
+the existing view and approval intact. Game files, launch configuration, local
+names, and play history remain in place. A running game is not terminated.
+Reapproval remains available in the Windows launcher.
 
 Latest orders by Steam release date. Most Popular orders by Steam recommendation
 totals. These public metadata fields refresh through the background artwork queue

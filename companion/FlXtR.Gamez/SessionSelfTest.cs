@@ -40,6 +40,17 @@ internal static class SessionSelfTest
                 Check(rejected&&renamed.Title=="Sifu","Invalid rename changed the title");
             }
             var marker=Path.Combine(directory,"parent.txt");
+            var gameFile=Path.Combine(directory,"installed-game.exe");File.WriteAllText(gameFile,"installed game data");
+            var store=new Catalog {StoragePath=Path.Combine(directory,"catalog.json")};
+            store.Games.Add(new Game{Id="Revoke1",Title="Installed game",Exe=gameFile,Hash="preserved",Args=["--original"],Approved=true});
+            store.Save();store.Unapprove("Revoke1");
+            var saved=JsonSerializer.Deserialize<Catalog>(File.ReadAllText(store.StoragePath))!;
+            Check(!saved.Games[0].Approved,"Unapproval was not persisted");
+            Check(saved.Games[0].Id=="Revoke1"&&saved.Games[0].Hash=="preserved"&&saved.Games[0].Args.SequenceEqual(new[]{"--original"}),"Unapproval changed launch configuration");
+            Check(File.ReadAllText(gameFile)=="installed game data","Unapproval changed or removed game files");
+            store.Unapprove("Revoke1");Check(!store.Games[0].Approved,"Repeated unapproval reapproved a game");
+            var unknown=false;try{store.Unapprove("Unknown");}catch(InvalidDataException){unknown=true;}
+            Check(unknown,"Unknown unapproval changed the catalog");
             using(var job=new GameJob(@"Local\FlXtR.Gamez.Test-"+Guid.NewGuid().ToString("N")))
             {
                 job.Start(Environment.ProcessPath!,AppContext.BaseDirectory,["--job-test-parent",marker]);

@@ -97,6 +97,15 @@ static int gamez_rename(const char *id,const char *title){
     if(!ok)puts("COULD NOT SAVE GAME NAME");
     return ok?0:1;
 }
+static int gamez_unapprove(const char *id){
+    if(!gamez_valid_id(id))return 2;
+    json_object *request=json_object_new_object();json_object_object_add(request,"id",json_object_new_string(id));
+    Buffer response={.limit=4096};long status=0;
+    int result=gamez_request("/v1/unapprove",json_object_to_json_string(request),&response,&status);
+    json_object_put(request);free(response.data);
+    if(!result&&status==200)return 0;
+    puts(status==404?"UPDATE PC GAMEZ TO UNAPPROVE":"COULD NOT UNAPPROVE / CHECK PC LAUNCHER");return 1;
+}
 static int gamez_list(int page,int genre,int order){
     if(genre<0||genre>=GAMEZ_GENRES||order<0||order>=GAMEZ_ORDERS)return -1;
     total=0;

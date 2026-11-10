@@ -183,6 +183,24 @@ public sealed class Bridge(Catalog catalog) : IDisposable
                     });
                 }
             }
+            else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/unapprove")
+            {
+                if(request.ContentLength64 is <1 or >256)code=400;
+                else
+                {
+                    var bytes=new byte[(int)request.ContentLength64];
+                    using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    await request.InputStream.ReadExactlyAsync(bytes,timeout.Token);
+                    using var document=JsonDocument.Parse(bytes);
+                    var id=document.RootElement.GetProperty("id").GetString()??"";
+                    if(id.Length is <1 or >32||!id.All(char.IsAsciiLetterOrDigit))code=400;
+                    else OnUI(()=>{
+                        catalog.Unapprove(id);
+                        if(dispatcher is CompanionWindow window)window.RefreshCatalog();
+                        return true;
+                    });
+                }
+            }
             else if (request.HttpMethod == "POST" && request.Url?.AbsolutePath == "/v1/launch")
             {
                 if (request.ContentLength64 is < 1 or > 32) code = 400;

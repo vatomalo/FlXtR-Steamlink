@@ -48,6 +48,15 @@ class GamezTest(unittest.TestCase):
             def do_POST(self):
                 valid = self.headers.get('Authorization') == 'Bearer ' + TOKEN
                 game_id = self.rfile.read(int(self.headers['Content-Length'])).decode()
+                if self.path == '/v1/unapprove':
+                    payload = json.loads(game_id)
+                    game = next((game for game in test.games if game['id'] == payload['id']), None)
+                    test.requests.append(('UNAPPROVE',payload['id'],valid))
+                    self.send_response(200 if valid and game else 422)
+                    self.end_headers()
+                    if valid and game:
+                        test.games = [entry for entry in test.games if entry['id'] != payload['id']]
+                    return
                 if self.path == '/v1/rename':
                     payload = json.loads(game_id)
                     game = next((game for game in test.games if game['id'] == payload['id']), None)
@@ -205,6 +214,20 @@ Path('stream.json').write_text(json.dumps({'args':sys.argv[1:], 'managed':os.get
         self.assertIn(title, self.catalog().stdout)
         self.games = []
         self.assertIn('total=0', self.catalog().stdout)
+
+    def test_native_unapprove_changes_pc_list_and_blocks_future_launch(self):
+        result = subprocess.run([str(self.binary), '--unapprove-gamez', GAME['id']], cwd=self.app, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.requests, [('UNAPPROVE', GAME['id'], True)])
+        self.assertIn('total=0', self.catalog().stdout)
+        self.launch(GAME['id'])
+        self.assertFalse((self.app / 'stream.json').exists())
+
+    def test_failed_unapprove_keeps_game_approved(self):
+        (self.app / 'token').write_text('b' * 64)
+        result = subprocess.run([str(self.binary), '--unapprove-gamez', GAME['id']], cwd=self.app, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.games, [GAME])
 
 
 if __name__ == '__main__':

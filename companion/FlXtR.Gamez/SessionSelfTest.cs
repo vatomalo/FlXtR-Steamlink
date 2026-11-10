@@ -8,6 +8,13 @@ internal static class SessionSelfTest
     public static bool Handle(string[] args)
     {
         if(args.Length==0)return false;
+        if(args[0]=="--watchdog-test-worker"){
+            var workerDirectory=args[1];var counter=Path.Combine(workerDirectory,"attempts.txt");
+            var attempt=File.Exists(counter)?int.Parse(File.ReadAllText(counter))+1:1;
+            File.WriteAllText(counter,attempt.ToString());File.WriteAllText(Path.Combine(workerDirectory,$"pid-{attempt}.txt"),Environment.ProcessId.ToString());
+            if(attempt==1)Environment.ExitCode=19;else Thread.Sleep(60000);
+            return true;
+        }
         if(args[0]=="--job-test-sleep") { Thread.Sleep(int.Parse(args[1]));return true; }
         if(args[0]=="--job-test-parent")
         {
@@ -33,7 +40,7 @@ internal static class SessionSelfTest
                 Check(rejected&&renamed.Title=="Sifu","Invalid rename changed the title");
             }
             var marker=Path.Combine(directory,"parent.txt");
-            using(var job=new GameJob())
+            using(var job=new GameJob(@"Local\FlXtR.Gamez.Test-"+Guid.NewGuid().ToString("N")))
             {
                 job.Start(Environment.ProcessPath!,AppContext.BaseDirectory,["--job-test-parent",marker]);
                 var timer=Stopwatch.StartNew();
@@ -41,8 +48,21 @@ internal static class SessionSelfTest
                 Check(File.Exists(marker),"Test bootstrap did not start");
                 Thread.Sleep(250);
                 Check(job.Running,"Bootstrap exit lost the still-running game child");
+                using(var recovered=GameJob.Open(job.Name!))Check(recovered.Running,"Named game job could not be recovered");
                 while(job.Running&&timer.ElapsedMilliseconds<15000)Thread.Sleep(20);
                 Check(!job.Running,"Game job failed to finish after its child exited");
+            }
+            var heldName=@"Local\FlXtR.Gamez.Test-"+Guid.NewGuid().ToString("N");
+            using(var job=new GameJob(heldName))
+            {
+                job.Start(Environment.ProcessPath!,AppContext.BaseDirectory,["--job-test-sleep","3000"]);
+                using var held=GameJob.Open(heldName);
+                job.Dispose();
+                Check(held.Running,"Closing the launcher handle terminated the game");
+                using var recovered=GameJob.Open(heldName);
+                Check(recovered.Running,"Recovery lost the running game after launcher handle closed");
+                var timer=Stopwatch.StartNew();while(recovered.Running&&timer.ElapsedMilliseconds<10000)Thread.Sleep(20);
+                Check(!recovered.Running,"Recovered job failed to detect game exit");
             }
             var argumentFile=Path.Combine(directory,"arguments.json");
             string[] expected=["", "a b", "quote\"inside", "C:\\folder with space\\", "literal;$(command)"];

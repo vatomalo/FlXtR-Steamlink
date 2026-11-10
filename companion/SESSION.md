@@ -64,3 +64,18 @@ self-tests, and retains the previous `app` directory as `app.previous`. Catalog,
 approval records, and private connection tokens remain outside the package.
 Candidate releases use immutable `gamez-COMMIT` tags and are tested before the
 stable manifest is advanced.
+
+The startup script also supervises the companion: an exit triggers a restart;
+repeated failed health checks or a stalled UI trigger replacement of that exact
+companion process. Slow launch verification gets up to three minutes before it
+is treated as stalled. Rapid crash loops use a longer restart delay. A Windows
+mutex and the task's IgnoreNew policy prevent duplicate supervisors.
+
+Game window positioning uses asynchronous requests, and session/health reads do
+not marshal through the Windows UI thread. Named game jobs are held by a small
+helper for the game's lifetime. The companion persists the job name, game ID,
+session ID and viewer state, then reconnects to that job after restart. Recovery
+does not stop the scheduled task or terminate game processes. Native job tests
+cover reopening an existing job and keeping a game alive after the launcher's
+handle closes. `Test-Watchdog.ps1` runs the actual PowerShell supervisor against
+isolated test children to exercise both exit and hung-UI restart paths.

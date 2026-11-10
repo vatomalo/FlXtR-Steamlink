@@ -6,9 +6,13 @@ namespace FlXtR.Gamez;
 
 internal static class SunshineSessionCli
 {
-    public static bool IsCommand(string[] args) => args.Any(a => a is "--wait-session" or "--prepare-session" or "--restore-shell" or "--restore-delayed");
+    public static bool IsCommand(string[] args) => args.Any(a => a is "--wait-session" or "--prepare-session" or "--restore-shell" or "--restore-delayed" or "--hold-job");
     public static int Run(string[] args)
     {
+        if(args.Length==2&&args[0]=="--hold-job"){
+            try {using var job=GameJob.Open(args[1]);while(job.Running)Thread.Sleep(250);return 0;}
+            catch(System.ComponentModel.Win32Exception){return 1;}
+        }
         if(args.Contains("--restore-delayed")) { Thread.Sleep(3000);GameShell.RestoreExplorer();return 0; }
         try
         {

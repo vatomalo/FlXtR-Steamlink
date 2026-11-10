@@ -4,6 +4,11 @@ $root = Join-Path $env:LOCALAPPDATA 'FlXtR\Gamez'
 $app = Join-Path $root 'app'
 $backup = Join-Path $root 'app.previous'
 New-Item -ItemType Directory -Path $root -Force | Out-Null
+if (-not $NoStart) {
+    $watchdogMutex = New-Object Threading.Mutex($false,'Local\FlXtR.Gamez.Watchdog')
+    try { $ownsWatchdog = $watchdogMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsWatchdog=$true }
+    if (-not $ownsWatchdog) { $watchdogMutex.Dispose(); return }
+}
 function Assert-ManagedPath([string]$Path) {
     $base = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
     if (-not [IO.Path]::GetFullPath($Path).StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { throw 'Update path is outside Gamez storage.' }
@@ -72,7 +77,37 @@ if ($PackagePath) {
     } catch { Add-Content -LiteralPath (Join-Path $root 'updater.log') -Value ((Get-Date).ToString('s') + ' ' + $_.Exception.Message) }
 }
 if (-not $NoStart) {
-    $process = Start-Process -FilePath (Join-Path $app 'FlXtR.Gamez.exe') -ArgumentList '--background' -WindowStyle Hidden -PassThru
-    $process.WaitForExit(); $process.Refresh()
-    exit $process.ExitCode
+    $restarts = @()
+    while ($true) {
+        try {
+            $process = Start-Process -FilePath (Join-Path $app 'FlXtR.Gamez.exe') -ArgumentList '--background' -WindowStyle Hidden -PassThru
+            $failures = 0
+            while (-not $process.HasExited) {
+                Start-Sleep -Seconds 2
+                $process.Refresh()
+                if ($process.HasExited) { break }
+                try {
+                    $configuration = Get-Content -LiteralPath (Join-Path $root 'catalog.json') -Raw | ConvertFrom-Json
+                    $health = Invoke-RestMethod -Uri ("http://$($configuration.Bind):$($configuration.Port)/v1/health") -Headers @{ Authorization=('Bearer '+$configuration.Token) } -TimeoutSec 3
+                    # Permit slower executable verification, but never wait
+                    # indefinitely for a blocked Windows UI/window callback.
+                    $busy = $health.launching_for_ms -gt 0 -and $health.launching_for_ms -lt 180000
+                    if ($health.ui_age_ms -lt 60000 -or $busy) { $failures=0 } else { $failures++ }
+                } catch { $failures++ }
+                if ($failures -ge 6) {
+                    Add-Content -LiteralPath (Join-Path $root 'watchdog.log') -Value ((Get-Date).ToString('s')+' Restarting unresponsive companion.')
+                    # Kill only the exact child started above. Never stop the
+                    # scheduled task or game processes during crash recovery.
+                    $process.Refresh()
+                    if (-not $process.HasExited) { $process.Kill() }
+                    break
+                }
+            }
+            if (-not $process.HasExited) { $process.WaitForExit(5000) | Out-Null }
+            $process.Dispose()
+        } catch { Add-Content -LiteralPath (Join-Path $root 'watchdog.log') -Value ((Get-Date).ToString('s')+' '+$_.Exception.Message) }
+        $cutoff = (Get-Date).AddMinutes(-1)
+        $restarts = @($restarts | Where-Object { $_ -gt $cutoff }) + (Get-Date)
+        Start-Sleep -Seconds $(if ($restarts.Count -gt 5) { 15 } else { 2 })
+    }
 }

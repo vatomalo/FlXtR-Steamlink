@@ -26,6 +26,8 @@ internal sealed class GameJob : IDisposable
     }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     private static extern SafeFileHandle CreateJobObject(IntPtr security, string? name);
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+    private static extern SafeFileHandle OpenJobObject(uint access,bool inherit,string name);
     [DllImport("kernel32.dll", SetLastError=true)]
     private static extern bool AssignProcessToJobObject(SafeFileHandle job, IntPtr process);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
@@ -40,11 +42,14 @@ internal sealed class GameJob : IDisposable
     [DllImport("kernel32.dll", EntryPoint="QueryInformationJobObject", SetLastError=true)]
     private static extern bool QueryProcesses(SafeFileHandle job, int type, IntPtr data, int length, out int resultLength);
     [DllImport("kernel32.dll", SetLastError=true)] private static extern bool IsProcessInJob(IntPtr process, SafeFileHandle job, out bool member);
-    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr window);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     private readonly HashSet<IntPtr> visibleWindows = [];
-    private readonly SafeFileHandle handle = CreateJobObject(IntPtr.Zero, null);
+    private readonly SafeFileHandle handle;
+    public string? Name {get;}
+    public GameJob(string? name=null){Name=name;handle=CreateJobObject(IntPtr.Zero,name);}
+    private GameJob(string name,bool existing){Name=name;handle=OpenJobObject(4,false,name);if(handle.IsInvalid)throw new Win32Exception(Marshal.GetLastWin32Error());}
+    public static GameJob Open(string name)=>new(name,true);
 
     public static string Quote(string value)
     {
@@ -101,8 +106,9 @@ internal sealed class GameJob : IDisposable
     {
         // The black cover stays above unrelated Windows apps. Only owned game
         // windows are raised over it; a bootstrap may hand off to a new window.
-        SetWindowPos(window,new IntPtr(-1),0,0,0,0,0x1|0x2|0x10);
-        BringWindowToTop(window);SetForegroundWindow(window);
+        SetWindowPos(window,new IntPtr(-1),0,0,0,0,0x1|0x2|0x10|0x4000);
+        // Never wait on the game's window thread from our UI/API dispatcher.
+        _=Task.Run(()=>SetForegroundWindow(window));
         visibleWindows.Add(window);
     }
     public void ShowNewWindows() => VisitProcesses(process => {

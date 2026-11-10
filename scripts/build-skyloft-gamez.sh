@@ -22,6 +22,7 @@ INFO
 cp "$repo/companion/Start-Gamez.ps1" "$repo/build/gamez/publish/"
 cp "$repo/companion/Update-And-Start.ps1" "$repo/build/gamez/publish/"
 cp "$repo/companion/Connect-SteamLink.ps1" "$repo/build/gamez/publish/"
+cp "$repo/companion/Test-Watchdog.ps1" "$repo/build/gamez/publish/"
 python3 - "$repo" <<'PY'
 import hashlib,pathlib,sys,zipfile
 root=pathlib.Path(sys.argv[1]); output=root/'dist/FlXtR-Gamez-win-x64.zip'

@@ -14,16 +14,39 @@ public sealed class Bridge(Catalog catalog) : IDisposable
     private Control? dispatcher;
     private GameShell? shell;
     private string? gameId,sessionId;
-    private string state="idle";
+    private volatile string state="idle";
     private bool viewer;
     private long phaseAt,lastPoll,lastShellCheck;
+    private long heartbeat=Environment.TickCount64,launchingAt;
+    private static string SessionFile=>Path.Combine(Catalog.DirectoryPath,"active-session.json");
+    private sealed record SavedSession(string Job,string GameId,string SessionId,bool Viewer=false);
+    private void SaveSession(){
+        if(current?.Name is not string name||gameId is null||sessionId is null)return;
+        File.WriteAllText(SessionFile+".next",JsonSerializer.Serialize(new SavedSession(name,gameId,sessionId,viewer)));
+        File.Move(SessionFile+".next",SessionFile,true);
+    }
     public string Status { get; private set; } = "Ready";
 
-    internal void AttachShell(Control control,GameShell gameShell) { dispatcher=control;shell=gameShell; _=control.Handle; }
+    internal void AttachShell(Control control,GameShell gameShell) { dispatcher=control;shell=gameShell; _=control.Handle; RecoverSession(); }
+    private void RecoverSession()
+    {
+        if(!File.Exists(SessionFile))return;
+        try {
+            var saved=JsonSerializer.Deserialize<SavedSession>(File.ReadAllText(SessionFile));
+            if(saved is null||!saved.Job.StartsWith(@"Local\FlXtR.Gamez.Session-"))return;
+            var job=GameJob.Open(saved.Job);
+            if(!job.Running){job.Dispose();File.Delete(SessionFile);return;}
+            current=job;gameId=saved.GameId;sessionId=saved.SessionId;viewer=saved.Viewer;state="running";phaseAt=Environment.TickCount64;
+            shell?.Prepare();current.Activate();Status="Recovered running game session";
+        }catch(Exception error) when(error is IOException or JsonException or System.ComponentModel.Win32Exception){Status="Session recovery: "+error.Message;}
+    }
     private T OnUI<T>(Func<T> operation) => dispatcher is {IsDisposed:false,InvokeRequired:true}
         ? (T)dispatcher.Invoke(operation) : operation();
 
-    public bool Launch(string id) => OnUI(() => LaunchCore(id));
+    public bool Launch(string id) => OnUI(() => {
+        Interlocked.Exchange(ref launchingAt,Environment.TickCount64);
+        try{return LaunchCore(id);}finally{Interlocked.Exchange(ref launchingAt,0);}
+    });
     private bool LaunchCore(string id)
     {
         lock (catalog)
@@ -40,13 +63,15 @@ public sealed class Bridge(Catalog catalog) : IDisposable
             if (!Path.IsPathFullyQualified(directory) || !Directory.Exists(directory)) throw new InvalidDataException("Working directory missing");
             current?.Dispose();
             current = null;
-            var job=new GameJob();
+            var job=new GameJob(@"Local\FlXtR.Gamez.Session-"+Guid.NewGuid().ToString("N"));
             try
             {
                 shell?.Prepare(); // Black first, Explorer stopped before CreateProcess.
                 job.Start(game.Exe,directory,game.Args);
                 current=job;gameId=id;sessionId=Guid.NewGuid().ToString("N");
                 state="running";viewer=false;phaseAt=Environment.TickCount64;
+                SaveSession();
+                Process.Start(new ProcessStartInfo(Environment.ProcessPath!){ArgumentList={"--hold-job",job.Name!},UseShellExecute=false,CreateNoWindow=true})?.Dispose();
             }
             catch { job.Dispose();shell?.Restore();throw; }
             Status = "Launched " + game.Title;
@@ -69,6 +94,7 @@ public sealed class Bridge(Catalog catalog) : IDisposable
 
     internal void PollSession()
     {
+        Interlocked.Exchange(ref heartbeat,Environment.TickCount64);
         var now=Environment.TickCount64;
         if(now-lastPoll<200)return;lastPoll=now;
         try
@@ -81,6 +107,7 @@ public sealed class Bridge(Catalog catalog) : IDisposable
             if(state=="running" && current is not null && !current.Running)
             {
                 state="ended";phaseAt=now;Status="Game ended / returning to FlXtR";
+                if(File.Exists(SessionFile))File.Delete(SessionFile);
                 shell?.CoverExit();
                 if(!viewer)shell?.Restore();
             }
@@ -91,14 +118,13 @@ public sealed class Bridge(Catalog catalog) : IDisposable
         { state="failed";Status=error.Message;shell?.Restore(); }
     }
 
-    public object SessionStatus() => OnUI<object>(() => {
-        PollSession();return new {state,game_id=gameId,session_id=sessionId};
-    });
+    public object SessionStatus() => new {state,game_id=gameId,session_id=sessionId};
+    public object Health(){var now=Environment.TickCount64;var started=Interlocked.Read(ref launchingAt);return new {state,pid=Environment.ProcessId,ui_age_ms=Math.Max(0,now-Interlocked.Read(ref heartbeat)),launching_for_ms=started==0?0:Math.Max(0,now-started)};}
     public bool PrepareViewer() => OnUI(() => {
         PollSession();if(state!="running")return false;
-        shell?.Prepare();current!.Activate();viewer=true;return true;
+        shell?.Prepare();current!.Activate();viewer=true;SaveSession();return true;
     });
-    public void RestoreSession() => OnUI(() => { viewer=false;shell?.Restore();return true; });
+    public void RestoreSession() => OnUI(() => { viewer=false;if(state=="running")SaveSession();shell?.Restore();return true; });
 
     public void Start()
     {
@@ -132,6 +158,7 @@ public sealed class Bridge(Catalog catalog) : IDisposable
                 lock (catalog) payload = new { games = catalog.Games.Where(game => game.Approved).Select(game => new { id = game.Id, title = game.Title }).ToArray() };
             }
             else if(request.HttpMethod=="GET" && request.Url?.AbsolutePath=="/v1/session") payload=SessionStatus();
+            else if(request.HttpMethod=="GET" && request.Url?.AbsolutePath=="/v1/health") payload=Health();
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/prepare") code=PrepareViewer()?200:409;
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/restore") RestoreSession();
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/rename")

@@ -419,8 +419,8 @@ static int games_list_filtered(int page,int refresh,int folder){
     }json_object_put(games);return 0;
 }
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
-static int games_system(int page,int folder){
-    if(folder==11)return gamez_list(page);
+static int games_system(int page,int folder,int order,int genre){
+    if(folder==11)return gamez_list(page,genre,order);
     return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;
 }
 static int game_pixel_geometry(const char *core,const char *rom,int output,int *width,int *height,int *dw,int *dh){

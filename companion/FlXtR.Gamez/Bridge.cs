@@ -134,6 +134,28 @@ public sealed class Bridge(Catalog catalog) : IDisposable
             else if(request.HttpMethod=="GET" && request.Url?.AbsolutePath=="/v1/session") payload=SessionStatus();
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/prepare") code=PrepareViewer()?200:409;
             else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/session/restore") RestoreSession();
+            else if(request.HttpMethod=="POST" && request.Url?.AbsolutePath=="/v1/rename")
+            {
+                if(request.ContentLength64 is <1 or >1024)code=400;
+                else
+                {
+                    var bytes=new byte[(int)request.ContentLength64];
+                    using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    await request.InputStream.ReadExactlyAsync(bytes,timeout.Token);
+                    using var document=JsonDocument.Parse(bytes);
+                    var id=document.RootElement.GetProperty("id").GetString()??"";
+                    var title=document.RootElement.GetProperty("title").GetString()??"";
+                    OnUI(()=>{
+                        lock(catalog)
+                        {
+                            if(!catalog.Games.Any(game=>game.Id==id&&game.Approved))throw new InvalidDataException("Unknown or unapproved game");
+                            catalog.Rename(id,title);
+                        }
+                        if(dispatcher is CompanionWindow window)window.RefreshCatalog();
+                        return true;
+                    });
+                }
+            }
             else if (request.HttpMethod == "POST" && request.Url?.AbsolutePath == "/v1/launch")
             {
                 if (request.ContentLength64 is < 1 or > 32) code = 400;
@@ -149,7 +171,7 @@ public sealed class Bridge(Catalog catalog) : IDisposable
             }
             else code = 404;
         }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException or ArgumentException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException or ArgumentException or JsonException or KeyNotFoundException)
         { code = 422; Status = error.Message; }
         try
         {

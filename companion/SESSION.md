@@ -25,6 +25,18 @@ Use **Rename selected** in the Windows launcher to edit a game's display title.
 Its ID, executable, arguments and approval remain unchanged. Reopen GAMEZ on
 the TV to load the new title and its matching cover.
 
+On the TV, Triangle/Y opens a rename keyboard for the selected approved game;
+Start opens genre and sort controls. Rename uses the authenticated companion
+endpoint and requires the matching Windows update. It preserves approval and
+launch configuration. Genre and sort choices persist across restarts.
+
+Latest orders by Steam release date. Most Popular orders by Steam recommendation
+totals. These public metadata fields refresh through the background artwork queue
+and are cached for a day. Games without a metadata match remain available in
+All Genres and Unknown. Recently Played records accepted FlXtR launch requests
+on this device in `gamez-history.json`, keyed by companion ID so renames retain
+history. Never-played and no-longer-approved games are excluded from that view.
+
 Before creating the game process, the companion shows a black cover and stops
 Explorer in the current user's Windows session. Owned game windows are raised
 above that cover, including windows created after a bootstrap exits. Explorer

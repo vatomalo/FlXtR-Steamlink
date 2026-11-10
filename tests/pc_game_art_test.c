@@ -3,6 +3,9 @@
 #undef main
 #include <assert.h>
 int main(void){
+    assert(pc_game_release("13 Jun, 2020")==20200613);
+    assert(pc_game_release("Jun 13, 2020")==20200613);
+    assert(pc_game_release("Coming soon")==0);
     json_object *results=json_tokener_parse("{\"items\":["
         "{\"type\":\"app\",\"id\":1,\"name\":\"FINAL FANTASY VII REMAKE Original Soundtrack\"},"
         "{\"type\":\"app\",\"id\":2,\"name\":\"FINAL FANTASY VII REBIRTH\"},"

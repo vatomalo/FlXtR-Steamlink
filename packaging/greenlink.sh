@@ -104,6 +104,7 @@ while :; do
                 continue
             fi
             game=$GAMEZ_SUNSHINE_APP
+            ./greenlink-catalog --record-gamez-play "$game_id" >/dev/null 2>&1 || true
         fi
         managed=0
         if [ "$bridge_mode" -eq 1 ] && [ "$game" = 'FlXtR Gamez' ]; then managed=1; fi

@@ -129,6 +129,7 @@ public sealed class CompanionWindow : Form
         foreach (var game in catalog.Games) games.Items.Add($"{(game.Approved ? "READY" : "REVIEW")} | {game.Title} | {game.Id} | {game.Exe}");
         if (games.Items.Count > 0) games.SelectedIndex = Math.Clamp(selected, 0, games.Items.Count - 1);
     }
+    internal void RefreshCatalog() => RefreshGames();
 
     private void Review(bool approved)
     {

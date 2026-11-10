@@ -48,6 +48,14 @@ class GamezTest(unittest.TestCase):
             def do_POST(self):
                 valid = self.headers.get('Authorization') == 'Bearer ' + TOKEN
                 game_id = self.rfile.read(int(self.headers['Content-Length'])).decode()
+                if self.path == '/v1/rename':
+                    payload = json.loads(game_id)
+                    game = next((game for game in test.games if game['id'] == payload['id']), None)
+                    self.send_response(200 if valid and game else 422)
+                    self.end_headers()
+                    if valid and game:
+                        game['title'] = payload['title']
+                    return
                 test.requests.append(('POST', game_id, valid))
                 accepted = valid and any(g['id'] == game_id for g in test.games)
                 self.send_response(200 if accepted else 422)
@@ -67,8 +75,8 @@ class GamezTest(unittest.TestCase):
         (self.app / 'gamez-bridge.conf').write_text(
             f"GAMEZ_HOST={self.host}\nGAMEZ_TOKEN_FILE='{self.app / 'token'}'\nGAMEZ_SUNSHINE_APP='FlXtR Gamez'\n")
 
-    def catalog(self, page=1):
-        return subprocess.run([str(self.binary), 'games-system', str(page), '', '11', '0', '0'],
+    def catalog(self, page=1, order=0, genre=0):
+        return subprocess.run([str(self.binary), 'games-system', str(page), '', '11', str(order), str(genre)],
                               cwd=self.app, env={**os.environ, 'FLXTR_NO_ART': '1'},
                               text=True, capture_output=True, timeout=12)
 
@@ -112,6 +120,7 @@ class GamezTest(unittest.TestCase):
         self.assertNotIn('Invalid', result.stdout)
 
     def launch(self, game_id):
+        shutil.copy(self.binary, self.app / 'greenlink-catalog')
         shutil.copy(ROOT / 'packaging/greenlink.sh', self.app)
         (self.app / '.no-auto-update').touch()
         ui = self.app / 'greenlink'
@@ -148,6 +157,47 @@ Path('stream.json').write_text(json.dumps({'args':sys.argv[1:], 'managed':os.get
         self.games = []
         self.launch(GAME['id'])
         self.assertFalse((self.app / 'stream.json').exists())
+        self.assertFalse((self.app / 'gamez-history.json').exists())
+
+    def metadata(self, title, release, popularity, genres):
+        value = 2166136261
+        for byte in title.upper().encode():
+            value = ((value ^ byte) * 16777619) & 0xffffffff
+        directory = self.app / 'gamez-metadata'
+        directory.mkdir(exist_ok=True)
+        (directory / f'{value:08x}.json').write_text(json.dumps(dict(release=release, popularity=popularity, genres=genres)))
+
+    def test_genres_latest_and_popularity_sort_only_approved_games(self):
+        self.games = [{'id':'A','title':'Alpha'}, {'id':'B','title':'Beta'}, {'id':'C','title':'Unknown'}]
+        self.metadata('Alpha', 20200101, 900, ['3'])
+        self.metadata('Beta', 20240101, 100, ['19'])
+        self.metadata('Removed', 20250101, 9999, ['19'])
+        latest = self.catalog(order=1).stdout
+        self.assertLess(latest.index('gamez:B'), latest.index('gamez:A'))
+        popular = self.catalog(order=2).stdout
+        self.assertLess(popular.index('gamez:A'), popular.index('gamez:B'))
+        self.assertIn('total=1', self.catalog(genre=3).stdout)
+        self.assertIn('gamez:A', self.catalog(genre=3).stdout)
+        self.assertNotIn('gamez:B', self.catalog(genre=3).stdout)
+        self.assertIn('gamez:C', self.catalog(genre=11).stdout)
+        self.assertNotIn('Removed', latest + popular)
+
+    def test_recent_history_is_persistent_and_uses_ids_after_rename(self):
+        self.launch(GAME['id'])
+        history = json.loads((self.app / 'gamez-history.json').read_text())
+        self.assertGreater(history[GAME['id']], 0)
+        self.games[0]['title'] = 'Renamed game'
+        self.assertIn('Renamed game', self.catalog(order=3).stdout)
+        self.games = []
+        self.assertIn('total=0', self.catalog(order=3).stdout)
+
+    def test_native_tv_rename_preserves_id_and_does_not_launch(self):
+        title = "Sifu's name; $(literal)"
+        result = subprocess.run([str(self.binary), '--rename-gamez', GAME['id'], title], cwd=self.app, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.games[0], {'id': GAME['id'], 'title': title})
+        self.assertFalse((self.app / 'gamez-history.json').exists())
+        self.assertIn(title, self.catalog().stdout)
 
 
 if __name__ == '__main__':

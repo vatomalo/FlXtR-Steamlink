@@ -531,7 +531,7 @@ static void game_art_prefetch(void){
                 for(int i=0;i<used;i++)if(!strncmp(entries[i].poster,"gameart:",8)){
                     char file[80];game_art_path(entries[i].poster,file,sizeof(file));
                     struct stat st;
-                    if(stat(file,&st)||st.st_size<54)fprintf(out,"%s\n",entries[i].poster);
+                    if(stat(file,&st)||st.st_size<54||(!strncmp(entries[i].poster,"gameart:PC|",11)&&gamez_info_stale(entries[i].poster+11)))fprintf(out,"%s\n",entries[i].poster);
                 }
                 fclose(out);
             }
@@ -570,7 +570,7 @@ static void game_art_prefetch(void){
                 for(char *line=strtok_r(requests,"\n",&save);line;line=strtok_r(NULL,"\n",&save)){
                     if(strncmp(line,"gameart:",8)||strlen(line)>400)continue;
                     char file[80];game_art_path(line,file,sizeof(file));
-                    struct stat st;if(!stat(file,&st)&&st.st_size>=54)continue;
+                    struct stat st;if(!stat(file,&st)&&st.st_size>=54&&(strncmp(line,"gameart:PC|",11)||!gamez_info_stale(line+11)))continue;
                     Entry e={0};snprintf(e.poster,sizeof(e.poster),"%s",line);
                     poster(&e,0);
                     if(strncmp(e.poster,"catalog-cache/",14))continue;
@@ -726,6 +726,8 @@ int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--repair-favorites-art")){if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;int result=favorite_repair_all();catalog_http_close();return result;}
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     if(argc==2&&!strcmp(argv[1],"--run-game"))return games_run();
+    if(argc==3&&!strcmp(argv[1],"--record-gamez-play"))return gamez_record_play(argv[2]);
+    if(argc==4&&!strcmp(argv[1],"--rename-gamez")){if(curl_global_init(CURL_GLOBAL_DEFAULT))return 1;int result=gamez_rename(argv[2],argv[3]);catalog_http_close();return result;}
     if(argc!=7&&argc!=8){fprintf(stderr,"Usage: greenlink-catalog movie|tv|season|episode|source|quality PAGE QUERY ID SEASON EPISODE [SERVER]\n");return 2;}
     const char *kind=argv[1];int page=positive(argv[2],0),id=positive(argv[4],1),season=positive(argv[5],1),episode=positive(argv[6],1);
     if(page<1||page>2000||id<0||season<0||episode<0||strlen(argv[3])>(!strcmp(kind,"archive-files")||!strcmp(kind,"games-archive-files")||!strcmp(kind,"games-file-download")||!strcmp(kind,"games-zip-list")||!strcmp(kind,"games-zip-extract")?2047:64))return 2;
@@ -765,7 +767,7 @@ int main(int argc,char **argv){
     else if(!strcmp(kind,"games-download"))rc=games_archive_download(id);
     else if(!strcmp(kind,"games"))rc=games_list(page,id);
     else if(!strcmp(kind,"games-folders"))rc=games_folders(page);
-    else if(!strcmp(kind,"games-system"))rc=games_system(page,id);
+    else if(!strcmp(kind,"games-system"))rc=games_system(page,id,season,episode);
     else if(!strcmp(kind,"tv-break"))rc=archive_commercial(id);
     else if(!strcmp(kind,"tv-pick"))rc=tv_pick(argv[3],id,season);
     else if(!strcmp(kind,"archive-folders"))rc=archive_folders(page);

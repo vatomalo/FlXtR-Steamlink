@@ -14,9 +14,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Steam Link-style console folders, ROM covers and per-ROM options. */
 public final class GamesActivity extends Activity {
-    private static final String[] SYSTEMS={"all","nes","snes","gb","gbc","gba","ps","psp","dolphin","scummvm"};
-    private static final String[] LABELS={"ALL GAMES","NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","GAMECUBE / WII","SCUMMVM"};
-    private static final String[] CODES={"ALL","FC","SFC","GB","GBC","GBA","PS","PSP","GC / WII","SCUMMVM"};
+    private static final String[] SYSTEMS={"all","nes","snes","gb","gbc","gba","ps","psp","dolphin","scummvm","sega","pce"};
+    private static final String[] LABELS={"ALL GAMES","NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","GAMECUBE / WII","SCUMMVM","SEGA","PC ENGINE"};
+    private static final String[] CODES={"ALL","FC","SFC","GB","GBC","GBA","PS","PSP","GC / WII","SCUMMVM","SEGA","PC ENGINE"};
     static final String[] SCALES={"FULLSCREEN FIT","INTEGER / PIXEL","FILL / CROP","STRETCH"};
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Gamepad gamepad=new Gamepad();
@@ -46,7 +46,7 @@ public final class GamesActivity extends Activity {
     private void launchScummVM(){try{File folder=library.directory();if(!folder.isDirectory()&&!folder.mkdirs())throw new java.io.IOException("Cannot create game folder");File launcher=new File(folder,"launcher.scummvm");if(!launcher.isFile())launcher.createNewFile();startActivity(new Intent(this,RetroActivity.class).putExtra("rom",launcher.getAbsolutePath()).putExtra("core","scummvm").putExtra("coreOnly",true));}catch(Exception failure){error(failure);}}
     private String[] coreLabels(String name){String[] cores=GameFormats.cores(name),labels=new String[cores.length+1];labels[0]="AUTOMATIC";for(int index=0;index<cores.length;index++)labels[index+1]=ConsoleMenu.coreName(cores[index]);return labels;}
     private void action(LinearLayout row,String label,Runnable click){Button b=menu.button(label,click);row.addView(b,new LinearLayout.LayoutParams(0,dp(46),1));actions.add(b);}
-private String system(JSONObject game){switch(game.optString("core")){case "ppsspp":return "psp";case "dolphin":return "dolphin";case "scummvm":return "scummvm";case "fceumm":return "nes";case "snes9x":return "snes";case "mgba":return "gba";case "pcsx_rearmed":return "ps";default:return game.optString("name").toLowerCase(Locale.ROOT).endsWith(".gbc")?"gbc":"gb";}}
+private String system(JSONObject game){switch(game.optString("core")){case "genesis_plus_gx":return "sega";case "mednafen_pce_fast":return "pce";case "ppsspp":return "psp";case "dolphin":return "dolphin";case "scummvm":return "scummvm";case "fceumm":return "nes";case "snes9x":return "snes";case "mgba":return "gba";case "pcsx_rearmed":return "ps";default:return game.optString("name").toLowerCase(Locale.ROOT).endsWith(".gbc")?"gbc":"gb";}}
     private String systemLabel(String value){for(int i=0;i<SYSTEMS.length;i++)if(SYSTEMS[i].equals(value))return LABELS[i];return "ROM FOLDERS";}
     private void render(){int selected=grid.getSelectedItemPosition();tiles.clear();try{List<JSONObject> games=library.games();if(system.isEmpty()){
             for(int i=0;i<SYSTEMS.length;i++){int count=0;for(JSONObject game:games)if(i==0||system(game).equals(SYSTEMS[i]))count++;tiles.add(new Tile(LABELS[i],count+" ROM"+(count==1?"":"S"),CODES[i],SYSTEMS[i],null));}

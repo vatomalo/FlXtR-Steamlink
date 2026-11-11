@@ -37,6 +37,30 @@
         "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/dolphin_libretro_android.so.zip"
       }
     },
+    "genesis_plus_gx": {
+      "arm64-v8a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/genesis_plus_gx_libretro_android.so.zip",
+        "sha256": "42425338bac3580a85a1e07d026ad0ee21ce9639501828ef4b751f38e5def79b",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/genesis_plus_gx_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/genesis_plus_gx_libretro_android.so.zip",
+        "sha256": "d12a47c11f338e8f0d2b342b5b0b293ac66b8e4c287852fe2c101168f2b674f2",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/genesis_plus_gx_libretro_android.so.zip"
+      }
+    },
+    "mednafen_pce_fast": {
+      "arm64-v8a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/mednafen_pce_fast_libretro_android.so.zip",
+        "sha256": "438c82b89edcb8a6e63961147dc8d807a266a5a4b018b4fdc28ff4251e51f354",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/mednafen_pce_fast_libretro_android.so.zip"
+      },
+      "armeabi-v7a": {
+        "url": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/mednafen_pce_fast_libretro_android.so.zip",
+        "sha256": "525cc17730f938648d2b3195475015cd5502ce06522535ac41e7634cd3bed42a",
+        "upstreamUrl": "https://buildbot.libretro.com/nightly/android/latest/armeabi-v7a/mednafen_pce_fast_libretro_android.so.zip"
+      }
+    },
     "fceumm": {
       "arm64-v8a": {
         "url": "https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-cores-20261031/fceumm-arm64-v8a.zip",

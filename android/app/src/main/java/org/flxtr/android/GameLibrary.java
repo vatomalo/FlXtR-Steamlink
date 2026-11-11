@@ -82,7 +82,7 @@ public final class GameLibrary {
     public void addFile(Uri uri)throws Exception {
         String name=null;long size=-1;
         try(Cursor c=context.getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){if(c!=null&&c.moveToFirst()){name=c.getString(0);if(!c.isNull(1))size=c.getLong(1);}}
-        if(name==null||GameFormats.core(name).isEmpty())throw new IOException("Choose GB, GBC, NES, SNES, GBA, CHD, PBP or ISO files. For CUE/BIN and M3U discs, add their folder.");
+        if(name==null||GameFormats.core(name).isEmpty())throw new IOException("Choose GB, GBC, NES, SNES, GBA, MD, GEN, SMD, SMS, GG, PCE, CHD, PBP or ISO files. For CUE/BIN and M3U discs, add their folder.");
         if(name.toLowerCase(Locale.ROOT).endsWith(".scummvm"))throw new IOException("Add the parent folder containing the ScummVM game and its launcher so all game data can be imported.");
         if(name.toLowerCase(Locale.ROOT).endsWith(".cue")||name.toLowerCase(Locale.ROOT).endsWith(".m3u"))throw new IOException("Add the containing folder so FlXtR can access every disc track.");
         GameFormats.relative(name);JSONObject game=entry(uri,name,size,0);JSONArray a=array("singles");for(int i=0;i<a.length();i++)if(identity(a.getJSONObject(i)).equals(identity(game)))return;a.put(game);prefs.edit().putString("singles",a.toString()).commit();

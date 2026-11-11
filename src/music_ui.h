@@ -285,7 +285,7 @@ static void music_action(SDL_Keycode key){
     }
     if(key==SDLK_F3||key==SDLK_SLASH){if(music_tab!=MUSIC_SEARCH)music_query[0]=0;music_tab=MUSIC_SEARCH;music_edit=1;music_key=0;music_cursor=strlen(music_query);SDL_StartTextInput();return;}
     if(key==SDLK_F5){music_lookup_stop();music_on=0;mtv_weights_open();return;}
-    if(key==SDLK_F7||key==SDLK_f){music_save_selected();if(music_tab==MUSIC_LIBRARY)music_lookup(1);return;}
+    if(key==SDLK_F7||key==SDLK_f){music_save_selected();if(music_tab==MUSIC_LIBRARY){char saved_message[sizeof(music_message)];snprintf(saved_message,sizeof(saved_message),"%s",music_message);music_lookup(1);snprintf(music_message,sizeof(music_message),"%s",saved_message);}return;}
     if(key==SDLK_HOME||key==SDLK_END){music_open_tab((music_tab+(key==SDLK_HOME?3:1))%4);return;}
     if(key==SDLK_y){
         if(music_tab==MUSIC_DISCOVER){music_discover_current=!music_discover_current;music_open_tab(MUSIC_DISCOVER);}
@@ -344,7 +344,7 @@ static void music_draw(void){
     if(music_edit){
         text(30,85,"SEARCH OR PASTE PUBLIC SPOTIFY PLAYLIST URL",2,accent,70);
         const char *completion=music_completion();
-        if(completion){text(30,105,completion,1,accent,110);text(800,105,"TAB / Y ACCEPT",1,accent,15);}
+        if(completion){text(30,105,completion,1,accent,110);text(800,105,"SQUARE ACCEPT",1,accent,18);}
         text(30,125,music_query,1,white,145);
         text(30+(int)(music_cursor>137?137:music_cursor)*6,143,"^",1,accent,1);
         for(int i=0;i<40;i++){

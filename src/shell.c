@@ -3074,6 +3074,22 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         return;
     }
     if(catalog_pid){
+        /* Switching a tab aborts its previous foreground lookup, rather than
+         * requiring every intermediate catalogue to finish loading. */
+        if(!auto_active&&pending.mode!=19&&pending.mode!=16&&
+           (key==SDLK_HOME||key==SDLK_END)&&
+           (library_group_for_mode(pending.mode)==LIB_GROUP_WATCH||
+            library_group_for_mode(pending.mode)==LIB_GROUP_FILES)&&
+           library_group_tab_index(library_group_for_mode(pending.mode),pending.mode)>=0){
+            int group=library_group_for_mode(pending.mode);
+            int selected=library_group_tab_index(group,pending.mode);
+            int mode=library_group_tab_mode(group,(selected+(key==SDLK_HOME?2:1))%3);
+            kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
+            if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}
+            play_after_load=0;
+            Browse next={0,1,0,0,0,0,"",""};
+            next.mode=mode;request_catalog(next,0,0);return;
+        }
         if(key==SDLK_F2&&!auto_active&&pending.mode!=19&&pending.mode!=16){
             int group=(library_group_for_mode(pending.mode)+1)%LIB_GROUP_COUNT;
             kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;

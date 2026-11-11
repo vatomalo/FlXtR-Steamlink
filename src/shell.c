@@ -922,6 +922,17 @@ static int download_queue_duplicate(const DownloadJob *job){
 }
 static void download_queue_add_video(const Title *title){
     if(!title||!video_download_supported(title))return;
+    uint64_t key=14695981039346656037ULL;
+    for(const unsigned char *p=(const unsigned char*)title->url;*p;p++){
+        key^=*p;
+        key*=1099511628211ULL;
+    }
+    char saved[96];
+    snprintf(saved,sizeof(saved),"phone-files/offline-%016llx.mkv",
+        (unsigned long long)key);
+    if(!access(saved,F_OK)){
+        snprintf(status,sizeof(status),"ALREADY SAVED / OPEN DOWNLOADS");return;
+    }
     DownloadJob job={0};job.mode=0;job.state=DOWNLOAD_WAITING;job.title=*title;
     if(browse.mode==6&&browse.name[0])
         snprintf(job.title.title,sizeof(job.title.title),"%s",browse.name);

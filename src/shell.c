@@ -1790,8 +1790,8 @@ static void draw(Uint32 tick) {
         SDL_RenderPresent(renderer);return;
     }
     text(30,24,"FLXTR",4,green,12);text(180,38,"CINEMA / STEAM LINK",1,dim,24);
-    if(music_job==3||music_job==2){text(737,22,"[R1] MUSIC / NOW PLAYING",1,dim,32);music_now_playing(737,43,31,green);}
-    else text(737,32,ui_hint("[R1] MUSIC","[M] MUSIC"),2,dim,17);
+    if(music_job==3||music_job==2){text(737,22,"[R2] MUSIC / NOW PLAYING",1,dim,32);music_now_playing(737,43,31,green);}
+    else text(737,32,ui_hint("[R2] MUSIC","[M] MUSIC"),2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
     int root_group=library_current_group();
@@ -2137,7 +2137,7 @@ char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
         text(210,270,video_download_delete_title.title,1,white,80);
         text(210,310,"A DELETE / B CANCEL",2,green,40);
     }
-    rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(683,509,library_can_focus_tabs()?(library_tabs_focused?"LEFT/RIGHT TAB / A OPEN / B EXIT":"LEFT TABS / X LIBRARY"):"DPAD MOVE / B BACK",1,green,42);
+    rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(683,509,library_can_focus_tabs()?"L1/R1 TABS / X LIBRARY":"DPAD MOVE / B BACK",1,green,42);
     SDL_RenderPresent(renderer);
 }
 static void rom_send_job(int stage,int device){
@@ -3074,6 +3074,22 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         return;
     }
     if(catalog_pid){
+        /* Switching a tab aborts its previous foreground lookup, rather than
+         * requiring every intermediate catalogue to finish loading. */
+        if(!auto_active&&pending.mode!=19&&pending.mode!=16&&
+           (key==SDLK_HOME||key==SDLK_END)&&
+           (library_group_for_mode(pending.mode)==LIB_GROUP_WATCH||
+            library_group_for_mode(pending.mode)==LIB_GROUP_FILES)&&
+           library_group_tab_index(library_group_for_mode(pending.mode),pending.mode)>=0){
+            int group=library_group_for_mode(pending.mode);
+            int selected=library_group_tab_index(group,pending.mode);
+            int mode=library_group_tab_mode(group,(selected+(key==SDLK_HOME?2:1))%3);
+            kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
+            if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}
+            play_after_load=0;
+            Browse next={0,1,0,0,0,0,"",""};
+            next.mode=mode;request_catalog(next,0,0);return;
+        }
         if(key==SDLK_F2&&!auto_active&&pending.mode!=19&&pending.mode!=16){
             int group=(library_group_for_mode(pending.mode)+1)%LIB_GROUP_COUNT;
             kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
@@ -3319,6 +3335,21 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){if(about_row==1&&key!=SDLK_u)accounts_open(1);else start_update();return;}
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}
+    /* Shoulder buttons select a grouped library tab directly, without forcing
+     * D-pad navigation into a separate tab-focus state. */
+    if(!about&&!settings_on&&!history_size&&library_can_focus_tabs()&&
+       (key==SDLK_HOME||key==SDLK_END)){
+        int group=library_current_group();
+        int current=library_current_tab();
+        int tab=(current+(key==SDLK_HOME?2:1))%3;
+        int mode=library_group_tab_mode(group,tab);
+        library_tabs_focused=0;
+        if(mode!=browse.mode){
+            Browse next={0,1,0,0,0,0,"",""};
+            next.mode=mode;request_catalog(next,0,0);
+        }
+        return;
+    }
     /* B exits the tab selector instead of navigating back to Recents. */
     if(library_tabs_focused&&library_can_focus_tabs()&&
        (key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_DOWN)){
@@ -3345,12 +3376,6 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
             }
         }else if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_DOWN)
             library_tabs_focused=0;
-        return;
-    }
-    else if(key==SDLK_LEFT&&!about&&library_can_focus_tabs()){
-        library_tabs_focused=1;
-        library_tab_cursor=library_current_tab();
-        snprintf(status,sizeof(status),"CHOOSE TAB WITH LEFT/RIGHT / A LOADS / B RETURNS");
         return;
     }
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);search_cursor=strlen(search_text);SDL_StartTextInput();}
@@ -3526,6 +3551,14 @@ int main(int argc,char **argv) {
                 int value=event.caxis.value;
                 if((event.caxis.axis<4&&(value>8000||value< -8000))||
                    (event.caxis.axis>=4&&value>8000))controller_used();
+                if(event.caxis.axis==SDL_CONTROLLER_AXIS_TRIGGERRIGHT){
+                    static int music_trigger_pressed;
+                    if(value>20000&&!music_trigger_pressed){
+                        music_trigger_pressed=1;
+                        if(!music_on&&!search_on&&!settings_on&&!player_pid)
+                            action(SDLK_m);
+                    }else if(value<8000)music_trigger_pressed=0;
+                }
                 if(event.caxis.axis==SDL_CONTROLLER_AXIS_TRIGGERLEFT){
                     static int left_trigger_pressed;
                     if(value>20000&&!left_trigger_pressed){
@@ -3554,8 +3587,8 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(samba_password_on?SDLK_RETURN:player_pid?SDLK_i:SDLK_F3);break;
-                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(search_on||(music_on&&music_edit)?SDLK_PAGEUP:player_pid?SDLK_LEFT:SDLK_v);break;
-                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(search_on||(music_on&&music_edit)?SDLK_PAGEDOWN:player_pid?SDLK_RIGHT:SDLK_m);break;
+                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(search_on||(music_on&&music_edit)?SDLK_PAGEUP:player_pid?SDLK_LEFT:music_on||library_can_focus_tabs()?SDLK_HOME:SDLK_v);break;
+                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(search_on||(music_on&&music_edit)?SDLK_PAGEDOWN:player_pid?SDLK_RIGHT:music_on||library_can_focus_tabs()?SDLK_END:SDLK_UNKNOWN);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:action(SDLK_UP);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:action(SDLK_DOWN);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:action(SDLK_LEFT);break;

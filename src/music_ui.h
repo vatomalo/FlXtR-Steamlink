@@ -273,7 +273,7 @@ static void music_action(SDL_Keycode key){
     if(key==SDLK_F3||key==SDLK_SLASH){music_tab=MUSIC_SEARCH;music_edit=1;music_key=0;music_cursor=strlen(music_query);SDL_StartTextInput();return;}
     if(key==SDLK_F5){music_lookup_stop();music_on=0;mtv_weights_open();return;}
     if(key==SDLK_F7||key==SDLK_f){music_save_selected();if(music_tab==MUSIC_LIBRARY)music_lookup(1);return;}
-    if(key==SDLK_LEFT||key==SDLK_RIGHT){music_open_tab((music_tab+(key==SDLK_LEFT?3:1))%4);return;}
+    if(key==SDLK_HOME||key==SDLK_END){music_open_tab((music_tab+(key==SDLK_HOME?3:1))%4);return;}
     if(key==SDLK_y){music_open_tab(music_tab);return;}
     if(music_job==1||music_job==2||music_job==4)return;
     if(key==SDLK_UP&&music_selected>0)music_selected--;
@@ -335,7 +335,7 @@ static void music_draw(void){
             rect(x-5,y-5,46,36,i==music_key?accent:muted,0);text(x+8,y,c,3,accent,1);
         }
         text(30,425,"A TYPE / TRIANGLE SPACE / SQUARE PREDICT / L1 R1 CURSOR",1,muted,110);
-        text(30,460,"KEYBOARD: CTRL+V PASTES A PLAYLIST LINK",1,muted,90);
+        text(30,460,"L1/R1 MOVE CURSOR / CTRL+V PASTES PLAYLIST LINK",1,muted,90);
     }else{
         static const char *const tabs[]={"RECENTS","DISCOVER","LIBRARY","SEARCH"};
         for(int tab=0;tab<4;tab++){

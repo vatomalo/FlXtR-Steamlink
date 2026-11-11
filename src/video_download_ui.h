@@ -40,7 +40,8 @@ static void video_download_finish(void){
     }
     int code;if(waitpid(video_download_pid,&code,WNOHANG)!=video_download_pid)return;
     video_download_pid=0;
-    if(WIFEXITED(code)&&!WEXITSTATUS(code)){
+    int success=WIFEXITED(code)&&!WEXITSTATUS(code);
+    if(success){
         char path[80],temp[80];
         snprintf(path,sizeof(path),"video-downloads/%s.tsv",video_download_key);
         snprintf(temp,sizeof(temp),"video-downloads/%s.next",video_download_key);
@@ -57,13 +58,14 @@ static void video_download_finish(void){
         if(error){if(fgets(status,sizeof(status),error))status[strcspn(status,"\r\n")]=0;fclose(error);}
     }
     video_download_message[0]=0;
+    download_queue_finished(success);
     if(browse.mode==OFFLINE_MODE){char message[sizeof(status)];snprintf(message,sizeof(message),"%s",status);video_download_list();snprintf(status,sizeof(status),"%s",message);}
 }
-static void video_download_start(const Title *title){
+static void video_download_begin(const Title *title){
 #ifdef _WIN32
     (void)title;snprintf(status,sizeof(status),"LOCAL VIDEO DOWNLOADS REQUIRE THE NATIVE DOWNLOADER");
 #else
-    if(video_download_pid){kill(video_download_pid,SIGTERM);snprintf(status,sizeof(status),"CANCELLING VIDEO DOWNLOAD");return;}
+    if(video_download_pid)return;
     if(!video_download_supported(title))return;
     if(access("./greenlink-download",X_OK)){snprintf(status,sizeof(status),"VIDEO DOWNLOADER NOT INSTALLED");return;}
     video_download_title=*title;
@@ -109,6 +111,9 @@ static void video_download_start(const Title *title){
     snprintf(video_download_message,sizeof(video_download_message),"DOWNLOADING TO LOCAL / D CANCEL");
     snprintf(status,sizeof(status),"DOWNLOAD STARTED / BROWSE WHILE IT RUNS");
 #endif
+}
+static void video_download_start(const Title *title){
+    download_queue_add_video(title);
 }
 static void video_download_delete(const Title *title){
     if(strcmp(title->kind,"offline")||!phone_local_media(title->url))return;

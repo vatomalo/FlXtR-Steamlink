@@ -25,6 +25,13 @@ test-native-sdl:
 
 .PHONY: test-providers test-native-sdl
 
+test-media-recents:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/media_recents_test.c -o build/media-recents-test $(SDL_LIBS) -lSDL2_image -lcurl
+	SDL_VIDEODRIVER=dummy ./build/media-recents-test
+
+.PHONY: test-media-recents
+
 test-music-home:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/music_home_test.c -o build/music-home-test $(SDL_LIBS) -lSDL2_image -lcurl

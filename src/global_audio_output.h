@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <ctype.h>
 
 static void flxtr_audio_preference(char *output,size_t capacity){
     if(!capacity)return;
@@ -22,6 +23,16 @@ static void flxtr_audio_preference(char *output,size_t capacity){
     }
     fclose(f);
 }
+static int flxtr_audio_contains(const char *text,const char *token){
+    size_t n=strlen(token);
+    for(;*text;text++){
+        size_t i=0;
+        while(i<n&&text[i]&&tolower((unsigned char)text[i])==
+              tolower((unsigned char)token[i]))i++;
+        if(i==n)return 1;
+    }
+    return 0;
+}
 static SDL_AudioDeviceID flxtr_open_audio_output(const SDL_AudioSpec *wanted,
                                                   SDL_AudioSpec *obtained){
     char preference[192];
@@ -36,7 +47,7 @@ static SDL_AudioDeviceID flxtr_open_audio_output(const SDL_AudioSpec *wanted,
         const char *name=SDL_GetAudioDeviceName(i,0);
         if(!name)continue;
         if(named&&!strcasecmp(name,named)){selected=name;break;}
-        if(hdmi&&(strcasestr(name,"hdmi")||strcasestr(name,"display"))){
+        if(hdmi&&(flxtr_audio_contains(name,"hdmi")||flxtr_audio_contains(name,"display"))){
             selected=name;break;
         }
     }

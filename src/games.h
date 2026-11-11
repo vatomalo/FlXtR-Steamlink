@@ -356,8 +356,19 @@ static int games_list_filtered(int page,int refresh,int folder){
         /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
         const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
         /* Artwork classification is independent of the selected launch core. */
-        const char *system=NULL;
+        char effective_core[96];
+        game_effective_core_name(rom_path,core,i+1,string(g,"title"),effective_core,sizeof(effective_core));
+        int core_folder=rom_category_from_core(effective_core,rom_path);
+        const char *system=core_folder==1?"Nintendo - Nintendo Entertainment System":
+            core_folder==2?"Nintendo - Super Nintendo Entertainment System":
+            core_folder==3?"Nintendo - Game Boy":
+            core_folder==4?"Nintendo - Game Boy Color":
+            core_folder==5?"Nintendo - Game Boy Advance":
+            core_folder==6?"Sony - PlayStation":
+            core_folder==7?"Sony - PlayStation Portable":
+            core_folder==8?"SNK - Neo Geo":NULL;
         const char *ext=strrchr(rom,'.');
+        if(!system){
         if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")||
            strstr(core,"fbneo")||strstr(core,"fbalpha2012")||
            !strncasecmp(e->title,"kof",3)||!strncasecmp(e->title,"mslug",5)||
@@ -376,6 +387,7 @@ static int games_list_filtered(int page,int refresh,int folder){
         else if(strstr(core,"ppsspp"))system="Sony - PlayStation Portable";
         else if(strstr(core,"picodrive")||strstr(core,"genesis_plus_gx"))
             system="Sega - Mega Drive - Genesis";
+        }
         if(system){
             char stem[128];snprintf(stem,sizeof(stem),"%s",e->title);
             char thumb[PATH_MAX];
@@ -458,8 +470,8 @@ static int games_list_filtered(int page,int refresh,int folder){
             else if(strstr(system,"PlayStation"))platform="PLAYSTATION";
             else if(strstr(system,"Neo Geo"))platform="NEO GEO";
             else if(strstr(system,"Mega Drive"))platform="SEGA GENESIS";
-            char bundled[PATH_MAX];const char *shown_core=core;
-            if(game_bundled_core(core,bundled,sizeof(bundled)))shown_core=bundled;
+            /* Report the same effective core that placed this title in a folder. */
+            const char *shown_core=effective_core;
             const char *core_file=strrchr(shown_core,'/');core_file=core_file?core_file+1:shown_core;
             char core_name[64];snprintf(core_name,sizeof(core_name),"%.63s",core_file);
             FILE *selected=fopen("game-cores.tsv","r");
@@ -474,8 +486,7 @@ static int games_list_filtered(int page,int refresh,int folder){
                 }
                 fclose(selected);
             }
-            char preference_key[17];rom_identity(rom_path,preference_key);
-            rom_core_preference(preference_key,core_name,sizeof(core_name));
+            /* Per-ROM and platform preferences are resolved above. */
             char *core_suffix=strstr(core_name,"_libretro" FLXTR_CORE_EXT);if(core_suffix)*core_suffix=0;
             snprintf(e->meta,sizeof(e->meta),"%s / CORE: %.48s",platform,core_name);
         }

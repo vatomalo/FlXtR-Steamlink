@@ -72,7 +72,7 @@ static void music_lookup(int library){
     snprintf(script,sizeof(script),"%s/tools/music.py",flxtr_win_binary_dir());
     snprintf(cert,sizeof(cert),"%s/certs/cacert.pem",flxtr_win_binary_dir());
     setenv("PYTHONHOME",runtime,1);setenv("PYTHONDONTWRITEBYTECODE","1",1);setenv("SSL_CERT_FILE",cert,1);
-    const char *args[]={"python","-I",script,library?"library":music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",library?NULL:music_tab==MUSIC_DISCOVER&&music_discover_current?music_track.key:music_query,NULL};
+    const char *args[]={"python","-I",script,library?"library":music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",library?NULL:music_tab==MUSIC_DISCOVER&&music_discover_current?(strcmp(music_track.kind,"video")?"current":music_track.key):music_query,NULL};
     music_lookup_pid=flxtr_win_spawn(python,args,"music-cache/browse.tsv","music-browse.log",NULL,0,1);
     unsetenv("PYTHONHOME");
 #else
@@ -84,7 +84,7 @@ static void music_lookup(int library){
         if(out<0||err<0)_exit(126);
         dup2(out,1);dup2(err,2);close(out);close(err);
         if(library)execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","library",(char*)NULL);
-        else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py",music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",music_tab==MUSIC_DISCOVER&&music_discover_current?music_track.key:music_query,(char*)NULL);
+        else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py",music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",music_tab==MUSIC_DISCOVER&&music_discover_current?(strcmp(music_track.kind,"video")?"current":music_track.key):music_query,(char*)NULL);
         _exit(127);
     }
     if(music_lookup_pid>0)setpgid(music_lookup_pid,music_lookup_pid);
@@ -101,8 +101,8 @@ static void music_open_tab(int tab){
     }else if(tab==MUSIC_LIBRARY)music_lookup(1);
     else if(tab==MUSIC_DISCOVER){
         if(music_discover_current){
-            if(strcmp(music_track.kind,"video")||!music_track.key[0]){
-                strcpy(music_message,"CURRENT SONG DISCOVERY NEEDS A PLAYED YOUTUBE SONG / Y MODE");return;
+            if(!music_track.key[0]){
+                strcpy(music_message,"PLAY A SONG FIRST / Y SWITCH TO GENRES");return;
             }
         }else{
             int genre=mtv_weighted_genre((unsigned int)time(NULL)+(unsigned int)SDL_GetTicks());

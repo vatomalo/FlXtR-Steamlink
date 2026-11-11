@@ -1,6 +1,7 @@
 /* Audio-only playback: bounded PCM queue, no video decoder or Python process. */
 #define _POSIX_C_SOURCE 200809L
 #include <SDL.h>
+#include "global_audio_output.h"
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/time.h>
@@ -49,7 +50,7 @@ int main(int argc,char **argv){
     if(avcodec_parameters_to_context(decoder,fmt->streams[index]->codecpar)<0||avcodec_open2(decoder,codec,NULL)<0)goto done;
     if(SDL_Init(SDL_INIT_AUDIO|SDL_INIT_TIMER)){fprintf(stderr,"Audio init: %s\n",SDL_GetError());goto done;}
     SDL_AudioSpec want={0},got={0};want.freq=48000;want.format=AUDIO_S16SYS;want.channels=2;want.samples=2048;
-    device=SDL_OpenAudioDevice(NULL,0,&want,&got,0);if(!device){fprintf(stderr,"Audio output: %s\n",SDL_GetError());goto done;}
+    device=flxtr_open_audio_output(&want,&got);if(!device){fprintf(stderr,"Audio output: %s\n",SDL_GetError());goto done;}
     int64_t layout=decoder->channel_layout?(int64_t)decoder->channel_layout:av_get_default_channel_layout(decoder->channels);
     swr=swr_alloc_set_opts(NULL,AV_CH_LAYOUT_STEREO,AV_SAMPLE_FMT_S16,48000,layout,decoder->sample_fmt,decoder->sample_rate,0,NULL);
     if(!swr||swr_init(swr)<0){fprintf(stderr,"Audio converter unavailable\n");goto done;}

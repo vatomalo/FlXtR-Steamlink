@@ -32,6 +32,13 @@ test-text-cursor:
 
 .PHONY: test-text-cursor
 
+test-grouped-tabs:
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/grouped_library_tabs_test.c -o build/grouped-library-tabs-test
+	./build/grouped-library-tabs-test
+
+.PHONY: test-grouped-tabs
+
 test-media-recents:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/media_recents_test.c -o build/media-recents-test $(SDL_LIBS) -lSDL2_image -lcurl

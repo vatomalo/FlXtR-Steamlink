@@ -32,6 +32,13 @@ test-text-cursor:
 
 .PHONY: test-text-cursor
 
+test-rom-core-category:
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/rom_core_category_test.c -o build/rom-core-category-test
+	./build/rom-core-category-test
+
+.PHONY: test-rom-core-category
+
 test-global-audio:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/global_audio_output_test.c -o build/global-audio-output-test $(SDL_LIBS)

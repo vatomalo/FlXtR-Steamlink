@@ -17,10 +17,12 @@ int main(void){
     music_pid=fork();assert(music_pid>=0);if(!music_pid){sleep(20);_exit(0);}
     music_job=3;pid_t playing=music_pid;
     f=fopen("scripts/music-runtime.sh","w");assert(f);fputs("#!/bin/sh\nsleep 20\n",f);fclose(f);
-    music_open_tab(MUSIC_SEARCH);strcpy(music_query,"new music");music_spawn(1);
+    strcpy(music_query,"stale query");
+    music_open_tab(MUSIC_SEARCH);assert(!music_query[0]);
+    strcpy(music_query,"new music");music_spawn(1);
     assert(music_pid==playing&&music_job==3&&music_lookup_pid>0);
     music_action(SDLK_ESCAPE);assert(!music_lookup_pid&&music_on&&music_pid==playing);
-    music_action(SDLK_LEFT);assert(music_tab==MUSIC_LIBRARY&&music_lookup_pid>0&&music_pid==playing);
+    music_action(SDLK_HOME);assert(music_tab==MUSIC_LIBRARY&&music_lookup_pid>0&&music_pid==playing);
     music_open_tab(MUSIC_RECENTS);assert(music_count==2&&!music_lookup_pid&&music_pid==playing);
     assert(music_queue_count==1&&!strcmp(music_queue[0].key,"original"));
     music_action(SDLK_ESCAPE);assert(!music_on&&music_pid==playing);

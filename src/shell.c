@@ -959,7 +959,9 @@ static void download_queue_pump(void){
     if(!job->mode){
         video_download_begin(&job->title);
         if(video_download_pid>0){
-            job->state=DOWNLOAD_RUNNING;download_active_job=next;return;
+            job->state=DOWNLOAD_RUNNING;download_active_job=next;
+            snprintf(job->title.poster,sizeof(job->title.poster),"%s",video_download_title.poster);
+            return;
         }
     }else{
         if(access("./greenlink-catalog",X_OK)){
@@ -995,10 +997,10 @@ static void download_queue_finished(int success){
 static void download_queue_remove(const Title *title){
     for(int i=0;i<DOWNLOAD_QUEUE_LIMIT;i++){
         DownloadJob *job=&download_jobs[i];
-        if(job->state==DOWNLOAD_EMPTY||strcmp(job->title.title,title->title))continue;
+        if(job->state==DOWNLOAD_EMPTY||title->id!=100000+i)continue;
         const char *kind=job->state==DOWNLOAD_WAITING?"download-queued":
             job->state==DOWNLOAD_RUNNING?"download-active":
-            job->state==DOWNLOAD_DONE?"download-complete":"download-failed";
+            job->state==DOWNLOAD_DONE?"download-done":"download-failed";
         if(strcmp(kind,title->kind))continue;
         if(job->state==DOWNLOAD_RUNNING){
             if(job->mode&&download_bg_pid)kill(download_bg_pid,SIGTERM);
@@ -1018,10 +1020,10 @@ static void downloads_append_active(void){
         /* Completed videos already appear as playable offline TSV entries. */
         if(!job->mode&&job->state==DOWNLOAD_DONE)continue;
         Title *item=&titles[count++];*item=job->title;
-        item->url[0]=0;
+        item->id=100000+i;item->url[0]=0;
         const char *kind=job->state==DOWNLOAD_WAITING?"download-queued":
             job->state==DOWNLOAD_RUNNING?"download-active":
-            job->state==DOWNLOAD_DONE?"download-complete":"download-failed";
+            job->state==DOWNLOAD_DONE?"download-done":"download-failed";
         snprintf(item->kind,sizeof(item->kind),"%s",kind);
         snprintf(item->meta,sizeof(item->meta),"%s %s",
             job->mode?"ROM":"VIDEO",
@@ -1034,7 +1036,7 @@ static void downloads_append_active(void){
 static int download_progress_percent(const Title *title){
     if(strcmp(title->kind,"download-active")||download_active_job<0)return -1;
     const DownloadJob *job=&download_jobs[download_active_job];
-    if(strcmp(job->title.title,title->title))return -1;
+    if(title->id!=100000+download_active_job)return -1;
     FILE *f=fopen(job->mode?"catalog-cache/download-progress":
         "video-downloads/progress","r");
     if(!f)return -1;
@@ -1060,7 +1062,7 @@ static void download_draw_progress(const Title *title,int x,int y,int width,int 
     int running=!strcmp(title->kind,"download-active");
     int waiting=!strcmp(title->kind,"download-queued");
     int failed=!strcmp(title->kind,"download-failed");
-    int complete=!strcmp(title->kind,"download-complete");
+    int complete=!strcmp(title->kind,"download-done");
     if(!running&&!waiting&&!failed&&!complete)return;
     int percent=running?download_progress_percent(title):(complete?100:0);
     SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);

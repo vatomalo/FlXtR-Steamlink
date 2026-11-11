@@ -73,7 +73,7 @@ static void music_lookup(int library){
     snprintf(script,sizeof(script),"%s/tools/music.py",flxtr_win_binary_dir());
     snprintf(cert,sizeof(cert),"%s/certs/cacert.pem",flxtr_win_binary_dir());
     setenv("PYTHONHOME",runtime,1);setenv("PYTHONDONTWRITEBYTECODE","1",1);setenv("SSL_CERT_FILE",cert,1);
-    const char *mode=library?"library":music_tab==MUSIC_DISCOVER?
+    const char *mode=library?"library":music_radio_pending?"radio":music_tab==MUSIC_DISCOVER?
         (music_discover_current?"discover-current":music_radio_tuned?"radio":"discover"):"search";
     const char *query=music_tab==MUSIC_DISCOVER&&music_discover_current?
         (strcmp(music_track.kind,"video")?"current":music_track.key):music_query;
@@ -90,7 +90,7 @@ static void music_lookup(int library){
         dup2(out,1);dup2(err,2);close(out);close(err);
         if(library)execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","library",(char*)NULL);
         else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py",
-            music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":music_radio_tuned?"radio":"discover"):"search",
+            music_radio_pending?"radio":music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":music_radio_tuned?"radio":"discover"):"search",
             music_tab==MUSIC_DISCOVER&&music_discover_current?(strcmp(music_track.kind,"video")?"current":music_track.key):music_query,(char*)NULL);
         _exit(127);
     }
@@ -134,6 +134,7 @@ static int music_lookup_poll(void){
     }
     music_lookup_pid=0;music_lookup_job=0;
     if(!WIFEXITED(code)||WEXITSTATUS(code)){
+        music_radio_pending=0;
         music_phone_play=0;strcpy(music_message,"LOOKUP FAILED / Y RETRY / DETAILS IN MUSIC-BROWSE.LOG");return 1;
     }
     music_read_rows("music-cache/browse.tsv");

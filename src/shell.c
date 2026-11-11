@@ -433,7 +433,6 @@ static char playback_server[32];
 static Title auto_title;
 static Uint32 catalog_started;
 static pid_t download_bg_pid;
-static int download_bg_mode;
 static Title download_bg_title;
 static void downloads_append_active(void);
 static int download_progress_percent(const Title *title);
@@ -903,7 +902,7 @@ static void downloads_append_active(void){
     filter();
 }
 static int download_progress_percent(const Title *title){
-    const char *rom=download_bg_pid&&!strcmp(title->title,download_bg_title.title)&&
+    int rom=download_bg_pid&&!strcmp(title->title,download_bg_title.title)&&
         !strcmp(title->meta,"ROM DOWNLOADING / X BROWSE");
     FILE *f=fopen(rom?"catalog-cache/download-progress":"video-downloads/progress","r");
     if(!f)return -1;
@@ -2870,7 +2869,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     }
     if(catalog_pid){
         if(key==SDLK_F2&&(pending.mode==19||pending.mode==16)){
-            download_bg_pid=catalog_pid;download_bg_mode=pending.mode;catalog_pid=0;
+            download_bg_pid=catalog_pid;catalog_pid=0;
             snprintf(status,sizeof(status),"ROM DOWNLOAD CONTINUES IN BACKGROUND / OPEN DOWNLOADS");return;
         }
         if(key==SDLK_F2&&auto_active){
@@ -3319,7 +3318,7 @@ int main(int argc,char **argv) {
         if(download_bg_pid){
             int code=0;pid_t done=waitpid(download_bg_pid,&code,WNOHANG);
             if(done==download_bg_pid){
-                download_bg_pid=0;download_bg_mode=0;dirty=1;
+                download_bg_pid=0;dirty=1;
                 memset(library_pages,0,sizeof(library_pages));
                 snprintf(status,sizeof(status),WIFEXITED(code)&&!WEXITSTATUS(code)?
                     "ROM DOWNLOAD COMPLETE / REFRESH GAMES OR DOWNLOADS":

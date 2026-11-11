@@ -24,6 +24,16 @@ test-native-sdl:
 	./build/video-native-sdl-test
 
 .PHONY: test-providers test-native-sdl
+
+test-music-home:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/music_home_test.c -o build/music-home-test $(SDL_LIBS) -lSDL2_image -lcurl
+	SDL_VIDEODRIVER=dummy ./build/music-home-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/music_queue_test.c -o build/music-queue-test $(SDL_LIBS) -lSDL2_image -lcurl
+	SDL_VIDEODRIVER=dummy ./build/music-queue-test
+	python3 tests/music_test.py
+
+.PHONY: test-music-home
 build/greenlink: src/video_download_ui.h src/phone_media.h
 build/greenlink: src/favorite_art.h src/favorite_art_ui.h
 build/greenlink-catalog: src/favorite_art.h src/favorite_art_worker.h

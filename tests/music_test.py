@@ -14,6 +14,55 @@ music = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(music)
 
 class MusicTest(unittest.TestCase):
+    def test_saved_library_tracks_are_links(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)), patch.object(music.os, 'walk', return_value=[]):
+            (Path(root) / 'saved.tsv').write_text('video\tabcdefghijk\tMy saved song\tArtist\n')
+            self.assertEqual(music.library_rows(), [('video', 'abcdefghijk', 'My saved song', 'Saved / Artist')])
+            self.assertEqual(list(Path(root).iterdir()), [Path(root) / 'saved.tsv'])
+
+    def test_discovery_skips_recent_tracks(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)), patch.object(music, 'search', return_value=[('video', 'abcdefghijk', 'Heard', 'Artist'), ('video', 'lmnopqrstuv', 'New', 'Artist')]):
+            music.remember(('video', 'abcdefghijk', 'Heard', 'Artist'))
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                music.run(['discover', 'rock'])
+            self.assertNotIn('Heard', out.getvalue())
+            self.assertIn('New', out.getvalue())
+
+    def test_recents_persist_deduplicate_and_bound(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
+            for i in range(60):
+                music.remember(('video', str(i), 'Song ' + str(i), 'Artist'))
+            music.remember(('video', '40', 'Updated title', 'Artist'))
+            rows = music.recent_rows()
+            self.assertEqual(len(rows), 50)
+            self.assertEqual(rows[0], ('video', '40', 'Updated title', 'Artist'))
+            self.assertEqual(sum(row[1] == '40' for row in rows), 1)
+            self.assertFalse((Path(root) / 'recents.tsv.next').exists())
+
+    def test_local_library_and_replay_without_network(self):
+        import os
+        with tempfile.TemporaryDirectory() as root:
+            old = Path.cwd()
+            try:
+                os.chdir(root)
+                cache = Path(root) / 'music-cache'
+                cache.mkdir()
+                Path('music').mkdir()
+                song = Path('music/A song.mp3')
+                song.write_bytes(b'audio')
+                Path('music/ignore.txt').write_text('not music')
+                with patch.object(music, 'CACHE', cache), patch.object(music.Path, 'home', return_value=Path(root)), patch.object(music, 'youtube_client', side_effect=AssertionError('network')):
+                    rows = [row for row in music.library_rows() if row[1] == str(song.resolve())]
+                    self.assertEqual(len(rows), 1)
+                    music.resolve('local', rows[0][1])
+                    self.assertEqual((cache / 'stream.txt').read_text().splitlines()[0], str(song.resolve()))
+                    self.assertEqual(music.recent_rows()[0][0], 'local')
+                    song.unlink()
+                    with self.assertRaises(ValueError):
+                        music.resolve('local', rows[0][1])
+            finally:
+                os.chdir(old)
+
     def test_playlist_metadata_only(self):
         data = {'props': {'pageProps': {'state': {'data': {'entity': {'trackList': [
             {'title': 'Song\nTitle', 'subtitle': 'Artist', 'audioPreview': {'url': 'must-not-play'}}

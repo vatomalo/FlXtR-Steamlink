@@ -28,6 +28,31 @@ class MusicTest(unittest.TestCase):
             self.assertNotIn('Heard', out.getvalue())
             self.assertIn('New', out.getvalue())
 
+    def test_current_song_discovery_skips_played_and_rejects_invalid_id(self):
+        class FakeYdl:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def extract_info(self, url, download=False):
+                self.url = url
+                return {'entries': [
+                    {'id': 'abcdefghijk', 'title': 'Current', 'channel': 'Artist'},
+                    {'id': 'lmnopqrstuv', 'title': 'Related song', 'channel': 'Another artist'},
+                    {'id': 'lmnopqrstuv', 'title': 'Duplicate', 'channel': 'Another artist'}]}
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
+            with patch.object(music, 'youtube_client', return_value=FakeYdl()):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    music.run(['discover-current', 'abcdefghijk'])
+                self.assertIn('Related song', out.getvalue())
+                self.assertNotIn('Current', out.getvalue())
+                self.assertEqual(out.getvalue().count('lmnopqrstuv'), 1)
+            with self.assertRaises(ValueError):
+                music.discover_current('not-a-valid-video-id')
+
+    def test_blank_search_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
+            with self.assertRaisesRegex(ValueError, 'Enter a song'):
+                music.run(['search', '   '])
+
     def test_recents_persist_deduplicate_and_bound(self):
         with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
             for i in range(60):

@@ -3354,7 +3354,6 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);search_cursor=strlen(search_text);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
-    else if(key==SDLK_x&&!about&&total&&!strcmp(titles[visible[selection]].kind,"game"))rom_launch(&titles[visible[selection]]);
     else if(key==SDLK_y)stars_on=!stars_on;
     else if(key==SDLK_v){snprintf(status,sizeof(status),"VIEW OPTIONS ARE AVAILABLE DURING VIDEO PLAYBACK");}
     else if(key==SDLK_TAB&&!browse.mode){ready_only=!ready_only;filter();}
@@ -3547,7 +3546,7 @@ int main(int argc,char **argv) {
                 switch(event.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_A:action(samba_password_on||search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
                     case SDL_CONTROLLER_BUTTON_B:action(samba_password_on?SDLK_ESCAPE:search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
-                    case SDL_CONTROLLER_BUTTON_X:action(!settings_on&&!rom_options_menu&&!rom_core_menu&&!player_pid&&!music_on&&total&&!strcmp(titles[visible[selection]].kind,"game")?SDLK_x:SDLK_F2);break;
+                    case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_INSERT:SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;

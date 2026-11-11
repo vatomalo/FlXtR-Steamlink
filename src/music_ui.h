@@ -134,6 +134,7 @@ static int music_lookup_poll(void){
     }
     music_lookup_pid=0;music_lookup_job=0;
     if(!WIFEXITED(code)||WEXITSTATUS(code)){
+        if(music_radio_pending)music_radio_active=0;
         music_radio_pending=0;
         music_phone_play=0;strcpy(music_message,"LOOKUP FAILED / Y RETRY / DETAILS IN MUSIC-BROWSE.LOG");return 1;
     }
@@ -255,7 +256,7 @@ static int music_poll(void){
         FILE *f=fopen("music-cache/playing.txt","r");music_playing[0]=0;
         if(f){if(!fgets(music_playing,sizeof(music_playing),f))music_playing[0]=0;fclose(f);music_playing[strcspn(music_playing,"\r\n")]=0;}
         music_spawn(3);
-    }else if(job==3&&music_autoplay){
+    }else if(job==3&&(music_autoplay||music_radio_active)){
         if(music_play_index+1<music_queue_count){music_play_index++;music_advancing=1;music_spawn(2);music_advancing=0;}
         else if(music_radio_active){
             /* Unlike generic YouTube autoplay, the next batch remains in the

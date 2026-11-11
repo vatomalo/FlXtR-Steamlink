@@ -909,11 +909,14 @@ static int download_progress_percent(const Title *title){
     int percent=-1;
     if(rom){long long done=0,size=0;
         if(fscanf(f,"%lld %lld",&done,&size)==2&&size>0){
-            if(done<0)done=0;if(done>size)done=size;percent=(int)(done*100/size);
+            if(done<0)done=0;
+            if(done>size)done=size;
+            percent=(int)(done*100/size);
         }
     }else{long long bytes=0;double seconds=0,duration=0;
         if(fscanf(f,"%lld %lf %lf",&bytes,&seconds,&duration)==3&&duration>0){
-            if(seconds<0)seconds=0;if(seconds>duration)seconds=duration;
+            if(seconds<0)seconds=0;
+            if(seconds>duration)seconds=duration;
             percent=(int)(seconds*100/duration);
         }
     }

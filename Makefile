@@ -254,3 +254,9 @@ test-usb:
 	./build/usb-setup-ui-test
 
 .PHONY: test-usb
+
+.PHONY: test-bios-download
+test-bios-download: all
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/bios_download_test.c -o build/bios-download-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/bios-download-test
+	python3 tests/update_package_test.py

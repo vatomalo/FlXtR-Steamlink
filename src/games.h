@@ -614,12 +614,15 @@ static int games_run(void){
         if(error){fputs("COULD NOT PREPARE ROM CHEATS / SEE GAME.LOG",error);fclose(error);}
         json_object_put(games);return 2;
     }
-    if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
+    if(strcasestr(core,"neogeo")||strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")){
         char bios[PATH_MAX];snprintf(bios,sizeof(bios),"%s",rom);
         char *slash=strrchr(bios,'/');if(slash)strcpy(slash+1,"neogeo.zip");
-        if(!game_file(bios)){
-            fprintf(stderr,"Neo Geo requires a legally obtained neogeo.zip BIOS in the ROM directory or a core-supported system directory\n");
-            /* Do not block: a configured RetroArch system directory may have BIOS. */
+        char shared[PATH_MAX],cwd[PATH_MAX];shared[0]=0;
+        if(getcwd(cwd,sizeof(cwd))&&snprintf(shared,sizeof(shared),"%s/system/neogeo.zip",cwd)>=(int)sizeof(shared))shared[0]=0;
+        if(!game_file(bios)&&!game_file(shared)){
+            fprintf(stderr,"Neo Geo BIOS missing: install neogeo.zip in Settings / Game BIOS or next to the ROM\n");
+            FILE *error=fopen("game-error.txt","w");if(error){fputs("NEO GEO BIOS MISSING / SETTINGS > GAME BIOS",error);fclose(error);}
+            json_object_put(games);return 2;
         }
     }
     char config[PATH_MAX],extra[PATH_MAX],runtime[PATH_MAX],home[PATH_MAX];
@@ -855,6 +858,9 @@ static int games_bios_files(int page,const char *identifier,int bios_id){
     for(size_t i=0;i<(size_t)json_object_array_length(files);i++){
         json_object *f=json_object_array_get_idx(files,i);
         const char *name=string(f,"name"),*digest=string(f,"sha1");
+        const char *size_text=string(f,"size");char *size_end=NULL;
+        unsigned long long bytes=strtoull(size_text,&size_end,10);
+        if(!*size_text||*size_end||!bytes||bytes>16777216)continue;
         const char *base=strrchr(name,'/');base=base?base+1:name;
         const char *ext=strrchr(base,'.');
         int container=ext&&!strcasecmp(ext,".zip")&&strlen(name)<140&&strcasestr(base,"bios")!=NULL;

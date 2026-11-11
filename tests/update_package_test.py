@@ -49,6 +49,8 @@ cp "$src" "$out"
     shutil.copy(stage / 'update.sh', app / 'update.sh')
     (app / '.installed-package-version').write_text(version + '\n')
     (app / 'settings.cfg').write_text('private settings\n')
+    (app / 'system').mkdir()
+    (app / 'system/neogeo.zip').write_bytes(b'user BIOS sentinel')
     env = dict(os.environ, PATH=str(app / 'bin') + ':' + os.environ['PATH'])
 
     def run():
@@ -56,6 +58,7 @@ cp "$src" "$out"
         assert result.returncode == 0, result.stdout + result.stderr
         assert not (app / '.update-lock').exists()
         assert (app / 'settings.cfg').read_text() == 'private settings\n'
+        assert (app / 'system/neogeo.zip').read_bytes() == b'user BIOS sentinel'
         assert (app / 'music-runtime/example.py').stat().st_mtime == 1600000000
         return result.stdout
 

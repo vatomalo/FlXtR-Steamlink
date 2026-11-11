@@ -141,6 +141,10 @@ with tempfile.TemporaryDirectory() as tmp:
     (root/'games.json').write_text(json.dumps([{'title':'Neo','rom':str(neo/'mslug.zip'),'core':str(neo_core)}]))
     assert launch()[-2]==str(neo_core)
     assert 'video_shader_enable = "false"' in (root/'game-runtime.cfg').read_text()
+    (neo/'neogeo.zip').unlink()
+    (root/'game-request').write_text('1 4 6\n')
+    assert subprocess.run([str(worker),'--run-game'],cwd=root,env=env).returncode==2
+    assert 'NEO GEO BIOS MISSING' in (root/'game-error.txt').read_text()
     (root/'game-request').write_text('99999 4 6\n')
     assert subprocess.run([str(worker),'--run-game'],cwd=root,env=env).returncode==2
 print('PASS: JSON/legacy import, deduplication, bounded paging, unknown core exclusion, exact argv and exit hotkeys')

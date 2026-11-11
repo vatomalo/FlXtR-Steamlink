@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #ifndef _WIN32
 #include <sys/wait.h>
+#include <sys/resource.h>
 #endif
 #include <unistd.h>
 #include <time.h>
@@ -548,6 +549,26 @@ static void load_menu_background(void){
     if(!background)fprintf(stderr,"Menu background unavailable: %s (%s)\n",path,menu_theme==2?IMG_GetError():SDL_GetError());
     apply_menu_theme();
 }
+static int bios_payload_valid(const char *path,int id){
+    struct stat st;if(stat(path,&st)||!S_ISREG(st.st_mode))return 0;
+    if(id!=1)return st.st_size==(id==5?16384:524288);
+    if(st.st_size<22||st.st_size>16777216)return 0;
+    FILE *f=fopen(path,"rb");unsigned char magic[4]={0};
+    if(!f)return 0;
+    size_t count=fread(magic,1,4,f);fclose(f);
+    return count==4&&!memcmp(magic,"PK\003\004",4);
+}
+static int bios_member_size(int id,unsigned long length){
+    return id==1?(length>=22&&length<=16777216):length==(id==5?16384UL:524288UL);
+}
+static int bios_archive_name_valid(const char *base,const char *name,int is_zip){
+    const char *ext=strrchr(base,'.');
+    return is_zip?(ext&&!strcasecmp(ext,".zip")):!strcasecmp(base,name);
+}
+static int bios_install_verified(const char *temp,const char *dest){
+    int result=0;if(link(temp,dest)<0)result=errno==EEXIST?4:3;
+    unlink(temp);return result;
+}
 static int bios_present(const char *filename) {
     char path[256];
     const char *dirs[]={"roms/NeoGeo","roms/neogeo","roms","system",
@@ -591,8 +612,8 @@ static int bios_download(void){
     code=0;int ok=waitpid(child,&code,0)==child&&WIFEXITED(code)&&WEXITSTATUS(code)==0;
     unlink("bios-check.txt");if(!ok){unlink(tmp);return 6;}
 #endif
-    if(link(tmp,target)<0){unlink(tmp);return 4;}
-    unlink(tmp);return 0;
+    if(!bios_payload_valid(tmp,bios_selected+1)){unlink(tmp);return 7;}
+    return bios_install_verified(tmp,target);
 }
 static int bios_archive_download(const Title *item){
     if(item->id<1||item->id>5)return 2;
@@ -610,10 +631,9 @@ static int bios_archive_download(const Title *item){
     if(!decoded)return 2;
     const char *base=strrchr(decoded,'/');
     base=base?base+1:decoded;
-    const char *extension=strrchr(base,'.');
     int valid=decoded_len>0&&(size_t)decoded_len==strlen(decoded)&&
         !strstr(decoded,"..")&&!strchr(decoded,'\\')&&
-        (is_zip?(item->id!=1&&extension&&!strcasecmp(extension,".zip")):!strcasecmp(base,name));
+        bios_archive_name_valid(base,name,is_zip);
     curl_free(decoded);
     if(!valid)return 2;
     if(mkdir("system",0700)<0&&errno!=EEXIST)return 3;
@@ -631,6 +651,7 @@ static int bios_archive_download(const Title *item){
     curl_easy_setopt(curl,CURLOPT_FAILONERROR,1L);
     curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,10L);
     curl_easy_setopt(curl,CURLOPT_TIMEOUT,120L);
+    curl_easy_setopt(curl,CURLOPT_MAXFILESIZE_LARGE,(curl_off_t)16777216);
     curl_easy_setopt(curl,CURLOPT_LOW_SPEED_LIMIT,1024L);
     curl_easy_setopt(curl,CURLOPT_LOW_SPEED_TIME,45L);
     curl_easy_setopt(curl,CURLOPT_CAINFO,FLXTR_CA_BUNDLE);
@@ -672,7 +693,7 @@ static int bios_archive_download(const Title *item){
         /* BusyBox unzip supports -l, not Info-ZIP's -Z -1.
          * Parse only properly formatted listing rows and extract one exact member. */
 #ifdef _WIN32
-        FILE *listing=flxtr_archive_listing(temp);char line[512],member[512]="";
+        FILE *listing=flxtr_archive_listing(temp);char line[512],member[512]="";int matches=0;
 #else
         int pipes[2];if(pipe(pipes)<0){unlink(temp);return 3;}
         pid=shell_fork();if(pid<0){close(pipes[0]);close(pipes[1]);unlink(temp);return 3;}
@@ -681,7 +702,7 @@ static int bios_archive_download(const Title *item){
             execlp("unzip","unzip","-l",temp,(char*)NULL);_exit(127);
         }
         close(pipes[1]);
-        FILE *listing=fdopen(pipes[0],"r");char line[512],member[512]="";
+        FILE *listing=fdopen(pipes[0],"r");char line[512],member[512]="";int matches=0;
 #endif
         if(listing){
             while(fgets(line,sizeof(line),listing)){
@@ -692,10 +713,11 @@ static int bios_archive_download(const Title *item){
                 if(sscanf(line," %lu %23s %23s %n",&length,date,clock,&offset)!=3||offset<=0)continue;
                 const char *path=line+offset;
                 while(*path==' '||*path=='\t')path++;
-                if(!*path||strlen(path)>=sizeof(member)||strstr(path,"..")||strchr(path,'\\'))continue;
+                if(!*path||*path=='/'||strlen(path)>=sizeof(member)||strstr(path,"..")||strchr(path,'\\'))continue;
                 const char *base=strrchr(path,'/');base=base?base+1:path;
-                if(!strcmp(base,name)&&length==((item->id==5)?16384UL:524288UL))
-                    snprintf(member,sizeof(member),"%s",path);
+                if(!strcasecmp(base,name)&&bios_member_size(item->id,length)){
+                    matches++;snprintf(member,sizeof(member),"%s",path);
+                }
             }
             fclose(listing);
         }
@@ -705,7 +727,7 @@ static int bios_archive_download(const Title *item){
 #else
         int listcode=listing?0:256;
 #endif
-        if(!member[0]||!WIFEXITED(listcode)||WEXITSTATUS(listcode)!=0){unlink(temp);return 7;}
+        if(matches!=1||!member[0]||!WIFEXITED(listcode)||WEXITSTATUS(listcode)!=0){unlink(temp);return 7;}
         char extracted[128];snprintf(extracted,sizeof(extracted),"system/.%s.extracted",name);
         unlink(extracted);
         int fd=open(extracted,O_WRONLY|O_CREAT|O_EXCL,0600);
@@ -716,20 +738,20 @@ static int bios_archive_download(const Title *item){
         pid=shell_fork();if(pid<0){close(fd);unlink(extracted);unlink(temp);return 3;}
         if(!pid){
             dup2(fd,STDOUT_FILENO);close(fd);
+            struct rlimit limit={16777216,16777216};if(setrlimit(RLIMIT_FSIZE,&limit))_exit(127);
             execlp("unzip","unzip","-p",temp,member,(char*)NULL);_exit(127);
         }
         close(fd);int extractcode=0;waitpid(pid,&extractcode,0);
 #endif
         struct stat contents;
         int good=WIFEXITED(extractcode)&&WEXITSTATUS(extractcode)==0&&
-            !stat(extracted,&contents)&&contents.st_size==((item->id==5)?16384:524288);
+            !stat(extracted,&contents)&&bios_payload_valid(extracted,item->id);
         unlink(temp);
         if(!good){unlink(extracted);return 7;}
-        if(link(extracted,dest)<0){unlink(extracted);return 4;}
-        unlink(extracted);return 0;
+        return bios_install_verified(extracted,dest);
     }
-    if(link(temp,dest)<0){unlink(temp);return 4;}
-    unlink(temp);return 0;
+    if(!bios_payload_valid(temp,item->id)){unlink(temp);return 7;}
+    return bios_install_verified(temp,dest);
 }
 static void color(SDL_Color c) { SDL_SetRenderDrawColor(renderer,c.r,c.g,c.b,c.a); }
 static void rect(int x,int y,int w,int h,SDL_Color c,int fill) {
@@ -2757,7 +2779,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
             bios_archive_confirm=0;int result=bios_archive_download(&bios_archive_title);
             snprintf(status,sizeof(status),"%s",result==0?"ARCHIVE BIOS INSTALLED AND VERIFIED":
                 result==2?"INVALID BIOS SOURCE":result==4?"BIOS EXISTS: NOT REPLACED":
-                result==5?"ARCHIVE DOWNLOAD FAILED":result==6?"SHA1 MISMATCH: DOWNLOAD DISCARDED":result==7?"ZIP HAS NO VALID MATCHING BIOS":"BIOS INSTALL ERROR");
+                result==5?"ARCHIVE DOWNLOAD FAILED":result==6?"SHA1 MISMATCH: DOWNLOAD DISCARDED":result==7?"NO VALID MATCHING BIOS / CHECK SOURCE":"BIOS INSTALL ERROR");
         }
         return;
     }
@@ -2897,7 +2919,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
             if(key==SDLK_RETURN){
                 bios_confirm=0;
                 int result=bios_download();
-                snprintf(status,sizeof(status),"%s",result==0?"BIOS INSTALLED AND VERIFIED":result==2?"NO VERIFIED SOURCE CONFIGURED":result==4?"BIOS PRESENT - NOT OVERWRITTEN":result==5?"BIOS DOWNLOAD FAILED":result==6?"SHA256 FAILED - FILE DISCARDED":"BIOS INSTALL FAILED");
+                snprintf(status,sizeof(status),"%s",result==0?"BIOS INSTALLED AND VERIFIED":result==2?"NO VERIFIED SOURCE CONFIGURED":result==4?"BIOS PRESENT - NOT OVERWRITTEN":result==5?"BIOS DOWNLOAD FAILED":result==6?"SHA256 FAILED - FILE DISCARDED":result==7?"INVALID BIOS FILE / CHECK SOURCE":"BIOS INSTALL FAILED");
             }
             return;
         }

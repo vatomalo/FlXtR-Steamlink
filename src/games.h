@@ -208,16 +208,47 @@ static json_object *games_import(void){
     FILE *version=fopen("games-import-version","w");if(version){fputs("2\n",version);fclose(version);}
     return games;
 }
+#include "rom_core_category.h"
 static const char *const local_folders[]={"NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","NEO GEO","ARCADE","OTHER"};
+/* Resolve the same per-ROM -> legacy -> platform default -> imported core
+ * precedence as the launcher, so changing a core changes its Games folder. */
+static void game_effective_core_name(const char *rom,const char *imported,
+                                     int id,const char *title,char *out,size_t capacity){
+    const char *basename=strrchr(imported,'/');
+    basename=basename?basename+1:imported;
+    snprintf(out,capacity,"%s",basename);
+    char legacy[96]={0};
+    FILE *f=fopen("game-cores.tsv","r");
+    if(f){
+        char row[256],saved_title[80],saved_core[96];int saved_id;
+        while(fgets(row,sizeof(row),f)){
+            if(sscanf(row,"%d\t%79[^\t]\t%95[^\n]",&saved_id,saved_title,saved_core)==3&&
+               saved_id==id&&!strcmp(saved_title,title)&&rom_core_name_valid(saved_core))
+                snprintf(legacy,sizeof(legacy),"%s",saved_core);
+        }
+        fclose(f);
+    }
+    char key[17];rom_identity(rom,key);
+    char selected[96]={0};
+    if(rom_core_preference(key,selected,sizeof(selected))){
+        snprintf(out,capacity,"%s",selected);return;
+    }
+    if(legacy[0]){snprintf(out,capacity,"%s",legacy);return;}
+    if(rom_platform_core_get(rom_platform_for_path(rom),selected,sizeof(selected)))
+        snprintf(out,capacity,"%s",selected);
+}
 static int local_category(const char *core,const char *rom){
-    if(strstr(core,"fceumm")||strstr(core,"nestopia")||strstr(core,"quicknes"))return 1;
-    if(strstr(core,"snes9x")||strstr(core,"catsfc"))return 2;
-    if(strstr(core,"gambatte")||strstr(core,"gearboy"))return strcasestr(rom,".gbc")?4:3;
-    if(strstr(core,"gpsp")||strstr(core,"mgba"))return 5;
-    if(strstr(core,"pcsx_rearmed")||strstr(core,"mednafen_psx"))return 6;
-    if(strstr(core,"ppsspp"))return 7;
-    if(strcasestr(core,"neogeo")||strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/"))return 8;
-    if(strstr(core,"mame")||strstr(core,"fbneo")||strstr(core,"fbalpha"))return 9;
+    int category=rom_category_from_core(core,rom);
+    if(category)return category;
+    if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/"))return 8;
+    if(strcasestr(rom,"/mame/")||strcasestr(rom,"/arcade/"))return 9;
+    int platform=rom_platform_for_path(rom);
+    const int folders[]={1,2,5,3,0,6,7,9,8};
+    if(platform>=0&&platform<ROM_PLATFORM_COUNT){
+        int mapped=folders[platform];
+        if(platform==3&&strcasestr(rom,".gbc"))return 4;
+        if(mapped)return mapped;
+    }
     return 10;
 }
 static int games_folders(int page){
@@ -293,7 +324,11 @@ static int games_list_filtered(int page,int refresh,int folder){
     if(count>GAME_LIMIT)count=GAME_LIMIT;
     for(int i=0;i<count;i++){
         json_object *g=json_object_array_get_idx(games,i);
-        if(folder&&local_category(string(g,"core"),string(g,"rom"))!=folder)continue;
+        if(folder){
+            char effective[96];
+            game_effective_core_name(string(g,"rom"),string(g,"core"),i+1,string(g,"title"),effective,sizeof(effective));
+            if(local_category(effective,string(g,"rom"))!=folder)continue;
+        }
         matched++;
     }
     json_object *names=games_read("rom-names.json");
@@ -301,7 +336,11 @@ static int games_list_filtered(int page,int refresh,int folder){
     total=matched;int skipped=0;
     for(int i=0;i<count&&used<PAGE_SIZE;i++){
         json_object *g=json_object_array_get_idx(games,i);
-        if(folder&&local_category(string(g,"core"),string(g,"rom"))!=folder)continue;
+        if(folder){
+            char effective[96];
+            game_effective_core_name(string(g,"rom"),string(g,"core"),i+1,string(g,"title"),effective,sizeof(effective));
+            if(local_category(effective,string(g,"rom"))!=folder)continue;
+        }
         if(skipped++<(page-1)*PAGE_SIZE)continue;
         Entry *e=&entries[used++];clean(e->title,sizeof(e->title),string(g,"title"));
         const char *core=string(g,"core"),*base=strrchr(core,'/');clean(e->meta,sizeof(e->meta),base?base+1:core);
@@ -317,8 +356,19 @@ static int games_list_filtered(int page,int refresh,int folder){
         /* Prefer RetroArch's locally downloaded Named_Boxarts thumbnails. */
         const char *rom=string(g,"rom"),*file=strrchr(rom,'/');file=file?file+1:rom;
         /* Artwork classification is independent of the selected launch core. */
-        const char *system=NULL;
+        char effective_core[96];
+        game_effective_core_name(rom_path,core,i+1,string(g,"title"),effective_core,sizeof(effective_core));
+        int core_folder=rom_category_from_core(effective_core,rom_path);
+        const char *system=core_folder==1?"Nintendo - Nintendo Entertainment System":
+            core_folder==2?"Nintendo - Super Nintendo Entertainment System":
+            core_folder==3?"Nintendo - Game Boy":
+            core_folder==4?"Nintendo - Game Boy Color":
+            core_folder==5?"Nintendo - Game Boy Advance":
+            core_folder==6?"Sony - PlayStation":
+            core_folder==7?"Sony - PlayStation Portable":
+            core_folder==8?"SNK - Neo Geo":NULL;
         const char *ext=strrchr(rom,'.');
+        if(!system){
         if(strcasestr(rom,"/neogeo/")||strcasestr(rom,"/neo-geo/")||
            strstr(core,"fbneo")||strstr(core,"fbalpha2012")||
            !strncasecmp(e->title,"kof",3)||!strncasecmp(e->title,"mslug",5)||
@@ -337,6 +387,7 @@ static int games_list_filtered(int page,int refresh,int folder){
         else if(strstr(core,"ppsspp"))system="Sony - PlayStation Portable";
         else if(strstr(core,"picodrive")||strstr(core,"genesis_plus_gx"))
             system="Sega - Mega Drive - Genesis";
+        }
         if(system){
             char stem[128];snprintf(stem,sizeof(stem),"%s",e->title);
             char thumb[PATH_MAX];
@@ -419,8 +470,8 @@ static int games_list_filtered(int page,int refresh,int folder){
             else if(strstr(system,"PlayStation"))platform="PLAYSTATION";
             else if(strstr(system,"Neo Geo"))platform="NEO GEO";
             else if(strstr(system,"Mega Drive"))platform="SEGA GENESIS";
-            char bundled[PATH_MAX];const char *shown_core=core;
-            if(game_bundled_core(core,bundled,sizeof(bundled)))shown_core=bundled;
+            /* Report the same effective core that placed this title in a folder. */
+            const char *shown_core=effective_core;
             const char *core_file=strrchr(shown_core,'/');core_file=core_file?core_file+1:shown_core;
             char core_name[64];snprintf(core_name,sizeof(core_name),"%.63s",core_file);
             FILE *selected=fopen("game-cores.tsv","r");
@@ -435,8 +486,7 @@ static int games_list_filtered(int page,int refresh,int folder){
                 }
                 fclose(selected);
             }
-            char preference_key[17];rom_identity(rom_path,preference_key);
-            rom_core_preference(preference_key,core_name,sizeof(core_name));
+            /* Per-ROM and platform preferences are resolved above. */
             char *core_suffix=strstr(core_name,"_libretro" FLXTR_CORE_EXT);if(core_suffix)*core_suffix=0;
             snprintf(e->meta,sizeof(e->meta),"%s / CORE: %.48s",platform,core_name);
         }

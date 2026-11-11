@@ -25,11 +25,12 @@ static retro_input_poll_t physical_poll;
 static unsigned long frame_number;
 static int armed, cancelled, completed, game_loaded, on_turbo;
 static retro_environment_t environment_callback;
+static void load_backend(void); /* RetroArch may query core info before init. */
 
 #define FORWARD(ret, name, args, callargs) \
     static ret (*backend_##name) args; \
     RETRO_API ret name args { \
-        if(!backend_##name) {fprintf(stderr,"[som-ai] missing backend %s\\n",#name);abort();} \
+        load_backend(); \
         return backend_##name callargs; \
     }
 #define FORWARD_VOID(name, args, callargs) \

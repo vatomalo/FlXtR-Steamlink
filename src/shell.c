@@ -897,8 +897,8 @@ static int read_catalog(const char *path) {
     filter();return count;
 }
 #include "media_recents.h"
-#include "grouped_library_tabs.h"
 #include "video_download_ui.h"
+#include "grouped_library_tabs.h"
 /* A single serial queue for native video and ROM transfers. The queue is RAM-only:
  * X hides the progress UI, never the transfer, and jobs survive library changes. */
 #define DOWNLOAD_QUEUE_LIMIT 24
@@ -1391,7 +1391,7 @@ static void finish_catalog(void){
     if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24&&browse.mode<35){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
     else snprintf(status,sizeof(status),"%s / PAGE %d OF %d / X CHANGE LIBRARY",browse_labels[browse.mode],browse.page,listing_pages);
-    if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"KISSANIME: BROWSING WORKS / SOME VIDEO HOSTS ARE NOT SUPPORTED");
+    if(browse.mode==7||browse.mode==8)snprintf(status,sizeof(status),"ANIME: SOME VIDEO HOSTS MAY BE UNSUPPORTED");
     if(browse.mode==14)snprintf(status,sizeof(status),"A ROM OPTIONS / Y CORE PICKER / SHARE+OPTIONS EXIT GAME");
     if(browse.mode==17&&!total)snprintf(status,sizeof(status),"NO ARCHIVE TITLES FOUND - TRY ANOTHER PLATFORM");
     if(browse.mode==18&&!total)snprintf(status,sizeof(status),"NO SUPPORTED ROM FILES IN THIS ARCHIVE ITEM");

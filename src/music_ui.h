@@ -42,6 +42,7 @@ static void music_save_selected(void){
         row=music_rows[music_selected];
     else if((music_job==2||music_job==3)&&music_track.key[0])row=music_track;
     else{strcpy(music_message,"NO SONG SELECTED / PLAY OR HIGHLIGHT A TRACK");return;}
+    MusicRow saved[100];
     int count=music_load_rows("music-cache/saved.tsv",saved),found=-1;
     for(int i=0;i<count;i++)if(!strcmp(saved[i].kind,row.kind)&&!strcmp(saved[i].key,row.key)){found=i;break;}
     if(found<0&&count==100){strcpy(music_message,"SAVED TRACKS FULL / UNSAVE A TRACK FIRST");return;}

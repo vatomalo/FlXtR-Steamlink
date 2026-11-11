@@ -445,7 +445,7 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE","LIBRETRO CORES","INSTALLING CORE","OFFLINE DOWNLOADS","RECENTS"};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","ANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE","LIBRETRO CORES","INSTALLING CORE","OFFLINE DOWNLOADS","RECENTS"};
 static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent","core-list","core-install","",""};
 static int search_on,search_key;
 static int gamez_rename_on,gamez_rename_pending;
@@ -897,6 +897,7 @@ static int read_catalog(const char *path) {
     filter();return count;
 }
 #include "media_recents.h"
+#include "grouped_library_tabs.h"
 #include "video_download_ui.h"
 /* A single serial queue for native video and ROM transfers. The queue is RAM-only:
  * X hides the progress UI, never the transfer, and jobs survive library changes. */
@@ -1164,6 +1165,8 @@ static void request_catalog(Browse next,int push,int pop){
         play_after_load=0;snprintf(status,sizeof(status),"ANDROID PREVIEW / ONLINE CATALOG NOT PORTED YET");return;
     }
 #endif
+    if(!push&&!pop&&next.page==1&&library_group_tab_index(library_group_for_mode(next.mode),next.mode)>=0)
+        library_tab_remember(next.mode);
     if(next.mode==MEDIA_RECENTS_MODE){if(catalog_pid)return;tv_active=auto_active=0;media_recents_open(next);return;}
     if(next.mode==OFFLINE_MODE){if(catalog_pid)return;tv_active=auto_active=0;about=ready_only=0;browse=next;history_size=0;video_download_list();return;}
     if(next.mode==16||next.mode==19){download_queue_add_rom(next);return;}
@@ -1791,14 +1794,21 @@ static void draw(Uint32 tick) {
     else text(737,32,ui_hint("[R1] MUSIC","[M] MUSIC"),2,dim,17);
     rect(30,65,900,1,dim,1);
     text(30,92,"LIBRARY",2,green,12);
-    int root_mode=history_size?history[0].mode:browse.mode;
-    if(root_mode==14||root_mode==22)root_mode=21;
-    if(root_mode==9||root_mode==10||root_mode==31)root_mode=30;
-    const int menu_modes[]={MEDIA_RECENTS_MODE,11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
-    const char *const menu_names[]={"RECENTS","TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","DOWNLOADS","LOCAL"};
-    for(int i=0;i<10;i++){
-        char line[32];snprintf(line,sizeof(line),"%c %s",root_mode==menu_modes[i]?'>':' ',menu_names[i]);
-        text(30,120+i*19,line,1,root_mode==menu_modes[i]?green:dim,18);
+    int root_group=library_current_group();
+    const char *const menu_names[]={"RECENTS","TV","FAVORITES","WATCH","GAMES","FILES"};
+    for(int i=0;i<LIB_GROUP_COUNT;i++){
+        char line[32];snprintf(line,sizeof(line),"%c %s",root_group==i?'>':' ',menu_names[i]);
+        text(30,124+i*27,line,2,root_group==i?green:dim,18);
+    }
+    /* The tab strip lives in the header, so posters and preview never shift. */
+    if(library_can_focus_tabs()){
+        int active=library_current_tab();
+        const char *const *labels=root_group==LIB_GROUP_WATCH?library_watch_labels:library_files_labels;
+        for(int tab=0;tab<3;tab++){
+            int x=353+tab*126,selected=library_tabs_focused?library_tab_cursor==tab:active==tab;
+            if(selected)rect(x-5,25,119,32,green,0);
+            text(x,36,labels[tab],2,selected?green:dim,14);
+        }
     }
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
     if(total&&video_download_offer(&titles[visible[selection]]))text(30,357,ui_hint("[L1] DOWNLOAD TO LOCAL","D DOWNLOAD TO LOCAL"),1,green,24);
@@ -2127,7 +2137,7 @@ char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
         text(210,270,video_download_delete_title.title,1,white,80);
         text(210,310,"A DELETE / B CANCEL",2,green,40);
     }
-    rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(713,509,"DPAD MOVE / B BACK",1,green,30);
+    rect(30,489,900,1,dim,1);text(30,509,status,1,white,92);text(683,509,library_can_focus_tabs()?(library_tabs_focused?"LEFT/RIGHT TAB / A OPEN / B EXIT":"LEFT TABS / X LIBRARY"):"DPAD MOVE / B BACK",1,green,42);
     SDL_RenderPresent(renderer);
 }
 static void rom_send_job(int stage,int device){
@@ -3300,13 +3310,32 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){
-        const int modes[]={MEDIA_RECENTS_MODE,11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
-        int current=history_size?history[0].mode:browse.mode,index=0;
-        if(current==14||current==22)current=21;
-        if(current==9||current==10||current==31)current=30;
-        for(int i=0;i<10;i++)if(modes[i]==current){index=i;break;}
-        Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%10];
+        int next_group=(library_current_group()+1)%LIB_GROUP_COUNT;
+        Browse next={0,1,0,0,0,0,"",""};
+        next.mode=library_group_entry_mode(next_group);
+        library_tabs_focused=0;
         history_size=0;request_catalog(next,0,0);
+    }
+    else if(library_tabs_focused&&library_can_focus_tabs()){
+        if(key==SDLK_LEFT&&library_tab_cursor>0)library_tab_cursor--;
+        else if(key==SDLK_RIGHT&&library_tab_cursor<2)library_tab_cursor++;
+        else if(key==SDLK_RETURN||key==SDLK_SPACE){
+            int group=library_current_group();
+            int mode=library_group_tab_mode(group,library_tab_cursor);
+            library_tabs_focused=0;
+            if(mode!=browse.mode){
+                Browse next={0,1,0,0,0,0,"",""};
+                next.mode=mode;request_catalog(next,0,0);
+            }
+        }else if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_DOWN)
+            library_tabs_focused=0;
+        return;
+    }
+    else if(key==SDLK_LEFT&&library_can_focus_tabs()){
+        library_tabs_focused=1;
+        library_tab_cursor=library_current_tab();
+        snprintf(status,sizeof(status),"CHOOSE TAB WITH LEFT/RIGHT / A LOADS / B RETURNS");
+        return;
     }
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);search_cursor=strlen(search_text);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;

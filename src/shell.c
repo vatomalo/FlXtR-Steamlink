@@ -3317,6 +3317,11 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){if(about_row==1&&key!=SDLK_u)accounts_open(1);else start_update();return;}
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}
+    /* B exits the tab selector instead of navigating back to Recents. */
+    if(library_tabs_focused&&library_can_focus_tabs()&&
+       (key==SDLK_ESCAPE||key==SDLK_BACKSPACE||key==SDLK_DOWN)){
+        library_tabs_focused=0;return;
+    }
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode!=MEDIA_RECENTS_MODE){Browse next={MEDIA_RECENTS_MODE,1,0,0,0,0,"",""};library_tabs_focused=0;request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){
         int next_group=(library_current_group()+1)%LIB_GROUP_COUNT;
@@ -3340,7 +3345,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
             library_tabs_focused=0;
         return;
     }
-    else if(key==SDLK_LEFT&&library_can_focus_tabs()){
+    else if(key==SDLK_LEFT&&!about&&library_can_focus_tabs()){
         library_tabs_focused=1;
         library_tab_cursor=library_current_tab();
         snprintf(status,sizeof(status),"CHOOSE TAB WITH LEFT/RIGHT / A LOADS / B RETURNS");

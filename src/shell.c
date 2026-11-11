@@ -3258,7 +3258,7 @@ int main(int argc,char **argv) {
         SDL_Event event;
         /* Worker completion has no SDL event: poll it promptly without a busy loop. */
         int worker_pending=catalog_pid||update_pid||video_download_pid||rom_send_pid||favorite_art_pid;
-        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:worker_pending?25:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||ambient_animated()||flow_animating())?33:250)) do {
+        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:worker_pending||download_bg_pid?25:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||ambient_animated()||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT){if(!usb_on||usb_stage!=5)running=0;}
             else if(event.type==SDL_KEYDOWN){if(!usb_on||!event.key.repeat){keyboard_used=1;desktop_key(event.key.keysym.sym,(SDL_Keymod)event.key.keysym.mod);}}
@@ -3346,7 +3346,7 @@ int main(int argc,char **argv) {
         }
         if(preview_tick())dirty=1;
         Uint32 now=SDL_GetTicks();
-        if(dirty||(usb_on&&now-last_draw>=250)||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||ambient_animated()||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+        if(dirty||((download_bg_pid||video_download_pid)&&(browse.mode==28||browse.mode==OFFLINE_MODE)&&now-last_draw>=100)||(usb_on&&now-last_draw>=250)||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||ambient_animated()||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid&&(!usb_on||usb_stage!=1)){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;

@@ -71,7 +71,12 @@ int main(void){
         assert(download_jobs[i].state!=DOWNLOAD_WAITING&&
             download_jobs[i].state!=DOWNLOAD_RUNNING);
     video_download_list();
-    assert(total==3);
+    int saved_count=0,done_count=0;
+    for(int i=0;i<total;i++){
+        if(!strcmp(titles[visible[i]].kind,"offline"))saved_count++;
+        if(!strcmp(titles[visible[i]].kind,"download-done"))done_count++;
+    }
+    assert(saved_count==3&&done_count==1);
     puts("PASS: offline saves, duplicate guard, deletion and FIFO video-ROM-video queue");
     SDL_Quit();return 0;
 }

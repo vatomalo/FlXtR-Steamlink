@@ -36,7 +36,7 @@ static void load_backend(void); /* RetroArch may query core info before init. */
 #define FORWARD_VOID(name, args, callargs) \
     static void (*backend_##name) args; \
     RETRO_API void name args { \
-        if(!backend_##name) {fprintf(stderr,"[som-ai] missing backend %s\\n",#name);abort();} \
+        load_backend(); \
         backend_##name callargs; \
     }
 

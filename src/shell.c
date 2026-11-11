@@ -1478,6 +1478,7 @@ static void draw(Uint32 tick) {
     SDL_SetRenderDrawColor(renderer,theme_canvas.r,theme_canvas.g,theme_canvas.b,255);SDL_RenderClear(renderer);
     if((background&&!monochrome_menu)||menu_theme>=3){
         if(background)SDL_RenderCopy(renderer,background,NULL,NULL);
+        ambient_draw(renderer,tick);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
         SDL_Color pane=theme_pane(210);
         SDL_Color side=theme_pane(225);
@@ -1489,7 +1490,7 @@ static void draw(Uint32 tick) {
         if(settings_on||bios_on||filters_on||gamez_options_on||gamez_unapprove_confirm||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,theme_pane(225),1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
-    ambient_draw(renderer,tick);
+    if(!((background&&!monochrome_menu)||menu_theme>=3))ambient_draw(renderer,tick);
     if(stars_on&&(!background||monochrome_menu))for(int i=0;i<STARS;i++) {
         int x=star_x[i]*W/256, y=(star_y[i]*H/256+(tick/100)*star_speed[i]/8)%H;
         SDL_Color c={145+(i%3)*40,145+(i%3)*40,145+(i%3)*40,255};rect(x,y,1+(i%9==0),1+(i%9==0),c,1);

@@ -254,6 +254,8 @@ static void music_action(SDL_Keycode key){
         }
         else if(key==SDLK_LEFT&&music_key>0)music_key--;
         else if(key==SDLK_RIGHT&&music_key<39)music_key++;
+        else if(key==SDLK_PAGEUP)flxtr_cursor_left(music_query,&music_cursor);
+        else if(key==SDLK_PAGEDOWN)flxtr_cursor_right(music_query,&music_cursor);
         else if(key==SDLK_UP&&music_key>=10)music_key-=10;
         else if(key==SDLK_DOWN&&music_key<30)music_key+=10;
         else if(key==SDLK_F4){char c=search_keys[music_key];if(c=='<')flxtr_cursor_left(music_query,&music_cursor);else if(c=='>')flxtr_cursor_right(music_query,&music_cursor);else{char value[2]={c,0};music_text(value);}}
@@ -332,7 +334,7 @@ static void music_draw(void){
             int x=70+(i%10)*80,y=185+(i/10)*53;char c[2]={search_keys[i],0};
             rect(x-5,y-5,46,36,i==music_key?accent:muted,0);text(x+8,y,c,3,accent,1);
         }
-        text(30,425,"A TYPE / TRIANGLE SPACE / < > CURSOR / B DELETE / START SEARCH",1,muted,110);
+        text(30,425,"A TYPE / TRIANGLE SPACE / SQUARE PREDICT / L1 R1 CURSOR",1,muted,110);
         text(30,460,"KEYBOARD: CTRL+V PASTES A PLAYLIST LINK",1,muted,90);
     }else{
         static const char *const tabs[]={"RECENTS","DISCOVER","LIBRARY","SEARCH"};

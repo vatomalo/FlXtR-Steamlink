@@ -2015,7 +2015,7 @@ char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
             rect(x,y,48,38,i==search_key?green:dim,0);text(x+15,y+10,ch,2,i==search_key?green:white,1);
         }
         text(194,442,(gamez_rename_on||rom_rename_on)?"A TYPE / B DELETE / START SAVE":completion?"Y ACCEPT SUGGESTION / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",1,green,76);
-        text(194,467,"TRIANGLE SPACE / < > CURSOR / B BACKSPACE / START CONFIRM",1,dim,90);
+        text(194,467,"TRIANGLE SPACE / SQUARE PREDICT / L1 R1 CURSOR / B DELETE",1,dim,90);
     }else if(about) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
         wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. WHITE METAL, WATER DROPS, AND GREEN PIXELS.",53,4,white);
@@ -3109,6 +3109,8 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
             if(completion){snprintf(search_text,(gamez_rename_on||rom_rename_on)?sizeof(search_text):65,"%s",completion);search_cursor=strlen(search_text);}
         }
         else if(key==SDLK_RIGHT&&search_key<39)search_key++;
+        else if(key==SDLK_PAGEUP)flxtr_cursor_left(search_text,&search_cursor);
+        else if(key==SDLK_PAGEDOWN)flxtr_cursor_right(search_text,&search_cursor);
         else if(key==SDLK_LEFT&&search_key>0)search_key--;
         else if(key==SDLK_DOWN&&search_key<30)search_key+=10;
         else if(key==SDLK_UP&&search_key>=10)search_key-=10;
@@ -3546,14 +3548,14 @@ int main(int argc,char **argv) {
                 switch(event.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_A:action(samba_password_on||search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
                     case SDL_CONTROLLER_BUTTON_B:action(samba_password_on?SDLK_ESCAPE:search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
-                    case SDL_CONTROLLER_BUTTON_X:action(SDLK_F2);break;
+                    case SDL_CONTROLLER_BUTTON_X:action(search_on||(music_on&&music_edit)?SDLK_TAB:SDLK_F2);break;
                     case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_INSERT:SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;
                     case SDL_CONTROLLER_BUTTON_START:action(samba_password_on?SDLK_RETURN:player_pid?SDLK_i:SDLK_F3);break;
-                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(player_pid?SDLK_LEFT:SDLK_v);break;
-                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(player_pid?SDLK_RIGHT:SDLK_m);break;
+                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:action(search_on||(music_on&&music_edit)?SDLK_PAGEUP:player_pid?SDLK_LEFT:SDLK_v);break;
+                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:action(search_on||(music_on&&music_edit)?SDLK_PAGEDOWN:player_pid?SDLK_RIGHT:SDLK_m);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:action(SDLK_UP);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:action(SDLK_DOWN);break;
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:action(SDLK_LEFT);break;

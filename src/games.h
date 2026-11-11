@@ -797,13 +797,19 @@ static int games_platforms(int page){
  * A search result is not evidence of a lawful or compatible firmware download. */
 static int games_bios_search(int page,int bios_id,const char *query){
     if(bios_id<1||bios_id>5)return -1;
-    const char *const defaults[]={"Neo Geo BIOS","PlayStation BIOS","PlayStation BIOS","PlayStation BIOS","Game Boy Advance BIOS"};
-    const char *term=*query?query:defaults[bios_id-1];
+    const char *const defaults[]={
+        "(title:neogeo OR title:(neo geo)) AND title:bios",
+        "(identifier:scph5500* OR title:scph5500)","(identifier:scph5501* OR title:scph5501)","(identifier:scph5502* OR title:scph5502)",
+        "(title:gba_bios OR (title:gba AND title:bios) OR (title:(game boy advance) AND title:bios))"};
+    char supplied[128];snprintf(supplied,sizeof(supplied),"%s",query);
+    char *extension=strrchr(supplied,'.');
+    if(extension&&(!strcasecmp(extension,".bin")||!strcasecmp(extension,".zip")))*extension=0;
+    const char *term=*query?supplied:defaults[bios_id-1];
     char clean_term[128];size_t n=0;
     for(size_t i=0;term[i]&&n+1<sizeof(clean_term);i++)
         if(isalnum((unsigned char)term[i])||term[i]==' '||term[i]=='-')clean_term[n++]=term[i];
     clean_term[n]=0;
-    char *escaped=curl_easy_escape(NULL,clean_term,0);if(!escaped)return -1;
+    char *escaped=curl_easy_escape(NULL,*query?clean_term:defaults[bios_id-1],0);if(!escaped)return -1;
     char url[1024];int len=snprintf(url,sizeof(url),ARCHIVE "/advancedsearch.php?q=mediatype%%3Asoftware%%20AND%%20%%28%s%%29%%20AND%%20-access-restricted-item%%3Atrue&fl%%5B%%5D=identifier&fl%%5B%%5D=title&rows=6&page=%d&output=json",escaped,page);
     curl_free(escaped);if(len<0||len>=(int)sizeof(url))return -1;
     json_object *root=archive_json(url);if(!root)return -1;

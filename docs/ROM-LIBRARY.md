@@ -42,3 +42,10 @@ Validation includes catalog import/rename tests, UI routing, ZIP safety and
 checksum tests, core ABI loading on a physical Steam Link, and separate PSP
 homebrew rendering checks. Commercial PSP title compatibility and performance
 must be checked per game; a successful core build is not a gameplay benchmark.
+
+BIOS discovery uses the selected SCPH5500/5501/5502 model in Archive item
+identifiers/titles rather than a generic PlayStation search. GBA searches target
+firmware titles, excluding full-text matches from unrelated source-code archives.
+Typing an exact .bin/.zip filename removes the extension for discovery.
+Downloads retain their metadata SHA-1 check; PlayStation payloads must be 512 KiB,
+GBA payloads 16 KiB. Existing installed BIOS files are not replaced.

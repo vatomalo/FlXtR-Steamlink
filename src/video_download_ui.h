@@ -26,7 +26,7 @@ static void video_download_list(void){
         char path[80];snprintf(path,sizeof(path),"video-downloads/%.20s",entry->d_name);
         read_catalog(path);
     }closedir(dir);}
-    filter();listing_total=total;listing_pages=1;
+    filter();downloads_append_active();listing_total=total;listing_pages=1;
     snprintf(status,sizeof(status),total?"A PLAY OFFLINE / Y DELETE / X LIBRARY":"NO SAVED VIDEOS / Y DOWNLOAD ON A PLAYABLE SOURCE");
 }
 static void video_download_finish(void){

@@ -2172,7 +2172,7 @@ static void rom_launch(const Title *t){
             }
         }
         FILE *f=fopen("game-request","w");if(!f){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}
-        fprintf(f,"%d %d %d %d %d\n",t->id,back,start,load,save);if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}game_exit=1;running=0;return;
+        fprintf(f,"%d %d %d %d %d\n",t->id,back,start,load,save);if(fclose(f)){snprintf(status,sizeof(status),"COULD NOT START GAME");return;}media_recents_record(t);game_exit=1;running=0;return;
 }
 static void play(void) {
     if(settings_on||rom_assets_on||rom_options_menu||rom_core_menu||about||!total||player_pid)return;

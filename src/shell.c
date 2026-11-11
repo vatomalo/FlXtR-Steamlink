@@ -445,8 +445,8 @@ static void launch_player(const Title *t);
 static void play(void);
 static void auto_next(void);
 static const char *local_catalog="catalog.tsv";
-static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE","LIBRETRO CORES","INSTALLING CORE","OFFLINE DOWNLOADS"};
-static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent","core-list","core-install",""};
+static const char *const browse_labels[]={"LOCAL","MOVIES","SERIES","SEASONS","EPISODES","SERVERS","QUALITY","KISSANIME","ANIME EPISODES","INTERNET ARCHIVE","VIDEO FILES","TV MODE","TV PICK","COMMERCIAL BREAK","GAMES","GET GAMES","IMPORTING GAME","ARCHIVE TITLES","ROM FILES","DOWNLOADING ROM","VERIFIED HOMEBREW","ROM FOLDERS","CONSOLE GAMES","BIOS ARCHIVE SEARCH","BIOS FILES","FAVORITES","ZIP CONTENTS","EXTRACTING ROM","DOWNLOADS","DELETING ZIP","ARCHIVE FOLDERS","ARCHIVE COLLECTION","ROMSGAMES PLATFORMS","ROMSGAMES TITLES","NEXT EPISODE","LIBRETRO CORES","INSTALLING CORE","OFFLINE DOWNLOADS","RECENTS"};
+static const char *const browse_kinds[]={"","movie","tv","season","episode","source","quality","kiss","kiss-episodes","archive","archive-files","","tv-pick","tv-break","games","games-platforms","games-download","games-archive-search","games-archive-files","games-file-download","games-archive","games-folders","games-system","games-bios-search","games-bios-files","favorites","games-zip-list","games-zip-extract","games-downloads-list","games-downloads-delete","archive-folders","archive-category","romsgames-platforms","romsgames","series-adjacent","core-list","core-install","",""};
 static int search_on,search_key;
 static int gamez_rename_on,gamez_rename_pending;
 static int rom_rename_on,rom_rename_pending;
@@ -890,6 +890,7 @@ static int read_catalog(const char *path) {
     for(int i=0;i<count;i++)search_dict_remember(titles[i].title);
     filter();return count;
 }
+#include "media_recents.h"
 #include "video_download_ui.h"
 /* A single serial queue for native video and ROM transfers. The queue is RAM-only:
  * X hides the progress UI, never the transfer, and jobs survive library changes. */
@@ -1157,6 +1158,7 @@ static void request_catalog(Browse next,int push,int pop){
         play_after_load=0;snprintf(status,sizeof(status),"ANDROID PREVIEW / ONLINE CATALOG NOT PORTED YET");return;
     }
 #endif
+    if(next.mode==MEDIA_RECENTS_MODE){if(catalog_pid)return;tv_active=auto_active=0;media_recents_open(next);return;}
     if(next.mode==OFFLINE_MODE){if(catalog_pid)return;tv_active=auto_active=0;about=ready_only=0;browse=next;history_size=0;video_download_list();return;}
     if(next.mode==16||next.mode==19){download_queue_add_rom(next);return;}
     int slot=library_filter_slot(next.mode);
@@ -1786,11 +1788,11 @@ static void draw(Uint32 tick) {
     int root_mode=history_size?history[0].mode:browse.mode;
     if(root_mode==14||root_mode==22)root_mode=21;
     if(root_mode==9||root_mode==10||root_mode==31)root_mode=30;
-    const int menu_modes[]={11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
-    const char *const menu_names[]={"TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","DOWNLOADS","LOCAL"};
-    for(int i=0;i<9;i++){
+    const int menu_modes[]={MEDIA_RECENTS_MODE,11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
+    const char *const menu_names[]={"RECENTS","TV","FAVORITES","MOVIES","SERIES","KISSANIME","GAMES","ARCHIVE","DOWNLOADS","LOCAL"};
+    for(int i=0;i<10;i++){
         char line[32];snprintf(line,sizeof(line),"%c %s",root_mode==menu_modes[i]?'>':' ',menu_names[i]);
-        text(30,124+i*21,line,1,root_mode==menu_modes[i]?green:dim,18);
+        text(30,120+i*19,line,1,root_mode==menu_modes[i]?green:dim,18);
     }
     char num[64];snprintf(num,sizeof(num),browse.mode==7?"%d+ TITLES":"%d TITLES",browse.mode?listing_total:total);text(30,310,num,1,white,20);
     if(total&&video_download_offer(&titles[visible[selection]]))text(30,357,ui_hint("[L1] DOWNLOAD TO LOCAL","D DOWNLOAD TO LOCAL"),1,green,24);
@@ -2177,6 +2179,7 @@ static void play(void) {
     restart_position=auto_resume=0;
     viewing=default_viewing; /* Each freshly selected item starts from the saved preference. */
     Title *t=&titles[visible[selection]];
+    media_recents_record(t);
 #ifdef FLXTR_DESKTOP
     if(!strcmp(t->kind,"core-manager")){Browse next={35,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!strcmp(t->kind,"core-download")){
@@ -3288,12 +3291,12 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     if(key==SDLK_F5){settings_on=1;about=0;return;}
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){
-        const int modes[]={11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
+        const int modes[]={MEDIA_RECENTS_MODE,11,FAVORITES_MODE,1,2,7,21,30,OFFLINE_MODE,0};
         int current=history_size?history[0].mode:browse.mode,index=0;
         if(current==14||current==22)current=21;
         if(current==9||current==10||current==31)current=30;
-        for(int i=0;i<9;i++)if(modes[i]==current){index=i;break;}
-        Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%9];
+        for(int i=0;i<10;i++)if(modes[i]==current){index=i;break;}
+        Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%10];
         history_size=0;request_catalog(next,0,0);
     }
     else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
@@ -3442,7 +3445,11 @@ int main(int argc,char **argv) {
     local_catalog=catalog;read_catalog(catalog);start=SDL_GetTicks();controller_used();
     if(initial_library){Browse next={initial_library,1,0,0,0,0,"",""};request_catalog(next,0,0);}
     if(weights_requested)mtv_weights_open();else if(usb_requested)usb_open();
-    else if(!settings_on&&!initial_library&&!keyboard_help)music_open();
+    else if(!settings_on&&!initial_library&&!keyboard_help&&!music_on){
+        Browse home={MEDIA_RECENTS_MODE,1,0,0,0,0,"",""};
+        request_catalog(home,0,0);
+    }
+    else if(music_on)music_open();
     while(running) {
         handoff_poll();
         if(accounts_on){if(party_entry==4)tailscale_refresh();else api_setup_tick(SDL_GetTicks());if(SDL_GetTicks()-last_draw>=100)dirty=1;}

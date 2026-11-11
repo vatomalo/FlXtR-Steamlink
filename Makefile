@@ -32,6 +32,13 @@ test-text-cursor:
 
 .PHONY: test-text-cursor
 
+test-som-ai-player2:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_ai_player2_test.c -o build/som-ai-player2-test
+	./build/som-ai-player2-test
+
+.PHONY: test-som-ai-player2
+
 test-rom-core-category:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/rom_core_category_test.c -o build/rom-core-category-test

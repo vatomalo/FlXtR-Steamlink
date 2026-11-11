@@ -166,6 +166,34 @@ def search(value):
             rows.append(('video', entry['id'], clean(entry.get('title')), clean(entry.get('channel') or entry.get('uploader'))))
     return rows
 
+
+def discover_current(ident):
+    """List neighboring songs from the current YouTube video's radio mix."""
+    if not re.fullmatch(r'[A-Za-z0-9_-]{11}', ident or ''):
+        raise ValueError('Play a YouTube song before using Current Song discovery')
+    with youtube_client(True) as ydl:
+        data = ydl.extract_info(
+            'https://www.youtube.com/watch?v=' + ident + '&list=RD' + ident,
+            download=False)
+    recent = {row[:2] for row in recent_rows()}
+    recent.add(('video', ident))
+    rows = []
+    for entry in islice(data.get('entries', []), 80):
+        if not entry:
+            continue
+        key = entry.get('id', '')
+        if not re.fullmatch(r'[A-Za-z0-9_-]{11}', key) or ('video', key) in recent:
+            continue
+        row = ('video', key, clean(entry.get('title')),
+               clean(entry.get('channel') or entry.get('uploader')))
+        if row[:2] not in {old[:2] for old in rows}:
+            rows.append(row)
+        if len(rows) >= MAX_ROWS:
+            break
+    if not rows:
+        raise ValueError('No new related songs found; try Weighted Genres')
+    return rows
+
 def recommendations():
     """Use YouTube's public radio mix, bounded and without replaying recent IDs."""
     try:
@@ -453,9 +481,15 @@ def run(args):
         recommendations(); return
     if args[0] == 'resolve' and len(args) == 3:
         resolve(args[1], args[2]); return
-    if args[0] not in ('search', 'discover') or len(args) != 2:
+    if len(args) == 2 and args[0] == 'discover-current':
+        for row in discover_current(args[1]):
+            print('\t'.join(clean(cell, 220) for cell in row))
+        return
+    if len(args) != 2 or args[0] not in ('search', 'discover'):
         raise ValueError('Invalid music command')
-    query = args[1].strip()[:220] or 'music'
+    query = args[1].strip()[:220]
+    if not query:
+        raise ValueError('Enter a song or artist before searching')
     key = hashlib.sha256(query.encode()).hexdigest()
     cached = CACHE / (key + '.json')
     rows = None

@@ -70,7 +70,7 @@ static void menu_draw(void){
         SLVideo_SetOverlayDisplayArea(menu_overlay,0,0,1,1);SLVideo_ShowOverlay(menu_overlay);
         return;
     }
-    char rows[15][80],heading[80];int seconds=(int)(seek_scrubbing?seek_target:playback_position());
+    char rows[16][80],heading[80];int seconds=(int)(seek_scrubbing?seek_target:playback_position());
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"%s",seek_scrubbing?"SEEK PREVIEW: LEFT/RIGHT / A PLAY / B CANCEL":"SEEK: LEFT/RIGHT PREVIEW / A PLAY");
@@ -87,8 +87,9 @@ static void menu_draw(void){
     snprintf(rows[12],80,"SAVE BOOKMARK");
     snprintf(rows[13],80,"FREEZE TO BACKGROUND");
     snprintf(rows[14],80,"STOP PLAYBACK");
+    snprintf(rows[15],80,"%s",access("gamez-last-request",R_OK)?"MOONLIGHT: LAUNCH A GAME FIRST":"SWITCH TO MOONLIGHT / SAVE VIDEO");
     menu_text(pixels,pitch,16,heading,0xff74ff84);
-    for(int i=0;i<15;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,49+i*19,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
+    for(int i=0;i<16;i++){char line[80];snprintf(line,sizeof(line),"%c %.70s",i==menu_row?'>':' ',rows[i]);menu_text(pixels,pitch,49+i*19,line,i==menu_row?0xff74ff84:0xffd4e2d6);}
     /* Native overlay progress timeline. Clamp to the known duration;
      * unknown-length live streams show elapsed time without a false percentage. */
     double position=seek_scrubbing?seek_target:playback_position();
@@ -181,8 +182,8 @@ static void menu_command(char c){
         menu_row=1;
     }
     if(!menu_open)return;
-    if(c=='u'&&!seek_scrubbing)menu_row=(menu_row+14)%15;
-    if(c=='d'&&!seek_scrubbing)menu_row=(menu_row+1)%15;
+    if(c=='u'&&!seek_scrubbing)menu_row=(menu_row+15)%16;
+    if(c=='d'&&!seek_scrubbing)menu_row=(menu_row+1)%16;
     if(c=='a'||c=='l'||c=='r'){
         int direction=c=='l'?-1:1;
         switch(menu_row){
@@ -221,6 +222,7 @@ static void menu_command(char c){
         case 12:bookmark_save(playback_position());break;
         case 13:if(bookmark_save(playback_position()))menu_restart(9,playback_position());break;
         case 14:menu_restart(7,playback_position());break;
+        case 15:if(!access("gamez-last-request",R_OK)&&bookmark_save(playback_position()))menu_restart(11,playback_position());break;
         }
     }
     if(menu_open&&!stopped)menu_draw();

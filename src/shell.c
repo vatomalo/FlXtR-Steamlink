@@ -436,6 +436,10 @@ static pid_t download_bg_pid;
 static Title download_bg_title;
 static void downloads_append_active(void);
 static int download_progress_percent(const Title *title);
+static void download_queue_add_video(const Title *title);
+static void download_queue_finished(int success);
+static void download_queue_pump(void);
+static void download_queue_add_rom(Browse request);
 static void music_video_pause(int resume);
 static void launch_player(const Title *t);
 static void play(void);
@@ -887,33 +891,163 @@ static int read_catalog(const char *path) {
     filter();return count;
 }
 #include "video_download_ui.h"
-/* Transfer rows are local-only items, never playable media or remote catalog results. */
-static void downloads_append_active(void){
-    if(download_bg_pid&&count<MAX_TITLES){
-        Title *item=&titles[count++];*item=download_bg_title;
-        snprintf(item->kind,sizeof(item->kind),"download-active");item->url[0]=0;
-        snprintf(item->meta,sizeof(item->meta),"ROM DOWNLOADING / X BROWSE");
+/* A single serial queue for native video and ROM transfers. The queue is RAM-only:
+ * X hides the progress UI, never the transfer, and jobs survive library changes. */
+#define DOWNLOAD_QUEUE_LIMIT 24
+enum { DOWNLOAD_EMPTY, DOWNLOAD_WAITING, DOWNLOAD_RUNNING, DOWNLOAD_DONE, DOWNLOAD_FAILED };
+typedef struct {
+    Browse request;
+    Title title;
+    unsigned serial;
+    int mode,state;
+} DownloadJob;
+static DownloadJob download_jobs[DOWNLOAD_QUEUE_LIMIT];
+static unsigned download_serial;
+static int download_active_job=-1;
+static int download_queue_find_slot(void){
+    for(int i=0;i<DOWNLOAD_QUEUE_LIMIT;i++)
+        if(download_jobs[i].state==DOWNLOAD_EMPTY)return i;
+    return -1;
+}
+static int download_queue_duplicate(const DownloadJob *job){
+    for(int i=0;i<DOWNLOAD_QUEUE_LIMIT;i++){
+        const DownloadJob *old=&download_jobs[i];
+        if(old->state!=DOWNLOAD_WAITING&&old->state!=DOWNLOAD_RUNNING)continue;
+        if(old->mode!=job->mode)continue;
+        if(!job->mode&&!strcmp(old->title.url,job->title.url))return 1;
+        if(job->mode&&old->request.id==job->request.id&&
+            !strcmp(old->request.query,job->request.query))return 1;
     }
-    if(video_download_pid&&count<MAX_TITLES){
-        Title *item=&titles[count++];*item=video_download_title;
-        snprintf(item->kind,sizeof(item->kind),"download-active");item->url[0]=0;
-        snprintf(item->meta,sizeof(item->meta),"VIDEO DOWNLOADING / X BROWSE");
+    return 0;
+}
+static void download_queue_add_video(const Title *title){
+    if(!title||!video_download_supported(title))return;
+    DownloadJob job={0};job.mode=0;job.state=DOWNLOAD_WAITING;job.title=*title;
+    if(browse.mode==6&&browse.name[0])
+        snprintf(job.title.title,sizeof(job.title.title),"%s",browse.name);
+    if(download_queue_duplicate(&job)){
+        snprintf(status,sizeof(status),"ALREADY IN DOWNLOAD QUEUE");return;
+    }
+    int slot=download_queue_find_slot();
+    if(slot<0){snprintf(status,sizeof(status),"DOWNLOAD QUEUE FULL / CLEAR FINISHED JOBS");return;}
+    job.serial=++download_serial;download_jobs[slot]=job;
+    snprintf(status,sizeof(status),"VIDEO ADDED TO DOWNLOAD QUEUE");
+    download_queue_pump();
+}
+static void download_queue_add_rom(Browse request){
+    DownloadJob job={0};job.mode=request.mode;job.request=request;
+    job.state=DOWNLOAD_WAITING;
+    if(total&&selection>=0&&selection<total)job.title=titles[visible[selection]];
+    else snprintf(job.title.title,sizeof(job.title.title),"ROM DOWNLOAD");
+    if(download_queue_duplicate(&job)){
+        snprintf(status,sizeof(status),"ROM ALREADY IN DOWNLOAD QUEUE");return;
+    }
+    int slot=download_queue_find_slot();
+    if(slot<0){snprintf(status,sizeof(status),"DOWNLOAD QUEUE FULL / CLEAR FINISHED JOBS");return;}
+    job.serial=++download_serial;download_jobs[slot]=job;
+    snprintf(status,sizeof(status),"ROM ADDED TO DOWNLOAD QUEUE");
+    download_queue_pump();
+}
+static void download_queue_pump(void){
+    if(download_active_job>=0||download_bg_pid||video_download_pid||catalog_pid)return;
+    int next=-1;
+    for(int i=0;i<DOWNLOAD_QUEUE_LIMIT;i++)
+        if(download_jobs[i].state==DOWNLOAD_WAITING&&
+            (next<0||download_jobs[i].serial<download_jobs[next].serial))next=i;
+    if(next<0)return;
+    DownloadJob *job=&download_jobs[next];
+    if(!job->mode){
+        video_download_begin(&job->title);
+        if(video_download_pid>0){
+            job->state=DOWNLOAD_RUNNING;download_active_job=next;return;
+        }
+    }else{
+        if(access("./greenlink-catalog",X_OK)){
+            snprintf(status,sizeof(status),"ROM DOWNLOADER NOT INSTALLED");
+        }else{
+            mkdir("catalog-cache",0700);
+            unlink("catalog-cache/download-progress");
+            char pg[16],id[16],sn[16],ep[16];
+            Browse *r=&job->request;
+            snprintf(pg,sizeof(pg),"%d",r->page);
+            snprintf(id,sizeof(id),"%d",r->id);
+            snprintf(sn,sizeof(sn),"%d",r->season);
+            snprintf(ep,sizeof(ep),"%d",r->episode);
+            const char *args[]={"greenlink-catalog",browse_kinds[r->mode],
+                pg,r->query,id,sn,ep,NULL};
+            download_bg_title=job->title;
+            download_bg_pid=shell_spawn("./greenlink-catalog",args,
+                "catalog-cache/download-result.tsv","catalog.log");
+            if(download_bg_pid>0){
+                job->state=DOWNLOAD_RUNNING;download_active_job=next;return;
+            }
+            snprintf(status,sizeof(status),"COULD NOT START ROM DOWNLOAD");
+        }
+    }
+    job->state=DOWNLOAD_FAILED;
+}
+static void download_queue_finished(int success){
+    if(download_active_job<0)return;
+    DownloadJob *job=&download_jobs[download_active_job];
+    job->state=success?DOWNLOAD_DONE:DOWNLOAD_FAILED;
+    download_active_job=-1;
+}
+static void download_queue_remove(const Title *title){
+    for(int i=0;i<DOWNLOAD_QUEUE_LIMIT;i++){
+        DownloadJob *job=&download_jobs[i];
+        if(job->state==DOWNLOAD_EMPTY||strcmp(job->title.title,title->title))continue;
+        const char *kind=job->state==DOWNLOAD_WAITING?"download-queued":
+            job->state==DOWNLOAD_RUNNING?"download-active":
+            job->state==DOWNLOAD_DONE?"download-complete":"download-failed";
+        if(strcmp(kind,title->kind))continue;
+        if(job->state==DOWNLOAD_RUNNING){
+            if(job->mode&&download_bg_pid)kill(download_bg_pid,SIGTERM);
+            else if(video_download_pid)kill(video_download_pid,SIGTERM);
+            snprintf(status,sizeof(status),"CANCELLING ACTIVE DOWNLOAD");
+        }else{
+            job->state=DOWNLOAD_EMPTY;
+            snprintf(status,sizeof(status),"DOWNLOAD REMOVED FROM QUEUE");
+        }
+        return;
+    }
+}
+static void downloads_append_active(void){
+    for(int i=0;i<DOWNLOAD_QUEUE_LIMIT&&count<MAX_TITLES;i++){
+        DownloadJob *job=&download_jobs[i];
+        if(job->state==DOWNLOAD_EMPTY)continue;
+        /* Completed videos already appear as playable offline TSV entries. */
+        if(!job->mode&&job->state==DOWNLOAD_DONE)continue;
+        Title *item=&titles[count++];*item=job->title;
+        item->url[0]=0;
+        const char *kind=job->state==DOWNLOAD_WAITING?"download-queued":
+            job->state==DOWNLOAD_RUNNING?"download-active":
+            job->state==DOWNLOAD_DONE?"download-complete":"download-failed";
+        snprintf(item->kind,sizeof(item->kind),"%s",kind);
+        snprintf(item->meta,sizeof(item->meta),"%s %s",
+            job->mode?"ROM":"VIDEO",
+            job->state==DOWNLOAD_WAITING?"QUEUED":
+            job->state==DOWNLOAD_RUNNING?"DOWNLOADING":
+            job->state==DOWNLOAD_DONE?"COMPLETED":"FAILED / RETRY BY SELECTING AGAIN");
     }
     filter();
 }
 static int download_progress_percent(const Title *title){
-    int rom=download_bg_pid&&!strcmp(title->title,download_bg_title.title)&&
-        !strcmp(title->meta,"ROM DOWNLOADING / X BROWSE");
-    FILE *f=fopen(rom?"catalog-cache/download-progress":"video-downloads/progress","r");
+    if(strcmp(title->kind,"download-active")||download_active_job<0)return -1;
+    const DownloadJob *job=&download_jobs[download_active_job];
+    if(strcmp(job->title.title,title->title))return -1;
+    FILE *f=fopen(job->mode?"catalog-cache/download-progress":
+        "video-downloads/progress","r");
     if(!f)return -1;
     int percent=-1;
-    if(rom){long long done=0,size=0;
+    if(job->mode){
+        long long done=0,size=0;
         if(fscanf(f,"%lld %lld",&done,&size)==2&&size>0){
             if(done<0)done=0;
             if(done>size)done=size;
             percent=(int)(done*100/size);
         }
-    }else{long long bytes=0;double seconds=0,duration=0;
+    }else{
+        long long bytes=0;double seconds=0,duration=0;
         if(fscanf(f,"%lld %lf %lf",&bytes,&seconds,&duration)==3&&duration>0){
             if(seconds<0)seconds=0;
             if(seconds>duration)seconds=duration;
@@ -923,16 +1057,23 @@ static int download_progress_percent(const Title *title){
     fclose(f);return percent;
 }
 static void download_draw_progress(const Title *title,int x,int y,int width,int height){
-    if(strcmp(title->kind,"download-active"))return;
-    int percent=download_progress_percent(title);
+    int running=!strcmp(title->kind,"download-active");
+    int waiting=!strcmp(title->kind,"download-queued");
+    int failed=!strcmp(title->kind,"download-failed");
+    int complete=!strcmp(title->kind,"download-complete");
+    if(!running&&!waiting&&!failed&&!complete)return;
+    int percent=running?download_progress_percent(title):(complete?100:0);
     SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
-    /* Unfinished portion of the artwork remains greyed, moving upward as bytes arrive. */
     int grey=percent<0?height:height*(100-percent)/100;
     rect(x,y,width,grey,(SDL_Color){35,43,48,195},1);
     rect(x,y+height-8,width,8,(SDL_Color){35,43,48,215},1);
-    if(percent>=0&&percent>0)rect(x,y+height-8,width*percent/100,8,green,1);
+    if(percent>0)rect(x,y+height-8,width*percent/100,8,green,1);
     SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
-    char label[24];if(percent>=0)snprintf(label,sizeof(label),"%d%%",percent);
+    char label[24];
+    if(waiting)snprintf(label,sizeof(label),"QUEUED");
+    else if(failed)snprintf(label,sizeof(label),"FAILED");
+    else if(complete)snprintf(label,sizeof(label),"DONE");
+    else if(percent>=0)snprintf(label,sizeof(label),"%d%%",percent);
     else snprintf(label,sizeof(label),"DOWNLOADING");
     text(x+5,y+height/2,label,1,white,18);
 }
@@ -1004,7 +1145,7 @@ static void request_catalog(Browse next,int push,int pop){
     }
 #endif
     if(next.mode==OFFLINE_MODE){if(catalog_pid)return;tv_active=auto_active=0;about=ready_only=0;browse=next;history_size=0;video_download_list();return;}
-    if((next.mode==16||next.mode==19)&&download_bg_pid){snprintf(status,sizeof(status),"A ROM DOWNLOAD IS ALREADY RUNNING / OPEN DOWNLOADS");return;}
+    if(next.mode==16||next.mode==19){download_queue_add_rom(next);return;}
     int slot=library_filter_slot(next.mode);
     if(next.mode==22&&next.id==11&&next.page==1&&!pop){next.episode=gamez_genre;next.season=gamez_order;}
     if(slot>=0&&!pop&&browse.mode!=next.mode&&next.page==1&&!next.query[0]&&!next.id&&!next.season){
@@ -2043,7 +2184,7 @@ static void play(void) {
         bios_archive_title=*t;bios_archive_confirm=1;
         snprintf(status,sizeof(status),"ARCHIVE BIOS: VERIFY RIGHTS / A CONFIRM / B CANCEL");return;
     }
-    if(!strcmp(t->kind,"download-active")){snprintf(status,sizeof(status),"DOWNLOAD STILL RUNNING / OPEN DOWNLOADS FOR PROGRESS");return;}
+    if(!strncmp(t->kind,"download-",9)&&strcmp(t->kind,"download-zip")){snprintf(status,sizeof(status),"DOWNLOAD QUEUE / Y REMOVE OR CANCEL");return;}
     if(!strcmp(t->kind,"rom-downloads")){Browse next={28,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!strcmp(t->kind,"download-zip")){Browse next={26,1,t->id,1,0,0,"",""};request_catalog(next,1,0);return;}
     if(!strcmp(t->kind,"archive-folder")){
@@ -2978,13 +3119,14 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         }
         return;
     }
-    if(video_download_pid&&!settings_on&&!player_pid&&!catalog_pid&&
-       (key==SDLK_d||(key==SDLK_y&&browse.mode==OFFLINE_MODE))){
-        kill(video_download_pid,SIGTERM);snprintf(status,sizeof(status),"CANCELLING VIDEO DOWNLOAD");return;
-    }
     if(!settings_on&&!player_pid&&!catalog_pid&&!about&&!search_on&&!music_on&&total&&
        (key==SDLK_d||(key==SDLK_v&&video_download_offer(&titles[visible[selection]]))||(key==SDLK_y&&video_download_supported(&titles[visible[selection]])))){video_download_selected(&titles[visible[selection]]);return;}
-    if(!settings_on&&!player_pid&&!catalog_pid&&browse.mode==OFFLINE_MODE&&key==SDLK_y&&total){video_download_delete_title=titles[visible[selection]];video_download_delete_confirm=1;return;}
+    if(!settings_on&&!player_pid&&!catalog_pid&&browse.mode==OFFLINE_MODE&&key==SDLK_y&&total){
+        if(!strncmp(titles[visible[selection]].kind,"download-",9)){
+            download_queue_remove(&titles[visible[selection]]);video_download_list();return;
+        }
+        video_download_delete_title=titles[visible[selection]];video_download_delete_confirm=1;return;
+    }
     if(!settings_on&&!about&&(browse.mode==14||browse.mode==22||browse.mode==FAVORITES_MODE)&&key==SDLK_y&&total&&
        (!strcmp(titles[visible[selection]].kind,"game")||!strcmp(titles[visible[selection]].kind,"game-zip"))){
         const Title *title=&titles[visible[selection]];
@@ -3001,7 +3143,11 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     }
     if(!settings_on&&!about&&(key==SDLK_f||key==SDLK_F7)){favorites_toggle();return;}
     if(!settings_on&&!about&&browse.mode==28&&key==SDLK_y&&total){
-        if(!strcmp(titles[visible[selection]].kind,"download-active")){snprintf(status,sizeof(status),"DOWNLOAD IN PROGRESS / CANNOT DELETE PARTIAL FILE");return;}
+        if(!strncmp(titles[visible[selection]].kind,"download-",9)&&
+            strcmp(titles[visible[selection]].kind,"download-zip")){
+            download_queue_remove(&titles[visible[selection]]);
+            return;
+        }
         Browse next={29,1,titles[visible[selection]].id,0,0,0,"",""};
         request_catalog(next,0,0);return;
     }
@@ -3350,6 +3496,7 @@ int main(int argc,char **argv) {
             int code=0;pid_t done=waitpid(download_bg_pid,&code,WNOHANG);
             if(done==download_bg_pid){
                 download_bg_pid=0;dirty=1;
+                download_queue_finished(WIFEXITED(code)&&!WEXITSTATUS(code));
                 memset(library_pages,0,sizeof(library_pages));
                 snprintf(status,sizeof(status),WIFEXITED(code)&&!WEXITSTATUS(code)?
                     "ROM DOWNLOAD COMPLETE / REFRESH GAMES OR DOWNLOADS":
@@ -3359,6 +3506,7 @@ int main(int argc,char **argv) {
             }
         }
         if(video_download_pid){video_download_finish();dirty=1;}
+        download_queue_pump();
         if(favorites_art_tick())dirty=1;
         if(rom_assets_tick())dirty=1;
         if(rom_send_tick())dirty=1;

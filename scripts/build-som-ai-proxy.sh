@@ -7,7 +7,7 @@ set +u
 source "$sdk/setenv.sh"
 set -u
 mkdir -p build/som-ai
-"$CC" -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared \
+$CC -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared \
   src/som_ai_proxy.c -o build/som-ai/som_ai_proxy_libretro.so -ldl
 "$STRIP" build/som-ai/som_ai_proxy_libretro.so
 file build/som-ai/som_ai_proxy_libretro.so

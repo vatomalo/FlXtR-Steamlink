@@ -1,0 +1,20 @@
+FlXtR PSP native port - development test 1
+
+This is an incomplete native port, not Android feature parity.
+New: paged popular movie and series catalogs using the Android metadata API.
+Retained: direct MP4 playlist playback. Catalog titles cannot play yet.
+Not implemented: search, seasons, provider resolution, HLS, subtitles,
+Android-style graphics, downloads, TV and music features.
+The 20 MiB application heap remains unchanged. All-model compatibility is unverified.
+Updates are disabled so this build cannot replace itself with the old beta.
+
+Extract FlXtR into ef0:/PSP/GAME/ on PSP Go or ms0:/PSP/GAME/ on Memory Stick.
+Custom firmware is required. Keep cacert.pem beside EBOOT.PBP.
+PPSSPP: open FlXtR/EBOOT.PBP. Network and firmware decoding may differ on hardware.
+
+Square: Local MP4 / Movies / Series. Left/right: catalog page.
+Triangle: reload. D-pad up/down: select. Cross: play local MP4.
+L/R: saved Wi-Fi profile. Circle: cancel network/playback. HOME: exit.
+Configure a compatible saved Wi-Fi connection and correct system clock first.
+Online requests are bounded and synchronous; Circle cancels them.
+If something fails, return app.log and media.log from the FlXtR folder.

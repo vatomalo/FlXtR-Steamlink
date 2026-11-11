@@ -284,6 +284,7 @@ static char adaptive_title_key[16];
 static int quality_height(void);
 static int adaptive_lookup_fallback(void);
 #include "settings_tabs.h"
+#include "ambient_effects.h"
 static int music_autoplay=1;
 static int bios_archive_confirm,bios_selected,bios_confirm,bios_on,monochrome_menu,menu_theme,settings_on,quality_setting=DEFAULT_QUALITY,buffer_setting=0,disk_setting=1,subtitle_setting=1,subtitle_scale=2,subtitle_delay;
 static const int qualities[]={480,720,1080,720},buffer_seconds[]={15,15,20,25,30,45,60,80,128};
@@ -326,7 +327,7 @@ static void save_settings(void){
     fprintf(f,"quality=%d\nbuffer=%d\ndisk=%d\ncoverflow=%d\nsubtitles=%d\nscale=%d\ndelay=%d\n",quality_setting,buffer_setting,disk_setting,coverflow,subtitle_setting,subtitle_scale,subtitle_delay);
     fprintf(f,"game_output=%d\ngame_view=%d\ngame_performance=%d\nmusic_autoplay=%d\n",game_output,game_view,game_performance,music_autoplay);
     fprintf(f,"tv_breaks=%d\nmenu_monochrome=%d\ngame_autostate=%d\n",tv_breaks,monochrome_menu,game_autostate);
-    fprintf(f,"menu_theme=%d\n",menu_theme);
+    fprintf(f,"menu_theme=%d\nambient_effect=%d\nambient_density=%d\nambient_speed=%d\n",menu_theme,ambient_effect,ambient_density,ambient_speed);
     fprintf(f,"tv_rating=%d\ntv_popularity=%d\ntv_variety=%d\n",tv_rating_weight,tv_popularity_weight,tv_variety_weight);
     FILE *g=fopen("tv-gambits.cfg.next","w");
     if(g){fprintf(g,"rating=%d\npopularity=%d\nvariety=%d\n",tv_rating_weight,tv_popularity_weight,tv_variety_weight);
@@ -371,6 +372,9 @@ static void load_settings(void){
         else if(!strcmp(key,"tv_breaks")&&(value==0||value==1))tv_breaks=value;
         else if(!strcmp(key,"menu_monochrome")&&(value==0||value==1))monochrome_menu=value;
         else if(!strcmp(key,"menu_theme")&&value>=0&&value<MENU_THEMES){menu_theme=value;theme_found=1;}
+        else if(!strcmp(key,"ambient_effect")&&value>=0&&value<AMBIENT_COUNT)ambient_effect=value;
+        else if(!strcmp(key,"ambient_density")&&value>=0&&value<3)ambient_density=value;
+        else if(!strcmp(key,"ambient_speed")&&value>=0&&value<3)ambient_speed=value;
         else if(!strcmp(key,"quality")&&value>=0&&value<QUALITY_CHOICES)quality_setting=value;
         else if(!strcmp(key,"buffer")&&value>=0&&value<9)buffer_setting=value;
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
@@ -1485,6 +1489,7 @@ static void draw(Uint32 tick) {
         if(settings_on||bios_on||filters_on||gamez_options_on||gamez_unapprove_confirm||search_on||about||tv_schedule_on||browse.mode==11)rect(184,80,746,339,theme_pane(225),1);
         SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
     }
+    ambient_draw(renderer,tick);
     if(stars_on&&(!background||monochrome_menu))for(int i=0;i<STARS;i++) {
         int x=star_x[i]*W/256, y=(star_y[i]*H/256+(tick/100)*star_speed[i]/8)%H;
         SDL_Color c={145+(i%3)*40,145+(i%3)*40,145+(i%3)*40,255};rect(x,y,1+(i%9==0),1+(i%9==0),c,1);
@@ -1702,11 +1707,11 @@ text(204,96,party_entry==4?"TAILSCALE":party_entry==3?"CONTINUE ON TV":party_ent
         text(194,474,status,1,green,86);
     }else if(settings_on){
 #ifdef FLXTR_DESKTOP
-const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE"};
+const char *labels[]={"QUALITY TARGET","PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE","BACKGROUND EFFECT","EFFECT DENSITY","EFFECT SPEED"};
 #else
-const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE"};
+const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW","SUBTITLES","SUBTITLE SIZE","SUBTITLE DELAY","TV SCHEDULE","TV COMMERCIALS","MENU THEME","GAME BIOS","GAME AUTO RESUME","TV RATING WEIGHT","TV POPULARITY WEIGHT","TV VARIETY WEIGHT","API ACCOUNTS","PARTY GAMES","AUTOPLAY SERIES","AUTO UPDATES","GAME OUTPUT","AUTOPLAY NEXT SONG","MUSIC PLAYER","GAME SCALING","SAMBA DOWNLOAD","SAMBA PASSWORD","SAMBA SHARING","VIDEO SCALING","DEFAULT CORES","ROM PERFORMANCE","MTV GENRE","USB STORAGE SETUP","MTV GENRE WEIGHTS","FUSION GENRE","CONTINUE ON TV","TAILSCALE","STREAM AUDIO OUTPUT","TEST STREAM AUDIO","STREAM RESOLUTION","STREAM FRAME RATE","STREAM BITRATE","BACKGROUND EFFECT","EFFECT DENSITY","EFFECT SPEED"};
 #endif
-char values[40][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
+char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
         const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
@@ -1736,6 +1741,9 @@ char values[40][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
         snprintf(values[37],40,"%dP",stream_resolution);
         snprintf(values[38],40,"%d FPS",stream_fps);
         snprintf(values[39],40,"%d MBPS",stream_bitrate/1000);
+        snprintf(values[40],40,"%s",ambient_names[ambient_effect]);
+        snprintf(values[41],40,"%s",ambient_density==0?"LOW":ambient_density==1?"MEDIUM":"HIGH");
+        snprintf(values[42],40,"%s",ambient_speed==0?"SLOW":ambient_speed==1?"NORMAL":"FAST");
 #if defined(FLXTR_DESKTOP) || defined(_WIN32)
         for(int i=23;i<=25;i++)snprintf(values[i],40,"STEAM LINK ONLY");
 #endif
@@ -2959,6 +2967,9 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
             int id=settings_id();
             if(key!=SDLK_RETURN&&(id==7||id==10||id==15||id==16||id==21||id==27||(id>=23&&id<=25)))return;
             switch(id){
+                case 40:ambient_effect=(ambient_effect+step+AMBIENT_COUNT)%AMBIENT_COUNT;break;
+                case 41:ambient_density=(ambient_density+step+3)%3;break;
+                case 42:ambient_speed=(ambient_speed+step+3)%3;break;
                 case 35:streaming_audio_step(step);break;
                 case 36:
 #if defined(FLXTR_DESKTOP) || defined(_WIN32) || defined(__ANDROID__)
@@ -3185,7 +3196,7 @@ int main(int argc,char **argv) {
         SDL_Event event;
         /* Worker completion has no SDL event: poll it promptly without a busy loop. */
         int worker_pending=catalog_pid||update_pid||video_download_pid||rom_send_pid||favorite_art_pid;
-        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:worker_pending?25:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||flow_animating())?33:250)) do {
+        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:worker_pending?25:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||ambient_animated()||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT){if(!usb_on||usb_stage!=5)running=0;}
             else if(event.type==SDL_KEYDOWN){if(!usb_on||!event.key.repeat){keyboard_used=1;desktop_key(event.key.keysym.sym,(SDL_Keymod)event.key.keysym.mod);}}
@@ -3261,7 +3272,7 @@ int main(int argc,char **argv) {
         }
         if(preview_tick())dirty=1;
         Uint32 now=SDL_GetTicks();
-        if(dirty||(usb_on&&now-last_draw>=250)||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+        if(dirty||(usb_on&&now-last_draw>=250)||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||ambient_animated()||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid&&(!usb_on||usb_stage!=1)){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;

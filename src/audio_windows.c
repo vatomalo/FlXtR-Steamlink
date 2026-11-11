@@ -17,7 +17,9 @@ static int audio_main(int argc,char **argv){
     int good=fgets(url,sizeof(url),f)!=NULL;
     if(!fgets(agent,sizeof(agent),f))strcpy(agent,"Mozilla/5.0");
     fclose(f);url[strcspn(url,"\r\n")]=0;agent[strcspn(agent,"\r\n")]=0;
-    if(!good||(!strncmp(url,"http://",7)?0:strncmp(url,"https://",8)))return 2;
+    if(!good)return 2;
+    int local=url[0]=='/'||(((url[0]>='A'&&url[0]<='Z')||(url[0]>='a'&&url[0]<='z'))&&url[1]==':'&&(url[2]=='/'||url[2]=='\\'));
+    if(!local&&strncmp(url,"http://",7)&&strncmp(url,"https://",8))return 2;
     mpv_handle *mpv=mpv_create();if(!mpv)return 1;
     mpv_set_option_string(mpv,"config","no");mpv_set_option_string(mpv,"video","no");
     mpv_set_option_string(mpv,"terminal","no");

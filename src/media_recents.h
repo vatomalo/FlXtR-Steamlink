@@ -112,6 +112,7 @@ static void media_recents_open(Browse next){
     if(offset&&shown)memmove(titles,titles+offset,(size_t)shown*sizeof(Title));
     count=shown;
     filter();
+    if(next.selected>=0&&next.selected<total)selection=next.selected;
     snprintf(status,sizeof(status),listing_total?
         "RECENTLY OPENED MEDIA / A RESUME / X CHANGE LIBRARY":
         "NO RECENTS YET / VISIT MOVIES, SERIES, ANIME OR GAMES WITH X");

@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include <SDL.h>
+#include "global_audio_output.h"
 #include <SLVideo.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -604,7 +605,7 @@ int main(int argc,char **argv) {
         if(!swr||swr_init(swr)<0)goto done;
         SDL_AudioSpec wanted;SDL_zero(wanted);wanted.freq=48000;wanted.format=AUDIO_S16SYS;wanted.channels=2;wanted.samples=1024;
         SDL_AudioSpec obtained;
-        device=SDL_OpenAudioDevice(NULL,0,&wanted,&obtained,0);
+        device=flxtr_open_audio_output(&wanted,&obtained);
         if(!device){fprintf(stderr,"Audio output unavailable: %s\n",SDL_GetError());goto done;}
         audio_period=obtained.samples;
     }

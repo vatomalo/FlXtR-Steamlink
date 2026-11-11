@@ -32,6 +32,13 @@ test-text-cursor:
 
 .PHONY: test-text-cursor
 
+test-global-audio:
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/global_audio_output_test.c -o build/global-audio-output-test $(SDL_LIBS)
+	SDL_AUDIODRIVER=dummy ./build/global-audio-output-test
+
+.PHONY: test-global-audio
+
 test-tv-fantasy:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/tv_fantasy_test.c -o build/tv-fantasy-test

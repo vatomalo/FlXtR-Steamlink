@@ -50,6 +50,7 @@ build/greenlink-catalog: src/rom_state_preferences.h src/rom_state_runtime.h
 build/greenlink-catalog: src/catalog.c src/rom_cover_preferences.h src/rom_cheat_runtime.h src/series_navigation.h src/response_cache.h src/romsgames.h src/games.h src/game_scaling.h src/rom_core_preferences.h src/core_geometry.h src/vendor/libretro.h src/kissanime.h src/megaplay.h src/archive.h src/tv_catalog.h src/tv_schedule.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/catalog.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl -ljson-c -lcrypto
+build/greenlink: src/ambient_effects.h
 build/greenlink: src/shell.c src/rom_assets_ui.h src/desktop_theme.h src/youtube_video.h src/music_ui.h src/child_process.h src/platform_process.h src/platform_files.h src/platform_paths.h src/platform_net.h src/platform_pipe.h src/api_setup.h src/phone_features.h src/server_preferences.h src/mtv_preferences.h src/preview_inset.h src/party_questions.h src/wifi_pairing.h src/vendor/qrcodegen.c src/vendor/qrcodegen.h src/font.h src/video_layout.h src/tv_schedule.h src/tv_airing.h src/tv_progress.h src/tv_history.h src/tv_play_history.h src/game_output.h src/settings_tabs.h src/settings_services.h src/rom_core_preferences.h src/game_scaling.h src/browse_filters.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/shell.c -o $@ $(SDL_LIBS) -lSDL2_image -lcurl

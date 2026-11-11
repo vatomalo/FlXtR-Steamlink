@@ -1801,7 +1801,7 @@ static void draw(Uint32 tick) {
         text(30,124+i*27,line,2,root_group==i?green:dim,18);
     }
     /* The tab strip lives in the header, so posters and preview never shift. */
-    if(library_can_focus_tabs()){
+    if(library_can_focus_tabs()&&!settings_on&&!search_on&&!about&&!filters_on&&!accounts_on){
         int active=library_current_tab();
         const char *const *labels=root_group==LIB_GROUP_WATCH?library_watch_labels:library_files_labels;
         for(int tab=0;tab<3;tab++){
@@ -3074,6 +3074,15 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         return;
     }
     if(catalog_pid){
+        if(key==SDLK_F2&&!auto_active&&pending.mode!=19&&pending.mode!=16){
+            int group=(library_group_for_mode(pending.mode)+1)%LIB_GROUP_COUNT;
+            kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
+            if(prefetch_pid){kill(prefetch_pid,SIGKILL);waitpid(prefetch_pid,NULL,0);prefetch_pid=0;}
+            library_tabs_focused=0;play_after_load=0;tv_active=0;history_size=0;
+            Browse next={0,1,0,0,0,0,"",""};
+            next.mode=library_group_entry_mode(group);
+            request_catalog(next,0,0);return;
+        }
         if(key==SDLK_F2&&(pending.mode==19||pending.mode==16)){
             download_bg_pid=catalog_pid;catalog_pid=0;
             snprintf(status,sizeof(status),"ROM DOWNLOAD CONTINUES IN BACKGROUND / OPEN DOWNLOADS");return;
@@ -3308,7 +3317,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     if(about&&(key==SDLK_RETURN||key==SDLK_SPACE||key==SDLK_u)){if(about_row==1&&key!=SDLK_u)accounts_open(1);else start_update();return;}
     if(key==SDLK_u){start_update();return;}
     if(key==SDLK_F5){settings_on=1;about=0;return;}
-    if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode){Browse next={0,1,0,0,0,0,"",""};request_catalog(next,0,0);}else running=0; }
+    if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE) { if(about)about=0;else if(history_size)request_catalog(history[history_size-1],0,1);else if(browse.mode!=MEDIA_RECENTS_MODE){Browse next={MEDIA_RECENTS_MODE,1,0,0,0,0,"",""};library_tabs_focused=0;request_catalog(next,0,0);}else running=0; }
     else if(key==SDLK_F2){
         int next_group=(library_current_group()+1)%LIB_GROUP_COUNT;
         Browse next={0,1,0,0,0,0,"",""};

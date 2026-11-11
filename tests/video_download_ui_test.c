@@ -32,6 +32,51 @@ int main(void){
     }
     assert(!video_download_requested&&!player_pid&&access("PLAYER_STARTED",F_OK));
     video_download_list();assert(total==1&&!strcmp(titles[0].title,"Resolved Movie"));
-    puts("PASS: explicit download, literal URL argv, completed index, offline listing without network, duplicate guard, confirmed deletion");
+    /* A video, ROM, and second video must run serially in enqueue order. */
+    Title first={0},last={0};
+    snprintf(first.title,sizeof(first.title),"Queued Video One");
+    snprintf(first.kind,sizeof(first.kind),"source");
+    snprintf(first.url,sizeof(first.url),"http://localhost/queued-one.mp4");
+    snprintf(last.title,sizeof(last.title),"Queued Video Two");
+    snprintf(last.kind,sizeof(last.kind),"source");
+    snprintf(last.url,sizeof(last.url),"http://localhost/queued-two.mp4");
+    video_download_start(&first);
+    assert(video_download_pid>0&&download_active_job>=0);
+    pid_t first_pid=video_download_pid;
+    Browse rom={16,1,2,0,0,0,"",""};
+    download_queue_add_rom(rom);
+    video_download_start(&last);
+    assert(video_download_pid==first_pid);
+    int waiting=0;for(int i=0;i<DOWNLOAD_QUEUE_LIMIT;i++)
+        if(download_jobs[i].state==DOWNLOAD_WAITING)waiting++;
+    assert(waiting==2);
+    start=SDL_GetTicks();
+    while(video_download_pid){assert(SDL_GetTicks()-start<5000);video_download_finish();SDL_Delay(1);}
+    download_queue_pump();
+    assert(download_bg_pid>0&&download_active_job>=0);
+    start=SDL_GetTicks();
+    while(download_bg_pid){
+        int code=0;pid_t done=waitpid(download_bg_pid,&code,WNOHANG);
+        if(done==download_bg_pid){
+            download_bg_pid=0;
+            download_queue_finished(WIFEXITED(code)&&!WEXITSTATUS(code));
+        }
+        assert(SDL_GetTicks()-start<5000);SDL_Delay(1);
+    }
+    download_queue_pump();
+    assert(video_download_pid>0);
+    start=SDL_GetTicks();
+    while(video_download_pid){assert(SDL_GetTicks()-start<5000);video_download_finish();SDL_Delay(1);}
+    for(int i=0;i<DOWNLOAD_QUEUE_LIMIT;i++)
+        assert(download_jobs[i].state!=DOWNLOAD_WAITING&&
+            download_jobs[i].state!=DOWNLOAD_RUNNING);
+    video_download_list();
+    int saved_count=0,done_count=0;
+    for(int i=0;i<total;i++){
+        if(!strcmp(titles[visible[i]].kind,"offline"))saved_count++;
+        if(!strcmp(titles[visible[i]].kind,"download-done"))done_count++;
+    }
+    assert(saved_count==3&&done_count==1);
+    puts("PASS: offline saves, duplicate guard, deletion and FIFO video-ROM-video queue");
     SDL_Quit();return 0;
 }

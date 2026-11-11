@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import random
 import ssl
 import sys
 import time
@@ -16,6 +17,63 @@ from urllib.parse import urlsplit, parse_qs
 
 CACHE = Path('music-cache')
 MAX_ROWS = 100
+AUDIO_EXTENSIONS = {'.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wav'}
+
+def stored_rows(filename, limit=50):
+    try:
+        rows = []
+        for line in (CACHE / filename).read_text(encoding='utf-8').splitlines()[:limit]:
+            cells = line.split('\t')
+            if len(cells) == 4 and cells[0] in ('video', 'query', 'local'):
+                rows.append(tuple(cells))
+        return rows
+    except OSError:
+        return []
+
+def recent_rows():
+    return stored_rows('recents.tsv')
+
+def remember(row):
+    # A durable, deduplicated history; never persist expiring stream URLs.
+    rows = [row] + [old for old in recent_rows() if old[:2] != row[:2]]
+    atomic(CACHE / 'recents.tsv', ''.join('\t'.join(cells) + '\n' for cells in rows[:50]))
+
+def library_rows():
+    roots = [Path('music'), Path('downloads'), Path('local'), Path.home() / 'Music']
+    roots += [Path('/media'), Path('/mnt')]
+    rows = stored_rows('saved.tsv', 100)
+    rows = [(kind, key, title, artist if artist.startswith('Saved / ') else 'Saved / ' + artist) for kind, key, title, artist in rows]
+    if len(rows) >= MAX_ROWS:
+        return rows[:MAX_ROWS]
+    seen, visited = set(), 0
+    saved_keys = {row[1] for row in rows if row[0] == 'local'}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for directory, folders, files in os.walk(root, followlinks=False):
+            folders[:] = sorted(f for f in folders if not f.startswith('.'))
+            if len(Path(directory).relative_to(root).parts) >= 5:
+                folders[:] = []
+            visited += 1
+            if visited > 2000:
+                return rows
+            for name in sorted(files):
+                path = Path(directory) / name
+                if path.suffix.lower() not in AUDIO_EXTENSIONS:
+                    continue
+                try:
+                    key = str(path.resolve())
+                    stat = path.stat()
+                except OSError:
+                    continue
+                identity = (stat.st_dev, stat.st_ino)
+                if identity in seen or key in saved_keys or len(key.encode('utf-8')) > 220 or any(c in key for c in '\t\r\n'):
+                    continue
+                seen.add(identity)
+                rows.append(('local', key, clean(path.stem), clean('On device / ' + str(path.parent))))
+                if len(rows) >= MAX_ROWS:
+                    return rows
+    return rows
 
 def clean(value, limit=150):
     value = unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode()
@@ -129,6 +187,14 @@ def recommendations():
     raise ValueError('No new YouTube recommendations available / START to search')
 
 def resolve(kind, value):
+    if kind == 'local':
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS or any(c in value for c in '\t\r\n'):
+            raise ValueError('Local audio file is missing or unsupported')
+        atomic(CACHE / 'stream.txt', str(path) + '\nMozilla/5.0\n')
+        atomic(CACHE / 'playing.txt', clean(path.stem) + '\n')
+        remember(('local', str(path), clean(path.stem), 'On device'))
+        return
     if kind == 'video' and re.fullmatch(r'[A-Za-z0-9_-]{11}', value):
         query = 'https://www.youtube.com/watch?v=' + value
     elif kind == 'query' and 0 < len(value) <= 220:
@@ -150,6 +216,7 @@ def resolve(kind, value):
         atomic(CACHE / 'playing.txt', clean(info.get('title')) + '\n')
         ident = info.get('id', '')
         if re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
+            remember(('video', ident, clean(info.get('title')), clean(info.get('channel') or info.get('uploader'))))
             try:
                 history = json.loads((CACHE / 'history.txt').read_text())
                 if not isinstance(history, list):
@@ -374,6 +441,10 @@ def atomic(path, text):
 
 def run(args):
     CACHE.mkdir(mode=0o700, exist_ok=True)
+    if args == ['library']:
+        for row in library_rows():
+            print('\t'.join(row))
+        return
     if len(args) == 3 and args[0] == 'preview':
         preview_source(args[2], args[1]); return
     if len(args) in (2,3) and args[0] in ('video', 'video-muxed', 'tv-video', 'tv-video-muxed'):
@@ -382,7 +453,7 @@ def run(args):
         recommendations(); return
     if args[0] == 'resolve' and len(args) == 3:
         resolve(args[1], args[2]); return
-    if args[0] != 'search' or len(args) != 2:
+    if args[0] not in ('search', 'discover') or len(args) != 2:
         raise ValueError('Invalid music command')
     query = args[1].strip()[:220] or 'music'
     key = hashlib.sha256(query.encode()).hexdigest()
@@ -397,8 +468,12 @@ def run(args):
         rows = search(query)
         atomic(cached, json.dumps(rows))
         # Three recent result screens; no growing library daemon/database.
-        for old in sorted((p for p in CACHE.glob('*.json') if re.fullmatch(r'[0-9a-f]{64}\.json', p.name)), key=lambda p: p.stat().st_mtime, reverse=True)[3:]:
+        for old in sorted((p for p in CACHE.glob('*.json') if p != cached and re.fullmatch(r'[0-9a-f]{64}\.json', p.name)), key=lambda p: p.stat().st_mtime, reverse=True)[2:]:
             old.unlink(missing_ok=True)
+    if args[0] == 'discover':
+        recent = {row[:2] for row in recent_rows()}
+        rows = [row for row in rows if isinstance(row, (tuple, list)) and len(row) == 4 and tuple(row[:2]) not in recent]
+        random.shuffle(rows)
     for row in rows[:MAX_ROWS]:
         if isinstance(row, (list, tuple)) and len(row) == 4:
             print('\t'.join(clean(cell, 220) for cell in row))
@@ -408,6 +483,6 @@ if __name__ == '__main__':
         run(sys.argv[1:])
     except Exception as error:
         CACHE.mkdir(mode=0o700, exist_ok=True)
-        atomic(CACHE / 'error.txt', clean(str(error), 180))
+        atomic(CACHE / ('browse-error.txt' if os.environ.get('FLXTR_MUSIC_BROWSE') else 'error.txt'), clean(str(error), 180))
         print('Music lookup failed: ' + clean(str(error), 180), file=sys.stderr)
         sys.exit(1)

@@ -25,7 +25,8 @@ int main(int argc,char **argv){
     char url[16002],agent[502];FILE *f=fopen(argv[1],"r");if(!f)return 2;
     if(!fgets(url,sizeof(url),f)||!strchr(url,'\n')||!fgets(agent,sizeof(agent),f)){fclose(f);return 2;}
     fclose(f);url[strcspn(url,"\r\n")]=0;agent[strcspn(agent,"\r\n")]=0;
-    if(strncmp(url,"https://",8))return 2;
+    int local=url[0]=='/';
+    if(!local&&strncmp(url,"https://",8))return 2;
     signal(SIGTERM,stop);signal(SIGINT,stop);signal(SIGUSR1,pause_request);
     av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     AVFormatContext *fmt=avformat_alloc_context();AVCodecContext *decoder=NULL;
@@ -34,7 +35,7 @@ int main(int argc,char **argv){
     if(!fmt)goto done;
     fmt->interrupt_callback=(AVIOInterruptCB){interrupt,NULL};
     AVDictionary *options=NULL;
-    av_dict_set(&options,"protocol_whitelist","https,tls,tcp,crypto",0);
+    av_dict_set(&options,"protocol_whitelist",local?"file":"https,tls,tcp,crypto",0);
     av_dict_set(&options,"tls_verify","1",0);
     av_dict_set(&options,"ca_file",access("certs/cacert.pem",R_OK)?"/etc/ssl/certs/ca-certificates.crt":"certs/cacert.pem",0);
     av_dict_set(&options,"user_agent",agent,0);av_dict_set(&options,"rw_timeout","15000000",0);

@@ -26,7 +26,7 @@ static void video_download_list(void){
         char path[80];snprintf(path,sizeof(path),"video-downloads/%.20s",entry->d_name);
         read_catalog(path);
     }closedir(dir);}
-    filter();listing_total=total;listing_pages=1;
+    filter();downloads_append_active();listing_total=total;listing_pages=1;
     snprintf(status,sizeof(status),total?"A PLAY OFFLINE / Y DELETE / X LIBRARY":"NO SAVED VIDEOS / Y DOWNLOAD ON A PLAYABLE SOURCE");
 }
 static void video_download_finish(void){
@@ -47,7 +47,7 @@ static void video_download_finish(void){
         FILE *file=fopen(temp,"w");
         if(file){
             for(char *p=video_download_title.title;*p;p++)if(*p=='\t'||*p=='\r'||*p=='\n')*p=' ';
-            fprintf(file,"%s\tSAVED OFFLINE\t\tphone-files/offline-%s.mkv\toffline\t0\t0\t0\n",video_download_title.title,video_download_key);
+            fprintf(file,"%s\tSAVED OFFLINE\t%s\tphone-files/offline-%s.mkv\toffline\t0\t0\t0\n",video_download_title.title,video_download_title.poster,video_download_key);
             if(fclose(file)||rename(temp,path))snprintf(status,sizeof(status),"VIDEO SAVED / INDEX WRITE FAILED");
             else snprintf(status,sizeof(status),"DOWNLOAD COMPLETE / OPEN DOWNLOADS TO PLAY OFFLINE");
         }else snprintf(status,sizeof(status),"VIDEO SAVED / INDEX WRITE FAILED");
@@ -74,6 +74,26 @@ static void video_download_start(const Title *title){
     char path[96];snprintf(path,sizeof(path),"phone-files/offline-%s.mkv",video_download_key);
     if(!access(path,F_OK)){snprintf(status,sizeof(status),"ALREADY SAVED / OPEN DOWNLOADS");return;}
     mkdir("video-downloads",0700);mkdir("phone-files",0700);unlink("video-downloads/progress");unlink("video-downloads/error");
+    /* Preserve bounded poster artwork before changing library pages. */
+    if(video_download_title.poster[0]){
+        char artwork[80];snprintf(artwork,sizeof(artwork),"video-downloads/%s.bmp",video_download_key);
+        struct stat picture;
+        int good=!stat(video_download_title.poster,&picture)&&S_ISREG(picture.st_mode)&&
+            picture.st_size>=54&&picture.st_size<=192*288*4+4096;
+        FILE *source=good?fopen(video_download_title.poster,"rb"):NULL;
+        FILE *target=source?fopen(artwork,"wb"):NULL;
+        if(!source||!target)good=0;
+        if(good){
+            unsigned char bytes[4096];size_t size;
+            while((size=fread(bytes,1,sizeof(bytes),source))!=0)
+                if(fwrite(bytes,1,size,target)!=size){good=0;break;}
+            if(ferror(source))good=0;
+        }
+        if(source)fclose(source);
+        if(target&&fclose(target))good=0;
+        if(good)snprintf(video_download_title.poster,sizeof(video_download_title.poster),"%s",artwork);
+        else {unlink(artwork);video_download_title.poster[0]=0;}
+    }
     video_download_pid=shell_fork();
     if(video_download_pid==0){
         int log=open("video-download.log",O_WRONLY|O_CREAT|O_TRUNC,0600);

@@ -432,7 +432,10 @@ static char auto_servers[40][32];
 static char playback_server[32];
 static Title auto_title;
 static Uint32 catalog_started;
-static int download_background;
+static pid_t download_bg_pid;
+static Title download_bg_title;
+static void downloads_append_active(void);
+static int download_progress_percent(const Title *title);
 static void music_video_pause(int resume);
 static void launch_player(const Title *t);
 static void play(void);
@@ -884,6 +887,53 @@ static int read_catalog(const char *path) {
     filter();return count;
 }
 #include "video_download_ui.h"
+/* Transfer rows are local-only items, never playable media or remote catalog results. */
+static void downloads_append_active(void){
+    if(download_bg_pid&&count<MAX_TITLES){
+        Title *item=&titles[count++];*item=download_bg_title;
+        snprintf(item->kind,sizeof(item->kind),"download-active");item->url[0]=0;
+        snprintf(item->meta,sizeof(item->meta),"ROM DOWNLOADING / X BROWSE");
+    }
+    if(video_download_pid&&count<MAX_TITLES){
+        Title *item=&titles[count++];*item=video_download_title;
+        snprintf(item->kind,sizeof(item->kind),"download-active");item->url[0]=0;
+        snprintf(item->meta,sizeof(item->meta),"VIDEO DOWNLOADING / X BROWSE");
+    }
+    filter();
+}
+static int download_progress_percent(const Title *title){
+    int rom=download_bg_pid&&!strcmp(title->title,download_bg_title.title)&&
+        !strcmp(title->meta,"ROM DOWNLOADING / X BROWSE");
+    FILE *f=fopen(rom?"catalog-cache/download-progress":"video-downloads/progress","r");
+    if(!f)return -1;
+    int percent=-1;
+    if(rom){long long done=0,size=0;
+        if(fscanf(f,"%lld %lld",&done,&size)==2&&size>0){
+            if(done<0)done=0;if(done>size)done=size;percent=(int)(done*100/size);
+        }
+    }else{long long bytes=0;double seconds=0,duration=0;
+        if(fscanf(f,"%lld %lf %lf",&bytes,&seconds,&duration)==3&&duration>0){
+            if(seconds<0)seconds=0;if(seconds>duration)seconds=duration;
+            percent=(int)(seconds*100/duration);
+        }
+    }
+    fclose(f);return percent;
+}
+static void download_draw_progress(const Title *title,int x,int y,int width,int height){
+    if(strcmp(title->kind,"download-active"))return;
+    int percent=download_progress_percent(title);
+    SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+    /* Unfinished portion of the artwork remains greyed, moving upward as bytes arrive. */
+    int grey=percent<0?height:height*(100-percent)/100;
+    rect(x,y,width,grey,(SDL_Color){35,43,48,195},1);
+    rect(x,y+height-8,width,8,(SDL_Color){35,43,48,215},1);
+    if(percent>=0&&percent>0)rect(x,y+height-8,width*percent/100,8,green,1);
+    SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE);
+    char label[24];if(percent>=0)snprintf(label,sizeof(label),"%d%%",percent);
+    else snprintf(label,sizeof(label),"DOWNLOADING");
+    text(x+5,y+height/2,label,1,white,18);
+}
+
 #include "favorite_art_ui.h"
 
 /* A small RAM-only LRU catalog. Reuse loaded pages until process restart.
@@ -951,6 +1001,7 @@ static void request_catalog(Browse next,int push,int pop){
     }
 #endif
     if(next.mode==OFFLINE_MODE){if(catalog_pid)return;tv_active=auto_active=0;about=ready_only=0;browse=next;history_size=0;video_download_list();return;}
+    if((next.mode==16||next.mode==19)&&download_bg_pid){snprintf(status,sizeof(status),"A ROM DOWNLOAD IS ALREADY RUNNING / OPEN DOWNLOADS");return;}
     int slot=library_filter_slot(next.mode);
     if(next.mode==22&&next.id==11&&next.page==1&&!pop){next.episode=gamez_genre;next.season=gamez_order;}
     if(slot>=0&&!pop&&browse.mode!=next.mode&&next.page==1&&!next.query[0]&&!next.id&&!next.season){
@@ -1011,15 +1062,18 @@ static void request_catalog(Browse next,int push,int pop){
     for(int i=0;i<VISIBLE;i++){char path[80];snprintf(path,sizeof(path),"catalog-cache/poster-%d.next.bmp",i);unlink(path);}
     browse.selected=selection;pending=next;pending_push=push;pending_pop=pop;
     catalog_started=SDL_GetTicks();
-    download_background=0;
-    if(next.mode==19||next.mode==16)unlink("catalog-cache/download-progress");
+    if(next.mode==19||next.mode==16){
+        unlink("catalog-cache/download-progress");
+        if(total&&selection>=0&&selection<total)download_bg_title=titles[visible[selection]];
+        else {memset(&download_bg_title,0,sizeof(download_bg_title));snprintf(download_bg_title.title,sizeof(download_bg_title.title),"ROM DOWNLOAD");}
+    }
     char pg[16],id[16],sn[16],ep[16];
     snprintf(pg,sizeof(pg),"%d",next.page);snprintf(id,sizeof(id),"%d",next.id);
     snprintf(sn,sizeof(sn),"%d",next.season);snprintf(ep,sizeof(ep),"%d",next.episode);
     const char *args[]={"greenlink-catalog",auto_active&&!strcmp(auto_title.kind,"kiss-episode")?
         (next.mode==5?"kiss-source":"kiss-quality"):browse_kinds[next.mode],
         pg,next.query,id,sn,ep,next.mode==6?next.query:"",NULL};
-    catalog_pid=shell_spawn("./greenlink-catalog",args,"catalog-cache/result.tsv","catalog.log");
+    catalog_pid=shell_spawn("./greenlink-catalog",args,(next.mode==16||next.mode==19)?"catalog-cache/download-result.tsv":"catalog-cache/result.tsv","catalog.log");
     if(catalog_pid<0){catalog_pid=0;snprintf(status,sizeof(status),"COULD NOT LOAD CATALOG");}
     else snprintf(status,sizeof(status),"LOADING %s - X SKIP / B CANCEL",browse_labels[next.mode]);
 }
@@ -1106,7 +1160,6 @@ static void finish_catalog(void){
     if(auto_active&&SDL_GetTicks()-catalog_started>70000)kill(catalog_pid,SIGKILL);
     int code;pid_t p=waitpid(catalog_pid,&code,WNOHANG);if(p!=catalog_pid)return;
     catalog_pid=0;
-    download_background=0;
     if(gamez_unapprove_pending){
         gamez_unapprove_pending=0;
         if(WIFEXITED(code)&&!WEXITSTATUS(code)){Browse next=browse;next.page=1;request_catalog(next,0,0);}
@@ -1165,6 +1218,7 @@ static void finish_catalog(void){
     if(pending.mode==14)pending.id=0;
     browse=pending;count=0;ready_only=0;about=0;listing_pages=1;listing_total=0;memset(titles,0,sizeof(titles));read_catalog("catalog-cache/result.tsv");
     if(browse.selected>=0&&browse.selected<total)selection=browse.selected;
+    if(browse.mode==28)downloads_append_active();
     library_cache_store(&browse);
     if((browse.mode<5||browse.mode>=7)&&browse.mode!=23&&browse.mode!=24&&browse.mode<35){prefetch_browse=browse;prefetch_left=browse.page==1?3:2;}
     if((browse.mode==5||browse.mode==6)&&!total)snprintf(status,sizeof(status),"NO SOURCES RETURNED FOR THIS TITLE - B TO RETURN");
@@ -1412,6 +1466,7 @@ static void draw_coverflow(void) {
             SDL_RenderSetClipRect(renderer,&clip);
             SDL_SetTextureAlphaMod(posters[slot],255);SDL_SetTextureColorMod(posters[slot],255,255,255);
         }else {rect(dst.x,dst.y,w,h,(SDL_Color){8,23,14,255},1);text(dst.x+6,dst.y+h/2,"FLXTR",1,(SDL_Color){150,190,160,255},w/6-1);}
+        download_draw_progress(&titles[visible[index]],dst.x,dst.y,w,h);
         if(index==selection){rect(dst.x-2,dst.y-2,w+4,h+4,green,0);rect(dst.x-3,dst.y-3,w+6,h+6,green,0);}
     }
     SDL_RenderSetClipRect(renderer,NULL);
@@ -1816,6 +1871,7 @@ char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
                 dst.w=(int)(iw*scale);dst.h=(int)(ih*scale);dst.x=x+5+(124-dst.w)/2;dst.y=y+5+(142-dst.h)/2;
                 SDL_RenderCopy(renderer,posters[slot],NULL,&dst);
             } else placeholder(dst.x,dst.y,dst.w,dst.h,visible[index]);
+            download_draw_progress(t,dst.x,dst.y,dst.w,dst.h);
             text(x,y+162,t->title,1,index==selection?green:white,22);
             const char *label=!strcmp(t->kind,"core-manager")?"A OPEN CORE DOWNLOADER":!strcmp(t->kind,"core-download")?"A INSTALL MISSING CORE":!strcmp(t->kind,"rg-game")?"A PHONE DOWNLOAD / QR":!strcmp(t->kind,"rg-source")||!strcmp(t->kind,"rg-platform")?"A BROWSE ROMSGAMES":!strcmp(t->kind,"archive")?"BROWSE VIDEO FILES":!strcmp(t->kind,"kiss")?"BROWSE EPISODES":!strcmp(t->kind,"tv")?"BROWSE SEASONS":!strcmp(t->kind,"season")?"BROWSE EPISODES":!strcmp(t->kind,"archive-game")?"A DOWNLOAD GAME":!strcmp(t->kind,"download-zip")?"A BROWSE ZIP / Y DELETE":!strcmp(t->kind,"game-zip")?"A BROWSE ZIP":!strcmp(t->kind,"zip-member")?"A EXTRACT ROM":!strcmp(t->kind,"game")?"A ROM OPTIONS":!strcmp(t->kind,"offline")?"A PLAY OFFLINE / Y DELETE":t->url[0]?"A PLAY / Y DOWNLOAD TO LOCAL":"A PLAY / AUTO SERVER";
             text(x,y+177,label,1,dim,22);
@@ -1874,7 +1930,7 @@ char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
         text(922-(int)strlen(num)*6,455,num,1,dim,25);
     }
     if(bios_archive_confirm){rect(190,210,680,110,green,0);text(207,225,"ARCHIVE BIOS / COPYRIGHT WARNING",2,green,45);text(207,259,"CONFIRM RIGHTS AND SOURCE BEFORE INSTALL",1,white,75);text(207,289,"A DOWNLOAD / B OR X CANCEL",2,green,42);}
-    if(catalog_pid&&!download_background){
+    if(catalog_pid){
         int transfer=pending.mode==19||pending.mode==16;
         rect(190,209,680,112,background?(SDL_Color){248,250,249,255}:(SDL_Color){0,0,0,255},1);
         rect(190,209,680,112,green,0);
@@ -1984,6 +2040,7 @@ static void play(void) {
         bios_archive_title=*t;bios_archive_confirm=1;
         snprintf(status,sizeof(status),"ARCHIVE BIOS: VERIFY RIGHTS / A CONFIRM / B CANCEL");return;
     }
+    if(!strcmp(t->kind,"download-active")){snprintf(status,sizeof(status),"DOWNLOAD STILL RUNNING / OPEN DOWNLOADS FOR PROGRESS");return;}
     if(!strcmp(t->kind,"rom-downloads")){Browse next={28,1,0,0,0,0,"",""};request_catalog(next,1,0);return;}
     if(!strcmp(t->kind,"download-zip")){Browse next={26,1,t->id,1,0,0,"",""};request_catalog(next,1,0);return;}
     if(!strcmp(t->kind,"archive-folder")){
@@ -2811,7 +2868,10 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         return;
     }
     if(catalog_pid){
-        if(key==SDLK_F2&&(pending.mode==19||pending.mode==16)){download_background=1;snprintf(status,sizeof(status),"DOWNLOAD RUNNING / B CANCEL");return;}
+        if(key==SDLK_F2&&(pending.mode==19||pending.mode==16)){
+            download_bg_pid=catalog_pid;catalog_pid=0;
+            snprintf(status,sizeof(status),"ROM DOWNLOAD CONTINUES IN BACKGROUND / OPEN DOWNLOADS");return;
+        }
         if(key==SDLK_F2&&auto_active){
             kill(catalog_pid,SIGKILL);waitpid(catalog_pid,NULL,0);catalog_pid=0;
             if(pending.mode==6){auto_index++;auto_next();}
@@ -2910,6 +2970,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     }
     if(!settings_on&&!about&&(key==SDLK_f||key==SDLK_F7)){favorites_toggle();return;}
     if(!settings_on&&!about&&browse.mode==28&&key==SDLK_y&&total){
+        if(!strcmp(titles[visible[selection]].kind,"download-active")){snprintf(status,sizeof(status),"DOWNLOAD IN PROGRESS / CANNOT DELETE PARTIAL FILE");return;}
         Browse next={29,1,titles[visible[selection]].id,0,0,0,"",""};
         request_catalog(next,0,0);return;
     }
@@ -3197,7 +3258,7 @@ int main(int argc,char **argv) {
         SDL_Event event;
         /* Worker completion has no SDL event: poll it promptly without a busy loop. */
         int worker_pending=catalog_pid||update_pid||video_download_pid||rom_send_pid||favorite_art_pid;
-        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:worker_pending?25:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||ambient_animated()||flow_animating())?33:250)) do {
+        if(SDL_WaitEventTimeout(&event,phone_upload>=0?1:worker_pending||download_bg_pid?25:accounts_on?10:(music_on||music_job==3)?100:((stars_on&&!background)||ambient_animated()||flow_animating())?33:250)) do {
             dirty=1;
             if(event.type==SDL_QUIT){if(!usb_on||usb_stage!=5)running=0;}
             else if(event.type==SDL_KEYDOWN){if(!usb_on||!event.key.repeat){keyboard_used=1;desktop_key(event.key.keysym.sym,(SDL_Keymod)event.key.keysym.mod);}}
@@ -3254,6 +3315,18 @@ int main(int argc,char **argv) {
         if(update_pid){int code;pid_t done=waitpid(update_pid,&code,WNOHANG);
             if(done==update_pid){update_pid=0;dirty=1;if(WIFEXITED(code)&&!WEXITSTATUS(code)){restart_shell=1;running=0;}else snprintf(status,sizeof(status),"UPDATE UNAVAILABLE - INSTALLED BUILD KEPT / SEE UPDATE.LOG");}}
         if(catalog_pid){finish_catalog();dirty=1;}
+        if(download_bg_pid){
+            int code=0;pid_t done=waitpid(download_bg_pid,&code,WNOHANG);
+            if(done==download_bg_pid){
+                download_bg_pid=0;dirty=1;
+                memset(library_pages,0,sizeof(library_pages));
+                snprintf(status,sizeof(status),WIFEXITED(code)&&!WEXITSTATUS(code)?
+                    "ROM DOWNLOAD COMPLETE / REFRESH GAMES OR DOWNLOADS":
+                    "ROM DOWNLOAD FAILED / CHECK CATALOG.LOG");
+                if(browse.mode==28&&!catalog_pid){Browse next=browse;request_catalog(next,0,0);}
+                else if(browse.mode==OFFLINE_MODE)video_download_list();
+            }
+        }
         if(video_download_pid){video_download_finish();dirty=1;}
         if(favorites_art_tick())dirty=1;
         if(rom_assets_tick())dirty=1;
@@ -3273,7 +3346,7 @@ int main(int argc,char **argv) {
         }
         if(preview_tick())dirty=1;
         Uint32 now=SDL_GetTicks();
-        if(dirty||(usb_on&&now-last_draw>=250)||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||ambient_animated()||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
+        if(dirty||((download_bg_pid||video_download_pid)&&(browse.mode==28||browse.mode==OFFLINE_MODE)&&now-last_draw>=100)||(usb_on&&now-last_draw>=250)||((music_job==3||music_job==2)&&now-last_draw>=230)||(browse.mode==11&&now-last_draw>=1000)||(!music_on&&!accounts_on&&((stars_on&&!background)||ambient_animated()||flow_animating())&&now-last_draw>=33)||shot||frames){draw(now-start);last_draw=now;dirty=0;seen++;
             if(shot&&!catalog_pid&&(!usb_on||usb_stage!=1)){int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
                 if(!s||SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_ARGB8888,s->pixels,s->pitch)||SDL_SaveBMP(s,shot)){fprintf(stderr,"Screenshot: %s\n",SDL_GetError());SDL_FreeSurface(s);return 1;}SDL_FreeSurface(s);running=0;}
             if(frames>0&&seen>=frames)running=0;
@@ -3284,7 +3357,7 @@ int main(int argc,char **argv) {
     youtube_stop();
     tv_cancel_prepared();
     api_setup_close();
-    pid_t children[]={player_pid,catalog_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid,rom_send_pid};
+    pid_t children[]={player_pid,catalog_pid,download_bg_pid,prefetch_pid,idle_pid,update_pid,samba_pid,power_pid,video_download_pid,favorite_art_pid,rom_send_pid};
     shutdown_children(children,sizeof(children)/sizeof(children[0]));
     close_ui();for(int i=0;i<4;i++)if(pads[i])SDL_GameControllerClose(pads[i]);
     SDL_Quit();return stream_audio_test?45:moonlight_exit?44:game_exit?43:restart_shell?42:0;

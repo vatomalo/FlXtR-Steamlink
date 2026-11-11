@@ -2810,7 +2810,7 @@ static int phone_dispatch(char *reply,size_t size){
     }else if(!strcmp(phone_pending,"music")){
         if(!player_pid&&!catalog_pid&&!update_pid&&!youtube_pid){
             snprintf(music_query,sizeof(music_query),"%.220s",phone_value);
-            music_edit=0;music_on=1;music_phone_play=1;music_spawn(1);
+            music_open();music_phone_play=1;music_spawn(1);
             if(!music_pid){code=503;music_phone_play=0;snprintf(reply,size,"Music worker could not start.");}
             else snprintf(reply,size,"Searching YouTube; the first matching track will play automatically.");
         }else{code=409;snprintf(reply,size,"FlXtR is busy. Stop playback or wait for the current operation.");}
@@ -2935,7 +2935,7 @@ static void action(SDL_Keycode key) {
         "music-runtime/usr/bin/python3"
 #endif
         ,X_OK))){start_update();return;}
-        tv_active=0;tv_cancel_prepared();music_on=1;return;
+        tv_active=0;tv_cancel_prepared();music_open();return;
     }
     if(favorite_remove_confirm){
         if(key==SDLK_RETURN&&browse.mode==FAVORITES_MODE&&total){
@@ -3246,7 +3246,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
                 case 29:mtv_genre=(mtv_genre+step+MTV_GENRES)%MTV_GENRES;break;
                 case 22:game_view=(game_view+step+GAME_VIEWS)%GAME_VIEWS;break;
                 case 20:music_autoplay=!music_autoplay;break;
-                case 21:settings_on=0;music_on=1;break;
+                case 21:settings_on=0;music_open();break;
                 case 23:if(key==SDLK_RETURN&&!samba_installed())samba_service("install");break;
                 case 24:if(key==SDLK_RETURN)samba_password_open();break;
                 case 25:if(key==SDLK_RETURN){
@@ -3442,6 +3442,7 @@ int main(int argc,char **argv) {
     local_catalog=catalog;read_catalog(catalog);start=SDL_GetTicks();controller_used();
     if(initial_library){Browse next={initial_library,1,0,0,0,0,"",""};request_catalog(next,0,0);}
     if(weights_requested)mtv_weights_open();else if(usb_requested)usb_open();
+    else if(!settings_on&&!initial_library&&!keyboard_help)music_open();
     while(running) {
         handoff_poll();
         if(accounts_on){if(party_entry==4)tailscale_refresh();else api_setup_tick(SDL_GetTicks());if(SDL_GetTicks()-last_draw>=100)dirty=1;}
@@ -3545,6 +3546,7 @@ int main(int argc,char **argv) {
         }
     }
     tv_history_finish("interrupted",tv_history_last_position());
+    music_lookup_stop();
     if(!game_exit||!game_music_keep||!music_rom_handoff())music_stop();
     youtube_stop();
     tv_cancel_prepared();

@@ -16,6 +16,7 @@ static void music_spawn(int job);
 static int music_on,music_edit,music_key,music_count,music_selected,music_job,music_paused,music_play_index,music_phone_play;
 static pid_t music_pid;
 static Uint32 music_started;
+static size_t music_cursor;
 static char music_query[221],music_message[181]="START SEARCH / PASTE A PUBLIC SPOTIFY PLAYLIST URL",music_playing[151];
 static int music_load_rows(const char *path,MusicRow *rows){
     int count=0;
@@ -229,31 +230,34 @@ static void music_video_pause(int resume){
     }
 }
 static void music_backspace(void){
-    size_t n=strlen(music_query);if(!n)return;
-    do{n--;}while(n&&((unsigned char)music_query[n]&0xc0)==0x80);
-    music_query[n]=0;
+    flxtr_cursor_backspace(music_query,&music_cursor);
 }
 static void music_text(const char *s){
-    size_t n=strlen(music_query);
-    while(*s&&n<sizeof(music_query)-1){if((unsigned char)*s>=32)music_query[n++]=*s;s++;}
-    music_query[n]=0;
+    while(*s){
+        if((unsigned char)*s>=32){
+            char value[2]={*s,0};
+            if(!flxtr_cursor_insert(music_query,sizeof(music_query),&music_cursor,value))return;
+        }
+        s++;
+    }
 }
 static const char *music_completion(void);
 static void music_action(SDL_Keycode key){
     if(music_edit){
         size_t n=strlen(music_query);
         if(key==SDLK_ESCAPE){music_edit=0;SDL_StopTextInput();return;}
-        if(key==SDLK_BACKSPACE){if(n)music_backspace();else{music_edit=0;SDL_StopTextInput();}}
+        if(key==SDLK_BACKSPACE){if(music_cursor)music_backspace();else if(!n){music_edit=0;SDL_StopTextInput();}}
         else if(key==SDLK_v&&(SDL_GetModState()&KMOD_CTRL)){char *p=SDL_GetClipboardText();if(p){music_text(p);SDL_free(p);}}
         else if(key==SDLK_TAB){
             const char *completion=music_completion();
-            if(completion)snprintf(music_query,sizeof(music_query),"%s",completion);
+            if(completion){snprintf(music_query,sizeof(music_query),"%s",completion);music_cursor=strlen(music_query);}
         }
         else if(key==SDLK_LEFT&&music_key>0)music_key--;
         else if(key==SDLK_RIGHT&&music_key<39)music_key++;
         else if(key==SDLK_UP&&music_key>=10)music_key-=10;
         else if(key==SDLK_DOWN&&music_key<30)music_key+=10;
-        else if(key==SDLK_F4){char c=search_keys[music_key];if(c=='<'){if(n)music_backspace();}else if(c=='>'){music_edit=0;SDL_StopTextInput();music_spawn(1);}else{char s[2]={c,0};music_text(s);}}
+        else if(key==SDLK_F4){char c=search_keys[music_key];if(c=='<')flxtr_cursor_left(music_query,&music_cursor);else if(c=='>')flxtr_cursor_right(music_query,&music_cursor);else{char value[2]={c,0};music_text(value);}}
+        else if(key==SDLK_INSERT){music_text(" ");}
         else if(key==SDLK_RETURN||key==SDLK_F3){music_edit=0;SDL_StopTextInput();music_spawn(1);}
         return;
     }
@@ -264,7 +268,7 @@ static void music_action(SDL_Keycode key){
         if(log){fprintf(log,"EXIT job=%d pid=%ld paused=%d\n",music_job,(long)music_pid,music_paused);fclose(log);}
         music_on=0;return;
     }
-    if(key==SDLK_F3||key==SDLK_SLASH){music_tab=MUSIC_SEARCH;music_edit=1;music_key=0;SDL_StartTextInput();return;}
+    if(key==SDLK_F3||key==SDLK_SLASH){music_tab=MUSIC_SEARCH;music_edit=1;music_key=0;music_cursor=strlen(music_query);SDL_StartTextInput();return;}
     if(key==SDLK_F5){music_lookup_stop();music_on=0;mtv_weights_open();return;}
     if(key==SDLK_F7||key==SDLK_f){music_save_selected();if(music_tab==MUSIC_LIBRARY)music_lookup(1);return;}
     if(key==SDLK_LEFT||key==SDLK_RIGHT){music_open_tab((music_tab+(key==SDLK_LEFT?3:1))%4);return;}
@@ -323,11 +327,12 @@ static void music_draw(void){
         const char *completion=music_completion();
         if(completion){text(30,105,completion,1,accent,110);text(800,105,"TAB / Y ACCEPT",1,accent,15);}
         text(30,125,music_query,1,white,145);
+        text(30+(int)(music_cursor>137?137:music_cursor)*6,143,"^",1,accent,1);
         for(int i=0;i<40;i++){
             int x=70+(i%10)*80,y=185+(i/10)*53;char c[2]={search_keys[i],0};
             rect(x-5,y-5,46,36,i==music_key?accent:muted,0);text(x+8,y,c,3,accent,1);
         }
-        text(30,425,"A TYPE / B DELETE / START SEARCH / ESC CANCEL",2,muted,70);
+        text(30,425,"A TYPE / TRIANGLE SPACE / < > CURSOR / B DELETE / START SEARCH",1,muted,110);
         text(30,460,"KEYBOARD: CTRL+V PASTES A PLAYLIST LINK",1,muted,90);
     }else{
         static const char *const tabs[]={"RECENTS","DISCOVER","LIBRARY","SEARCH"};

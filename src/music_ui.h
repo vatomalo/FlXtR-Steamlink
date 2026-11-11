@@ -9,7 +9,25 @@ static pid_t music_lookup_pid;
 static Uint32 music_lookup_started;
 enum { MUSIC_RECENTS, MUSIC_DISCOVER, MUSIC_LIBRARY, MUSIC_SEARCH };
 #include "mtv_weights.h"
-static void mtv_fusion_query(int anchor,char *out,size_t size);
+/* Combine VGA or karaoke with a weighted genre, excluding the anchor itself. */
+static void mtv_fusion_query(int anchor,char *out,size_t size){
+    int weights[MTV_GENRES];
+    mtv_weights_load(weights);
+    unsigned int sum=0;
+    for(int i=1;i<MTV_GENRES;i++)
+        if(i!=11&&i!=12)sum+=(unsigned int)weights[i];
+    int genre=0;
+    if(sum){
+        unsigned int chosen=((unsigned int)time(NULL)+(unsigned int)SDL_GetTicks())%sum;
+        for(int i=1;i<MTV_GENRES;i++){
+            if(i==11||i==12)continue;
+            if(chosen<(unsigned int)weights[i]){genre=i;break;}
+            chosen-=(unsigned int)weights[i];
+        }
+    }
+    snprintf(out,size,"%s %s",anchor==11?"video game music": "karaoke",
+        mtv_genre_names[genre]);
+}
 static void mtv_weights_open(void);
 static void music_spawn(int job);
 static int music_on,music_edit,music_key,music_count,music_selected,music_job,music_paused,music_play_index,music_phone_play;

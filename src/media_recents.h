@@ -101,8 +101,18 @@ static void media_recents_open(Browse next){
     count=total=selection=0;listing_pages=1;listing_total=0;
     memset(titles,0,sizeof(titles));
     if(!access("media-recents.tsv",R_OK))read_catalog("media-recents.tsv");
-    listing_total=total;
-    snprintf(status,sizeof(status),total?
+    int available=count;
+    listing_total=available;
+    listing_pages=available?(available+VISIBLE-1)/VISIBLE:1;
+    if(next.page<1||next.page>listing_pages)browse.page=1;
+    int offset=(browse.page-1)*VISIBLE;
+    int shown=available-offset;
+    if(shown>VISIBLE)shown=VISIBLE;
+    if(shown<0)shown=0;
+    if(offset&&shown)memmove(titles,titles+offset,(size_t)shown*sizeof(Title));
+    count=shown;
+    filter();
+    snprintf(status,sizeof(status),listing_total?
         "RECENTLY OPENED MEDIA / A RESUME / X CHANGE LIBRARY":
         "NO RECENTS YET / VISIT MOVIES, SERIES, ANIME OR GAMES WITH X");
 }

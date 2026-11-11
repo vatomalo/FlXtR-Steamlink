@@ -14,7 +14,7 @@ static const SettingsTab settings_tabs[]={
     {"ROMS",6,{22,19,28,10,11,27}},
     {"TV",5,{7,8,12,13,14}},
     {"SERVICES",8,{23,24,25,15,18,30,33,34}},
-    {"GENERAL",3,{3,9,16}},
+    {"GENERAL",6,{3,9,16,40,41,42}},
     {"STREAM",5,{35,36,37,38,39}}
 };
 static int settings_tab,settings_row=-1;

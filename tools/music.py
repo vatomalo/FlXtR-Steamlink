@@ -169,6 +169,12 @@ def search(value):
 
 def discover_current(ident):
     """List neighboring songs from the current YouTube video's radio mix."""
+    if ident == 'current':
+        try:
+            history = json.loads((CACHE / 'history.txt').read_text())
+            ident = history[-1] if isinstance(history, list) and history else ''
+        except (OSError, ValueError):
+            ident = ''
     if not re.fullmatch(r'[A-Za-z0-9_-]{11}', ident or ''):
         raise ValueError('Play a YouTube song before using Current Song discovery')
     with youtube_client(True) as ydl:

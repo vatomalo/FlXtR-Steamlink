@@ -47,8 +47,12 @@ foreach ($label in $experiments.Keys) {
   $hasPatch = (Get-Item $patch).Length -gt 0
   if ($hasPatch) {
     # Git's 3-way mode uses common ancestors, preserving newer work when possible.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $applyOutput = @(git apply --3way --index $patch 2>&1)
-    if ($LASTEXITCODE -ne 0) {
+    $applyCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousPreference
+    if ($applyCode -ne 0) {
       $applyOutput | Out-File (Join-Path $artifacts "$label-conflict.txt")
       # Safe here because this is the clean, dedicated experimental clone.
       git reset --hard HEAD | Out-Null

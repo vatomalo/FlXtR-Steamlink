@@ -457,6 +457,12 @@ static char gamez_unapprove_id[33],gamez_unapprove_title[80];
 static char gamez_rename_id[33];
 static int favorite_remove_confirm;
 static char search_text[80];
+static size_t search_cursor;
+#include "text_cursor.h"
+static void search_insert(const char *value){
+    size_t limit=(gamez_rename_on||rom_rename_on)?sizeof(search_text):65;
+    flxtr_cursor_insert(search_text,limit,&search_cursor,value);
+}
 static const char search_keys[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -<>";
 /* Persistent index of distinct titles encountered across every catalog page.
  * Append only new titles; no old entries are evicted when browsing. */
@@ -1992,12 +1998,14 @@ char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",ada
             text(202,126,search_dict_count?"NO SUGGESTION":"DICTIONARY EMPTY",1,dim,65);
         }
         text(194,154,search_text,2,white,60);
+        /* The marker follows the insertion position, not the selected key. */
+        text(194+(int)(search_cursor>59?59:search_cursor)*12,180,"^",1,green,1);
         for(int i=0;i<40;i++){
             int x=194+(i%10)*64,y=202+(i/10)*48;char ch[2]={search_keys[i],0};
             rect(x,y,48,38,i==search_key?green:dim,0);text(x+15,y+10,ch,2,i==search_key?green:white,1);
         }
         text(194,442,(gamez_rename_on||rom_rename_on)?"A TYPE / B DELETE / START SAVE":completion?"Y ACCEPT SUGGESTION / A TYPE / START SEARCH":"A TYPE / B DELETE / START SEARCH",1,green,76);
-        text(194,467,(gamez_rename_on||rom_rename_on)?"< DELETE    > SAVE    ESC CANCEL":"< DELETE    > SEARCH    ESC CANCEL",1,dim,60);
+        text(194,467,"TRIANGLE SPACE / < > CURSOR / B BACKSPACE / START CONFIRM",1,dim,90);
     }else if(about) {
         text(194,100,"SMALL BY DESIGN",3,green,35);
         wrap(194,155,"A QUIET LIBRARY FOR YOUR STEAM LINK. WHITE METAL, WATER DROPS, AND GREEN PIXELS.",53,4,white);
@@ -2887,7 +2895,7 @@ static void action(SDL_Keycode key) {
                 gamez_options_on=0;
                 if(gamez_options_row==0){
                     strcpy(gamez_rename_id,game->url+6);snprintf(search_text,sizeof(search_text),"%.79s",game->title);
-                    gamez_rename_on=search_on=1;search_key=0;SDL_StartTextInput();
+                    gamez_rename_on=search_on=1;search_key=0;search_cursor=strlen(search_text);SDL_StartTextInput();
                 }else {
                     strcpy(gamez_unapprove_id,game->url+6);snprintf(gamez_unapprove_title,sizeof(gamez_unapprove_title),"%.79s",game->title);
                     gamez_unapprove_confirm=1;
@@ -3076,16 +3084,17 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
     if(search_on){
         size_t n=strlen(search_text);
         if(key==SDLK_ESCAPE){gamez_rename_on=rom_rename_on=search_on=0;SDL_StopTextInput();}
-        else if(key==SDLK_BACKSPACE){if(n)search_text[n-1]=0;else {gamez_rename_on=rom_rename_on=search_on=0;SDL_StopTextInput();}}
+        else if(key==SDLK_BACKSPACE){if(search_cursor)flxtr_cursor_backspace(search_text,&search_cursor);else if(!n){gamez_rename_on=rom_rename_on=search_on=0;SDL_StopTextInput();}}
         else if(key==SDLK_TAB){
             const char *completion=search_completion();
-            if(completion)snprintf(search_text,(gamez_rename_on||rom_rename_on)?sizeof(search_text):65,"%s",completion);
+            if(completion){snprintf(search_text,(gamez_rename_on||rom_rename_on)?sizeof(search_text):65,"%s",completion);search_cursor=strlen(search_text);}
         }
         else if(key==SDLK_RIGHT&&search_key<39)search_key++;
         else if(key==SDLK_LEFT&&search_key>0)search_key--;
         else if(key==SDLK_DOWN&&search_key<30)search_key+=10;
         else if(key==SDLK_UP&&search_key>=10)search_key-=10;
-        else if(key==SDLK_F4){char c=search_keys[search_key];if(c=='<'){if(n)search_text[n-1]=0;}else if(c=='>')action(SDLK_RETURN);else if(n<((gamez_rename_on||rom_rename_on)?79:64)){search_text[n]=c;search_text[n+1]=0;}}
+        else if(key==SDLK_F4){char c=search_keys[search_key];if(c=='<')flxtr_cursor_left(search_text,&search_cursor);else if(c=='>')flxtr_cursor_right(search_text,&search_cursor);else{char value[2]={c,0};search_insert(value);}}
+        else if(key==SDLK_INSERT){search_insert(" ");}
         else if(key==SDLK_RETURN||key==SDLK_F3){
             if(rom_rename_on){
                 if(!search_text[0]){snprintf(status,sizeof(status),"ENTER A ROM TITLE");return;}
@@ -3148,7 +3157,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         const Title *title=&titles[visible[selection]];
         if(strncmp(title->url,"romid:",6)||!rom_key_valid(title->url+6)){snprintf(status,sizeof(status),"RESCAN ROMS BEFORE RENAMING");return;}
         memcpy(rom_rename_key,title->url+6,17);snprintf(search_text,sizeof(search_text),"%s",title->title);
-        rom_rename_on=search_on=1;search_key=0;SDL_StartTextInput();return;
+        rom_rename_on=search_on=1;search_key=0;search_cursor=strlen(search_text);SDL_StartTextInput();return;
     }
     if(!settings_on&&!about&&!search_on&&key==SDLK_F3&&total&&!strcmp(titles[visible[selection]].kind,"game")){
         rom_assets_open(&titles[visible[selection]]);return;
@@ -3299,7 +3308,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
         Browse next={0,1,0,0,0,0,"",""};next.mode=modes[(index+1)%10];
         history_size=0;request_catalog(next,0,0);
     }
-    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);SDL_StartTextInput();}
+    else if((key==SDLK_F3||key==SDLK_SLASH)&&(browse.mode==1||browse.mode==2||browse.mode==7||browse.mode==9||browse.mode==17||browse.mode==23||browse.mode==31)){search_on=1;search_key=0;strcpy(search_text,browse.query);search_cursor=strlen(search_text);SDL_StartTextInput();}
     else if(key==SDLK_F3)about=!about;
     else if(key==SDLK_i)about=!about;
     else if(key==SDLK_x&&!about&&total&&!strcmp(titles[visible[selection]].kind,"game"))rom_launch(&titles[visible[selection]]);
@@ -3466,7 +3475,7 @@ int main(int argc,char **argv) {
             }
             else if(event.type==SDL_TEXTINPUT&&samba_password_on)samba_password_text(event.text.text);
             else if(event.type==SDL_TEXTINPUT&&music_on&&music_edit)music_text(event.text.text);
-            else if(event.type==SDL_TEXTINPUT&&search_on){for(const char *p=event.text.text;*p;p++){size_t n=strlen(search_text);if(n<((gamez_rename_on||rom_rename_on)?79:64)&&((gamez_rename_on||rom_rename_on)?(unsigned char)*p>=32:(isalnum((unsigned char)*p)||*p==' '||*p=='-'))){search_text[n]=(gamez_rename_on||rom_rename_on)?*p:(char)toupper((unsigned char)*p);search_text[n+1]=0;}}}
+            else if(event.type==SDL_TEXTINPUT&&search_on){for(const char *p=event.text.text;*p;p++){size_t n=strlen(search_text);if(n<((gamez_rename_on||rom_rename_on)?79:64)&&((gamez_rename_on||rom_rename_on)?(unsigned char)*p>=32:(isalnum((unsigned char)*p)||*p==' '||*p=='-'))){char insert[2]={(gamez_rename_on||rom_rename_on)?*p:(char)toupper((unsigned char)*p),0};search_insert(insert);}}}
             else if(event.type==SDL_CONTROLLERDEVICEADDED)add_pad(event.cdevice.which);
             else if(event.type==SDL_CONTROLLERDEVICEREMOVED){for(int i=0;i<4;i++)if(pads[i]&&SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i]))==event.cdevice.which){SDL_GameControllerClose(pads[i]);pads[i]=NULL;}}
             else if(event.type==SDL_CONTROLLERAXISMOTION){
@@ -3496,7 +3505,7 @@ int main(int argc,char **argv) {
                     case SDL_CONTROLLER_BUTTON_A:action(samba_password_on||search_on||(music_on&&music_edit)?SDLK_F4:SDLK_RETURN);break;
                     case SDL_CONTROLLER_BUTTON_B:action(samba_password_on?SDLK_ESCAPE:search_on||(music_on&&music_edit)?SDLK_BACKSPACE:SDLK_ESCAPE);break;
                     case SDL_CONTROLLER_BUTTON_X:action(!settings_on&&!rom_options_menu&&!rom_core_menu&&!player_pid&&!music_on&&total&&!strcmp(titles[visible[selection]].kind,"game")?SDLK_x:SDLK_F2);break;
-                    case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_TAB:SDLK_y);break;
+                    case SDL_CONTROLLER_BUTTON_Y:action(search_on||(music_on&&music_edit)?SDLK_INSERT:SDLK_y);break;
                     case SDL_CONTROLLER_BUTTON_LEFTSTICK:action(SDLK_F7);break;
                     case SDL_CONTROLLER_BUTTON_RIGHTSTICK:action(SDLK_F9);break;
                     case SDL_CONTROLLER_BUTTON_BACK:action(SDLK_F5);break;

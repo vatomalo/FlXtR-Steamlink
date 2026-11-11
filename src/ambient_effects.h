@@ -24,9 +24,13 @@ static void ambient_draw(SDL_Renderer *r,Uint32 ticks){
                 int y=(travel-tail)*step;
                 if(y<0||y>=H)continue;
                 uint32_t code=ambient_hash(seed+(uint32_t)(travel-tail)*17u);
-                char glyph[2]={(char)("0123456789ABCDEF"[code%16u]),0};
                 SDL_Color ink=tail==0?(SDL_Color){165,255,190,190}:(SDL_Color){17,185,65,(Uint8)(105-tail*13)};
-                text(x,y,glyph,1,ink,1);
+                SDL_SetRenderDrawColor(r,ink.r,ink.g,ink.b,ink.a);
+                /* 3x5 procedural digital glyphs keep this renderer font-independent. */
+                for(int py=0;py<5;py++)for(int px=0;px<3;px++){
+                    if((ambient_hash(code+(uint32_t)py*11u)>>(px+3))&1u)
+                        SDL_RenderDrawPoint(r,x+px*2,y+py*2);
+                }
             }
         }
     }else{

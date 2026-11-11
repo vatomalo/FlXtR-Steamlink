@@ -32,6 +32,13 @@ test-text-cursor:
 
 .PHONY: test-text-cursor
 
+test-tv-fantasy:
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/tv_fantasy_test.c -o build/tv-fantasy-test
+	./build/tv-fantasy-test
+
+.PHONY: test-tv-fantasy
+
 test-grouped-tabs:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/grouped_library_tabs_test.c -o build/grouped-library-tabs-test

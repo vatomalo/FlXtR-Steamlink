@@ -1,13 +1,14 @@
 #include "tv_schedule.h"
+#include "tv_fantasy.h"
 #include "tv_progress.h"
 #include "tv_history.h"
 #include "tv_play_history.h"
 #include "tv_airing.h"
 static int tv_pick_episode(int genre,int seed,int forced,int requested_season,int requested_episode,int allow_recent,int resume_live){
-    if(genre<0||genre>=TV_MUSIC_VIDEOS)return -1;
+    if(genre<0||genre>=TV_GENRES||genre==TV_MUSIC_VIDEOS)return -1;
     /* Alternate sci-fi with animated comedy from Adult Swim's network. */
     const char *filters[]={"","&with_genres=35","&with_genres=80%7C9648%7C18","&with_genres=10765","&with_genres=16","&with_genres=10759","&with_genres=9648","&with_genres=16&with_networks=80","&with_genres=99","&with_genres=10751","&with_genres=10764","&with_genres=10762","&with_genres=10766","&with_genres=10768","&with_genres=37","&with_genres=10767"};
-    int effective=genre==7&&seed%2==0?3:genre;
+    int effective=genre==TV_FANTASY?3:genre==7&&seed%2==0?3:genre;
     char path[512],title[80],art[512];int id=forced,n=0;json_object *root=NULL;
     if(forced){
         snprintf(path,sizeof(path),"/tv/%d",forced);root=get_json(path);if(!root)return -1;
@@ -36,6 +37,8 @@ static int tv_pick_episode(int genre,int seed,int forced,int requested_season,in
         json_object *candidate=json_object_array_get_idx(shows,i);
         int candidate_id=number(candidate,"id");
         if(candidate_id<1||tv_recent_has(candidate_id,0,0,1))continue;
+        int fantasy=genre==TV_FANTASY?tv_fantasy_score(string(candidate,"name"),string(candidate,"overview")):0;
+        if(genre==TV_FANTASY&&fantasy<=0)continue;
         double rating=0,popularity=0;
         json_object *value=field(candidate,"vote_average");
         if(value)rating=json_object_get_double(value);
@@ -48,7 +51,7 @@ static int tv_pick_episode(int genre,int seed,int forced,int requested_season,in
         unsigned hash=(unsigned)candidate_id*2654435761u^(unsigned)seed*2246822519u;
         hash^=hash>>16;hash*=2246822519u;hash^=hash>>13;
         double novelty=(hash%10000)/1000.0;
-        double score=wr*reliable+wp*pop+wv*novelty;
+        double score=wr*reliable+wp*pop+wv*novelty+(genre==TV_FANTASY?fantasy*8.0:0.0);
         if(score>best){best=score;pick=i;}
     }
     if(pick<0){json_object_put(root);return -1;}

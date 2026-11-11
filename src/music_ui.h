@@ -5,6 +5,7 @@ typedef struct {char kind[8],key[221],title[151],artist[151];} MusicRow;
 static MusicRow music_rows[100];
 static MusicRow music_queue[100],music_track;
 static int music_queue_count,music_advancing,music_tab,music_loaded,music_lookup_job;
+static int music_discover_current; /* 0 = weighted genres; 1 = playing track */
 static pid_t music_lookup_pid;
 static Uint32 music_lookup_started;
 enum { MUSIC_RECENTS, MUSIC_DISCOVER, MUSIC_LIBRARY, MUSIC_SEARCH };
@@ -35,8 +36,11 @@ static int music_load_rows(const char *path,MusicRow *rows){
 }
 static void music_read_rows(const char *path){music_count=music_load_rows(path,music_rows);music_selected=0;}
 static void music_save_selected(void){
-    if(!music_count)return;
-    MusicRow saved[100],row=music_rows[music_selected];
+    MusicRow row={0};
+    if(music_count&&music_selected>=0&&music_selected<music_count)
+        row=music_rows[music_selected];
+    else if((music_job==2||music_job==3)&&music_track.key[0])row=music_track;
+    else{strcpy(music_message,"NO SONG SELECTED / PLAY OR HIGHLIGHT A TRACK");return;}
     int count=music_load_rows("music-cache/saved.tsv",saved),found=-1;
     for(int i=0;i<count;i++)if(!strcmp(saved[i].kind,row.kind)&&!strcmp(saved[i].key,row.key)){found=i;break;}
     if(found<0&&count==100){strcpy(music_message,"SAVED TRACKS FULL / UNSAVE A TRACK FIRST");return;}
@@ -52,7 +56,7 @@ static void music_save_selected(void){
     if(failed||rename("music-cache/saved.next","music-cache/saved.tsv")){
         unlink("music-cache/saved.next");strcpy(music_message,"COULD NOT SAVE TRACK / CHECK STORAGE");return;
     }
-    strcpy(music_message,found<0?"SAVED TO LIBRARY / TRACK LINK ONLY":"REMOVED FROM SAVED TRACKS");
+    strcpy(music_message,found<0?"SAVED TO LIBRARY / OPEN LIBRARY TAB":"REMOVED FROM SAVED TRACKS");
 }
 static void music_lookup_stop(void){
     if(music_lookup_pid){kill(-music_lookup_pid,SIGKILL);kill(music_lookup_pid,SIGKILL);waitpid(music_lookup_pid,NULL,0);}
@@ -68,7 +72,7 @@ static void music_lookup(int library){
     snprintf(script,sizeof(script),"%s/tools/music.py",flxtr_win_binary_dir());
     snprintf(cert,sizeof(cert),"%s/certs/cacert.pem",flxtr_win_binary_dir());
     setenv("PYTHONHOME",runtime,1);setenv("PYTHONDONTWRITEBYTECODE","1",1);setenv("SSL_CERT_FILE",cert,1);
-    const char *args[]={"python","-I",script,library?"library":music_tab==MUSIC_DISCOVER?"discover":"search",library?NULL:music_query,NULL};
+    const char *args[]={"python","-I",script,library?"library":music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",library?NULL:music_tab==MUSIC_DISCOVER&&music_discover_current?music_track.key:music_query,NULL};
     music_lookup_pid=flxtr_win_spawn(python,args,"music-cache/browse.tsv","music-browse.log",NULL,0,1);
     unsetenv("PYTHONHOME");
 #else
@@ -80,7 +84,7 @@ static void music_lookup(int library){
         if(out<0||err<0)_exit(126);
         dup2(out,1);dup2(err,2);close(out);close(err);
         if(library)execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","library",(char*)NULL);
-        else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py",music_tab==MUSIC_DISCOVER?"discover":"search",music_query,(char*)NULL);
+        else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py",music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",music_tab==MUSIC_DISCOVER&&music_discover_current?music_track.key:music_query,(char*)NULL);
         _exit(127);
     }
     if(music_lookup_pid>0)setpgid(music_lookup_pid,music_lookup_pid);
@@ -96,11 +100,20 @@ static void music_open_tab(int tab){
         strcpy(music_message,"RECENTLY PLAYED / NEWEST FIRST");
     }else if(tab==MUSIC_LIBRARY)music_lookup(1);
     else if(tab==MUSIC_DISCOVER){
-        int genre=mtv_weighted_genre((unsigned int)time(NULL)+(unsigned int)SDL_GetTicks());
-        if(genre==11||genre==12)mtv_fusion_query(genre,music_query,sizeof(music_query));
-        else snprintf(music_query,sizeof(music_query),"%s",mtv_genre_queries[genre]);
+        if(music_discover_current){
+            if(strcmp(music_track.kind,"video")||!music_track.key[0]){
+                strcpy(music_message,"CURRENT SONG DISCOVERY NEEDS A PLAYED YOUTUBE SONG / Y MODE");return;
+            }
+        }else{
+            int genre=mtv_weighted_genre((unsigned int)time(NULL)+(unsigned int)SDL_GetTicks());
+            if(genre==11||genre==12)mtv_fusion_query(genre,music_query,sizeof(music_query));
+            else snprintf(music_query,sizeof(music_query),"%s",mtv_genre_queries[genre]);
+        }
         music_lookup(0);
-    }else strcpy(music_message,"START SEARCH / PASTE A YOUTUBE OR PUBLIC SPOTIFY PLAYLIST LINK");
+    }else{
+        music_query[0]=0;music_cursor=0;
+        strcpy(music_message,"START SEARCH / ENTER SONG, ARTIST OR PASTE A LINK");
+    }
 }
 static void music_open(void){music_on=1;music_edit=0;music_open_tab(MUSIC_RECENTS);}
 static int music_lookup_poll(void){
@@ -138,7 +151,7 @@ static int music_rom_handoff(void){
 #endif
 }
 static void music_spawn(int job){
-    if(job==1){music_tab=MUSIC_SEARCH;music_loaded=1;music_lookup(0);return;}
+    if(job==1){music_tab=MUSIC_SEARCH;music_loaded=1;if(!music_query[0]){strcpy(music_message,"TYPE A SONG OR ARTIST FIRST");return;}music_lookup(0);return;}
     music_stop();mkdir("music-cache",0700);unlink("music-cache/error.txt");
     if(job==2||job==4){unlink("music-cache/stream.txt");unlink("music-cache/playing.txt");}
     if(job==2){
@@ -270,11 +283,15 @@ static void music_action(SDL_Keycode key){
         if(log){fprintf(log,"EXIT job=%d pid=%ld paused=%d\n",music_job,(long)music_pid,music_paused);fclose(log);}
         music_on=0;return;
     }
-    if(key==SDLK_F3||key==SDLK_SLASH){music_tab=MUSIC_SEARCH;music_edit=1;music_key=0;music_cursor=strlen(music_query);SDL_StartTextInput();return;}
+    if(key==SDLK_F3||key==SDLK_SLASH){if(music_tab!=MUSIC_SEARCH)music_query[0]=0;music_tab=MUSIC_SEARCH;music_edit=1;music_key=0;music_cursor=strlen(music_query);SDL_StartTextInput();return;}
     if(key==SDLK_F5){music_lookup_stop();music_on=0;mtv_weights_open();return;}
     if(key==SDLK_F7||key==SDLK_f){music_save_selected();if(music_tab==MUSIC_LIBRARY)music_lookup(1);return;}
     if(key==SDLK_HOME||key==SDLK_END){music_open_tab((music_tab+(key==SDLK_HOME?3:1))%4);return;}
-    if(key==SDLK_y){music_open_tab(music_tab);return;}
+    if(key==SDLK_y){
+        if(music_tab==MUSIC_DISCOVER){music_discover_current=!music_discover_current;music_open_tab(MUSIC_DISCOVER);}
+        else music_open_tab(music_tab);
+        return;
+    }
     if(music_job==1||music_job==2||music_job==4)return;
     if(key==SDLK_UP&&music_selected>0)music_selected--;
     if(key==SDLK_DOWN&&music_selected+1<music_count)music_selected++;
@@ -344,7 +361,7 @@ static void music_draw(void){
             text(x,80,tabs[tab],2,tab==music_tab?accent:muted,18);
         }
         const char *subtitle=music_tab==MUSIC_RECENTS?"PICK UP WHERE YOU LEFT OFF / NEWEST FIRST":
-            music_tab==MUSIC_DISCOVER?"YOUR MTV GENRE WEIGHTS / Y NEW MIX / SELECT TO TUNE WEIGHTS":
+            music_tab==MUSIC_DISCOVER?(music_discover_current?"CURRENT SONG RADIO / Y SWITCH TO GENRE DISCOVERY":"WEIGHTED GENRE DISCOVERY / Y SWITCH TO CURRENT SONG"):
             music_tab==MUSIC_LIBRARY?"SAVED TRACK LINKS + LOCAL AUDIO / L3 SAVE OR UNSAVE":"FIND A SONG, ARTIST OR PLAYLIST / START TO TYPE";
         text(30,116,subtitle,1,muted,145);
         int first=music_selected/6*6;
@@ -356,14 +373,14 @@ static void music_draw(void){
         }
         if(!music_count&&!music_lookup_pid){
             text(38,180,music_tab==MUSIC_RECENTS?"YOUR RECENT MUSIC WILL APPEAR HERE":music_tab==MUSIC_LIBRARY?"SAVE TRACK LINKS WITH L3 / ADD LOCAL MUSIC FILES":"FIND YOUR NEXT FAVORITE",2,accent,73);
-            text(38,220,"RIGHT FOR DISCOVER / START TO SEARCH",1,muted,110);
+            text(38,220,"L1/R1 CHANGE TABS / START TO SEARCH",1,muted,110);
         }
         char counter[80];snprintf(counter,sizeof(counter),"%d / %d",music_count?music_selected+1:0,music_count);
         text(820,397,counter,1,muted,15);
         if(*music_playing){text(30,421,music_paused?"PAUSED":"NOW PLAYING",1,muted,20);music_now_playing(30,440,140,accent);}
         text(30,466,music_message,1,accent,145);
-        text(30,503,ui_hint("LEFT/RIGHT TABS / A PLAY / X PAUSE / L3 SAVE / Y REFRESH / START SEARCH / B BACK",
-            "LEFT/RIGHT TABS / ENTER PLAY / SPACE PAUSE / F SAVE / Y REFRESH / F3 SEARCH / ESC BACK"),1,muted,145);
+        text(30,503,ui_hint("L1/R1 TABS / A PLAY / X PAUSE / L3 SAVE / Y DISCOVERY MODE / START SEARCH / B BACK",
+            "HOME/END TABS / ENTER PLAY / F SAVE / Y DISCOVERY MODE / F3 SEARCH / ESC BACK"),1,muted,145);
     }
 }
 #endif

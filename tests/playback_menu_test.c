@@ -45,6 +45,14 @@ int main(void){
     menu_row=2;menu_command('l');assert(menu_subtitles==4&&request(1)==10);
     menu_row=4;for(int i=0;i<20;i++)menu_command('l');assert(subtitle_delay==-5);
     menu_command('b');assert(!menu_open&&!stopped);menu_command('b');assert(request(7)==10);
+    /* Switch to Moonlight requires a last-game marker and must save the timestamp. */
+    menu_open=1;menu_row=15;menu_command('a');assert(!stopped);
+    FILE *game=fopen("gamez-last-request","w");assert(game);fputs("abc123\n",game);fclose(game);
+    assert(!setenv("FLXTR_BOOKMARK_KEY","1234abcd",1));
+    menu_command('a');assert(request(11)==10);
+    FILE *saved=fopen("bookmarks/1234abcd.txt","r");assert(saved);
+    double bookmarked=0;assert(fscanf(saved,"%lf",&bookmarked)==1&&bookmarked==10);fclose(saved);
+    unlink("bookmarks/1234abcd.txt");rmdir("bookmarks");unlink("gamez-last-request");
     int fd[2];assert(!pipe(fd));control_fd=fd[0];assert(!fcntl(control_fd,F_SETFL,O_NONBLOCK));
     assert(write(fd[1],"md",2)==2);menu_row=0;menu_poll();assert(menu_open&&menu_row==1);close(fd[0]);close(fd[1]);
     assert(!chdir("/tmp"));rmdir(temp);

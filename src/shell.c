@@ -2070,6 +2070,13 @@ static void play(void) {
         if(!request){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
         fprintf(request,"%s\n",t->url+6);
         if(fclose(request)){snprintf(status,sizeof(status),"COULD NOT START GAMEZ");return;}
+        /* Last launch is a reconnect target, never a command or process path. */
+        FILE *last=fopen("gamez-last-request.next","w");
+        if(last){
+            fprintf(last,"%s\n",t->url+6);
+            if(fclose(last)==0)rename("gamez-last-request.next","gamez-last-request");
+            else unlink("gamez-last-request.next");
+        }
         moonlight_exit=1;
         running=0;
         return;
@@ -2498,9 +2505,30 @@ static void finish_player(int code){
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;
         if(f)fclose(f);
         unlink("playback-request");
-        if(!valid||command<1||command>10||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;tv_history_finish("failed",tv_history_last_position());snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
+        if(!valid||command<1||command>11||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;tv_history_finish("failed",tv_history_last_position());snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
         if(command>=5)tv_history_finish(command==5||command==6?"skipped":"stopped",position);
         if(command==10){tv_active=auto_active=0;running=0;return;}
+        if(command==11){
+#if defined(FLXTR_DESKTOP) || defined(_WIN32) || defined(__ANDROID__)
+            snprintf(status,sizeof(status),"MOONLIGHT VIDEO HANDOFF IS STEAM LINK ONLY");
+#else
+            char id[48]={0};FILE *last=fopen("gamez-last-request","r");
+            if(last){if(!fgets(id,sizeof(id),last))id[0]=0;fclose(last);}
+            id[strcspn(id,"\r\n")]=0;
+            if(gamez_valid_id(id)){
+                FILE *next=fopen("gamez-request.next","w");
+                if(next){
+                    fprintf(next,"%s\n",id);
+                    if(!fclose(next)&&!rename("gamez-request.next","gamez-request")){
+                        auto_active=tv_active=0;moonlight_exit=1;running=0;return;
+                    }
+                    unlink("gamez-request.next");
+                }
+            }
+            snprintf(status,sizeof(status),"MOONLIGHT RECONNECT FAILED / OPEN GAMES MANUALLY");
+#endif
+            auto_active=tv_active=0;return;
+        }
         if(viewing!=view)tv_cancel_prepared(); /* Preloaded MTV worker has the old --view argument. */
         viewing=view;subtitle_setting=sub;subtitle_scale=scale;subtitle_delay=delay;save_settings(); /* Only default_viewing is persisted. */
         /* TV is a channel, not a resume-based episode player. */

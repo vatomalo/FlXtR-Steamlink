@@ -25,6 +25,13 @@ test-native-sdl:
 
 .PHONY: test-providers test-native-sdl
 
+test-text-cursor:
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/text_cursor_test.c -o build/text-cursor-test
+	./build/text-cursor-test
+
+.PHONY: test-text-cursor
+
 test-media-recents:
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/media_recents_test.c -o build/media-recents-test $(SDL_LIBS) -lSDL2_image -lcurl

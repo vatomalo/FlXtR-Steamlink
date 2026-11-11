@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #define MEDIA_RECENTS_MODE 38
 #define FAVORITES_MODE 25
 #define OFFLINE_MODE 37
@@ -9,6 +10,9 @@ static int history_size;
 #include "../src/grouped_library_tabs.h"
 int main(void){
     assert(library_current_group()==LIB_GROUP_RECENTS);
+    assert(!strcmp(library_watch_labels[2],"ANIME"));
+    assert(!strcmp(library_files_labels[1],"DOWNLOADS"));
+    library_tabs_focused=1;assert(library_tabs_focused);library_tabs_focused=0;
     assert(library_group_entry_mode(LIB_GROUP_WATCH)==1);
     assert(library_group_entry_mode(LIB_GROUP_FILES)==30);
     for(int i=0;i<3;i++){

@@ -53,6 +53,24 @@ class MusicTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Enter a song'):
                 music.run(['search', '   '])
 
+    def test_mtv_genre_radio_excludes_recent_tracks(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
+            music.remember(('video', 'abcdefghijk', 'Played', 'Artist'))
+            with patch.object(music, 'search', return_value=[
+                    ('video', 'abcdefghijk', 'Played', 'Artist'),
+                    ('video', 'lmnopqrstuv', 'Radio track', 'Another'),
+                    ('video', 'lmnopqrstuv', 'Duplicate', 'Another')]):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    music.run(['radio', 'official city pop music videos'])
+                self.assertIn('Radio track', out.getvalue())
+                self.assertNotIn('Played', out.getvalue())
+                self.assertEqual(out.getvalue().count('lmnopqrstuv'), 1)
+
+    def test_mtv_genre_radio_requires_query(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
+            with self.assertRaisesRegex(ValueError, 'configured MTV genre'):
+                music.radio_tracks('  ')
+
     def test_recents_persist_deduplicate_and_bound(self):
         with tempfile.TemporaryDirectory() as root, patch.object(music, 'CACHE', Path(root)):
             for i in range(60):

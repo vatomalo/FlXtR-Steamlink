@@ -5,7 +5,8 @@ typedef struct {char kind[8],key[221],title[151],artist[151];} MusicRow;
 static MusicRow music_rows[100];
 static MusicRow music_queue[100],music_track;
 static int music_queue_count,music_advancing,music_tab,music_loaded,music_lookup_job;
-static int music_discover_current; /* 0 = weighted genres; 1 = playing track */
+static int music_discover_current; /* 0 = MTV genre stations; 1 = playing track */
+static int music_radio_station=1,music_radio_tuned,music_radio_pending,music_radio_active;
 static pid_t music_lookup_pid;
 static Uint32 music_lookup_started;
 enum { MUSIC_RECENTS, MUSIC_DISCOVER, MUSIC_LIBRARY, MUSIC_SEARCH };
@@ -72,7 +73,11 @@ static void music_lookup(int library){
     snprintf(script,sizeof(script),"%s/tools/music.py",flxtr_win_binary_dir());
     snprintf(cert,sizeof(cert),"%s/certs/cacert.pem",flxtr_win_binary_dir());
     setenv("PYTHONHOME",runtime,1);setenv("PYTHONDONTWRITEBYTECODE","1",1);setenv("SSL_CERT_FILE",cert,1);
-    const char *args[]={"python","-I",script,library?"library":music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",library?NULL:music_tab==MUSIC_DISCOVER&&music_discover_current?(strcmp(music_track.kind,"video")?"current":music_track.key):music_query,NULL};
+    const char *mode=library?"library":music_radio_pending?"radio":music_tab==MUSIC_DISCOVER?
+        (music_discover_current?"discover-current":music_radio_tuned?"radio":"discover"):"search";
+    const char *query=music_tab==MUSIC_DISCOVER&&music_discover_current?
+        (strcmp(music_track.kind,"video")?"current":music_track.key):music_query;
+    const char *args[]={"python","-I",script,mode,library?NULL:query,NULL};
     music_lookup_pid=flxtr_win_spawn(python,args,"music-cache/browse.tsv","music-browse.log",NULL,0,1);
     unsetenv("PYTHONHOME");
 #else
@@ -84,7 +89,9 @@ static void music_lookup(int library){
         if(out<0||err<0)_exit(126);
         dup2(out,1);dup2(err,2);close(out);close(err);
         if(library)execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py","library",(char*)NULL);
-        else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py",music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":"discover"):"search",music_tab==MUSIC_DISCOVER&&music_discover_current?(strcmp(music_track.kind,"video")?"current":music_track.key):music_query,(char*)NULL);
+        else execl("/bin/sh","sh","scripts/music-runtime.sh","tools/music.py",
+            music_radio_pending?"radio":music_tab==MUSIC_DISCOVER?(music_discover_current?"discover-current":music_radio_tuned?"radio":"discover"):"search",
+            music_tab==MUSIC_DISCOVER&&music_discover_current?(strcmp(music_track.kind,"video")?"current":music_track.key):music_query,(char*)NULL);
         _exit(127);
     }
     if(music_lookup_pid>0)setpgid(music_lookup_pid,music_lookup_pid);
@@ -94,7 +101,7 @@ static void music_lookup(int library){
     snprintf(music_message,sizeof(music_message),"%s",music_lookup_pid?(library?"FINDING LOCAL AND DOWNLOADED AUDIO...":"FINDING MUSIC... / B CANCEL"):"COULD NOT START MUSIC LOOKUP");
 }
 static void music_open_tab(int tab){
-    music_lookup_stop();music_tab=tab;music_loaded=1;music_count=music_selected=0;
+    music_lookup_stop();music_radio_pending=0;music_tab=tab;music_loaded=1;music_count=music_selected=0;
     if(tab==MUSIC_RECENTS){
         music_read_rows("music-cache/recents.tsv");
         strcpy(music_message,"RECENTLY PLAYED / NEWEST FIRST");
@@ -102,14 +109,16 @@ static void music_open_tab(int tab){
     else if(tab==MUSIC_DISCOVER){
         if(music_discover_current){
             if(!music_track.key[0]){
-                strcpy(music_message,"PLAY A SONG FIRST / Y SWITCH TO GENRES");return;
+                strcpy(music_message,"PLAY A SONG FIRST / Y SWITCH TO GENRE RADIO");return;
             }
+            music_lookup(0);
         }else{
-            int genre=mtv_weighted_genre((unsigned int)time(NULL)+(unsigned int)SDL_GetTicks());
-            if(genre==11||genre==12)mtv_fusion_query(genre,music_query,sizeof(music_query));
-            else snprintf(music_query,sizeof(music_query),"%s",mtv_genre_queries[genre]);
+            /* Station guide. Tune explicitly with A: no network request just
+             * from selecting a tab, like the TV programme guide. */
+            music_radio_tuned=0;
+            snprintf(music_message,sizeof(music_message),
+                "GENRE RADIO / UP DOWN STATION / A TUNE / Y CURRENT SONG");
         }
-        music_lookup(0);
     }else{
         music_query[0]=0;music_cursor=0;
         strcpy(music_message,"START SEARCH / ENTER SONG, ARTIST OR PASTE A LINK");
@@ -125,12 +134,40 @@ static int music_lookup_poll(void){
     }
     music_lookup_pid=0;music_lookup_job=0;
     if(!WIFEXITED(code)||WEXITSTATUS(code)){
+        if(music_radio_pending)music_radio_active=0;
+        music_radio_pending=0;
         music_phone_play=0;strcpy(music_message,"LOOKUP FAILED / Y RETRY / DETAILS IN MUSIC-BROWSE.LOG");return 1;
     }
     music_read_rows("music-cache/browse.tsv");
-    snprintf(music_message,sizeof(music_message),"%d TRACKS / A PLAY / START SEARCH",music_count);
+    if(music_radio_pending){
+        music_radio_pending=0;
+        if(music_count){
+            /* Queue the station's current playlist and keep its identity
+             * beyond the Discover screen. The next batch is fetched on EOF. */
+            music_selected=0;
+            music_spawn(2);
+        }else{
+            music_radio_active=0;
+            strcpy(music_message,"RADIO HAS NO NEW TRACKS / A RETUNE");
+        }
+    }else snprintf(music_message,sizeof(music_message),"%d TRACKS / A PLAY / START SEARCH",music_count);
     if(music_phone_play){music_phone_play=0;if(music_count)music_spawn(2);}
     return 1;
+}
+/* Build MTV's canonical genre/fusion query, not a separate radio taxonomy. */
+static void music_radio_query(void){
+    int genre=music_radio_station;
+    if(genre==0)genre=mtv_weighted_genre((unsigned int)time(NULL)+(unsigned int)SDL_GetTicks());
+    if(genre==11||genre==12)mtv_fusion_query(genre,music_query,sizeof(music_query));
+    else snprintf(music_query,sizeof(music_query),"%s",mtv_genre_queries[genre]);
+}
+static void music_radio_tune(void){
+    music_radio_tuned=1;
+    music_radio_active=1;
+    music_radio_query();
+    music_radio_pending=1;
+    music_lookup(0);
+    snprintf(music_message,sizeof(music_message),"TUNING %s RADIO...",mtv_genre_names[music_radio_station]);
 }
 static void music_stop(void){
     if(music_pid){kill(-music_pid,SIGKILL);kill(music_pid,SIGKILL);waitpid(music_pid,NULL,0);music_pid=0;}
@@ -219,8 +256,15 @@ static int music_poll(void){
         FILE *f=fopen("music-cache/playing.txt","r");music_playing[0]=0;
         if(f){if(!fgets(music_playing,sizeof(music_playing),f))music_playing[0]=0;fclose(f);music_playing[strcspn(music_playing,"\r\n")]=0;}
         music_spawn(3);
-    }else if(job==3&&music_autoplay){
+    }else if(job==3&&(music_autoplay||music_radio_active)){
         if(music_play_index+1<music_queue_count){music_play_index++;music_advancing=1;music_spawn(2);music_advancing=0;}
+        else if(music_radio_active){
+            /* Unlike generic YouTube autoplay, the next batch remains in the
+             * chosen MTV genre rather than drifting to arbitrary suggestions. */
+            music_radio_query();
+            music_radio_pending=1;
+            music_lookup(0);
+        }
         else if(strcmp(music_track.kind,"local"))music_spawn(4);
         else strcpy(music_message,"LOCAL QUEUE FINISHED / A PLAY");
     }else if(job==3){
@@ -277,7 +321,10 @@ static void music_action(SDL_Keycode key){
         return;
     }
     if(key==SDLK_ESCAPE||key==SDLK_BACKSPACE){
-        if(music_lookup_pid){music_lookup_stop();strcpy(music_message,"LOOKUP CANCELLED / Y RETRY");return;}
+        if(music_lookup_pid){music_lookup_stop();music_radio_pending=0;strcpy(music_message,"LOOKUP CANCELLED / Y RETRY");return;}
+        if(music_tab==MUSIC_DISCOVER&&!music_discover_current&&music_radio_tuned){
+            music_radio_tuned=0;strcpy(music_message,"GENRE RADIO / SELECT A STATION / A TUNE");return;
+        }
         /* Exit browser without touching the audio worker; retain diagnostics. */
         FILE *log=fopen("music-background.log","a");
         if(log){fprintf(log,"EXIT job=%d pid=%ld paused=%d\n",music_job,(long)music_pid,music_paused);fclose(log);}
@@ -292,10 +339,18 @@ static void music_action(SDL_Keycode key){
         else music_open_tab(music_tab);
         return;
     }
+    if(music_tab==MUSIC_DISCOVER&&!music_discover_current&&!music_radio_tuned){
+        if(key==SDLK_UP){music_radio_station=(music_radio_station+MTV_GENRES-1)%MTV_GENRES;return;}
+        if(key==SDLK_DOWN){music_radio_station=(music_radio_station+1)%MTV_GENRES;return;}
+        if(key==SDLK_RETURN){music_radio_tune();return;}
+    }
     if(music_job==1||music_job==2||music_job==4)return;
     if(key==SDLK_UP&&music_selected>0)music_selected--;
     if(key==SDLK_DOWN&&music_selected+1<music_count)music_selected++;
-    if(key==SDLK_RETURN&&music_count)music_spawn(2);
+    if(key==SDLK_RETURN&&music_count){
+        music_radio_active=music_tab==MUSIC_DISCOVER&&!music_discover_current&&music_radio_tuned;
+        music_spawn(2);
+    }
     if(key==SDLK_F2&&music_job==3){kill(music_pid,SIGUSR1);music_paused=!music_paused;snprintf(music_message,sizeof(music_message),"%s / X TOGGLE / B EXIT",music_paused?"PAUSED":"PLAYING");}
 }
 /* Scrolling title is rendered with bounded text; no texture allocation. */
@@ -361,17 +416,34 @@ static void music_draw(void){
             text(x,80,tabs[tab],2,tab==music_tab?accent:muted,18);
         }
         const char *subtitle=music_tab==MUSIC_RECENTS?"PICK UP WHERE YOU LEFT OFF / NEWEST FIRST":
-            music_tab==MUSIC_DISCOVER?(music_discover_current?"CURRENT SONG RADIO / Y SWITCH TO GENRE DISCOVERY":"WEIGHTED GENRE DISCOVERY / Y SWITCH TO CURRENT SONG"):
+            music_tab==MUSIC_DISCOVER?(music_discover_current?
+                "CURRENT SONG RADIO / Y MTV GENRE STATIONS":
+                music_radio_tuned?mtv_genre_names[music_radio_station]:
+                "MTV GENRE RADIO / UP DOWN STATION / A TUNE / Y CURRENT SONG"):
             music_tab==MUSIC_LIBRARY?"SAVED TRACK LINKS + LOCAL AUDIO / L3 SAVE OR UNSAVE":"FIND A SONG, ARTIST OR PLAYLIST / START TO TYPE";
         text(30,116,subtitle,1,muted,145);
+        if(music_tab==MUSIC_DISCOVER&&!music_discover_current&&!music_radio_tuned){
+            /* TV-style station guide: shared MTV names and weighted MIX channel. */
+            int first_station=music_radio_station/6*6;
+            for(int i=first_station;i<MTV_GENRES&&i<first_station+6;i++){
+                int y=150+(i-first_station)*40;
+                if(i==music_radio_station)rect(24,y-5,912,38,accent,0);
+                char line[120];
+                snprintf(line,sizeof(line),"CH %02d   %s",i+1,mtv_genre_names[i]);
+                text(38,y,line,2,accent,85);
+                text(38,y+22,i==0?"MTV WEIGHTED MIX":"A TUNE / AUTOMATIC CONTINUOUS RADIO",1,muted,115);
+            }
+        }
         int first=music_selected/6*6;
+        if(music_tab!=MUSIC_DISCOVER||music_discover_current||music_radio_tuned)
         for(int i=first;i<music_count&&i<first+6;i++){
             int y=150+(i-first)*40;
             if(i==music_selected)rect(24,y-5,912,38,accent,0);
             if(!strcmp(music_rows[i].kind,music_track.kind)&&!strcmp(music_rows[i].key,music_track.key)&&(music_job==3||music_job==2))text(887,y,"[>]",2,accent,4);
             text(38,y,music_rows[i].title,2,accent,73);text(38,y+22,music_rows[i].artist,1,muted,130);
         }
-        if(!music_count&&!music_lookup_pid){
+        if(!music_count&&!music_lookup_pid&&
+           (music_tab!=MUSIC_DISCOVER||music_discover_current||music_radio_tuned)){
             text(38,180,music_tab==MUSIC_RECENTS?"YOUR RECENT MUSIC WILL APPEAR HERE":music_tab==MUSIC_LIBRARY?"SAVE TRACK LINKS WITH L3 / ADD LOCAL MUSIC FILES":"FIND YOUR NEXT FAVORITE",2,accent,73);
             text(38,220,"L1/R1 CHANGE TABS / START TO SEARCH",1,muted,110);
         }
@@ -379,7 +451,7 @@ static void music_draw(void){
         text(820,397,counter,1,muted,15);
         if(*music_playing){text(30,421,music_paused?"PAUSED":"NOW PLAYING",1,muted,20);music_now_playing(30,440,140,accent);}
         text(30,466,music_message,1,accent,145);
-        text(30,503,ui_hint("L1/R1 TABS / A PLAY / X PAUSE / L3 SAVE / Y DISCOVERY MODE / START SEARCH / B BACK",
+        text(30,503,ui_hint("L1/R1 TABS / A TUNE/PLAY / X PAUSE / L3 SAVE / Y RADIO MODE / START SEARCH",
             "HOME/END TABS / ENTER PLAY / F SAVE / Y DISCOVERY MODE / F3 SEARCH / ESC BACK"),1,muted,145);
     }
 }

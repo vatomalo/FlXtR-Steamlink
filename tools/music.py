@@ -167,6 +167,34 @@ def search(value):
     return rows
 
 
+
+def radio_tracks(query):
+    """MTV genre station: fresh bounded search, filtered against recent playback.
+    Never download whole audio until the native player resolves a selected track.
+    """
+    if not query.strip():
+        raise ValueError('Radio station has no configured MTV genre query')
+    # Alternate a few query variants between refills to avoid identical batches.
+    variations = ('', ' live performances', ' classics', ' new releases')
+    variant = variations[int(time.time() // 180) % len(variations)]
+    candidates = search((query[:190] + variant)[:220])
+    recent = {row[:2] for row in recent_rows()}
+    try:
+        history = json.loads((CACHE / 'history.txt').read_text())
+        if isinstance(history, list):
+            recent.update(('video', key) for key in history[-50:] if isinstance(key, str))
+    except (OSError, ValueError):
+        pass
+    results, seen = [], set()
+    for row in candidates:
+        if len(row) == 4 and row[:2] not in recent and row[:2] not in seen:
+            results.append(row)
+            seen.add(row[:2])
+    random.shuffle(results)
+    if not results:
+        raise ValueError('No fresh tracks for this station; tune again')
+    return results[:MAX_ROWS]
+
 def discover_current(ident):
     """List neighboring songs from the current YouTube video's radio mix."""
     if ident == 'current':
@@ -487,6 +515,10 @@ def run(args):
         recommendations(); return
     if args[0] == 'resolve' and len(args) == 3:
         resolve(args[1], args[2]); return
+    if len(args) == 2 and args[0] == 'radio':
+        for row in radio_tracks(args[1]):
+            print('\t'.join(clean(cell, 220) for cell in row))
+        return
     if len(args) == 2 and args[0] == 'discover-current':
         for row in discover_current(args[1]):
             print('\t'.join(clean(cell, 220) for cell in row))

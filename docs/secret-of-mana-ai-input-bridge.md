@@ -23,8 +23,9 @@ After building and installing this **experimental branch of FlXtR**, open
 exists. **AUTOMATIC** or the previously selected standard core is still
 the default; this is per-ROM, not a platform-wide setting.
 
-Choosing `som_ai_proxy` makes FlXtR use that core for this specific ROM
-and enables `FLXTR_SOM_AI_TEST=1` for that launch. There is no longer a
+Choosing `som_ai_proxy` makes FlXtR use that core for this specific ROM.
+The proxy listens for the one-shot trigger automatically when the exact
+Turbo filename loads; it does not depend on an environment variable. There is no longer a
 need to start a competing RetroArch instance via SSH. Once gameplay has
 started normally, run on SkyLoft:
 
@@ -48,7 +49,7 @@ update the old FlXtR menu. PR remains experimental and unmerged.
 
 ## Runtime-triggered movement experiment (revision 2)
 
-The proxy no longer triggers at startup. Set `FLXTR_SOM_AI_TEST=1` when
+The proxy no longer triggers at startup. Select the experimental proxy core when
 launching it. The ROM must have the exact Turbo filename, and you must
 create a one-shot trigger file **after reaching active gameplay**.
 
@@ -67,7 +68,7 @@ sha256sum "/tmp/flxtr-som-ai-sandbox/Secret of Mana, Turbo.smc"
 ```
 
 Launch RetroArch normally with the experimental proxy core, the sandbox
-ROM, and `FLXTR_SOM_AI_TEST=1`. Do not use `--max-frames`, since you
+ROM, and selecting `som_ai_proxy`. Do not use `--max-frames`, since you
 need to reach gameplay first. Run from the device console or a dedicated
 SSH session; capture stderr to `/tmp/som-ai-interactive.log`.
 
@@ -94,7 +95,7 @@ single-use per game session; restart RetroArch for another test.
 movement in an actual gameplay state.
 
 **Important:** The proxy currently checks the *game filename* and
-`FLXTR_SOM_AI_TEST=1`, not a runtime SHA-256. The checksum above must be
+selecting `som_ai_proxy`, not a runtime SHA-256. The checksum above must be
 verified separately before any live session. The injection is triggered manually, not by a hardcoded startup delay. The reference SHA-256 is checked outside the proxy. This is not autonomous gameplay.
 
 ## Build and unit tests on SkyLoft
@@ -119,9 +120,9 @@ package, publish, or activate** the artifact.
 2. Confirm the ROM hash, core path and build architecture.
 3. Copy the new proxy **under a different filename** into an experimental
    directory, never overwrite `snes9x2005_plus_libretro.so`.
-4. Start with `FLXTR_SOM_AI_TEST` unset and validate ordinary controller
+4. Start with the original Snes9x core selected and validate ordinary controller
    input and core loading; capture verbose RetroArch logs.
-5. In an opt-in test with `FLXTR_SOM_AI_TEST=1`, create `/tmp/flxtr-som-ai-go` during actual gameplay to inject RIGHT for 30 frames.
+5. In an opt-in test using `som_ai_proxy`, create `/tmp/flxtr-som-ai-go` during actual gameplay to inject RIGHT for 30 frames.
 6. If any physical Player 1 SNES joypad button is pressed, the test
    cancels immediately. Normal input always passes through afterward.
 7. It logs to RetroArch stderr: armed, injection begin, physical

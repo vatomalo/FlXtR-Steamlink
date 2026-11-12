@@ -14,6 +14,35 @@ persistent override is performed.
 - Normal RetroArch remains `/home/apps/retroarch/retroarch.exec`
 - Steam Link Tailscale IP observed: `100.124.74.13`
 
+## Multi-action controller interface (experimental)
+
+The proxy now accepts one-shot action commands through
+`/tmp/flxtr-som-ai-action`. These actions use the normal P1 Libretro
+controller and have **not** all been verified against the Turbo menus.
+
+Available commands: `right`, `left`, `up`, `down`, `attack`,
+`open_ring`, `confirm`, `cancel`, `next_ring`, `prev_ring`,
+`snapshot`. Movement lasts 30 emulated frames; buttons pulse for two
+frames. The legacy `touch /tmp/flxtr-som-ai-go` still sends Right.
+
+To send an action while the AI proxy is running:
+
+```sh
+ssh root@100.124.74.13 'printf "open_ring\\n" > /tmp/flxtr-som-ai-action'
+ssh root@100.124.74.13 'printf "snapshot\\n" > /tmp/flxtr-som-ai-action'
+```
+
+The `snapshot` action logs the *raw* candidate menu bytes at WRAM
+offsets `0x180B`, `0x1846`, `0x1847` if the core's Libretro system
+RAM buffer is large enough. These are **unverified for Turbo** and must
+not be treated as reliable state signals or used for writes.
+
+Do not send commands concurrently; wait for each
+`[som-ai] COMPLETE` log. The command file is consumed once and only
+checked every six frames. Selection still must be explicitly set to
+`som_ai_proxy`. No automatic Candy selection or HP-based healing
+exists yet: those require validation of game RAM and menu operations.
+
 ## FlXtR per-ROM Core selection
 
 After building and installing this **experimental branch of FlXtR**, open

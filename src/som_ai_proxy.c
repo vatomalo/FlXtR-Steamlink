@@ -233,7 +233,8 @@ static void som_check_trigger(void){
         unsigned count=0;
         char *state=NULL;
         char *token=strtok_r(command+5," ",&state);
-        while(token && count<SOM_PLAN_MAX){
+        while(token){
+            if(count>=SOM_PLAN_MAX)break;
             SomAction action=som_parse_action(token);
             if(action!=SOM_ACT_RIGHT && action!=SOM_ACT_LEFT &&
                action!=SOM_ACT_UP && action!=SOM_ACT_DOWN &&

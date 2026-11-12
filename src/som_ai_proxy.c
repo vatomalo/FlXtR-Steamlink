@@ -169,10 +169,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_right_queries=0;
     game_loaded=backend_load_game(game);
-    const char *enabled=getenv("FLXTR_SOM_AI_TEST");
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
-    test_enabled=game_loaded&&on_turbo&&enabled&&!strcmp(enabled,"1");
+    /* Selecting this experimental core is explicit opt-in. No injection
+     * occurs until the separate one-shot trigger is consumed. A
+     * launcher-provided environment variable is not reliable across the
+     * greenlink -> greenlink-catalog -> RetroArch process boundary. */
+    test_enabled=game_loaded&&on_turbo;
     if(test_enabled){
         trigger_file=getenv("FLXTR_SOM_AI_TRIGGER_FILE");
         if(!trigger_file || !*trigger_file) trigger_file=SOM_TRIGGER_DEFAULT;
@@ -182,7 +185,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             test_enabled=0;
         }
         if(test_enabled)fprintf(stderr,"[som-ai] READY: create %s during gameplay to inject 30 frames of RIGHT\n",trigger_file);
-    }else fprintf(stderr,"[som-ai] disabled (opt-in or exact Turbo ROM path absent)\n");
+    }else fprintf(stderr,"[som-ai] disabled (Turbo filename missing or game failed to load)\n");
     return game_loaded;
 }
 RETRO_API void retro_unload_game(void){

@@ -107,9 +107,9 @@ static void som_input_poll(void){
 /* Candidate RAM offsets are for original SoM, UNVERIFIED on Turbo.
  * Read only and print raw bytes, never treat as validated state. */
 static void som_snapshot(void){
-    if(!backend_get_memory_data||!backend_get_memory_size)return;
-    const uint8_t *ram=(const uint8_t*)backend_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-    size_t size=backend_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    size_t size=backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram||size<=0x1847){
         fprintf(stderr,"[som-ai] RAM unavailable (size=%lu)\n",(unsigned long)size);
         return;

@@ -10,7 +10,7 @@ static void provider_http_options(AVDictionary **options){
         av_dict_set(options,"allowed_extensions","ALL",0);
         av_dict_set(options,"extension_picky","0",0);
     }else if(provider&&!strcmp(provider,"fmovies")){
-        av_dict_set(options,"referer","https://videm.xyz/",0);
+        av_dict_set(options,"referer","https://videm.buzz/",0);
     }
 }
 #endif

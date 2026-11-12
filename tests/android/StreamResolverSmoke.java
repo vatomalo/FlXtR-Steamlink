@@ -10,6 +10,7 @@ public final class StreamResolverSmoke {
         try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[1024];int n;while(out.size()<limit&&(n=in.read(b,0,Math.min(b.length,limit-out.size())))>0)out.write(b,0,n);return out.toByteArray();}finally{c.disconnect();}
     }
     public static void main(String[] args) throws Exception {
+        if(!StreamResolver.markerFromScript("x(\"x-fingerprint-lite\",\"b4f8a1fc72e8O5d63e\")").equals("b4f8a1fc72e8O5d63e"))throw new IOException("Marker parser failed");
         synchronized(StreamDecoder.LOCK){
             try{
                 String secret=StreamDecoder.nativeBegin();boolean rejected=false;

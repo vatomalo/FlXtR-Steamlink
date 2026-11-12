@@ -7,6 +7,7 @@ import javax.net.ssl.HttpsURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.regex.*;
 
 final class StreamResolver {
     interface Progress {void update(String message);}
@@ -58,18 +59,31 @@ final class StreamResolver {
             try{
                 String key=StreamDecoder.nativeBegin();
                 if(key==null||key.length()!=64)throw new IOException("Stream decoder unavailable");
-                JSONObject clock=new JSONObject(text(StreamProtocol.BASE+"/api/time",Collections.emptyMap(),request));
+                String marker=flixerMarker(request);
+                JSONObject clock=new JSONObject(text(StreamProtocol.BASE+"/api/time",Collections.emptyMap(),request,"Flixer clock request"));
                 long time=clock.optLong("timestamp",0);if(time<=0)throw new IOException("Provider clock unavailable");
                 String timestamp=Long.toString(time);byte[] random=new byte[16];new SecureRandom().nextBytes(random);
                 String nonce=Base64.getEncoder().withoutPadding().encodeToString(random).replace("/","").replace("+","");
                 Map<String,String> headers=new HashMap<>();headers.put("Origin","https://flixer.gd");headers.put("Referer","https://flixer.gd/");headers.put("Accept","text/plain");
-                headers.put("x-fingerprint-lite","b4f8a1fc72e9O5d63e");headers.put("X-Api-Key",key);headers.put("X-Request-Timestamp",timestamp);headers.put("X-Request-Nonce",nonce);
+                headers.put("x-fingerprint-lite",marker);headers.put("X-Api-Key",key);headers.put("X-Request-Timestamp",timestamp);headers.put("X-Request-Nonce",nonce);
                 headers.put("X-Request-Signature",StreamProtocol.signature(key,timestamp,nonce,path));headers.put("X-Client-Fingerprint",StreamProtocol.fingerprint());
                 if(server.isEmpty())headers.put("bW90aGFmYWth","1");else{if(!StreamProtocol.validServer(server))throw new IOException("Invalid server");headers.put("X-Only-Sources","1");headers.put("X-Server",server);}
-                String raw=text(StreamProtocol.BASE+path,headers,request);request.check();
-                String decoded=StreamDecoder.nativeDecode(raw,key);request.check();return new JSONObject(decoded);
+                String raw=text(StreamProtocol.BASE+path,headers,request,"Flixer authenticated request");request.check();
+                String decoded;try{decoded=StreamDecoder.nativeDecode(raw,key);}catch(IOException failure){throw new IOException("Flixer response decode failed",failure);}
+                request.check();try{return new JSONObject(decoded);}catch(org.json.JSONException failure){throw new IOException("Flixer decoded response was not valid JSON",failure);}
             }finally{StreamDecoder.nativeEnd();}
         }
+    }
+    static String markerFromScript(String script) throws IOException {
+        Matcher match=Pattern.compile("[\\\"']x-fingerprint-lite[\\\"']\\s*,\\s*[\\\"']([A-Za-z0-9]{8,63})[\\\"']").matcher(script);
+        if(!match.find())throw new IOException("Flixer client marker discovery failed");return match.group(1);
+    }
+    private static String flixerMarker(Request request) throws IOException {
+        String page=text("https://flixer.gd/",Collections.emptyMap(),request,"Flixer client page request");
+        Matcher asset=Pattern.compile("/assets/js/index-[A-Za-z0-9._-]+\\.js").matcher(page);
+        if(!asset.find())throw new IOException("Flixer client asset discovery failed");
+        Map<String,String> headers=Collections.singletonMap("Referer","https://flixer.gd/");
+        return markerFromScript(text("https://flixer.gd"+asset.group(),headers,request,"Flixer client asset request"));
     }
     private static HttpsURLConnection connect(String url,Map<String,String> headers,Request request) throws IOException {
         request.check();if(!CatalogItem.validStream(url))throw new IOException("Invalid HTTPS media URL");
@@ -78,10 +92,10 @@ final class StreamResolver {
         for(Map.Entry<String,String> header:headers.entrySet())connection.setRequestProperty(header.getKey(),header.getValue());
         request.check();return connection;
     }
-    private static String text(String url,Map<String,String> headers,Request request) throws IOException {
+    private static String text(String url,Map<String,String> headers,Request request,String stage) throws IOException {
         HttpsURLConnection connection=connect(url,headers,request);
         try{
-            if(connection.getResponseCode()!=200)throw new IOException("Provider request failed");
+            int code=connection.getResponseCode();if(code!=200)throw new IOException(stage+" failed (HTTP "+code+")");
             if(connection.getContentLengthLong()>2*1024*1024)throw new IOException("Provider response is too large");
             try(InputStream in=connection.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
                 byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){request.check();if(out.size()+n>2*1024*1024)throw new IOException("Provider response is too large");out.write(buffer,0,n);}

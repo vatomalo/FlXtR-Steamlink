@@ -17,6 +17,7 @@
 #include <time.h>
 #include "windows_runtime.h"
 #define BASE "https://plsdontscrapemelove.flixer.gd"
+#define FLIXER_SITE "https://flixer.gd"
 typedef struct {char *data;size_t length,limit;} Buffer;
 typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024];int height;} Choice;
 static Choice choices[40];static int count;
@@ -35,7 +36,7 @@ static size_t receive(void *ptr,size_t size,size_t nmemb,void *opaque){
     char *p=realloc(b->data,b->length+n+1);if(!p)return 0;
     b->data=p;memcpy(p+b->length,ptr,n);b->length+=n;p[b->length]=0;return n;
 }
-static char *request(const char *url,struct curl_slist *headers,int media){
+static char *request_stage(const char *url,struct curl_slist *headers,int media,const char *stage){
     Buffer b={NULL,0,media?512*1024:2*1024*1024};CURL *c=curl_easy_init();if(!c)return NULL;
     curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_HTTPHEADER,headers);
     curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,receive);curl_easy_setopt(c,CURLOPT_WRITEDATA,&b);
@@ -50,9 +51,10 @@ static char *request(const char *url,struct curl_slist *headers,int media){
     curl_easy_setopt(c,CURLOPT_PROTOCOLS,media?(CURLPROTO_HTTP|CURLPROTO_HTTPS):CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTP|CURLPROTO_HTTPS);
 #endif
     CURLcode rc=curl_easy_perform(c);long code=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);curl_easy_cleanup(c);
-    if(rc!=CURLE_OK||code!=200){fprintf(stderr,"%s HTTP %ld / error %d\n",media?"Quality list":"Provider",code,(int)rc);free(b.data);return NULL;}
+    if(rc!=CURLE_OK||code!=200){fprintf(stderr,"%s failed (HTTP %ld, curl %d)\n",stage,code,(int)rc);free(b.data);return NULL;}
     return b.data;
 }
+static char *request(const char *url,struct curl_slist *headers,int media){return request_stage(url,headers,media,media?"Quality list request":"Provider request");}
 static json_object *parse(const char *s){
     if(!s)return NULL;
     json_tokener *t=json_tokener_new_ex(32);if(!t)return NULL;
@@ -72,9 +74,35 @@ static void fingerprint(char *out){
     base36(h,out);
 }
 static struct curl_slist *header(struct curl_slist *list,const char *name,const char *value){char line[1024];if(snprintf(line,sizeof(line),"%s: %s",name,value)>=(int)sizeof(line))return list;return curl_slist_append(list,line);}
+static int flixer_marker_from_script(const char *script,char out[64]){
+    const char *p=strstr(script,"x-fingerprint-lite");if(!p)return 0;p+=strlen("x-fingerprint-lite");
+    if(*p!='\"'&&*p!='\'')return 0;
+    p++;while(isspace((unsigned char)*p))p++;
+    if(*p++!=',')return 0;
+    while(isspace((unsigned char)*p))p++;
+    char quote=*p++;if(quote!='\"'&&quote!='\'')return 0;
+    const char *end=strchr(p,quote);size_t n=end?(size_t)(end-p):0;if(n<8||n>=64)return 0;
+    for(size_t i=0;i<n;i++)if(!isalnum((unsigned char)p[i]))return 0;
+    memcpy(out,p,n);out[n]=0;return 1;
+}
+static int flixer_marker(char out[64]){
+    char *page=request_stage(FLIXER_SITE"/",NULL,0,"Flixer client page request");if(!page)return 0;
+    const char *start=strstr(page,"/assets/js/index-");if(!start){free(page);fprintf(stderr,"Flixer client asset discovery failed\n");return 0;}
+    const char *end=strstr(start,".js");size_t n=end?(size_t)(end+3-start):0;
+    if(!n||n>=256){free(page);fprintf(stderr,"Flixer client asset discovery failed\n");return 0;}
+    for(size_t i=0;i<n;i++)if(!isalnum((unsigned char)start[i])&&start[i]!='/'&&start[i]!='-'&&start[i]!='_'&&start[i]!='.'){
+        free(page);fprintf(stderr,"Flixer client asset validation failed\n");return 0;
+    }
+    char url[320];snprintf(url,sizeof(url),FLIXER_SITE"%.*s",(int)n,start);free(page);
+    struct curl_slist *headers=header(NULL,"Referer",FLIXER_SITE"/");
+    char *script=request_stage(url,headers,0,"Flixer client asset request");curl_slist_free_all(headers);if(!script)return 0;
+    int ok=flixer_marker_from_script(script,out);free(script);if(!ok)fprintf(stderr,"Flixer client marker discovery failed\n");return ok;
+}
 static json_object *lookup(const char *path,const char *server){
-    char *clock=request(BASE"/api/time",NULL,0);json_object *time=parse(clock);free(clock);if(!time)return NULL;
-    int64_t timestamp=json_object_get_int64(field(time,"timestamp"));json_object_put(time);if(timestamp<=0)return NULL;
+    char marker[64];if(!flixer_marker(marker))return NULL;
+    char *clock=request_stage(BASE"/api/time",NULL,0,"Flixer clock request");json_object *time=parse(clock);free(clock);
+    if(!time){fprintf(stderr,"Flixer clock response was not valid JSON\n");return NULL;}
+    int64_t timestamp=json_object_get_int64(field(time,"timestamp"));json_object_put(time);if(timestamp<=0){fprintf(stderr,"Flixer clock response had no timestamp\n");return NULL;}
     char *key=resolver_key();if(!key){fprintf(stderr,"Decoder key: %s\n",resolver_error());return NULL;}
     unsigned char random[16],digest[EVP_MAX_MD_SIZE];unsigned digest_len=0;char encoded[32],nonce[24],sig[128],message[1024],ts[32],fp[16],url[1024];
     if(RAND_bytes(random,sizeof(random))!=1){free(key);return NULL;}
@@ -84,14 +112,15 @@ static json_object *lookup(const char *path,const char *server){
     fingerprint(fp);snprintf(url,sizeof(url),BASE"%s",path);
     struct curl_slist *headers=NULL;
     headers=header(headers,"Origin","https://flixer.gd");headers=header(headers,"Referer","https://flixer.gd/");
-    headers=header(headers,"x-fingerprint-lite","b4f8a1fc72e9O5d63e");headers=header(headers,"Accept","text/plain");
+    headers=header(headers,"x-fingerprint-lite",marker);headers=header(headers,"Accept","text/plain");
     headers=header(headers,"X-Api-Key",key);headers=header(headers,"X-Request-Timestamp",ts);headers=header(headers,"X-Request-Nonce",nonce);
     headers=header(headers,"X-Request-Signature",sig);headers=header(headers,"X-Client-Fingerprint",fp);
     if(*server){headers=header(headers,"X-Only-Sources","1");headers=header(headers,"X-Server",server);}
     else headers=header(headers,"bW90aGFmYWth","1");
-    char *raw=request(url,headers,0);curl_slist_free_all(headers);char *decoded=raw?resolver_decode(raw,key):NULL;free(raw);free(key);
-    if(!decoded){fprintf(stderr,"Source response could not be decoded: %s\n",resolver_error());return NULL;}
-    json_object *root=parse(decoded);free(decoded);return root;
+    char *raw=request_stage(url,headers,0,"Flixer authenticated request");curl_slist_free_all(headers);if(!raw){free(key);return NULL;}
+    char *decoded=resolver_decode(raw,key);free(raw);free(key);
+    if(!decoded){fprintf(stderr,"Flixer response decode failed: %s\n",resolver_error());return NULL;}
+    json_object *root=parse(decoded);free(decoded);if(!root)fprintf(stderr,"Flixer decoded response was not valid JSON\n");return root;
 }
 static void server_choice(const char *server){
     if(!valid_server(server)||count>=40)return;

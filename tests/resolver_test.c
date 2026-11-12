@@ -11,6 +11,9 @@ const char *resolver_error(void){return "test";}
 int main(void){
     assert(valid_server("alpha")&&!valid_server("bad\r\nheader"));
     assert(valid_url("https://example.org/master.m3u8")&&!valid_url("file:///etc/passwd"));
+    char marker[64];assert(flixer_marker_from_script("x(\"x-fingerprint-lite\",\"b4f8a1fc72e8O5d63e\")",marker)&&!strcmp(marker,"b4f8a1fc72e8O5d63e"));
+    assert(flixer_marker_from_script("x('x-fingerprint-lite' , 'newMarker123')",marker)&&!strcmp(marker,"newMarker123"));
+    assert(!flixer_marker_from_script("x(\"x-fingerprint-lite\",\"bad header\")",marker));
     json_object *o=parse("{\"sources\":[{\"server\":\"alpha\"},{\"server\":\"bravo\"},{\"server\":\"alpha\"},{\"server\":\"bad\\nname\"}]}");
     servers(o);assert(count==2&&!strcmp(choices[1].label,"bravo"));json_object_put(o);
     char english[1024]="",norwegian[1024]="",spanish[1024]="";
@@ -36,6 +39,8 @@ int main(void){
     assert(o&&field(o,"ssr"));json_object_put(o);
     o=parse("{\"url\":\"https://media.example/master.m3u8\",\"tracks\":[{\"label\":\"English\",\"file\":\"https://media.example/en.vtt\"}]}");
     assert(web_source(o,"SFLIX")&&count==1&&strstr(choices[0].meta,"SFLIX")&&choices[0].subs_eng[0]);json_object_put(o);
+    o=parse("{\"url\":\"/relative/master.m3u8\"}");assert(web_source_at(o,"FMOVIES",FMOVIES_PLAYER)&&!strcmp(choices[0].url,"https://videm.buzz/relative/master.m3u8"));json_object_put(o);
     o=parse("{\"url\":\"file:///etc/passwd\"}");assert(!web_source(o,"FMOVIES"));json_object_put(o);
-    puts("PASS: server deduplication, URL validation and compatible HLS quality choices");return 0;
+    assert(!strcmp(FMOVIES_PLAYER,"https://videm.buzz"));
+    puts("PASS: marker discovery, server deduplication, URL validation and compatible HLS quality choices");return 0;
 }

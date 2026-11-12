@@ -53,6 +53,18 @@ int main(void){
     reset_proxy();on_turbo=0;
     som_start_action(SOM_ACT_LEFT);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==0);
+    reset_proxy();autonomous_mode=1;auto_deadline=frame_number+600;
+    auto_step=0;start_frame=0;action_frames=0;
+    som_auto_tick();
+    assert(armed && active_action==SOM_ACT_RIGHT);
+    assert(auto_step==1);
+    frame_number=auto_deadline;
+    som_auto_tick();
+    assert(!autonomous_mode);
+    reset_proxy();autonomous_mode=1;
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;
+    som_input_poll();
+    assert(!autonomous_mode);
     unlink(path);
     puts("PASS: Turbo action parsing, menu Y, 30-frame movement, override, port isolation");
     return 0;

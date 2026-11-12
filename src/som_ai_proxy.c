@@ -12,18 +12,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #ifndef SOM_PROXY_BASE_CORE
 #define SOM_PROXY_BASE_CORE "/home/apps/retroarch/cores/snes9x2005_plus_libretro.so"
 #endif
-#define SOM_START_FRAME 180u
+#define SOM_TRIGGER_POLL_FRAMES 6u
+#define SOM_TRIGGER_DEFAULT "/tmp/flxtr-som-ai-go"
 #define SOM_HOLD_FRAMES 30u
 
 static void *backend;
 static retro_input_state_t physical_state;
 static retro_input_poll_t physical_poll;
 static unsigned long frame_number;
-static int armed, cancelled, completed, game_loaded, on_turbo;
+static int armed, cancelled, completed, game_loaded, on_turbo, test_enabled;
+static unsigned long start_frame, injected_right_queries;
+static const char *trigger_file;
 static retro_environment_t environment_callback;
 static void load_backend(void); /* RetroArch may query core info before init. */
 
@@ -74,9 +78,12 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && id<16 && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\\n",frame_number);return actual;}
-        if(frame_number>=SOM_START_FRAME &&
-           frame_number<SOM_START_FRAME+SOM_HOLD_FRAMES &&
-           id==RETRO_DEVICE_ID_JOYPAD_RIGHT)return 1;
+        if(frame_number>=start_frame &&
+           frame_number<start_frame+SOM_HOLD_FRAMES &&
+           id==RETRO_DEVICE_ID_JOYPAD_RIGHT){
+            injected_right_queries++;
+            return 1;
+        }
     }
     return actual;
 }
@@ -91,6 +98,23 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] physical controller override on frame %lu\\n",frame_number);
                 break;
             }
+}
+
+/* Trigger is a one-shot file created via SSH *after* gameplay begins.
+ * Poll sparingly on the emulation thread; never read network or run commands. */
+static void som_check_trigger(void){
+    if(!test_enabled || !game_loaded || !on_turbo || armed ||
+       !trigger_file || frame_number%SOM_TRIGGER_POLL_FRAMES) return;
+    if(access(trigger_file,F_OK)!=0) return;
+    if(unlink(trigger_file)!=0){
+        fprintf(stderr,"[som-ai] refusing trigger that could not be consumed: %s\n",trigger_file);
+        return;
+    }
+    armed=1;cancelled=0;completed=0;
+    start_frame=frame_number;
+    injected_right_queries=0;
+    fprintf(stderr,"[som-ai] TRIGGERED at frame %lu; injecting RIGHT for %u frames\n",
+            start_frame,SOM_HOLD_FRAMES);
 }
 
 static void load_backend(void){
@@ -143,13 +167,22 @@ RETRO_API void retro_deinit(void){
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
+    test_enabled=0;trigger_file=NULL;start_frame=0;injected_right_queries=0;
     game_loaded=backend_load_game(game);
     const char *enabled=getenv("FLXTR_SOM_AI_TEST");
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
-    armed=game_loaded&&on_turbo&&enabled&&!strcmp(enabled,"1");
-    if(armed)fprintf(stderr,"[som-ai] ARMED: 30-frame RIGHT at emulated frames %u..%u; any physical button cancels\\n",SOM_START_FRAME,SOM_START_FRAME+SOM_HOLD_FRAMES-1);
-    else fprintf(stderr,"[som-ai] disabled (opt-in or exact Turbo ROM path absent)\\n");
+    test_enabled=game_loaded&&on_turbo&&enabled&&!strcmp(enabled,"1");
+    if(test_enabled){
+        trigger_file=getenv("FLXTR_SOM_AI_TRIGGER_FILE");
+        if(!trigger_file || !*trigger_file) trigger_file=SOM_TRIGGER_DEFAULT;
+        /* Stale files from prior sessions must never cause a new takeover. */
+        if(unlink(trigger_file)!=0 && access(trigger_file,F_OK)==0){
+            fprintf(stderr,"[som-ai] cannot clear stale trigger; disabled\n");
+            test_enabled=0;
+        }
+        if(test_enabled)fprintf(stderr,"[som-ai] READY: create %s during gameplay to inject 30 frames of RIGHT\n",trigger_file);
+    }else fprintf(stderr,"[som-ai] disabled (opt-in or exact Turbo ROM path absent)\n");
     return game_loaded;
 }
 RETRO_API void retro_unload_game(void){
@@ -158,13 +191,12 @@ RETRO_API void retro_unload_game(void){
 }
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
-    if(armed&&!cancelled&&!completed&&game_loaded){
-        if(frame_number==SOM_START_FRAME)
-            fprintf(stderr,"[som-ai] begin RIGHT injection at frame %lu\\n",frame_number);
-        if(frame_number==SOM_START_FRAME+SOM_HOLD_FRAMES){
-            completed=1;
-            fprintf(stderr,"[som-ai] COMPLETE: physical input restored at frame %lu\\n",frame_number);
-        }
+    som_check_trigger();
+    if(armed&&!cancelled&&!completed&&game_loaded &&
+       frame_number==start_frame+SOM_HOLD_FRAMES){
+        completed=1;
+        fprintf(stderr,"[som-ai] COMPLETE at frame %lu; RIGHT sampled %lu times\n",
+                frame_number,injected_right_queries);
     }
     backend_run();
     frame_number++;

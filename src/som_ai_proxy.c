@@ -118,6 +118,10 @@ static void som_input_poll(void){
                     combo_count,frame_number);
         }
         last_physical_buttons=current;
+        if(autonomous_mode && current){
+            autonomous_mode=0;armed=0;cancelled=1;
+            fprintf(stderr,"[som-ai] AUTO STOP physical controller takeover\n");
+        }
     }
     /* Check all physical buttons before injecting input, regardless of which
      * individual IDs the emulator requests in this frame. */
@@ -209,7 +213,7 @@ static void som_check_trigger(void){
     if(!strcmp(command,"auto_on")){
         autonomous_mode=1;auto_step=0;
         auto_deadline=frame_number+600; /* ten seconds maximum at 60fps */
-        start_frame=frame_number-50;action_frames=0;
+        start_frame=frame_number>50?frame_number-50:0;action_frames=0;
         fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
         return;
     }

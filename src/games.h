@@ -637,6 +637,25 @@ static int games_run(void){
                 if(n<0||n>=(int)sizeof(selected_core))selected_core[0]=0;
             }
         }
+        /* The one experimental AI proxy lives in a separate directory.
+         * Only Secret of Mana Turbo can select it; all other games fail
+         * closed rather than silently loading a non-SNES wrapper. */
+        if(!strcmp(selected_name,"som_ai_proxy")){
+            const char *base=strrchr(rom,'/');
+            base=base?base+1:rom;
+            if(strcmp(base,"Secret of Mana, Turbo.smc")){
+                fprintf(stderr,"Experimental AI core is restricted to Secret of Mana Turbo\\n");
+                json_object_put(games);
+                return 2;
+            }
+            snprintf(selected_core,sizeof(selected_core),
+                     "%s/cores/experimental/som_ai_proxy_libretro" FLXTR_CORE_EXT,games_home());
+            if(!game_file(selected_core)){
+                fprintf(stderr,"Experimental AI core not installed: %s\\n",selected_core);
+                json_object_put(games);
+                return 2;
+            }
+        }
         if(game_file(selected_core))core=selected_core;
     }
 #ifndef FLXTR_DESKTOP
@@ -808,6 +827,13 @@ static int games_run(void){
     if(view!=GAME_PIXEL)game_native_sdl();
     if(chdir(games_home()))return 2;
     setenv("HOME",home,1);
+    /* Explicitly selecting the experimental core is the opt-in.
+     * Do not enable injection for a normal Snes9x launch. */
+    const char *chosen_base=strrchr(core,'/');
+    chosen_base=chosen_base?chosen_base+1:core;
+    if(!strcmp(chosen_base,"som_ai_proxy_libretro" FLXTR_CORE_EXT))
+        setenv("FLXTR_SOM_AI_TEST","1",1);
+    else unsetenv("FLXTR_SOM_AI_TEST");
     fprintf(stderr,"Game launch: core=%s ROM=%s\n",core,rom);
     /* Argument vectors preserve spaces/metacharacters; never execute a playlist as shell text. */
     const char *test=getenv("FLXTR_GAME_TEST_FRAMES");

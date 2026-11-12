@@ -177,3 +177,55 @@ for a single test launch.
 - Future phases: verify native core loading; add a live test-launch
   option; implement observation from verified Turbo RAM mappings;
   eventually replace the scripted input with the standalone AI policy.
+
+## Experimental autonomous mode and local Qwen bridge
+
+Build the experimental core again after commit `c5ffbf4`. Exit Turbo
+before updating `/home/apps/retroarch/cores/experimental/som_ai_proxy_libretro.so`,
+then reopen Turbo using the selected proxy.
+
+To run a bounded, non-perceptive **ten-second** controller demo from SkyLoft:
+
+```sh
+ssh root@100.124.74.13 'printf "auto_on\n" > /tmp/flxtr-som-ai-action'
+```
+
+The demo cycles directions and basic attacks, has a 600-emulated-frame
+limit and stops if a physical control is pressed. It **does not** know
+where enemies, walls, HP, or the player's coordinates are. Do not
+run it near hazards or during menus/cutscenes. The `auto_off` command
+can also stop it after the current input pulse.
+
+### Qwen connectivity demonstration
+
+The new `tools/som_qwen_bridge.py` talks to an **existing local**
+Ollama API on SkyLoft and sends one allowlisted controller action at
+a time via SSH to the Steam Link. It is not yet autonomous world
+understanding: no screenshot or live game state is supplied to Qwen.
+
+Prerequisites: Ollama serving a pulled Qwen model, and passwordless SSH
+from SkyLoft to the Steam Link for non-interactive control. Verify
+`ssh -o BatchMode=yes root@100.124.74.13 true` first.
+You may check `ollama list` for installed models; use that exact model
+name instead of assuming `qwen2.5:1.5b` is installed.
+
+```sh
+python3 tools/som_qwen_bridge.py --model qwen2.5:1.5b \
+  --objective "Wander slowly and attack occasionally" --steps 5 --dry-run
+python3 tools/som_qwen_bridge.py --model qwen2.5:1.5b \
+  --objective "Wander slowly and attack occasionally" --steps 5
+```
+
+### Remaining combat/progression engineering
+
+* Physical input attack-edge detection now logs `COMBO OBSERVED`
+  when two or three B presses occur within 30 frames. This recognizes
+  input patterns only; no attack animation cancelling is active.
+* Real fighting-game finishers require verified Turbo animation,
+  attack state, hitbox and recovery fields or a compatible ROM patch.
+* Tap/hold Square magic shortcuts and contextual remapping have **not**
+  been installed, because the ring/menu context is not yet verified.
+* Skyrim-like progression will require validated hit events, per-weapon
+  and spell usage, level thresholds, and save migration. No experience
+  or ROM save data is modified by this experimental controller.
+

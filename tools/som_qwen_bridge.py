@@ -12,6 +12,7 @@ import sys
 import time
 import urllib.request
 
+MOVES = ("right", "down", "left", "up")
 ACTIONS = {
     "right", "left", "up", "down", "attack", "open_ring",
     "confirm", "cancel", "next_ring", "prev_ring", "snapshot",
@@ -70,13 +71,30 @@ def main() -> int:
     if args.ollama_url not in ("http://127.0.0.1:11434", "http://localhost:11434"):
         parser.error("only local Ollama is supported for this initial experiment")
     previous = "none"
+    move_cursor = 0
     for i in range(args.steps):
         try:
             action = choose_action(args.ollama_url, args.model,
                                    args.objective, previous)
-            print(f"[qwen] {i+1}/{args.steps}: {action}", flush=True)
+            # Without live state the tiny model may choose "attack" forever.
+            # Apply a deterministic cadence and varied walking directions.
+            # This is intentionally NOT intelligent obstacle avoidance.
+            raw_action = action
+            if i % 3 != 2:
+                if action not in MOVES or action == previous:
+                    action = MOVES[move_cursor % len(MOVES)]
+                move_cursor += 1
+            elif action not in ("attack", *MOVES):
+                action = "attack"
+            if action == previous and action == "attack":
+                action = MOVES[move_cursor % len(MOVES)]
+                move_cursor += 1
+            print(f"[qwen] {i+1}/{args.steps}: {action}"
+                  + (f" (model said {raw_action})" if raw_action != action else ""),
+                  flush=True)
             if not args.dry_run:
                 send_action(args.host, action)
+                print(f"[ssh] submitted {action} to {args.host} (not gameplay-confirmed)", flush=True)
             previous = action
             if i+1 < args.steps:
                 time.sleep(args.interval)

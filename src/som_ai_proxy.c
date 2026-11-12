@@ -77,7 +77,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && id<16 && armed && !cancelled && !completed && on_turbo){
-        if(actual){cancelled=1;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\\n",frame_number);return actual;}
+        if(actual){cancelled=1;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
         if(frame_number>=start_frame &&
            frame_number<start_frame+SOM_HOLD_FRAMES &&
            id==RETRO_DEVICE_ID_JOYPAD_RIGHT){
@@ -95,7 +95,7 @@ static void som_input_poll(void){
         for(unsigned id=0;id<16;id++)
             if(physical_state(0,RETRO_DEVICE_JOYPAD,0,id)){
                 cancelled=1;
-                fprintf(stderr,"[som-ai] physical controller override on frame %lu\\n",frame_number);
+                fprintf(stderr,"[som-ai] physical controller override on frame %lu\n",frame_number);
                 break;
             }
 }
@@ -122,12 +122,12 @@ static void load_backend(void){
     const char *path=getenv("FLXTR_AI_BASE_CORE");
     if(!path||!*path)path=SOM_PROXY_BASE_CORE;
     /* Never allow loading this proxy into itself. */
-    if(strstr(path,"som_ai_proxy")){fputs("[som-ai] recursive core path refused\\n",stderr);abort();}
+    if(strstr(path,"som_ai_proxy")){fputs("[som-ai] recursive core path refused\n",stderr);abort();}
     backend=dlopen(path,RTLD_NOW|RTLD_LOCAL);
-    if(!backend){fprintf(stderr,"[som-ai] dlopen failed: %s\\n",dlerror());abort();}
+    if(!backend){fprintf(stderr,"[som-ai] dlopen failed: %s\n",dlerror());abort();}
 #define LOAD(name) do { \
     *(void**)(&backend_##name)=dlsym(backend,#name); \
-    if(!backend_##name){fprintf(stderr,"[som-ai] backend lacks %s\\n",#name);abort();} \
+    if(!backend_##name){fprintf(stderr,"[som-ai] backend lacks %s\n",#name);abort();} \
 } while(0)
     LOAD(retro_set_video_refresh);LOAD(retro_set_audio_sample);
     LOAD(retro_set_audio_sample_batch);LOAD(retro_set_controller_port_device);
@@ -139,7 +139,7 @@ static void load_backend(void){
 #undef LOAD
 #define LOAD_DIRECT(name) do { \
     *(void**)(&backend_##name)=dlsym(backend,"retro_"#name); \
-    if(!backend_##name){fprintf(stderr,"[som-ai] missing retro_%s\\n",#name);abort();} \
+    if(!backend_##name){fprintf(stderr,"[som-ai] missing retro_%s\n",#name);abort();} \
 } while(0)
     LOAD_DIRECT(set_environment);LOAD_DIRECT(set_input_poll);LOAD_DIRECT(set_input_state);
     LOAD_DIRECT(init);LOAD_DIRECT(deinit);LOAD_DIRECT(load_game);LOAD_DIRECT(unload_game);LOAD_DIRECT(run);

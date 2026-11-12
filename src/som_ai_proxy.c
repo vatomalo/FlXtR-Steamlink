@@ -81,7 +81,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && id<16 && armed && !cancelled && !completed && on_turbo){
-        if(actual){cancelled=1;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
+        if(actual){cancelled=1;armed=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
         if(frame_number>=start_frame &&
            frame_number<start_frame+action_frames &&
            id==som_action_button(active_action)){
@@ -98,7 +98,7 @@ static void som_input_poll(void){
     if(armed&&!cancelled&&!completed&&on_turbo&&physical_state)
         for(unsigned id=0;id<16;id++)
             if(physical_state(0,RETRO_DEVICE_JOYPAD,0,id)){
-                cancelled=1;
+                cancelled=1;armed=0;
                 fprintf(stderr,"[som-ai] physical controller override on frame %lu\n",frame_number);
                 break;
             }
@@ -236,7 +236,7 @@ RETRO_API void retro_run(void){
     som_check_trigger();
     if(armed&&!cancelled&&!completed&&game_loaded &&
        frame_number==start_frame+action_frames){
-        completed=1;
+        completed=1;armed=0;
         fprintf(stderr,"[som-ai] COMPLETE %s at frame %lu; button sampled %lu times\n",
                 som_action_name(active_action),frame_number,injected_queries);
     }

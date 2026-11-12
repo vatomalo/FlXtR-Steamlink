@@ -65,6 +65,24 @@ int main(void){
     pressed=RETRO_DEVICE_ID_JOYPAD_B;
     som_input_poll();
     assert(!autonomous_mode);
+    reset_proxy();
+    action_file=path;
+    FILE *plan=fopen(path,"w");
+    assert(plan && fputs("plan left attack up attack\\n",plan)>0 && fclose(plan)==0);
+    frame_number=192;
+    som_check_trigger();
+    assert(plan_running && plan_count==4 && plan_next==0);
+    assert(plan_actions[0]==SOM_ACT_LEFT);
+    som_auto_tick();
+    assert(armed && active_action==SOM_ACT_LEFT && plan_next==1);
+    frame_number=start_frame+action_frames;
+    armed=0;
+    som_auto_tick();
+    assert(plan_next==1); /* inter-action recovery interval */
+    frame_number=next_plan_frame;
+    som_auto_tick();
+    assert(armed && active_action==SOM_ACT_ATTACK && plan_next==2);
+    reset_proxy();
     unlink(path);
     puts("PASS: Turbo action parsing, menu Y, 30-frame movement, override, port isolation");
     return 0;

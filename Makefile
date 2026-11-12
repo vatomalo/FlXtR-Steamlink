@@ -32,6 +32,13 @@ test-text-cursor:
 
 .PHONY: test-text-cursor
 
+test-som-ai-proxy:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_ai_proxy_test.c -o build/som-ai-proxy-test -ldl
+	./build/som-ai-proxy-test
+
+.PHONY: test-som-ai-proxy
+
 test-som-ai-player2:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_ai_player2_test.c -o build/som-ai-player2-test

@@ -190,6 +190,10 @@ static void rom_core_open(const Title *t){
     if(retroarch_home&&*retroarch_home){char path[PATH_MAX];snprintf(path,sizeof(path),"%s/cores",retroarch_home);rom_core_scan(path);}
     rom_core_scan("/home/apps/retroarch/cores");
     rom_core_scan("/home/apps/retroarch/.home/.config/retroarch/cores");
+    /* Experimental cores are intentionally available only for the Turbo ROM.
+     * No global/default platform selection can choose this unstable proxy. */
+    if(!strcmp(rom_core_title,"Secret of Mana, Turbo"))
+        rom_core_scan("/home/apps/retroarch/cores/experimental");
     qsort(rom_core_names+1,(size_t)(rom_core_count-1),sizeof(rom_core_names[0]),rom_core_compare);
     /* Open on the previously chosen core, if any. */
     FILE *f=fopen("game-cores.tsv","r");

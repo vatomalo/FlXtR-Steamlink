@@ -7,6 +7,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include "vendor/libretro.h"
+#include "som_ai_actions.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,8 +27,11 @@ static retro_input_state_t physical_state;
 static retro_input_poll_t physical_poll;
 static unsigned long frame_number;
 static int armed, cancelled, completed, game_loaded, on_turbo, test_enabled;
-static unsigned long start_frame, injected_right_queries;
+static unsigned long start_frame, injected_queries;
+static SomAction active_action;
+static unsigned action_frames;
 static const char *trigger_file;
+static const char *action_file="/tmp/flxtr-som-ai-action";
 static retro_environment_t environment_callback;
 static void load_backend(void); /* RetroArch may query core info before init. */
 
@@ -79,9 +83,9 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
        index==0 && id<16 && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
         if(frame_number>=start_frame &&
-           frame_number<start_frame+SOM_HOLD_FRAMES &&
-           id==RETRO_DEVICE_ID_JOYPAD_RIGHT){
-            injected_right_queries++;
+           frame_number<start_frame+action_frames &&
+           id==som_action_button(active_action)){
+            injected_queries++;
             return 1;
         }
     }
@@ -100,21 +104,52 @@ static void som_input_poll(void){
             }
 }
 
-/* Trigger is a one-shot file created via SSH *after* gameplay begins.
- * Poll sparingly on the emulation thread; never read network or run commands. */
-static void som_check_trigger(void){
-    if(!test_enabled || !game_loaded || !on_turbo || armed ||
-       !trigger_file || frame_number%SOM_TRIGGER_POLL_FRAMES) return;
-    if(access(trigger_file,F_OK)!=0) return;
-    if(unlink(trigger_file)!=0){
-        fprintf(stderr,"[som-ai] refusing trigger that could not be consumed: %s\n",trigger_file);
+/* Candidate RAM offsets are for original SoM, UNVERIFIED on Turbo.
+ * Read only and print raw bytes, never treat as validated state. */
+static void som_snapshot(void){
+    if(!backend_get_memory_data||!backend_get_memory_size)return;
+    const uint8_t *ram=(const uint8_t*)backend_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    size_t size=backend_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||size<=0x1847){
+        fprintf(stderr,"[som-ai] RAM unavailable (size=%lu)\n",(unsigned long)size);
         return;
     }
+    fprintf(stderr,"[som-ai] CANDIDATE frame=%lu size=%lu 7E180B=%02x 7E1846=%02x 7E1847=%02x (unverified Turbo)\n",
+        frame_number,(unsigned long)size,ram[0x180b],ram[0x1846],ram[0x1847]);
+}
+static void som_start_action(SomAction action){
+    if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
+    active_action=action;
+    action_frames=som_action_frames(action);
     armed=1;cancelled=0;completed=0;
-    start_frame=frame_number;
-    injected_right_queries=0;
-    fprintf(stderr,"[som-ai] TRIGGERED at frame %lu; injecting RIGHT for %u frames\n",
-            start_frame,SOM_HOLD_FRAMES);
+    start_frame=frame_number;injected_queries=0;
+    fprintf(stderr,"[som-ai] TRIGGERED %s at frame %lu for %u frames\n",
+        som_action_name(action),start_frame,action_frames);
+}
+/* File commands are polled from the emulation thread.
+ * Only allow another action after the previous action is completed. */
+static void som_check_trigger(void){
+    if(!test_enabled||!game_loaded||!on_turbo||armed||
+       frame_number%SOM_TRIGGER_POLL_FRAMES)return;
+    if(trigger_file&&access(trigger_file,F_OK)==0){
+        if(unlink(trigger_file)==0){som_start_action(SOM_ACT_RIGHT);return;}
+        fprintf(stderr,"[som-ai] could not consume legacy trigger\n");
+    }
+    if(access(action_file,F_OK)!=0)return;
+    char command[40]={0};
+    FILE *input=fopen(action_file,"r");
+    if(!input)return;
+    int have=fgets(command,sizeof(command),input)!=NULL;
+    fclose(input);
+    if(unlink(action_file)!=0)return;
+    if(!have)return;
+    command[strcspn(command,"\r\n")]=0;
+    SomAction action=som_parse_action(command);
+    if(action==SOM_ACT_NONE){
+        fprintf(stderr,"[som-ai] unknown action %s\n",command);
+        return;
+    }
+    som_start_action(action);
 }
 
 static void load_backend(void){
@@ -167,7 +202,8 @@ RETRO_API void retro_deinit(void){
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
-    test_enabled=0;trigger_file=NULL;start_frame=0;injected_right_queries=0;
+    active_action=SOM_ACT_NONE;action_frames=0;
+    test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     game_loaded=backend_load_game(game);
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
@@ -184,7 +220,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             fprintf(stderr,"[som-ai] cannot clear stale trigger; disabled\n");
             test_enabled=0;
         }
-        if(test_enabled)fprintf(stderr,"[som-ai] READY: create %s during gameplay to inject 30 frames of RIGHT\n",trigger_file);
+        if(test_enabled){
+            unlink(action_file);
+            fprintf(stderr,"[som-ai] READY: legacy %s; actions via %s\n",trigger_file,action_file);
+        }
     }else fprintf(stderr,"[som-ai] disabled (Turbo filename missing or game failed to load)\n");
     return game_loaded;
 }
@@ -196,10 +235,10 @@ RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     som_check_trigger();
     if(armed&&!cancelled&&!completed&&game_loaded &&
-       frame_number==start_frame+SOM_HOLD_FRAMES){
+       frame_number==start_frame+action_frames){
         completed=1;
-        fprintf(stderr,"[som-ai] COMPLETE at frame %lu; RIGHT sampled %lu times\n",
-                frame_number,injected_right_queries);
+        fprintf(stderr,"[som-ai] COMPLETE %s at frame %lu; button sampled %lu times\n",
+                som_action_name(active_action),frame_number,injected_queries);
     }
     backend_run();
     frame_number++;

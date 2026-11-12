@@ -14,12 +14,56 @@ persistent override is performed.
 - Normal RetroArch remains `/home/apps/retroarch/retroarch.exec`
 - Steam Link Tailscale IP observed: `100.124.74.13`
 
+## Runtime-triggered movement experiment (revision 2)
+
+The proxy no longer triggers at startup. Set `FLXTR_SOM_AI_TEST=1` when
+launching it. The ROM must have the exact Turbo filename, and you must
+create a one-shot trigger file **after reaching active gameplay**.
+
+For a test that protects existing saves, copy the ROM (and optionally
+SRAM) to a separate folder. The proxy checks the filename, not a cryptographic
+hash, so verify the copied ROM hash before launching it.
+
+```sh
+# On Steam Link; create a disposable isolated ROM directory
+mkdir -p /tmp/flxtr-som-ai-sandbox
+cp "/home/apps/retroarch/roms/Snes/Secret of Mana, Turbo.smc" \
+   "/tmp/flxtr-som-ai-sandbox/Secret of Mana, Turbo.smc"
+sha256sum "/tmp/flxtr-som-ai-sandbox/Secret of Mana, Turbo.smc"
+# Optional: copy SRAM into the sandbox if you want to resume your existing save
+# cp "/home/apps/retroarch/roms/Snes/Secret of Mana, Turbo.srm" /tmp/flxtr-som-ai-sandbox/
+```
+
+Launch RetroArch normally with the experimental proxy core, the sandbox
+ROM, and `FLXTR_SOM_AI_TEST=1`. Do not use `--max-frames`, since you
+need to reach gameplay first. Run from the device console or a dedicated
+SSH session; capture stderr to `/tmp/som-ai-interactive.log`.
+
+Once Randi is controllable, execute in a **second** SSH session:
+
+```sh
+touch /tmp/flxtr-som-ai-go
+```
+
+Within 6 emulated frames the proxy consumes the file. It injects RIGHT
+for 30 emulated frames, then releases it. Any physical joypad button
+cancels the sequence. The log records how many RIGHT queries were actually
+answered with injected input:
+
+```sh
+grep '\[som-ai\]' /tmp/som-ai-interactive.log
+```
+
+The trigger is discarded on game load, so a stale file from a prior
+session cannot accidentally trigger takeover. This test is deliberately
+single-use per game session; restart RetroArch for another test.
+
+**Still unverified:** whether injected RIGHT causes visible Randi
+movement in an actual gameplay state.
+
 **Important:** The proxy currently checks the *game filename* and
 `FLXTR_SOM_AI_TEST=1`, not a runtime SHA-256. The checksum above must be
-verified separately before any live session. The 180-frame delay is counted
-from game launch, **not** from reaching gameplay. If a menu/title screen
-is still visible after three seconds, the synthetic input will not
-demonstrate Randi movement. Never treat this as autonomous play.
+verified separately before any live session. The injection is triggered manually, not by a hardcoded startup delay. The reference SHA-256 is checked outside the proxy. This is not autonomous gameplay.
 
 ## Build and unit tests on SkyLoft
 
@@ -43,10 +87,9 @@ package, publish, or activate** the artifact.
 2. Confirm the ROM hash, core path and build architecture.
 3. Copy the new proxy **under a different filename** into an experimental
    directory, never overwrite `snes9x2005_plus_libretro.so`.
-4. Start with `FLXTR_AI_TEST` unset and validate ordinary controller
+4. Start with `FLXTR_SOM_AI_TEST` unset and validate ordinary controller
    input and core loading; capture verbose RetroArch logs.
-5. In an opt-in test with `FLXTR_SOM_AI_TEST=1`, the proxy presses RIGHT
-   on emulated frames **180–209**, starting frame count at 0.
+5. In an opt-in test with `FLXTR_SOM_AI_TEST=1`, create `/tmp/flxtr-som-ai-go` during actual gameplay to inject RIGHT for 30 frames.
 6. If any physical Player 1 SNES joypad button is pressed, the test
    cancels immediately. Normal input always passes through afterward.
 7. It logs to RetroArch stderr: armed, injection begin, physical

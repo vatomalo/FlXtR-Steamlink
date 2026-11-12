@@ -7,7 +7,6 @@ verified state. This is a connectivity test, not context-aware gameplay.
 """
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
@@ -28,16 +27,26 @@ def choose_action(url: str, model: str, objective: str, previous: str) -> str:
         "Prefer movement or attack, avoid menus unless asked. "
         f"Objective: {objective}. Previous action: {previous}."
     )
+    # Qwen3 reasoning models may spend a tiny num_predict budget entirely
+    # on hidden thinking, returning response="" despite successful inference.
+    # Disable reasoning for this one-token action task, with a little headroom.
     payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
-                          "options": {"temperature": 0.3, "num_predict": 18}}).encode()
+                          "think": False,
+                          "options": {"temperature": 0.0, "num_predict": 64}}).encode()
     req = urllib.request.Request(
         url.rstrip("/") + "/api/generate", data=payload,
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=90) as response:
         result = json.load(response)
-    candidate = result.get("response", "").strip().lower()
+    raw = result.get("response") or ""
+    candidate = raw.strip().lower().strip("` \\"'\\r\\n")
     if candidate not in ACTIONS:
-        raise ValueError(f"Qwen returned unsupported action: {candidate!r}")
+        reason = result.get("done_reason", "unknown")
+        raise ValueError(
+            f"Qwen returned unsupported action {candidate!r} "
+            f"(done_reason={reason!r}, thinking_present={bool(result.get('thinking'))}). "
+            "Try --model qwen3.5:4b if qwen3:0.6b gives no response."
+        )
     return candidate
 
 def send_action(host: str, action: str) -> None:
@@ -50,7 +59,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="root@100.124.74.13")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
-    parser.add_argument("--model", default="qwen2.5:1.5b")
+    parser.add_argument("--model", default="qwen3:0.6b")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--interval", type=float, default=2.0)

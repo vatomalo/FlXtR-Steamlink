@@ -32,6 +32,10 @@ static SomAction active_action;
 static unsigned action_frames;
 static const char *trigger_file;
 static const char *action_file="/tmp/flxtr-som-ai-action";
+#define SOM_MENU_SCAN_START 0x1800u
+#define SOM_MENU_SCAN_LENGTH 0x0200u
+static uint8_t som_previous_menu[SOM_MENU_SCAN_LENGTH];
+static int som_have_previous_menu;
 static retro_environment_t environment_callback;
 static void load_backend(void); /* RetroArch may query core info before init. */
 
@@ -110,12 +114,32 @@ static void som_snapshot(void){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
     const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     size_t size=backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
-    if(!ram||size<=0x1847){
-        fprintf(stderr,"[som-ai] RAM unavailable (size=%lu)\n",(unsigned long)size);
+    if(!ram||size<SOM_MENU_SCAN_START+SOM_MENU_SCAN_LENGTH){
+        fprintf(stderr,"[som-ai] RAM unavailable or too small (size=%lu)\n",(unsigned long)size);
         return;
     }
     fprintf(stderr,"[som-ai] CANDIDATE frame=%lu size=%lu 7E180B=%02x 7E1846=%02x 7E1847=%02x (unverified Turbo)\n",
         frame_number,(unsigned long)size,ram[0x180b],ram[0x1846],ram[0x1847]);
+    if(!som_have_previous_menu){
+        memcpy(som_previous_menu,ram+SOM_MENU_SCAN_START,SOM_MENU_SCAN_LENGTH);
+        som_have_previous_menu=1;
+        fprintf(stderr,"[som-ai] MENU BASELINE frame=%lu range=7E1800..7E19FF; snapshot again after one controlled change\n",frame_number);
+        return;
+    }
+    unsigned changed=0,printed=0;
+    for(unsigned i=0;i<SOM_MENU_SCAN_LENGTH;i++){
+        uint8_t now=ram[SOM_MENU_SCAN_START+i],before=som_previous_menu[i];
+        if(now==before)continue;
+        changed++;
+        if(printed<48){
+            fprintf(stderr,"[som-ai] MENU DIFF 7E%04X %02X->%02X\n",
+                SOM_MENU_SCAN_START+i,(unsigned)before,(unsigned)now);
+            printed++;
+        }
+    }
+    fprintf(stderr,"[som-ai] MENU DIFF SUMMARY frame=%lu changed=%u printed=%u range=7E1800..7E19FF\n",
+        frame_number,changed,printed);
+    memcpy(som_previous_menu,ram+SOM_MENU_SCAN_START,SOM_MENU_SCAN_LENGTH);
 }
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
@@ -202,7 +226,7 @@ RETRO_API void retro_deinit(void){
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
-    active_action=SOM_ACT_NONE;action_frames=0;
+    active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     game_loaded=backend_load_game(game);
     const char *path=game?game->path:NULL;

@@ -36,6 +36,11 @@ static unsigned long auto_deadline;
 static uint16_t last_physical_buttons;
 static unsigned long last_attack_frame;
 static unsigned combo_count;
+#define SOM_PLAN_MAX 12u
+static SomAction plan_actions[SOM_PLAN_MAX];
+static unsigned plan_count,plan_next;
+static int plan_running;
+static unsigned long next_plan_frame;
 static const char *trigger_file;
 static const char *action_file="/tmp/flxtr-som-ai-action";
 #define SOM_MENU_SCAN_START 0x1800u
@@ -91,7 +96,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && id<16 && armed && !cancelled && !completed && on_turbo){
-        if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
+        if(actual){cancelled=1;armed=0;autonomous_mode=0;plan_running=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
         if(frame_number>=start_frame &&
            frame_number<start_frame+action_frames &&
            id==som_action_button(active_action)){
@@ -119,7 +124,7 @@ static void som_input_poll(void){
         }
         last_physical_buttons=current;
         if(autonomous_mode && current){
-            autonomous_mode=0;armed=0;cancelled=1;
+            autonomous_mode=0;plan_running=0;armed=0;cancelled=1;
             fprintf(stderr,"[som-ai] AUTO STOP physical controller takeover\n");
         }
     }
@@ -182,6 +187,19 @@ static void som_auto_tick(void){
     static const SomAction sequence[]={SOM_ACT_RIGHT,SOM_ACT_ATTACK,
         SOM_ACT_DOWN,SOM_ACT_ATTACK,SOM_ACT_LEFT,SOM_ACT_ATTACK,
         SOM_ACT_UP,SOM_ACT_ATTACK};
+    if(plan_running){
+        if(armed || frame_number<next_plan_frame)return;
+        if(plan_next>=plan_count){
+            plan_running=0;
+            fprintf(stderr,"[som-ai] PLAN COMPLETE count=%u frame=%lu\n",plan_count,frame_number);
+            return;
+        }
+        SomAction next=plan_actions[plan_next++];
+        som_start_action(next);
+        next_plan_frame=frame_number+som_action_frames(next)+
+            (next==SOM_ACT_ATTACK?30u:9u);
+        return;
+    }
     if(!autonomous_mode)return;
     if(frame_number>=auto_deadline){
         autonomous_mode=0;
@@ -202,7 +220,7 @@ static void som_check_trigger(void){
         fprintf(stderr,"[som-ai] could not consume legacy trigger\n");
     }
     if(access(action_file,F_OK)!=0)return;
-    char command[40]={0};
+    char command[192]={0};
     FILE *input=fopen(action_file,"r");
     if(!input)return;
     int have=fgets(command,sizeof(command),input)!=NULL;
@@ -210,19 +228,42 @@ static void som_check_trigger(void){
     if(unlink(action_file)!=0)return;
     if(!have)return;
     command[strcspn(command,"\r\n")]=0;
+    if(!strncmp(command,"plan ",5)){
+        SomAction incoming[SOM_PLAN_MAX];
+        unsigned count=0;
+        char *state=NULL;
+        char *token=strtok_r(command+5," ",&state);
+        while(token && count<SOM_PLAN_MAX){
+            SomAction action=som_parse_action(token);
+            if(action!=SOM_ACT_RIGHT && action!=SOM_ACT_LEFT &&
+               action!=SOM_ACT_UP && action!=SOM_ACT_DOWN &&
+               action!=SOM_ACT_ATTACK)break;
+            incoming[count++]=action;
+            token=strtok_r(NULL," ",&state);
+        }
+        if(!count||token){
+            fprintf(stderr,"[som-ai] PLAN REJECTED: requires 1..%u movement/attack actions\n",SOM_PLAN_MAX);
+            return;
+        }
+        memcpy(plan_actions,incoming,count*sizeof(incoming[0]));
+        plan_count=count;plan_next=0;plan_running=1;autonomous_mode=0;
+        next_plan_frame=frame_number;
+        fprintf(stderr,"[som-ai] PLAN START count=%u frame=%lu\n",count,frame_number);
+        return;
+    }
     if(!strcmp(command,"auto_on")){
-        autonomous_mode=1;auto_step=0;
+        plan_running=0;autonomous_mode=1;auto_step=0;
         auto_deadline=frame_number+600; /* ten seconds maximum at 60fps */
         start_frame=frame_number>50?frame_number-50:0;action_frames=0;
         fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
         return;
     }
     if(!strcmp(command,"auto_off")){
-        autonomous_mode=0;armed=0;
+        autonomous_mode=0;plan_running=0;armed=0;
         fprintf(stderr,"[som-ai] AUTO STOP\n");
         return;
     }
-    if(autonomous_mode){autonomous_mode=0;armed=0;}
+    if(autonomous_mode||plan_running){autonomous_mode=0;plan_running=0;armed=0;}
     SomAction action=som_parse_action(command);
     if(action==SOM_ACT_NONE){
         fprintf(stderr,"[som-ai] unknown action %s\n",command);
@@ -283,6 +324,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
+    plan_running=0;plan_count=0;plan_next=0;next_plan_frame=0;
     last_physical_buttons=0;last_attack_frame=0;combo_count=0;
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     game_loaded=backend_load_game(game);
@@ -309,7 +351,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     return game_loaded;
 }
 RETRO_API void retro_unload_game(void){
-    armed=0;autonomous_mode=0;game_loaded=0;
+    armed=0;autonomous_mode=0;plan_running=0;game_loaded=0;
     if(backend_unload_game)backend_unload_game();
 }
 RETRO_API void retro_run(void){

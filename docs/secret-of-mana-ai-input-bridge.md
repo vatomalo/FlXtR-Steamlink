@@ -229,3 +229,25 @@ python3 tools/som_qwen_bridge.py --model qwen2.5:1.5b \
   and spell usage, level thresholds, and save migration. No experience
   or ROM save data is modified by this experimental controller.
 
+
+## Batched Qwen gameplay: faster than one inference per action
+
+The default Qwen bridge now makes **one** Ollama inference to select an
+initial heading, then constructs at most twelve simple movement/attack
+actions. The entire `plan <action> ...` command crosses SSH once,
+and the Libretro proxy executes each action on the emulator thread with
+short recovery gaps. There is no network or model request inside the
+frame loop. The old per-action mode remains accessible via
+`--individual` for diagnostics.
+
+```sh
+python3 -m py_compile tools/som_qwen_bridge.py
+make test-som-ai-proxy
+python3 tools/som_qwen_bridge.py --model qwen3:0.6b --steps 12 --dry-run
+python3 tools/som_qwen_bridge.py --model qwen3:0.6b --steps 12
+```
+
+**Requires rebuilding and redeploying the experimental .so** before a
+`plan` command will be recognized. This mode does not provide vision,
+map awareness, safety around obstacles or contextual combat intelligence.
+`auto_off` and physical controller input stop the running plan.

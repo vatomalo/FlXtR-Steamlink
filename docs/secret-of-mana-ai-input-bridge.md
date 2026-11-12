@@ -14,6 +14,38 @@ persistent override is performed.
 - Normal RetroArch remains `/home/apps/retroarch/retroarch.exec`
 - Steam Link Tailscale IP observed: `100.124.74.13`
 
+## FlXtR per-ROM Core selection
+
+After building and installing this **experimental branch of FlXtR**, open
+**Games → Secret of Mana, Turbo → ROM Options → Core** and choose
+`som_ai_proxy`. The option appears only when
+`/home/apps/retroarch/cores/experimental/som_ai_proxy_libretro.so`
+exists. **AUTOMATIC** or the previously selected standard core is still
+the default; this is per-ROM, not a platform-wide setting.
+
+Choosing `som_ai_proxy` makes FlXtR use that core for this specific ROM
+and enables `FLXTR_SOM_AI_TEST=1` for that launch. There is no longer a
+need to start a competing RetroArch instance via SSH. Once gameplay has
+started normally, run on SkyLoft:
+
+```sh
+ssh root@100.124.74.13 'touch /tmp/flxtr-som-ai-go'
+ssh root@100.124.74.13 'grep "\\[som-ai\\]" /home/apps/greenlink/game.log 2>/dev/null || true'
+```
+
+The log location is installation-dependent; use the existing FlXtR game
+runtime log (or run `grep -R '\\[som-ai\\]' /home/apps/greenlink/*.log`
+where available).
+
+**Save warning:** When launched from FlXtR, RetroArch uses normal game
+save/state paths. Before testing, back up your Turbo `.srm` and save
+states. The separate SSH test recipe below uses isolated `/tmp` saves
+instead. Selecting a proxy core never itself isolates saves.
+
+Rebuild the FlXtR Steam Link package using the established builder workflow
+before expecting a new Core option; merely copying a `.so` will not
+update the old FlXtR menu. PR remains experimental and unmerged.
+
 ## Runtime-triggered movement experiment (revision 2)
 
 The proxy no longer triggers at startup. Set `FLXTR_SOM_AI_TEST=1` when

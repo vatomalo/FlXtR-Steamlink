@@ -39,7 +39,7 @@ def choose_action(url: str, model: str, objective: str, previous: str) -> str:
     with urllib.request.urlopen(req, timeout=90) as response:
         result = json.load(response)
     raw = result.get("response") or ""
-    candidate = raw.strip().lower().strip("` \\"'\\r\\n")
+    candidate = raw.strip().lower().strip("`").strip()
     if candidate not in ACTIONS:
         reason = result.get("done_reason", "unknown")
         raise ValueError(

@@ -30,6 +30,12 @@ static int armed, cancelled, completed, game_loaded, on_turbo, test_enabled;
 static unsigned long start_frame, injected_queries;
 static SomAction active_action;
 static unsigned action_frames;
+static int autonomous_mode;
+static unsigned auto_step;
+static unsigned long auto_deadline;
+static uint16_t last_physical_buttons;
+static unsigned long last_attack_frame;
+static unsigned combo_count;
 static const char *trigger_file;
 static const char *action_file="/tmp/flxtr-som-ai-action";
 #define SOM_MENU_SCAN_START 0x1800u
@@ -85,7 +91,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && id<16 && armed && !cancelled && !completed && on_turbo){
-        if(actual){cancelled=1;armed=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
+        if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
         if(frame_number>=start_frame &&
            frame_number<start_frame+action_frames &&
            id==som_action_button(active_action)){
@@ -97,12 +103,28 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
 }
 static void som_input_poll(void){
     if(physical_poll)physical_poll();
+    /* Observe physical attack edges without mutating the game's inputs. */
+    if(physical_state && on_turbo){
+        uint16_t current=0;
+        for(unsigned key=0;key<16;key++)
+            if(physical_state(0,RETRO_DEVICE_JOYPAD,0,key))current|=(uint16_t)(1u<<key);
+        const uint16_t attack=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+        if((current&attack)&&!(last_physical_buttons&attack)){
+            combo_count=(frame_number-last_attack_frame<=30 && combo_count<3)?
+                combo_count+1:1;
+            last_attack_frame=frame_number;
+            if(combo_count>=2)
+                fprintf(stderr,"[som-ai] COMBO OBSERVED hits=%u frame=%lu (recognition only)\n",
+                    combo_count,frame_number);
+        }
+        last_physical_buttons=current;
+    }
     /* Check all physical buttons before injecting input, regardless of which
      * individual IDs the emulator requests in this frame. */
     if(armed&&!cancelled&&!completed&&on_turbo&&physical_state)
         for(unsigned id=0;id<16;id++)
             if(physical_state(0,RETRO_DEVICE_JOYPAD,0,id)){
-                cancelled=1;armed=0;
+                cancelled=1;armed=0;autonomous_mode=0;
                 fprintf(stderr,"[som-ai] physical controller override on frame %lu\n",frame_number);
                 break;
             }
@@ -152,6 +174,22 @@ static void som_start_action(SomAction action){
 }
 /* File commands are polled from the emulation thread.
  * Only allow another action after the previous action is completed. */
+static void som_auto_tick(void){
+    static const SomAction sequence[]={SOM_ACT_RIGHT,SOM_ACT_ATTACK,
+        SOM_ACT_DOWN,SOM_ACT_ATTACK,SOM_ACT_LEFT,SOM_ACT_ATTACK,
+        SOM_ACT_UP,SOM_ACT_ATTACK};
+    if(!autonomous_mode)return;
+    if(frame_number>=auto_deadline){
+        autonomous_mode=0;
+        fprintf(stderr,"[som-ai] AUTO COMPLETE after limited demo\n");
+        return;
+    }
+    if(armed)return;
+    /* Delay between actions allows attack recovery and visible stop frames. */
+    if(frame_number<start_frame+action_frames+18)return;
+    som_start_action(sequence[auto_step%8u]);
+    auto_step++;
+}
 static void som_check_trigger(void){
     if(!test_enabled||!game_loaded||!on_turbo||armed||
        frame_number%SOM_TRIGGER_POLL_FRAMES)return;
@@ -168,6 +206,19 @@ static void som_check_trigger(void){
     if(unlink(action_file)!=0)return;
     if(!have)return;
     command[strcspn(command,"\r\n")]=0;
+    if(!strcmp(command,"auto_on")){
+        autonomous_mode=1;auto_step=0;
+        auto_deadline=frame_number+600; /* ten seconds maximum at 60fps */
+        start_frame=frame_number-50;action_frames=0;
+        fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
+        return;
+    }
+    if(!strcmp(command,"auto_off")){
+        autonomous_mode=0;armed=0;
+        fprintf(stderr,"[som-ai] AUTO STOP\n");
+        return;
+    }
+    if(autonomous_mode){autonomous_mode=0;armed=0;}
     SomAction action=som_parse_action(command);
     if(action==SOM_ACT_NONE){
         fprintf(stderr,"[som-ai] unknown action %s\n",command);
@@ -227,6 +278,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
+    autonomous_mode=0;auto_step=0;auto_deadline=0;
+    last_physical_buttons=0;last_attack_frame=0;combo_count=0;
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     game_loaded=backend_load_game(game);
     const char *path=game?game->path:NULL;
@@ -252,12 +305,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     return game_loaded;
 }
 RETRO_API void retro_unload_game(void){
-    armed=0;game_loaded=0;
+    armed=0;autonomous_mode=0;game_loaded=0;
     if(backend_unload_game)backend_unload_game();
 }
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     som_check_trigger();
+    som_auto_tick();
     if(armed&&!cancelled&&!completed&&game_loaded &&
        frame_number==start_frame+action_frames){
         completed=1;armed=0;

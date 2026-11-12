@@ -51,10 +51,24 @@ def choose_action(url: str, model: str, objective: str, previous: str) -> str:
     return candidate
 
 def send_action(host: str, action: str) -> None:
-    # stdin carries an allowlisted command. No LLM text is interpolated into shell.
+    # stdin carries only an allowlisted single action or locally constructed plan.
+    tokens = action.split()
+    valid_plan = (len(tokens) >= 2 and tokens[0] == "plan" and
+                  len(tokens) <= 13 and
+                  all(token in (*MOVES, "attack") for token in tokens[1:]))
+    if action not in ACTIONS and not valid_plan:
+        raise ValueError("Refusing unsupported controller command")
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7",
            host, "cat > /tmp/flxtr-som-ai-action"]
     subprocess.run(cmd, input=action + "\n", text=True, check=True, timeout=15)
+
+def make_plan(first: str, count: int) -> list[str]:
+    """Qwen chooses a heading; the C runtime performs a bounded plan."""
+    start = MOVES.index(first) if first in MOVES else 0
+    directions = [MOVES[(start + i) % len(MOVES)] for i in range(4)]
+    return [("attack" if i % 3 == 2 else directions[(i // 3) % 4])
+            for i in range(count)]
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -65,11 +79,26 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--individual", action="store_true",
+                        help="Legacy slower per-action Ollama calls")
     args = parser.parse_args()
     if not (1 <= args.steps <= 30) or args.interval < 1.0:
         parser.error("steps must be 1..30 and interval at least 1 second")
     if args.ollama_url not in ("http://127.0.0.1:11434", "http://localhost:11434"):
         parser.error("only local Ollama is supported for this initial experiment")
+    if not args.individual:
+        try:
+            heading = choose_action(args.ollama_url, args.model, args.objective, "none")
+            actions = make_plan(heading, min(args.steps, 12))
+            command = "plan " + " ".join(actions)
+            print("[qwen] heading=" + heading + "; plan=" + " ".join(actions), flush=True)
+            if not args.dry_run:
+                send_action(args.host, command)
+                print("[ssh] plan submitted; check game.log for PLAN START", flush=True)
+            return 0
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print(f"[qwen] stopped safely: {exc}", file=sys.stderr)
+            return 1
     previous = "none"
     move_cursor = 0
     for i in range(args.steps):

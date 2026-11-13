@@ -367,6 +367,10 @@ def main(argv=None):
                      help="send native NPC walks (proxy enable marker still required)")
     run.add_argument("--no-messages", action="store_true")
     run.add_argument("--steps", type=int, default=0)
+    run.add_argument("--director", action="store_true",
+                     help="once per game day let Qwen pick one validated schedule change")
+    run.add_argument("--ollama-url", default="http://127.0.0.1:11434")
+    run.add_argument("--model", default="qwen3:0.6b")
     args = parser.parse_args(argv)
     real = time.time()
     world = open_world(args.db, args.schedule, real=real, rate=args.rate)
@@ -410,6 +414,10 @@ def run_loop(world, args):
     from som_qwen_bridge import RemoteLink
     link = RemoteLink(args.host, remote_loop=REMOTE_LOOP)
     drivers, last_talk, step = {}, None, 0
+    daily = None
+    if args.director:
+        import som_npc_director as director
+        daily = director.DailyDirector(world, director.qwen_chooser(args.ollama_url, args.model))
     print(f"[living-world] {'LIVE native NPC walks' if args.live else 'read-only'}; "
           f"world time {world.clock.now().describe()}", flush=True)
     try:
@@ -419,6 +427,9 @@ def run_loop(world, args):
             payload = link.fetch_wram(False)
             wram = WRAM(payload)
             world.clock.checkpoint(real)
+            if daily is not None:
+                for npc_id, choice in daily.tick(world.clock.now(real)):
+                    print(f"[living-world] director {npc_id}: {choice}", flush=True)
             now, lines, commands = observe_once(world, wram, real, drivers)
             talking = talk_target(wram, None, world.world)
             if talking and talking != last_talk:

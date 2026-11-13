@@ -19,7 +19,8 @@ or byte-exact sources), not re-checked on Turbo; **[H]** hypothesis.
 | world clock (persistent, deterministic, catch-up) | implemented and tested |
 | schedule format and Potos data for one NPC | implemented and tested; locations verified from ROM + live terrain |
 | off-screen simulation, story overrides, interruptions, encounter memory | implemented and tested (SQLite) |
-| reconciliation + route planning + native walk commands | implemented; runs read-only against live WRAM |
+| daily Qwen director (one validated schedule change per NPC and day) | implemented and tested; smoke-tested against local Ollama (section 6.1) |
+| reconciliation + route planning + native walk commands | implemented; runs read-only against live WRAM (re-checked 2026-11-13: map 131, slot 8 bound, holds during events) |
 | proxy `npc_walk` (game-RAM write) | implemented, unit-tested, ROM-gated, **off by default, not deployed, never run live** |
 | visible NPC movement in the running game | **not demonstrated yet**: needs your approval for live RAM writes (section 12) |
 | NPC disappearing indoors / crossing maps natively | not possible without a further mechanism (section 9) |
@@ -170,6 +171,34 @@ it (repeat visits), the clock (night warnings) and the activity (sleeping).
 Tables live in their own database `~/.local/state/flxtr/som-living-world.sqlite`,
 separate from the AI history.
 
+### 6.1 Daily director (`tools/som_npc_director.py`)
+
+Opt-in with `run --director [--ollama-url URL --model M]`. At the first tick
+of each game day, for each NPC, the director builds a menu of at most six
+one-slot changes (option ids `A`..`F`) plus `K` (keep the routine):
+
+- every option is an `override_day` the simulation already validates (an
+  existing entry time, a destination the NPC already uses or its home);
+- `sleep` and `wake_up` slots are never offered, nor slots that have already
+  started;
+- places are interleaved by personality appeal (diligent -> workplace,
+  sociable -> social places, unsociable -> home), evening slots first, so
+  the menu reads like "work late", "stay out", "stay in tonight".
+
+The prompt contains the name, personality, how often the player talked to
+the NPC yesterday (encounter memory) and the menu; no addresses or
+coordinates. Qwen's reply must contain exactly one offered id, otherwise it is
+`K`. The call runs in a worker thread, so `tick` never blocks the loop; an
+answer that arrives after its slot has started is dropped (`stale`). Errors
+and timeouts are `K`. Every day's decision is stored in `npc_director_days`
+(`choice`, `source` = qwen / error / stale / rejected / no_options), so each
+NPC is asked at most once per game day, even across restarts.
+
+Smoke test against the local Ollama (2026-11-13, throwaway DB): `qwen3:0.6b`
+answered `"Answer: D: at 18..."` in 8.7 s -> override "18:00 socialize at
+lane west" stored; `qwen3.5:4b` hit the 45 s timeout on a cold load -> `K`
+(`error`), schedule unchanged.
+
 ## 7. On-screen reconciliation and pathfinding
 
 When the player is on the NPC's map, `NativeDriver` binds the identity to
@@ -252,7 +281,10 @@ make test-som-ai-proxy test-som-ai-player2
 ```
 
 New: `test_som_world_clock.py`, `test_som_npc_schedule.py`,
-`test_som_npc_native.py`, `test_som_living_world.py`; the proxy test checks
+`test_som_npc_native.py`, `test_som_living_world.py`,
+`test_som_npc_director.py` (menu validity, no past/night slots, once per
+day, invalid/failed replies keep the schedule, stale answers dropped,
+non-blocking, simulation follows a chosen override); the proxy test checks
 command parsing, every refusal gate, the exact ten-field write set (nothing
 else in WRAM changes), all four directions, presentation flags, the enable
 marker, the ROM gate and the rate limit. The fingerprints were also checked
@@ -267,5 +299,5 @@ against the real Turbo ROM (accepted) and a one-byte change (refused).
 2. Make the NPC vanish at night (flag-range or hiding mechanism, section 9).
 3. Wandering NPCs and shopkeepers via record bit 7 patches; merchant
    open/closed lines; guards with patrol routes on maps with monsters.
-4. Qwen director: one call per game day choosing among `override_day`
-   options from personality and memory.
+4. ~~Qwen director~~ done (section 6.1). Next for it: more NPCs, so that
+   NPC-to-NPC choices ("meet X at the lane") become possible.

@@ -217,11 +217,11 @@ GOLD = 0x7ECC6A
 class FakeShop(FakeInn):
     """Shop dialog: talk, then the taught presses buy one Candy for 10 GP."""
 
-    def __init__(self, sells=True, candy=0x20, gold=600):
+    def __init__(self, sells=True, candy=0x20, gold=600, confirm_at=2):
         super().__init__()
         self.set(0x7ECC48, candy)
         self.set16(GOLD, gold & 0xFFFF); self.set(GOLD + 2, gold >> 16)
-        self.sells = sells
+        self.sells, self.confirm_at = sells, confirm_at
 
     def send_action(self, action):
         self.sent.append(action)
@@ -232,7 +232,7 @@ class FakeShop(FakeInn):
             self.set(EVENT, 1); self.dialog_confirms = 0
         elif action == "confirm" and in_dialog:
             self.dialog_confirms += 1
-            if self.dialog_confirms == 2 and self.sells:
+            if self.dialog_confirms == self.confirm_at and self.sells:
                 self.set(0x7ECC48, self.get(0x7ECC48) + 0x20)   # one more Candy (count in high nibble)
                 self.set16(GOLD, self.get(GOLD) | self.get(GOLD + 1) << 8)
                 gold = (self.get(GOLD) | self.get(GOLD + 1) << 8) - 10
@@ -274,6 +274,13 @@ class TestGoldAndShop(unittest.TestCase):
         self.assertEqual(run_shop(game), 10)
         self.assertEqual(game.sent[0], "step_left")
         self.assertEqual(game.sent[1:], SHOP["buttons"])
+        self.assertEqual(game.get(EVENT), 0)
+
+    def test_extra_buy_confirmation_before_exit(self):
+        game = FakeShop(confirm_at=3)
+        self.assertEqual(run_shop(game), 10)
+        self.assertEqual(game.sent.count("confirm"), 4)
+        self.assertEqual(game.sent[-1], "cancel")
         self.assertEqual(game.get(EVENT), 0)
 
     def test_purchase_not_seen_cancels_out_and_fails(self):

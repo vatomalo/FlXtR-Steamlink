@@ -5,6 +5,7 @@ story dialogue. A confirmed death -> transition -> recovered HP -> event
 sequence is required. This does not load savestates, reset the game, or
 modify WRAM. All commands still use the existing physical-takeover-safe proxy.
 """
+import json
 import time
 
 
@@ -18,6 +19,26 @@ class RespawnDialogue:
         self.last_confirm_at = None
         self.confirms = 0
         self.finished = False
+
+    def restore_recent(self, connection, max_age_seconds=300):
+        """Rehydrate a witnessed KO sequence across a bridge service restart.
+
+        Only the recent, actual WRAM observation history counts. Replaying a
+        field observation clears a completed recovery, so unrelated story
+        events cannot inherit a stale death authorization.
+        """
+        rows = connection.execute(
+            "SELECT state FROM observations WHERE ts>=? "
+            "ORDER BY id DESC LIMIT 900", (time.time() - max_age_seconds,)
+        ).fetchall()
+        for (encoded,) in reversed(rows):
+            self.observe(json.loads(encoded))
+        # No actions are sent by replay: current live observation is always
+        # rechecked before the first button press.
+        self.last_event = None
+        self.stable_since = self.clock()
+        self.last_confirm_at = None
+        self.confirms = 0
 
     def observe(self, observation, event_byte=None):
         """Return a one-shot 'confirm' command, or None."""

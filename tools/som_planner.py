@@ -126,6 +126,7 @@ class MemoryPlanner:
         self.charge_disabled = False
         self.combat_learner = None  # Optional, trained only from verified live attacks
         self.last_pixel = None
+        self.block_cooldown = 0
 
     @staticmethod
     def _open_steps(context):
@@ -503,6 +504,16 @@ class MemoryPlanner:
                              "x_px": enemy["x_px"], "y_px": enemy["y_px"],
                              "misses": 0})
         recharge = hero.get("weapon_recharge")
+        # Turbo's R guard blocks physical hits. Defend briefly when the
+        # weapon is still recharging and an enemy is already in striking
+        # distance. Cooldown prevents standing still blocking forever.
+        if (recharge is not None and recharge >= 50 and distance <= 32 and
+                max_hp and hp * 4 <= max_hp * 3 and self.block_cooldown == 0):
+            self.block_cooldown = 10
+            return PlannerDecision("block",
+                                   f"guard against enemy {enemy['slot']} while weapon recharges",
+                                   "defend_enemy")
+
         # A destructible obstacle between the hero and a visible enemy
         # must be resolved before pursuit. Otherwise routing around the
         # obstacle can alternate left/right forever as the enemy moves.
@@ -900,6 +911,7 @@ class MemoryPlanner:
         self.blocked_moves = {key: turns - 1 for key, turns in self.blocked_moves.items()
                               if turns > 1}
         self.previous_action = previous
+        self.block_cooldown = max(0, self.block_cooldown - 1)
         if previous in STEP_OFFSETS:
             self.assumed_facing = previous
         decision = self._decide(observation, previous, directive, errand)

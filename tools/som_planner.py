@@ -17,6 +17,7 @@ class PlannerDecision:
     action: str
     reason: str
     intention: str = "observe"
+    remaining_tiles: int | None = None
 
 
 class MemoryPlanner:
@@ -186,7 +187,7 @@ class MemoryPlanner:
         self._set_intention(intention)
         return PlannerDecision(action,
                                f"frontier {target[0]},{target[1]} is {distance} known tiles away",
-                               "explore_frontier")
+                               "explore_frontier", distance)
 
     def _combat(self, observation, context, open_steps, directive=None):
         actor = context["actor"]

@@ -233,9 +233,13 @@ def prefer_open_step(action: str, observation, previous: str) -> str:
             return step
     return action
 
-def extend_clear_exploration(action: str, observation, intention: str) -> str:
+def extend_clear_exploration(action: str, observation, intention: str,
+                             remaining_tiles=None) -> str:
     """Use a half-second hold only when the full observed line is clear."""
-    if intention != "explore_frontier" or action not in LONG_MOVES:
+    # A hold moves roughly four tiles. Keep a two-tile braking margin so the
+    # agent cannot overshoot a frontier and reverse on the next snapshot.
+    if (intention != "explore_frontier" or action not in LONG_MOVES or
+            not isinstance(remaining_tiles, int) or remaining_tiles < 6):
         return action
     context = observation.get("tile_context") if isinstance(observation, dict) else None
     if (not isinstance(context, dict) or not context.get("runtime_verified") or
@@ -346,6 +350,8 @@ def main() -> int:
     directive_map = None
     director_results = queue.Queue()
     director_running = False
+    last_sent_position = None
+    unchanged_polls = 0
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
@@ -459,11 +465,29 @@ def main() -> int:
             print(f"[ai] {step}/{total}: {action}", flush=True)
             sent_action = extend_clear_exploration(
                 action, observation,
-                decision.intention if args.policy in ("hybrid", "memory") else "qwen")
+                decision.intention if args.policy in ("hybrid", "memory") else "qwen",
+                decision.remaining_tiles if args.policy in ("hybrid", "memory") else None)
             if sent_action != action:
                 print(f"[ai] smooth clear route: {action} -> {sent_action}", flush=True)
-            if not args.dry_run:
+            actor = ((observation or {}).get("tile_context") or {}).get("actor") or {}
+            current_position = ((observation or {}).get("map_id"),
+                                actor.get("x_px"), actor.get("y_px"))
+            movement = action in STEP_OFFSETS
+            if movement and current_position == last_sent_position:
+                unchanged_polls += 1
+            else:
+                unchanged_polls = 0
+            await_progress = movement and unchanged_polls <= 2 and current_position == last_sent_position
+            if await_progress:
+                print("[ai] awaiting WRAM movement acknowledgement", flush=True)
+            elif not args.dry_run:
+                # After two unchanged snapshots, retry only the precise pulse;
+                # never stack another long hold on stale position data.
+                if movement and unchanged_polls > 2:
+                    sent_action = action
                 send_action(args.host, sent_action)
+                if movement:
+                    last_sent_position = current_position
             previous = action
             if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)

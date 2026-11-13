@@ -54,15 +54,18 @@ class TestTileGuard(unittest.TestCase):
         clear = {"tile_context": {"runtime_verified": True, "game_mode": "field",
                                   "radius": 3, "passability_rows": ["......."] * 7}}
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "explore_frontier"), "right")
+            extend_clear_exploration("step_right", clear, "explore_frontier", 8), "right")
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "engage_enemy"), "step_right")
+            extend_clear_exploration("step_right", clear, "engage_enemy", 8), "step_right")
+        self.assertEqual(
+            extend_clear_exploration("step_right", clear, "explore_frontier", 4),
+            "step_right")
         blocked = {"tile_context": dict(clear["tile_context"])}
         blocked["tile_context"]["passability_rows"] = [".......", ".......", ".......",
                                                           "...@.#.", ".......", ".......",
                                                           "......."]
         self.assertEqual(
-            extend_clear_exploration("step_right", blocked, "explore_frontier"),
+            extend_clear_exploration("step_right", blocked, "explore_frontier", 8),
             "step_right")
 
 

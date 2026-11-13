@@ -64,10 +64,20 @@ class TestTileGuard(unittest.TestCase):
         clear = {"tile_context": {"runtime_verified": True, "game_mode": "field",
                                   "radius": 3, "passability_rows": ["......."] * 7}}
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "explore_frontier", 8, 8), "dash_right")
+            extend_clear_exploration("step_right", clear, "explore_frontier", 8, 8), "step_right")
+        wide = {"tile_context": {"runtime_verified": True, "game_mode": "field",
+                                 "radius":5, "passability_rows":["..........."]*11}}
+        self.assertEqual(extend_clear_exploration("step_right", wide, "explore_frontier", 8,8), "right")
+        self.assertEqual(extend_clear_exploration("step_right", wide, "explore_frontier", 4,8), "step_right")
+        river = {"tile_context": {"runtime_verified":True,"game_mode":"field","radius":5,
+                    "actor":{"reported_ground_effect":0x31},
+                    "passability_rows":["..........."]*11,
+                    "attribute_rows":[" ".join(["02023100"]*11)]*11}}
+        self.assertEqual(extend_clear_exploration("step_up",river,"go_to_destination",8,8),"up")
+        self.assertEqual(extend_clear_exploration("step_down",river,"go_to_destination",8,8),"step_down")
         # Holds are preemptible, so every movement intention may use them.
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "engage_enemy", None, 5), "dash_right")
+            extend_clear_exploration("step_right", clear, "engage_enemy", None, 5), "step_right")
         self.assertEqual(
             extend_clear_exploration("step_right", clear, "observe", None), "step_right")
         # The route turns after two tiles: a hold would overshoot the corner.
@@ -232,6 +242,27 @@ class TestRemoteLink(unittest.TestCase):
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
         self.assertIsNone(self.link.fetch_wram(require_marker=True))
+
+    def test_speech_bubble_prefix_survives_the_remote_protocol(self):
+        self.link.show_message("^Hello there!|Second line")
+        self.assertEqual((self.root / "flxtr-som-ai-message").read_text(),
+                         "^Hello there!|Second line\n")
+
+    def test_navigation_reads_are_small_coherent_and_takeover_guarded(self):
+        raw=bytearray(0x20000)
+        raw[0xE4],raw[0xE6],raw[0xD9],raw[0xF4]=1,15,1,42
+        raw[0xDC:0xDE]=(128).to_bytes(2,"little")
+        raw[0xE000],raw[0xE02C],raw[0xE048]=1,1,0x31
+        raw[0xE002:0xE004]=(536).to_bytes(2,"little")
+        raw[0xE004:0xE006]=(866).to_bytes(2,"little")
+        raw[0xE182:0xE184]=(98).to_bytes(2,"little")
+        raw[0xE184:0xE186]=(98).to_bytes(2,"little")
+        (self.root/"flxtr-som-wram.bin").write_bytes(raw)
+        self.assertIsNone(self.link.fetch_navigation())
+        (self.root/"flxtr-som-ai-enabled").write_text("enabled\n")
+        frame=self.link.fetch_navigation()
+        self.assertTrue(frame["valid"])
+        self.assertEqual((frame["tick"],frame["x"],frame["y"]),(42,536,866))
 
     def test_control_commands_are_separate_from_model_actions(self):
         with self.assertRaises(ValueError):

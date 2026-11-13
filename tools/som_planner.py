@@ -1,5 +1,7 @@
 """Persistent, intention-driven, fail-closed field planner for Secret of Mana."""
 import math
+import heapq
+import itertools
 from collections import deque
 from dataclasses import dataclass
 
@@ -69,6 +71,7 @@ class PlannerDecision:
     # For action "charge": the stage to hold the attack button until.
     charge_stage: int = 0
     enemy_slot: int | None = None
+    navigation_path: tuple | None = None
 
 
 class RouteMap(dict):
@@ -127,6 +130,8 @@ class MemoryPlanner:
         self.combat_learner = None  # Optional, trained only from verified live attacks
         self.last_pixel = None
         self.block_cooldown = 0
+        self.route_diagonals = {}
+        self.route_threats = []
 
     @staticmethod
     def _open_steps(context):
@@ -229,6 +234,29 @@ class MemoryPlanner:
                                "follow_taught_path")
 
     def _remember(self, observation, context):
+        self.route_threats = [(e["x_px"]//16, e["y_px"]//16)
+                             for e in observation.get("enemy_slots", []) if e.get("active") and
+                             isinstance(e.get("x_px"), int) and isinstance(e.get("y_px"), int)]
+        # A diagonal half tile is not a fully open 16x16 square. The old BFS
+        # cut corners across its solid half and oscillated against the cliff.
+        # Keep native passability truthful; penalize observed half tiles so
+        # ordinary floor and verified cuts are preferred to tight corners.
+        key = (context["map_id"], context["actor"]["layer"])
+        diagonal = self.route_diagonals.setdefault(key, set())
+        radius = context.get("radius", 0)
+        center = context["actor_tile"]
+        size = context["map_size_tiles"]
+        for row_index, row in enumerate(context.get("attribute_rows") or []):
+            for column, encoded in enumerate(row.split()):
+                attributes = bytes.fromhex(encoded)
+                if len(attributes) != 4:
+                    continue
+                position = ((center[0]+column-radius)%size[0], (center[1]+row_index-radius)%size[1])
+                ground = attributes[2]
+                if ground & 0xF0 == 0x10 and ground & 7 >= 4:
+                    diagonal.add(position)
+                else:
+                    diagonal.discard(position)
         if self.history is None:
             self.local_cuttable.update(detect_cuts(self.previous_observation, observation))
             self.previous_observation = observation
@@ -267,9 +295,11 @@ class MemoryPlanner:
 
     def _known_cells(self, map_id, layer):
         if self.history is not None:
-            return self.history.known_cells(map_id, layer)
-        return {(x, y): kind for (known_map, known_layer, x, y), kind
-                in self.local_cells.items() if known_map == map_id and known_layer == layer}
+            cells = self.history.known_cells(map_id, layer)
+        else:
+            cells = {(x, y): kind for (known_map, known_layer, x, y), kind
+                     in self.local_cells.items() if known_map == map_id and known_layer == layer}
+        return cells
 
     def _get_intention(self):
         if self.history is not None:
@@ -313,12 +343,40 @@ class MemoryPlanner:
         return None if kind != "walked" else height
 
     @staticmethod
-    def _routes(start, cells, size, height=None):
+    def _routes(start, cells, size, height=None, weights=None):
         """Shortest known paths as {position: (first action, distance)}.
 
         Searches (position, height) states so a bridge reached up a ramp is
         usable even though, seen from the river bank, its ends look like walls.
         """
+        if weights:
+            routes = RouteMap(start)
+            order = itertools.count()
+            queue = [(0, next(order), start, height, None, 0, None)]
+            costs = {(start, height): 0}
+            while queue:
+                cost, _, position, level, first, distance, parent = heapq.heappop(queue)
+                if cost != costs[(position, level)]:
+                    continue
+                if position not in routes:
+                    routes[position] = (first, distance)
+                    routes.parents[position] = parent
+                for action, offset in STEP_OFFSETS.items():
+                    neighbor = MemoryPlanner._neighbor(position, offset, size)
+                    kind = cells.get(neighbor)
+                    if kind not in ("open", "pass", "cuttable", "h1", "h2"):
+                        continue
+                    after = MemoryPlanner._enter(kind, level)
+                    if after is None and kind in ("h1", "h2"):
+                        continue
+                    total = cost + max(1, weights.get(neighbor, 1))
+                    state = (neighbor, after)
+                    if total >= costs.get(state, float("inf")):
+                        continue
+                    costs[state] = total
+                    heapq.heappush(queue, (total, next(order), neighbor, after,
+                        action if first is None else first, distance+1, (position, action)))
+            return routes
         routes = RouteMap(start)
         seen = {(start, height)}
         queue = deque([(start, height, None, 0)])
@@ -726,7 +784,7 @@ class MemoryPlanner:
                 best = candidate
         return (best[2], best[1], routes.straight(best[3])) if best else None
 
-    def _travel(self, context, anchor, open_steps, place, travel_intent, arrive_intent):
+    def _travel(self, context, anchor, open_steps, place, travel_intent, arrive_intent, strict=False):
         """Follow learned maps and tiles to a taught place; None if no route."""
         actor = context["actor"]
         destination = anchor
@@ -754,8 +812,20 @@ class MemoryPlanner:
             position = tuple(context["actor_tile"])
             target = tuple(destination["target"])
             cells = self._exit_cells(context, destination)
+            weights = None
+            if strict or travel_intent == "return_to_inn":
+                width, height = context["map_size_tiles"]
+                weights = {}
+                for pos, kind in cells.items():
+                    risk = 0
+                    for ex, ey in self.route_threats:
+                        dx = abs(self._wrapped_delta(pos[0], ex, width))
+                        dy = abs(self._wrapped_delta(pos[1], ey, height))
+                        risk += max(0, 10-dx-dy)*8
+                    half = pos in self.route_diagonals.get((context["map_id"], actor["layer"]), ())
+                    weights[pos] = 1 + risk + (3 if kind == "cuttable" else 0) + (20 if half else 0)
             routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
-                                  actor.get("floor_height"))
+                                  actor.get("floor_height"), weights)
             via = destination.get("path")
             hop = (f" via maps {'>'.join(str(m) for m in via)}"
                    if isinstance(via, list) and len(via) > 2 else "")
@@ -774,10 +844,25 @@ class MemoryPlanner:
                 if action in open_steps:
                     kind = ("exit to map %s%s" % (destination.get("next_map"), hop)
                             if crossing else "")
+                    corridor = []
+                    cursor = target
+                    while cursor != position and cursor in routes.parents:
+                        corridor.append(cursor)
+                        cursor = routes.parents[cursor][0]
+                    corridor.reverse()
+                    safe_corridor = []
+                    for point in corridor[:3]:
+                        if cells.get(point) not in ("open","pass","h1","h2"):
+                            break
+                        if (abs(self._wrapped_delta(point[0],position[0],context["map_size_tiles"][0])) > 4 or
+                                abs(self._wrapped_delta(point[1],position[1],context["map_size_tiles"][1])) > 4):
+                            break
+                        safe_corridor.append(point)
                     return PlannerDecision(action,
                                            f"go to learned {place} ({distance} tiles)"
                                            + (f" by {kind}" if kind else ""),
-                                           travel_intent, distance, routes.straight(target))
+                                           travel_intent, distance, routes.straight(target),
+                                           navigation_path=tuple(safe_corridor))
                 if action in self._cut_steps(context):
                     return self._cut(context, action)
             if target not in routes and context.get("return_doors"):
@@ -785,6 +870,8 @@ class MemoryPlanner:
                 # Leave through a native return door, then choose the entrance
                 # whose arrival belongs to the destination's connected room.
                 return self._return_door(context, open_steps, f"leave disconnected room for {place}")
+            if strict:
+                return PlannerDecision("wait", "no verified route to destination exit", "observe")
             # Scanned collision islands can be disconnected when the agent
             # crossed an area before map learning was enabled. Keep a stable
             # heading toward the observed exit while checking every next tile.
@@ -1138,6 +1225,13 @@ class MemoryPlanner:
                                        "resuming cautious play", "replan")
             self._set_state("survival", survival)
             return decision
+        if (isinstance(errand, dict) and errand.get("avoid_fights") and
+                isinstance(errand.get("anchor"), dict) and max_hp and hp*2 > max_hp):
+            place = errand.get("place", "destination")
+            travel = self._travel(context, errand["anchor"], open_steps, place,
+                                  "go_to_destination", "at_destination", strict=True)
+            if travel is not None:
+                return travel
         combat = self._combat(observation, context, open_steps, directive)
         if combat is not None:
             return combat

@@ -202,6 +202,8 @@ class WRAM:
         if 0x20 <= ground <= 0x2F:
             reasons.append("ramp_or_stairs")
         elif 0x30 <= ground <= 0x3F:
+            if ground in (0x31, 0x32):
+                return "open", reasons + ["moving_floor_short_steps"]
             return "conditional", reasons + ["moving_floor"]
         elif ground in (0xD0, 0xD1, 0xD2):
             return "conditional", reasons + ["special_ground"]
@@ -220,7 +222,7 @@ class WRAM:
             return "!"
         if terrain == 3:
             return "#"
-        if 0x30 <= ground <= 0x3F or ground in (0xD0, 0xD1, 0xD2):
+        if (0x30 <= ground <= 0x3F and ground not in (0x31, 0x32)) or ground in (0xD0, 0xD1, 0xD2):
             return "?"
         if terrain in (1, 2):
             return str(terrain)
@@ -367,8 +369,8 @@ class WRAM:
                           "raw": raw, "verified": valid})
         return items
 
-    def observe(self):
-        tile_context = self.tile_context()
+    def observe(self, radius=3):
+        tile_context = self.tile_context(radius=radius)
         inventory = self.inventory()
         return {
             "source": "raw_wram",
@@ -670,16 +672,23 @@ class ObservationHistory:
             current = self._verified_position(json.loads(encoded), action)
             self._learn_edge(previous, current)
             previous = current or previous
-        self._last_verified = previous
         self.connection.commit()
 
     def record(self, state, action=None):
         current = self._verified_position(state, action)
-        if self._last_verified is None and current is not None:
-            row = self.connection.execute(
-                "SELECT action,state FROM observations ORDER BY id DESC LIMIT 1").fetchone()
-            if row:
-                self._last_verified = self._verified_position(json.loads(row[1]), row[0])
+        party = state.get("party") or [] if isinstance(state, dict) else []
+        hero = party[0] if party else {}
+        # A KO/respawn or service restart is not a walked exit. Never join a
+        # fresh process to a persisted last position from another game session.
+        if hero.get("hp") == 0:
+            self._last_verified = self._last_verified_state = None
+        if current is not None and self._last_verified_state is not None:
+            old_party = self._last_verified_state.get("party") or []
+            old_hero = old_party[0] if old_party else {}
+            if (self._last_verified["map_id"] != current["map_id"] and
+                    isinstance(hero.get("hp"), int) and isinstance(old_hero.get("hp"), int) and
+                    hero["hp"] > old_hero["hp"]):
+                self._last_verified = self._last_verified_state = None
         if (current is not None and self._last_verified is not None and
                 current["map_id"] != self._last_verified["map_id"]):
             self.check_rom_crossing(self._last_verified_state, current["map_id"])
@@ -1272,6 +1281,24 @@ class ObservationHistory:
         """
         if current_map == target_map:
             return [current_map]
+        # Old history can contain resets/KO returns as one-hop "crossings".
+        # A complete route through cross-checked ROM exits takes precedence
+        # over those shortcuts, regardless of how many hops it requires.
+        if self.rom_exits_trusted():
+            parents = {current_map: None}
+            queue = deque([current_map])
+            while queue:
+                here = queue.popleft()
+                for to_map in sorted(self.rom_tables.neighbours(here)):
+                    if to_map in parents:
+                        continue
+                    parents[to_map] = here
+                    if to_map == target_map:
+                        path = [to_map]
+                        while parents[path[-1]] is not None:
+                            path.append(parents[path[-1]])
+                        return path[::-1]
+                    queue.append(to_map)
         edges = {}
         for from_map, to_map in self.connection.execute(
                 "SELECT from_map,to_map FROM map_edges"):

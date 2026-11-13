@@ -26,6 +26,40 @@ def observation(rows=("...", ".@.", "..."), enemy=None, recharge=0, hp=80, max_h
 
 
 class TestMemoryPlanner(unittest.TestCase):
+    def test_weighted_visit_route_avoids_a_dangerous_shortcut(self):
+        cells = {(x,y):"open" for x in range(1,7) for y in range(1,5)}
+        weights = {(x,2):50 for x in range(2,6)}
+        routes = MemoryPlanner._routes((1,2), cells, (8,6), 0, weights)
+        self.assertIn(routes[(6,2)][0], ("step_up", "step_down"))
+        self.assertGreater(routes[(6,2)][1], 5)
+
+    def test_route_tracks_diagonal_half_tiles_without_declaring_them_walls(self):
+        planner = MemoryPlanner()
+        state = observation()
+        state["tile_context"]["attribute_rows"] = ["00000000 00000000 00000000",
+            "00000000 00000000 12001700", "00000000 00000000 00000000"]
+        planner.decide(state)
+        self.assertIn((3,3), planner.route_diagonals[(131,1)])
+        self.assertEqual(planner._known_cells(131,1)[(3,3)], "open")
+
+    def test_strict_visit_does_not_greedily_walk_toward_a_disconnected_target(self):
+        planner = MemoryPlanner()
+        state = observation()
+        decision = planner._travel(state["tile_context"],
+            {"map_id":131,"layer":1,"target":[6,6]}, ["step_right"],
+            "town", "go_to_destination", "at_destination", strict=True)
+        self.assertEqual(decision.action, "wait")
+        self.assertIn("no verified route", decision.reason)
+
+    def test_explicit_visit_skips_optional_fight_but_survival_still_wins(self):
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}
+        errand = {"place": "town", "anchor": {"map_id":131,"layer":1,"target":[1,3]},
+                  "avoid_fights": True}
+        decision = MemoryPlanner().decide(observation(enemy=enemy), errand=errand)
+        self.assertEqual((decision.action, decision.intention), ("step_left", "go_to_destination"))
+        decision = MemoryPlanner().decide(observation(enemy=enemy,hp=20), errand=errand)
+        self.assertNotEqual(decision.intention, "go_to_destination")
+
     def test_attacks_verified_nearby_enemy_when_weapon_ready(self):
         # Facing byte not yet verified: turn toward the enemy, then swing.
         enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}

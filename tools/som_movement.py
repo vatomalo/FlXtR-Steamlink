@@ -16,7 +16,7 @@ class MovementAck:
         self.clock = clock or time.monotonic
         self.pending = None
 
-    def decide(self, desired, observation, intent=""):
+    def decide(self, desired, observation, intent="", allowed_steps=None):
         """Return (action_or_None, reason). Never bypass caller's tile guard.
 
         Only steps that were already authorized by the guard can be retried.
@@ -28,13 +28,26 @@ class MovementAck:
         valid = (context.get("runtime_verified") and
                  context.get("game_mode") == "field" and
                  all(isinstance(actor.get(k), int) for k in ("x_px", "y_px")))
-        if not valid or intent in ("survive", "evade_enemy", "cut_grass", "charge_attack"):
+        if not valid or intent in ("survive", "evade_enemy", "cut_grass", "charge_attack", "talk_to_npc"):
             self.pending = None
             return desired, "override"
         pos = (context.get("map_id"), actor["x_px"], actor["y_px"])
         if self.pending is not None:
             pending = self.pending
+            if allowed_steps is not None and pending["action"] not in allowed_steps:
+                self.pending = None
+                return desired, "old direction no longer passable"
             if pos != pending["position"]:
+                if (pos[0] == pending["position"][0] and desired in STEPS and
+                        desired != pending["action"] and pending.get("centering", 0) < 2 and
+                        self.clock()-pending["time"] < 1.2):
+                    axis = 1 if pending["action"] in ("step_left", "step_right") else 2
+                    positive = pending["action"] in ("step_right", "step_down")
+                    fraction = pos[axis] % 16
+                    before_center = fraction < 8 if positive else fraction > 8
+                    if before_center:
+                        pending["centering"] = pending.get("centering", 0)+1
+                        return pending["action"], "finish tile before turning"
                 self.pending = None
             elif desired not in STEPS:
                 self.pending = None

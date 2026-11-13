@@ -207,6 +207,26 @@ class TestRomCrossChecks(unittest.TestCase):
         self.assertEqual(waypoints[0]["target"], [4, 23])
         self.assertEqual(waypoints[0]["source"], "rom")
 
+    def test_reset_shaped_shortcut_never_beats_a_verified_rom_route(self):
+        self.cross(130, 129, (1, 0))
+        self.history.connection.execute(
+            "INSERT INTO map_edges VALUES(131,128,1,10,23,'wait',1,0)")
+        self.history.connection.commit()
+        self.assertEqual(self.history.map_path(131, 128), [131, 130, 129, 128])
+
+    def test_ko_return_is_not_learned_as_an_exit(self):
+        before = crossing_state(130, (15, 25))
+        before["party"] = [{"hp": 20}]
+        dead = dict(before, party=[{"hp": 0}])
+        dead["tile_context"] = dict(before["tile_context"], runtime_verified=False)
+        after = crossing_state(128, (31, 58))
+        after["party"] = [{"hp": 98}]
+        self.history.record(before, "step_right")
+        self.history.record(dead, "wait")
+        self.history.record(after, "step_left")
+        self.assertIsNone(self.history.connection.execute(
+            "SELECT 1 FROM map_edges WHERE from_map=130 AND to_map=128").fetchone())
+
     def test_attach_replays_log_without_stale_map_snapshots(self):
         self.history.rom_tables = None
         before = crossing_state(130, (32, 11), (1, 0))

@@ -32,6 +32,22 @@ class TestMovementAck(unittest.TestCase):
         self.assertEqual(self.ack.decide("step_right", observation(x=101))[0],
                          "step_right")
 
+    def test_previous_direction_is_not_retried_after_becoming_blocked(self):
+        self.ack.decide("step_up", observation(), allowed_steps={"step_up", "step_right"})
+        self.now = .5
+        action, reason = self.ack.decide("step_right", observation(), allowed_steps={"step_right"})
+        self.assertEqual(action, "step_right")
+        self.assertIn("no longer passable", reason)
+
+    def test_finish_entering_tile_before_turning_at_a_corner(self):
+        self.ack.decide("step_right", observation(x=100))
+        self.now = .2
+        action, reason = self.ack.decide("step_up", observation(x=112))
+        self.assertEqual(action, "step_right")
+        self.assertIn("finish tile", reason)
+        self.now = .4
+        self.assertEqual(self.ack.decide("step_up", observation(x=124))[0], "step_up")
+
     def test_never_retries_outside_verified_field(self):
         self.ack.decide("step_up", observation())
         self.now = 2

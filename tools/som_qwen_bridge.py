@@ -23,10 +23,12 @@ from som_memory import (GP_REWARD, HP_PENALTY, WRAM, MapLoadGuard,
                         ObservationHistory)
 from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFailed,
                       ShopMacro, candy_count, read_gold, ring_open)
-from som_planner import MemoryPlanner
+from som_planner import MemoryPlanner, PlannerDecision
 from som_personality import Personality, LINES
 from som_learning import CombatLearner
 from som_doors import DoorLearner
+from som_dialogue import Commentary, NpcDialogue, qwen_comment
+from som_walk import CurrentWalk, WalkFailed
 from som_respawn import RespawnDialogue
 from som_event_escape import EventEscape
 from som_movement import MovementAck
@@ -333,14 +335,42 @@ def extend_clear_exploration(action: str, observation, intention: str,
     if not isinstance(rows, list) or not isinstance(radius, int) or radius < 2:
         return action
     dx, dy = STEP_OFFSETS[action]
+    attributes = context.get("attribute_rows") or []
+    opposing = {"step_up":0x31, "step_right":0x32}.get(action)
+    if opposing is not None and radius >= 5 and straight_tiles >= 3:
+        lane = []
+        for distance in range(1, 6):
+            row, column = radius+dy*distance, radius+dx*distance
+            if not (0 <= row < len(rows) and 0 <= column < len(rows[row]) and rows[row][column]=="."):
+                break
+            if row >= len(attributes) or column >= len(attributes[row].split()):
+                break
+            lane.append(int(attributes[row].split()[column][4:6],16))
+        # Two consecutive opposing-current cells cannot be crossed by a
+        # pulse followed by a long SSH idle. A verified plain hold made 30px
+        # upstream on live Turbo; keep the five-cell lookahead as a bound.
+        current = (context.get("actor") or {}).get("reported_ground_effect")
+        if len(lane)==5 and (lane[:2]==[opposing,opposing] or
+                              (current==opposing and lane[0]==opposing)):
+            return LONG_MOVES[action]
+    if (context.get("actor") or {}).get("reported_ground_effect") in (0x31, 0x32):
+        return action
     for distance in range(1, radius + 1):
         row, column = radius + dy * distance, radius + dx * distance
         if not (0 <= row < len(rows) and isinstance(rows[row], str) and
                 0 <= column < len(rows[row]) and rows[row][column] == "."):
             return action
-    # Turbo dash uses A plus direction. Only verified, fully clear,
-    # four-tile straight routes qualify, never a blind short-step retry.
-    return DASH_MOVES[LONG_MOVES[action]]
+        if row < len(attributes):
+            encoded = attributes[row].split()
+            if column < len(encoded):
+                ground = int(encoded[column][4:6], 16)
+                if ground in (0x31, 0x32) or (ground & 0xF0 == 0x10 and ground & 7 >= 4):
+                    return action
+    # A plain 30-frame walk covers 60px. Five verified tiles leave room for
+    # the hero box as well as that displacement. A dash has no such bound.
+    if radius >= 5 and straight_tiles >= 5 and (remaining_tiles is None or remaining_tiles >= 5):
+        return LONG_MOVES[action]
+    return action
 
 # One persistent POSIX-sh loop on the Steam Link. Each request is one line on
 # stdin; no process or SSH channel is created per decision. The remote side
@@ -352,16 +382,21 @@ REMOTE_LOOP = (
     "if [ \"$cmd\" = obsm ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
     "elif [ -f /tmp/flxtr-som-wram.bin ]; then echo WRAM; cat /tmp/flxtr-som-wram.bin; "
     "else echo NONE; fi;; "
+    "nav) if [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
+    "elif exec 3< /tmp/flxtr-som-wram.bin; then echo NAV; "
+    "dd if=/proc/self/fd/3 bs=256 count=1 2>/dev/null; "
+    "dd if=/proc/self/fd/3 bs=256 skip=224 count=2 2>/dev/null; exec 3<&-; "
+    "else echo NONE; fi;; "
     "act\\ *) a=${cmd#act }; "
     "case \"$a\" in ''|*[!a-z_]*) echo BAD;; "
     "*) printf '%s\\n' \"$a\" > /tmp/flxtr-som-ai-action && echo OK || echo BAD;; esac;; "
     r'msg\ *) t=${cmd#msg }; '
-    r'case "$t" in ""|*[!A-Za-z0-9\ .,!?:/%+=\(\)\|-]*) echo BAD;; '
+    r'case "$t" in ""|*[!A-Za-z0-9\ .,!?:/%+=\(\)\|\^-]*) echo BAD;; '
     r'*) printf "%s\n" "$t" > /tmp/flxtr-som-ai-message && echo OK || echo BAD;; esac;; '
     "*) echo BAD;; esac; done"
 )
 # Characters the Steam Link loop and the overlay font both accept.
-MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|-]")
+MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|^-]")
 WRAM_BYTES = 0x20000
 
 
@@ -428,6 +463,8 @@ class RemoteLink:
                 status = self._read_line(deadline)
                 payload = (self._read_exact(WRAM_BYTES, deadline)
                            if status == "WRAM" else None)
+                if status == "NAV":
+                    payload = self._read_exact(768, deadline)
                 return status, payload
             except (OSError, subprocess.SubprocessError):
                 # The stream may be mid-frame; restart once, then fail safe.
@@ -452,6 +489,23 @@ class RemoteLink:
         if status != "OK":
             raise OSError(f"Steam Link rejected message ({status})")
 
+    def fetch_navigation(self):
+        status, raw = self._request("nav")
+        if status == "STOP":
+            return None
+        if status != "NAV" or len(raw) != 768:
+            raise OSError("navigation snapshot unavailable")
+        low, hero = raw[:256], raw[256:]
+        def word(data, offset):
+            return data[offset] | data[offset+1] << 8
+        hp, maximum = word(hero,0x182), word(hero,0x184)
+        return {"tick":low[0xF4], "map":word(low,0xDC)&0x1FF,
+                "x":word(hero,2),"y":word(hero,4),"hp":hp,"max_hp":maximum,
+                "layer":hero[0xB]&0x80,"ground":hero[0x48],
+                "valid":low[0xE4]==1 and low[0xE6]==0xF and low[0xD0]==0 and
+                low[0x7D]!=1 and low[0xD9]==1 and hero[0]==1 and hero[0x2C]==1 and
+                not word(hero,0x190)&0xC160 and 0 < hp <= maximum <= 999}
+
     def send_control(self, command: str) -> None:
         """Experimental proxy commands that only tools (never Qwen) may send."""
         if command not in CONTROL_COMMANDS:
@@ -475,6 +529,7 @@ INTENT_MESSAGES = {
     "recover_at_inn": "AI: at the inn",
     "survive": "AI: HP low|retreating",
     "stuck": "AI: stuck|no open tile",
+    "evade_enemy": "AI: body flicker|afterimage",
     "go_to_shop": "AI: plenty of GP|going to buy Candy",
     "cut_grass": "AI: cutting grass",
 }
@@ -622,6 +677,10 @@ def main() -> int:
                         help="Non-modal AI dialogue style (default curious)")
     parser.add_argument("--no-personality", action="store_true",
                         help="Disable contextual AI speech bubbles")
+    parser.add_argument("--no-npc-talk", action="store_true",
+                        help="Do not initiate conversations with nearby NPCs")
+    parser.add_argument("--visit-map", type=int,
+                        help="Travel to this map, then stay and talk to nearby NPCs")
     parser.add_argument("--policy", choices=("hybrid", "memory", "qwen"), default="hybrid",
                         help="hybrid uses Qwen for intentions and WRAM planning for execution")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
@@ -653,6 +712,8 @@ def main() -> int:
     parser.add_argument("--start-timeout", type=float, default=300.0,
                         help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
+    if args.visit_map is not None and not 0 <= args.visit_map <= 511:
+        parser.error("visit-map must be 0..511")
     if not (0 <= args.steps <= 30) or args.interval < 0.1:
         parser.error("steps must be 1..30, or 0 for continuous ring control; interval minimum is 0.1")
     if args.steps == 0 and not args.ring_control:
@@ -739,6 +800,11 @@ def main() -> int:
             announce("^" + phrase)
             print(f"[personality] {event}: {phrase}", flush=True)
 
+    commentator = (Commentary(lambda text: qwen_comment(args.ollama_url, args.model, text))
+                   if messages and args.policy == "hybrid" else None)
+    npc_dialogue = (NpcDialogue(history, commentator)
+                    if history is not None and args.wram_remote and not args.dry_run else None)
+
     if args.policy == "hybrid":
         threading.Thread(target=warm_model, args=(args.ollama_url, args.model),
                          daemon=True, name="som-qwen-warmup").start()
@@ -776,7 +842,7 @@ def main() -> int:
             raw = None
             if args.wram_file:
                 raw = args.wram_file.read_bytes()
-                observation = WRAM(raw).observe()
+                observation = WRAM(raw).observe(radius=5)
             elif args.wram_remote:
                 # Fixed remote path; no model-generated command or file path.
                 raw = (link.fetch_wram(args.ring_control) if link else
@@ -786,11 +852,17 @@ def main() -> int:
                         learner.cancel("physical takeover or game exit")
                     print("[ai] stopped by physical takeover or game exit", flush=True)
                     break
-                observation = WRAM(raw).observe()
+                observation = WRAM(raw).observe(radius=5)
             if observation is not None:
                 map_guard.apply(observation)
                 if doors is not None:
                     doors.observe(WRAM(raw), observation)
+                if npc_dialogue is not None:
+                    npc_dialogue.observe(WRAM(raw), observation)
+                    bubble = commentator.poll(observation["map_id"]) if commentator else None
+                    if bubble:
+                        announce(bubble)
+                        print(f"[npc-comment] {bubble}", flush=True)
                 if learner is not None:
                     learned = learner.observe(observation)
                     if learned is not None:
@@ -820,6 +892,26 @@ def main() -> int:
                     if after != before and after is not None:
                         print(f"[{label}] {after}", flush=True)
                 hero_facts = facts
+            if npc_dialogue is not None and npc_dialogue.target is not None:
+                npc_action = npc_dialogue.step(WRAM(raw), observation, planner)
+                # NpcDialogue only advances in D0 0x83; Turbo often holds a
+                # page in 0x84, which used to stall here for its 25 s timeout.
+                if (npc_action is not None and npc_action[0] == "wait" and
+                        npc_dialogue.phase == "dialogue" and npc_dialogue.target is not None):
+                    escape = event_escape.observe(WRAM(raw))
+                    if escape is not None:
+                        npc_action = (escape[0], "NPC dialogue escape: " + escape[1])
+                if npc_action is not None:
+                    action, reason = npc_action
+                    if learner is not None:
+                        learner.cancel("NPC conversation")
+                    link.send_action(action)
+                    history.record(observation, action)
+                    print(f"[npc] {reason}: {action}", flush=True)
+                    previous = action
+                    step += 1
+                    time.sleep(args.interval)
+                    continue
             if history is not None and observation is not None:
                 history.record_combat(observation, previous if previous != "none" else None)
                 money = read_gold(WRAM(raw), gold) if raw is not None else None
@@ -1023,7 +1115,21 @@ def main() -> int:
                 auto_errand = (shop_errand(wram_now, observation, shop, gold, args.shop_gold)
                                if wram_now is not None and not shop_disabled else None)
                 errand = goal_errand or auto_errand
+                if args.visit_map is not None and current_map != args.visit_map:
+                    errand = {"place": f"map {args.visit_map}", "anchor": {"map_id": args.visit_map},
+                              "avoid_fights": True}
+                elif args.visit_map == current_map:
+                    errand = None
                 decision = planner.decide(observation, previous, directive, errand)
+                if (args.visit_map == current_map and decision.intention in
+                        ("explore_frontier", "leave_room", "replan", "stuck")):
+                    decision = PlannerDecision("wait", "at requested visit map", "visit_map")
+                if (npc_dialogue is not None and not args.no_npc_talk and
+                        decision.intention in ("explore_frontier", "leave_room", "replan", "stuck", "visit_map")):
+                    npc_action = npc_dialogue.consider(WRAM(raw), observation, planner)
+                    if npc_action is not None:
+                        action, reason = npc_action
+                        decision = PlannerDecision(action, reason, "talk_to_npc")
                 if history is not None and context.get("map_id") not in inn_lookalikes:
                     score = history.looks_like("inn", observation)
                     if score is not None:
@@ -1104,8 +1210,8 @@ def main() -> int:
                     # it would immediately cover a timed speech bubble.
                     announce(INTENT_MESSAGES[decision.intention])
                 if (decision.intention != last_intention_spoken and
-                        decision.intention in ("explore_frontier", "engage_enemy",
-                                               "survive", "return_to_inn", "stuck")):
+                    decision.intention in ("explore_frontier", "engage_enemy",
+                                           "evade_enemy", "survive", "return_to_inn", "stuck")):
                     speak(decision.intention)
                     last_intention_spoken = decision.intention
             else:
@@ -1145,8 +1251,6 @@ def main() -> int:
                       flush=True)
                 action = "wait"
                 repeated = 1
-            if history is not None and observation is not None:
-                history.record(observation, action)
             step += 1
             total = "continuous" if args.steps == 0 else str(args.steps)
             print(f"[ai] {step}/{total}: {action}", flush=True)
@@ -1162,19 +1266,39 @@ def main() -> int:
             # Retry the SAME already-guarded step once, as a separate pulse.
             actual, movement_reason = movement_ack.decide(
                 action, observation,
-                decision.intention if args.policy in ("hybrid", "memory") else "qwen")
+                decision.intention if args.policy in ("hybrid", "memory") else "qwen",
+                allowed_steps={step for step in STEP_OFFSETS
+                               if guard_tile_action(step, observation, trusted) == step})
             if actual is None:
                 print(f"[movement] {movement_reason}", flush=True)
             elif not args.dry_run:
+                if actual in STEP_OFFSETS and actual != action:
+                    sent_action = actual
                 if movement_reason.startswith("retry same"):
                     sent_action = actual  # no long hold on an uncertain tile
                     print(f"[movement] {movement_reason}: {actual}", flush=True)
                 elif actual == "block":
                     sent_action = "block"
-                link.send_action(sent_action) if link else send_action(args.host, sent_action)
+                context = (observation or {}).get("tile_context") or {}
+                ground = (context.get("actor") or {}).get("reported_ground_effect")
+                corridor = decision.navigation_path if args.policy in ("hybrid","memory") else None
+                current_walk = link and ground in (0x31,0x32) and actual in STEP_OFFSETS and corridor
+                if current_walk:
+                    try:
+                        actor = context["actor"]
+                        progress = CurrentWalk(link,actual.removeprefix("step_"),
+                            origin=(context["map_id"],actor["x_px"],actor["y_px"]),waypoints=corridor).run()
+                        print(f"[movement] verified upstream walk: {progress}px",flush=True)
+                    except WalkFailed as exc:
+                        print(f"[movement] current walk stopped: {exc}",flush=True)
+                else:
+                    link.send_action(sent_action) if link else send_action(args.host, sent_action)
                 if learner is not None:
                     learner.action_sent(sent_action, observation)
-            previous = action
+            if history is not None and observation is not None:
+                history.record(observation, action if args.dry_run else
+                               sent_action if actual is not None else None)
+            previous = actual if actual is not None else "wait"
             if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:

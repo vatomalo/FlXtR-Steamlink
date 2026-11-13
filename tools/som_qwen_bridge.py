@@ -799,7 +799,19 @@ def main() -> int:
                               f"damage={learned['damage']} hp_lost={learned['hp_lost']}",
                               flush=True)
                 if personality is not None:
-                    speech_event = personality.observation_event(observation)
+                    # Persistent memory, not just the previous map in this run.
+                    # Check before the current observation is recorded/surveyed.
+                    context_for_speech = observation.get("tile_context") or {}
+                    map_for_speech = context_for_speech.get("map_id")
+                    visited_before = False
+                    if (history is not None and
+                            context_for_speech.get("runtime_verified") and
+                            isinstance(map_for_speech, int)):
+                        visited_before = bool(history.connection.execute(
+                            "SELECT 1 FROM tile_visits WHERE map_id=? LIMIT 1",
+                            (map_for_speech,)).fetchone())
+                    speech_event = personality.observation_event(
+                        observation, visited_before=visited_before)
                     if speech_event:
                         speak(speech_event)
                 hero_now = (observation.get("party") or [{}])[0]

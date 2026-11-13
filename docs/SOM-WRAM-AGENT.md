@@ -104,6 +104,19 @@ The service needs passwordless BatchMode SSH to the Steam Link and the selected
 Ollama model already installed locally. Check those independently with
 `ssh -o BatchMode=yes root@100.124.74.13 true` and `ollama list`.
 
+If the Action Grid is unavailable because companions have not joined, start or
+stop the same supervised Player 1 AI session from SkyLoft through the proxy's
+allowlisted action channel:
+
+```sh
+ssh root@100.124.74.13 'printf "ai_on\n" > /tmp/flxtr-som-ai-action'
+ssh root@100.124.74.13 'printf "ai_off\n" > /tmp/flxtr-som-ai-action'
+```
+
+Do not create `/tmp/flxtr-som-ai-enabled` directly: `ai_on` also arms the
+proxy's physical-controller takeover cleanup. This starts AI control of Player
+1; it does not create or mutate a companion party member.
+
 Mapping basis: the live work-map and collision-cache layout follows the
 read-only reverse engineering in `cidwel/som-decomp` (`docs/maps.md` and
 `docs/hero-movement.md`), while the 16×16 block/collision organization is

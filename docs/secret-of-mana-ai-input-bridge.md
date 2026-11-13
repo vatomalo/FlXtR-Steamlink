@@ -25,6 +25,8 @@ Available commands: `right`, `left`, `up`, `down`, `attack`,
 `step_right`, `step_left`, `step_up`, `step_down`, `wait`, and `snapshot`.
 Full movement lasts 30 emulated frames, tile-aware steps last six, and buttons
 pulse for two frames. The legacy `touch /tmp/flxtr-som-ai-go` still sends Right.
+`ai_on` and `ai_off` safely start or stop the waiting SkyLoft bridge when the
+in-game Action Grid is unavailable; they do not spawn companions.
 
 To send an action while the AI proxy is running:
 

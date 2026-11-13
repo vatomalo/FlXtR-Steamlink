@@ -103,6 +103,14 @@ int main(void){
     mocked_wram[0xA212]=0;mocked_wram[0xA136]=3;som_ring_ai_tick();
     mocked_wram[0x007D]=0;som_ring_ai_tick();
     assert(!ring_ai_pending&&!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
+    FILE *manual=fopen(path,"w");
+    assert(manual!=NULL&&fputs("ai_on\n",manual)>0&&fclose(manual)==0);
+    frame_number=180;som_check_trigger();
+    assert(ring_ai_enabled&&access(ring_ai_path,F_OK)==0);
+    manual=fopen(path,"w");
+    assert(manual!=NULL&&fputs("ai_off\n",manual)>0&&fclose(manual)==0);
+    som_check_trigger();
+    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
     reset_proxy();autonomous_mode=1;auto_deadline=frame_number+600;
     auto_step=0;start_frame=0;action_frames=0;
     som_auto_tick();

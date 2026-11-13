@@ -283,6 +283,19 @@ static void som_check_trigger(void){
     if(unlink(action_file)!=0)return;
     if(!have)return;
     command[strcspn(command,"\r\n")]=0;
+    if(!strcmp(command,"ai_on")){
+        if(som_write_ring_ai_marker()){
+            ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
+            fprintf(stderr,"[som-ai] MANUAL AI START signal ready at %s\n",ring_ai_file);
+        }else fprintf(stderr,"[som-ai] MANUAL AI start signal failed\n");
+        return;
+    }
+    if(!strcmp(command,"ai_off")){
+        ring_ai_enabled=0;ring_ai_pending=0;armed=0;cancelled=1;
+        unlink(ring_ai_file);
+        fprintf(stderr,"[som-ai] MANUAL AI STOP\n");
+        return;
+    }
     if(!strcmp(command,"auto_on")){
         autonomous_mode=1;auto_step=0;
         auto_deadline=frame_number+600; /* ten seconds maximum at 60fps */

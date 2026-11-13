@@ -108,6 +108,24 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(still_hurt.intention, "return_to_inn")
         self.assertNotEqual(recovered.intention, "return_to_inn")
 
+    def test_survival_gives_up_when_inn_spot_does_not_heal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "inn.sqlite")
+            history.set_agent_state("safe_anchor",
+                                    {"map_id": 131, "layer": 1, "target": [2, 3]})
+            planner = MemoryPlanner(history)
+            hurt = observation(hp=40, max_hp=100)
+            decisions = [planner.decide(hurt) for _ in range(40)]
+            self.assertEqual(decisions[0].intention, "recover_at_inn")
+            abandoned = [d for d in decisions if "survival abandoned" in d.reason]
+            self.assertEqual(len(abandoned), 1)
+            self.assertIn("innkeeper", abandoned[0].reason)
+            self.assertNotIn(decisions[-1].intention, ("recover_at_inn", "return_to_inn"))
+            # A new critical drop restarts the retreat.
+            critical = planner.decide(observation(hp=20, max_hp=100))
+            self.assertIn(critical.intention, ("recover_at_inn", "return_to_inn"))
+            history.close()
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

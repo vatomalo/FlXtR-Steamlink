@@ -13,6 +13,10 @@ OPPOSITE_STEP = {
 
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
+# Leave survival when the inn spot does not heal or no recovery happens.
+# HP does not regenerate on its own, so an endless retreat is a dead end.
+INN_WAIT_DECISIONS = 30
+SURVIVAL_GIVE_UP_DECISIONS = 900
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 
@@ -428,17 +432,38 @@ class MemoryPlanner:
         hero = (observation.get("party") or [{}])[0]
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
         survival = self._get_state("survival")
-        if max_hp and hp * 2 <= max_hp:
-            survival = {"active": True}
-            self._set_state("survival", survival)
-        if isinstance(survival, dict) and survival.get("active"):
-            # Hysteresis prevents bouncing between fighting and retreating.
-            # Resume only after a real recovery, not one lucky HP tick.
-            if max_hp and hp * 10 >= max_hp * 9:
+        if not isinstance(survival, dict):
+            survival = {}
+        critical = bool(max_hp and hp * 4 <= max_hp)
+        if max_hp and hp * 10 >= max_hp * 9:
+            # Real recovery ends survival and any earlier give-up.
+            if survival:
                 self._set_state("survival", None)
-            else:
-                return self._survive(observation, context, open_steps,
-                                     critical=bool(max_hp and hp * 4 <= max_hp))
+            survival = {}
+        elif max_hp and hp * 2 <= max_hp and not survival.get("active"):
+            # After a give-up, only a new critical drop restarts the retreat.
+            if not survival.get("abandoned") or critical:
+                survival = {"active": True, "turns": 0, "at_inn": 0}
+                self._set_state("survival", survival)
+        if survival.get("active"):
+            # Hysteresis prevents bouncing between fighting and retreating.
+            decision = self._survive(observation, context, open_steps, critical=critical)
+            survival["turns"] = survival.get("turns", 0) + 1
+            if decision.intention == "recover_at_inn":
+                survival["at_inn"] = survival.get("at_inn", 0) + 1
+            reason = None
+            if survival["at_inn"] >= INN_WAIT_DECISIONS:
+                reason = ("reached the inn spot but HP did not rise; staying at the inn "
+                          "needs the innkeeper dialog, which is not automated")
+            elif survival["turns"] >= SURVIVAL_GIVE_UP_DECISIONS:
+                reason = f"no recovery after {SURVIVAL_GIVE_UP_DECISIONS} decisions"
+            if reason:
+                self._set_state("survival", {"active": False, "abandoned": True})
+                self._set_intention(None)
+                return PlannerDecision("wait", f"survival abandoned: {reason}; "
+                                       "resuming cautious play", "replan")
+            self._set_state("survival", survival)
+            return decision
         combat = self._combat(observation, context, open_steps, directive)
         if combat is not None:
             return combat

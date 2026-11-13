@@ -7,6 +7,7 @@ Enemy target validation follows the game's native target-list predicates.
 """
 import json
 import sqlite3
+from collections import deque
 import time
 from pathlib import Path
 
@@ -19,6 +20,9 @@ SOURCE = "https://wiki.superfamicom.org/seiken-densetsu-2"
 TILE_BASES = (0x7F0000, 0x7F4000)
 ATTRIBUTE_BASES = (0x7FB800, 0x7FBC00)
 TILE_SIZE = 16
+OPPOSITE_STEP = {"step_right": "step_left", "step_left": "step_right",
+                 "step_up": "step_down", "step_down": "step_up",
+                 "right": "left", "left": "right", "up": "down", "down": "up"}
 ITEM_NAMES = ("candy", "medical_herb", "cup_of_wishes", "faerie_walnut",
               "royal_jam", "chocolate", "barrel", "magic_rope",
               "flammie_drum", "moogle_belt", "midge_mallet", "unknown_curative")
@@ -317,9 +321,70 @@ class ObservationHistory:
             "y INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, "
             "source TEXT NOT NULL, seen INTEGER NOT NULL, last_ts REAL NOT NULL, "
             "PRIMARY KEY(map_id,layer,x,y,kind))")
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS map_edges "
+            "(from_map INTEGER NOT NULL, to_map INTEGER NOT NULL, layer INTEGER, "
+            "x INTEGER NOT NULL, y INTEGER NOT NULL, action TEXT, "
+            "seen INTEGER NOT NULL, last_ts REAL NOT NULL, PRIMARY KEY(from_map,to_map))")
+        self.connection.commit()
+        self._last_verified = None
+        self._anchor_misses = 0
+        if not self.connection.execute("SELECT 1 FROM map_edges LIMIT 1").fetchone():
+            self._backfill_edges()
+
+    @staticmethod
+    def _verified_position(state, action):
+        context = state.get("tile_context") if isinstance(state, dict) else None
+        if not isinstance(context, dict) or not context.get("runtime_verified"):
+            return None
+        tile, actor = context.get("actor_tile"), context.get("actor") or {}
+        if not isinstance(tile, list) or len(tile) != 2:
+            return None
+        return {"map_id": context.get("map_id"), "layer": actor.get("layer"),
+                "target": list(tile), "action": action}
+
+    def _learn_edge(self, previous, current):
+        """Store both directions of one observed map crossing.
+
+        Kept outside the trimmed observation log so a route home learned an
+        hour ago is still known after thousands of later decisions.
+        """
+        if not previous or not current or previous["map_id"] == current["map_id"]:
+            return
+        now = time.time()
+        reverse = OPPOSITE_STEP.get(previous["action"])
+        for origin, destination, action in (
+                (previous, current["map_id"], previous["action"]),
+                (current, previous["map_id"], reverse)):
+            self.connection.execute(
+                "INSERT INTO map_edges(from_map,to_map,layer,x,y,action,seen,last_ts) "
+                "VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(from_map,to_map) DO UPDATE SET "
+                "layer=excluded.layer,x=excluded.x,y=excluded.y,action=excluded.action,"
+                "seen=seen+1,last_ts=excluded.last_ts",
+                (origin["map_id"], destination, origin["layer"], *origin["target"],
+                 action, now))
+
+    def _backfill_edges(self):
+        rows = self.connection.execute(
+            "SELECT action,state FROM observations ORDER BY id ASC").fetchall()
+        previous = None
+        for action, encoded in rows:
+            current = self._verified_position(json.loads(encoded), action)
+            self._learn_edge(previous, current)
+            previous = current or previous
+        self._last_verified = previous
         self.connection.commit()
 
     def record(self, state, action=None):
+        current = self._verified_position(state, action)
+        if self._last_verified is None and current is not None:
+            row = self.connection.execute(
+                "SELECT action,state FROM observations ORDER BY id DESC LIMIT 1").fetchone()
+            if row:
+                self._last_verified = self._verified_position(json.loads(row[1]), row[0])
+        self._learn_edge(self._last_verified, current)
+        if current is not None:
+            self._last_verified = current
         self.connection.execute(
             "INSERT INTO observations(ts,action,state) VALUES(?,?,?)",
             (time.time(), action, json.dumps(state, separators=(",", ":"))))
@@ -501,6 +566,10 @@ class ObservationHistory:
         anchor = self.get_agent_state("safe_anchor")
         if isinstance(anchor, dict):
             return anchor
+        # Scanning the log is expensive; retry only occasionally.
+        self._anchor_misses += 1
+        if self._anchor_misses % 200 != 1:
+            return None
         # Prefer an early full-health, enemy-free Potos observation. This makes
         # existing training databases useful immediately without hardcoding a
         # doorway coordinate. A later observed heal replaces it with the real
@@ -552,7 +621,28 @@ class ObservationHistory:
         return candidate if healed else None
 
     def return_waypoint(self, current_map, target_map):
-        """Recover a previously traversed direct map edge in reverse."""
+        """First exit on the shortest learned chain of maps to target_map."""
+        edges = {}
+        for from_map, to_map, layer, x, y, action in self.connection.execute(
+                "SELECT from_map,to_map,layer,x,y,action FROM map_edges"):
+            edges.setdefault(from_map, []).append((to_map, layer, x, y, action))
+        first_hop = {current_map: None}
+        queue = deque([current_map])
+        while queue:
+            here = queue.popleft()
+            for to_map, layer, x, y, action in edges.get(here, []):
+                if to_map in first_hop:
+                    continue
+                first_hop[to_map] = first_hop[here] or {
+                    "map_id": current_map, "layer": layer, "target": [x, y],
+                    "action": action, "next_map": to_map}
+                if to_map == target_map:
+                    return dict(first_hop[to_map])
+                queue.append(to_map)
+        return self._scan_return_waypoint(current_map, target_map)
+
+    def _scan_return_waypoint(self, current_map, target_map):
+        """Legacy direct-edge scan of the recent observation log."""
         previous = None
         rows = self.connection.execute(
             "SELECT action,state FROM observations ORDER BY id ASC LIMIT 5000").fetchall()

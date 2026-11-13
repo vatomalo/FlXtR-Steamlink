@@ -148,7 +148,14 @@ The proxy changes require rebuilding and reinstalling `som_ai_proxy_libretro.so`
 - `intent=observe` now names the verification failure, e.g.
   `(actor_tile_fields_disagree, mode=field)` or `(not_field_mode, mode=event)`.
 - Survival mode is stored in the history database and survives service
-  restarts; it ends only when HP is back to 90 percent.
+  restarts. It ends when HP is back to 90 percent, after 30 decisions on the
+  learned inn spot without HP rising (paying the innkeeper is not automated),
+  or after 900 decisions without recovery. After a give-up only a new critical
+  (25 percent) HP drop restarts the retreat.
+- Map crossings are stored permanently in `map_edges` (both directions), so
+  the way home is not lost when the 5000-row observation log rolls over, and
+  the return route can chain several maps. Older databases are backfilled
+  once from their remaining observation log.
 
 ## Start from the existing Action Grid ring menu
 

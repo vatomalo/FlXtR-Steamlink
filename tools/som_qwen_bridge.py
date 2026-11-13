@@ -335,6 +335,8 @@ class RemoteLink:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 process.kill()
+                process.wait()
+            process.stdout.close()
 
     def _read_exact(self, size: int, deadline: float) -> bytes:
         chunks, remaining = [], size

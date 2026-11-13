@@ -201,6 +201,38 @@ class TestWRAM(unittest.TestCase):
             self.assertEqual(waypoint["action"], "step_right")
             history.close()
 
+    def test_route_home_survives_log_trimming_and_spans_several_maps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "multi.sqlite"
+            history = ObservationHistory(path)
+            def state(map_id, tile):
+                return {"tile_context": {"runtime_verified": True, "map_id": map_id,
+                                         "actor_tile": tile, "actor": {"layer": 1}}}
+            # Potos (131) -> 130 -> 129, then thousands of decisions in 129.
+            history.record(state(131, [2, 3]), "step_left")
+            history.record(state(130, [7, 3]), "step_up")
+            history.record(state(130, [7, 0]), "step_up")
+            history.record(state(129, [5, 9]), "wait")
+            history.connection.execute("DELETE FROM observations")
+            history.connection.commit()
+            waypoint = history.return_waypoint(129, 131)
+            self.assertEqual(waypoint["target"], [5, 9])
+            self.assertEqual(waypoint["action"], "step_down")
+            self.assertEqual(waypoint["next_map"], 130)
+            self.assertEqual(history.return_waypoint(130, 131)["action"], "step_right")
+            history.close()
+            # Existing databases are backfilled once from their observation log.
+            legacy = Path(directory) / "legacy.sqlite"
+            old = ObservationHistory(legacy)
+            old.record(state(131, [2, 3]), "step_left")
+            old.record(state(130, [7, 3]), "wait")
+            old.connection.execute("DELETE FROM map_edges")
+            old.connection.commit()
+            old.close()
+            reopened = ObservationHistory(legacy)
+            self.assertEqual(reopened.return_waypoint(130, 131)["target"], [7, 3])
+            reopened.close()
+
     def test_safe_anchor_falls_back_to_earliest_verified_potos_position(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "anchor.sqlite")

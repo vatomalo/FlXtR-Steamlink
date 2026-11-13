@@ -59,10 +59,10 @@ class TestLearning(unittest.TestCase):
 
     def test_learned_range_needs_comparative_evidence(self):
         self.assertFalse(self.learner.should_close(0, "sword", 37))
-        for bucket, hits in [(1, 4), (2, 0)]:
+        for bucket, attempts, hits in [(1, 5, 4), (2, 4, 0)]:
             self.connection.execute(
                 "INSERT INTO learned_attack_ranges VALUES(?,?,?,?,?,?,?)",
-                (0, "sword", bucket, 4, hits, hits * 8, 0))
+                (0, "sword", bucket, attempts, hits, hits * 8, 0))
         self.connection.commit()
         self.assertTrue(self.learner.should_close(0, "sword", 37))
         self.assertFalse(self.learner.should_close(0, "sword", 21))

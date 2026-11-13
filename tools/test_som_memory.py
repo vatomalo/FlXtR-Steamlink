@@ -80,7 +80,7 @@ class TestWRAM(unittest.TestCase):
         self.assertEqual(context["passability_rows"][3][3:5], "@#")
         self.assertEqual(state["player_position"]["x_px"], 40)
 
-    def test_tile_context_fails_closed_when_actor_fields_disagree(self):
+    def test_tile_context_accepts_stale_id_when_collision_fields_agree(self):
         data = bytearray(128 * 1024)
         data[0x7EE000 - 0x7E0000] = 1
         data[0x7E00E4 - 0x7E0000] = 1
@@ -89,8 +89,20 @@ class TestWRAM(unittest.TestCase):
         put16(data, 0x7E00C2, 16 * 8)
         data[0x7EE04C - 0x7E0000] = 99
         context = WRAM(data).tile_context()
+        self.assertTrue(context["runtime_verified"])
+        self.assertEqual(context["verification_warning"], "stale_actor_tile_id_cache")
+
+    def test_tile_context_fails_closed_when_collision_fields_disagree(self):
+        data = bytearray(128 * 1024)
+        data[0x7EE000 - 0x7E0000] = 1
+        data[0x7E00E4 - 0x7E0000] = 1
+        data[0x7E00E6 - 0x7E0000] = 0x0F
+        put16(data, 0x7E00C0, 16 * 8)
+        put16(data, 0x7E00C2, 16 * 8)
+        data[0x7EE08E - 0x7E0000] = 1
+        context = WRAM(data).tile_context()
         self.assertFalse(context["runtime_verified"])
-        self.assertEqual(context["verification_error"], "actor_tile_fields_disagree")
+        self.assertEqual(context["verification_error"], "actor_tile_attributes_disagree")
         self.assertNotIn("passability_rows", context)
 
     def test_history(self):

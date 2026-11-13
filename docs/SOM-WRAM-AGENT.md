@@ -24,8 +24,10 @@ local-Ollama controller experiment.
 - Preserve the existing SSH allowlisted action protocol.
 
 Tile mapping fails closed: the grid is published as runtime-verified only when
-the tile under the hero agrees with the actor's separately maintained tile ID,
-ground-effect byte, and priority field. Exploration is local rather than a full
+the tile under the hero agrees with the actor's independently maintained floor,
+ground-effect, and priority fields. Turbo may leave the actor's tile-ID cache
+stale, so that byte is retained as a warning rather than a movement veto.
+Exploration is local rather than a full
 map route solver: it chooses among verified adjacent tiles using persisted visit
 counts and enemy direction. Party/item/enemy spawning is intentionally not
 exposed: each requires a different native game routine, and raw partial actor

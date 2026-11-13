@@ -149,6 +149,7 @@ class WRAM:
         current_id, current_attributes = self.tile(center_x, center_y, actor["layer"])
         checks = {
             "tile_id": current_id == actor["reported_tile_id"],
+            "floor_height": (current_attributes[0] & 3) == actor["floor_height"],
             "ground_effect": current_attributes[2] == actor["reported_ground_effect"],
             "priority": (current_attributes[1] & 7) == actor["reported_priority"],
         }
@@ -157,8 +158,14 @@ class WRAM:
             "actor_tile": [center_x, center_y],
             "verification_checks": checks,
         })
-        if not all(checks.values()):
-            result["verification_error"] = "actor_tile_fields_disagree"
+        # Turbo can leave actor +04C's tile-id cache stale even while the
+        # terrain fields used by movement are current. Live map 131 showed
+        # cached id 148 at map id 160, but floor, ground and priority all
+        # agreed. Trust collision data only when those three independent
+        # semantic fields match; retain tile_id as a diagnostic check.
+        semantic_checks = ("floor_height", "ground_effect", "priority")
+        if not all(checks[name] for name in semantic_checks):
+            result["verification_error"] = "actor_tile_attributes_disagree"
             return result
 
         rows, tile_rows, special = [], [], []
@@ -182,6 +189,8 @@ class WRAM:
             tile_rows.append(" ".join(ids))
         result.update({
             "runtime_verified": True,
+            "verification_warning": (None if checks["tile_id"] else
+                                     "stale_actor_tile_id_cache"),
             "radius": radius,
             "passability_rows": rows,
             "tile_id_rows": tile_rows,

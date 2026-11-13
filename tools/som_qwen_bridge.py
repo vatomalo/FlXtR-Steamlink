@@ -49,6 +49,9 @@ ACTIONS = {
     "dash_right", "dash_left", "dash_up", "dash_down",
 }
 # Held for many seconds and ended by the bridge: never offered to the model.
+CANDY_TRANSIENT = ("did not produce an open ring", "not in field mode")
+CANDY_RETRY_S = 4.0
+CANDY_MAX_RETRIES = 6
 GUARD_REFRESHES = 2     # extra block presses per guard decision
 GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
 MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
@@ -830,6 +833,7 @@ def main() -> int:
     calibration = (Calibration.load(args.ring_calibration) if args.ring_calibration
                    else Calibration.load())
     candy_disabled = calibration is None
+    candy_retry_at, candy_failures = 0.0, 0
     inn_disabled = False
     inn_lookalikes = set()
     surveyed_map, surveys_due = None, 0
@@ -1124,6 +1128,7 @@ def main() -> int:
             else:
                 orphan_ring_samples = 0
             if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
+                    time.monotonic() >= candy_retry_at and
                     candy_wanted(observation) and mode == "field"):
                 if learner is not None:
                     learner.cancel("Candy macro")
@@ -1132,13 +1137,24 @@ def main() -> int:
                     gained = CandyMacro(link, calibration,
                                         log=lambda text: print(text, flush=True)).run()
                     print(f"[candy] used Candy: +{gained} HP", flush=True)
+                    candy_failures = 0
                     announce(f"AI: Candy +{gained} HP")
                 except MacroFailed as exc:
-                    # One failure disables Candy for this run rather than
-                    # fumbling through menus repeatedly.
-                    candy_disabled = True
-                    print(f"[candy] disabled for this run: {exc}", flush=True)
-                    announce("AI: Candy failed|see log")
+                    # The ring refusing to open (balloon, a swing or a hit in
+                    # progress) is transient: retry soon instead of losing
+                    # Candy for the run, which let the hero die at low HP.
+                    # Anything that went wrong inside the menu still
+                    # disables Candy rather than fumbling repeatedly.
+                    transient = any(text in str(exc) for text in CANDY_TRANSIENT)
+                    candy_failures = candy_failures + 1 if transient else CANDY_MAX_RETRIES
+                    if candy_failures < CANDY_MAX_RETRIES:
+                        candy_retry_at = time.monotonic() + CANDY_RETRY_S
+                        print(f"[candy] retry in {CANDY_RETRY_S:.0f}s "
+                              f"({candy_failures}/{CANDY_MAX_RETRIES}): {exc}", flush=True)
+                    else:
+                        candy_disabled = True
+                        print(f"[candy] disabled for this run: {exc}", flush=True)
+                        announce("AI: Candy failed|see log")
                     # Handle a failure before CandyMacro entered its own
                     # cleanup block (for example a stale ring-mode read).
                     if raw is not None and ring_open(WRAM(raw)):

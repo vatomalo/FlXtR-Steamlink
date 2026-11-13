@@ -1,5 +1,6 @@
 """Persistent, intention-driven, fail-closed field planner for Secret of Mana."""
 import math
+import time
 import heapq
 import itertools
 from collections import deque
@@ -35,6 +36,9 @@ SURVIVAL_GIVE_UP_DECISIONS = 900
 CUT_ATTEMPTS = 3
 # A step chosen this many times without the hero moving is blocked for a while.
 STALL_DECISIONS = 8
+# Minimum time between swings. Turbo's recharge byte is unreliable; swings
+# sent sooner after the last one dealt under half the damage (2026-11-14).
+SWING_INTERVAL_S = 0.6
 # A learned crossing this close to a native return door went through that door.
 DOOR_CROSSING_TILES = 4
 STALL_BLOCK_DECISIONS = 200
@@ -150,6 +154,9 @@ class MemoryPlanner:
         # not walk over exit tiles (it used to leave map 129 for 128 and be
         # sent straight back, over and over).
         self.stay_on_map = False
+        self.clock = time.monotonic
+        self.last_swing = None
+        self.swing_decided_at = None
         self.just_hit = False
         self.previous_action = "none"
         self.combat_learner = None  # Optional, trained only from verified live attacks
@@ -740,6 +747,14 @@ class MemoryPlanner:
                                        "charge_attack", charge_stage=stage,
                                        enemy_slot=enemy.get("slot"))
             if ready:
+                since = (self.clock() - self.last_swing) if self.last_swing is not None else None
+                if since is not None and since < SWING_INTERVAL_S:
+                    # A swing before the gauge refills does little damage
+                    # (live: 1.6 vs 3.6 per swing). Hold the guard instead;
+                    # the next swing is the counter.
+                    return PlannerDecision("block", f"guard while the weapon recharges "
+                                           f"({since:.1f}s since swing)", "defend_enemy")
+                self.swing_decided_at = self.clock()
                 return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range, "
                                        f"facing it", "engage_enemy")
             return None
@@ -1156,6 +1171,10 @@ class MemoryPlanner:
         self.block_cooldown = max(0, self.block_cooldown - 1)
         if previous in STEP_OFFSETS:
             self.assumed_facing = previous
+        if previous in ("attack", "charge"):
+            # When that swing was decided (sent right after), else now.
+            self.last_swing = self.swing_decided_at or self.clock()
+        self.swing_decided_at = None
         decision = self._decide(observation, previous, directive, errand)
         return self._check_stall(observation, decision)
 

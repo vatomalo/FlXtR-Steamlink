@@ -65,10 +65,26 @@ class TestFacingAndTurns(unittest.TestCase):
 
     def test_unverified_facing_keeps_the_last_turn_for_repeated_swings(self):
         planner = MemoryPlanner()
+        ticks = iter(range(100))
+        planner.clock = lambda: float(next(ticks))      # one second per decision
         observed = state([(16, 0)])
         actions = [planner.decide(observed, previous=previous).action
                    for previous in ("none", "step_right", "attack", "attack")]
         self.assertEqual(actions, ["step_right", "attack", "attack", "attack"])
+
+    def test_swings_are_paced_and_the_gap_is_guarded(self):
+        planner = MemoryPlanner()
+        now = [0.0]
+        planner.clock = lambda: now[0]
+        observed = state([(16, 0)])
+        planner.decide(observed, previous="step_right")
+        now[0] = 1.0
+        self.assertEqual(planner.decide(observed, previous="step_right").action, "attack")
+        now[0] = 1.3                                     # 0.3 s after the swing
+        held = planner.decide(observed, previous="attack")
+        self.assertEqual((held.action, held.intention), ("block", "defend_enemy"))
+        now[0] = 1.9                                     # gauge refilled: counter
+        self.assertEqual(planner.decide(observed, previous="block").action, "attack")
 
 
 if __name__ == "__main__":

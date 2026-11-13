@@ -31,6 +31,7 @@ from som_dialogue import Commentary, NpcDialogue, qwen_comment
 from som_walk import CurrentWalk, WalkFailed
 from som_respawn import RespawnDialogue
 from som_event_escape import EventEscape
+from som_play_loop import PlayLoop, SaveMacro
 from som_movement import MovementAck
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
@@ -677,6 +678,12 @@ def main() -> int:
                         help="Non-modal AI dialogue style (default curious)")
     parser.add_argument("--no-personality", action="store_true",
                         help="Disable contextual AI speech bubbles")
+    parser.add_argument("--play-loop", action="store_true",
+                        help="deterministic hunt -> shop -> inn -> save cycle (som_play_loop.py)")
+    parser.add_argument("--hunt-map", type=int,
+                        help="play loop hunting map (default: best gold per HP from memory)")
+    parser.add_argument("--trip-gold", type=int, default=100,
+                        help="play loop: GP to earn per hunting trip")
     parser.add_argument("--no-npc-talk", action="store_true",
                         help="Do not initiate conversations with nearby NPCs")
     parser.add_argument("--visit-map", type=int,
@@ -825,6 +832,13 @@ def main() -> int:
     orphan_ring_attempted = False
     respawn_dialogue = RespawnDialogue()
     event_escape = EventEscape(log=lambda line: print(line, flush=True))
+    play_loop = None
+    save_disabled = False
+    last_loop_goal = None
+    if args.play_loop and history is not None and args.policy in ("hybrid", "memory"):
+        play_loop = PlayLoop(history, args.hunt_map, args.trip_gold,
+                             log=lambda line: print(line, flush=True))
+        print(f"[loop] play loop on; phase {play_loop.phase}", flush=True)
     if history is not None:
         respawn_dialogue.restore_recent(history.connection)
         if respawn_dialogue.stage != "idle":
@@ -1078,7 +1092,8 @@ def main() -> int:
                 # A journey is kept until arrival or timeout; other goals are
                 # reconsidered every DIRECTOR_TURNS decisions or on a new map.
                 travelling = is_travel(goal) and step < goal_deadline
-                if (args.policy == "hybrid" and not director_running and not travelling and
+                if (args.policy == "hybrid" and play_loop is None and
+                        not director_running and not travelling and
                         (directive_turns <= 0 or current_map != directive_map)):
                     # Qwen can take tens of seconds on CPU. Never freeze the
                     # controller; the goal arrives through a thread-safe queue.
@@ -1106,14 +1121,37 @@ def main() -> int:
                 directive, goal_errand, done = goal_plan(
                     goal, summary, args.hunt_direction,
                     history.safe_anchor() if history is not None else None, shop_offer)
-                if done or (is_travel(goal) and (step >= goal_deadline or
-                                                 (goal_errand is None and not done))):
+                if play_loop is None and (done or (is_travel(goal) and (step >= goal_deadline or
+                                                 (goal_errand is None and not done)))):
                     print(f"[goal] {goal} {'reached' if done else 'ended'}; hunting here",
                           flush=True)
                     goal, directive_turns = "hunt_here", 0
                     directive, goal_errand, _ = goal_plan(goal, summary, args.hunt_direction)
                 auto_errand = (shop_errand(wram_now, observation, shop, gold, args.shop_gold)
                                if wram_now is not None and not shop_disabled else None)
+                if play_loop is not None:
+                    # The loop owns goals: no Qwen goal and no automatic shop detour.
+                    inn_anchor = history.safe_anchor()
+                    save_point = history.get_agent_state("save")
+                    loop_goal = play_loop.goal(
+                        summary, shop_offer is not None,
+                        isinstance(inn_anchor, dict) and bool(inn_anchor.get("face")) and
+                        not inn_disabled,
+                        isinstance(save_point, dict) and save_point.get("taught") and
+                        not save_disabled, reachable)
+                    if loop_goal != last_loop_goal:
+                        print(f"[loop] {play_loop.phase}: goal {loop_goal}", flush=True)
+                        last_loop_goal = loop_goal
+                    goal = loop_goal
+                    if goal == "go_to_save":
+                        directive = (f"explore_{args.hunt_direction}"
+                                     if args.hunt_direction != "none" else "explore_unknown")
+                        goal_errand = {"place": "save", "anchor": save_point,
+                                       "arrive": "at_save"}
+                    else:
+                        directive, goal_errand, _ = goal_plan(
+                            goal, summary, args.hunt_direction, inn_anchor, shop_offer)
+                    auto_errand = None
                 errand = goal_errand or auto_errand
                 if args.visit_map is not None and current_map != args.visit_map:
                     errand = {"place": f"map {args.visit_map}", "anchor": {"map_id": args.visit_map},
@@ -1194,12 +1232,35 @@ def main() -> int:
                                               log=lambda text: print(text, flush=True)).run()
                             print(f"[inn] stayed at the inn: +{gained} HP", flush=True)
                             announce("AI: rested at the inn|HP restored")
+                            if play_loop is not None:
+                                play_loop.inn_done()
                         except MacroFailed as exc:
+                            if play_loop is not None:
+                                play_loop.inn_failed(str(exc))
                             inn_disabled = True
                             print(f"[inn] disabled for this run: {exc}", flush=True)
                             announce("AI: inn failed|see log")
                         previous = "wait"
                         continue
+                if (link and play_loop is not None and decision.intention == "at_save" and
+                        isinstance(errand, dict) and errand.get("place") == "save"):
+                    if learner is not None:
+                        learner.cancel("save macro")
+                    announce("AI: saving the game")
+                    cancel = calibration.cancel_action if calibration else "cancel"
+                    try:
+                        pages = SaveMacro(link, errand["anchor"], cancel=cancel,
+                                          log=lambda text: print(text, flush=True)).run()
+                        print(f"[save] saved; pages {pages[-2:]}", flush=True)
+                        announce("AI: game saved")
+                        play_loop.save_done()
+                    except MacroFailed as exc:
+                        save_disabled = True
+                        print(f"[save] disabled for this run: {exc}", flush=True)
+                        announce("AI: save failed|see log")
+                        play_loop.save_failed(str(exc))
+                    previous = "wait"
+                    continue
                 directive_turns -= 1
                 action = decision.action
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)

@@ -17,6 +17,12 @@ hunt_direction=${SOM_AI_HUNT_DIRECTION:-west}
 shop_gold=${SOM_AI_SHOP_GOLD:-500}
 gp_reward=${SOM_AI_GP_REWARD:-1}
 hp_penalty=${SOM_AI_HP_PENALTY:-2}
+# Deterministic hunt -> shop -> inn -> save loop; SOM_AI_PLAY_LOOP=0 restores Qwen goals.
+loop_args=()
+if [ "${SOM_AI_PLAY_LOOP:-1}" != 0 ]; then
+  loop_args=(--play-loop --trip-gold "${SOM_AI_TRIP_GOLD:-100}")
+  [ -n "${SOM_AI_HUNT_MAP:-}" ] && loop_args+=(--hunt-map "$SOM_AI_HUNT_MAP")
+fi
 
 exec python3 "$repo/tools/som_qwen_bridge.py" \
   --host "$host" \
@@ -33,4 +39,5 @@ exec python3 "$repo/tools/som_qwen_bridge.py" \
   --start-timeout "$start_timeout" \
   --history-db "$history_db" \
   --wram-remote \
-  --ring-control
+  --ring-control \
+  "${loop_args[@]}"

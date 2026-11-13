@@ -63,6 +63,15 @@ ssh root@100.124.74.13 'printf "ai_on\n" > /tmp/flxtr-som-ai-action'   # start A
 ssh root@100.124.74.13 'printf "ai_off\n" > /tmp/flxtr-som-ai-action'  # stop AI
 ```
 
+Play loop (`tools/som_play_loop.py`, on by default in the service;
+`SOM_AI_PLAY_LOOP=0` restores Qwen goals): hunt -> shop -> inn -> save ->
+hunt. Hunt travels to the map with the best gold per HP lost in
+`reward_ledger` (or `SOM_AI_HUNT_MAP`) and fights until `SOM_AI_TRIP_GOLD`
+(100) GP, HP < 60 % or 3000 decisions; shop buys Candy; inn rests (skipped at
+full HP); save replays the save taught with `tools/som_teach_save.py` and
+requires the taught final page, else saving is skipped. Shop/inn/save give
+up after 1500 decisions. Phase persists in agent_state `play_loop`.
+
 Dialogue escape (`tools/som_event_escape.py`): in any event screen the AI
 did not start itself, once the screen has been unchanged for 1 s it presses
 `confirm` on text pages (alternating with `cancel` if a page will not move),

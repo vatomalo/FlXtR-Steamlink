@@ -201,6 +201,17 @@ class TestWRAM(unittest.TestCase):
             self.assertEqual(waypoint["action"], "step_right")
             history.close()
 
+    def test_safe_anchor_falls_back_to_earliest_verified_potos_position(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "anchor.sqlite")
+            state = {"party": [{"hp": 20, "max_hp": 100}],
+                     "enemy_slots": [{"active": True}],
+                     "tile_context": {"runtime_verified": True, "map_id": 131,
+                                      "actor_tile": [9, 4], "actor": {"layer": 1}}}
+            history.record(state, "step_left")
+            self.assertEqual(history.safe_anchor()["target"], [9, 4])
+            history.close()
+
 
 if __name__ == "__main__":
     unittest.main()

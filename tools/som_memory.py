@@ -501,16 +501,27 @@ class ObservationHistory:
         # doorway coordinate. A later observed heal replaces it with the real
         # recovery location.
         fallback = None
+        potos_fallback = None
         rows = self.connection.execute(
             "SELECT state FROM observations ORDER BY id ASC LIMIT 5000").fetchall()
         for (encoded,) in rows:
-            candidate = self._safe_position(json.loads(encoded))
+            state = json.loads(encoded)
+            context = state.get("tile_context") or {}
+            actor = context.get("actor") or {}
+            tile = context.get("actor_tile")
+            if (potos_fallback is None and context.get("runtime_verified") and
+                    context.get("map_id") == 131 and isinstance(tile, list) and
+                    len(tile) == 2 and isinstance(actor.get("layer"), int)):
+                potos_fallback = {"map_id": 131, "layer": actor["layer"],
+                                  "target": list(tile)}
+            candidate = self._safe_position(state)
             if candidate is None:
                 continue
             fallback = fallback or candidate
             if candidate.get("map_id") == 131:
                 fallback = candidate
                 break
+        fallback = fallback or potos_fallback
         if fallback is not None:
             self.set_agent_state("safe_anchor", fallback)
             self.remember_place(fallback["map_id"], fallback["layer"],

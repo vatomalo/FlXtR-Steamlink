@@ -266,6 +266,7 @@ class MemoryPlanner:
         width_px, height_px = dimensions[0] * 16, dimensions[1] * 16
         enemies = [enemy for enemy in observation.get("enemy_slots", [])
                    if enemy.get("active")]
+        threat_retreat = None
         if enemies and open_steps:
             # Survival outranks the route: first increase distance from the
             # closest current threat, then continue toward safety.
@@ -279,9 +280,7 @@ class MemoryPlanner:
                                             height_px))
                     for enemy in enemies)
                 scored.append((nearest, action))
-            return PlannerDecision(max(scored)[1],
-                                   "retreat from enemies before returning to inn",
-                                   "return_to_inn")
+            threat_retreat = max(scored)[1]
 
         anchor = self.history.safe_anchor() if self.history is not None else None
         destination = anchor
@@ -311,6 +310,11 @@ class MemoryPlanner:
                     return PlannerDecision(action,
                                            f"return to learned inn/safe point ({distance} tiles)",
                                            "return_to_inn", distance)
+
+        if threat_retreat:
+            return PlannerDecision(threat_retreat,
+                                   "evade enemies while searching for inn route",
+                                   "return_to_inn")
 
         # No complete learned route yet. Never resume combat: use the least
         # visited verified tile to search for the recorded return trail.

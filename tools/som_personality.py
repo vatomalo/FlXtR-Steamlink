@@ -15,6 +15,7 @@ LINES = {
         "return_to_inn": ("An inn sounds lovely.", "Rest before adventure!"),
         "stuck": ("Hmm. That's a wall.", "There must be another way!"),
         "map_change": ("A whole new place!", "Where are we now?"),
+        "map_return": ("Back here again!", "I remember this place."),
         "victory": ("That went rather well!", "We did it!"),
         "hurt": ("Ow! That was rude!", "Careful now!"),
     },
@@ -25,6 +26,7 @@ LINES = {
         "return_to_inn": ("I'll be back stronger.",),
         "stuck": ("Move, stupid wall!", "A detour? Fine."),
         "map_change": ("New ground to conquer!",),
+        "map_return": ("Back on familiar ground!",),
         "victory": ("Who's next?", "Too easy!"),
         "hurt": ("You'll regret that!",),
     },
@@ -35,6 +37,7 @@ LINES = {
         "return_to_inn": ("A bed. Finally.",),
         "stuck": ("Excellent. A wall.", "The wall wins this round."),
         "map_change": ("A change of scenery.",),
+        "map_return": ("This place again. Naturally.",),
         "victory": ("That was unnecessary.",),
         "hurt": ("How considerate.",),
     },
@@ -56,7 +59,7 @@ class Personality:
         self.previous_map = None
         self.previous_hp = None
 
-    def observation_event(self, observation):
+    def observation_event(self, observation, visited_before=False):
         """Detect verified field-map changes and real HP loss."""
         if not isinstance(observation, dict):
             return None
@@ -69,7 +72,7 @@ class Personality:
         hp = hero.get("hp")
         event = None
         if self.previous_map is not None and map_id != self.previous_map:
-            event = "map_change"
+            event = "map_return" if visited_before else "map_change"
             self.previous_hp = None
         elif (self.previous_hp is not None and isinstance(hp, int)
               and hp < self.previous_hp and hp >= 0):

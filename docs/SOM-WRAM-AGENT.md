@@ -1,6 +1,13 @@
-# Secret of Mana RAM-aware Qwen bridge (experimental)
+# Secret of Mana WRAM memory agent (experimental)
 
 Branch: `feature/som-ai-memory-agent-20261112`.
+
+The supervised service now defaults to `SOM_AI_POLICY=memory`. This policy does
+not ask a language model for every button. It validates the live field tile,
+tracks map/layer/tile visits in SQLite, explores the least-visited safe exit,
+recognizes the three native monster slots, approaches a target, and attacks
+only when the weapon is ready. Set `SOM_AI_POLICY=qwen` to retain the older
+local-Ollama controller experiment.
 
 ## What works in this checkpoint
 
@@ -8,24 +15,28 @@ Branch: `feature/som-ai-memory-agent-20261112`.
 - Decode documented enemy slots, party attributes, and weapon-use flag.
 - Decode the hero's pixel position, current map, active 16×16 tile layer, and
   a compact 7×7 nearby tile/collision grid.
-- Provide a compact observation to Ollama alongside the objective.
+- Use verified WRAM observations directly in the default planner; optionally
+  provide the same compact observation to local Ollama.
 - Export a live, read-only 128-KiB WRAM image atomically from the opt-in
   Libretro proxy every 30 emulated frames.
-- Optionally persist observations/actions in SQLite.
-- Stop after 4 identical actions instead of looping forever.
+- Persist observations, actions, and map-scoped tile visits in SQLite.
+- Stop after 4 repeated attack/menu actions while allowing intentional travel.
 - Preserve the existing SSH allowlisted action protocol.
 
 Tile mapping fails closed: the grid is published as runtime-verified only when
 the tile under the hero agrees with the actor's separately maintained tile ID,
-ground-effect byte, and priority field. **Not yet implemented:** automated
-movement feedback, pathfinding, or party member spawning. No claim of autonomous
-exploration is made.
+ground-effect byte, and priority field. Exploration is local rather than a full
+map route solver: it chooses among verified adjacent tiles using persisted visit
+counts and enemy direction. Party/item/enemy spawning is intentionally not
+exposed: each requires a different native game routine, and raw partial actor
+writes can corrupt the current map or save. Spawning needs a separately gated,
+reversible implementation before the planner may request it.
 
 ## Run tests
 
 ```sh
 PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py' -v
-python3 -m py_compile tools/som_memory.py tools/som_qwen_bridge.py
+python3 -m py_compile tools/som_memory.py tools/som_planner.py tools/som_qwen_bridge.py
 ```
 
 ## Use an existing raw WRAM dump
@@ -55,6 +66,10 @@ Qwen uses six-frame `step_*` movement commands rather than the older 30-frame
 manual movement pulses. A deterministic guard changes a proposed step to
 `wait` unless the runtime-verified adjacent cell is open. Blocked (`#`),
 conditional (`?`), malformed, and unverified grids all fail closed.
+The supervised profile requests a new decision every 0.5 seconds. Safe repeated
+steps are allowed, and a model-proposed `wait` becomes a deterministic open
+step only when the runtime-verified grid has an adjacent open cell. Repeated
+attacks or menu actions still stop the session.
 
 ## Troubleshooting: AI connects but Randi never moves
 

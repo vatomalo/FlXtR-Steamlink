@@ -38,14 +38,17 @@ class TestWRAM(unittest.TestCase):
         put16(data, 0x7EE184, 100)
         put16(data, 0x7EE602, 18)
         put16(data, 0x7EE604, 25)
+        data[0x7EE600 - 0x7E0000] = 1
+        data[0x7EE780 - 0x7E0000] = 0x20
         put16(data, 0x7EE782, 10)
         put16(data, 0x7EE784, 30)
         state = WRAM(data).observe()
         self.assertTrue(state["weapons_enabled"])
         self.assertEqual(state["party"][0]["graphic"], "boy")
         self.assertEqual(state["party"][0]["hp"], 77)
-        self.assertEqual(state["enemy_slots"][0]["x_raw"], 25)
-        self.assertIsNone(state["enemy_slots"][0]["active"])
+        self.assertEqual(state["enemy_slots"][0]["x_px"], 18)
+        self.assertEqual(state["enemy_slots"][0]["y_px"], 25)
+        self.assertTrue(state["enemy_slots"][0]["active"])
         self.assertIsNone(state["player_position"])
 
     def test_runtime_verifies_and_classifies_nearby_tiles(self):

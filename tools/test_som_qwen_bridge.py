@@ -1,7 +1,7 @@
 """Tile-safety tests; no Ollama, SSH, ROM, or emulator required."""
 import unittest
 
-from som_qwen_bridge import guard_tile_action, parse_action
+from som_qwen_bridge import guard_tile_action, parse_action, prefer_open_step
 
 
 class TestTileGuard(unittest.TestCase):
@@ -37,6 +37,15 @@ class TestTileGuard(unittest.TestCase):
         state["tile_context"]["game_mode"] = "ring"
         self.assertEqual(guard_tile_action("attack", state), "wait")
         self.assertEqual(guard_tile_action("step_left", state), "wait")
+
+    def test_wait_falls_back_to_verified_open_tile(self):
+        state = self.observation([".#.", "#@.", ".#."])
+        self.assertEqual(prefer_open_step("wait", state, "none"), "step_right")
+        self.assertEqual(prefer_open_step("wait", state, "step_right"), "step_right")
+
+    def test_wait_stays_when_no_open_tile_exists(self):
+        state = self.observation(["###", "#@#", "###"])
+        self.assertEqual(prefer_open_step("wait", state, "none"), "wait")
 
 
 class TestParseAction(unittest.TestCase):

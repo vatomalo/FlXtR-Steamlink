@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Experimental Qwen -> SSH -> FlXtR Libretro action bridge (manual opt-in).
+"""Persistent WRAM planner / optional Qwen -> FlXtR action bridge.
 
 Runs on SkyLoft with a LOCAL Ollama instance. Qwen receives the last action,
 the user-supplied objective, and optionally a read-only WRAM observation. The
-observation still lacks verified navigation fields, so this is not yet
-context-aware autonomous gameplay.
+default memory policy is deterministic and uses verified tiles, enemies,
+weapon state and persistent map visits. Qwen remains an optional test policy.
 """
 import argparse
 import json
@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 
 from som_memory import WRAM, ObservationHistory
+from som_planner import MemoryPlanner
 
 ACTIONS = {
     "step_right", "step_left", "step_up", "step_down", "wait",
@@ -31,6 +32,10 @@ MAX_REPEATS = 4
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
     "step_up": (0, -1), "step_down": (0, 1),
+}
+OPPOSITE_STEP = {
+    "step_right": "step_left", "step_left": "step_right",
+    "step_up": "step_down", "step_down": "step_up",
 }
 
 def parse_action(raw: str):
@@ -104,6 +109,32 @@ def guard_tile_action(action: str, observation) -> str:
         return "wait"
     return action if rows[row][column] == "." else "wait"
 
+def prefer_open_step(action: str, observation, previous: str) -> str:
+    """Keep exploration visible when the model waits despite verified exits."""
+    if action != "wait":
+        return action
+    context = observation.get("tile_context") if isinstance(observation, dict) else None
+    if not isinstance(context, dict) or not context.get("runtime_verified") or context.get("game_mode") != "field":
+        return action
+    rows, radius = context.get("passability_rows"), context.get("radius")
+    if not isinstance(rows, list) or not isinstance(radius, int):
+        return action
+    preferred = [previous] if previous in STEP_OFFSETS else []
+    preferred += ["step_right", "step_down", "step_left", "step_up"]
+    reverse = OPPOSITE_STEP.get(previous)
+    candidates = []
+    for step in preferred:
+        if step not in candidates:
+            candidates.append(step)
+    candidates.sort(key=lambda step: step == reverse)
+    for step in candidates:
+        dx, dy = STEP_OFFSETS[step]
+        row, column = radius + dy, radius + dx
+        if (0 <= row < len(rows) and isinstance(rows[row], str) and
+                0 <= column < len(rows[row]) and rows[row][column] == "."):
+            return step
+    return action
+
 def send_action(host: str, action: str) -> None:
     # stdin carries an allowlisted command. No LLM text is interpolated into shell.
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7",
@@ -136,9 +167,11 @@ def main() -> int:
     parser.add_argument("--host", default="root@100.124.74.13")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3:0.6b")
+    parser.add_argument("--policy", choices=("memory", "qwen"), default="memory",
+                        help="memory uses persistent WRAM planning; qwen asks local Ollama")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
     parser.add_argument("--steps", type=int, default=5)
-    parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--interval", type=float, default=0.5)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--wram-file", type=Path,
                         help="Path to raw 128-KiB WRAM dump; reread each step")
@@ -151,11 +184,12 @@ def main() -> int:
     parser.add_argument("--start-timeout", type=float, default=300.0,
                         help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
-    if not (0 <= args.steps <= 30) or args.interval < 1.0:
-        parser.error("steps must be 1..30, or 0 for continuous ring control")
+    if not (0 <= args.steps <= 30) or args.interval < 0.25:
+        parser.error("steps must be 1..30, or 0 for continuous ring control; interval minimum is 0.25")
     if args.steps == 0 and not args.ring_control:
         parser.error("steps=0 is allowed only with --ring-control")
-    if args.ollama_url not in ("http://127.0.0.1:11434", "http://localhost:11434"):
+    if (args.policy == "qwen" and
+            args.ollama_url not in ("http://127.0.0.1:11434", "http://localhost:11434")):
         parser.error("only local Ollama is supported for this initial experiment")
     if args.wram_file and args.wram_remote:
         parser.error("choose one of --wram-file or --wram-remote")
@@ -166,15 +200,16 @@ def main() -> int:
     if not 1 <= args.start_timeout <= 3600:
         parser.error("start-timeout must be 1..3600 seconds")
     history = ObservationHistory(args.history_db) if args.history_db else None
+    planner = MemoryPlanner(history)
     if args.ring_control:
-        print("[qwen] waiting for unchanged Action Grid confirmation", flush=True)
+        print(f"[ai] {args.policy} policy waiting for Action Grid confirmation", flush=True)
         deadline = time.monotonic() + args.start_timeout
         while not remote_ring_ai_enabled(args.host):
             if time.monotonic() >= deadline:
-                print("[qwen] stopped safely: Action Grid start timed out", file=sys.stderr)
+                print("[ai] stopped safely: Action Grid start timed out", file=sys.stderr)
                 return 1
             time.sleep(1.0)
-        print("[qwen] Action Grid start received", flush=True)
+        print("[ai] Action Grid start received", flush=True)
     previous = "none"
     repeated = 0
     invalid_replies = 0
@@ -182,7 +217,7 @@ def main() -> int:
     while args.steps == 0 or step < args.steps:
         try:
             if args.ring_control and not remote_ring_ai_enabled(args.host):
-                print("[qwen] Action Grid AI stopped by physical takeover or game exit", flush=True)
+                print("[ai] stopped by physical takeover or game exit", flush=True)
                 break
             observation = None
             if args.wram_file:
@@ -194,46 +229,57 @@ def main() -> int:
                      args.host, "cat /tmp/flxtr-som-wram.bin"],
                     capture_output=True, check=True, timeout=15).stdout
                 observation = WRAM(raw).observe()
-            try:
-                action = choose_action(args.ollama_url, args.model,
-                                       args.objective, previous, observation)
-                invalid_replies = 0
-            except ValueError as exc:
-                # One odd reply from a tiny model should not end the session;
-                # waiting is always safe. Persistent garbage still stops.
-                invalid_replies += 1
-                if invalid_replies >= MAX_INVALID_REPLIES:
-                    raise
-                print(f"[qwen] ignoring reply ({invalid_replies}/{MAX_INVALID_REPLIES}): {exc}",
-                      flush=True)
-                action = "wait"
+            if args.policy == "memory":
+                decision = planner.decide(observation, previous)
+                action = decision.action
+                print(f"[ai] plan: {decision.reason}", flush=True)
+            else:
+                try:
+                    action = choose_action(args.ollama_url, args.model,
+                                           args.objective, previous, observation)
+                    invalid_replies = 0
+                except ValueError as exc:
+                    # One odd reply from a tiny model should not end the
+                    # session. Persistent garbage still stops safely.
+                    invalid_replies += 1
+                    if invalid_replies >= MAX_INVALID_REPLIES:
+                        raise
+                    print(f"[ai] ignoring model reply "
+                          f"({invalid_replies}/{MAX_INVALID_REPLIES}): {exc}", flush=True)
+                    action = "wait"
             guarded_action = guard_tile_action(action, observation)
             if guarded_action != action:
                 context = (observation or {}).get("tile_context") or {}
                 why = context.get("verification_error") or (
                     "no WRAM observation" if observation is None else "next tile not open")
-                print(f"[qwen] tile guard: {action} -> {guarded_action} ({why})", flush=True)
+                print(f"[ai] tile guard: {action} -> {guarded_action} ({why})", flush=True)
             action = guarded_action
-            # Repeating a non-wait action indefinitely is not intelligent
-            # control: insert a safe wait instead of blindly attacking or
-            # walking into a wall. Waiting itself never ends the session.
+            if args.policy == "qwen":
+                fallback_action = prefer_open_step(action, observation, previous)
+                if fallback_action != action:
+                    print(f"[ai] open-tile fallback: {action} -> {fallback_action}", flush=True)
+                action = fallback_action
+            # Long runs may intentionally repeat safe travel. Break repeated
+            # attack/menu actions with one wait instead of ending the agent.
             repeated = repeated + 1 if action == previous else 1
-            if action != "wait" and repeated >= MAX_REPEATS:
-                print(f"[qwen] repeated {action!r} {MAX_REPEATS} times; waiting once", flush=True)
+            if (action not in STEP_OFFSETS and action != "wait" and
+                    repeated >= MAX_REPEATS):
+                print(f"[ai] repeated {action!r} {MAX_REPEATS} times; waiting once",
+                      flush=True)
                 action = "wait"
                 repeated = 1
             if history is not None and observation is not None:
                 history.record(observation, action)
             step += 1
             total = "continuous" if args.steps == 0 else str(args.steps)
-            print(f"[qwen] {step}/{total}: {action}", flush=True)
+            print(f"[ai] {step}/{total}: {action}", flush=True)
             if not args.dry_run:
                 send_action(args.host, action)
             previous = action
             if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            print(f"[qwen] stopped safely: {exc}", file=sys.stderr)
+            print(f"[ai] stopped safely: {exc}", file=sys.stderr)
             if args.ring_control:
                 clear_remote_ring_ai(args.host)
             return 1

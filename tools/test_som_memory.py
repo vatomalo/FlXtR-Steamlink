@@ -188,6 +188,29 @@ class TestWRAM(unittest.TestCase):
                              "flxtr-som-atlas-v1")
             history.close()
 
+    def test_candy_heal_and_later_heals_never_move_a_taught_inn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "taught.sqlite")
+            state = {
+                "party": [{"hp": 30, "max_hp": 100}], "enemy_slots": [], "candy_count": 2,
+                "tile_context": {"runtime_verified": True, "map_id": 128,
+                                 "actor_tile": [4, 5], "actor": {"layer": 1}},
+            }
+            history.remember_recovery(state)
+            state.update(party=[{"hp": 100, "max_hp": 100}], candy_count=1)
+            self.assertIsNone(history.remember_recovery(state))
+            inn = dict(state, tile_context=dict(state["tile_context"], map_id=131,
+                                                actor_tile=[9, 9]))
+            history.teach_inn(inn, "step_up")
+            state.update(party=[{"hp": 30, "max_hp": 100}])
+            history.remember_recovery(state)
+            state.update(party=[{"hp": 100, "max_hp": 100}])
+            history.remember_recovery(state)
+            anchor = history.safe_anchor()
+            self.assertEqual((anchor["map_id"], anchor["target"], anchor["face"]),
+                             (131, [9, 9], "step_up"))
+            history.close()
+
     def test_return_waypoint_reverses_observed_map_transition(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "routes.sqlite")

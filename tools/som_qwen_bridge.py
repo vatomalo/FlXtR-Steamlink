@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 from som_memory import WRAM, ObservationHistory
-from som_menu import CandyMacro, Calibration, MacroFailed
+from som_menu import CandyMacro, Calibration, InnMacro, MacroFailed
 from som_planner import MemoryPlanner
 
 ACTIONS = {
@@ -529,6 +529,7 @@ def main() -> int:
     calibration = (Calibration.load(args.ring_calibration) if args.ring_calibration
                    else Calibration.load())
     candy_disabled = calibration is None
+    inn_disabled = False
     print("[candy] " + ("enabled from ring calibration" if calibration else
                         "disabled: run tools/som_ring_probe.py once to enable"), flush=True)
     messages = link is not None and not args.no_messages
@@ -647,6 +648,23 @@ def main() -> int:
                     print(f"[qwen-director] thinking asynchronously; meanwhile {directive}",
                           flush=True)
                 decision = planner.decide(observation, previous, directive)
+                if (link and not inn_disabled and history is not None and
+                        decision.intention == "recover_at_inn"):
+                    anchor = history.safe_anchor()
+                    if isinstance(anchor, dict) and anchor.get("face"):
+                        announce("AI: staying at the inn")
+                        cancel = calibration.cancel_action if calibration else "cancel"
+                        try:
+                            gained = InnMacro(link, anchor, cancel=cancel,
+                                              log=lambda text: print(text, flush=True)).run()
+                            print(f"[inn] stayed at the inn: +{gained} HP", flush=True)
+                            announce("AI: rested at the inn|HP restored")
+                        except MacroFailed as exc:
+                            inn_disabled = True
+                            print(f"[inn] disabled for this run: {exc}", flush=True)
+                            announce("AI: inn failed|see log")
+                        previous = "wait"
+                        continue
                 directive_turns -= 1
                 action = decision.action
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)

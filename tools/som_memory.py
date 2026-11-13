@@ -609,7 +609,14 @@ class ObservationHistory:
         hero = party[0] if party else {}
         previous = self.get_agent_state("health_previous") or {}
         candidate = self._safe_position(state)
-        healed = (candidate is not None and isinstance(previous.get("hp"), int) and
+        candy = state.get("candy_count") if isinstance(state, dict) else None
+        used_candy = (isinstance(candy, int) and isinstance(previous.get("candy"), int) and
+                      candy < previous["candy"])
+        anchor = self.get_agent_state("safe_anchor")
+        taught = isinstance(anchor, dict) and anchor.get("taught")
+        # A Candy heal is not an inn, and a taught inn is never replaced.
+        healed = (candidate is not None and not used_candy and not taught and
+                  isinstance(previous.get("hp"), int) and
                   isinstance(hero.get("hp"), int) and hero["hp"] > previous["hp"])
         if healed:
             self.set_agent_state("safe_anchor", candidate)
@@ -617,8 +624,23 @@ class ObservationHistory:
                                 *candidate["target"], "inn", "observed recovery point",
                                 "health_increase")
         self.set_agent_state("health_previous", {"hp": hero.get("hp"),
-                                                   "max_hp": hero.get("max_hp")})
+                                                   "max_hp": hero.get("max_hp"),
+                                                   "candy": candy})
         return candidate if healed else None
+
+    def teach_inn(self, state, face):
+        """Store the tile in front of the innkeeper shown by the player."""
+        position = self._verified_position(state, None)
+        if position is None:
+            raise ValueError("the tile under the hero is not runtime-verified")
+        if face not in ("step_up", "step_down", "step_left", "step_right"):
+            raise ValueError(f"unknown facing {face!r}")
+        anchor = {"map_id": position["map_id"], "layer": position["layer"],
+                  "target": position["target"], "face": face, "taught": True}
+        self.set_agent_state("safe_anchor", anchor)
+        self.remember_place(anchor["map_id"], anchor["layer"], *anchor["target"],
+                            "inn", "taught innkeeper tile", "player_demonstration")
+        return anchor
 
     def return_waypoint(self, current_map, target_map):
         """First exit on the shortest learned chain of maps to target_map."""

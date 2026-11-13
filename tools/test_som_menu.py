@@ -1,8 +1,8 @@
 """Ring-menu macro tests against a simulated ring; no emulator required."""
 import unittest
 
-from som_menu import (RING_KIND, RING_OPEN, CandyMacro, Calibration, MacroFailed,
-                      find_cursor_candidates)
+from som_menu import (RING_KIND, RING_OPEN, CandyMacro, Calibration, InnMacro,
+                      MacroFailed, find_cursor_candidates)
 from som_memory import WRAM
 
 CURSOR = 0x7EA21C
@@ -130,6 +130,85 @@ class TestCandyMacro(unittest.TestCase):
             run(game, calibration(item_ring_kind=3))
         self.assertNotIn("confirm", game.sent)
 
+
+EVENT = 0x7E00D0
+TILE_X = 0x7EF000   # test-only stand-in for the verified actor tile
+
+
+class FakeInn(FakeGame):
+    """Innkeeper dialog: talk, a few confirms, HP restored, dialog closes."""
+
+    def __init__(self, heals_at=3, closes_at=5, face_moves=False, talks=True):
+        super().__init__()
+        self.heals_at, self.closes_at = heals_at, closes_at
+        self.face_moves, self.talks = face_moves, talks
+        self.dialog_confirms = 0
+
+    def send_action(self, action):
+        self.sent.append(action)
+        in_dialog = self.get(EVENT) != 0
+        if action.startswith("step_") and self.face_moves and not in_dialog:
+            self.set(TILE_X, self.get(TILE_X) + 1)
+        elif action == "confirm" and not in_dialog and self.talks:
+            self.set(EVENT, 1)
+        elif action == "confirm" and in_dialog:
+            self.dialog_confirms += 1
+            if self.dialog_confirms == self.heals_at:
+                self.set16(HERO_HP, 100)
+            if self.dialog_confirms >= self.closes_at:
+                self.set(EVENT, 0)
+        elif action == "cancel" and in_dialog:
+            self.set(EVENT, 0)
+
+
+class TestInn(InnMacro):
+    def _tile(self, wram):
+        return (131, 1, wram.u8(TILE_X), 4)
+
+
+ANCHOR = {"map_id": 131, "layer": 1, "target": [0, 4], "face": "step_up", "taught": True}
+
+
+def run_inn(game, anchor=ANCHOR):
+    now = [0.0]
+    def sleep(seconds):
+        now[0] += seconds
+    return TestInn(game, anchor, log=lambda _: None, sleep=sleep,
+                   clock=lambda: now[0]).run()
+
+
+class TestInnMacro(unittest.TestCase):
+    def test_talks_confirms_and_verifies_full_hp(self):
+        game = FakeInn()
+        self.assertEqual(run_inn(game), 60)
+        self.assertEqual(game.sent[0], "step_up")
+        self.assertEqual(game.get(EVENT), 0)
+        self.assertNotIn("cancel", game.sent)
+
+    def test_facing_tap_that_moves_the_hero_aborts_before_talking(self):
+        game = FakeInn(face_moves=True)
+        with self.assertRaises(MacroFailed):
+            run_inn(game)
+        self.assertNotIn("confirm", game.sent)
+
+    def test_no_dialog_fails(self):
+        with self.assertRaises(MacroFailed) as raised:
+            run_inn(FakeInn(talks=False))
+        self.assertIn("did not start talking", str(raised.exception))
+
+    def test_dialog_without_healing_cancels_out_and_fails(self):
+        game = FakeInn(heals_at=99, closes_at=99)
+        with self.assertRaises(MacroFailed):
+            run_inn(game)
+        self.assertIn("cancel", game.sent)
+        self.assertEqual(game.get(EVENT), 0)
+        self.assertLessEqual(game.sent.count("confirm"), InnMacro.MAX_CONFIRMS + 1)
+
+    def test_requires_taught_tile_and_facing(self):
+        with self.assertRaises(MacroFailed):
+            run_inn(FakeInn(), dict(ANCHOR, target=[3, 4]))
+        with self.assertRaises(MacroFailed):
+            run_inn(FakeInn(), {"map_id": 131, "layer": 1, "target": [0, 4]})
 
 if __name__ == "__main__":
     unittest.main()

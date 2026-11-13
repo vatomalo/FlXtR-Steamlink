@@ -158,9 +158,27 @@ byte that follows the cursor, records the Candy position, and tests whether
 Y (`open_ring`) or X (`menu_x`) opens the ring. Recalibrate if Candy changes
 inventory slot. Until calibrated, the log says `[candy] disabled`.
 
-**Inn (next):** reuse the same closed-loop pattern: walk to the learned inn
-tile, face the innkeeper, Confirm to talk, confirm "Yes" and payment, then
-require full HP. The dialog/choice bytes still need the same kind of probe.
+## Inn (taught by demonstration)
+
+Show the AI the inn once by walking there yourself:
+
+```sh
+systemctl --user stop flxtr-som-ai.service
+python3 tools/som_teach_inn.py
+systemctl --user start flxtr-som-ai.service
+```
+
+The tool only reads WRAM. While you walk it stores every map crossing and the
+walkable tiles around you in the AI's history database. Stop on the tile in
+front of the innkeeper, press Enter, and say which side they are on. That tile
+becomes the inn; Candy heals or other HP rises can no longer move it.
+
+When survival mode reaches that tile, the bridge taps toward the innkeeper
+(and aborts if the tap moved the hero), presses Confirm to talk (aborts if no
+dialog starts), then presses Confirm at most ten times until HP is full and
+the game is back in field mode. Without a full heal it presses Cancel until the
+dialog closes and disables the inn for the rest of the run. Not enough GP or a
+"No" default therefore fails safely. Reteach if the inn changes.
 
 ## Responsiveness (continuous control)
 

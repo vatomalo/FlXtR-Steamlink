@@ -65,6 +65,10 @@ int main(void){
     assert(som_action_button(SOM_ACT_MENU_X)==RETRO_DEVICE_ID_JOYPAD_X);
     assert(som_action_frames(SOM_ACT_MENU_X)==2);
     assert(som_action_frames(SOM_ACT_WAIT)==0);
+    assert(som_parse_action("charge")==SOM_ACT_CHARGE);
+    assert(som_action_button(SOM_ACT_CHARGE)==RETRO_DEVICE_ID_JOYPAD_B);
+    assert(som_action_frames(SOM_ACT_CHARGE)==SOM_CHARGE_MAX_FRAMES);
+    assert(!strcmp(som_action_name(SOM_ACT_CHARGE),"charge"));
     som_check_trigger();
     assert(!armed);
     FILE *touch=fopen(path,"w");

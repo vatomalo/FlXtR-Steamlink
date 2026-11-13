@@ -25,14 +25,17 @@ from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFa
                       ShopMacro, candy_count, read_gold)
 from som_planner import MemoryPlanner
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
+from som_combat import ChargeFailed, ChargeMacro
 from som_goals import (TRAVEL_TIMEOUT, build_goal_prompt, goal_plan, is_travel,
                        memory_summary, offered_goals, parse_goal)
 
 ACTIONS = {
     "step_right", "step_left", "step_up", "step_down", "wait",
     "attack", "open_ring", "confirm", "cancel", "next_ring",
-    "prev_ring", "snapshot", "menu_x",
+    "prev_ring", "snapshot", "menu_x", "charge",
 }
+# Held for many seconds and ended by the bridge: never offered to the model.
+MODEL_ACTIONS = ACTIONS - {"charge"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off"}
 # Longest names first so "step_right" is not read as "right"-style prefixes.
@@ -207,7 +210,7 @@ def choose_action(url: str, model: str, objective: str, previous: str, observati
         "You are a primitive test controller for Secret of Mana Turbo. "
         "You cannot see the screen, character location, inventory or enemy state. "
         "Choose ONE safe, short controller action from: "
-        + ", ".join(sorted(ACTIONS))
+        + ", ".join(sorted(MODEL_ACTIONS))
         + ". Reply with ONLY the lowercase action name. "
         "Use only short step movement. The tile grid uses @ for the actor, "
         ". for open, # for blocked, and ? for conditional terrain. "
@@ -510,6 +513,9 @@ def load_rom_exits(host, cache=ROM_TABLE_CACHE):
         return None
 
 
+MAX_CHARGE_FAILURES = 2
+
+
 def weapon_note(weapon):
     """One log line for the equipped weapon, or why it is not trusted."""
     if not isinstance(weapon, dict):
@@ -713,6 +719,7 @@ def main() -> int:
     unchanged_polls = 0
     reward_total = 0.0
     hero_facts = (None, None)
+    charge_failures = 0
     if history is not None:
         print("[reward] " + ("+%g per GP gained, -%g per %% of max HP lost" %
                              (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
@@ -876,6 +883,28 @@ def main() -> int:
                         print(f"[inn] map {context['map_id']} looks like the taught inn "
                               f"({score:.0%} of tiles); teach it to use it", flush=True)
                         announce("AI: this looks like an inn|teach it to use it")
+                if link and decision.action == "charge":
+                    try:
+                        result = ChargeMacro(link, decision.charge_stage,
+                                             decision.enemy_slot,
+                                             log=lambda text: print(text, flush=True)).run()
+                        if result["interrupted"]:
+                            print(f"[charge] hit while charging (stage {result['stage']}); "
+                                  "released", flush=True)
+                        else:
+                            print(f"[charge] stage {result['stage']} attack released; "
+                                  f"enemy damage {result['damage']}", flush=True)
+                            announce(f"AI: charged attack|stage {result['stage']}")
+                    except ChargeFailed as exc:
+                        charge_failures += 1
+                        print(f"[charge] failed ({charge_failures}/{MAX_CHARGE_FAILURES}): "
+                              f"{exc}", flush=True)
+                        if charge_failures >= MAX_CHARGE_FAILURES:
+                            planner.charge_disabled = True
+                            print("[charge] disabled for this run; plain swings only",
+                                  flush=True)
+                    previous = "attack"
+                    continue
                 if link and errand and decision.intention == "at_shop":
                     announce("AI: buying Candy")
                     cancel = calibration.cancel_action if calibration else "cancel"

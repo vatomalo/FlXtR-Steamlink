@@ -37,6 +37,10 @@ FACING_MIN_CONFIRMED = 3
 # An enemy this far sideways still counts as in front when it is no farther
 # sideways than ahead.
 FRONT_SIDE_PX = 20
+# Charged attacks: only against enemies with at least this much HP, and no
+# higher than this stage (each stage takes about 1.5 s of holding).
+CHARGE_MIN_ENEMY_HP = 40
+CHARGE_MAX_STAGE = 2
 # Two enemies within this box whose directions have a cosine below
 # SPLIT_COSINE are "on opposite sides"; a step must raise it by SPLIT_GAIN.
 SPLIT_RANGE_PX = 48
@@ -58,6 +62,9 @@ class PlannerDecision:
     # A tap that only turns the hero (toward an adjacent enemy or grass);
     # not moving is expected, so stall detection ignores it.
     turn_only: bool = False
+    # For action "charge": the stage to hold the attack button until.
+    charge_stage: int = 0
+    enemy_slot: int | None = None
 
 
 class RouteMap(dict):
@@ -111,6 +118,8 @@ class MemoryPlanner:
         self.facing_checks = [0, 0]
         # Facing assumed from the last step sent while E010 is unverified.
         self.assumed_facing = None
+        # Set by the bridge after charged attacks failed this run.
+        self.charge_disabled = False
         self.last_pixel = None
 
     @staticmethod
@@ -492,7 +501,7 @@ class MemoryPlanner:
         if abs(dx) <= 48 and abs(dy) <= 48 and observation.get("weapons_enabled"):
             # A swing only connects in the facing direction (user report).
             strike = self._face_and_strike(context, enemy, dx, dy, open_steps,
-                                           recharge == 0)
+                                           recharge == 0, hero)
             if strike is not None:
                 return strike
         # Follow the learned map first. Taking the straight-line step whenever
@@ -542,7 +551,23 @@ class MemoryPlanner:
         confirmed, contradicted = self.facing_checks
         return confirmed >= FACING_MIN_CONFIRMED and contradicted * 10 <= confirmed
 
-    def _face_and_strike(self, context, enemy, dx, dy, open_steps, ready):
+    def charge_stage(self, hero, enemy):
+        """Stage worth charging to before this swing, or 0 for a plain swing.
+
+        Only with a verified weapon of level >= 1, above half HP (a hit cuts
+        the charge), against an enemy with enough HP left to make the wait
+        worth it, and while charging has not failed this run.
+        """
+        weapon = (hero or {}).get("weapon") or {}
+        hp, max_hp = (hero or {}).get("hp", 0), (hero or {}).get("max_hp", 0)
+        if (self.charge_disabled or not weapon.get("verified") or
+                not weapon.get("level") or not max_hp or hp * 2 <= max_hp or
+                not enemy.get("hp_plausible", True) or
+                enemy.get("hp", 0) < CHARGE_MIN_ENEMY_HP):
+            return 0
+        return min(int(weapon["level"]), CHARGE_MAX_STAGE)
+
+    def _face_and_strike(self, context, enemy, dx, dy, open_steps, ready, hero=None):
         """Attack only while facing the enemy; otherwise tap toward it first.
 
         With an unverified facing byte the hero always taps toward the enemy
@@ -552,6 +577,12 @@ class MemoryPlanner:
         facing = ((context.get("actor") or {}).get("facing") if self.facing_trusted()
                   else self.assumed_facing)
         if self._in_front(facing, dx, dy):
+            stage = self.charge_stage(hero, enemy) if ready else 0
+            if stage:
+                return PlannerDecision("charge", f"charge stage {stage} at enemy "
+                                       f"{enemy['slot']} ({enemy.get('hp')} HP), facing it",
+                                       "charge_attack", charge_stage=stage,
+                                       enemy_slot=enemy.get("slot"))
             if ready:
                 return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range, "
                                        f"facing it", "engage_enemy")

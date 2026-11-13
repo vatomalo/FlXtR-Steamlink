@@ -406,8 +406,26 @@ Decoded per hero from som-decomp `docs/wram-companion-map.md` and
   walls (`controls locked by status frozen`).
 
 Both are logged when they change and go into the Qwen goal summary when
-verified. Charged attacks (holding the attack button up to the weapon level)
-need a new hold action in the proxy and are not used yet.
+verified.
+
+## Charged attacks
+
+The proxy action `charge` holds the attack button (B) for up to 900 frames;
+any later command (`wait`) releases it, which performs the charged attack
+(som-decomp `docs/weapons-melee.md` 3: the charge counter `E01A` fills after
+the swing and the weapon gauge, then the stage `+0x19B` rises every 90 frames
+up to the weapon level; damage x(2 stage + 4)/4). No game memory is written.
+
+The planner charges instead of swinging when it faces an enemy with at least
+40 HP, the weapon reading is verified with level >= 1, the hero is above half
+HP, and charging has not failed this run; the stage is the weapon level,
+capped at 2 (1.5 s per stage). `tools/som_combat.py` runs it closed-loop:
+the counter must start within 3 s, each stage must come within 2.5 s, a drop
+in hero HP (a hit cuts the charge) releases at once, and after the release
+the weapon gauge must start recharging. The enemy's HP loss is logged
+(`[charge] stage 1 attack released; enemy damage 60`). Two failures disable
+charging for the run. Needs the rebuilt `som_ai_proxy_libretro.so`; an older
+proxy ignores `charge`, which fails closed after two attempts.
 
 Kill GP arrives after the monster has left its slot, so GP gained up to 30
 samples after an enemy was near is credited to that enemy type.

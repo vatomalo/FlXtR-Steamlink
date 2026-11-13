@@ -748,6 +748,11 @@ def main() -> int:
     orphan_ring_attempted = False
     respawn_dialogue = RespawnDialogue()
     if history is not None:
+        respawn_dialogue.restore_recent(history.connection)
+        if respawn_dialogue.stage != "idle":
+            print(f"[respawn] restored recent KO sequence: "
+                  f"{respawn_dialogue.stage}", flush=True)
+    if history is not None:
         print("[reward] " + ("+%g per GP gained, -%g per %% of max HP lost" %
                              (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
                              else "GP not calibrated (run tools/som_teach_shop.py); "

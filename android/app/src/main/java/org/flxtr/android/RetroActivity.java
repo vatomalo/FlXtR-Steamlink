@@ -66,7 +66,7 @@ String optionsKey=getIntent().getStringExtra("optionsKey");if(optionsKey!=null&&
         LinearLayout dpad=new LinearLayout(this);dpad.setOrientation(LinearLayout.VERTICAL);dpad.addView(row(control("↑",4)));dpad.addView(row(control("←",6),control("↓",5),control("→",7)));root.addView(dpad,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT));
         LinearLayout buttons=new LinearLayout(this);buttons.setOrientation(LinearLayout.VERTICAL);
         if(coreName.equals("pcsx_rearmed")||coreName.equals("ppsspp")){buttons.addView(row(control("L2",12),control("R2",13)));buttons.addView(row(control("□",1),control("△",9)));buttons.addView(row(control("×",0),control("○",8)));}
-        else{if(coreName.equals("snes9x"))buttons.addView(row(control("Y",1),control("X",9)));buttons.addView(row(control("B",0),control("A",8)));}
+        else{if(coreName.equals("snes9x")||coreName.equals("som_ai"))buttons.addView(row(control("Y",1),control("X",9)));buttons.addView(row(control("B",0),control("A",8)));}
         if(!coreName.equals("gambatte")&&!coreName.equals("fceumm"))buttons.addView(row(control("L",10),control("R",11)));
         buttons.addView(row(control("Select",2),control("Start",3)));root.addView(buttons,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT));
 Button menu=new Button(this);menu.setText("⋮");menu.setContentDescription("Game menu");menu.setAlpha(.75f);menu.setOnClickListener(v->menu());root.addView(menu,new FrameLayout.LayoutParams(dp(56),dp(48),Gravity.TOP|Gravity.RIGHT));touchDpad=dpad;touchButtons=buttons;setTouchControls(getSharedPreferences("retro-ui",MODE_PRIVATE).getBoolean("touch-controls",false));setContentView(root);hideBars();
@@ -88,6 +88,12 @@ Button menu=new Button(this);menu.setText("⋮");menu.setContentDescription("Gam
     private void runCore(){
         boolean started=false;try{
             CoreAssets.install(this,coreName);
+            if(coreName.equals("som_ai")){
+                // The experimental proxy exchanges data only inside app-private storage.
+                File aiDir=new File(getFilesDir(),"som-ai");
+                if(!aiDir.isDirectory()&&!aiDir.mkdirs())
+                    throw new IOException("Cannot prepare SoM AI bridge directory");
+            }
             runOnUiThread(()->loadingText.setText("Starting "+GameFormats.label(coreName)+"..."));
             File coreSaves=new File(getFilesDir(),"games/core-saves/"+coreName);if(!coreSaves.isDirectory()&&!coreSaves.mkdirs())throw new IOException("Cannot create engine save directory");
             String library=coreName.equals("gambatte")?"":new File(getApplicationInfo().nativeLibraryDir,"libflxtr_"+coreName+".so").getAbsolutePath();

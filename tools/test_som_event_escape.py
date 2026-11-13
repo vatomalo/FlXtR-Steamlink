@@ -57,11 +57,10 @@ class EventEscapeTest(unittest.TestCase):
         self.assertLessEqual(len(actions), int(3.0 / esc.GAP) + 1)
         self.assertGreaterEqual(len(actions), 3)
 
-    def test_stuck_page_alternates_confirm_and_cancel(self):
+    def test_text_page_keeps_confirming_without_cancelling(self):
         actions = self.run_for(6, wram())
-        self.assertEqual(actions[:2], ["confirm", "confirm"])
-        self.assertIn("cancel", actions[2:])
-        self.assertIn("confirm", actions[2:])
+        self.assertGreaterEqual(len(actions), 3)
+        self.assertEqual(set(actions), {"confirm"})
 
     def test_new_page_resets_settle(self):
         self.run_for(1.1, wram(pointer=1))
@@ -82,6 +81,12 @@ class EventEscapeTest(unittest.TestCase):
         actions = self.run_for(120, wram())
         self.assertEqual(len(actions), esc.MAX_PRESSES)
         self.assertTrue(any("leaving it to the player" in line for line in self.logs))
+
+    def test_new_dialogue_page_restores_exhausted_budget(self):
+        self.run_for(120, wram(pointer=1))
+        self.assertTrue(self.escape.gave_up)
+        self.assertIsNone(self.escape.observe(wram(pointer=2)))
+        self.assertEqual(self.run_for(2, wram(pointer=2)), ["confirm", "confirm"])
 
     def test_leaving_event_resets_budget(self):
         self.run_for(120, wram())

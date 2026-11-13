@@ -22,10 +22,23 @@
 #include <fcntl.h>
 
 #ifndef SOM_PROXY_BASE_CORE
+#ifdef __ANDROID__
+/* Android's bundled SNES backend is Snes9x, not Snes9x 2005 Plus.
+ * Native ROM/WRAM gates remain active; hardware validation is required. */
+#define SOM_PROXY_BASE_CORE "libflxtr_snes9x.so"
+#else
 #define SOM_PROXY_BASE_CORE "/home/apps/retroarch/cores/snes9x2005_plus_libretro.so"
 #endif
+#endif
+#ifdef __ANDROID__
+/* App-private storage, created by RetroActivity before the core loads. */
+#define SOM_AI_DATA_DIR "/data/user/0/org.flxtr.android/files/som-ai"
+#define SOM_AI_PATH(file) SOM_AI_DATA_DIR "/" file
+#else
+#define SOM_AI_PATH(file) "/tmp/" file
+#endif
 #define SOM_TRIGGER_POLL_FRAMES 2u
-#define SOM_TRIGGER_DEFAULT "/tmp/flxtr-som-ai-go"
+#define SOM_TRIGGER_DEFAULT SOM_AI_PATH("flxtr-som-ai-go")
 #define SOM_HOLD_FRAMES 30u
 #define SOM_WRAM_SIZE 0x20000u
 /* Ten snapshots per second keep the SkyLoft planner on fresh positions. */
@@ -52,10 +65,10 @@ static uint16_t last_physical_buttons;
 static unsigned long last_attack_frame;
 static unsigned combo_count;
 static const char *trigger_file;
-static const char *action_file="/tmp/flxtr-som-ai-action";
-static const char *wram_file="/tmp/flxtr-som-wram.bin";
-static const char *wram_temp_file="/tmp/flxtr-som-wram.bin.tmp";
-static const char *ring_ai_file="/tmp/flxtr-som-ai-enabled";
+static const char *action_file=SOM_AI_PATH("flxtr-som-ai-action");
+static const char *wram_file=SOM_AI_PATH("flxtr-som-wram.bin");
+static const char *wram_temp_file=SOM_AI_PATH("flxtr-som-wram.bin.tmp");
+static const char *ring_ai_file=SOM_AI_PATH("flxtr-som-ai-enabled");
 static int wram_export_error_logged;
 static int ring_ai_selector_open,ring_ai_pending,ring_ai_enabled;
 /* Idle auto-start: after SOM_IDLE_AUTOSTART_FRAMES (one minute at 60 fps)
@@ -66,7 +79,11 @@ static int ring_ai_selector_open,ring_ai_pending,ring_ai_enabled;
  * SOM_IDLE_DISABLE_FILE turns the feature off. Pausing RetroArch stops
  * retro_run, so time in the RetroArch menu does not count as idle. */
 #define SOM_IDLE_AUTOSTART_FRAMES 3600ul
+#ifdef __ANDROID__
+#define SOM_IDLE_DISABLE_FILE SOM_AI_PATH("som_ai_idle_autostart_disable")
+#else
 #define SOM_IDLE_DISABLE_FILE "/home/apps/retroarch/cores/experimental/som_ai_idle_autostart_disable"
+#endif
 static const char *idle_disable_file=SOM_IDLE_DISABLE_FILE;
 static unsigned long last_input_frame;
 static int idle_started;
@@ -91,14 +108,14 @@ static retro_environment_t environment_callback;
 /* Optional AI message box, drawn on a private copy of each frame. */
 #define SOM_MESSAGE_POLL_FRAMES 15u
 #define SOM_MESSAGE_FRAMES 240u
-static const char *message_file="/tmp/flxtr-som-ai-message";
+static const char *message_file=SOM_AI_PATH("flxtr-som-ai-message");
 static retro_video_refresh_t frontend_video;
 static int pixel_format; /* RETRO_PIXEL_FORMAT_0RGB1555 until the core says otherwise */
 static SomOverlay overlay;
 /* Teaching: while the marker exists, physical presses are appended to a log
  * as the action names the bridge can replay. Nothing is injected. */
-static const char *record_marker="/tmp/flxtr-som-ai-record";
-static const char *record_file="/tmp/flxtr-som-ai-recorded";
+static const char *record_marker=SOM_AI_PATH("flxtr-som-ai-record");
+static const char *record_file=SOM_AI_PATH("flxtr-som-ai-recorded");
 static int recording;
 static uint8_t *overlay_frame;
 static size_t overlay_frame_size;
@@ -629,7 +646,11 @@ RETRO_API void retro_deinit(void){
  * build is never altered. Used to turn a map's monster record into a Rabite,
  * which the game then spawns natively (drawing, AI, death and drops). */
 #ifndef SOM_ROM_PATCH_FILE
+#ifdef __ANDROID__
+#define SOM_ROM_PATCH_FILE SOM_AI_PATH("som_ai_rom_patch.txt")
+#else
 #define SOM_ROM_PATCH_FILE "/home/apps/retroarch/cores/experimental/som_ai_rom_patch.txt"
+#endif
 #endif
 static const char *rom_patch_file=SOM_ROM_PATCH_FILE;
 static uint8_t *patched_rom;

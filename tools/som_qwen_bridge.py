@@ -26,6 +26,7 @@ from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFa
 from som_planner import MemoryPlanner
 from som_personality import Personality, LINES
 from som_learning import CombatLearner
+from som_respawn import RespawnDialogue
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
 from som_goals import (TRAVEL_TIMEOUT, build_goal_prompt, goal_plan, is_travel,
@@ -745,6 +746,7 @@ def main() -> int:
     charge_failures = 0
     orphan_ring_samples = 0
     orphan_ring_attempted = False
+    respawn_dialogue = RespawnDialogue()
     if history is not None:
         print("[reward] " + ("+%g per GP gained, -%g per %% of max HP lost" %
                              (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
@@ -816,6 +818,28 @@ def main() -> int:
                             print(f"[ai] eagle eye: mapped {learned} tiles of map {here}",
                                   flush=True)
                         surveyed_map, surveys_due = here, SURVEY_EVERY
+            # Ordinary KO in Turbo auto-respawns the hero but can leave an
+            # event/dialogue awaiting one or more B presses. Only a witnessed
+            # dead -> transition -> alive/event sequence authorizes confirms.
+            # Generic story events and shops remain untouched.
+            if observation is not None and args.policy in ("hybrid", "memory"):
+                event_byte = WRAM(raw).u8(0x7E00D0) if raw is not None else None
+                recovery_action = respawn_dialogue.observe(observation, event_byte)
+                if recovery_action is not None:
+                    if link:
+                        link.send_action(recovery_action)
+                    elif not args.dry_run:
+                        send_action(args.host, recovery_action)
+                    print(f"[respawn] advancing verified KO dialogue "
+                          f"({respawn_dialogue.confirms}/"
+                          f"{respawn_dialogue.max_confirms})", flush=True)
+                    previous = "wait"
+                    continue
+                if respawn_dialogue.finished and respawn_dialogue.confirms == respawn_dialogue.max_confirms:
+                    if not getattr(respawn_dialogue, "_limit_logged", False):
+                        respawn_dialogue._limit_logged = True
+                        print("[respawn] dialogue did not clear after bounded confirms; "
+                              "stopping automatic event input", flush=True)
             # The service can restart with the Candy item ring still on screen.
             # In that state CandyMacro.ready() raises BEFORE its cleanup try:
             # the regular planner then waits forever for field mode.

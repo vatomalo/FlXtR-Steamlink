@@ -126,12 +126,12 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && (id<16||bitmask) && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
-        unsigned button=som_action_button(active_action);
+        uint16_t wanted=som_action_mask(active_action);
         if(frame_number>=start_frame &&
-           frame_number<start_frame+action_frames && button<16 &&
-           (bitmask||id==button)){
+           frame_number<start_frame+action_frames && wanted &&
+           (bitmask||(id<16 && (wanted & (uint16_t)(1u<<id))))){
             injected_queries++;
-            return bitmask?(int16_t)(1u<<button):1;
+            return bitmask?(int16_t)wanted:1;
         }
     }
     return actual;

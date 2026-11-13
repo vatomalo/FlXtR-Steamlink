@@ -296,6 +296,21 @@ class TestMemoryPlanner(unittest.TestCase):
         decision = planner.decide(state, previous="step_up", directive="explore_north")
         self.assertEqual((decision.action, decision.intention), ("attack", "cut_grass"))
 
+    def test_regrown_grass_on_a_walked_tile_is_cut_not_walked_into(self):
+        planner = MemoryPlanner()
+        planner.local_cuttable.add("1300c85f")
+        planner.local_walked[131] = {(2, 4)}         # walked after an earlier cut
+        state = observation(("...", ".@.", "###"))
+        state["tile_context"]["attribute_rows"] = [
+            "12020000 12020000 12020000", "12020000 12020000 12020000",
+            "73060000 1300c85f 73060000"]
+        self.assertNotIn("step_down", planner._passable_steps(state["tile_context"]))
+        self.assertIn("step_down", planner.trusted_steps(state))     # as a cut tap
+        state["tile_context"]["passability_rows"][0] = "###"
+        state["tile_context"]["passability_rows"][1] = "#@#"
+        decision = planner.decide(state, previous="step_down")
+        self.assertEqual((decision.action, decision.intention), ("attack", "cut_grass"))
+
     def test_gives_up_on_grass_that_does_not_cut(self):
         planner = MemoryPlanner()
         planner.local_cuttable.add("03004000")

@@ -143,13 +143,17 @@ class MemoryPlanner:
                 isinstance(tile, list) and len(tile) == 2):
             return steps
         walked = self._walked(context.get("map_id"))
+        # Grass grows back when the map reloads: a walked tile that now shows
+        # known grass must be cut, not walked into (live map 129: the hero
+        # circled beside regrown grass it had walked through before).
+        regrown = {action for action, _ in self._cut_targets(context)}
         proven = (self.history.passable_signatures() if self.history is not None
                   else self.local_signatures)
         special = {tuple(cell["offset"]): cell
                    for cell in context.get("special_cells") or []
                    if isinstance(cell.get("offset"), list)}
         for action, offset in STEP_OFFSETS.items():
-            if action in steps:
+            if action in steps or action in regrown:
                 continue
             cell = special.get(offset)
             # Proven by standing on it, or it looks (collision-wise) exactly

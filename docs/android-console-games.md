@@ -4,6 +4,14 @@ Open **More → Games** or **Library → Libretro games**. **Moonlight** is avai
 from the same menus and the Games screen; it uses the embedded Moonlight client,
 including PC discovery, pairing, controller input and stream settings.
 
+**PC Games** uses the same approved Gamez companion catalog as Steam Link. Enter
+the same private bridge token once, open the paired Sunshine PC, and Android
+replaces the single `FlXtR Gamez` transport tile with the companion's approved
+titles. Selecting a title sends its stable ID to the authenticated companion,
+then starts the existing `FlXtR Gamez` Sunshine stream. **Moonlight Apps** remains
+available for the host's raw Sunshine application list. The companion must allow
+the Android device's LAN address; the token is stored in app-private preferences.
+
 The ROM library groups games into console tiles. Open a game for **Play / Core /
 Scaling / Output** options; scaling is saved per game. Output opens Android's
 display settings. Moonlight uses the same black-and-green pixel presentation.
@@ -92,7 +100,10 @@ License texts are included in `android/app/src/main/assets/licenses/`.
 ## Validation
 
 The Android unit suite includes format detection, safe disc references, M3U
-handling and BIOS filename validation. Debug instrumentation includes:
+handling, BIOS filename validation, Gamez catalog validation and Android
+Moonlight patch coverage. The SkyLoft build also opens the signed APK and fails
+unless both `libflxtr_som_ai.so` and `libflxtr_snes9x.so` exist for every
+requested ABI. Debug instrumentation includes:
 
 - `ConsoleSmokeInstrumentation`: load all additional cores; recursively scan a
   synthetic document provider; deduplicate; discover additions; replace changed

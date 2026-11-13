@@ -15,7 +15,7 @@ android {
     buildFeatures { buildConfig true; resValues true }
     sourceSets.main {
         manifest.srcFile 'AndroidManifest.xml'
-        java.srcDirs = ['../build/game-sources/moonlight/app/src/main/java']
+        java.srcDirs = ['src/main/java', '../build/game-sources/moonlight/app/src/main/java']
         res.srcDirs = ['../build/game-sources/moonlight/app/src/main/res']
         assets.srcDirs = ['../build/game-sources/moonlight/app/src/main/assets']
     }

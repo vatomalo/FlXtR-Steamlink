@@ -28,4 +28,5 @@ if [[ "${FLXTR_ANDROID_RELEASE:-0}" == 1 ]]; then
 else
     cp app/build/outputs/apk/debug/app-debug.apk "$repo/dist/FlXtR-Android-preview.apk"
 fi
+python3 "$repo/scripts/verify-android-core-payload.py" "$repo/dist/FlXtR-Android-preview.apk" "${FLXTR_ANDROID_ABIS:-armeabi-v7a,arm64-v8a}"
 sha256sum "$repo/dist/FlXtR-Android-preview.apk"

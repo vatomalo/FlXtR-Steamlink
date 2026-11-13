@@ -14,7 +14,9 @@ flxtr-build --android --branch feature/som-ai-android-core-20261113 --no-publish
 
 The existing Android CMake setup builds `libflxtr_som_ai.so` for
 `armeabi-v7a` and `arm64-v8a`, alongside `libflxtr_snes9x.so`.
-The APK must package **both libraries for the same ABI**.
+The APK must package **both libraries for the same ABI**. The SkyLoft build now
+checks the signed APK payload and fails before handoff if either library is
+missing for any requested ABI.
 
 The proxy uses `dlopen("libflxtr_snes9x.so")` on Android. This is
 different from the Steam Link's Snes9x 2005 Plus backend and is **not yet
@@ -26,7 +28,8 @@ save-state layout, input timing or NPC movement are compatible until tested.
 With a ROM named **exactly** `Secret of Mana, Turbo.smc`, open that ROM's
 existing per-game **CORE** selector, and choose `Secret of Mana AI` (core
 ID `som_ai`). All other SNES ROMs continue to use `snes9x`; the proxy
-does not become the default SNES emulator.
+does not become the default SNES emulator. Controller left/right now cycles
+Automatic, Snes9x and Secret of Mana AI instead of only toggling Automatic.
 
 The existing Android frontend loads `libflxtr_som_ai.so` as a normal
 Libretro core. It creates the private command directory before loading:

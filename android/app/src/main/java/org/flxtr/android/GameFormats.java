@@ -27,6 +27,7 @@ if(n.endsWith(".dol")||n.endsWith(".gcm")||n.endsWith(".rvz")||n.endsWith(".wbfs
             return new String[]{"snes9x","som_ai"};
 if(lower.endsWith(".iso"))return new String[]{"pcsx_rearmed","ppsspp","dolphin"};if(lower.endsWith(".pbp"))return new String[]{"pcsx_rearmed","ppsspp"};if(lower.endsWith(".elf"))return new String[]{"ppsspp","dolphin"};String detected=core(name);return detected.isEmpty()?new String[0]:new String[]{detected};}
     public static boolean compatible(String name,String core){return Arrays.asList(cores(name)).contains(core);}
+    public static String nextCore(String name,String selected,int direction){String[] available=cores(name);if(available.length==0)return "";int current=-1;for(int i=0;i<available.length;i++)if(available[i].equals(selected))current=i;int choices=available.length+1;int next=(current+1+(direction<0?choices-1:1))%choices;return next==0?"":available[next-1];}
     public static boolean bios(String name) {return name.toLowerCase(Locale.ROOT).matches("(scph(1001|5500|5501|5502|7001)|psxonpsp660)\\.bin");}
     public static String relative(String path)throws IOException {
         String p=path.replace('\\','/');if(p.startsWith("/")||p.contains(":"))throw new IOException("Disc paths must stay inside the selected game folder.");

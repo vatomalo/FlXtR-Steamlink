@@ -11,6 +11,7 @@ def checkout(name,url,revision):
     subprocess.run(['git','-C',str(path),'submodule','update','--init','--recursive'],check=True)
     return path
 moon=checkout('moonlight','https://github.com/moonlight-stream/moonlight-android.git','1b1b100e63e8ffcf1496e324ff7b57ee9f2db2a9')
+subprocess.run(['python3',str(root/'scripts/patch-android-moonlight.py'),str(moon)],check=True)
 # Keep the Android 8-compatible UI/JNI interface and refresh native crypto/audio
 # from the current upstream release without requiring its Android 37 UI APIs.
 crypto_revision='b48494cb96bff23d8886c4775cc4f39a1075495d'

@@ -13,6 +13,10 @@ public class GameFormatsTest {
         assertFalse(GameFormats.compatible("Secret of Mana.smc","som_ai"));
         assertFalse(GameFormats.compatible("Secret of Mana, Turbo.sfc","som_ai"));
         assertEquals("Secret of Mana AI",GameFormats.label("som_ai"));
+        assertEquals("snes9x",GameFormats.nextCore("Secret of Mana, Turbo.smc","",1));
+        assertEquals("som_ai",GameFormats.nextCore("Secret of Mana, Turbo.smc","snes9x",1));
+        assertEquals("",GameFormats.nextCore("Secret of Mana, Turbo.smc","som_ai",1));
+        assertEquals("som_ai",GameFormats.nextCore("Secret of Mana, Turbo.smc","",-1));
     }
     @Test public void detectsSupportedSystems(){assertEquals("fceumm",GameFormats.core("Mario.NES"));assertEquals("snes9x",GameFormats.core("game.sfc"));assertEquals("mgba",GameFormats.core("game.gba"));assertEquals("pcsx_rearmed",GameFormats.core("disc.chd"));assertEquals("gambatte",GameFormats.core("game.gbc"));assertEquals("",GameFormats.core("track.bin"));assertEquals("",GameFormats.core("movie.mp4"));}
     @Test public void cuePreservesTracksAndRelativeDirectories()throws Exception {assertEquals(Arrays.asList("PS/Game/Track 01.bin","PS/Audio/02.bin"),GameFormats.references("PS/Game/game.cue","FILE \"Track 01.bin\" BINARY\nFILE \"../Audio/02.bin\" BINARY"));}

@@ -4,7 +4,11 @@ import unittest
 from pathlib import Path
 
 from som_memory import ObservationHistory
-from som_planner import MemoryPlanner
+from som_planner import MemoryPlanner, PlannerDecision
+
+
+def PlannerDecisionStub(action):
+    return PlannerDecision(action, "test", "explore_frontier")
 
 
 def observation(rows=("...", ".@.", "..."), enemy=None, recharge=0, hp=80, max_hp=100):
@@ -248,6 +252,49 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertIn("step_left", planner.trusted_steps(grass))
         attack = planner.decide(grass, face.action, "explore_west")
         self.assertEqual((attack.action, attack.intention), ("attack", "cut_grass"))
+
+    @staticmethod
+    def grass_ledge_state(previous_rows=None):
+        # Live map 129 tile (38,23): grass two rows above the hero, an open
+        # row between that the game nevertheless refused (diagonal ledge).
+        rows = ["#......", "...##..", ".....##", "...@.##",
+                "#######", "#######", "#######"]
+        attrs = ["13060000 12001600 12020000 12020000 12070000 12020000 12020000",
+                 "12070000 12070000 12070000 1300c85f 1300c85f 12001700 12001400",
+                 "12020000 12020000 12020000 12020000 12020000 73060000 73060000",
+                 "12001700 12001400 12001700 12001400 12001700 73060000 73060000"] + \
+            ["73060000 " * 6 + "73060000"] * 3
+        return {"weapons_enabled": True, "enemy_slots": [],
+                "party": [{"weapon_recharge": 0, "hp": 80, "max_hp": 100}],
+                "tile_context": {
+                    "runtime_verified": True, "game_mode": "field", "radius": 3,
+                    "map_id": 129, "map_size_tiles": [64, 72], "actor_tile": [38, 23],
+                    "actor": {"x_px": 623, "y_px": 370, "layer": 1},
+                    "passability_rows": rows, "attribute_rows": attrs}}
+
+    def test_cuts_grass_beyond_a_step_that_never_moves(self):
+        planner = MemoryPlanner()
+        planner.local_cuttable.add("1300c85f")
+        planner.previous_action = "step_up"          # it kept pressing up
+        state = self.grass_ledge_state()
+        decisions = []
+        for _ in range(8):
+            planner.blocked_moves.clear()
+            decision = planner._check_stall(state, PlannerDecisionStub("step_up"))
+            decisions.append(decision)
+        self.assertEqual(decisions[-1].action, "attack")
+        self.assertEqual(decisions[-1].intention, "cut_grass")
+        self.assertIn("38,21", decisions[-1].reason)
+
+    def test_boxed_in_hero_cuts_grass_two_tiles_away(self):
+        planner = MemoryPlanner()
+        planner.local_cuttable.add("1300c85f")
+        state = self.grass_ledge_state()
+        # Everything around refused (stall-blocked); grass waits beyond.
+        for action in ("step_up", "step_left", "step_right", "step_down"):
+            planner.blocked_moves[planner._stall_key(state["tile_context"], action)] = 50
+        decision = planner.decide(state, previous="step_up", directive="explore_north")
+        self.assertEqual((decision.action, decision.intention), ("attack", "cut_grass"))
 
     def test_gives_up_on_grass_that_does_not_cut(self):
         planner = MemoryPlanner()

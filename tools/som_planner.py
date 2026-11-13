@@ -771,29 +771,45 @@ class MemoryPlanner:
             return self.history.cuttable_signatures()
         return self.local_cuttable
 
-    def _cut_steps(self, context):
-        """Steps into a blocking tile that looks like grass already cut once."""
+    def _cut_steps(self, context, reach=1):
+        """Steps into a blocking tile that looks like grass already cut once.
+
+        reach=2 also finds grass two tiles away beyond an open tile: the hero
+        box reaches into the next row from inside its tile, and a diagonal
+        half tile can refuse the step in between (live map 129, tile 38,23).
+        """
+        return [action for action, _ in self._cut_targets(context, reach)]
+
+    def _cut_targets(self, context, reach=1):
+        """[(action, distance)] toward cuttable tiles within reach tiles."""
         rows, attrs, radius = (context.get("passability_rows"), context.get("attribute_rows"),
                                context.get("radius"))
         if not (isinstance(rows, list) and isinstance(attrs, list) and isinstance(radius, int)):
             return []
         cuttable, blocked = self._cuttable(), self._blocked_here(context)
-        steps = []
+        targets = []
         for action, (dx, dy) in STEP_OFFSETS.items():
-            row, column = radius + dy, radius + dx
-            if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
-                continue
-            cells = attrs[row].split()
-            if (rows[row][column] in "#?" and column < len(cells) and
-                    cells[column] in cuttable and action not in blocked):
-                steps.append(action)
-        return steps
+            for distance in range(1, reach + 1):
+                row, column = radius + dy * distance, radius + dx * distance
+                if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
+                    break
+                cells = attrs[row].split()
+                if (rows[row][column] in "#?" and column < len(cells) and
+                        cells[column] in cuttable):
+                    # Next to the hero a blocked step means the cut failed;
+                    # farther away the step was blocked by what lies between.
+                    if distance > 1 or action not in blocked:
+                        targets.append((action, distance))
+                    break
+                if rows[row][column] not in ".@":
+                    break
+        return targets
 
-    def _cut(self, context, action):
+    def _cut(self, context, action, distance=1):
         """Face the grass with a short tap (the hero cannot enter it), then attack."""
         tile = context.get("actor_tile") or [0, 0]
         dx, dy = STEP_OFFSETS[action]
-        key = (context.get("map_id"), tile[0] + dx, tile[1] + dy)
+        key = (context.get("map_id"), tile[0] + dx * distance, tile[1] + dy * distance)
         if self.previous_action != action:
             return PlannerDecision(action, f"face grass at {key[1]},{key[2]} to cut it",
                                    "cut_grass")
@@ -833,6 +849,10 @@ class MemoryPlanner:
         self.blocked_moves[self._stall_key(context, decision.action)] = STALL_BLOCK_DECISIONS
         self.stall = None
         self._set_intention(None)
+        # Grass just beyond a refused step: cut it instead of giving up.
+        for action, distance in self._cut_targets(context, reach=2):
+            if action == decision.action:
+                return self._cut(context, action, distance)
         return PlannerDecision(
             "wait", f"no progress with {decision.action} from tile "
             f"{context.get('actor_tile')}; blocking that step for "
@@ -901,12 +921,15 @@ class MemoryPlanner:
             if travel is not None:
                 return travel
         if not open_steps:
-            cut = self._cut_steps(context)
-            if cut:
+            targets = dict(self._cut_targets(context))
+            if not targets:
+                targets = dict(self._cut_targets(context, reach=2))
+            if targets:
                 heading = {"explore_west": "step_left", "explore_east": "step_right",
                            "explore_north": "step_up",
                            "explore_south": "step_down"}.get(directive)
-                return self._cut(context, heading if heading in cut else cut[0])
+                action = heading if heading in targets else next(iter(targets))
+                return self._cut(context, action, targets[action])
             self._set_intention(None)
             return PlannerDecision("wait", "no verified open adjacent tile", "stuck")
         exploration = self._explore(context, open_steps, directive)

@@ -36,7 +36,13 @@ def memory_summary(history, observation, gold=None, shop_errand=None):
                "enemies_near": sum(1 for enemy in (observation or {}).get("enemy_slots", [])
                                    if isinstance(enemy, dict) and enemy.get("active")),
                "inn_map": None, "shop_map": None, "shop_ready": bool(shop_errand),
-               "known_maps": [], "reward_maps": [], "avoided_enemies": []}
+               "known_maps": [], "reward_maps": [], "avoided_enemies": [],
+               "weapon": None, "status": []}
+    weapon, status = hero.get("weapon") or {}, hero.get("status") or {}
+    if weapon.get("verified"):
+        summary["weapon"] = f"{weapon['type']} level {weapon['level']}"
+    if status.get("verified"):
+        summary["status"] = list(status.get("effects") or [])
     if history is None:
         return summary
     anchor = history.safe_anchor()
@@ -95,7 +101,9 @@ def build_goal_prompt(objective, summary, offered, current):
         f"Player objective: {objective}. "
         f"Now: {MAP_NAMES.get(here, 'map')} (map {here}), HP {summary.get('hp')}/"
         f"{summary.get('max_hp')}, level {summary.get('level')}, gold {summary.get('gold')}, "
-        f"candy {summary.get('candy')}, enemies near {summary.get('enemies_near')}. "
+        f"candy {summary.get('candy')}, enemies near {summary.get('enemies_near')}, "
+        f"weapon {summary.get('weapon') or 'unknown'}, "
+        f"status {', '.join(summary.get('status') or []) or 'normal'}. "
         f"Inn on map {summary.get('inn_map')}, shop on map {summary.get('shop_map')}. "
         f"Known maps {summary.get('known_maps')}. Score per map: {rewards}. "
         f"Current goal: {current}. Goals: {', '.join(offered)}. "

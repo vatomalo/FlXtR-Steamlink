@@ -510,6 +510,29 @@ def load_rom_exits(host, cache=ROM_TABLE_CACHE):
         return None
 
 
+def weapon_note(weapon):
+    """One log line for the equipped weapon, or why it is not trusted."""
+    if not isinstance(weapon, dict):
+        return None
+    if not weapon.get("verified"):
+        return "weapon fields not verified: " + ", ".join(weapon.get("failed_checks") or [])
+    others = ", ".join(f"{name} {level}" for name, level in weapon["levels"].items()
+                       if level and name != weapon["type"])
+    return (f"{weapon['type']} tier {weapon['tier']} level {weapon['level']}" +
+            (f" (also {others})" if others else ""))
+
+
+def status_note(status):
+    if not isinstance(status, dict):
+        return None
+    if not status.get("verified"):
+        return f"status word {status.get('raw', 0):#06x} disagrees with HP; ignored"
+    effects = ", ".join(status.get("effects") or []) or "normal"
+    unknown = status.get("unknown_bits")
+    return effects + (f" (+unknown bits {unknown:#06x})" if unknown else "") + \
+        (", controls locked" if status.get("controls_locked") else "")
+
+
 def survey(history, raw, radius):
     """Store a wide verified view in map memory; returns cells learned."""
     context = WRAM(raw).tile_context(radius=radius)
@@ -689,6 +712,7 @@ def main() -> int:
     last_sent_position = None
     unchanged_polls = 0
     reward_total = 0.0
+    hero_facts = (None, None)
     if history is not None:
         print("[reward] " + ("+%g per GP gained, -%g per %% of max HP lost" %
                              (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
@@ -712,6 +736,12 @@ def main() -> int:
                 observation = WRAM(raw).observe()
             if observation is not None:
                 map_guard.apply(observation)
+                hero_now = (observation.get("party") or [{}])[0]
+                facts = (weapon_note(hero_now.get("weapon")), status_note(hero_now.get("status")))
+                for label, before, after in zip(("weapon", "status"), hero_facts, facts):
+                    if after != before and after is not None:
+                        print(f"[{label}] {after}", flush=True)
+                hero_facts = facts
             if history is not None and observation is not None:
                 history.record_combat(observation, previous if previous != "none" else None)
                 money = read_gold(WRAM(raw), gold) if raw is not None else None

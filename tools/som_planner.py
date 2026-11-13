@@ -876,6 +876,13 @@ class MemoryPlanner:
                                    "observe")
         if context.get("game_mode") != "field":
             return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
+        status = ((observation.get("party") or [{}])[0] or {}).get("status") or {}
+        if status.get("verified") and status.get("controls_locked"):
+            # The game ignores the pad (frozen, petrified, balloon, engulfed);
+            # stepping would only be mistaken for a wall by stall detection.
+            self.stall = None
+            return PlannerDecision("wait", "controls locked by status "
+                                   f"{', '.join(status.get('effects') or ['?'])}", "observe")
         open_steps = self._passable_steps(context)
         self._learn_facing(context)
         self._remember(observation, context)

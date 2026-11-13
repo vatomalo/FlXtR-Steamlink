@@ -20,6 +20,15 @@ SOURCE = "https://wiki.superfamicom.org/seiken-densetsu-2"
 TILE_BASES = (0x7F0000, 0x7F4000)
 ATTRIBUTE_BASES = (0x7FB800, 0x7FBC00)
 TILE_SIZE = 16
+WEAPON_TYPES = ("glove", "sword", "axe", "spear", "whip", "bow", "boomerang", "javelin")
+# Status word +0x190 (som-decomp docs/hit-reactions.md, wram-companion-map.md).
+STATUS_NAMES = {0x0004: "slow", 0x0020: "frozen", 0x0040: "petrified",
+                0x0100: "balloon", 0x0200: "pygmy", 0x2000: "poison",
+                0x4000: "engulfed", 0x8000: "dead"}
+# The game zeroes the pad of a hero with any of these bits ($02:B6CD).
+CONTROLS_LOCKED = 0xC160
+# Transient bits of a hit/KO in progress (hit-reactions.md); not effects.
+STATUS_TRANSIENT = 0x0003
 FACINGS = {0x00: "step_up", 0x01: "step_down", 0x02: "step_right", 0x82: "step_left"}
 # Learned map kinds the route search may enter (see MemoryPlanner._enter).
 WALKABLE_KINDS = ("open", "pass", "cuttable", "h1", "h2")
@@ -73,7 +82,58 @@ class WRAM:
             "native_ai_behavior": self.u8(0x7ECC73 + index),
             "native_ai_grid_cell": self.u8(0x7ECC7A + index),
             "native_ai_charge_level": self.u8(0x7ECC7D + index),
+            "weapon": self.weapons(index),
+            "status": self.status(index),
         }
+
+    def weapons(self, index):
+        """Equipped weapon and the eight weapon levels, cross-checked.
+
+        som-decomp docs/wram-companion-map.md: type +0x1E4, row +0x1E8
+        (row = type * 9 + tier), levels +0x1C0 as eight nibbles (even type in
+        the high nibble; unverified there), weapon animation type +0x068,
+        charge stage +0x19B, owned weapons $CC54 + type (low bits tier,
+        bit 6 equipped by the boy). Turbo is a ROM hack: `verified` is set
+        only when every independent field agrees.
+        """
+        if index not in (0, 1, 2):
+            raise ValueError("Character slot must be 0..2")
+        base = CHARACTER_BASES[index]
+        weapon_type, row = self.u8(base + 0x1E4), self.u8(base + 0x1E8)
+        packed = [self.u8(base + 0x1C0 + i) for i in range(4)]
+        levels = [packed[t // 2] >> 4 if t % 2 == 0 else packed[t // 2] & 0x0F
+                  for t in range(8)]
+        stage = self.u8(base + 0x19B)
+        checks = {
+            "type_range": weapon_type < 8,
+            "row_matches_type": row // 9 == weapon_type,
+            "animation_type": self.u8(base + 0x068) == weapon_type,
+            "levels_range": all(level <= 8 for level in levels),
+            "charge_within_level": weapon_type < 8 and stage <= levels[weapon_type],
+        }
+        if index == 0 and weapon_type < 8:
+            owned = self.u8(0x7ECC54 + weapon_type)
+            checks["owned_and_equipped"] = (owned != 0xFF and bool(owned & 0x40) and
+                                            (owned & 0x0F) == row % 9)
+        verified = all(checks.values())
+        return {"type": WEAPON_TYPES[weapon_type] if weapon_type < 8 else None,
+                "tier": row % 9, "level": levels[weapon_type] if weapon_type < 8 else None,
+                "levels": dict(zip(WEAPON_TYPES, levels)), "charge_stage": stage,
+                "verified": verified,
+                "failed_checks": [name for name, ok in checks.items() if not ok]}
+
+    def status(self, index):
+        """Status effects of a hero; `verified` needs the dead bit to match HP."""
+        if index not in (0, 1, 2):
+            raise ValueError("Character slot must be 0..2")
+        base = CHARACTER_BASES[index]
+        raw = self.u16(base + 0x190)
+        effects = [name for bit, name in STATUS_NAMES.items() if raw & bit]
+        unknown = raw & ~(sum(STATUS_NAMES) | STATUS_TRANSIENT) & 0xFFFF
+        hp = self.u16(base + 0x182)
+        verified = not (self.u8(base) == 1 and raw & 0x8000 and hp > 0)
+        return {"raw": raw, "effects": effects, "unknown_bits": unknown,
+                "controls_locked": bool(raw & CONTROLS_LOCKED), "verified": verified}
 
     def game_mode(self):
         if self.u8(0x7EE000) != 1:
@@ -341,6 +401,8 @@ MAX_GOLD_STEP = 5000
 # (-200 = two full HP bars more than the GP it paid, at default weights).
 AVOID_SCORE = 200
 AVOID_MIN_EVENTS = 5
+# Samples after an enemy was last near that its kill GP is still credited to.
+REWARD_ENEMY_MEMORY = 30
 # Enemies count for reward bookkeeping only while on screen.
 REWARD_RANGE_X, REWARD_RANGE_Y = 128, 112
 
@@ -560,6 +622,7 @@ class ObservationHistory:
             "PRIMARY KEY(map_id,enemy_id))")
         self.connection.commit()
         self._reward_previous = None
+        self._reward_enemy = None
         self.rom_tables = None
         self._last_verified_state = None
         self._last_verified = None
@@ -1059,6 +1122,12 @@ class ObservationHistory:
             return None
         current = {"map_id": context.get("map_id"), "hp": hero["hp"],
                    "max_hp": hero["max_hp"], "gold": gold}
+        near = nearest_enemy_identity(state)
+        if near >= 0:
+            self._reward_enemy = (near, REWARD_ENEMY_MEMORY)
+        elif self._reward_enemy is not None:
+            identity, left = self._reward_enemy
+            self._reward_enemy = (identity, left - 1) if left > 1 else None
         previous, self._reward_previous = self._reward_previous, current
         if previous is None or previous["max_hp"] != current["max_hp"]:
             return None          # level-up or first sample: no comparison
@@ -1071,7 +1140,10 @@ class ObservationHistory:
         if not hp_lost and not gold_gained:
             return None
         score = gold_gained * gp_weight - hp_lost * 100.0 / current["max_hp"] * hp_weight
-        enemy_id = nearest_enemy_identity(state)
+        enemy_id = near
+        if enemy_id < 0 and gold_gained and self._reward_enemy is not None:
+            # Kill GP arrives after the monster has left its slot.
+            enemy_id = self._reward_enemy[0]
         self.connection.execute(
             "INSERT INTO reward_ledger VALUES(?,?,?,?,?,1,?) "
             "ON CONFLICT(map_id,enemy_id) DO UPDATE SET hp_lost=hp_lost+excluded.hp_lost,"

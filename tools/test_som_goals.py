@@ -77,5 +77,17 @@ class TestGoals(unittest.TestCase):
             history.close()
 
 
+    def test_summary_and_prompt_carry_verified_weapon_and_status_only(self):
+        hero = {"hp": 50, "max_hp": 100,
+                "weapon": {"verified": True, "type": "sword", "level": 1},
+                "status": {"verified": True, "effects": ["poison"]}}
+        facts = memory_summary(None, {"party": [hero], "tile_context": {"map_id": 129}})
+        self.assertEqual((facts["weapon"], facts["status"]), ("sword level 1", ["poison"]))
+        prompt = build_goal_prompt("x", facts, ["hunt_here"], "hunt_here")
+        self.assertIn("weapon sword level 1, status poison", prompt)
+        hero["weapon"]["verified"] = hero["status"]["verified"] = False
+        facts = memory_summary(None, {"party": [hero], "tile_context": {"map_id": 129}})
+        self.assertEqual((facts["weapon"], facts["status"]), (None, []))
+
 if __name__ == "__main__":
     unittest.main()

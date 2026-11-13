@@ -371,6 +371,32 @@ and a net score of -200 or worse (two full HP bars more than it paid) is no
 longer engaged; the hero backs away when one comes within 64 px
 (`intent=evade_enemy`). Per-map scores go into the Qwen goal summary.
 
+## Weapon levels and status effects
+
+Decoded per hero from som-decomp `docs/wram-companion-map.md` and
+`docs/hit-reactions.md`, with Turbo cross-checks:
+
+- Weapon: type `+0x1E4`, row `+0x1E8` (row = type x 9 + tier), levels
+  `+0x1C0` (eight nibbles, even type = high nibble; unverified in som-decomp),
+  charge stage `+0x19B`. Trusted only when row / 9 equals the type, the weapon
+  animation type `+0x068` equals it, every level is 0-8, the charge stage is
+  not above the weapon's level, and for the boy the owned-weapon byte
+  `$CC54 + type` is owned, equipped (bit 6) and has the same tier. Live
+  Turbo: `[weapon] sword tier 0 level 1`.
+- Status word `+0x190`: slow 0x0004, frozen 0x0020, petrified 0x0040, balloon
+  0x0100, pygmy 0x0200, poison 0x2000, engulfed 0x4000, dead 0x8000; other bits
+  are reported as unknown. Trusted unless an active hero has the dead bit with
+  HP left. While frozen, petrified, balloon or engulfed (the game zeroes the
+  pad, mask 0xC160) the planner waits instead of mistaking refused steps for
+  walls (`controls locked by status frozen`).
+
+Both are logged when they change and go into the Qwen goal summary when
+verified. Charged attacks (holding the attack button up to the weapon level)
+need a new hold action in the proxy and are not used yet.
+
+Kill GP arrives after the monster has left its slot, so GP gained up to 30
+samples after an enemy was near is credited to that enemy type.
+
 ## Qwen chooses goals
 
 In the hybrid policy Qwen now picks a goal, not buttons or tiles. The bridge

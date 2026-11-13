@@ -67,6 +67,16 @@ class TestRewardLedger(unittest.TestCase):
         self.history.record_reward(sample(hp=100, enemy=RABITE), 600)
         self.assertEqual(self.history.unprofitable_enemies(), set())
 
+    def test_kill_gp_after_the_enemy_vanished_is_credited_to_it(self):
+        self.history.record_reward(sample(enemy=RABITE), 500)
+        self.history.record_reward(sample(hp=90, enemy=RABITE), 500)
+        paid = self.history.record_reward(sample(hp=90), 520)        # slot emptied
+        self.assertEqual(paid["enemy_id"], 0x00)
+        for _ in range(30):
+            self.history.record_reward(sample(hp=90), 520)
+        late = self.history.record_reward(sample(hp=90), 530)
+        self.assertEqual(late["enemy_id"], -1)
+
 
 class TestRewardDrivenCombat(unittest.TestCase):
     def test_backs_away_from_unprofitable_enemy_and_ignores_it_farther_off(self):

@@ -180,9 +180,9 @@ class WRAM:
             result["verification_error"] = "actor_tile_attributes_disagree"
             return result
 
-        rows, tile_rows, special = [], [], []
+        rows, tile_rows, attribute_rows, special = [], [], [], []
         for dy in range(-radius, radius + 1):
-            passability, ids = [], []
+            passability, ids, attribute_row = [], [], []
             for dx in range(-radius, radius + 1):
                 x = (center_x + dx) % width_tiles
                 y = (center_y + dy) % height_tiles
@@ -193,12 +193,14 @@ class WRAM:
                     marker = "@"
                 passability.append(marker)
                 ids.append(f"{tile_id:02x}")
+                attribute_row.append("".join(f"{value:02x}" for value in attributes))
                 if reasons:
                     special.append({"offset": [dx, dy], "tile": tile_id,
                                     "attributes": "".join(f"{value:02x}" for value in attributes),
                                     "classification": classification, "reasons": reasons})
             rows.append("".join(passability))
             tile_rows.append(" ".join(ids))
+            attribute_rows.append(" ".join(attribute_row))
         result.update({
             "runtime_verified": True,
             "verification_warning": (
@@ -207,6 +209,7 @@ class WRAM:
             "radius": radius,
             "passability_rows": rows,
             "tile_id_rows": tile_rows,
+            "attribute_rows": attribute_rows,
             "special_cells": special,
         })
         return result
@@ -282,6 +285,60 @@ class WRAM:
         }
 
 
+def grid_cells(state):
+    """{(x, y): (marker, tile_id, attributes)} of a verified 7x7 grid, absolute."""
+    context = state.get("tile_context") if isinstance(state, dict) else None
+    if not isinstance(context, dict) or not context.get("runtime_verified"):
+        return None
+    rows, ids, attrs = (context.get("passability_rows"), context.get("tile_id_rows"),
+                        context.get("attribute_rows"))
+    radius, size, center = (context.get("radius"), context.get("map_size_tiles"),
+                            context.get("actor_tile"))
+    if not (isinstance(rows, list) and isinstance(ids, list) and isinstance(attrs, list)
+            and isinstance(radius, int) and isinstance(size, list) and
+            isinstance(center, list)):
+        return None
+    cells = {}
+    for row_index, (markers, id_row, attr_row) in enumerate(zip(rows, ids, attrs)):
+        for column, (marker, tile_id, attributes) in enumerate(
+                zip(markers, id_row.split(), attr_row.split())):
+            x = (center[0] + column - radius) % size[0]
+            y = (center[1] + row_index - radius) % size[1]
+            cells[(x, y)] = (marker, tile_id, attributes)
+    return cells
+
+
+def detect_cuts(previous, current):
+    """Attributes of tiles next to the hero that turned from blocking to open.
+
+    That is what cutting grass (or breaking a pot) looks like in WRAM: the
+    tile in front of the hero is replaced by a different, walkable tile.
+    """
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return []
+    before_context = previous.get("tile_context") or {}
+    after_context = current.get("tile_context") or {}
+    if (before_context.get("map_id") != after_context.get("map_id") or
+            (before_context.get("actor") or {}).get("layer") !=
+            (after_context.get("actor") or {}).get("layer")):
+        return []
+    before, after = grid_cells(previous), grid_cells(current)
+    if not before or not after:
+        return []
+    hero = tuple(after_context["actor_tile"])
+    size = after_context["map_size_tiles"]
+    found = []
+    for (x, y), (marker, tile_id, _) in after.items():
+        old = before.get((x, y))
+        if marker != "." or old is None or old[0] not in "#?" or old[1] == tile_id:
+            continue
+        dx = min((x - hero[0]) % size[0], (hero[0] - x) % size[0])
+        dy = min((y - hero[1]) % size[1], (hero[1] - y) % size[1])
+        if dx + dy == 1:
+            found.append(old[2])
+    return found
+
+
 class ObservationHistory:
     """SQLite observations plus persistent, map-scoped tile visitation memory."""
 
@@ -333,6 +390,11 @@ class ObservationHistory:
         # bridge crossed once makes every bridge with that signature usable.
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS passable_signatures "
+            "(attributes TEXT PRIMARY KEY, seen INTEGER NOT NULL, last_ts REAL NOT NULL)")
+        # Attributes of tiles seen turning from blocking to open next to the
+        # hero (grass cut with a weapon). Same attributes = also cuttable.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS cuttable_signatures "
             "(attributes TEXT PRIMARY KEY, seen INTEGER NOT NULL, last_ts REAL NOT NULL)")
         # 7x7 tile-ID patterns around taught inns, to recognise lookalikes.
         self.connection.execute(
@@ -522,6 +584,8 @@ class ObservationHistory:
             return 0
         kinds = {".": "open", "@": "open", "#": "blocked", "?": "conditional"}
         proven = self.passable_signatures()
+        cuttable = self.cuttable_signatures()
+        attribute_rows = context.get("attribute_rows") or []
         special = {tuple(cell["offset"]): cell.get("attributes")
                    for cell in context.get("special_cells") or []
                    if isinstance(cell.get("offset"), list)}
@@ -536,6 +600,10 @@ class ObservationHistory:
                 if (kind == "conditional" and
                         special.get((column - radius, row_index - radius)) in proven):
                     kind = "open"
+                attributes = (attribute_rows[row_index].split()[column]
+                              if row_index < len(attribute_rows) else None)
+                if kind in ("blocked", "conditional") and attributes in cuttable:
+                    kind = "cuttable"
                 x = (center[0] + column - radius) % width
                 y = (center[1] + row_index - radius) % height
                 self.connection.execute(
@@ -586,6 +654,23 @@ class ObservationHistory:
             (*position, time.time()))
         self.connection.commit()
         return True
+
+    def learn_cuts(self, state):
+        """Compare with the previous observation; store newly seen cut tiles."""
+        previous, self._previous_state = getattr(self, "_previous_state", None), state
+        learned = detect_cuts(previous, state)
+        for attributes in learned:
+            self.connection.execute(
+                "INSERT INTO cuttable_signatures(attributes,seen,last_ts) VALUES(?,1,?) "
+                "ON CONFLICT(attributes) DO UPDATE SET seen=seen+1,last_ts=excluded.last_ts",
+                (attributes, time.time()))
+        if learned:
+            self.connection.commit()
+        return learned
+
+    def cuttable_signatures(self):
+        return {row[0] for row in self.connection.execute(
+            "SELECT attributes FROM cuttable_signatures")}
 
     def passable_signatures(self):
         return {row[0] for row in self.connection.execute(

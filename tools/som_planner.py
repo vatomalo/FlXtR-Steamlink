@@ -2,6 +2,8 @@
 from collections import deque
 from dataclasses import dataclass
 
+from som_memory import detect_cuts
+
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
     "step_up": (0, -1), "step_down": (0, 1),
@@ -17,6 +19,8 @@ UNREACHABLE_COOLDOWN = 20
 # HP does not regenerate on its own, so an endless retreat is a dead end.
 INN_WAIT_DECISIONS = 30
 SURVIVAL_GIVE_UP_DECISIONS = 900
+# Attacks on one grass tile before the planner stops trying to cut it.
+CUT_ATTEMPTS = 3
 # A step chosen this many times without the hero moving is blocked for a while.
 STALL_DECISIONS = 8
 STALL_BLOCK_DECISIONS = 200
@@ -47,6 +51,12 @@ class MemoryPlanner:
         # (wrong layer under a bridge, an NPC, a mislearned tile...).
         self.stall = None
         self.blocked_moves = {}
+        # Grass cutting: learned cuttable attributes (without a database),
+        # the previous observation to detect cuts, and attacks per tile.
+        self.local_cuttable = set()
+        self.previous_observation = None
+        self.cut_attempts = {}
+        self.previous_action = "none"
         self.local_signatures = set()
 
     @staticmethod
@@ -115,7 +125,7 @@ class MemoryPlanner:
         context = observation.get("tile_context") if isinstance(observation, dict) else None
         if not isinstance(context, dict) or context.get("game_mode") != "field":
             return set()
-        return set(self._passable_steps(context))
+        return set(self._passable_steps(context)) | set(self._cut_steps(context))
 
     def _follow_taught_path(self, context, previous, directive):
         """Keep moving along walked tiles while the tile check is unavailable."""
@@ -146,7 +156,11 @@ class MemoryPlanner:
                                "follow_taught_path")
 
     def _remember(self, observation, context):
+        if self.history is None:
+            self.local_cuttable.update(detect_cuts(self.previous_observation, observation))
+            self.previous_observation = observation
         if self.history is not None:
+            self.history.learn_cuts(observation)
             self.history.remember_walk(observation)
             self.history.remember_position(observation)
             self.history.remember_world(observation)
@@ -216,7 +230,7 @@ class MemoryPlanner:
             first, distance = routes[position]
             for action, offset in STEP_OFFSETS.items():
                 neighbor = MemoryPlanner._neighbor(position, offset, size)
-                if neighbor in routes or cells.get(neighbor) != "open":
+                if neighbor in routes or cells.get(neighbor) not in ("open", "cuttable"):
                     continue
                 routes[neighbor] = (action if first is None else first, distance + 1)
                 queue.append(neighbor)
@@ -290,6 +304,9 @@ class MemoryPlanner:
                 return None
         action, distance = routes[target]
         if action not in open_steps:
+            if action in self._cut_steps(context):
+                self._set_intention(intention)
+                return self._cut(context, action)
             self._set_intention(None)
             return None
         self._set_intention(intention)
@@ -426,6 +443,8 @@ class MemoryPlanner:
                     return PlannerDecision(action,
                                            f"go to learned {place} ({distance} tiles)",
                                            travel_intent, distance)
+                if action in self._cut_steps(context):
+                    return self._cut(context, action)
             # Scanned collision islands can be disconnected when the agent
             # crossed an area before map learning was enabled. Keep a stable
             # heading toward the observed exit while checking every next tile.
@@ -516,8 +535,50 @@ class MemoryPlanner:
         """errand: optional {"place": "shop", "anchor": {...}} to travel to."""
         self.blocked_moves = {key: turns - 1 for key, turns in self.blocked_moves.items()
                               if turns > 1}
+        self.previous_action = previous
         decision = self._decide(observation, previous, directive, errand)
         return self._check_stall(observation, decision)
+
+    def _cuttable(self):
+        if self.history is not None:
+            return self.history.cuttable_signatures()
+        return self.local_cuttable
+
+    def _cut_steps(self, context):
+        """Steps into a blocking tile that looks like grass already cut once."""
+        rows, attrs, radius = (context.get("passability_rows"), context.get("attribute_rows"),
+                               context.get("radius"))
+        if not (isinstance(rows, list) and isinstance(attrs, list) and isinstance(radius, int)):
+            return []
+        cuttable, blocked = self._cuttable(), self._blocked_here(context)
+        steps = []
+        for action, (dx, dy) in STEP_OFFSETS.items():
+            row, column = radius + dy, radius + dx
+            if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
+                continue
+            cells = attrs[row].split()
+            if (rows[row][column] in "#?" and column < len(cells) and
+                    cells[column] in cuttable and action not in blocked):
+                steps.append(action)
+        return steps
+
+    def _cut(self, context, action):
+        """Face the grass with a short tap (the hero cannot enter it), then attack."""
+        tile = context.get("actor_tile") or [0, 0]
+        dx, dy = STEP_OFFSETS[action]
+        key = (context.get("map_id"), tile[0] + dx, tile[1] + dy)
+        if self.previous_action != action:
+            return PlannerDecision(action, f"face grass at {key[1]},{key[2]} to cut it",
+                                   "cut_grass")
+        attempts = self.cut_attempts.get(key, 0) + 1
+        self.cut_attempts[key] = attempts
+        if attempts > CUT_ATTEMPTS:
+            self.blocked_moves[self._stall_key(context, action)] = STALL_BLOCK_DECISIONS
+            self.cut_attempts.pop(key, None)
+            return PlannerDecision("wait", f"grass at {key[1]},{key[2]} did not cut after "
+                                   f"{CUT_ATTEMPTS} attacks; avoiding it", "replan")
+        return PlannerDecision("attack", f"cut grass at {key[1]},{key[2]} "
+                               f"(attack {attempts}/{CUT_ATTEMPTS})", "cut_grass")
 
     @staticmethod
     def _stall_key(context, action):
@@ -611,6 +672,12 @@ class MemoryPlanner:
             if travel is not None:
                 return travel
         if not open_steps:
+            cut = self._cut_steps(context)
+            if cut:
+                heading = {"explore_west": "step_left", "explore_east": "step_right",
+                           "explore_north": "step_up",
+                           "explore_south": "step_down"}.get(directive)
+                return self._cut(context, heading if heading in cut else cut[0])
             self._set_intention(None)
             return PlannerDecision("wait", "no verified open adjacent tile", "stuck")
         exploration = self._explore(context, open_steps, directive)

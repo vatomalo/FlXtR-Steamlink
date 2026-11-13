@@ -434,6 +434,7 @@ INTENT_MESSAGES = {
     "survive": "AI: HP low|retreating",
     "stuck": "AI: stuck|no open tile",
     "go_to_shop": "AI: plenty of GP|going to buy Candy",
+    "cut_grass": "AI: cutting grass",
 }
 
 

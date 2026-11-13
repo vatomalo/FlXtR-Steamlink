@@ -49,6 +49,8 @@ def record_walk(link, history, interval):
         context = state.get("tile_context") or {}
         # Every tile stood on counts, even where the tile-ID cross-check
         # fails (bridges): that is exactly what the AI cannot learn alone.
+        for attributes in history.learn_cuts(state):
+            print(f"  learned a cuttable tile type ({attributes})", flush=True)
         if history.remember_walk(state):
             tiles += 1
         if context.get("runtime_verified"):

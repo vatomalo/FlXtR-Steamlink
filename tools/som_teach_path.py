@@ -34,11 +34,15 @@ def main():
     history = ObservationHistory(args.history_db)
     link = RemoteLink(args.host)
     before = history.passable_signatures()
-    print("Walk the path (e.g. across the bridge and a few steps beyond),\n"
-          "then press Enter here.\n", flush=True)
+    before_cuts = history.cuttable_signatures()
+    print("Walk the path (e.g. across the bridge and a few steps beyond).\n"
+          "To teach grass cutting, stand next to grass, face it and attack it.\n"
+          "Press Enter here when done.\n", flush=True)
     try:
         tiles, maps = record_walk(link, history, args.interval)
         learned = history.passable_signatures() - before
+        cuts = history.cuttable_signatures() - before_cuts
+        print(f"Learned {len(cuts)} new cuttable tile type(s): {sorted(cuts)}")
         print(f"Learned {tiles} tile observations on {len(maps)} map(s) and "
               f"{len(learned)} new walkable tile type(s): {sorted(learned)}")
         if not learned:

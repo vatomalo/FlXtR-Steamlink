@@ -193,6 +193,64 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertNotIn("no progress", moving.decide(state, "step_left",
                                                           "explore_west").reason)
 
+    @staticmethod
+    def grass_state(left_marker, left_tile="10", left_attrs="03004000", others="00000000"):
+        state = observation(("###", left_marker + "@#", "###"))
+        attrs = [" ".join([others] * 3),
+                 " ".join([left_attrs, others, others]),
+                 " ".join([others] * 3)]
+        ids = ["01 01 01", f"{left_tile} 02 01", "01 01 01"]
+        state["tile_context"].update(attribute_rows=attrs, tile_id_rows=ids)
+        return state
+
+    def test_learns_grass_from_a_cut_then_cuts_identical_grass(self):
+        planner = MemoryPlanner()
+        planner.decide(self.grass_state("#"))
+        planner.decide(self.grass_state(".", left_tile="11", left_attrs="00000000"))
+        self.assertIn("03004000", planner.local_cuttable)
+        # Elsewhere: grass with the same attributes blocks the only way west.
+        grass = self.grass_state("#")
+        grass["tile_context"]["map_id"] = 140
+        face = planner.decide(grass, "wait", "explore_west")
+        self.assertEqual((face.action, face.intention), ("step_left", "cut_grass"))
+        self.assertIn("step_left", planner.trusted_steps(grass))
+        attack = planner.decide(grass, face.action, "explore_west")
+        self.assertEqual((attack.action, attack.intention), ("attack", "cut_grass"))
+
+    def test_gives_up_on_grass_that_does_not_cut(self):
+        planner = MemoryPlanner()
+        planner.local_cuttable.add("03004000")
+        grass = self.grass_state("#")
+        previous, actions = "wait", []
+        for _ in range(10):
+            decision = planner.decide(grass, previous, "explore_west")
+            actions.append(decision.action)
+            previous = decision.action
+        self.assertEqual(actions.count("attack"), 3)
+        self.assertNotIn("step_left", planner.trusted_steps(grass))
+
+    def test_history_learns_grass_and_maps_it_as_cuttable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "grass.sqlite")
+            self.assertEqual(history.learn_cuts(self.grass_state("#")), [])
+            self.assertEqual(history.learn_cuts(
+                self.grass_state(".", left_tile="11", left_attrs="00000000")), ["03004000"])
+            other = self.grass_state("#")
+            other["tile_context"]["map_id"] = 140
+            history.remember_world(other)
+            self.assertEqual(history.known_cells(140, 1)[(1, 3)], "cuttable")
+            self.assertEqual(history.known_cells(140, 1)[(3, 3)], "blocked")
+            history.close()
+
+    def test_changes_that_are_not_cuts_are_ignored(self):
+        from som_memory import detect_cuts
+        before = self.grass_state("#")
+        same_tile = self.grass_state(".", left_tile="10")       # tile did not change
+        self.assertEqual(detect_cuts(before, same_tile), [])
+        moved = self.grass_state(".", left_tile="11")
+        moved["tile_context"]["map_id"] = 999                   # different map
+        self.assertEqual(detect_cuts(before, moved), [])
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

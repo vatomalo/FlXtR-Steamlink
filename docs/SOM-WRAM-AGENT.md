@@ -272,6 +272,27 @@ arbitrary monster id would need executing game code from the proxy, which is
 not implemented. Only the explicit tool can send these commands; the model
 cannot. Keep a normal backup save before experimenting.
 
+## Cutting grass
+
+Grass blocks the way until it is hit; then the game replaces it with an open
+tile. The AI learns this by watching: when a blocking tile right next to the
+hero turns into a different, open tile, the old tile's four attribute bytes
+are stored as cuttable (`cuttable_signatures`). Any tile with the same bytes,
+on any map, is then treated as grass: routes may pass through it, and the
+planner taps toward it (to face it) and attacks (`intent=cut_grass`). After
+three attacks without a cut, that tile is avoided for 200 decisions.
+
+Teach it once by cutting a patch yourself:
+
+```sh
+systemctl --user stop flxtr-som-ai.service
+python3 tools/som_teach_path.py   # face some grass, attack it, press Enter
+systemctl --user start flxtr-som-ai.service
+```
+
+The AI also learns whenever one of its own attacks cuts grass. Pots or other
+breakable tiles that behave the same way are learned the same way.
+
 ## Spawn a real Rabite (native map spawn)
 
 The game creates monsters from each map's 8-byte object records while the map

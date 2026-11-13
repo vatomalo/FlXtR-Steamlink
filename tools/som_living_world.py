@@ -398,7 +398,7 @@ def main(argv=None):
             wram = WRAM.load(args.wram_file)
         else:
             from som_qwen_bridge import RemoteLink
-            link = RemoteLink(args.host, remote_loop=REMOTE_LOOP)
+            link = RemoteLink(args.host, remote_loop=REMOTE_LOOP, partial=False)
             try:
                 wram = WRAM(link.fetch_wram(False))
             finally:
@@ -417,7 +417,7 @@ def main(argv=None):
 def run_loop(world, args):
     from som_memory import WRAM
     from som_qwen_bridge import RemoteLink
-    link = RemoteLink(args.host, remote_loop=REMOTE_LOOP)
+    link = RemoteLink(args.host, remote_loop=REMOTE_LOOP, partial=False)
     drivers, last_talk, step = {}, None, 0
     daily = None
     if args.director:

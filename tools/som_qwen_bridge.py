@@ -95,6 +95,8 @@ SMOOTH_INTENTIONS = {"explore_frontier", "engage_enemy", "return_to_inn",
 # follow_taught_path deliberately keeps short pulses on unverified tiles.
 LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
+DASH_MIN_STRAIGHT = 8   # learned straight route tiles (and distance) for a dash
+DASH_ENEMY_PX = 160     # no dashing with a monster this close
 DASH_MOVES = {"right": "dash_right", "left": "dash_left",
               "up": "dash_up", "down": "dash_down"}
 OPPOSITE_STEP = {
@@ -377,10 +379,28 @@ def extend_clear_exploration(action: str, observation, intention: str,
                 if ground in (0x31, 0x32) or (ground & 0xF0 == 0x10 and ground & 7 >= 4):
                     return action
     # A plain 30-frame walk covers 60px. Five verified tiles leave room for
-    # the hero box as well as that displacement. A dash has no such bound.
+    # the hero box as well as that displacement.
     if radius >= 5 and straight_tiles >= 5 and (remaining_tiles is None or remaining_tiles >= 5):
+        # A dash goes further than the five tiles seen around the hero, so it
+        # needs a long straight run on the learned route and a far target,
+        # and never near a monster (travel, not a fight).
+        if (intention != "engage_enemy" and straight_tiles >= DASH_MIN_STRAIGHT and
+                (remaining_tiles is None or remaining_tiles >= DASH_MIN_STRAIGHT) and
+                not enemy_within(observation, DASH_ENEMY_PX)):
+            return DASH_MOVES[LONG_MOVES[action]]
         return LONG_MOVES[action]
     return action
+
+
+def enemy_within(observation, limit):
+    actor = ((observation or {}).get("tile_context") or {}).get("actor") or {}
+    ax, ay = actor.get("x_px"), actor.get("y_px")
+    if not isinstance(ax, int) or not isinstance(ay, int):
+        return True                       # unknown: do not dash
+    return any(isinstance(enemy, dict) and enemy.get("active") and
+               isinstance(enemy.get("x_px"), int) and isinstance(enemy.get("y_px"), int) and
+               abs(enemy["x_px"] - ax) + abs(enemy["y_px"] - ay) <= limit
+               for enemy in (observation or {}).get("enemy_slots", []))
 
 # One persistent POSIX-sh loop on the Steam Link. Each request is one line on
 # stdin; no process or SSH channel is created per decision. The remote side
@@ -388,12 +408,27 @@ def extend_clear_exploration(action: str, observation, intention: str,
 # A failed redirect on the special builtin `exec` makes a POSIX shell exit,
 # which would drop the session when the game is closed; `command exec` keeps
 # the loop alive so it can answer NONE.
+# WRAM that changes between decisions (measured live: system/state, dialogue
+# and menus, inventory/gold/actors, 7F:8000). A hot read moves ~24 KiB instead
+# of 128 KiB and is patched into the last full snapshot; a full snapshot is
+# fetched every FULL_EVERY reads and whenever map, mode or ring state differ.
+HOT_RANGES_KB = ((0, 8), (39, 2), (50, 10), (96, 4))
+HOT_BYTES = sum(count for _, count in HOT_RANGES_KB) * 1024
+FULL_EVERY = 6
+# map id, game mode bytes and ring flag: a change means cold areas moved too
+BASE_GUARD = (0xDC, 0xDD, 0xD0, 0xE4, 0xE6, 0x7D)
 REMOTE_LOOP = (
     "while IFS= read -r cmd; do "
     "case \"$cmd\" in "
     "obs|obsm) "
     "if [ \"$cmd\" = obsm ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
     "elif [ -f /tmp/flxtr-som-wram.bin ]; then echo WRAM; cat /tmp/flxtr-som-wram.bin; "
+    "else echo NONE; fi;; "
+    "hotz|hotmz) "
+    "if [ \"$cmd\" = hotmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
+    "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMH; "
+    "{ " + "; ".join(f"dd if=/proc/self/fd/3 bs=1024 skip={start} count={count} 2>/dev/null"
+                     for start, count in HOT_RANGES_KB) + "; } | gzip -1 -c; exec 3<&-; "
     "else echo NONE; fi;; "
     "obsz|obsmz) "
     "if [ \"$cmd\" = obsmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
@@ -421,12 +456,14 @@ class RemoteLink:
     """Keep one SSH session open for WRAM reads and actions."""
 
     def __init__(self, host: str, timeout: float = 5.0, remote_loop: str = REMOTE_LOOP,
-                 ssh_command=None, compress=True):
+                 ssh_command=None, compress=True, partial=True):
         self.host, self.timeout = host, timeout
         self.remote_loop = remote_loop
         self.ssh_command = list(ssh_command or SSH_BASE)
         self.process = None
         self.compress = compress
+        self.partial = partial and compress
+        self.base, self.hot_reads = None, 0
 
     def _start(self):
         self.close()
@@ -463,7 +500,7 @@ class RemoteLink:
             remaining -= len(chunk)
         return b"".join(chunks)
 
-    def _read_gzip(self, deadline: float) -> bytes:
+    def _read_gzip(self, deadline: float, size: int = WRAM_BYTES) -> bytes:
         """One gzip member from the stream; nothing follows it until the next request."""
         inflater = zlib.decompressobj(wbits=31)
         fd = self.process.stdout.fileno()
@@ -479,7 +516,7 @@ class RemoteLink:
         if inflater.unused_data:
             raise OSError("unexpected bytes after compressed WRAM")
         data = b"".join(out)
-        if len(data) != WRAM_BYTES:
+        if len(data) != size:
             raise OSError(f"compressed WRAM inflated to {len(data)} bytes")
         return data
 
@@ -503,6 +540,8 @@ class RemoteLink:
                            if status == "WRAM" else None)
                 if status == "WRAMZ":
                     payload = self._read_gzip(deadline)
+                if status == "WRAMH":
+                    payload = self._read_gzip(deadline, HOT_BYTES)
                 if status == "NAV":
                     payload = self._read_exact(768, deadline)
                 return status, payload
@@ -514,13 +553,29 @@ class RemoteLink:
 
     def fetch_wram(self, require_marker=False):
         # The Steam Link link carries ~210 KB/s; gzip -1 shrinks the 128 KiB
-        # snapshot ~3x and roughly halves the time per decision.
+        # snapshot ~3x, and hot reads (HOT_RANGES_KB) cut a decision's read
+        # from ~290 ms to ~160 ms.
+        if self.partial and self.base is not None and self.hot_reads < FULL_EVERY:
+            status, hot = self._request("hotmz" if require_marker else "hotz")
+            if status == "STOP":
+                return None
+            if status == "WRAMH":
+                image = bytearray(self.base)
+                offset = 0
+                for start, count in HOT_RANGES_KB:
+                    image[start * 1024:(start + count) * 1024] = hot[offset:offset + count * 1024]
+                    offset += count * 1024
+                if all(image[i] == self.base[i] for i in BASE_GUARD):
+                    self.hot_reads += 1
+                    return bytes(image)
         command = "obsm" if require_marker else "obs"
         status, payload = self._request(command + "z" if self.compress else command)
         if status == "STOP":
             return None
         if status not in ("WRAM", "WRAMZ"):
+            self.base = None
             raise OSError(f"WRAM snapshot unavailable ({status})")
+        self.base, self.hot_reads = payload, 0
         return payload
 
     def show_message(self, text: str) -> None:

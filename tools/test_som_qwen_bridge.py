@@ -60,6 +60,27 @@ class TestTileGuard(unittest.TestCase):
         state = self.observation(["###", "#@#", "###"])
         self.assertEqual(prefer_open_step("wait", state, "none"), "wait")
 
+    def test_dashes_on_long_straight_routes_away_from_monsters(self):
+        def wide(enemies=()):
+            return {"tile_context": {"runtime_verified": True, "game_mode": "field", "radius": 5,
+                                     "actor": {"x_px": 400, "y_px": 400},
+                                     "passability_rows": ["..........."] * 11},
+                    "enemy_slots": list(enemies)}
+        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 10),
+                         "dash_right")
+        self.assertEqual(extend_clear_exploration("step_up", wide(), "go_to_inn", None, 12),
+                         "dash_up")
+        # Short runs, near targets, nearby monsters and fights keep the walk.
+        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 7),
+                         "right")
+        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 6, 10),
+                         "right")
+        near = {"active": True, "x_px": 500, "y_px": 420}
+        self.assertEqual(extend_clear_exploration("step_right", wide([near]), "explore_frontier",
+                                                  10, 10), "right")
+        self.assertEqual(extend_clear_exploration("step_right", wide(), "engage_enemy", 10, 10),
+                         "right")
+
     def test_extends_only_fully_clear_exploration_routes(self):
         clear = {"tile_context": {"runtime_verified": True, "game_mode": "field",
                                   "radius": 3, "passability_rows": ["......."] * 7}}
@@ -248,6 +269,27 @@ class TestRemoteLink(unittest.TestCase):
         self.assertEqual(self.link.fetch_wram(), image)
         self.link.compress = True
         self.assertEqual(self.link.fetch_wram(), image)     # stream stays in sync
+
+    def test_hot_reads_patch_changes_and_refresh_cold_areas(self):
+        from som_qwen_bridge import FULL_EVERY
+        path = self.root / "flxtr-som-wram.bin"
+        image = bytearray(0x20000)
+        path.write_bytes(image)
+        self.assertEqual(self.link.fetch_wram(), bytes(image))          # full: base
+        image[0xE002] = 77                                                 # hero x (hot)
+        cold = 0x14010                                                     # 7F:4010 (cold)
+        image[cold] = 9
+        path.write_bytes(image)
+        hot = self.link.fetch_wram()
+        self.assertEqual(hot[0xE002], 77)
+        self.assertEqual(hot[cold], 0)                                     # not yet
+        for _ in range(FULL_EVERY):
+            refreshed = self.link.fetch_wram()
+        self.assertEqual(refreshed[cold], 9)                               # full refresh
+        image[0xDC] = 131                                                  # map change
+        image[cold] = 3
+        path.write_bytes(image)
+        self.assertEqual(self.link.fetch_wram()[cold], 3)                  # full at once
 
     def test_missing_snapshot_answers_none_and_keeps_the_session(self):
         for compress in (True, False):

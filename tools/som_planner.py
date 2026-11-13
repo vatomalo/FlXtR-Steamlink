@@ -161,7 +161,7 @@ class MemoryPlanner:
     def _follow_taught_path(self, context, previous, directive):
         """Keep moving along walked tiles while the tile check is unavailable."""
         size, tile = context.get("map_size_tiles"), context.get("actor_tile")
-        if not (context.get("game_mode") == "field" and
+        if not (context.get("game_mode") == "field" and not context.get("map_loading") and
                 isinstance(size, list) and len(size) == 2 and
                 isinstance(tile, list) and len(tile) == 2):
             return None
@@ -488,10 +488,17 @@ class MemoryPlanner:
         actor = context["actor"]
         destination = anchor
         exit_action = None
+        crossing = False
         if (isinstance(anchor, dict) and anchor.get("map_id") != context.get("map_id") and
                 self.history is not None):
-            destination = self.history.return_waypoint(context.get("map_id"),
-                                                       anchor.get("map_id"))
+            crossing = True
+            waypoints = []
+            if hasattr(self.history, "exit_waypoints"):
+                waypoints = self.history.exit_waypoints(context.get("map_id"),
+                                                        anchor.get("map_id"))
+            destination = (self._pick_waypoint(context, waypoints) if waypoints else
+                           self.history.return_waypoint(context.get("map_id"),
+                                                        anchor.get("map_id")))
             exit_action = destination.get("action") if isinstance(destination, dict) else None
         if (isinstance(destination, dict) and
                 destination.get("map_id") == context.get("map_id") and
@@ -499,20 +506,30 @@ class MemoryPlanner:
                 isinstance(destination.get("target"), list)):
             position = tuple(context["actor_tile"])
             target = tuple(destination["target"])
-            cells = self._known_cells(context["map_id"], actor["layer"])
+            cells = self._exit_cells(context, destination)
             routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
                                   actor.get("floor_height"))
+            via = destination.get("path")
+            hop = (f" via maps {'>'.join(str(m) for m in via)}"
+                   if isinstance(via, list) and len(via) > 2 else "")
             if target == position:
                 if exit_action in open_steps:
                     return PlannerDecision(exit_action, f"take learned exit toward {place}",
                                            travel_intent, 1)
+                if crossing and exit_action is None:
+                    # On a ROM exit tile; the game starts the transition.
+                    return PlannerDecision("wait", f"on exit to map "
+                                           f"{destination.get('next_map')}", travel_intent)
                 if exit_action is None:
                     return PlannerDecision("wait", f"at learned {place} point", arrive_intent)
             if target in routes and target != position:
                 action, distance = routes[target]
                 if action in open_steps:
+                    kind = ("exit to map %s%s" % (destination.get("next_map"), hop)
+                            if crossing else "")
                     return PlannerDecision(action,
-                                           f"go to learned {place} ({distance} tiles)",
+                                           f"go to learned {place} ({distance} tiles)"
+                                           + (f" by {kind}" if kind else ""),
                                            travel_intent, distance, routes.straight(target))
                 if action in self._cut_steps(context):
                     return self._cut(context, action)
@@ -529,6 +546,51 @@ class MemoryPlanner:
                                        f"{target[0]},{target[1]} vector dx={dx},dy={dy}",
                                        travel_intent)
         return None
+
+    def _exit_cells(self, context, destination, cells=None):
+        """Known cells; a ROM exit tile is entered whatever its looks say.
+
+        Trigger tiles copy the attributes of the tile they replace, so most
+        read as open; the guard still checks the real step into it.
+        """
+        if cells is None:
+            cells = self._known_cells(context["map_id"], context["actor"]["layer"])
+        if destination.get("source") == "rom":
+            target = tuple(destination["target"])
+            if cells.get(target) not in ("open", "pass", "cuttable", "h1", "h2"):
+                cells = dict(cells)
+                cells[target] = "pass"
+        return cells
+
+    def _pick_waypoint(self, context, waypoints):
+        """Nearest reachable exit on the hero's layer, else the first one."""
+        actor = context["actor"]
+        position = tuple(context["actor_tile"])
+        size = tuple(context["map_size_tiles"])
+        usable = [waypoint for waypoint in waypoints
+                  if waypoint.get("layer") == actor.get("layer") and
+                  isinstance(waypoint.get("target"), list)]
+        # One search for all exits (map 131 has 63 painted border exit tiles).
+        cells = dict(self._known_cells(context["map_id"], actor["layer"]))
+        for waypoint in usable:
+            if waypoint.get("source") == "rom":
+                cells.update(self._exit_cells(context, waypoint, cells))
+        routes = self._routes(position, cells, size, actor.get("floor_height"))
+        best = None
+        for order, waypoint in enumerate(usable):
+            target = tuple(waypoint["target"])
+            if target == position:
+                return waypoint
+            if target in routes:
+                # A cross-checked ROM exit beats a learned crossing, whose
+                # recorded tile can be off (return doors, scripted moves).
+                candidate = (waypoint.get("source") != "rom", routes[target][1], order)
+                if best is None or candidate < best[0]:
+                    best = (candidate, waypoint)
+        if best is not None:
+            return best[1]
+        on_layer = [w for w in waypoints if w.get("layer") == actor.get("layer")]
+        return (on_layer or waypoints)[0]
 
     def _survive(self, observation, context, open_steps, critical=False):
         """Disengage and retrace the learned map toward the inn/safe anchor."""

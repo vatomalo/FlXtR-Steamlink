@@ -292,6 +292,61 @@ scan when a map is entered (`[ai] eagle eye: mapped N tiles`) and a 33x33
 scan every 10 decisions feed the learned map (about 11 ms and 3 ms on
 SkyLoft-class CPUs).
 
+## Walked tiles keep their height
+
+A tile the hero has stood on is proven walkable, but not at every height.
+Walked tiles used to be stored as plain ground (height 0), so on the log
+bridge of map 130 the route stepped from the deck (height 1) straight down
+onto the height-2 bank, which the game refuses; from the next tile the route
+pointed back, and the hero swung left/right for minutes
+(`frontier 39,30 is 41/42 known tiles away`). Walked tiles now keep the kind
+read from the map (`h1`, `h2`, `pass`, `open`); only tiles that looked
+impassable are upgraded, to `pass` (keeps the arrival height).
+
+## Map loading guard
+
+The map id (`7E00DC`) changes one or two snapshots before the work map, the
+map size and the hero position (live log, crossings 130 -> 129 and 130 -> 131).
+Those snapshots passed the tile check with the old map's data, so the
+eagle-eye scan on entry stored the previous map under the new id and learned
+crossings recorded wrong tiles. After a map id change the tile context is now
+`map_loading` (unverified) until a loader mode (transition/event) is seen, the
+map size changes, or 8 field samples have passed. On first start with this
+version the observation log is replayed once with the guard to re-learn the
+crossings it contains.
+
+## Multi-map routes from the ROM exit table
+
+`tools/som_rom.py` reads the documented exit tables of som-decomp
+`docs/maps.md` sections 2 and 8 from the ROM file over SSH (read-only, `cat`
+and `sha1sum`; parsed tables are cached in
+`~/.local/state/flxtr/som-rom-exits.json` by ROM digest):
+
+- `$C8:7000` map headers (byte 3: trigger base, entry-event flag),
+- `$C8:4000` event lists (one word per trigger tile id),
+- `$C8:3000` transitions (target map, start tile, layer).
+
+Turbo relocates some tables (map 182's header and the event lists of maps 51,
+133, 183, 248 and 250 are out of order); those maps get no ROM exits. Only
+plain transitions (event words `0x800-0xBFF`) are used; scripted exits (story
+gates, dialogs) are learned by walking them.
+
+When a map has loaded, its live work map is scanned for trigger tile ids and
+each exit tile is stored with its target (`map_exits`; `[rom] map 129: 4 exit
+tiles to maps [15, 128, 130]`). Every real crossing is cross-checked: the
+trigger tiles within two tiles of the last position must predict the map
+actually entered (`rom_exit_checks`). ROM exits are used only after at least
+one confirmed and no contradicted crossing; one contradiction disables them
+and routes fall back to learned crossings. On the live Turbo log: 8 confirmed,
+0 contradicted (130 -> 129, 130 -> 131, 131 -> 130, 131 -> 259, 259 -> 131).
+
+Travel to a place on another map (inn, shop, errands) searches the chain of
+maps over learned crossings plus trusted ROM exits, so maps never walked
+between can be chained (`via maps 131>130>129>128`), then walks onto the
+nearest reachable exit tile of the first hop. A reachable ROM exit tile is
+preferred to a learned crossing, whose recorded tile can be off for return
+doors and scripted moves.
+
 ## Cutting grass
 
 Grass blocks the way until it is hit; then the game replaces it with an open

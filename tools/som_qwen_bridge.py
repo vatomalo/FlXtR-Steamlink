@@ -19,10 +19,11 @@ import time
 import urllib.request
 from pathlib import Path
 
-from som_memory import WRAM, ObservationHistory
+from som_memory import WRAM, MapLoadGuard, ObservationHistory
 from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFailed,
                       ShopMacro, candy_count, read_gold)
 from som_planner import MemoryPlanner
+from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 
 ACTIONS = {
     "step_right", "step_left", "step_up", "step_down", "wait",
@@ -466,6 +467,29 @@ SURVEY_RADIUS = 16
 MAP_SURVEY_RADIUS = 32     # 65x65 scan when a new map is entered
 
 
+ROM_PATH = "/home/apps/retroarch/roms/Snes/Secret of Mana, Turbo.smc"
+ROM_TABLE_CACHE = Path.home() / ".local/state/flxtr/som-rom-exits.json"
+
+
+def load_rom_exits(host, cache=ROM_TABLE_CACHE):
+    """Parsed ROM exit tables (read-only SSH reads), or None to fail closed."""
+    def run(command, binary):
+        result = subprocess.run([*SSH_BASE, host, command], capture_output=True,
+                                check=True, timeout=60)
+        return result.stdout if binary else result.stdout.decode()
+
+    def digest():
+        text = run(f'sha1sum "{ROM_PATH}"', False).split()
+        return text[0] if text else None
+
+    try:
+        return load_tables(lambda: run(f'cat "{ROM_PATH}"', True), cache, digest)
+    except (OSError, RomLayoutError, subprocess.SubprocessError) as exc:
+        print(f"[rom] exit table unavailable, using learned crossings only: {exc}",
+              flush=True)
+        return None
+
+
 def survey(history, raw, radius):
     """Store a wide verified view in map memory; returns cells learned."""
     context = WRAM(raw).tile_context(radius=radius)
@@ -577,6 +601,18 @@ def main() -> int:
         parser.error("start-timeout must be 1..3600 seconds")
     history = ObservationHistory(args.history_db) if args.history_db else None
     planner = MemoryPlanner(history)
+    map_guard = MapLoadGuard()
+    if history is not None and args.wram_remote and not args.dry_run:
+        tables = load_rom_exits(args.host)
+        if tables is not None:
+            history.attach_rom(tables)
+            confirmed, contradicted = history.rom_check_summary()
+            state = ("trusted" if history.rom_exits_trusted() else
+                     "NOT trusted (contradicted)" if contradicted else
+                     "waiting for a confirming crossing")
+            print(f"[rom] exit table of {len(tables.maps)} maps: {state} "
+                  f"({confirmed} confirmed, {contradicted} contradicted crossings)",
+                  flush=True)
     if args.ring_control:
         print(f"[ai] {args.policy} policy waiting for Action Grid confirmation", flush=True)
         deadline = time.monotonic() + args.start_timeout
@@ -643,11 +679,21 @@ def main() -> int:
                     print("[ai] stopped by physical takeover or game exit", flush=True)
                     break
                 observation = WRAM(raw).observe()
+            if observation is not None:
+                map_guard.apply(observation)
             if history is not None and observation is not None:
                 history.record_combat(observation, previous if previous != "none" else None)
-                here = (observation.get("tile_context") or {}).get("map_id")
+                here_context = observation.get("tile_context") or {}
+                here = here_context.get("map_id")
                 surveys_due -= 1
-                if raw is not None and (here != surveyed_map or surveys_due <= 0):
+                if (raw is not None and here_context.get("runtime_verified") and
+                        here != surveyed_map and history.rom_tables is not None):
+                    exits = scan_exit_tiles(WRAM(raw), here, history.rom_tables)
+                    history.remember_exits(here, exits)
+                    print(f"[rom] map {here}: {len(exits)} exit tiles to maps "
+                          f"{sorted({item['to_map'] for item in exits})}", flush=True)
+                if (raw is not None and here_context.get("runtime_verified") and
+                        (here != surveyed_map or surveys_due <= 0)):
                     radius = MAP_SURVEY_RADIUS if here != surveyed_map else SURVEY_RADIUS
                     learned = survey(history, raw, radius)
                     if learned:

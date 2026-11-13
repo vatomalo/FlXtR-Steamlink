@@ -20,6 +20,8 @@ SOURCE = "https://wiki.superfamicom.org/seiken-densetsu-2"
 TILE_BASES = (0x7F0000, 0x7F4000)
 ATTRIBUTE_BASES = (0x7FB800, 0x7FBC00)
 TILE_SIZE = 16
+# Learned map kinds the route search may enter (see MemoryPlanner._enter).
+WALKABLE_KINDS = ("open", "pass", "cuttable", "h1", "h2")
 OPPOSITE_STEP = {"step_right": "step_left", "step_left": "step_right",
                  "step_up": "step_down", "step_down": "step_up",
                  "right": "left", "left": "right", "up": "down", "down": "up"}
@@ -325,6 +327,57 @@ class WRAM:
         }
 
 
+# Snapshots a new map id may still show the previous map's tiles (see below).
+MAP_SETTLE_SAMPLES = 8
+
+
+class MapLoadGuard:
+    """Distrust the tile buffers for a moment after the map id changes.
+
+    Live log (Turbo, maps 130 -> 129 and 130 -> 131): the map id at 7E00DC
+    switches one or two snapshots before the work map, the map size and the
+    hero position follow. Those snapshots passed the tile cross-check with the
+    old map's data, so the eagle-eye scan stored map 130 under map 129 and
+    learned crossings recorded tiles of the wrong map. A sample is trusted
+    again once a non-field mode was seen (the loader ran), the map size
+    changed, or after MAP_SETTLE_SAMPLES field samples.
+    """
+
+    def __init__(self, settle=MAP_SETTLE_SAMPLES):
+        self.settle = settle
+        self.map_id = None
+        self.size = None
+        self.loading_from = None
+        self.pending = 0
+
+    def apply(self, observation):
+        """Mark observation's tile context unverified while the map loads."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        if not isinstance(context, dict):
+            return observation
+        map_id, size = context.get("map_id"), context.get("map_size_tiles")
+        field = context.get("game_mode") == "field"
+        if self.map_id is None:
+            self.map_id = map_id
+        elif map_id != self.map_id:
+            self.map_id, self.pending, self.loading_from = map_id, self.settle, self.size
+        if self.pending:
+            if not field:
+                self.pending = 0
+                return observation
+            if size != self.loading_from:
+                self.pending = 0
+            else:
+                self.pending -= 1
+                context.update(runtime_verified=False, map_loading=True,
+                               verification_error="map_loading")
+                observation["player_position"] = None
+                return observation
+        if field and size:
+            self.size = size
+        return observation
+
+
 def grid_cells(state):
     """{(x, y): (marker, tile_id, attributes)} of a verified 7x7 grid, absolute."""
     context = state.get("tile_context") if isinstance(state, dict) else None
@@ -446,7 +499,25 @@ class ObservationHistory:
             "(from_map INTEGER NOT NULL, to_map INTEGER NOT NULL, layer INTEGER, "
             "x INTEGER NOT NULL, y INTEGER NOT NULL, action TEXT, "
             "seen INTEGER NOT NULL, last_ts REAL NOT NULL, PRIMARY KEY(from_map,to_map))")
+        # Exit tiles of each visited map, from the ROM exit table applied to
+        # the live work map (replaced on every visit: story flags change them).
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS map_exits "
+            "(map_id INTEGER NOT NULL, layer INTEGER NOT NULL, x INTEGER NOT NULL, "
+            "y INTEGER NOT NULL, tile_id INTEGER NOT NULL, to_map INTEGER NOT NULL, "
+            "to_x INTEGER, to_y INTEGER, to_layer INTEGER, last_ts REAL NOT NULL, "
+            "PRIMARY KEY(map_id,layer,x,y))")
+        # Runtime cross-check of the ROM exit table (Turbo is a ROM hack):
+        # crossings whose trigger tile predicted the map really entered.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS rom_exit_checks "
+            "(from_map INTEGER NOT NULL, tile_id INTEGER NOT NULL, "
+            "predicted INTEGER NOT NULL, confirmed INTEGER NOT NULL, "
+            "contradicted INTEGER NOT NULL, last_ts REAL NOT NULL, "
+            "PRIMARY KEY(from_map,tile_id))")
         self.connection.commit()
+        self.rom_tables = None
+        self._last_verified_state = None
         self._last_verified = None
         self._anchor_misses = 0
         if not self.connection.execute("SELECT 1 FROM map_edges LIMIT 1").fetchone():
@@ -502,9 +573,13 @@ class ObservationHistory:
                 "SELECT action,state FROM observations ORDER BY id DESC LIMIT 1").fetchone()
             if row:
                 self._last_verified = self._verified_position(json.loads(row[1]), row[0])
+        if (current is not None and self._last_verified is not None and
+                current["map_id"] != self._last_verified["map_id"]):
+            self.check_rom_crossing(self._last_verified_state, current["map_id"])
         self._learn_edge(self._last_verified, current)
         if current is not None:
             self._last_verified = current
+            self._last_verified_state = state
         self.connection.execute(
             "INSERT INTO observations(ts,action,state) VALUES(?,?,?)",
             (time.time(), action, json.dumps(state, separators=(",", ":"))))
@@ -669,8 +744,15 @@ class ObservationHistory:
             "SELECT x,y,kind FROM world_cells WHERE map_id=? AND layer=?",
             (map_id, layer)).fetchall()
         cells = {(x, y): kind for x, y, kind in rows}
+        # Standing on a tile proves it walkable, but not its height: a walked
+        # bridge deck relabelled "open" (height 0) let routes step from the
+        # deck onto height-2 banks the game refuses, so the hero swung
+        # left/right between two tiles whose routes disagreed. Keep observed
+        # height kinds; upgrade only tiles that looked impassable, and keep
+        # the arrival height on them like a bridge deck does.
         for position in self.walked_cells(map_id):
-            cells[position] = "open"
+            if cells.get(position) not in WALKABLE_KINDS:
+                cells[position] = "pass"
         return cells
 
     @staticmethod
@@ -678,7 +760,8 @@ class ObservationHistory:
         """(map, x, y) under the hero in field mode, even if the tile-ID
         cross-check failed (it does on some bridges); None otherwise."""
         context = state.get("tile_context") if isinstance(state, dict) else None
-        if not isinstance(context, dict) or context.get("game_mode") != "field":
+        if (not isinstance(context, dict) or context.get("game_mode") != "field" or
+                context.get("map_loading")):
             return None
         tile = context.get("actor_tile")
         if not isinstance(tile, list) or len(tile) != 2:
@@ -910,6 +993,161 @@ class ObservationHistory:
                     return dict(first_hop[to_map])
                 queue.append(to_map)
         return self._scan_return_waypoint(current_map, target_map)
+
+    # --- ROM exit table, cross-checked against real crossings -------------
+
+    def attach_rom(self, tables):
+        """Use parsed ROM exit tables; replay the log once with the map guard.
+
+        The replay re-learns the crossings in the observation log without
+        the stale first snapshots of a new map (which polluted older
+        map_edges rows) and cross-checks the ROM table against them.
+        """
+        self.rom_tables = tables
+        if self.get_agent_state("log_replayed_with_map_guard"):
+            return
+        guard = MapLoadGuard()
+        previous, previous_state = None, None
+        rows = self.connection.execute(
+            "SELECT action,state FROM observations ORDER BY id ASC").fetchall()
+        for action, encoded in rows:
+            state = guard.apply(json.loads(encoded))
+            current = self._verified_position(state, action)
+            if current is None:
+                continue
+            if previous is not None and previous["map_id"] != current["map_id"]:
+                self.check_rom_crossing(previous_state, current["map_id"], commit=False)
+                self._learn_edge(previous, current)
+            previous, previous_state = current, state
+        self.connection.commit()
+        self.set_agent_state("log_replayed_with_map_guard", True)
+
+    def check_rom_crossing(self, previous_state, to_map, commit=True):
+        """Did a trigger tile next to the last position predict to_map?
+
+        Returns "confirmed", "contradicted" or None (no plain ROM exit near:
+        return doors and scripted exits are not judged).
+        """
+        if self.rom_tables is None or not isinstance(previous_state, dict):
+            return None
+        context = previous_state.get("tile_context") or {}
+        rows, radius = context.get("tile_id_rows"), context.get("radius")
+        from_map = context.get("map_id")
+        if not isinstance(rows, list) or not isinstance(radius, int):
+            return None
+        predictions = {}
+        for row_index, row in enumerate(rows):
+            for column, text in enumerate(row.split()):
+                if abs(row_index - radius) + abs(column - radius) > 2:
+                    continue
+                tile_id = int(text, 16)
+                exit_ = self.rom_tables.trigger_exit(from_map, tile_id)
+                if exit_ is not None and exit_["map_id"] != from_map:
+                    predictions[tile_id] = exit_["map_id"]
+        if not predictions:
+            return None
+        verdict = ("confirmed" if to_map in predictions.values() else "contradicted")
+        now = time.time()
+        for tile_id, predicted in predictions.items():
+            if verdict == "confirmed" and predicted != to_map:
+                continue
+            self.connection.execute(
+                "INSERT INTO rom_exit_checks VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(from_map,tile_id) DO UPDATE SET predicted=excluded.predicted,"
+                "confirmed=confirmed+excluded.confirmed,"
+                "contradicted=contradicted+excluded.contradicted,last_ts=excluded.last_ts",
+                (from_map, tile_id, predicted, int(verdict == "confirmed"),
+                 int(verdict == "contradicted"), now))
+        if commit:
+            self.connection.commit()
+        return verdict
+
+    def rom_exits_trusted(self):
+        """ROM exits are used only after a confirmed and no contradicted crossing."""
+        if self.rom_tables is None:
+            return False
+        confirmed, contradicted = self.connection.execute(
+            "SELECT COALESCE(SUM(confirmed),0), COALESCE(SUM(contradicted),0) "
+            "FROM rom_exit_checks").fetchone()
+        return confirmed >= 1 and contradicted == 0
+
+    def rom_check_summary(self):
+        return self.connection.execute(
+            "SELECT COALESCE(SUM(confirmed),0), COALESCE(SUM(contradicted),0) "
+            "FROM rom_exit_checks").fetchone()
+
+    def remember_exits(self, map_id, exits):
+        """Replace the stored exit tiles of map_id (see som_rom.scan_exit_tiles)."""
+        now = time.time()
+        self.connection.execute("DELETE FROM map_exits WHERE map_id=?", (map_id,))
+        for item in exits:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO map_exits VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (map_id, item["layer"], item["x"], item["y"], item["tile_id"],
+                 item["to_map"], *item.get("to_tile", (None, None)),
+                 item.get("to_layer"), now))
+        self.connection.commit()
+        return len(exits)
+
+    def map_path(self, current_map, target_map):
+        """Shortest chain of maps [current, ..., target] or None.
+
+        Uses crossings the hero made (map_edges) and, once the ROM table has
+        passed its runtime cross-check, the ROM exits of every map.
+        """
+        if current_map == target_map:
+            return [current_map]
+        edges = {}
+        for from_map, to_map in self.connection.execute(
+                "SELECT from_map,to_map FROM map_edges"):
+            edges.setdefault(from_map, set()).add(to_map)
+        rom = self.rom_tables if self.rom_exits_trusted() else None
+        parents = {current_map: None}
+        queue = deque([current_map])
+        while queue:
+            here = queue.popleft()
+            following = set(edges.get(here, ()))
+            if rom is not None:
+                following |= rom.neighbours(here)
+            for to_map in sorted(following):
+                if to_map in parents:
+                    continue
+                parents[to_map] = here
+                if to_map == target_map:
+                    path = [to_map]
+                    while parents[path[-1]] is not None:
+                        path.append(parents[path[-1]])
+                    return path[::-1]
+                queue.append(to_map)
+        return None
+
+    def exit_waypoints(self, current_map, target_map):
+        """Exits of current_map toward target_map, ROM exit tiles first.
+
+        ROM exits: {"target": trigger tile, "action": None, "source": "rom"}
+        (stepping onto the tile starts the transition). Learned crossings:
+        {"target": last tile, "action": step, "source": "learned"}.
+        """
+        path = self.map_path(current_map, target_map)
+        if not path or len(path) < 2:
+            return []
+        next_map = path[1]
+        waypoints = []
+        if self.rom_exits_trusted():
+            for layer, x, y in self.connection.execute(
+                    "SELECT layer,x,y FROM map_exits WHERE map_id=? AND to_map=? "
+                    "ORDER BY layer,y,x", (current_map, next_map)):
+                waypoints.append({"map_id": current_map, "layer": layer, "target": [x, y],
+                                  "action": None, "next_map": next_map, "source": "rom",
+                                  "path": path})
+        row = self.connection.execute(
+            "SELECT layer,x,y,action FROM map_edges WHERE from_map=? AND to_map=?",
+            (current_map, next_map)).fetchone()
+        if row:
+            waypoints.append({"map_id": current_map, "layer": row[0],
+                              "target": [row[1], row[2]], "action": row[3],
+                              "next_map": next_map, "source": "learned", "path": path})
+        return waypoints
 
     def _scan_return_waypoint(self, current_map, target_map):
         """Legacy direct-edge scan of the recent observation log."""

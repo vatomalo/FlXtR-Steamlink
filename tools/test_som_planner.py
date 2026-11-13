@@ -267,6 +267,43 @@ class TestMemoryPlanner(unittest.TestCase):
         routes = MemoryPlanner._routes((1, 0), deck, (16, 16), height=1)
         self.assertNotIn((1, 1), routes)
 
+    def test_walked_bridge_deck_keeps_its_height_so_routes_do_not_swing(self):
+        # Live map 130: hero on a log-bridge deck at height 1, a height-2 bank
+        # below the deck. Walked tiles used to become "open" (height 0), so
+        # the deck route stepped down onto the bank (refused by the game) and
+        # two neighbouring tiles' routes pointed at each other.
+        #   x: 0  1  2  3  4  5
+        #   y0 o  h1 p  p  h1 o      (o open, p pass, h1/h2 raised)
+        #   y1 o  h2 h2 h2 h2 o
+        #   y2 o  o  o  o  o  o
+        layout = {0: ["open", "h1", "pass", "pass", "h1", "open"],
+                  1: ["open", "h2", "h2", "h2", "h2", "open"],
+                  2: ["open"] * 6}
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "deck.sqlite")
+            for y, row in layout.items():
+                for x, kind in enumerate(row):
+                    history.connection.execute(
+                        "INSERT INTO world_cells VALUES(130,1,?,?,?,1,0)", (x, y, kind))
+            for x in range(6):
+                history.connection.execute(
+                    "INSERT INTO walked_cells VALUES(130,?,0,1,0)", (x,))
+            history.connection.execute("INSERT INTO walked_cells VALUES(130,9,9,1,0)")
+            history.connection.execute(
+                "INSERT INTO world_cells VALUES(130,1,9,9,'blocked',1,0)")
+            cells = history.known_cells(130, 1)
+            self.assertEqual([cells[(x, 0)] for x in range(6)],
+                             ["open", "h1", "pass", "pass", "h1", "open"])
+            # A walked tile that only looked impassable keeps the arrival height.
+            self.assertEqual(cells[(9, 9)], "pass")
+            target = (1, 2)
+            west = MemoryPlanner._routes((2, 0), cells, (16, 16), height=1)[target]
+            east = MemoryPlanner._routes((3, 0), cells, (16, 16), height=1)[target]
+            # Off the deck by its ramp end, never straight down onto the bank.
+            self.assertEqual(west, ("step_left", 5))
+            self.assertEqual(east, ("step_left", 6))
+            history.close()
+
     @staticmethod
     def dead_end_state(hero_row=6):
         # 13x13 view: a wall 3 rows above the hero with a gap at the far right;

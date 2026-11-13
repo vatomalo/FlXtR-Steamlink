@@ -517,6 +517,16 @@ class MemoryPlanner:
                                                recharge == 0, hero)
                 if strike is not None:
                     return strike
+        # A destructible obstacle between the hero and a visible enemy
+        # must be resolved before pursuit. Otherwise routing around the
+        # obstacle can alternate left/right forever as the enemy moves.
+        # Only attempt verified, previously learned grass adjacent to the
+        # hero. Never confuse a wall or unknown collision with vegetation.
+        if observation.get("weapons_enabled") and recharge == 0:
+            cutting = self._grass_blocking_enemy(context, dx, dy)
+            if cutting is not None:
+                return self._cut(context, cutting)
+
         # Follow the learned map first. Taking the straight-line step whenever
         # its first tile was open, and the map route only when it was not,
         # sent the hero up into a dead end and back down, over and over.
@@ -898,6 +908,25 @@ class MemoryPlanner:
         half tile can refuse the step in between (live map 129, tile 38,23).
         """
         return [action for action, _ in self._cut_targets(context, reach)]
+
+    def _grass_blocking_enemy(self, context, dx, dy):
+        """Cut adjacent known vegetation on the path toward a target.
+
+        Only a tile on a relevant target-facing axis is eligible; vegetation
+        to the side cannot hijack a fight. The cut signature must already be
+        learned from a real terrain transition.
+        """
+        choices = self._cut_targets(context, reach=1)
+        if not choices:
+            return None
+        options = []
+        for action, _ in choices:
+            ox, oy = STEP_OFFSETS[action]
+            ahead = dx * ox + dy * oy
+            side = abs(dx * oy - dy * ox)
+            if ahead > 0 and ahead >= side:
+                options.append((ahead, -side, action))
+        return max(options)[2] if options else None
 
     def _cut_targets(self, context, reach=1):
         """[(action, distance)] toward cuttable tiles within reach tiles."""

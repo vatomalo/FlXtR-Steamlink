@@ -37,6 +37,12 @@ offsets `0x180B`, `0x1846`, `0x1847` if the core's Libretro system
 RAM buffer is large enough. These are **unverified for Turbo** and must
 not be treated as reliable state signals or used for writes.
 
+While the opt-in proxy is active, it also publishes a read-only raw WRAM image
+to `/tmp/flxtr-som-wram.bin` every 30 emulated frames. Each 128-KiB image is
+written under a temporary name and atomically renamed, so a remote observer
+never reads a half-written frame. The files are removed when the game unloads.
+This feed exposes bytes only; Turbo state mappings remain unverified.
+
 Do not send commands concurrently; wait for each
 `[som-ai] COMPLETE` log. The command file is consumed once and only
 checked every six frames. Selection still must be explicitly set to
@@ -132,7 +138,7 @@ verified separately before any live session. The injection is triggered manually
 ```bash
 cd ~/builds/FlXtR-SOM-AI-Test
 git fetch origin
-git switch experiment/som-turbo-ai-input-bridge-20261111
+git switch feature/som-ai-memory-agent-20261112
 make test-som-ai-player2 test-som-ai-proxy
 bash scripts/build-som-ai-proxy.sh
 file build/som-ai/som_ai_proxy_libretro.so
@@ -174,9 +180,9 @@ for a single test launch.
   injection; use the controller or exit the emulator.
 - The wrapper has **not** been validated against the exact Steam Link
   RetroArch ABI or hardware yet.
-- Future phases: verify native core loading; add a live test-launch
-  option; implement observation from verified Turbo RAM mappings;
-  eventually replace the scripted input with the standalone AI policy.
+- Future phases: verify native core loading and the live WRAM export on
+  hardware; map verified Turbo navigation fields; eventually replace the
+  scripted input with the standalone AI policy.
 
 ## Experimental autonomous mode and local Qwen bridge
 
@@ -200,8 +206,9 @@ can also stop it after the current input pulse.
 
 The new `tools/som_qwen_bridge.py` talks to an **existing local**
 Ollama API on SkyLoft and sends one allowlisted controller action at
-a time via SSH to the Steam Link. It is not yet autonomous world
-understanding: no screenshot or live game state is supplied to Qwen.
+a time via SSH to the Steam Link. With `--wram-remote`, it receives the live
+raw/partially decoded WRAM observation. It still has no screenshot or verified
+navigation state, so this is not yet autonomous world understanding.
 
 Prerequisites: Ollama serving a pulled Qwen model, and passwordless SSH
 from SkyLoft to the Steam Link for non-interactive control. Verify

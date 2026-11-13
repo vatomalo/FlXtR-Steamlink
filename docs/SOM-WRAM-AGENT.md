@@ -7,13 +7,15 @@ Branch: `feature/som-ai-memory-agent-20261112`.
 - Read **raw 131072-byte SNES WRAM**, starting at SNES address `7E0000`.
 - Decode documented enemy slots, party attributes, and weapon-use flag.
 - Provide a compact observation to Ollama alongside the objective.
+- Export a live, read-only 128-KiB WRAM image atomically from the opt-in
+  Libretro proxy every 30 emulated frames.
 - Optionally persist observations/actions in SQLite.
 - Stop after 4 identical actions instead of looping forever.
 - Preserve the existing SSH allowlisted action protocol.
 
-**Not yet implemented:** a live Libretro memory exporter, verified player
-coordinates/map IDs/collision geometry, automated movement feedback, pathfinding,
-or party member spawning. No claim of autonomous exploration is made.
+**Not yet implemented:** verified player coordinates/map IDs/collision geometry,
+automated movement feedback, pathfinding, or party member spawning. No claim of
+autonomous exploration is made.
 
 ## Run tests
 
@@ -32,10 +34,15 @@ python3 tools/som_qwen_bridge.py \
 ```
 
 A dump is reread once per step. A static file is **not live perception**.
-For Steam Link, an emulator-side adapter must copy exactly 128 KiB from
-`retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM)` while the game is running.
-Only once such a producer exists should you use `--wram-remote`, which
-reads the fixed path `/tmp/flxtr-som-wram.bin` via SSH.
+When the opt-in `som_ai_proxy` core is running the exact Turbo filename, it
+copies exactly 128 KiB from `retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM)`
+to `/tmp/flxtr-som-wram.bin` every 30 emulated frames. Publication uses a
+temporary file plus atomic rename, and unload removes the snapshot so the
+bridge does not consume stale state. Use `--wram-remote` to read it via SSH.
+
+This makes the bytes live; it does **not** make unverified fields trustworthy.
+Turbo coordinates, current map, collision state, and enemy-slot activity must
+still be mapped experimentally before they can drive autonomous movement.
 
 **Do not feed serialized savestates** to `--wram-file`. Libretro
 `retro_serialize()` outputs core-specific state, not plain WRAM.

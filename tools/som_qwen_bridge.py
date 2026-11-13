@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Experimental Qwen -> SSH -> FlXtR Libretro action bridge (manual opt-in).
 
-Runs on SkyLoft with a LOCAL Ollama instance. Qwen currently receives *only*
-the last action and a user-supplied objective; it has no live game vision or
-verified state. This is a connectivity test, not context-aware gameplay.
+Runs on SkyLoft with a LOCAL Ollama instance. Qwen receives the last action,
+the user-supplied objective, and optionally a read-only WRAM observation. The
+observation still lacks verified navigation fields, so this is not yet
+context-aware autonomous gameplay.
 """
 import argparse
 import json

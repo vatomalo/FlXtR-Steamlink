@@ -7,9 +7,16 @@
 #include "../src/som_ai_proxy.c"
 
 static unsigned pressed=100;
+static uint8_t mocked_wram[SOM_WRAM_SIZE];
 static int16_t mocked_input(unsigned port,unsigned device,unsigned index,unsigned id){
     (void)index;
     return port==0&&device==RETRO_DEVICE_JOYPAD&&id==pressed?1:0;
+}
+static void *mocked_memory_data(unsigned id){
+    return id==RETRO_MEMORY_SYSTEM_RAM?mocked_wram:NULL;
+}
+static size_t mocked_memory_size(unsigned id){
+    return id==RETRO_MEMORY_SYSTEM_RAM?sizeof(mocked_wram):0;
 }
 static void reset_proxy(void){
     physical_state=mocked_input;physical_poll=NULL;
@@ -20,8 +27,12 @@ static void reset_proxy(void){
 }
 int main(void){
     char path[]="/tmp/flxtr-ai-test-XXXXXX";
+    char wram_path[]="/tmp/flxtr-wram-test-XXXXXX";
+    char wram_tmp_path[]="/tmp/flxtr-wram-temp-test-XXXXXX";
     int fd=mkstemp(path);
     assert(fd>=0);close(fd);unlink(path);
+    fd=mkstemp(wram_path);assert(fd>=0);close(fd);unlink(wram_path);
+    fd=mkstemp(wram_tmp_path);assert(fd>=0);close(fd);unlink(wram_tmp_path);
     reset_proxy();
     trigger_file=path;
     action_file=path;
@@ -53,6 +64,19 @@ int main(void){
     reset_proxy();on_turbo=0;
     som_start_action(SOM_ACT_LEFT);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==0);
+    backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    wram_file=wram_path;wram_temp_file=wram_tmp_path;
+    for(size_t i=0;i<sizeof(mocked_wram);i++)mocked_wram[i]=(uint8_t)(i&0xffu);
+    assert(som_export_wram());
+    assert(access(wram_tmp_path,F_OK)!=0);
+    FILE *wram=fopen(wram_path,"rb");
+    assert(wram!=NULL);
+    uint8_t first[3]={0};
+    assert(fread(first,1,sizeof(first),wram)==sizeof(first));
+    assert(first[0]==0&&first[1]==1&&first[2]==2);
+    assert(fseek(wram,0,SEEK_END)==0&&ftell(wram)==(long)SOM_WRAM_SIZE);
+    assert(fclose(wram)==0);
     reset_proxy();autonomous_mode=1;auto_deadline=frame_number+600;
     auto_step=0;start_frame=0;action_frames=0;
     som_auto_tick();
@@ -65,7 +89,7 @@ int main(void){
     pressed=RETRO_DEVICE_ID_JOYPAD_B;
     som_input_poll();
     assert(!autonomous_mode);
-    unlink(path);
-    puts("PASS: Turbo action parsing, menu Y, 30-frame movement, override, port isolation");
+    unlink(path);unlink(wram_path);unlink(wram_tmp_path);
+    puts("PASS: Turbo actions, override, port isolation, and atomic read-only WRAM export");
     return 0;
 }

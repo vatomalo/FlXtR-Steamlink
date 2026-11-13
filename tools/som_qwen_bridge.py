@@ -62,6 +62,7 @@ STEP_OFFSETS = {
 }
 SMOOTH_INTENTIONS = {"explore_frontier", "engage_enemy", "return_to_inn",
                      "survive", "replan", "go_to_shop"}
+# follow_taught_path deliberately keeps short pulses on unverified tiles.
 LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
 OPPOSITE_STEP = {
@@ -217,12 +218,18 @@ def choose_action(url: str, model: str, objective: str, previous: str, observati
         )
     return candidate
 
-def guard_tile_action(action: str, observation) -> str:
-    """Deterministically veto movement that lacks a verified open next tile."""
+def guard_tile_action(action: str, observation, trusted=()) -> str:
+    """Deterministically veto movement that lacks a verified open next tile.
+
+    trusted: steps the memory planner has proven walkable (tiles the hero
+    stood on, or conditional tiles matching a walked collision signature).
+    """
     context = observation.get("tile_context") if isinstance(observation, dict) else None
     if isinstance(context, dict) and context.get("game_mode") != "field":
         return "wait" if action in STEP_OFFSETS or action == "attack" else action
     if action not in STEP_OFFSETS:
+        return action
+    if action in trusted:
         return action
     if not isinstance(context, dict) or not context.get("runtime_verified"):
         return "wait"
@@ -551,6 +558,7 @@ def main() -> int:
                    else Calibration.load())
     candy_disabled = calibration is None
     inn_disabled = False
+    inn_lookalikes = set()
     shop_disabled = False
     shop = history.get_agent_state("shop") if history is not None else None
     gold = history.get_agent_state("gold") if history is not None else None
@@ -682,6 +690,17 @@ def main() -> int:
                 errand = (shop_errand(WRAM(raw), observation, shop, gold, args.shop_gold)
                           if (raw is not None and not shop_disabled) else None)
                 decision = planner.decide(observation, previous, directive, errand)
+                if history is not None and context.get("map_id") not in inn_lookalikes:
+                    score = history.looks_like("inn", observation)
+                    if score is not None:
+                        inn_lookalikes.add(context.get("map_id"))
+                        history.remember_place(context["map_id"], context["actor"]["layer"],
+                                               *context["actor_tile"], "inn_candidate",
+                                               f"looks like the taught inn ({score:.0%})",
+                                               "tile_pattern")
+                        print(f"[inn] map {context['map_id']} looks like the taught inn "
+                              f"({score:.0%} of tiles); teach it to use it", flush=True)
+                        announce("AI: this looks like an inn|teach it to use it")
                 if link and errand and decision.intention == "at_shop":
                     announce("AI: buying Candy")
                     cancel = calibration.cancel_action if calibration else "cancel"
@@ -734,7 +753,9 @@ def main() -> int:
                     print(f"[ai] ignoring model reply "
                           f"({invalid_replies}/{MAX_INVALID_REPLIES}): {exc}", flush=True)
                     action = "wait"
-            guarded_action = guard_tile_action(action, observation)
+            trusted = (planner.trusted_steps(observation)
+                       if args.policy in ("hybrid", "memory") else ())
+            guarded_action = guard_tile_action(action, observation, trusted)
             if guarded_action != action:
                 context = (observation or {}).get("tile_context") or {}
                 why = context.get("verification_error") or (

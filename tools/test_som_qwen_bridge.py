@@ -39,6 +39,12 @@ class TestTileGuard(unittest.TestCase):
             guard_tile_action("step_down", self.observation(["...", ".@.", "..."], False)),
             "wait")
 
+    def test_trusted_steps_pass_the_guard(self):
+        state = self.observation(["...", "?@.", "..."], verified=False)
+        self.assertEqual(guard_tile_action("step_left", state), "wait")
+        self.assertEqual(guard_tile_action("step_left", state, {"step_left"}), "step_left")
+        self.assertEqual(guard_tile_action("step_up", state, {"step_left"}), "wait")
+
     def test_field_actions_wait_during_menu_or_transition(self):
         state = self.observation(["...", ".@.", "..."])
         state["tile_context"]["game_mode"] = "ring"

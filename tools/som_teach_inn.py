@@ -47,6 +47,10 @@ def record_walk(link, history, interval):
             raise SystemExit("no WRAM snapshot; is Turbo running with som_ai_proxy?")
         state = WRAM(raw).observe()
         context = state.get("tile_context") or {}
+        # Every tile stood on counts, even where the tile-ID cross-check
+        # fails (bridges): that is exactly what the AI cannot learn alone.
+        if history.remember_walk(state):
+            tiles += 1
         if context.get("runtime_verified"):
             actor = context["actor"]
             pixels = (actor["x_px"], actor["y_px"])

@@ -38,6 +38,8 @@ class MemoryPlanner:
         self.local_cells = {}
         self.local_intention = None
         self.last_position = None
+        self.local_walked = {}
+        self.local_signatures = set()
 
     @staticmethod
     def _open_steps(context):
@@ -64,14 +66,83 @@ class MemoryPlanner:
         return ((position[0] + offset[0]) % size[0],
                 (position[1] + offset[1]) % size[1])
 
+    def _walked(self, map_id):
+        """Tiles the hero has stood on: proven walkable, whatever the grid says."""
+        if self.history is not None:
+            return self.history.walked_cells(map_id)
+        return self.local_walked.get(map_id, set())
+
+    def _passable_steps(self, context):
+        steps = self._open_steps(context)
+        size = context.get("map_size_tiles")
+        tile = context.get("actor_tile")
+        if not (isinstance(size, list) and len(size) == 2 and
+                isinstance(tile, list) and len(tile) == 2):
+            return steps
+        walked = self._walked(context.get("map_id"))
+        proven = (self.history.passable_signatures() if self.history is not None
+                  else self.local_signatures)
+        special = {tuple(cell["offset"]): cell
+                   for cell in context.get("special_cells") or []
+                   if isinstance(cell.get("offset"), list)}
+        for action, offset in STEP_OFFSETS.items():
+            if action in steps:
+                continue
+            cell = special.get(offset)
+            # Proven by standing on it, or it looks (collision-wise) exactly
+            # like a conditional tile the hero has already walked across.
+            if (self._neighbor(tuple(tile), offset, tuple(size)) in walked or
+                    (cell and cell.get("classification") == "conditional" and
+                     cell.get("attributes") in proven)):
+                steps.append(action)
+        return steps
+
+    def trusted_steps(self, observation):
+        """Steps the planner may take beyond plain '.' tiles (for the guard)."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        if not isinstance(context, dict) or context.get("game_mode") != "field":
+            return set()
+        return set(self._passable_steps(context))
+
+    def _follow_taught_path(self, context, previous, directive):
+        """Keep moving along walked tiles while the tile check is unavailable."""
+        size, tile = context.get("map_size_tiles"), context.get("actor_tile")
+        if not (context.get("game_mode") == "field" and
+                isinstance(size, list) and len(size) == 2 and
+                isinstance(tile, list) and len(tile) == 2):
+            return None
+        walked = self._walked(context.get("map_id"))
+        position = tuple(tile)
+        if position not in walked:
+            return None
+        steps = [action for action, offset in STEP_OFFSETS.items()
+                 if self._neighbor(position, offset, tuple(size)) in walked]
+        if not steps:
+            return None
+        heading = {"explore_west": "step_left", "explore_east": "step_right",
+                   "explore_north": "step_up", "explore_south": "step_down"}.get(directive)
+        reverse = OPPOSITE_STEP.get(previous)
+        for choice in (previous, heading):
+            if choice in steps:
+                return PlannerDecision(choice, "follow taught path across unverified tiles",
+                                       "follow_taught_path")
+        forward = [step for step in steps if step != reverse] or steps
+        return PlannerDecision(forward[0], "follow taught path across unverified tiles",
+                               "follow_taught_path")
+
     def _remember(self, observation, context):
         if self.history is not None:
+            self.history.remember_walk(observation)
             self.history.remember_position(observation)
             self.history.remember_world(observation)
             self.history.remember_recovery(observation)
             self.history.safe_anchor()
             return
         actor = context["actor"]
+        self.local_walked.setdefault(context["map_id"], set()).add(tuple(context["actor_tile"]))
+        for cell in context.get("special_cells") or []:
+            if cell.get("offset") == [0, 0] and cell.get("classification") == "conditional":
+                self.local_signatures.add(cell.get("attributes"))
         key = (context["map_id"], actor["layer"], *context["actor_tile"])
         if key != self.last_position:
             self.local_visits[key] = self.local_visits.get(key, 0) + 1
@@ -432,6 +503,10 @@ class MemoryPlanner:
 
     def _decide(self, observation, previous, directive, errand):
         context = observation.get("tile_context") if isinstance(observation, dict) else None
+        if isinstance(context, dict) and not context.get("runtime_verified"):
+            taught = self._follow_taught_path(context, previous, directive)
+            if taught is not None:
+                return taught
         if not isinstance(context, dict) or not context.get("runtime_verified"):
             why = context.get("verification_error") if isinstance(context, dict) else None
             mode = context.get("game_mode") if isinstance(context, dict) else None
@@ -440,7 +515,7 @@ class MemoryPlanner:
                                    "observe")
         if context.get("game_mode") != "field":
             return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
-        open_steps = self._open_steps(context)
+        open_steps = self._passable_steps(context)
         self._remember(observation, context)
         hero = (observation.get("party") or [{}])[0]
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)

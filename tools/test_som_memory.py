@@ -211,6 +211,23 @@ class TestWRAM(unittest.TestCase):
                              (131, [9, 9], "step_up"))
             history.close()
 
+    def test_inn_lookalike_is_recognised_on_another_map_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "pattern.sqlite")
+            rows = [" ".join(f"{(r * 7 + c):02x}" for c in range(7)) for r in range(7)]
+            def state(map_id, tile_rows):
+                return {"party": [{"hp": 10, "max_hp": 100}], "enemy_slots": [],
+                        "tile_context": {"runtime_verified": True, "map_id": map_id,
+                                         "actor_tile": [4, 4], "actor": {"layer": 1},
+                                         "tile_id_rows": tile_rows}}
+            history.teach_inn(state(131, rows), "step_up")
+            self.assertIsNone(history.looks_like("inn", state(131, rows)))
+            similar = rows[:6] + ["ff ff ff ff ff ff ff"]
+            self.assertAlmostEqual(history.looks_like("inn", state(150, similar)), 42 / 49)
+            different = ["00 00 00 00 00 00 00"] * 7
+            self.assertIsNone(history.looks_like("inn", state(150, different)))
+            history.close()
+
     def test_return_waypoint_reverses_observed_map_transition(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "routes.sqlite")

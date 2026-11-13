@@ -211,6 +211,35 @@ less gold; otherwise it cancels out and stops shopping for the run. A shop
 whose cursor remembers a different position could sell a different item; the
 Candy check then reports failure. Proxy rebuild required for recording.
 
+## Bridges and other tiles the AI will not take alone
+
+The AI steps only on tiles verified as plainly open. Bridges switch the hero
+between tile layers and read as conditional (`?`), and on some bridges the
+tile-ID cross-check fails entirely, so the AI never crossed them. Teach once:
+
+```sh
+systemctl --user stop flxtr-som-ai.service
+python3 tools/som_teach_path.py     # walk across the bridge, press Enter
+systemctl --user start flxtr-som-ai.service
+```
+
+- Every tile you stood on becomes walkable for the AI (`walked_cells`),
+  whatever later grid readings say, and while the tile check is unavailable
+  it keeps following those tiles (`intent=follow_taught_path`).
+- The collision attributes of each conditional tile you crossed are learned
+  (`passable_signatures`). Tiles with identical attributes behave
+  identically, so every bridge built from the same tile types becomes
+  walkable on any map without teaching it again. `som_teach_inn.py` and
+  `som_teach_shop.py` learn the same way along their walks.
+
+Inns are recognised by look only as **candidates**: the 7x7 tile pattern around
+a taught inn is stored, and a map whose surroundings match at least 80 percent
+is logged and shown as "looks like an inn". The innkeeper is a sprite, not a
+tile, and shops use similar counters, so the AI does not talk to a candidate
+on its own (Confirm in a shop can buy things). Teach it with
+`som_teach_inn.py` to use it. Tile IDs may be tileset-specific across maps;
+this has not been validated on hardware.
+
 ## Responsiveness (continuous control)
 
 - The bridge keeps **one** SSH session open to a tiny allowlisted shell loop on

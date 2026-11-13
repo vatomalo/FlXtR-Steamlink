@@ -142,6 +142,39 @@ class TestMemoryPlanner(unittest.TestCase):
                                           errand={"place": "shop", "anchor": shop})
         self.assertEqual(decision.intention, "engage_enemy")
 
+    def test_bridge_crossed_once_makes_identical_tiles_walkable_everywhere(self):
+        bridge = {"classification": "conditional", "attributes": "08001000",
+                  "reasons": ["layer_switch"]}
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "bridge.sqlite")
+            planner = MemoryPlanner(history)
+            # Before: a conditional tile to the left is refused.
+            ahead = observation(("...", "?@.", "..."))
+            ahead["tile_context"]["special_cells"] = [dict(bridge, offset=[-1, 0])]
+            self.assertNotIn("step_left", planner.trusted_steps(ahead))
+            # The player stands on such a tile once (on another map).
+            standing = observation(("...", ".@.", "..."))
+            standing["tile_context"].update(map_id=200, special_cells=[
+                dict(bridge, offset=[0, 0])])
+            history.remember_walk(standing)
+            self.assertIn("step_left", planner.trusted_steps(ahead))
+            decision = planner.decide(ahead, directive="explore_west")
+            self.assertNotEqual(decision.intention, "observe")
+            history.close()
+
+    def test_follows_taught_path_when_tile_check_fails_on_bridge(self):
+        planner = MemoryPlanner()
+        for x in (2, 1, 0):
+            planner.local_walked.setdefault(131, set()).add((x, 3))
+        state = observation()
+        state["tile_context"].update(runtime_verified=False,
+                                     verification_error="actor_tile_fields_disagree")
+        decision = planner.decide(state, "step_left", "explore_west")
+        self.assertEqual((decision.action, decision.intention),
+                         ("step_left", "follow_taught_path"))
+        state["tile_context"]["actor_tile"] = [5, 5]   # off the taught path
+        self.assertEqual(planner.decide(state, "step_left").intention, "observe")
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

@@ -321,6 +321,24 @@ class ObservationHistory:
             "y INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, "
             "source TEXT NOT NULL, seen INTEGER NOT NULL, last_ts REAL NOT NULL, "
             "PRIMARY KEY(map_id,layer,x,y,kind))")
+        # Tiles the hero actually stood on. Kept apart from world_cells so a
+        # later "conditional"/"blocked" grid reading (bridges switch layers)
+        # can never undo proof that the tile is walkable. Layer-agnostic.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS walked_cells "
+            "(map_id INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, "
+            "seen INTEGER NOT NULL, last_ts REAL NOT NULL, PRIMARY KEY(map_id,x,y))")
+        # Collision attributes (4 bytes, hex) of conditional tiles the hero has
+        # walked on. Tiles with identical attributes behave identically, so a
+        # bridge crossed once makes every bridge with that signature usable.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS passable_signatures "
+            "(attributes TEXT PRIMARY KEY, seen INTEGER NOT NULL, last_ts REAL NOT NULL)")
+        # 7x7 tile-ID patterns around taught inns, to recognise lookalikes.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS place_patterns "
+            "(kind TEXT NOT NULL, map_id INTEGER NOT NULL, pattern TEXT NOT NULL, "
+            "PRIMARY KEY(kind,map_id))")
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS map_edges "
             "(from_map INTEGER NOT NULL, to_map INTEGER NOT NULL, layer INTEGER, "
@@ -503,6 +521,10 @@ class ObservationHistory:
                 isinstance(height, int) and height > 0):
             return 0
         kinds = {".": "open", "@": "open", "#": "blocked", "?": "conditional"}
+        proven = self.passable_signatures()
+        special = {tuple(cell["offset"]): cell.get("attributes")
+                   for cell in context.get("special_cells") or []
+                   if isinstance(cell.get("offset"), list)}
         now, learned = time.time(), 0
         for row_index, row in enumerate(rows):
             if not isinstance(row, str):
@@ -511,6 +533,9 @@ class ObservationHistory:
                 kind = kinds.get(marker)
                 if kind is None:
                     continue
+                if (kind == "conditional" and
+                        special.get((column - radius, row_index - radius)) in proven):
+                    kind = "open"
                 x = (center[0] + column - radius) % width
                 y = (center[1] + row_index - radius) % height
                 self.connection.execute(
@@ -526,7 +551,81 @@ class ObservationHistory:
         rows = self.connection.execute(
             "SELECT x,y,kind FROM world_cells WHERE map_id=? AND layer=?",
             (map_id, layer)).fetchall()
-        return {(x, y): kind for x, y, kind in rows}
+        cells = {(x, y): kind for x, y, kind in rows}
+        for position in self.walked_cells(map_id):
+            cells[position] = "open"
+        return cells
+
+    @staticmethod
+    def walk_position(state):
+        """(map, x, y) under the hero in field mode, even if the tile-ID
+        cross-check failed (it does on some bridges); None otherwise."""
+        context = state.get("tile_context") if isinstance(state, dict) else None
+        if not isinstance(context, dict) or context.get("game_mode") != "field":
+            return None
+        tile = context.get("actor_tile")
+        if not isinstance(tile, list) or len(tile) != 2:
+            return None
+        return context.get("map_id"), tile[0], tile[1]
+
+    def remember_walk(self, state):
+        position = self.walk_position(state)
+        if position is None:
+            return False
+        context = state["tile_context"]
+        for cell in context.get("special_cells") or []:
+            if (cell.get("offset") == [0, 0] and cell.get("classification") == "conditional"
+                    and isinstance(cell.get("attributes"), str)):
+                self.connection.execute(
+                    "INSERT INTO passable_signatures(attributes,seen,last_ts) VALUES(?,1,?) "
+                    "ON CONFLICT(attributes) DO UPDATE SET seen=seen+1,last_ts=excluded.last_ts",
+                    (cell["attributes"], time.time()))
+        self.connection.execute(
+            "INSERT INTO walked_cells(map_id,x,y,seen,last_ts) VALUES(?,?,?,1,?) "
+            "ON CONFLICT(map_id,x,y) DO UPDATE SET seen=seen+1,last_ts=excluded.last_ts",
+            (*position, time.time()))
+        self.connection.commit()
+        return True
+
+    def passable_signatures(self):
+        return {row[0] for row in self.connection.execute(
+            "SELECT attributes FROM passable_signatures")}
+
+    def remember_pattern(self, kind, state):
+        context = state.get("tile_context") or {}
+        rows = context.get("tile_id_rows")
+        if not isinstance(rows, list) or not context.get("runtime_verified"):
+            return False
+        self.connection.execute(
+            "INSERT INTO place_patterns(kind,map_id,pattern) VALUES(?,?,?) "
+            "ON CONFLICT(kind,map_id) DO UPDATE SET pattern=excluded.pattern",
+            (kind, context["map_id"], json.dumps(rows)))
+        self.connection.commit()
+        return True
+
+    def looks_like(self, kind, state, threshold=0.8):
+        """Fraction-matched taught pattern of this kind on another map, or None."""
+        context = state.get("tile_context") or {}
+        rows = context.get("tile_id_rows")
+        if not isinstance(rows, list) or not context.get("runtime_verified"):
+            return None
+        here = [cell for row in rows for cell in row.split()]
+        best = None
+        for map_id, encoded in self.connection.execute(
+                "SELECT map_id,pattern FROM place_patterns WHERE kind=?", (kind,)):
+            if map_id == context.get("map_id"):
+                continue
+            known = [cell for row in json.loads(encoded) for cell in row.split()]
+            if len(known) != len(here):
+                continue
+            score = sum(a == b for a, b in zip(here, known)) / len(here)
+            if score >= threshold and (best is None or score > best):
+                best = score
+        return best
+
+    def walked_cells(self, map_id):
+        return {(x, y) for x, y in self.connection.execute(
+            "SELECT x,y FROM walked_cells WHERE map_id=?", (map_id,))}
 
     def get_agent_state(self, key):
         row = self.connection.execute(
@@ -638,6 +737,7 @@ class ObservationHistory:
         anchor = {"map_id": position["map_id"], "layer": position["layer"],
                   "target": position["target"], "face": face, "taught": True}
         self.set_agent_state("safe_anchor", anchor)
+        self.remember_pattern("inn", state)
         self.remember_place(anchor["map_id"], anchor["layer"], *anchor["target"],
                             "inn", "taught innkeeper tile", "player_demonstration")
         return anchor

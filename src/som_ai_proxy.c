@@ -58,6 +58,18 @@ static const char *wram_temp_file="/tmp/flxtr-som-wram.bin.tmp";
 static const char *ring_ai_file="/tmp/flxtr-som-ai-enabled";
 static int wram_export_error_logged;
 static int ring_ai_selector_open,ring_ai_pending,ring_ai_enabled;
+/* Idle auto-start: after SOM_IDLE_AUTOSTART_FRAMES (one minute at 60 fps)
+ * without any physical button, raise the same AI signal as "ai_on". Once
+ * per idle period: a new period starts only with a real button press, so a
+ * bridge that stops itself is never restarted in a loop, and "ai_off" stays
+ * off until the player has touched the controller again. The marker file
+ * SOM_IDLE_DISABLE_FILE turns the feature off. Pausing RetroArch stops
+ * retro_run, so time in the RetroArch menu does not count as idle. */
+#define SOM_IDLE_AUTOSTART_FRAMES 3600ul
+#define SOM_IDLE_DISABLE_FILE "/home/apps/retroarch/cores/experimental/som_ai_idle_autostart_disable"
+static const char *idle_disable_file=SOM_IDLE_DISABLE_FILE;
+static unsigned long last_input_frame;
+static int idle_started;
 static uint8_t ring_ai_initial_cell;
 static unsigned long ring_ai_grace_until;
 #define SOM_MENU_SCAN_START 0x1800u
@@ -168,6 +180,7 @@ static void som_input_poll(void){
         }
         if(recording)som_record_presses((uint16_t)(current&~last_physical_buttons));
         last_physical_buttons=current;
+        if(current){last_input_frame=frame_number;idle_started=0;}
         if(ring_ai_enabled&&current&&frame_number>=ring_ai_grace_until){
             ring_ai_enabled=0;unlink(ring_ai_file);
             fprintf(stderr,"[som-ai] RING AI STOP physical controller takeover\n");
@@ -280,6 +293,22 @@ static void som_ring_ai_tick(void){
             fprintf(stderr,"[som-ai] RING AI START signal ready at %s\n",ring_ai_file);
         }else fprintf(stderr,"[som-ai] RING AI start signal failed\n");
     }
+}
+static void som_idle_tick(void){
+    if(!test_enabled||!game_loaded||!on_turbo||idle_started||ring_ai_enabled||armed)return;
+    if(frame_number-last_input_frame<SOM_IDLE_AUTOSTART_FRAMES)return;
+    if(frame_number%SOM_MESSAGE_POLL_FRAMES)return;
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    if(ram[0x007D]==1)return;            /* ring menu open: retry when closed */
+    idle_started=1;
+    if(access(idle_disable_file,F_OK)==0)return;
+    if(som_write_ring_ai_marker()){
+        ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
+        fprintf(stderr,"[som-ai] IDLE AI START after %lu frames without input\n",
+            frame_number-last_input_frame);
+    }else fprintf(stderr,"[som-ai] IDLE AI start signal failed\n");
 }
 /* EXPERIMENTAL, the proxy's only game-memory write: copy one live monster
  * object (0x200 bytes, slots 7EE600/E800/EA00 per cidwel/som-decomp) into an
@@ -437,6 +466,7 @@ static void som_check_trigger(void){
     if(!strcmp(command,"ai_off")){
         ring_ai_enabled=0;ring_ai_pending=0;armed=0;cancelled=1;
         unlink(ring_ai_file);
+        idle_started=1;                  /* stay off until the player plays */
         fprintf(stderr,"[som-ai] MANUAL AI STOP\n");
         return;
     }
@@ -605,6 +635,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     undo_ready=0;
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
+    last_input_frame=frame_number;idle_started=0;
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
     free(patched_rom);patched_rom=NULL;
@@ -671,6 +702,7 @@ RETRO_API void retro_run(void){
     }
     backend_run();
     if(test_enabled&&on_turbo)som_ring_ai_tick();
+    som_idle_tick();
     if(test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&
        !som_export_wram()&&!wram_export_error_logged){
         wram_export_error_logged=1;

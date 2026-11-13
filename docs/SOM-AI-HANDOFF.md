@@ -63,6 +63,13 @@ ssh root@100.124.74.13 'printf "ai_on\n" > /tmp/flxtr-som-ai-action'   # start A
 ssh root@100.124.74.13 'printf "ai_off\n" > /tmp/flxtr-som-ai-action'  # stop AI
 ```
 
+Idle auto-start: the proxy raises the same AI signal as `ai_on` after one
+minute (3600 frames) without any physical button, once per idle period (a
+new period starts with a real press; `ai_off` stays off until then; not while
+the ring menu is open). Any press after a 30-frame grace hands control back.
+Disable with
+`ssh root@100.124.74.13 'touch /home/apps/retroarch/cores/experimental/som_ai_idle_autostart_disable'`.
+
 Live inspection: `python3 tools/som_spawn.py show` prints the monster slots;
 `WRAM(RemoteLink(host).fetch_wram()).observe()` gives the full observation.
 Stop the service before running a teach or probe tool, and start it again after.

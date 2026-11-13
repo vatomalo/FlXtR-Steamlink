@@ -354,7 +354,53 @@ int main(void){
     som_check_npc_command();
     assert(access(npc_cmd_path,F_OK)!=0&&npc[0x0A]==4&&npc[0x06]==2&&active_action==SOM_ACT_NONE);
     unlink(enable_path);
+    /* Idle auto-start: one minute without physical input raises the AI
+     * signal once; a press stops it and starts a new idle period. */
+    reset_proxy();backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    ring_ai_file=ring_ai_path;unlink(ring_ai_path);
+    ring_ai_enabled=ring_ai_pending=0;
+    char idle_off_path[]="/tmp/flxtr-idle-off-test-XXXXXX";
+    fd=mkstemp(idle_off_path);assert(fd>=0);close(fd);unlink(idle_off_path);
+    idle_disable_file=idle_off_path;
+    frame_number=SOM_MESSAGE_POLL_FRAMES*1000ul;last_input_frame=frame_number;idle_started=0;
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;
+    assert(last_input_frame==frame_number);
+    frame_number+=SOM_IDLE_AUTOSTART_FRAMES-SOM_MESSAGE_POLL_FRAMES;som_idle_tick();
+    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);      /* 59.75 s: not yet */
+    frame_number+=SOM_MESSAGE_POLL_FRAMES;
+    mocked_wram[0x007D]=1;som_idle_tick();
+    assert(!ring_ai_enabled&&!idle_started);                     /* ring open: wait */
+    mocked_wram[0x007D]=0;som_input_poll();som_idle_tick();       /* no buttons held */
+    assert(ring_ai_enabled&&idle_started&&access(ring_ai_path,F_OK)==0);
+    frame_number+=1;pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;
+    assert(ring_ai_enabled);                                     /* 30-frame grace */
+    frame_number+=40;pressed=RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();pressed=100;
+    assert(!ring_ai_enabled&&!idle_started&&access(ring_ai_path,F_OK)!=0);
+    /* Bridge cleared the marker itself: no restart within the same period. */
+    frame_number=(frame_number/SOM_MESSAGE_POLL_FRAMES+1)*SOM_MESSAGE_POLL_FRAMES;
+    last_input_frame=frame_number;
+    frame_number+=SOM_IDLE_AUTOSTART_FRAMES;som_idle_tick();
+    assert(ring_ai_enabled);
+    ring_ai_enabled=0;unlink(ring_ai_path);
+    frame_number+=SOM_IDLE_AUTOSTART_FRAMES;som_idle_tick();
+    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
+    /* ai_off keeps it off until a physical press. */
+    pressed=RETRO_DEVICE_ID_JOYPAD_A;som_input_poll();pressed=100;
+    FILE *off=fopen(path,"w");assert(off&&fputs("ai_off\n",off)>0&&fclose(off)==0);
+    action_file=path;frame_number+=SOM_TRIGGER_POLL_FRAMES-frame_number%SOM_TRIGGER_POLL_FRAMES;
+    som_check_trigger();assert(idle_started);
+    frame_number+=SOM_IDLE_AUTOSTART_FRAMES*2;frame_number-=frame_number%SOM_MESSAGE_POLL_FRAMES;
+    som_idle_tick();assert(!ring_ai_enabled);
+    /* Disable marker. */
+    pressed=RETRO_DEVICE_ID_JOYPAD_A;som_input_poll();pressed=100;
+    fd=open(idle_off_path,O_WRONLY|O_CREAT,0600);assert(fd>=0);close(fd);
+    frame_number+=SOM_IDLE_AUTOSTART_FRAMES;frame_number-=frame_number%SOM_MESSAGE_POLL_FRAMES;
+    som_idle_tick();
+    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
+    unlink(idle_off_path);
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
-    puts("PASS: Turbo actions, tile steps, ring AI signal, override, and WRAM export");
+    puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");
     return 0;
 }

@@ -1,7 +1,7 @@
 """Tile-safety tests; no Ollama, SSH, ROM, or emulator required."""
 import unittest
 
-from som_qwen_bridge import guard_tile_action
+from som_qwen_bridge import guard_tile_action, parse_action
 
 
 class TestTileGuard(unittest.TestCase):
@@ -37,6 +37,25 @@ class TestTileGuard(unittest.TestCase):
         state["tile_context"]["game_mode"] = "ring"
         self.assertEqual(guard_tile_action("attack", state), "wait")
         self.assertEqual(guard_tile_action("step_left", state), "wait")
+
+
+class TestParseAction(unittest.TestCase):
+    def test_accepts_common_small_model_formats(self):
+        self.assertEqual(parse_action("step_right"), "step_right")
+        self.assertEqual(parse_action("  Step_Right.\n"), "step_right")
+        self.assertEqual(parse_action("`attack`"), "attack")
+        self.assertEqual(parse_action("Action: step-down"), "step_down")
+        self.assertEqual(parse_action("<think>\n\n</think>\n\nwait"), "wait")
+
+    def test_ignores_actions_mentioned_only_while_thinking(self):
+        self.assertIsNone(parse_action("<think>maybe attack or step_up"))
+        self.assertEqual(parse_action("<think>attack?</think> step_up"), "step_up")
+
+    def test_rejects_unknown_text(self):
+        self.assertIsNone(parse_action(""))
+        self.assertIsNone(parse_action("jump"))
+        self.assertIsNone(parse_action("rm -rf /"))
+        self.assertIsNone(parse_action("upstairs"))
 
 
 if __name__ == "__main__":

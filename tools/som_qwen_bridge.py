@@ -8,6 +8,7 @@ context-aware autonomous gameplay.
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -21,10 +22,28 @@ ACTIONS = {
     "attack", "open_ring", "confirm", "cancel", "next_ring",
     "prev_ring", "snapshot",
 }
+# Longest names first so "step_right" is not read as "right"-style prefixes.
+_ACTION_PATTERN = re.compile(
+    r"(?<![a-z_])(" + "|".join(sorted(ACTIONS, key=len, reverse=True)) + r")(?![a-z_])")
+MAX_INVALID_REPLIES = 3
+MAX_REPEATS = 4
+
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
     "step_up": (0, -1), "step_down": (0, 1),
 }
+
+def parse_action(raw: str):
+    """Extract one allowlisted action from a small model's free-form reply.
+
+    Small Qwen models often add punctuation, a prefix such as "Action:", or an
+    empty <think></think> block even with think=False. Only names from the
+    fixed allowlist are ever returned; anything else yields None.
+    """
+    text = re.sub(r"<think>.*?(</think>|$)", " ", raw or "", flags=re.S | re.I)
+    text = text.lower().replace("-", "_")
+    match = _ACTION_PATTERN.search(text)
+    return match.group(1) if match else None
 
 def choose_action(url: str, model: str, objective: str, previous: str, observation=None) -> str:
     prompt = (
@@ -55,11 +74,11 @@ def choose_action(url: str, model: str, objective: str, previous: str, observati
     with urllib.request.urlopen(req, timeout=90) as response:
         result = json.load(response)
     raw = result.get("response") or ""
-    candidate = raw.strip().lower().strip("`").strip()
-    if candidate not in ACTIONS:
+    candidate = parse_action(raw)
+    if candidate is None:
         reason = result.get("done_reason", "unknown")
         raise ValueError(
-            f"Qwen returned unsupported action {candidate!r} "
+            f"Qwen returned unsupported action {raw.strip()[:80]!r} "
             f"(done_reason={reason!r}, thinking_present={bool(result.get('thinking'))}). "
             "Try --model qwen3.5:4b if qwen3:0.6b gives no response."
         )
@@ -158,6 +177,7 @@ def main() -> int:
         print("[qwen] Action Grid start received", flush=True)
     previous = "none"
     repeated = 0
+    invalid_replies = 0
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
@@ -174,17 +194,34 @@ def main() -> int:
                      args.host, "cat /tmp/flxtr-som-wram.bin"],
                     capture_output=True, check=True, timeout=15).stdout
                 observation = WRAM(raw).observe()
-            action = choose_action(args.ollama_url, args.model,
-                                   args.objective, previous, observation)
+            try:
+                action = choose_action(args.ollama_url, args.model,
+                                       args.objective, previous, observation)
+                invalid_replies = 0
+            except ValueError as exc:
+                # One odd reply from a tiny model should not end the session;
+                # waiting is always safe. Persistent garbage still stops.
+                invalid_replies += 1
+                if invalid_replies >= MAX_INVALID_REPLIES:
+                    raise
+                print(f"[qwen] ignoring reply ({invalid_replies}/{MAX_INVALID_REPLIES}): {exc}",
+                      flush=True)
+                action = "wait"
             guarded_action = guard_tile_action(action, observation)
             if guarded_action != action:
-                print(f"[qwen] tile guard: {action} -> {guarded_action}", flush=True)
+                context = (observation or {}).get("tile_context") or {}
+                why = context.get("verification_error") or (
+                    "no WRAM observation" if observation is None else "next tile not open")
+                print(f"[qwen] tile guard: {action} -> {guarded_action} ({why})", flush=True)
             action = guarded_action
-            # The same action indefinitely is not intelligent control. Stop
-            # instead of blindly attacking or walking into a wall.
+            # Repeating a non-wait action indefinitely is not intelligent
+            # control: insert a safe wait instead of blindly attacking or
+            # walking into a wall. Waiting itself never ends the session.
             repeated = repeated + 1 if action == previous else 1
-            if repeated >= 4:
-                raise ValueError(f"Repeated action {action!r} four times; stopping")
+            if action != "wait" and repeated >= MAX_REPEATS:
+                print(f"[qwen] repeated {action!r} {MAX_REPEATS} times; waiting once", flush=True)
+                action = "wait"
+                repeated = 1
             if history is not None and observation is not None:
                 history.record(observation, action)
             step += 1

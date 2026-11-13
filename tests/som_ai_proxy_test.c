@@ -62,6 +62,16 @@ int main(void){
     assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
     frame_number=start_frame+action_frames;
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+    /* snes9x2005 queries the whole pad with one bitmask when supported. */
+    reset_proxy();som_start_action(SOM_ACT_STEP_DOWN);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
+           (1<<RETRO_DEVICE_ID_JOYPAD_DOWN));
+    assert(injected_queries==1);
+    assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+    frame_number=start_frame+action_frames;
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+    reset_proxy();som_start_action(SOM_ACT_WAIT);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
     reset_proxy();som_start_action(SOM_ACT_RIGHT);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==1);
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();

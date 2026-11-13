@@ -56,6 +56,20 @@ manual movement pulses. A deterministic guard changes a proposed step to
 `wait` unless the runtime-verified adjacent cell is open. Blocked (`#`),
 conditional (`?`), malformed, and unverified grids all fail closed.
 
+## Troubleshooting: AI connects but Randi never moves
+
+- Rebuild and reinstall `som_ai_proxy_libretro.so` after commit "Inject AI
+  input on bitmask joypad queries". Earlier builds only injected per-button
+  queries, but snes9x2005 reads the whole pad with one
+  `RETRO_DEVICE_ID_JOYPAD_MASK` query whenever RetroArch supports bitmasks,
+  so every injected action was silently dropped (`COMPLETE ... button
+  sampled 0 times` in the game log).
+- `[qwen] tile guard: step_x -> wait (actor_tile_fields_disagree)` means the
+  Turbo tile layout did not pass runtime verification, so movement is vetoed
+  by design. Waiting no longer ends the session; only attacks can occur.
+- Odd replies from small models (`Step_Right.`, `<think></think>wait`) are
+  now parsed; up to two unparseable replies in a row are treated as `wait`.
+
 ## Start from the existing Action Grid ring menu
 
 Run the SkyLoft bridge with `--ring-control --wram-remote`, then open the

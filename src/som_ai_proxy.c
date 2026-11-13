@@ -24,6 +24,12 @@
 #define SOM_HOLD_FRAMES 30u
 #define SOM_WRAM_SIZE 0x20000u
 #define SOM_WRAM_EXPORT_FRAMES 30u
+/* Modern cores (including the pinned snes9x2005) read the whole pad with one
+ * bitmask query when the frontend reports RETRO_ENVIRONMENT_GET_INPUT_BITMASKS.
+ * The vendored libretro.h predates these constants. */
+#ifndef RETRO_DEVICE_ID_JOYPAD_MASK
+#define RETRO_DEVICE_ID_JOYPAD_MASK 256
+#endif
 
 static void *backend;
 static retro_input_state_t physical_state;
@@ -99,14 +105,16 @@ static void (*backend_run)(void);
  * Never try to emulate frames from a timer/network worker. */
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
+    int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
-       index==0 && id<16 && armed && !cancelled && !completed && on_turbo){
+       index==0 && (id<16||bitmask) && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
+        unsigned button=som_action_button(active_action);
         if(frame_number>=start_frame &&
-           frame_number<start_frame+action_frames &&
-           id==som_action_button(active_action)){
+           frame_number<start_frame+action_frames && button<16 &&
+           (bitmask||id==button)){
             injected_queries++;
-            return 1;
+            return bitmask?(int16_t)(1u<<button):1;
         }
     }
     return actual;

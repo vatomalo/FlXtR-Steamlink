@@ -535,6 +535,35 @@ class ObservationHistory:
                                                    "max_hp": hero.get("max_hp")})
         return candidate if healed else None
 
+    def return_waypoint(self, current_map, target_map):
+        """Recover a previously traversed direct map edge in reverse."""
+        previous = None
+        rows = self.connection.execute(
+            "SELECT action,state FROM observations ORDER BY id ASC LIMIT 5000").fetchall()
+        opposites = {"step_right": "step_left", "step_left": "step_right",
+                     "step_up": "step_down", "step_down": "step_up"}
+        result = None
+        for action, encoded in rows:
+            state = json.loads(encoded)
+            context = state.get("tile_context") or {}
+            actor = context.get("actor") or {}
+            tile = context.get("actor_tile")
+            current = ({"map_id": context.get("map_id"), "layer": actor.get("layer"),
+                        "target": tile, "action": action}
+                       if context.get("runtime_verified") and
+                       isinstance(tile, list) and len(tile) == 2 else None)
+            if (previous and current and previous["map_id"] != current["map_id"]):
+                if previous["map_id"] == current_map and current["map_id"] == target_map:
+                    result = {"map_id": current_map, "layer": previous["layer"],
+                              "target": previous["target"],
+                              "action": previous["action"]}
+                elif current["map_id"] == current_map and previous["map_id"] == target_map:
+                    result = {"map_id": current_map, "layer": current["layer"],
+                              "target": current["target"],
+                              "action": opposites.get(previous["action"])}
+            previous = current or previous
+        return result
+
     def record_combat(self, state, previous_action=None):
         """Persist observed fight outcomes attributable to the previous action."""
         if not isinstance(state, dict):

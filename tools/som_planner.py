@@ -60,6 +60,7 @@ class MemoryPlanner:
             self.history.remember_position(observation)
             self.history.remember_world(observation)
             self.history.remember_recovery(observation)
+            self.history.safe_anchor()
             return
         actor = context["actor"]
         key = (context["map_id"], actor["layer"], *context["actor_tile"])
@@ -283,14 +284,25 @@ class MemoryPlanner:
                                    "return_to_inn")
 
         anchor = self.history.safe_anchor() if self.history is not None else None
-        if (isinstance(anchor, dict) and anchor.get("map_id") == context.get("map_id") and
-                anchor.get("layer") == actor.get("layer") and
-                isinstance(anchor.get("target"), list)):
+        destination = anchor
+        exit_action = None
+        if (isinstance(anchor, dict) and anchor.get("map_id") != context.get("map_id") and
+                self.history is not None):
+            destination = self.history.return_waypoint(context.get("map_id"),
+                                                       anchor.get("map_id"))
+            exit_action = destination.get("action") if isinstance(destination, dict) else None
+        if (isinstance(destination, dict) and
+                destination.get("map_id") == context.get("map_id") and
+                destination.get("layer") == actor.get("layer") and
+                isinstance(destination.get("target"), list)):
             position = tuple(context["actor_tile"])
-            target = tuple(anchor["target"])
+            target = tuple(destination["target"])
             cells = self._known_cells(context["map_id"], actor["layer"])
             routes = self._routes(position, cells, tuple(context["map_size_tiles"]))
             if target == position:
+                if exit_action in open_steps:
+                    return PlannerDecision(exit_action, "take learned exit toward inn",
+                                           "return_to_inn", 1)
                 return PlannerDecision("wait", "at learned inn/safe recovery point",
                                        "recover_at_inn")
             if target in routes:

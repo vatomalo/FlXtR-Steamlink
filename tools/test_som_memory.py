@@ -188,6 +188,19 @@ class TestWRAM(unittest.TestCase):
                              "flxtr-som-atlas-v1")
             history.close()
 
+    def test_return_waypoint_reverses_observed_map_transition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "routes.sqlite")
+            def state(map_id, tile):
+                return {"tile_context": {"runtime_verified": True, "map_id": map_id,
+                                         "actor_tile": tile, "actor": {"layer": 1}}}
+            history.record(state(131, [2, 3]), "step_left")
+            history.record(state(130, [7, 3]), "wait")
+            waypoint = history.return_waypoint(130, 131)
+            self.assertEqual(waypoint["target"], [7, 3])
+            self.assertEqual(waypoint["action"], "step_right")
+            history.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,10 +64,10 @@ class TestTileGuard(unittest.TestCase):
         clear = {"tile_context": {"runtime_verified": True, "game_mode": "field",
                                   "radius": 3, "passability_rows": ["......."] * 7}}
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "explore_frontier", 8, 8), "right")
+            extend_clear_exploration("step_right", clear, "explore_frontier", 8, 8), "dash_right")
         # Holds are preemptible, so every movement intention may use them.
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "engage_enemy", None, 5), "right")
+            extend_clear_exploration("step_right", clear, "engage_enemy", None, 5), "dash_right")
         self.assertEqual(
             extend_clear_exploration("step_right", clear, "observe", None), "step_right")
         # The route turns after two tiles: a hold would overshoot the corner.

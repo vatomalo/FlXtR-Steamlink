@@ -18,7 +18,11 @@ if [[ ! -f "$sdk/setenv.sh" ]]; then
         flxtr-steamlink-builder:skyloft bash -c 'set -e; git init /sdk; git -C /sdk remote add origin https://github.com/ValveSoftware/steamlink-sdk.git; git -C /sdk fetch --depth 1 origin 62b4d098d1472c3534dd098ca2a0e0e10712f1c6; git -C /sdk checkout --detach FETCH_HEAD'
 fi
 cd "$repo"
-if [[ ! -f build/music-runtime.tgz ]]; then bash scripts/build-music-runtime.sh; fi
+if [[ -f scripts/build-music-runtime.sh ]]; then
+    if [[ ! -f build/music-runtime.tgz ]]; then bash scripts/build-music-runtime.sh; fi
+else
+    echo 'This branch predates the optional music runtime; continuing without it.'
+fi
 rm -f dist/steamlink/apps/greenlink/.no-auto-update
 docker run --rm --name flxtr-steamlink-build --cpus=3 --memory=5g \
     --user "$(id -u):$(id -g)" -e HOME=/build-home -e JOBS=3 \
@@ -27,5 +31,6 @@ docker run --rm --name flxtr-steamlink-build --cpus=3 --memory=5g \
     -v "$repo:/src" -v "$sdk:/opt/steamlink-sdk" \
     -v "$storage/build-cache/steamlink:/var/cache/flxtr-steamlink" \
     -v "$storage/build-home/steamlink:/build-home" \
-    flxtr-steamlink-builder:skyloft bash -c 'bash scripts/build-moonlight.sh && bash scripts/autocompile --steamlink --no-update'
+    flxtr-steamlink-builder:skyloft bash -c \
+    'if [[ -f scripts/build-moonlight.sh ]]; then bash scripts/build-moonlight.sh; else echo "This branch predates the Moonlight package helper; using its original Steam Link build."; fi; bash scripts/autocompile --steamlink --no-update'
 echo 'Complete Steam Link package built on SkyLoft.'

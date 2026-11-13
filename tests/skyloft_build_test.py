@@ -147,6 +147,12 @@ class BuildCommandTest(unittest.TestCase):
         result = self.run_build('--android')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_steamlink_runner_feature_detects_newer_optional_helpers(self):
+        runner = (COMMAND.parent / 'build-skyloft-steamlink.sh').read_text()
+        self.assertIn('[[ -f scripts/build-music-runtime.sh ]]', runner)
+        self.assertIn('[[ -f scripts/build-moonlight.sh ]]', runner)
+        self.assertIn('bash scripts/autocompile --steamlink --no-update', runner)
+
     def test_local_commit_is_not_reset(self):
         (self.repo / 'local').write_text('unpublished work\n')
         self.git(self.repo, 'add', '.')

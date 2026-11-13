@@ -35,6 +35,23 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(decision.action, "attack")
         self.assertIn("enemy 1", decision.reason)
 
+    def test_does_not_swing_at_enemy_outside_contact_reach(self):
+        planner = MemoryPlanner()
+        planner.assumed_facing = "step_right"
+        state = observation(enemy={"slot": 1, "active": True,
+                                   "x_px": 80, "y_px": 56}, recharge=0)
+        decision = planner.decide(state, previous="step_right")
+        self.assertNotIn(decision.action, ("attack", "charge"),
+                         decision.reason)
+
+    def test_contact_range_allows_verified_facing_attack(self):
+        planner = MemoryPlanner()
+        planner.assumed_facing = "step_right"
+        state = observation(enemy={"slot": 1, "active": True,
+                                   "x_px": 64, "y_px": 56}, recharge=0)
+        decision = planner.decide(state, previous="step_right")
+        self.assertEqual(decision.action, "attack", decision.reason)
+
     def test_swings_only_while_facing_the_enemy(self):
         planner = MemoryPlanner()
         planner.facing_checks = [5, 0]                 # E010 verified

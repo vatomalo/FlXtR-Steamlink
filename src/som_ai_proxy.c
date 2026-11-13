@@ -8,6 +8,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "vendor/libretro.h"
 #include "som_ai_actions.h"
+#include "som_overlay.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,6 +61,15 @@ static unsigned long ring_ai_grace_until;
 static uint8_t som_previous_menu[SOM_MENU_SCAN_LENGTH];
 static int som_have_previous_menu;
 static retro_environment_t environment_callback;
+/* Optional AI message box, drawn on a private copy of each frame. */
+#define SOM_MESSAGE_POLL_FRAMES 15u
+#define SOM_MESSAGE_FRAMES 240u
+static const char *message_file="/tmp/flxtr-som-ai-message";
+static retro_video_refresh_t frontend_video;
+static int pixel_format; /* RETRO_PIXEL_FORMAT_0RGB1555 until the core says otherwise */
+static SomOverlay overlay;
+static uint8_t *overlay_frame;
+static size_t overlay_frame_size;
 static void load_backend(void); /* RetroArch may query core info before init. */
 
 #define FORWARD(ret, name, args, callargs) \
@@ -75,7 +85,6 @@ static void load_backend(void); /* RetroArch may query core info before init. */
         backend_##name callargs; \
     }
 
-FORWARD_VOID(retro_set_video_refresh,(retro_video_refresh_t cb),(cb))
 FORWARD_VOID(retro_set_audio_sample,(retro_audio_sample_t cb),(cb))
 FORWARD_VOID(retro_set_audio_sample_batch,(retro_audio_sample_batch_t cb),(cb))
 FORWARD_VOID(retro_set_controller_port_device,(unsigned port,unsigned device),(port,device))
@@ -94,6 +103,7 @@ FORWARD_VOID(retro_get_system_info,(struct retro_system_info *info),(info))
 FORWARD_VOID(retro_get_system_av_info,(struct retro_system_av_info *info),(info))
 
 static void (*backend_set_environment)(retro_environment_t);
+static void (*backend_set_video_refresh)(retro_video_refresh_t);
 static void (*backend_set_input_poll)(retro_input_poll_t);
 static void (*backend_set_input_state)(retro_input_state_t);
 static void (*backend_init)(void);
@@ -329,6 +339,46 @@ static void som_check_trigger(void){
     som_start_action(action);
 }
 
+/* Show one message from the SkyLoft bridge. '|' starts the second line. */
+static void som_check_message(void){
+    if(!test_enabled||!game_loaded||!on_turbo||frame_number%SOM_MESSAGE_POLL_FRAMES)return;
+    if(access(message_file,F_OK)!=0)return;
+    char text[96]={0};
+    FILE *input=fopen(message_file,"r");
+    if(!input)return;
+    int have=fgets(text,sizeof(text),input)!=NULL;
+    fclose(input);
+    unlink(message_file);
+    if(have&&som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES))
+        fprintf(stderr,"[som-ai] MESSAGE %s\n",text);
+}
+static void som_video_refresh(const void *data,unsigned width,unsigned height,size_t pitch){
+    if(!frontend_video)return;
+    /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
+     * hardware-rendered frame that has no CPU pixels to draw on. */
+    if(!overlay.frames_left||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+       (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
+        frontend_video(data,width,height,pitch);
+        return;
+    }
+    size_t size=(size_t)height*pitch;
+    if(size>overlay_frame_size){
+        uint8_t *grown=realloc(overlay_frame,size);
+        if(!grown){frontend_video(data,width,height,pitch);return;}
+        overlay_frame=grown;overlay_frame_size=size;
+    }
+    memcpy(overlay_frame,data,size);
+    som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay);
+    overlay.frames_left--;
+    frontend_video(overlay_frame,width,height,pitch);
+}
+static bool som_environment(unsigned cmd,void *data){
+    bool handled=environment_callback?environment_callback(cmd,data):false;
+    if(handled&&cmd==RETRO_ENVIRONMENT_SET_PIXEL_FORMAT&&data)
+        pixel_format=(int)*(const enum retro_pixel_format*)data;
+    return handled;
+}
+
 static void load_backend(void){
     if(backend)return;
     const char *path=getenv("FLXTR_AI_BASE_CORE");
@@ -337,11 +387,15 @@ static void load_backend(void){
     if(strstr(path,"som_ai_proxy")){fputs("[som-ai] recursive core path refused\n",stderr);abort();}
     backend=dlopen(path,RTLD_NOW|RTLD_LOCAL);
     if(!backend){fprintf(stderr,"[som-ai] dlopen failed: %s\n",dlerror());abort();}
+#define LOAD_VIDEO() do { \
+    *(void**)(&backend_set_video_refresh)=dlsym(backend,"retro_set_video_refresh"); \
+    if(!backend_set_video_refresh){fputs("[som-ai] backend lacks retro_set_video_refresh\n",stderr);abort();} \
+} while(0)
 #define LOAD(name) do { \
     *(void**)(&backend_##name)=dlsym(backend,#name); \
     if(!backend_##name){fprintf(stderr,"[som-ai] backend lacks %s\n",#name);abort();} \
 } while(0)
-    LOAD(retro_set_video_refresh);LOAD(retro_set_audio_sample);
+    LOAD_VIDEO();LOAD(retro_set_audio_sample);
     LOAD(retro_set_audio_sample_batch);LOAD(retro_set_controller_port_device);
     LOAD(retro_reset);LOAD(retro_serialize_size);LOAD(retro_serialize);
     LOAD(retro_unserialize);LOAD(retro_cheat_reset);LOAD(retro_cheat_set);
@@ -349,6 +403,7 @@ static void load_backend(void){
     LOAD(retro_get_memory_data);LOAD(retro_get_memory_size);
     LOAD(retro_api_version);LOAD(retro_get_system_info);LOAD(retro_get_system_av_info);
 #undef LOAD
+#undef LOAD_VIDEO
 #define LOAD_DIRECT(name) do { \
     *(void**)(&backend_##name)=dlsym(backend,"retro_"#name); \
     if(!backend_##name){fprintf(stderr,"[som-ai] missing retro_%s\n",#name);abort();} \
@@ -358,7 +413,10 @@ static void load_backend(void){
 #undef LOAD_DIRECT
 }
 RETRO_API void retro_set_environment(retro_environment_t cb){
-    load_backend();environment_callback=cb;backend_set_environment(cb);
+    load_backend();environment_callback=cb;backend_set_environment(som_environment);
+}
+RETRO_API void retro_set_video_refresh(retro_video_refresh_t cb){
+    load_backend();frontend_video=cb;backend_set_video_refresh(som_video_refresh);
 }
 RETRO_API void retro_set_input_poll(retro_input_poll_t cb){
     load_backend();physical_poll=cb;backend_set_input_poll(som_input_poll);
@@ -385,6 +443,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     last_physical_buttons=0;last_attack_frame=0;combo_count=0;
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     wram_export_error_logged=0;
+    memset(&overlay,0,sizeof(overlay));
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     game_loaded=backend_load_game(game);
@@ -404,7 +463,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             test_enabled=0;
         }
         if(test_enabled){
-            unlink(action_file);
+            unlink(action_file);unlink(message_file);
             unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
             fprintf(stderr,"[som-ai] READY: legacy %s; actions via %s; read-only WRAM via %s\n",
                 trigger_file,action_file,wram_file);
@@ -415,12 +474,14 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
 RETRO_API void retro_unload_game(void){
     armed=0;autonomous_mode=0;game_loaded=0;
     ring_ai_enabled=0;ring_ai_pending=0;
-    unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
+    unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
+    memset(&overlay,0,sizeof(overlay));
     if(backend_unload_game)backend_unload_game();
 }
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     som_check_trigger();
+    som_check_message();
     som_auto_tick();
     if(armed&&!cancelled&&!completed&&game_loaded &&
        frame_number==start_frame+action_frames){

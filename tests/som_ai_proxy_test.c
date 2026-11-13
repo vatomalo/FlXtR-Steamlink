@@ -18,6 +18,10 @@ static void *mocked_memory_data(unsigned id){
 static size_t mocked_memory_size(unsigned id){
     return id==RETRO_MEMORY_SYSTEM_RAM?sizeof(mocked_wram):0;
 }
+static const void *shown_frame;
+static void mocked_video(const void *data,unsigned width,unsigned height,size_t pitch){
+    (void)width;(void)height;(void)pitch;shown_frame=data;
+}
 static void reset_proxy(void){
     physical_state=mocked_input;physical_poll=NULL;
     frame_number=180;start_frame=0;injected_queries=0;
@@ -46,6 +50,9 @@ int main(void){
     assert(som_action_button(SOM_ACT_STEP_RIGHT)==RETRO_DEVICE_ID_JOYPAD_RIGHT);
     assert(som_action_frames(SOM_ACT_STEP_RIGHT)==6);
     assert(som_parse_action("wait")==SOM_ACT_WAIT);
+    assert(som_parse_action("menu_x")==SOM_ACT_MENU_X);
+    assert(som_action_button(SOM_ACT_MENU_X)==RETRO_DEVICE_ID_JOYPAD_X);
+    assert(som_action_frames(SOM_ACT_MENU_X)==2);
     assert(som_action_frames(SOM_ACT_WAIT)==0);
     som_check_trigger();
     assert(!armed);
@@ -146,6 +153,29 @@ int main(void){
     pressed=RETRO_DEVICE_ID_JOYPAD_B;
     som_input_poll();
     assert(!autonomous_mode);
+    /* Bridge messages are drawn on a private copy of the frame only. */
+    reset_proxy();
+    char message_path[]="/tmp/flxtr-message-test-XXXXXX";
+    fd=mkstemp(message_path);assert(fd>=0);close(fd);
+    message_file=message_path;frontend_video=mocked_video;pixel_format=2;
+    static uint16_t core_frame[224][256];
+    som_video_refresh(core_frame,256,224,512);
+    assert(shown_frame==core_frame);
+    FILE *note=fopen(message_path,"w");
+    assert(note!=NULL&&fputs("AI: using Candy|line two\n",note)>0&&fclose(note)==0);
+    frame_number=SOM_MESSAGE_POLL_FRAMES*20u;som_check_message();
+    assert(access(message_path,F_OK)!=0&&overlay.line_count==2);
+    assert(!strcmp(overlay.lines[0],"AI: using Candy"));
+    som_video_refresh(core_frame,256,224,512);
+    assert(shown_frame!=core_frame&&shown_frame==overlay_frame);
+    size_t lit=0;
+    for(size_t i=0;i<256u*224u;i++)lit+=((const uint16_t*)shown_frame)[i]!=0;
+    assert(lit>1000);
+    for(size_t i=0;i<256u*224u;i++)assert(((uint16_t*)core_frame)[i]==0);
+    overlay.frames_left=0;
+    som_video_refresh(core_frame,256,224,512);
+    assert(shown_frame==core_frame);
+    unlink(message_path);
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, override, and WRAM export");
     return 0;

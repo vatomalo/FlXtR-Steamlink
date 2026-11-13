@@ -20,12 +20,13 @@ import urllib.request
 from pathlib import Path
 
 from som_memory import WRAM, ObservationHistory
+from som_menu import CandyMacro, Calibration, MacroFailed
 from som_planner import MemoryPlanner
 
 ACTIONS = {
     "step_right", "step_left", "step_up", "step_down", "wait",
     "attack", "open_ring", "confirm", "cancel", "next_ring",
-    "prev_ring", "snapshot",
+    "prev_ring", "snapshot", "menu_x",
 }
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(
@@ -302,8 +303,13 @@ REMOTE_LOOP = (
     "act\\ *) a=${cmd#act }; "
     "case \"$a\" in ''|*[!a-z_]*) echo BAD;; "
     "*) printf '%s\\n' \"$a\" > /tmp/flxtr-som-ai-action && echo OK || echo BAD;; esac;; "
+    r'msg\ *) t=${cmd#msg }; '
+    r'case "$t" in ""|*[!A-Za-z0-9\ .,!?:/%+=\(\)\|-]*) echo BAD;; '
+    r'*) printf "%s\n" "$t" > /tmp/flxtr-som-ai-message && echo OK || echo BAD;; esac;; '
     "*) echo BAD;; esac; done"
 )
+# Characters the Steam Link loop and the overlay font both accept.
+MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|-]")
 WRAM_BYTES = 0x20000
 
 
@@ -385,12 +391,47 @@ class RemoteLink:
             raise OSError(f"WRAM snapshot unavailable ({status})")
         return payload
 
+    def show_message(self, text: str) -> None:
+        """Ask the proxy to draw a short two-line message box ('|' = new line)."""
+        clean = MESSAGE_ALLOWED.sub("", text.replace("_", " "))[:65].strip()
+        if not clean:
+            return
+        status, _ = self._request("msg " + clean)
+        if status != "OK":
+            raise OSError(f"Steam Link rejected message ({status})")
+
     def send_action(self, action: str) -> None:
         if action not in ACTIONS and action not in LONG_MOVES.values():
             raise ValueError(f"refusing non-allowlisted action {action!r}")
         status, _ = self._request("act " + action)
         if status != "OK":
             raise OSError(f"Steam Link rejected action {action!r} ({status})")
+
+
+INTENT_MESSAGES = {
+    "explore_frontier": "AI: exploring",
+    "engage_enemy": "AI: fighting",
+    "return_to_inn": "AI: HP low|heading back to the inn",
+    "recover_at_inn": "AI: at the inn",
+    "survive": "AI: HP low|retreating",
+    "stuck": "AI: stuck|no open tile",
+}
+
+
+def candy_wanted(observation):
+    """Use Candy below half HP when no enemy is within weapon reach."""
+    if not isinstance(observation, dict) or not observation.get("candy_count"):
+        return False
+    hero = (observation.get("party") or [{}])[0]
+    hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
+    if not max_hp or hp * 2 > max_hp:
+        return False
+    actor = ((observation.get("tile_context") or {}).get("actor") or {})
+    for enemy in observation.get("enemy_slots", []):
+        if (enemy.get("active") and isinstance(actor.get("x_px"), int) and
+                abs(enemy["x_px"] - actor["x_px"]) + abs(enemy["y_px"] - actor["y_px"]) < 64):
+            return False
+    return True
 
 
 def send_action(host: str, action: str) -> None:
@@ -450,6 +491,11 @@ def main() -> int:
                         help="Optional persistent SQLite observation log")
     parser.add_argument("--ring-control", action="store_true",
                         help="Wait for the in-game Action Grid start gesture and stop on takeover")
+    parser.add_argument("--no-messages", action="store_true",
+                        help="Do not draw AI status message boxes on the game screen")
+    parser.add_argument("--ring-calibration", type=Path,
+                        help="Ring calibration JSON from som_ring_probe.py "
+                             "(default ~/.config/flxtr/som-ring.json)")
     parser.add_argument("--start-timeout", type=float, default=300.0,
                         help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
@@ -480,6 +526,24 @@ def main() -> int:
             time.sleep(1.0)
         print("[ai] Action Grid start received", flush=True)
     link = RemoteLink(args.host) if not args.dry_run else None
+    calibration = (Calibration.load(args.ring_calibration) if args.ring_calibration
+                   else Calibration.load())
+    candy_disabled = calibration is None
+    print("[candy] " + ("enabled from ring calibration" if calibration else
+                        "disabled: run tools/som_ring_probe.py once to enable"), flush=True)
+    messages = link is not None and not args.no_messages
+    last_message = None
+
+    def announce(text):
+        nonlocal messages, last_message
+        if not messages or text == last_message:
+            return
+        last_message = text
+        try:
+            link.show_message(text)
+        except (OSError, subprocess.SubprocessError) as exc:
+            messages = False
+            print(f"[ai] message boxes disabled: {exc}", flush=True)
     if args.policy == "hybrid":
         threading.Thread(target=warm_model, args=(args.ollama_url, args.model),
                          daemon=True, name="som-qwen-warmup").start()
@@ -509,6 +573,22 @@ def main() -> int:
                 observation = WRAM(raw).observe()
             if history is not None and observation is not None:
                 history.record_combat(observation, previous if previous != "none" else None)
+            if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
+                    candy_wanted(observation)):
+                announce("AI: HP low|using Candy")
+                try:
+                    gained = CandyMacro(link, calibration,
+                                        log=lambda text: print(text, flush=True)).run()
+                    print(f"[candy] used Candy: +{gained} HP", flush=True)
+                    announce(f"AI: Candy +{gained} HP")
+                except MacroFailed as exc:
+                    # One failure disables Candy for this run rather than
+                    # fumbling through menus repeatedly.
+                    candy_disabled = True
+                    print(f"[candy] disabled for this run: {exc}", flush=True)
+                    announce("AI: Candy failed|see log")
+                previous = "wait"
+                continue
             if args.policy in ("hybrid", "memory"):
                 context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
                 current_map = context.get("map_id")
@@ -525,6 +605,7 @@ def main() -> int:
                             directive = selected
                             directive_turns = DIRECTOR_TURNS
                             directive_map = current_map
+                            announce("Qwen: " + directive.replace("_", " "))
                             print(f"[qwen-director] intention={directive} for "
                                   f"{DIRECTOR_TURNS} decisions", flush=True)
                         else:
@@ -569,6 +650,10 @@ def main() -> int:
                 directive_turns -= 1
                 action = decision.action
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)
+                if decision.reason.startswith("survival abandoned"):
+                    announce("AI: inn did not heal|back to careful play")
+                elif decision.intention in INTENT_MESSAGES:
+                    announce(INTENT_MESSAGES[decision.intention])
             else:
                 try:
                     action = choose_action(args.ollama_url, args.model,

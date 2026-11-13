@@ -120,6 +120,48 @@ attacks or menu actions still stop the session.
 - Odd replies from small models (`Step_Right.`, `<think></think>wait`) are
   now parsed; up to two unparseable replies in a row are treated as `wait`.
 
+## On-screen AI messages
+
+The proxy can draw a two-line message box (32 characters per line) over the
+game picture. It draws on a private copy of each frame; game RAM, ROM, and
+the core's own frame buffer are untouched. The bridge shows a message when
+the AI's intention or Qwen directive changes; disable with `--no-messages`.
+Send one by hand (allowed: letters, digits, space and `.,!?:/%+=()-`; `|`
+starts line two):
+
+```sh
+ssh root@100.124.74.13 'printf "Hello from SkyLoft|second line\n" > /tmp/flxtr-som-ai-message'
+```
+
+This is not the game's native dialog window. Making the game's own text
+engine show new text would need a WRAM/ROM write path plus the Turbo text
+script format, which this read-only proxy deliberately does not have.
+
+## Candy (ring-menu macro)
+
+Below half HP, with no enemy within 64 px and Candy in the inventory, the
+bridge opens the item ring, rotates to Candy, confirms item and target, and
+requires an observed HP gain or Candy count drop within three seconds. Every
+press waits for the matching WRAM change; anything unexpected presses Cancel
+until the ring is closed and disables Candy for the rest of the run.
+
+The ring cursor byte is not documented for Turbo, so calibrate once:
+
+```sh
+systemctl --user stop flxtr-som-ai.service
+python3 tools/som_ring_probe.py
+systemctl --user start flxtr-som-ai.service
+```
+
+The probe asks you to open the item ring and rotate it a few times, finds the
+byte that follows the cursor, records the Candy position, and tests whether
+Y (`open_ring`) or X (`menu_x`) opens the ring. Recalibrate if Candy changes
+inventory slot. Until calibrated, the log says `[candy] disabled`.
+
+**Inn (next):** reuse the same closed-loop pattern: walk to the learned inn
+tile, face the innkeeper, Confirm to talk, confirm "Yes" and payment, then
+require full HP. The dialog/choice bytes still need the same kind of probe.
+
 ## Responsiveness (continuous control)
 
 - The bridge keeps **one** SSH session open to a tiny allowlisted shell loop on

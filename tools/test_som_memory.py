@@ -12,6 +12,11 @@ def put16(data, address, value):
 
 
 class TestWRAM(unittest.TestCase):
+    def test_floor_height_collision_classification(self):
+        self.assertEqual(WRAM.classify_tile([1, 0, 0, 0], 1)[0], "open")
+        self.assertEqual(WRAM.classify_tile([2, 0, 0, 0], 1),
+                         ("blocked", ["floor_height_wall"]))
+
     def test_requires_raw_wram_not_savestate(self):
         with self.assertRaises(ValueError):
             WRAM(b"savestate")
@@ -42,6 +47,48 @@ class TestWRAM(unittest.TestCase):
         self.assertEqual(state["enemy_slots"][0]["x_raw"], 25)
         self.assertIsNone(state["enemy_slots"][0]["active"])
         self.assertIsNone(state["player_position"])
+
+    def test_runtime_verifies_and_classifies_nearby_tiles(self):
+        data = bytearray(128 * 1024)
+        data[0x7EE000 - 0x7E0000] = 1
+        data[0x7E00E4 - 0x7E0000] = 1
+        data[0x7E00E6 - 0x7E0000] = 0x0F
+        put16(data, 0x7E00C0, 16 * 8)
+        put16(data, 0x7E00C2, 16 * 8)
+        put16(data, 0x7E00DC, 131)
+        put16(data, 0x7EE002, 2 * 16 + 8)
+        put16(data, 0x7EE004, 3 * 16 + 8)
+        data[0x7EE00B - 0x7E0000] = 0
+        data[0x7EE04C - 0x7E0000] = 5
+        data[0x7EE048 - 0x7E0000] = 0
+        data[0x7EE08E - 0x7E0000] = 6
+        tile_map = 0x7F0000 - 0x7E0000
+        data[tile_map:tile_map + 0x4000] = bytes([5]) * 0x4000
+        data[tile_map + 3 * 128 + 3] = 6
+        attributes = 0x7FB800 - 0x7E0000
+        data[attributes + 5 * 4:attributes + 5 * 4 + 4] = bytes([0, 6, 0, 0])
+        data[attributes + 6 * 4:attributes + 6 * 4 + 4] = bytes([3, 0, 0, 0])
+        state = WRAM(data).observe()
+        context = state["tile_context"]
+        self.assertTrue(context["runtime_verified"])
+        self.assertEqual(context["map_id"], 131)
+        self.assertEqual(context["game_mode"], "field")
+        self.assertEqual(context["actor_tile"], [2, 3])
+        self.assertEqual(context["passability_rows"][3][3:5], "@#")
+        self.assertEqual(state["player_position"]["x_px"], 40)
+
+    def test_tile_context_fails_closed_when_actor_fields_disagree(self):
+        data = bytearray(128 * 1024)
+        data[0x7EE000 - 0x7E0000] = 1
+        data[0x7E00E4 - 0x7E0000] = 1
+        data[0x7E00E6 - 0x7E0000] = 0x0F
+        put16(data, 0x7E00C0, 16 * 8)
+        put16(data, 0x7E00C2, 16 * 8)
+        data[0x7EE04C - 0x7E0000] = 99
+        context = WRAM(data).tile_context()
+        self.assertFalse(context["runtime_verified"])
+        self.assertEqual(context["verification_error"], "actor_tile_fields_disagree")
+        self.assertNotIn("passability_rows", context)
 
     def test_history(self):
         with tempfile.TemporaryDirectory() as directory:

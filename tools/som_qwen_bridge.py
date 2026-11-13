@@ -17,8 +17,13 @@ from pathlib import Path
 from som_memory import WRAM, ObservationHistory
 
 ACTIONS = {
-    "right", "left", "up", "down", "attack", "open_ring",
-    "confirm", "cancel", "next_ring", "prev_ring", "snapshot",
+    "step_right", "step_left", "step_up", "step_down", "wait",
+    "attack", "open_ring", "confirm", "cancel", "next_ring",
+    "prev_ring", "snapshot",
+}
+STEP_OFFSETS = {
+    "step_right": (1, 0), "step_left": (-1, 0),
+    "step_up": (0, -1), "step_down": (0, 1),
 }
 
 def choose_action(url: str, model: str, objective: str, previous: str, observation=None) -> str:
@@ -28,7 +33,10 @@ def choose_action(url: str, model: str, objective: str, previous: str, observati
         "Choose ONE safe, short controller action from: "
         + ", ".join(sorted(ACTIONS))
         + ". Reply with ONLY the lowercase action name. "
-        "Prefer movement or attack, avoid menus unless asked. "
+        "Use only short step movement. The tile grid uses @ for the actor, "
+        ". for open, # for blocked, and ? for conditional terrain. "
+        "Prefer a verified open step or attack; wait when movement is unsafe. "
+        "Avoid menus unless asked. "
         f"Objective: {objective}. Previous action: {previous}. "
         + ("Verified/partially decoded WRAM observation (unknown values are null; "
            "never assume an enemy slot is active): "
@@ -57,11 +65,41 @@ def choose_action(url: str, model: str, objective: str, previous: str, observati
         )
     return candidate
 
+def guard_tile_action(action: str, observation) -> str:
+    """Deterministically veto movement that lacks a verified open next tile."""
+    context = observation.get("tile_context") if isinstance(observation, dict) else None
+    if isinstance(context, dict) and context.get("game_mode") != "field":
+        return "wait" if action in STEP_OFFSETS or action == "attack" else action
+    if action not in STEP_OFFSETS:
+        return action
+    if not isinstance(context, dict) or not context.get("runtime_verified"):
+        return "wait"
+    rows = context.get("passability_rows")
+    radius = context.get("radius")
+    dx, dy = STEP_OFFSETS[action]
+    if not isinstance(rows, list) or not isinstance(radius, int):
+        return "wait"
+    row = radius + dy
+    column = radius + dx
+    if not 0 <= row < len(rows) or not isinstance(rows[row], str) or not 0 <= column < len(rows[row]):
+        return "wait"
+    return action if rows[row][column] == "." else "wait"
+
 def send_action(host: str, action: str) -> None:
     # stdin carries an allowlisted command. No LLM text is interpolated into shell.
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7",
            host, "cat > /tmp/flxtr-som-ai-action"]
     subprocess.run(cmd, input=action + "\n", text=True, check=True, timeout=15)
+
+def remote_ring_ai_enabled(host: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7", host,
+             "test -f /tmp/flxtr-som-ai-enabled"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -78,6 +116,10 @@ def main() -> int:
                         help="Read /tmp/flxtr-som-wram.bin on target via SSH per step")
     parser.add_argument("--history-db", type=Path,
                         help="Optional persistent SQLite observation log")
+    parser.add_argument("--ring-control", action="store_true",
+                        help="Wait for the in-game Action Grid start gesture and stop on takeover")
+    parser.add_argument("--start-timeout", type=float, default=300.0,
+                        help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
     if not (1 <= args.steps <= 30) or args.interval < 1.0:
         parser.error("steps must be 1..30 and interval at least 1 second")
@@ -85,11 +127,28 @@ def main() -> int:
         parser.error("only local Ollama is supported for this initial experiment")
     if args.wram_file and args.wram_remote:
         parser.error("choose one of --wram-file or --wram-remote")
+    if args.ring_control and args.dry_run:
+        parser.error("--ring-control requires a live SSH target")
+    if args.ring_control and not args.wram_remote:
+        parser.error("--ring-control requires --wram-remote for fail-closed perception")
+    if not 1 <= args.start_timeout <= 3600:
+        parser.error("start-timeout must be 1..3600 seconds")
     history = ObservationHistory(args.history_db) if args.history_db else None
+    if args.ring_control:
+        print("[qwen] waiting for unchanged Action Grid confirmation", flush=True)
+        deadline = time.monotonic() + args.start_timeout
+        while not remote_ring_ai_enabled(args.host):
+            if time.monotonic() >= deadline:
+                print("[qwen] stopped safely: Action Grid start timed out", file=sys.stderr)
+                return 1
+            time.sleep(1.0)
+        print("[qwen] Action Grid start received", flush=True)
     previous = "none"
     repeated = 0
     for i in range(args.steps):
         try:
+            if args.ring_control and not remote_ring_ai_enabled(args.host):
+                raise ValueError("Action Grid AI signal cleared by physical takeover or game exit")
             observation = None
             if args.wram_file:
                 observation = WRAM.load(args.wram_file).observe()
@@ -102,6 +161,10 @@ def main() -> int:
                 observation = WRAM(raw).observe()
             action = choose_action(args.ollama_url, args.model,
                                    args.objective, previous, observation)
+            guarded_action = guard_tile_action(action, observation)
+            if guarded_action != action:
+                print(f"[qwen] tile guard: {action} -> {guarded_action}", flush=True)
+            action = guarded_action
             # The same action indefinitely is not intelligent control. Stop
             # instead of blindly attacking or walking into a wall.
             repeated = repeated + 1 if action == previous else 1

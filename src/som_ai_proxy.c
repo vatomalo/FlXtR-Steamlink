@@ -43,7 +43,11 @@ static const char *trigger_file;
 static const char *action_file="/tmp/flxtr-som-ai-action";
 static const char *wram_file="/tmp/flxtr-som-wram.bin";
 static const char *wram_temp_file="/tmp/flxtr-som-wram.bin.tmp";
+static const char *ring_ai_file="/tmp/flxtr-som-ai-enabled";
 static int wram_export_error_logged;
+static int ring_ai_selector_open,ring_ai_pending,ring_ai_enabled;
+static uint8_t ring_ai_initial_cell;
+static unsigned long ring_ai_grace_until;
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
 static uint8_t som_previous_menu[SOM_MENU_SCAN_LENGTH];
@@ -124,6 +128,10 @@ static void som_input_poll(void){
                     combo_count,frame_number);
         }
         last_physical_buttons=current;
+        if(ring_ai_enabled&&current&&frame_number>=ring_ai_grace_until){
+            ring_ai_enabled=0;unlink(ring_ai_file);
+            fprintf(stderr,"[som-ai] RING AI STOP physical controller takeover\n");
+        }
         if(autonomous_mode && current){
             autonomous_mode=0;armed=0;cancelled=1;
             fprintf(stderr,"[som-ai] AUTO STOP physical controller takeover\n");
@@ -193,6 +201,44 @@ static int som_export_wram(void){
     if(ok)ok=rename(wram_temp_file,wram_file)==0;
     if(!ok)unlink(wram_temp_file);
     return ok;
+}
+
+static int som_write_ring_ai_marker(void){
+    int fd=open(ring_ai_file,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
+    if(fd<0)return 0;
+    static const char enabled[]="enabled\n";
+    int ok=write(fd,enabled,sizeof(enabled)-1)==(ssize_t)(sizeof(enabled)-1);
+    if(ok)ok=fsync(fd)==0;
+    if(close(fd)!=0)ok=0;
+    if(!ok)unlink(ring_ai_file);
+    return ok;
+}
+
+/* The existing Action Grid remains unmodified. Confirming its currently
+ * selected 4x4 cell is an otherwise harmless gesture that requests external
+ * AI control. Changing cells continues to configure the game's native AI. */
+static void som_ring_ai_tick(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    int ring_open=ram[0x007D]==1;
+    int action_grid=ring_open&&ram[0xA20F]==4;
+    int selector=action_grid&&(ram[0xA212]&0x20)!=0;
+    uint8_t cell=ram[0xA136]&0x0F;
+    if(selector&&!ring_ai_selector_open)ring_ai_initial_cell=cell;
+    if(!selector&&ring_ai_selector_open&&action_grid&&cell==ring_ai_initial_cell){
+        ring_ai_pending=1;
+        fprintf(stderr,"[som-ai] RING AI requested from unchanged Action Grid cell %u\n",
+            (unsigned)cell);
+    }
+    ring_ai_selector_open=selector;
+    if(ring_ai_pending&&!ring_open){
+        ring_ai_pending=0;
+        if(som_write_ring_ai_marker()){
+            ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
+            fprintf(stderr,"[som-ai] RING AI START signal ready at %s\n",ring_ai_file);
+        }else fprintf(stderr,"[som-ai] RING AI start signal failed\n");
+    }
 }
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
@@ -303,7 +349,7 @@ RETRO_API void retro_deinit(void){
     /* RetroArch may call get_system_info again; do not unload an active
      * backend out from under its borrowed system-info string pointers. */
     game_loaded=0;armed=0;
-    unlink(wram_file);unlink(wram_temp_file);
+    unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
     (void)environment_callback;
 }
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
@@ -314,6 +360,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     last_physical_buttons=0;last_attack_frame=0;combo_count=0;
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     wram_export_error_logged=0;
+    ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
+    ring_ai_initial_cell=0;ring_ai_grace_until=0;
     game_loaded=backend_load_game(game);
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
@@ -332,7 +380,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
         }
         if(test_enabled){
             unlink(action_file);
-            unlink(wram_file);unlink(wram_temp_file);
+            unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
             fprintf(stderr,"[som-ai] READY: legacy %s; actions via %s; read-only WRAM via %s\n",
                 trigger_file,action_file,wram_file);
         }
@@ -341,7 +389,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
 }
 RETRO_API void retro_unload_game(void){
     armed=0;autonomous_mode=0;game_loaded=0;
-    unlink(wram_file);unlink(wram_temp_file);
+    ring_ai_enabled=0;ring_ai_pending=0;
+    unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
     if(backend_unload_game)backend_unload_game();
 }
 RETRO_API void retro_run(void){
@@ -355,6 +404,7 @@ RETRO_API void retro_run(void){
                 som_action_name(active_action),frame_number,injected_queries);
     }
     backend_run();
+    if(test_enabled&&on_turbo)som_ring_ai_tick();
     if(test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&
        !som_export_wram()&&!wram_export_error_logged){
         wram_export_error_logged=1;

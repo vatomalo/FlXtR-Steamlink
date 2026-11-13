@@ -22,8 +22,9 @@ controller and have **not** all been verified against the Turbo menus.
 
 Available commands: `right`, `left`, `up`, `down`, `attack`,
 `open_ring`, `confirm`, `cancel`, `next_ring`, `prev_ring`,
-`snapshot`. Movement lasts 30 emulated frames; buttons pulse for two
-frames. The legacy `touch /tmp/flxtr-som-ai-go` still sends Right.
+`step_right`, `step_left`, `step_up`, `step_down`, `wait`, and `snapshot`.
+Full movement lasts 30 emulated frames, tile-aware steps last six, and buttons
+pulse for two frames. The legacy `touch /tmp/flxtr-som-ai-go` still sends Right.
 
 To send an action while the AI proxy is running:
 
@@ -42,6 +43,13 @@ to `/tmp/flxtr-som-wram.bin` every 30 emulated frames. Each 128-KiB image is
 written under a temporary name and atomically renamed, so a remote observer
 never reads a half-written frame. The files are removed when the game unloads.
 This feed exposes bytes only; Turbo state mappings remain unverified.
+
+The existing Action Grid can also start a waiting SkyLoft AI bridge without a
+ROM or ring-data patch. Open Action Grid, enter its 4×4 selector, and confirm
+the already-selected cell without moving it. The proxy preserves the native
+personality and creates `/tmp/flxtr-som-ai-enabled` only after the ring closes.
+Run `som_qwen_bridge.py` with `--ring-control --wram-remote` to wait for that
+signal. Physical controller takeover, game unload, and core shutdown clear it.
 
 Do not send commands concurrently; wait for each
 `[som-ai] COMPLETE` log. The command file is consumed once and only

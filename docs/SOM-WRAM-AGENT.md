@@ -6,6 +6,8 @@ Branch: `feature/som-ai-memory-agent-20261112`.
 
 - Read **raw 131072-byte SNES WRAM**, starting at SNES address `7E0000`.
 - Decode documented enemy slots, party attributes, and weapon-use flag.
+- Decode the hero's pixel position, current map, active 16×16 tile layer, and
+  a compact 7×7 nearby tile/collision grid.
 - Provide a compact observation to Ollama alongside the objective.
 - Export a live, read-only 128-KiB WRAM image atomically from the opt-in
   Libretro proxy every 30 emulated frames.
@@ -13,14 +15,16 @@ Branch: `feature/som-ai-memory-agent-20261112`.
 - Stop after 4 identical actions instead of looping forever.
 - Preserve the existing SSH allowlisted action protocol.
 
-**Not yet implemented:** verified player coordinates/map IDs/collision geometry,
-automated movement feedback, pathfinding, or party member spawning. No claim of
-autonomous exploration is made.
+Tile mapping fails closed: the grid is published as runtime-verified only when
+the tile under the hero agrees with the actor's separately maintained tile ID,
+ground-effect byte, and priority field. **Not yet implemented:** automated
+movement feedback, pathfinding, or party member spawning. No claim of autonomous
+exploration is made.
 
 ## Run tests
 
 ```sh
-PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_memory.py' -v
+PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py' -v
 python3 -m py_compile tools/som_memory.py tools/som_qwen_bridge.py
 ```
 
@@ -41,8 +45,40 @@ temporary file plus atomic rename, and unload removes the snapshot so the
 bridge does not consume stale state. Use `--wram-remote` to read it via SSH.
 
 This makes the bytes live; it does **not** make unverified fields trustworthy.
-Turbo coordinates, current map, collision state, and enemy-slot activity must
-still be mapped experimentally before they can drive autonomous movement.
+The observation now includes nearby tile IDs and a compact passability grid.
+Solid cells are marked `#`, open cells `.`, conditional slopes/layer switches
+and moving ground `?`, and the actor `@`. Runtime cross-checking protects the
+AI from consuming a shifted or incompatible Turbo layout, but real hardware
+testing is still required before this grid drives autonomous movement.
+
+Qwen uses six-frame `step_*` movement commands rather than the older 30-frame
+manual movement pulses. A deterministic guard changes a proposed step to
+`wait` unless the runtime-verified adjacent cell is open. Blocked (`#`),
+conditional (`?`), malformed, and unverified grids all fail closed.
+
+## Start from the existing Action Grid ring menu
+
+Run the SkyLoft bridge with `--ring-control --wram-remote`, then open the
+game's existing Action Grid, open its 4×4 selector, and confirm the currently
+selected square without changing it. The proxy observes that harmless commit
+transition and publishes `/tmp/flxtr-som-ai-enabled`; it does not alter the
+ring, personality value, ROM, or WRAM. Closing the ring releases the start
+signal. Any physical controller input after the short menu-close grace period,
+game unload, or core shutdown removes the signal and the bridge stops.
+
+```sh
+python3 tools/som_qwen_bridge.py --ring-control --wram-remote \
+  --model qwen3:0.6b --steps 30 --objective "Follow open tiles and explore safely"
+```
+
+The bridge process must already be running (or supervised as a SkyLoft
+service). The Steam Link ring cannot itself launch a process on SkyLoft.
+
+Mapping basis: the live work-map and collision-cache layout follows the
+read-only reverse engineering in `cidwel/som-decomp` (`docs/maps.md` and
+`docs/hero-movement.md`), while the 16×16 block/collision organization is
+also documented by the Secret of Mana map-editor project. The runtime
+cross-check remains mandatory because this target is the Turbo ROM hack.
 
 **Do not feed serialized savestates** to `--wram-file`. Libretro
 `retro_serialize()` outputs core-specific state, not plain WRAM.

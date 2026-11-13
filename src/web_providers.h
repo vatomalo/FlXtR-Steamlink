@@ -45,6 +45,53 @@ static int web_source_at(json_object *source,const char *provider,const char *or
     return 1;
 }
 static int web_source(json_object *source,const char *provider){return web_source_at(source,provider,NULL);}
+static int web_first_hls_uri(const char *manifest,const char *base,char *out,size_t size){
+    const char *p=manifest;
+    while(p&&*p){
+        while(*p=='\r'||*p=='\n')p++;
+        const char *end=strpbrk(p,"\r\n");size_t n=end?(size_t)(end-p):strlen(p);
+        if(n&&*p!='#'&&n<2048){char uri[2048];memcpy(uri,p,n);uri[n]=0;return hls_resolve_uri(base,uri,out,size);}
+        p=end;
+    }
+    return 0;
+}
+static int web_media_prefix(const unsigned char *data,size_t length,const char *type){
+    if(!length||(type&&(!strncasecmp(type,"image/",6)||!strncasecmp(type,"text/html",9))))return 0;
+    if(length>=4&&data[0]==0x89&&data[1]=='P'&&data[2]=='N'&&data[3]=='G')return 0;
+    if(length>=3&&data[0]==0xff&&data[1]==0xd8&&data[2]==0xff)return 0;
+    if(length>=6&&(!memcmp(data,"GIF87a",6)||!memcmp(data,"GIF89a",6)))return 0;
+    if(length>=5&&(!strncasecmp((const char*)data,"<html",5)||!strncasecmp((const char*)data,"<!doc",5)))return 0;
+    return 1;
+}
+typedef struct {unsigned char data[32];size_t length;} WebProbe;
+static size_t web_probe_receive(void *ptr,size_t size,size_t nmemb,void *opaque){
+    if(size&&nmemb>SIZE_MAX/size)return 0;
+    size_t n=size*nmemb;WebProbe *probe=opaque;
+    size_t copy=n;if(copy>sizeof(probe->data)-probe->length)copy=sizeof(probe->data)-probe->length;
+    if(copy){memcpy(probe->data+probe->length,ptr,copy);probe->length+=copy;}
+    return probe->length==sizeof(probe->data)?0:n;
+}
+static int web_probe_url(const char *url,const char *referer){
+    WebProbe probe={{0},0};CURL *c=curl_easy_init();if(!c)return 0;
+    curl_easy_setopt(c,CURLOPT_URL,url);curl_easy_setopt(c,CURLOPT_REFERER,referer);curl_easy_setopt(c,CURLOPT_USERAGENT,"Mozilla/5.0");
+    curl_easy_setopt(c,CURLOPT_RANGE,"0-4095");curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,web_probe_receive);curl_easy_setopt(c,CURLOPT_WRITEDATA,&probe);
+    curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,4L);curl_easy_setopt(c,CURLOPT_TIMEOUT,12L);curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);
+    curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,1L);curl_easy_setopt(c,CURLOPT_MAXREDIRS,3L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L);curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L);curl_easy_setopt(c,CURLOPT_CAINFO,FLXTR_CA_BUNDLE);
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"https");curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"https");
+#else
+    curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS,CURLPROTO_HTTPS);
+#endif
+    CURLcode rc=curl_easy_perform(c);long code=0;char *type=NULL;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&code);curl_easy_getinfo(c,CURLINFO_CONTENT_TYPE,&type);
+    int ok=(rc==CURLE_OK||rc==CURLE_WRITE_ERROR)&&(code==200||code==206)&&web_media_prefix(probe.data,probe.length,type);curl_easy_cleanup(c);return ok;
+}
+static int web_hls_media(const char *manifest,const char *base,const char *referer,int depth){
+    char next[2048];if(depth>2||!web_first_hls_uri(manifest,base,next,sizeof(next)))return 0;
+    if(strstr(manifest,"#EXT-X-STREAM-INF:")){
+        char *child=web_get(next,referer,NULL,"Fallback HLS variant request");int ok=child&&web_hls_media(child,next,referer,depth+1);free(child);return ok;
+    }
+    return web_probe_url(next,referer);
+}
 static json_object *web_assignment(const char *page,const char *marker){
     const char *p=strstr(page,marker);return p?parse(p+strlen(marker)):NULL;
 }
@@ -102,7 +149,8 @@ static int web_provider(const char *provider,int id,int season,int episode){
     int ok=!strcmp(provider,"fmovies")?web_fmovies(id,season,episode):web_sflix(id,season,episode);
     if(!ok){count=0;fprintf(stderr,"%s returned no native-playable source for TMDB %d S%d E%d\n",provider,id,season,episode);return 1;}
     char *manifest=web_get(choices[0].url,!strcmp(provider,"sflix")?"https://vidspark.to/":FMOVIES_PLAYER"/",NULL,!strcmp(provider,"sflix")?"SFlix HLS playlist request":"FMovies HLS playlist request");
-    if(!manifest||strncmp(manifest,"#EXTM3U",7)){free(manifest);count=0;fprintf(stderr,"%s did not return a usable HLS playlist\n",provider);return 1;}
+    const char *referer=!strcmp(provider,"sflix")?"https://vidspark.to/":FMOVIES_PLAYER"/";
+    if(!manifest||strncmp(manifest,"#EXTM3U",7)||!web_hls_media(manifest,choices[0].url,referer,0)){free(manifest);count=0;fprintf(stderr,"%s did not return playable media\n",provider);return 1;}
     add_variants(manifest,choices[0].url,!strcmp(provider,"sflix")?"SFLIX":"FMOVIES");free(manifest);return 0;
 }
 static void web_servers(void){

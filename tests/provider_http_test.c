@@ -8,8 +8,13 @@
 int main(void){
     AVDictionary *opts=NULL;setenv("FLXTR_MEDIA_PROVIDER","sflix",1);provider_http_options(&opts);
     assert(!strcmp(av_dict_get(opts,"referer",NULL,0)->value,"https://vidspark.to/"));
-    assert(!strcmp(av_dict_get(opts,"allowed_extensions",NULL,0)->value,"ALL"));av_dict_free(&opts);
-    setenv("FLXTR_MEDIA_PROVIDER","fmovies",1);provider_http_options(&opts);assert(!strcmp(av_dict_get(opts,"referer",NULL,0)->value,"https://videm.buzz/"));av_dict_free(&opts);
+    assert(!strcmp(av_dict_get(opts,"user_agent",NULL,0)->value,"Mozilla/5.0"));
+    assert(!strcmp(av_dict_get(opts,"allowed_extensions",NULL,0)->value,"ALL"));
+    assert(!strcmp(av_dict_get(opts,"allowed_segment_extensions",NULL,0)->value,"ALL"));av_dict_free(&opts);
+    setenv("FLXTR_MEDIA_PROVIDER","fmovies",1);provider_http_options(&opts);assert(!strcmp(av_dict_get(opts,"referer",NULL,0)->value,"https://videm.buzz/"));
+    assert(!strcmp(av_dict_get(opts,"user_agent",NULL,0)->value,"Mozilla/5.0"));
+    assert(!strcmp(av_dict_get(opts,"allowed_extensions",NULL,0)->value,"ALL"));
+    assert(!strcmp(av_dict_get(opts,"allowed_segment_extensions",NULL,0)->value,"ALL"));av_dict_free(&opts);
     unsetenv("FLXTR_MEDIA_PROVIDER");provider_http_options(&opts);assert(!opts);
-    puts("PASS: fixed provider origins and playlist extensions; ordinary playback options unchanged");return 0;
+    puts("PASS: fixed provider origins, browser identity and playlist extensions; ordinary playback options unchanged");return 0;
 }

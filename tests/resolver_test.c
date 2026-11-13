@@ -41,6 +41,10 @@ int main(void){
     assert(web_source(o,"SFLIX")&&count==1&&strstr(choices[0].meta,"SFLIX")&&choices[0].subs_eng[0]);json_object_put(o);
     o=parse("{\"url\":\"/relative/master.m3u8\"}");assert(web_source_at(o,"FMOVIES",FMOVIES_PLAYER)&&!strcmp(choices[0].url,"https://videm.buzz/relative/master.m3u8"));json_object_put(o);
     o=parse("{\"url\":\"file:///etc/passwd\"}");assert(!web_source(o,"FMOVIES"));json_object_put(o);
+    const unsigned char png[]={0x89,'P','N','G',13,10,26,10},ts[]={0x47,0x40,0x00,0x10};
+    assert(!web_media_prefix(png,sizeof(png),"image/png")&&web_media_prefix(ts,sizeof(ts),"video/mp2t"));
+    char first[256];assert(web_first_hls_uri("#EXTM3U\n#EXTINF:4,\nsegment.ts\n","https://media.example/path/list.m3u8",first,sizeof(first))&&
+        !strcmp(first,"https://media.example/path/segment.ts"));
     assert(!strcmp(FMOVIES_PLAYER,"https://videm.buzz"));
     puts("PASS: marker discovery, server deduplication, URL validation and compatible HLS quality choices");return 0;
 }

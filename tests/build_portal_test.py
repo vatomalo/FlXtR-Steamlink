@@ -23,6 +23,8 @@ class PortalTest(unittest.TestCase):
         self.assertIn('id="copy-output"', page)
         self.assertIn("navigator.clipboard.writeText(value)", page)
         self.assertIn("document.execCommand('copy')", page)
+        self.assertIn('id="clean-checkout"', page)
+        self.assertIn("'/api/checkout/clean'", page)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -133,6 +135,31 @@ print('Build complete.',flush=True)
         portal.atomic_json(folder / 'job.json', dict(id='a' * 32, status='queued', created=time.time()))
         with self.assertRaises(BlockingIOError):
             self.store.create(dict(platform='android', arch='universal', branch='main'))
+
+    def test_clean_checkout_preserves_changes_in_recovery_stash(self):
+        subprocess.run(['git', 'init', '-q', '-b', 'main', str(self.source)], check=True)
+        subprocess.run(['git', '-C', str(self.source), 'config', 'user.name', 'Portal Test'], check=True)
+        subprocess.run(['git', '-C', str(self.source), 'config', 'user.email', 'portal@example.invalid'], check=True)
+        tracked = self.source / 'tracked.txt'
+        tracked.write_text('original\n')
+        subprocess.run(['git', '-C', str(self.source), 'add', 'tracked.txt'], check=True)
+        subprocess.run(['git', '-C', str(self.source), 'commit', '-qm', 'fixture'], check=True)
+        tracked.write_text('changed\n')
+        (self.source / 'untracked.txt').write_text('keep this too\n')
+        generated = self.source / 'android/.gradle/cache.bin'
+        generated.parent.mkdir(parents=True)
+        generated.write_text('cache\n')
+        status, response = self.request('POST', '/api/checkout/clean', '', **{'X-Flxtr-Request': '1'})
+        result = json.loads(response)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result['stash'], 'stash@{0}')
+        self.assertEqual(subprocess.check_output(
+            ['git', '-C', str(self.source), 'status', '--porcelain'], text=True), '')
+        stash = subprocess.check_output(
+            ['git', '-C', str(self.source), 'stash', 'show', '--include-untracked', '--name-only', 'stash@{0}'], text=True)
+        self.assertIn('tracked.txt', stash)
+        self.assertIn('untracked.txt', stash)
+        self.assertFalse(generated.exists())
 
 
 if __name__ == '__main__':

@@ -20,6 +20,12 @@ PLATFORMS = {'android', 'steamlink', 'linux', 'windows', 'desktop', 'all'}
 ARCHES = {'universal', 'arm64', 'armv7', 'x86_64'}
 ARTIFACTS = ('FlXtR-Android-preview.apk', 'greenlink.tgz', 'FlXtR-Linux-x86_64.tgz', 'FlXtR-Windows-x86_64.zip')
 JOB_ID = re.compile(r'^[0-9a-f]{32}$')
+GENERATED_PATHS = (
+    'android/.gradle', 'android/app/.cxx', 'android/app/libs',
+    'android/app/src/main/jniLibs', 'android/local.properties',
+    'android/moonlight/AndroidManifest.xml',
+    'companion/FlXtR.Gamez/bin', 'companion/FlXtR.Gamez/obj',
+)
 
 
 @dataclass
@@ -157,6 +163,42 @@ class Store:
                 threading.Thread(target=worker.wait, daemon=True).start()
             return build
 
+    def clean_checkout(self):
+        with self.guard, (self.config.state / 'dispatch.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if any(job['status'] in ('queued', 'running') for job in self.list()):
+                raise BlockingIOError('Wait for the active build to finish before cleaning.')
+            build_lock = Path(os.environ.get('FLXTR_STORAGE', '/opt/dockers/storage')) / 'build-home/flxtr-build.lock'
+            if build_lock.exists():
+                with build_lock.open('a') as current:
+                    try:
+                        fcntl.flock(current, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        raise BlockingIOError('Wait for the command-line build to finish before cleaning.') from None
+            source = self.config.source
+            before = subprocess.check_output(
+                ['git', '-C', str(source), 'status', '--porcelain', '--untracked-files=all'], text=True)
+            stash = None
+            if before:
+                message = 'SkyLoft build checkout recovery ' + time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                result = subprocess.run(
+                    ['git', '-C', str(source), 'stash', 'push', '--include-untracked', '-m', message],
+                    text=True, capture_output=True, timeout=120)
+                if result.returncode:
+                    raise ValueError('Could not preserve checkout changes: ' + (result.stderr.strip() or result.stdout.strip()))
+                stash = subprocess.check_output(
+                    ['git', '-C', str(source), 'stash', 'list', '-1', '--format=%gd'], text=True).strip() or None
+            subprocess.run(
+                ['git', '-C', str(source), 'clean', '-fdx', '--', *GENERATED_PATHS],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            remaining = subprocess.check_output(
+                ['git', '-C', str(source), 'status', '--porcelain', '--untracked-files=all'], text=True)
+            if remaining:
+                paths = '\n'.join(remaining.splitlines()[:40])
+                raise ValueError('Checkout still has changes after recovery:\n' + paths)
+            return {'clean': True, 'stash': stash,
+                    'message': 'Checkout cleaned.' + (f' Changes preserved in {stash}.' if stash else '')}
+
 
 def run_job(store, identity):
     folder = store.folder(identity)
@@ -265,6 +307,13 @@ def handler_for(store):
             origin = self.headers.get('Origin')
             if (origin and origin not in ('http://' + self.headers['Host'], 'https://' + self.headers['Host'])) or self.headers.get('X-Flxtr-Request') != '1':
                 return self.reply(403, {'error': 'Open the build page on SkyLoft to submit a build.'})
+            if self.path == '/api/checkout/clean':
+                try:
+                    return self.reply(200, store.clean_checkout())
+                except BlockingIOError as error:
+                    return self.reply(409, {'error': str(error)})
+                except (OSError, subprocess.SubprocessError, ValueError) as error:
+                    return self.reply(400, {'error': str(error)})
             if self.path != '/api/jobs':
                 return self.reply(404, {'error': 'Not found.'})
             if self.headers.get('Content-Type', '').split(';', 1)[0] != 'application/json':

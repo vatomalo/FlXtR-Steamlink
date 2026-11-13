@@ -120,6 +120,7 @@ class MemoryPlanner:
         self.assumed_facing = None
         # Set by the bridge after charged attacks failed this run.
         self.charge_disabled = False
+        self.combat_learner = None  # Optional, trained only from verified live attacks
         self.last_pixel = None
 
     @staticmethod
@@ -499,11 +500,19 @@ class MemoryPlanner:
                              "misses": 0})
         recharge = hero.get("weapon_recharge")
         if abs(dx) <= 48 and abs(dy) <= 48 and observation.get("weapons_enabled"):
-            # A swing only connects in the facing direction (user report).
-            strike = self._face_and_strike(context, enemy, dx, dy, open_steps,
-                                           recharge == 0, hero)
-            if strike is not None:
-                return strike
+            # Only a mature learned range can veto a normal swing. Existing
+            # attack/charge logic remains the safe fallback for sparse data.
+            weapon = hero.get("weapon") or {}
+            learner = self.combat_learner
+            close_in = (learner is not None and weapon.get("verified") and
+                        learner.should_close(
+                            enemy.get("identity"), weapon.get("type"), distance,
+                            hp / max_hp if max_hp else 1.0))
+            if not close_in:
+                strike = self._face_and_strike(context, enemy, dx, dy, open_steps,
+                                               recharge == 0, hero)
+                if strike is not None:
+                    return strike
         # Follow the learned map first. Taking the straight-line step whenever
         # its first tile was open, and the map route only when it was not,
         # sent the hero up into a dead end and back down, over and over.

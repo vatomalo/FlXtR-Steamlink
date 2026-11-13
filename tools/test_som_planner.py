@@ -55,7 +55,7 @@ class TestMemoryPlanner(unittest.TestCase):
     def test_swings_only_while_facing_the_enemy(self):
         planner = MemoryPlanner()
         planner.facing_checks = [5, 0]                 # E010 verified
-        enemy = {"slot": 1, "active": True, "x_px": 40, "y_px": 20}   # straight above
+        enemy = {"slot": 1, "active": True, "x_px": 40, "y_px": 32}   # 24px straight above, within melee reach
         state = observation(enemy=enemy)
         state["tile_context"]["actor"]["facing"] = "step_right"
         self.assertEqual(planner.decide(state).action, "step_up")

@@ -141,6 +141,9 @@ class MemoryPlanner:
         # this many decisions of fighting back with no evading or retreat.
         self.provoked = 0
         self.last_hp = None
+        # Play loop: every monster is a target; the "cost more HP than GP"
+        # avoid list made the hero dance around enemies instead of hunting.
+        self.fight_all = False
         self.just_hit = False
         self.previous_action = "none"
         self.combat_learner = None  # Optional, trained only from verified live attacks
@@ -528,7 +531,7 @@ class MemoryPlanner:
         enemies = [enemy for enemy in enemies if str(enemy.get("slot")) not in cooldowns]
         # Reward ledger: types that cost far more HP than the GP they pay
         # are not engaged, and the hero backs away when one comes close.
-        avoided = set() if self.provoked else self._avoided_identities()
+        avoided = set() if (self.provoked or self.fight_all) else self._avoided_identities()
         shunned = [enemy for enemy in enemies if enemy.get("identity") in avoided]
         enemies = [enemy for enemy in enemies if enemy.get("identity") not in avoided]
         close = []

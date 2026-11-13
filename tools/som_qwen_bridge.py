@@ -538,6 +538,19 @@ INTENT_MESSAGES = {
 }
 
 
+LOOP_MESSAGES = {"hunt_here": "AI: hunting here|fighting monsters",
+                 "go_to_shop": "AI: going shopping|buying Candy",
+                 "go_to_inn": "AI: going to the inn|to rest",
+                 "go_to_save": "AI: going to save"}
+
+
+def loop_message(goal):
+    """Overlay text for a play-loop goal change."""
+    if goal and goal.startswith("hunt_map_"):
+        return f"AI: off to hunt|map {goal.rsplit('_', 1)[1]}"
+    return LOOP_MESSAGES.get(goal, f"AI: {str(goal).replace('_', ' ')}")
+
+
 def shop_errand(wram, observation, shop, gold, threshold):
     """Shop for Candy when healthy, rich, and not already carrying four."""
     if not isinstance(shop, dict) or not isinstance(gold, dict):
@@ -845,6 +858,7 @@ def main() -> int:
     if args.play_loop and history is not None and args.policy in ("hybrid", "memory"):
         play_loop = PlayLoop(history, args.hunt_map, args.trip_gold,
                              log=lambda line: print(line, flush=True))
+        planner.fight_all = True
         print(f"[loop] play loop on; phase {play_loop.phase}", flush=True)
     if history is not None:
         respawn_dialogue.restore_recent(history.connection)
@@ -1157,6 +1171,7 @@ def main() -> int:
                     if loop_goal != last_loop_goal:
                         print(f"[loop] {play_loop.phase}: goal {loop_goal}", flush=True)
                         last_loop_goal = loop_goal
+                        announce(loop_message(loop_goal))
                     goal = loop_goal
                     if goal == "go_to_save":
                         directive = (f"explore_{args.hunt_direction}"

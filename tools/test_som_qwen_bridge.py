@@ -277,5 +277,15 @@ class TestRemoteLink(unittest.TestCase):
             self.link.send_action("$(reboot)")
         self.assertFalse((self.root / "flxtr-som-ai-action").exists())
 
+
+class LoopMessageTest(unittest.TestCase):
+    def test_loop_messages(self):
+        from som_qwen_bridge import MESSAGE_ALLOWED as allowed, loop_message
+        for goal in ("hunt_map_129", "hunt_here", "go_to_shop", "go_to_inn", "go_to_save"):
+            text = loop_message(goal)
+            self.assertTrue(text.startswith("AI: "))
+            self.assertIsNone(allowed.search(text), text)
+        self.assertIn("129", loop_message("hunt_map_129"))
+
 if __name__ == "__main__":
     unittest.main()

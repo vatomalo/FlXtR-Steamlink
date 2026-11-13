@@ -225,6 +225,18 @@ class TestMemoryPlanner(unittest.TestCase):
         hit = planner.decide(observation(enemy=enemy, hp=80))
         self.assertNotEqual(hit.intention, "evade_enemy")
 
+    def test_fight_all_attacks_avoided_enemy_types(self):
+        enemy = {"slot": 1, "active": True, "x_px": 56, "y_px": 56, "identity": 9}
+        planner = MemoryPlanner()
+        planner.local_avoided.add(9)
+        self.assertEqual(planner.decide(observation(enemy=enemy, hp=90)).intention,
+                         "evade_enemy")
+        planner = MemoryPlanner()
+        planner.local_avoided.add(9)
+        planner.fight_all = True
+        self.assertNotEqual(planner.decide(observation(enemy=enemy, hp=90)).intention,
+                            "evade_enemy")
+
     def test_block_learner_drives_guard_decision(self):
         class Learner:
             def __init__(self, answer):

@@ -539,6 +539,26 @@ static void som_check_message(void){
     if(have&&som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES))
         fprintf(stderr,"[som-ai] MESSAGE %s\n",text);
 }
+/* The hero's position on the base 256x224 screen, from read-only WRAM:
+ * world position (7E:E002/E004) minus a camera that centres on the hero and
+ * stops at the map edges (map size 7E:00C0/00C2). Field mode only. */
+static int som_hero_screen(int *x,int *y){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return 0;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return 0;
+    if(ram[0xE000]!=1||ram[0x00E4]!=1||ram[0x00E6]!=0x0F||ram[0x00D0]!=0)return 0;
+    long w=ram[0xC0]|ram[0xC1]<<8,h=ram[0xC2]|ram[0xC3]<<8;
+    long hx=ram[0xE002]|ram[0xE003]<<8,hy=ram[0xE004]|ram[0xE005]<<8;
+    if(w<256||h<224||w>4096||h>4096)return 0;
+    hx%=w;hy%=h;
+    long cam_x=hx-128,cam_y=hy-112;
+    if(cam_x<0)cam_x=0;
+    if(cam_x>w-256)cam_x=w-256;
+    if(cam_y<0)cam_y=0;
+    if(cam_y>h-224)cam_y=h-224;
+    *x=(int)(hx-cam_x);*y=(int)(hy-cam_y);
+    return 1;
+}
 static void som_video_refresh(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
@@ -555,7 +575,9 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
         overlay_frame=grown;overlay_frame_size=size;
     }
     memcpy(overlay_frame,data,size);
-    som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay);
+    int hero_x=-1,hero_y=-1;
+    if(overlay.speech_bubble)som_hero_screen(&hero_x,&hero_y);
+    som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
     overlay.frames_left--;
     frontend_video(overlay_frame,width,height,pitch);
 }

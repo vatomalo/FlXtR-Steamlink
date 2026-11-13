@@ -58,8 +58,13 @@ static inline void som_overlay_fill(uint8_t *pixels,size_t pitch,int format,unsi
 
 /* Draw a bordered box near the bottom of a width x height frame. Hi-res and
  * interlaced SNES frames get the same apparent size via per-axis scaling. */
+/* anchor_x/anchor_y: the hero's position in base SNES screen pixels
+ * (256-wide), or negative when unknown. A speech bubble then sits with its
+ * tail tip SOM_BUBBLE_HEAD_PX above that point and follows the hero. */
+#define SOM_BUBBLE_HEAD_PX 30
 static inline void som_overlay_draw(uint8_t *pixels,unsigned width,unsigned height,
-                                    size_t pitch,int format,const SomOverlay *overlay){
+                                    size_t pitch,int format,const SomOverlay *overlay,
+                                    int anchor_x,int anchor_y){
     if(!overlay->line_count||!pixels)return;
     unsigned longest=0;
     for(unsigned i=0;i<overlay->line_count;i++){
@@ -69,13 +74,24 @@ static inline void som_overlay_draw(uint8_t *pixels,unsigned width,unsigned heig
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
     const unsigned box_w=(longest*6u+9u)*sx,box_h=(overlay->line_count*10u+7u)*sy;
     if(longest==0||box_w+4u>width||box_h+8u*sy>height)return;
-    const unsigned x0=(width-box_w)/2u;
-    /* Speech bubble sits above the usual player-center region. This is a
-     * screen-space anchor, NOT actor tracking: camera offsets are not
-     * validated yet. Keep the original bottom HUD box for status messages. */
-    const unsigned y0=overlay->speech_bubble?
-        (height/2u>box_h+14u*sy?height/2u-box_h-14u*sy:2u*sy):
+    unsigned x0=(width-box_w)/2u;
+    /* Speech bubbles follow the hero when its screen position is known,
+     * otherwise sit above the screen centre. Status messages keep the
+     * bottom HUD box. */
+    unsigned y0=overlay->speech_bubble?
+        (height/2u>box_h+(6u+SOM_BUBBLE_HEAD_PX)*sy?
+         height/2u-box_h-(6u+SOM_BUBBLE_HEAD_PX)*sy:2u*sy):
         height-box_h-8u*sy;
+    if(overlay->speech_bubble&&anchor_x>=0&&anchor_y>=0){
+        const long cx=(long)anchor_x*(long)sx;
+        const long tip=((long)anchor_y-SOM_BUBBLE_HEAD_PX)*(long)sy;
+        long left=cx-(long)box_w/2,top=tip-6L*(long)sy-(long)box_h;
+        if(left<2L*(long)sx)left=2L*(long)sx;
+        if(left+(long)box_w+2L*(long)sx>(long)width)left=(long)width-(long)box_w-2L*(long)sx;
+        if(top<2L*(long)sy)top=2L*(long)sy;
+        if(top+(long)box_h>(long)height)top=(long)height-(long)box_h;
+        x0=(unsigned)left;y0=(unsigned)top;
+    }
     const uint32_t border=overlay->speech_bubble?
         som_overlay_color(format,25,30,45):
         som_overlay_color(format,248,248,248);

@@ -435,6 +435,24 @@ int main(void){
     frame_number+=SOM_SWITCH_HOLD_FRAMES*2;som_input_poll();
     frame_number+=1;pressed=100;som_input_poll();
     assert(!ring_ai_enabled);
+    /* Bubble anchor: hero screen position under a hero-centred camera that
+     * stops at the map edges. */
+    backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_wram[0xE000]=1;mocked_wram[0x00E4]=1;mocked_wram[0x00E6]=0x0F;
+    mocked_wram[0xC0]=0x00;mocked_wram[0xC1]=0x04;              /* 1024 px wide */
+    mocked_wram[0xC2]=0x00;mocked_wram[0xC3]=0x03;              /* 768 px high */
+    int sx_,sy_;
+    mocked_wram[0xE002]=0xF4;mocked_wram[0xE003]=0x01;          /* x 500 */
+    mocked_wram[0xE004]=0x58;mocked_wram[0xE005]=0x02;          /* y 600 */
+    assert(som_hero_screen(&sx_,&sy_)&&sx_==128&&sy_==112);      /* centred */
+    mocked_wram[0xE002]=50;mocked_wram[0xE003]=0;mocked_wram[0xE004]=30;mocked_wram[0xE005]=0;
+    assert(som_hero_screen(&sx_,&sy_)&&sx_==50&&sy_==30);        /* top-left edge */
+    mocked_wram[0xE002]=0xE8;mocked_wram[0xE003]=0x03;          /* x 1000 */
+    mocked_wram[0xE004]=0xF0;mocked_wram[0xE005]=0x02;          /* y 752 */
+    assert(som_hero_screen(&sx_,&sy_)&&sx_==1000-768&&sy_==752-544); /* far edge */
+    mocked_wram[0x00D0]=0x81;assert(!som_hero_screen(&sx_,&sy_)); /* dialogue */
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");
     return 0;

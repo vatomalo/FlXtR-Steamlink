@@ -4,10 +4,16 @@ Branch: `feature/som-ai-memory-agent-20261112`.
 
 The supervised service now defaults to `SOM_AI_POLICY=memory`. This policy does
 not ask a language model for every button. It validates the live field tile,
-tracks map/layer/tile visits in SQLite, explores the least-visited safe exit,
-recognizes the three native monster slots, approaches a target, and attacks
-only when the weapon is ready. Set `SOM_AI_POLICY=qwen` to retain the older
-local-Ollama controller experiment.
+learns a persistent map/layer collision graph in SQLite, selects and retains a
+frontier target, and follows a shortest known route until the intention is
+reached or blocked. Combat overrides exploration: it can engage a verified
+enemy, attack when the weapon is ready, or retreat below 25 percent HP. Set
+`SOM_AI_POLICY=qwen` to retain the older local-Ollama controller experiment.
+
+The decision log names the current intention (`explore_frontier`,
+`engage_enemy`, `survive`, `replan`, or `observe`) and its target/reason. SSH
+connection reuse keeps the three remote operations per decision from paying a
+new handshake each time.
 
 ## What works in this checkpoint
 

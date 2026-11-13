@@ -1,4 +1,5 @@
-"""Persistent, fail-closed field planner for Secret of Mana."""
+"""Persistent, intention-driven, fail-closed field planner for Secret of Mana."""
+from collections import deque
 from dataclasses import dataclass
 
 STEP_OFFSETS = {
@@ -15,14 +16,17 @@ OPPOSITE_STEP = {
 class PlannerDecision:
     action: str
     reason: str
+    intention: str = "observe"
 
 
 class MemoryPlanner:
-    """Use verified WRAM, enemies and persisted visits to choose one safe action."""
+    """Pursue a durable goal using verified WRAM and a learned map graph."""
 
     def __init__(self, history=None):
         self.history = history
         self.local_visits = {}
+        self.local_cells = {}
+        self.local_intention = None
         self.last_position = None
 
     @staticmethod
@@ -45,27 +49,133 @@ class MemoryPlanner:
             delta = (delta + extent // 2) % extent - extent // 2
         return delta
 
+    @staticmethod
+    def _neighbor(position, offset, size):
+        return ((position[0] + offset[0]) % size[0],
+                (position[1] + offset[1]) % size[1])
+
     def _remember(self, observation, context):
         if self.history is not None:
             self.history.remember_position(observation)
+            self.history.remember_world(observation)
             return
         actor = context["actor"]
         key = (context["map_id"], actor["layer"], *context["actor_tile"])
         if key != self.last_position:
             self.local_visits[key] = self.local_visits.get(key, 0) + 1
             self.last_position = key
+        rows, radius = context["passability_rows"], context["radius"]
+        width, height = context["map_size_tiles"]
+        cx, cy = context["actor_tile"]
+        kinds = {".": "open", "@": "open", "#": "blocked", "?": "conditional"}
+        for row_index, row in enumerate(rows):
+            for column, marker in enumerate(row):
+                if marker in kinds:
+                    position = ((cx + column - radius) % width,
+                                (cy + row_index - radius) % height)
+                    self.local_cells[(context["map_id"], actor["layer"], *position)] = kinds[marker]
 
     def _visits(self, map_id, layer, x, y):
         if self.history is not None:
             return self.history.visit_count(map_id, layer, x, y)
         return self.local_visits.get((map_id, layer, x, y), 0)
 
-    def _approach_enemy(self, observation, context, open_steps):
+    def _known_cells(self, map_id, layer):
+        if self.history is not None:
+            return self.history.known_cells(map_id, layer)
+        return {(x, y): kind for (known_map, known_layer, x, y), kind
+                in self.local_cells.items() if known_map == map_id and known_layer == layer}
+
+    def _get_intention(self):
+        if self.history is not None:
+            return self.history.get_agent_state("intention")
+        return self.local_intention
+
+    def _set_intention(self, intention):
+        if self.history is not None:
+            self.history.set_agent_state("intention", intention)
+        else:
+            self.local_intention = intention
+
+    @staticmethod
+    def _routes(start, cells, size):
+        """Return shortest known-open paths as (first action, distance)."""
+        routes = {start: (None, 0)}
+        queue = deque([start])
+        while queue:
+            position = queue.popleft()
+            first, distance = routes[position]
+            for action, offset in STEP_OFFSETS.items():
+                neighbor = MemoryPlanner._neighbor(position, offset, size)
+                if neighbor in routes or cells.get(neighbor) != "open":
+                    continue
+                routes[neighbor] = (action if first is None else first, distance + 1)
+                queue.append(neighbor)
+        return routes
+
+    def _choose_frontier(self, context, cells, routes):
+        map_id, layer = context["map_id"], context["actor"]["layer"]
+        size = tuple(context["map_size_tiles"])
+        candidates = []
+        for position, (first, distance) in routes.items():
+            if first is None:
+                continue
+            unknown_edges = sum(
+                self._neighbor(position, offset, size) not in cells
+                for offset in STEP_OFFSETS.values())
+            if not unknown_edges:
+                continue
+            visits = self._visits(map_id, layer, *position)
+            candidates.append((visits, -distance, -unknown_edges, position))
+        if not candidates:
+            for position, (_, distance) in routes.items():
+                if distance:
+                    candidates.append((self._visits(map_id, layer, *position),
+                                       -distance, 0, position))
+        return min(candidates)[3] if candidates else None
+
+    def _explore(self, context, open_steps):
+        map_id, layer = context["map_id"], context["actor"]["layer"]
+        position = tuple(context["actor_tile"])
+        size = tuple(context["map_size_tiles"])
+        cells = self._known_cells(map_id, layer)
+        routes = self._routes(position, cells, size)
+        intention = self._get_intention()
+        valid = (isinstance(intention, dict) and intention.get("kind") == "explore" and
+                 intention.get("map_id") == map_id and intention.get("layer") == layer and
+                 isinstance(intention.get("target"), list))
+        target = tuple(intention["target"]) if valid else None
+        if target == position or target not in routes:
+            target = None
+        if target is None:
+            target = self._choose_frontier(context, cells, routes)
+            if target is None:
+                self._set_intention(None)
+                return None
+            intention = {"kind": "explore", "map_id": map_id, "layer": layer,
+                         "target": list(target), "last_position": list(position),
+                         "stagnant": 0}
+        else:
+            last = tuple(intention.get("last_position", []))
+            intention["stagnant"] = intention.get("stagnant", 0) + 1 if last == position else 0
+            intention["last_position"] = list(position)
+            if intention["stagnant"] >= 8:
+                self._set_intention(None)
+                return None
+        action, distance = routes[target]
+        if action not in open_steps:
+            self._set_intention(None)
+            return None
+        self._set_intention(intention)
+        return PlannerDecision(action,
+                               f"frontier {target[0]},{target[1]} is {distance} known tiles away",
+                               "explore_frontier")
+
+    def _combat(self, observation, context, open_steps):
         actor = context["actor"]
         dimensions = context.get("map_size_tiles", [0, 0])
         width_px, height_px = dimensions[0] * 16, dimensions[1] * 16
-        enemies = [enemy for enemy in observation.get("enemy_slots", [])
-                   if enemy.get("active")]
+        enemies = [enemy for enemy in observation.get("enemy_slots", []) if enemy.get("active")]
         if not enemies:
             return None
         targets = []
@@ -74,49 +184,55 @@ class MemoryPlanner:
             dy = self._wrapped_delta(enemy["y_px"], actor["y_px"], height_px)
             targets.append((abs(dx) + abs(dy), dx, dy, enemy))
         distance, dx, dy, enemy = min(targets, key=lambda value: value[0])
-        recharge = observation.get("party", [{}])[0].get("weapon_recharge")
+        hero = observation.get("party", [{}])[0]
+        hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
+        if max_hp and hp * 4 <= max_hp:
+            retreat = []
+            for action in open_steps:
+                sx, sy = STEP_OFFSETS[action]
+                retreat.append((abs(dx - sx * 16) + abs(dy - sy * 16), action))
+            if retreat:
+                action = max(retreat)[1]
+                self._set_intention({"kind": "survive", "enemy": enemy["slot"]})
+                return PlannerDecision(action, f"retreat from enemy {enemy['slot']} at low HP",
+                                       "survive")
+        self._set_intention({"kind": "engage", "enemy": enemy["slot"]})
+        recharge = hero.get("weapon_recharge")
         if (abs(dx) <= 48 and abs(dy) <= 48 and
                 observation.get("weapons_enabled") and recharge == 0):
-            return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range")
-        axes = []
-        if abs(dx) >= abs(dy):
-            axes.extend(["step_right" if dx > 0 else "step_left",
-                         "step_down" if dy > 0 else "step_up"])
-        else:
-            axes.extend(["step_down" if dy > 0 else "step_up",
-                         "step_right" if dx > 0 else "step_left"])
+            return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range",
+                                   "engage_enemy")
+        axes = (["step_right" if dx > 0 else "step_left",
+                 "step_down" if dy > 0 else "step_up"] if abs(dx) >= abs(dy) else
+                ["step_down" if dy > 0 else "step_up",
+                 "step_right" if dx > 0 else "step_left"])
         for action in axes:
-            if action in open_steps and ((dx and action in ("step_left", "step_right")) or
-                                         (dy and action in ("step_up", "step_down"))):
-                return PlannerDecision(action, f"approach enemy {enemy['slot']} at {distance}px")
+            if action in open_steps:
+                return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px",
+                                       "engage_enemy")
         return None
 
     def decide(self, observation, previous="none"):
         context = observation.get("tile_context") if isinstance(observation, dict) else None
         if not isinstance(context, dict) or not context.get("runtime_verified"):
-            return PlannerDecision("wait", "no runtime-verified tile context")
+            return PlannerDecision("wait", "no runtime-verified tile context", "observe")
         if context.get("game_mode") != "field":
-            return PlannerDecision("wait", f"game mode is {context.get('game_mode')}")
+            return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
         open_steps = self._open_steps(context)
         self._remember(observation, context)
-        combat = self._approach_enemy(observation, context, open_steps)
+        combat = self._combat(observation, context, open_steps)
         if combat is not None:
             return combat
         if not open_steps:
-            return PlannerDecision("wait", "no verified open adjacent tile")
-
-        map_id = context["map_id"]
-        layer = context["actor"]["layer"]
-        x, y = context["actor_tile"]
-        width, height = context["map_size_tiles"]
+            self._set_intention(None)
+            return PlannerDecision("wait", "no verified open adjacent tile", "stuck")
+        exploration = self._explore(context, open_steps)
+        if exploration is not None:
+            return exploration
         reverse = OPPOSITE_STEP.get(previous)
-        order = {name: rank for rank, name in enumerate(
-                 ("step_right", "step_down", "step_left", "step_up"))}
-        scored = []
-        for action in open_steps:
-            dx, dy = STEP_OFFSETS[action]
-            visits = self._visits(map_id, layer, (x + dx) % width, (y + dy) % height)
-            scored.append((visits, action == reverse, action != previous,
-                           order[action], action))
-        visits, _, _, _, action = min(scored)
-        return PlannerDecision(action, f"least-visited open tile ({visits} prior visits)")
+        candidates = [step for step in open_steps if step != reverse] or open_steps
+        action = min(candidates, key=lambda step: self._visits(
+            context["map_id"], context["actor"]["layer"],
+            *self._neighbor(tuple(context["actor_tile"]), STEP_OFFSETS[step],
+                            tuple(context["map_size_tiles"]))))
+        return PlannerDecision(action, "replan after blocked or completed intention", "replan")

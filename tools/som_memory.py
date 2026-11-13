@@ -233,7 +233,7 @@ class WRAM:
             "map_id": tile_context["map_id"],
             "player_position": tile_context["actor"] if tile_context["runtime_verified"] else None,
             "tile_context": tile_context,
-            "weapons_enabled": self.u8(0x7E00ED) == 0x80,
+            "weapons_enabled": bool(self.u8(0x7E00ED) & 0x80),
             "party": [self.character(i) for i in range(3)],
             "enemy_slots": [self.enemy(i) for i in range(3)],
             "limitations": [
@@ -261,6 +261,11 @@ class ObservationHistory:
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS agent_meta "
             "(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS world_cells "
+            "(map_id INTEGER NOT NULL, layer INTEGER NOT NULL, x INTEGER NOT NULL, "
+            "y INTEGER NOT NULL, kind TEXT NOT NULL, seen INTEGER NOT NULL, "
+            "last_ts REAL NOT NULL, PRIMARY KEY(map_id,layer,x,y))")
         self.connection.commit()
 
     def record(self, state, action=None):
@@ -310,6 +315,64 @@ class ObservationHistory:
             "SELECT visits FROM tile_visits WHERE map_id=? AND layer=? AND x=? AND y=?",
             (map_id, layer, x, y)).fetchone()
         return row[0] if row else 0
+
+    def remember_world(self, state):
+        """Merge the verified nearby collision grid into persistent map memory."""
+        context = state.get("tile_context") if isinstance(state, dict) else None
+        if not isinstance(context, dict) or not context.get("runtime_verified"):
+            return 0
+        rows, radius = context.get("passability_rows"), context.get("radius")
+        size, center, actor = (context.get("map_size_tiles"),
+                               context.get("actor_tile"), context.get("actor"))
+        if not (isinstance(rows, list) and isinstance(radius, int) and
+                isinstance(size, list) and len(size) == 2 and
+                isinstance(center, list) and len(center) == 2 and
+                isinstance(actor, dict)):
+            return 0
+        width, height = size
+        if not (isinstance(width, int) and width > 0 and
+                isinstance(height, int) and height > 0):
+            return 0
+        kinds = {".": "open", "@": "open", "#": "blocked", "?": "conditional"}
+        now, learned = time.time(), 0
+        for row_index, row in enumerate(rows):
+            if not isinstance(row, str):
+                continue
+            for column, marker in enumerate(row):
+                kind = kinds.get(marker)
+                if kind is None:
+                    continue
+                x = (center[0] + column - radius) % width
+                y = (center[1] + row_index - radius) % height
+                self.connection.execute(
+                    "INSERT INTO world_cells(map_id,layer,x,y,kind,seen,last_ts) "
+                    "VALUES(?,?,?,?,?,1,?) ON CONFLICT(map_id,layer,x,y) DO UPDATE SET "
+                    "kind=excluded.kind,seen=seen+1,last_ts=excluded.last_ts",
+                    (context["map_id"], actor["layer"], x, y, kind, now))
+                learned += 1
+        self.connection.commit()
+        return learned
+
+    def known_cells(self, map_id, layer):
+        rows = self.connection.execute(
+            "SELECT x,y,kind FROM world_cells WHERE map_id=? AND layer=?",
+            (map_id, layer)).fetchall()
+        return {(x, y): kind for x, y, kind in rows}
+
+    def get_agent_state(self, key):
+        row = self.connection.execute(
+            "SELECT value FROM agent_meta WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def set_agent_state(self, key, value):
+        if value is None:
+            self.connection.execute("DELETE FROM agent_meta WHERE key=?", (key,))
+        else:
+            self.connection.execute(
+                "INSERT INTO agent_meta(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value, separators=(",", ":"))))
+        self.connection.commit()
 
     def close(self):
         self.connection.close()

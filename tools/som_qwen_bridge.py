@@ -28,6 +28,12 @@ _ACTION_PATTERN = re.compile(
     r"(?<![a-z_])(" + "|".join(sorted(ACTIONS, key=len, reverse=True)) + r")(?![a-z_])")
 MAX_INVALID_REPLIES = 3
 MAX_REPEATS = 4
+# Reuse the SkyLoft-to-Steam-Link SSH transport. A fresh handshake for each
+# marker check, WRAM read and action made one nominal one-second decision take
+# four to five seconds on the live machines.
+SSH_BASE = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7",
+            "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/flxtr-som-ssh-%C",
+            "-o", "ControlPersist=120"]
 
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
@@ -137,14 +143,13 @@ def prefer_open_step(action: str, observation, previous: str) -> str:
 
 def send_action(host: str, action: str) -> None:
     # stdin carries an allowlisted command. No LLM text is interpolated into shell.
-    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7",
-           host, "cat > /tmp/flxtr-som-ai-action"]
+    cmd = [*SSH_BASE, host, "cat > /tmp/flxtr-som-ai-action"]
     subprocess.run(cmd, input=action + "\n", text=True, check=True, timeout=15)
 
 def remote_ring_ai_enabled(host: str) -> bool:
     try:
         result = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7", host,
+            [*SSH_BASE, host,
              "test -f /tmp/flxtr-som-ai-enabled"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
         return result.returncode == 0
@@ -155,7 +160,7 @@ def clear_remote_ring_ai(host: str) -> None:
     """End one ring-controlled session using only the fixed marker path."""
     try:
         subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7", host,
+            [*SSH_BASE, host,
              "rm -f /tmp/flxtr-som-ai-enabled"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
             check=False)
@@ -225,14 +230,13 @@ def main() -> int:
             elif args.wram_remote:
                 # Fixed remote path; no model-generated command or file path.
                 raw = subprocess.run(
-                    ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7",
-                     args.host, "cat /tmp/flxtr-som-wram.bin"],
+                    [*SSH_BASE, args.host, "cat /tmp/flxtr-som-wram.bin"],
                     capture_output=True, check=True, timeout=15).stdout
                 observation = WRAM(raw).observe()
             if args.policy == "memory":
                 decision = planner.decide(observation, previous)
                 action = decision.action
-                print(f"[ai] plan: {decision.reason}", flush=True)
+                print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)
             else:
                 try:
                     action = choose_action(args.ollama_url, args.model,

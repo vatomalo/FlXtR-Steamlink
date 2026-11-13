@@ -7,10 +7,10 @@ from som_memory import ObservationHistory
 from som_planner import MemoryPlanner
 
 
-def observation(rows=("...", ".@.", "..."), enemy=None, recharge=0):
+def observation(rows=("...", ".@.", "..."), enemy=None, recharge=0, hp=80, max_hp=100):
     return {
         "weapons_enabled": True,
-        "party": [{"weapon_recharge": recharge}],
+        "party": [{"weapon_recharge": recharge, "hp": hp, "max_hp": max_hp}],
         "enemy_slots": [enemy] if enemy else [],
         "tile_context": {
             "runtime_verified": True, "game_mode": "field", "radius": 1,
@@ -33,20 +33,27 @@ class TestMemoryPlanner(unittest.TestCase):
         state = observation(("...", ".@#", "..."), enemy, recharge=20)
         self.assertNotEqual(MemoryPlanner().decide(state).action, "step_right")
 
-    def test_persistent_visits_change_exploration_choice(self):
+    def test_persistent_frontier_intention_survives_decisions(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "memory.sqlite")
             planner = MemoryPlanner(history)
             state = observation()
-            self.assertEqual(planner.decide(state).action, "step_right")
-            # Persist a visit to the right-hand tile as if the actor arrived.
-            moved = observation()
-            moved["tile_context"]["actor_tile"] = [3, 3]
-            moved["tile_context"]["actor"]["x_px"] = 56
-            history.remember_position(moved)
-            history.remember_position(state)
-            self.assertEqual(planner.decide(state).action, "step_down")
+            first = planner.decide(state)
+            intention = history.get_agent_state("intention")
+            second = planner.decide(state)
+            self.assertEqual(first.intention, "explore_frontier")
+            self.assertEqual(second.action, first.action)
+            self.assertEqual(history.get_agent_state("intention")["target"],
+                             intention["target"])
+            self.assertEqual(len(history.known_cells(131, 1)), 9)
             history.close()
+
+    def test_low_hp_intention_retreats_from_enemy(self):
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}
+        decision = MemoryPlanner().decide(
+            observation(enemy=enemy, recharge=20, hp=20, max_hp=100))
+        self.assertEqual(decision.intention, "survive")
+        self.assertNotEqual(decision.action, "step_right")
 
     def test_fails_closed_without_verified_context(self):
         state = observation()

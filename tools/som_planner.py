@@ -499,6 +499,16 @@ class MemoryPlanner:
                              "x_px": enemy["x_px"], "y_px": enemy["y_px"],
                              "misses": 0})
         recharge = hero.get("weapon_recharge")
+        # A destructible obstacle between the hero and a visible enemy
+        # must be resolved before pursuit. Otherwise routing around the
+        # obstacle can alternate left/right forever as the enemy moves.
+        # Only attempt verified, previously learned grass adjacent to the
+        # hero. Never confuse a wall or unknown collision with vegetation.
+        if observation.get("weapons_enabled") and recharge == 0:
+            cutting = self._grass_blocking_enemy(context, dx, dy)
+            if cutting is not None:
+                return self._cut(context, cutting)
+
         if abs(dx) <= 48 and abs(dy) <= 48 and observation.get("weapons_enabled"):
             # Only a mature learned range can veto a normal swing. Existing
             # attack/charge logic remains the safe fallback for sparse data.
@@ -517,16 +527,6 @@ class MemoryPlanner:
                                                recharge == 0, hero)
                 if strike is not None:
                     return strike
-        # A destructible obstacle between the hero and a visible enemy
-        # must be resolved before pursuit. Otherwise routing around the
-        # obstacle can alternate left/right forever as the enemy moves.
-        # Only attempt verified, previously learned grass adjacent to the
-        # hero. Never confuse a wall or unknown collision with vegetation.
-        if observation.get("weapons_enabled") and recharge == 0:
-            cutting = self._grass_blocking_enemy(context, dx, dy)
-            if cutting is not None:
-                return self._cut(context, cutting)
-
         # Follow the learned map first. Taking the straight-line step whenever
         # its first tile was open, and the map route only when it was not,
         # sent the hero up into a dead end and back down, over and over.

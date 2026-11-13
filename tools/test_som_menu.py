@@ -23,6 +23,7 @@ class FakeGame:
         self.items = len(items)
         self.opener, self.heal = opener, heal
         self.rings = rings          # ring kinds in Up order; opens on the first
+        self.drop_ups = 0
         self.sent = []
 
     def set(self, address, value):
@@ -44,6 +45,8 @@ class FakeGame:
         if action == self.opener and not is_open:
             self.set(RING_OPEN, 1); self.set(RING_KIND, self.rings[0])
             self.confirms = 0
+        elif action == "step_up" and is_open and self.drop_ups:
+            self.drop_ups -= 1                  # live Turbo drops some ring presses
         elif action == "step_up" and is_open:
             kind = self.rings.index(self.get(RING_KIND))
             self.set(RING_KIND, self.rings[(kind + 1) % len(self.rings)])
@@ -135,6 +138,13 @@ class TestCandyMacro(unittest.TestCase):
         game = FakeGame(rings=(1, 2, 0))
         self.assertEqual(run(game), 60)
         self.assertEqual(game.sent[:3], ["open_ring", "step_up", "step_up"])
+
+    def test_a_dropped_up_press_is_pressed_again(self):
+        # Live order with the solo hero: sword 3 -> items 0 (equip 2 between).
+        game = FakeGame(rings=(3, 0, 2))
+        game.drop_ups = 1
+        self.assertEqual(run(game), 60)
+        self.assertEqual(game.sent.count("step_up"), 2)
 
     def test_wrong_ring_kind_fails_before_selecting(self):
         game = FakeGame()

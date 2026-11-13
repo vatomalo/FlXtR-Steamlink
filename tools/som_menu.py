@@ -15,7 +15,11 @@ from pathlib import Path
 from som_memory import WRAM
 
 RING_OPEN = 0x7E007D
-RING_KIND = 0x7EA20F
+# Which ring is shown, valid while the ring is open. Turbo, solo hero,
+# verified live 2026-11-14 with the player naming each ring on screen:
+# items 0, equip 2, sword 3; Up cycles items -> equip -> sword -> items.
+# (7E:A20F, used before, reads 255 open or closed on Turbo.)
+RING_KIND = 0x7E1809
 BANK_7E = range(0x7E0000, 0x7F0000)
 DEFAULT_CALIBRATION = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) \
     / "flxtr" / "som-ring.json"
@@ -94,7 +98,7 @@ class MacroFailed(Exception):
     pass
 
 
-RING_SWITCHES = 4   # Up presses allowed to reach the item ring
+RING_SWITCHES = 6   # Up presses (two rings away, plus dropped presses)
 
 
 class CandyMacro:
@@ -177,9 +181,15 @@ class CandyMacro:
                     break
                 before = wram.u8(RING_KIND)
                 self.log(f"[candy] ring kind {before}; pressing up for the item ring")
-                wram = self._press_until("step_up",
-                                         lambda w: ring_open(w) and w.u8(RING_KIND) != before,
-                                         timeout=0.8, what="a ring switch")
+                try:
+                    wram = self._press_until("step_up",
+                                             lambda w: ring_open(w) and w.u8(RING_KIND) != before,
+                                             timeout=1.0, what="a ring switch")
+                except MacroFailed:
+                    # Ring presses are sometimes dropped live; press again.
+                    wram = self._read()
+                    if not ring_open(wram):
+                        raise
             if wram.u8(RING_KIND) != self.cal.item_ring_kind:
                 raise MacroFailed(f"item ring {self.cal.item_ring_kind} not reached after "
                                   f"{RING_SWITCHES} ups (kind {wram.u8(RING_KIND)})")

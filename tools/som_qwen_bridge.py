@@ -963,7 +963,9 @@ def main() -> int:
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)
                 if decision.reason.startswith("survival abandoned"):
                     announce("AI: inn did not heal|back to careful play")
-                elif decision.intention in INTENT_MESSAGES:
+                elif decision.intention in INTENT_MESSAGES and personality is None:
+                    # Avoid re-issuing the generic status box every frame:
+                    # it would immediately cover a timed speech bubble.
                     announce(INTENT_MESSAGES[decision.intention])
                 if (decision.intention != last_intention_spoken and
                         decision.intention in ("explore_frontier", "engage_enemy",

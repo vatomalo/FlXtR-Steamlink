@@ -16,3 +16,7 @@ java --add-modules jdk.compiler com.sun.tools.javac.Main -cp "$json" -d "$build/
     android/app/src/main/java/org/flxtr/android/{CatalogItem,MediaCaptions,MediaHttp,StreamProtocol,StreamDecoder,StreamResolver}.java tests/android/StreamResolverSmoke.java
 java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke
 java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke episode
+java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke fmovies-movie
+java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke fmovies-tv
+java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke sflix-movie
+java -Djava.library.path="$build" -cp "$build/classes:$json" org.flxtr.android.StreamResolverSmoke sflix-tv

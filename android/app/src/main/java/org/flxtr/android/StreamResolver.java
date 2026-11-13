@@ -1,6 +1,7 @@
 package org.flxtr.android;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.io.*;
 import java.net.URL;
 import javax.net.ssl.HttpsURLConnection;
@@ -10,6 +11,7 @@ import java.util.*;
 import java.util.regex.*;
 
 final class StreamResolver {
+    private static final String FMOVIES_PLAYER="https://videm.buzz";
     interface Progress {void update(String message);}
     interface ExtraBackend {StreamProtocol.Stream resolve(CatalogItem item,int attempt,Request request,Progress progress) throws Exception;}
     static volatile ExtraBackend extraBackend;
@@ -36,10 +38,14 @@ final class StreamResolver {
                 throw new IOException("No working media source was found");
             }
             String path=StreamProtocol.path(item);
-            if(servers==null){progress.update("Finding available servers…");servers=StreamProtocol.servers(lookup(path,"",request));}
+            if(servers==null){
+                progress.update("Finding available servers…");
+                try{servers=new ArrayList<>(StreamProtocol.servers(lookup(path,"",request)));}catch(Exception unavailable){request.check();servers=new ArrayList<>();}
+                servers.add("fmovies");servers.add("sflix");
+            }
             while(next<servers.size()){
                 request.check();String server=servers.get(next++);progress.update("Opening server "+next+" of "+servers.size()+"…");
-                try{StreamProtocol.Stream stream=StreamProtocol.stream(lookup(path,server,request),server);probe(stream,request);if(stream.subtitles.isEmpty())discoverCaptions(item,stream,request);request.check();stream.item=item;return stream;}
+                try{StreamProtocol.Stream stream=server.equals("fmovies")||server.equals("sflix")?web(item,server,request):StreamProtocol.stream(lookup(path,server,request),server);probe(stream,request);if(stream.subtitles.isEmpty())discoverCaptions(item,stream,request);request.check();stream.item=item;return stream;}
                 catch(Exception unavailable){request.check();/* Try the next provider; never log signed media URLs. */}
             }
             throw new IOException("No playable stream was returned. Please retry or choose another title.");
@@ -51,6 +57,55 @@ final class StreamResolver {
             request.check();
             try{String raw=MediaHttp.text("https://sub.vdrk.site/v"+version+"/"+path,Collections.emptyMap(),524288,request);JSONObject root=new JSONObject();root.put("tracks",new org.json.JSONArray(raw));MediaCaptions.read(root,stream);}catch(Exception unavailable){request.check();}
         }
+    }
+    static StreamProtocol.Stream web(CatalogItem item,String provider,Request request) throws Exception {
+        return provider.equals("fmovies")?fmovies(item,request):sflix(item,request);
+    }
+    private static StreamProtocol.Stream sflix(CatalogItem item,Request request) throws Exception {
+        String path=item.kind.equals("movie")?"movie/"+item.id:"tv/"+item.id+"/"+item.season+"/"+item.episode;
+        Map<String,String> site=Collections.singletonMap("Referer","https://ssflix.pro/");
+        String page=text("https://vidspark.to/"+path,site,request,"SFlix player page request");
+        Matcher asset=Pattern.compile("src=[\\\"']/assets/index-([A-Za-z0-9._-]+)[\\\"']").matcher(page);
+        if(!asset.find())throw new IOException("SFlix player asset discovery failed");
+        String script=text("https://vidspark.to/assets/index-"+asset.group(1),Collections.singletonMap("Referer","https://vidspark.to/"),request,"SFlix player asset request");
+        Matcher key=Pattern.compile("var\\s+fz=`([0-9A-Fa-f]{16,127})`").matcher(script);if(!key.find())throw new IOException("SFlix player key discovery failed");
+        Map<String,String> headers=new HashMap<>();headers.put("Referer","https://vidspark.to/");headers.put("x-player-key",key.group(1));
+        JSONObject root=new JSONObject(text("https://vidspark.to/api/vidora/v1/"+path,headers,request,"SFlix source API request"));
+        JSONArray sources=root.optJSONArray("sources");if(!root.optBoolean("result")||sources==null||sources.length()==0)throw new IOException("SFlix source API returned no source");
+        return webStream(sources.getJSONObject(0),"SFLIX","https://vidspark.to");
+    }
+    private static StreamProtocol.Stream fmovies(CatalogItem item,Request request) throws Exception {
+        String path=item.kind.equals("movie")?"/embed/movie/"+item.id:"/embed/tv/"+item.id+"/"+item.season+"/"+item.episode;
+        String embed=FMOVIES_PLAYER+path;
+        JSONObject metadata=assignment(text(embed,Collections.singletonMap("Referer","https://www.f-moviess.org/"),request,"FMovies player page request"),"var Q = ");
+        String token=metadata.optString("t","");JSONObject ssr=metadata.optJSONObject("ssr");JSONArray rows=ssr==null?null:ssr.optJSONArray("servers");
+        if(token.isEmpty()||rows==null)throw new IOException("FMovies player metadata was incomplete");
+        Exception last=null;
+        for(int i=0;i<Math.min(2,rows.length());i++){
+            String ref=rows.optJSONObject(i)==null?"":rows.optJSONObject(i).optString("ref","");if(ref.isEmpty())continue;
+            try{
+                String url=FMOVIES_PLAYER+"/api.php?a=play&ref="+MediaHttp.encode(ref)+"&t="+MediaHttp.encode(token);
+                JSONObject source=new JSONObject(text(url,Collections.singletonMap("Referer",embed),request,"FMovies source API request"));
+                return webStream(source,"FMOVIES",FMOVIES_PLAYER);
+            }catch(Exception failure){request.check();last=failure;}
+        }
+        throw new IOException("FMovies source API returned no compatible source",last);
+    }
+    private static JSONObject assignment(String page,String marker) throws IOException {
+        int start=page.indexOf(marker);if(start<0)throw new IOException("FMovies player metadata discovery failed");start+=marker.length();
+        int depth=0;char quote=0;boolean escaped=false;
+        for(int i=start;i<page.length();i++){
+            char value=page.charAt(i);
+            if(quote!=0){if(escaped)escaped=false;else if(value=='\\')escaped=true;else if(value==quote)quote=0;continue;}
+            if(value=='\"'||value=='\''){quote=value;continue;}if(value=='{')depth++;else if(value=='}'&&--depth==0){try{return new JSONObject(page.substring(start,i+1));}catch(Exception invalid){break;}}
+        }
+        throw new IOException("FMovies player metadata was invalid");
+    }
+    private static StreamProtocol.Stream webStream(JSONObject source,String provider,String origin) throws IOException {
+        String url=source.optString("url",source.optString("file",""));if(url.startsWith("/")&&!url.startsWith("//"))url=origin+url;
+        if(!CatalogItem.validStream(url))throw new IOException(provider+" returned no compatible HTTPS stream");
+        StreamProtocol.Stream stream=new StreamProtocol.Stream(url,provider);stream.headers.clear();stream.headers.put("User-Agent",StreamProtocol.UA);stream.headers.put("Origin",origin);stream.headers.put("Referer",origin+"/");
+        MediaCaptions.read(source,stream);return stream;
     }
     private static JSONObject lookup(String path,String server,Request request) throws Exception {
         request.check();
@@ -103,8 +158,16 @@ final class StreamResolver {
             }
         }finally{request.connection=null;connection.disconnect();}
     }
-    private static void probe(StreamProtocol.Stream stream,Request request) throws IOException {
-        String url=stream.url;Map<String,String> headers=new HashMap<>(stream.headers);headers.put("Range","bytes=0-65535");
+    static boolean compatibleHls(String playlist){
+        Matcher variants=Pattern.compile("RESOLUTION=([0-9]+)x([0-9]+)",Pattern.CASE_INSENSITIVE).matcher(playlist);boolean found=false;
+        while(variants.find()){found=true;try{if(Integer.parseInt(variants.group(1))<=1280&&Integer.parseInt(variants.group(2))<=720)return true;}catch(NumberFormatException invalid){return false;}}
+        return !found;
+    }
+    static String firstHlsEntry(String playlist){for(String line:playlist.split("\\r?\\n")){line=line.trim();if(!line.isEmpty()&&!line.startsWith("#"))return line;}return null;}
+    private static void probe(StreamProtocol.Stream stream,Request request) throws IOException {probe(stream,stream.url,new HashMap<>(stream.headers),request,0);}
+    private static void probe(StreamProtocol.Stream stream,String initialUrl,Map<String,String> headers,Request request,int depth) throws IOException {
+        if(depth>3)throw new IOException("HLS playlist nesting exceeded");
+        String url=initialUrl;headers.put("Range","bytes=0-65535");
         for(int redirect=0;redirect<=3;redirect++){
             HttpsURLConnection connection=connect(url,headers,request);
             try{
@@ -113,9 +176,14 @@ final class StreamResolver {
                 if(code!=200&&code!=206)throw new IOException("Stream is unavailable");
                 String type=connection.getContentType();
                 try(InputStream in=connection.getInputStream()){
-                    byte[] prefix=new byte[1024];int used=0,n;while(used<prefix.length&&(n=in.read(prefix,used,prefix.length-used))>0){request.check();used+=n;}
+                    byte[] prefix=new byte[32768];int used=0,n;while(used<prefix.length&&(n=in.read(prefix,used,prefix.length-used))>0){request.check();used+=n;}
                     String head=new String(prefix,0,used,StandardCharsets.UTF_8).trim();
-                    if(head.startsWith("#EXTM3U")||(type!=null&&type.toLowerCase(Locale.ROOT).contains("mpegurl")))stream.mime="application/x-mpegURL";
+                    if(head.startsWith("#EXTM3U")||(type!=null&&type.toLowerCase(Locale.ROOT).contains("mpegurl"))){
+                        String lower=head.toLowerCase(Locale.ROOT);if(!compatibleHls(head)||((lower.contains("hvc1")||lower.contains("hev1"))&&!lower.contains("avc1")&&!lower.contains("h264")))throw new IOException("Server has no compatible H.264 rendition");
+                        stream.mime="application/x-mpegURL";
+                        String entry=firstHlsEntry(head);if(entry==null)throw new IOException("HLS playlist has no media entries");
+                        probe(stream,new URL(new URL(url),entry).toString(),headers,request,depth+1);
+                    }
                     else if(used<1||head.startsWith("<!DOCTYPE")||head.startsWith("<html")||(type!=null&&type.contains("text/html")))throw new IOException("Server returned a web page instead of video");
                     return;
                 }

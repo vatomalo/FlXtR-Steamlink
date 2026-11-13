@@ -18,8 +18,11 @@ load), then walk into the map: the record spawns as a Rabite. Each patch line
 names the byte it expects, so a different ROM is never altered.
 """
 import argparse
+import json
+import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 
 from som_memory import WRAM
 from som_qwen_bridge import SSH_BASE, RemoteLink
@@ -29,6 +32,17 @@ PATCH_FILE = "/home/apps/retroarch/cores/experimental/som_ai_rom_patch.txt"
 TABLE = 0x087000          # $C8:7000 in a HiROM image without copier header
 BANK_C8 = 0x080000
 RABITE = 0x00
+# Ordinary monsters; 0x57-0x7F are bosses, 0x80+ NPCs/chests/switches.
+LAST_MONSTER = 0x56
+DEFAULT_HISTORY = Path.home() / ".local/state/flxtr/som-ai.sqlite"
+# Turbo relocates a few headers (map 182's lies at $C8:0D00); tolerate that
+# many descending pointers and refuse only the maps they affect.
+MAX_RELOCATED = 16
+MAX_RECORDS = 64
+
+
+class RecordError(ValueError):
+    pass
 
 
 def remote(host, command, binary=False):
@@ -44,18 +58,26 @@ def load_rom(host):
     if len(rom) < TABLE + 0x400:
         raise SystemExit(f"ROM too small ({len(rom)} bytes)")
     pointers = [rom[TABLE + 2 * m] | rom[TABLE + 2 * m + 1] << 8 for m in range(400)]
-    if any(b < a for a, b in zip(pointers, pointers[1:])) or min(pointers) < 0x7000:
-        raise SystemExit("the map pointer table at $C8:7000 does not look like Secret of "
-                         "Mana's; the Turbo layout differs, nothing changed")
+    descending = sum(b < a for a, b in zip(pointers, pointers[1:]))
+    if descending > MAX_RELOCATED:
+        raise SystemExit(f"the map pointer table at $C8:7000 does not look like Secret of "
+                         f"Mana's ({descending} pointers descend); nothing changed")
     return rom
 
 
 def records(rom, map_id):
+    """Object records of map_id; RecordError when its bounds are unreliable."""
     pointer = rom[TABLE + 2 * map_id] | rom[TABLE + 2 * map_id + 1] << 8
     following = rom[TABLE + 2 * map_id + 2] | rom[TABLE + 2 * map_id + 3] << 8
+    previous = (rom[TABLE + 2 * map_id - 2] | rom[TABLE + 2 * map_id - 1] << 8
+                if map_id else pointer)
     found = []
-    if following <= pointer + 8:
+    if following == pointer or (following == pointer + 8 and previous <= pointer):
         return found
+    if (following < pointer or previous > pointer or
+            (following - pointer - 8) % 8 or (following - pointer - 8) // 8 > MAX_RECORDS):
+        raise RecordError(f"map {map_id}: record table relocated in this ROM "
+                          f"(pointer {pointer:#06x}, next {following:#06x}); refusing")
     for index in range((following - pointer - 8) // 8):
         offset = BANK_C8 + pointer + 8 + 8 * index
         record = rom[offset:offset + 8]
@@ -68,7 +90,7 @@ def records(rom, map_id):
     return found
 
 
-def current_map(host):
+def live_wram(host):
     link = RemoteLink(host)
     try:
         raw = link.fetch_wram(False)
@@ -76,14 +98,55 @@ def current_map(host):
         link.close()
     if raw is None:
         raise SystemExit("no WRAM snapshot; is Turbo running with som_ai_proxy?")
-    return WRAM(raw).u16(0x7E00DC) & 0x1FF
+    return WRAM(raw)
+
+
+def current_map(host):
+    return live_wram(host).u16(0x7E00DC) & 0x1FF
+
+
+def seen_identities(map_id, wram=None, here=None, history_db=DEFAULT_HISTORY):
+    """Monster identities (+0x180) seen on map_id: live WRAM if the hero is
+    there, plus every identity the AI's observation log recorded there."""
+    seen = set()
+    if wram is not None and here == map_id:
+        seen |= {enemy["identity"] for enemy in (wram.enemy(i) for i in range(3))
+                 if enemy["active"]}
+    try:
+        connection = sqlite3.connect(f"file:{history_db}?mode=ro", uri=True)
+        try:
+            for (encoded,) in connection.execute("SELECT state FROM observations"):
+                state = json.loads(encoded)
+                if (state.get("tile_context") or {}).get("map_id") != map_id:
+                    continue
+                seen |= {enemy.get("identity") for enemy in state.get("enemy_slots", [])
+                         if enemy.get("active")}
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        pass
+    return seen
+
+
+def cross_check(found, seen):
+    """(matched, extra): seen identities that are / are not record ids.
+
+    Turbo is a ROM hack: a map's records are trusted for patching only when
+    a monster the game really spawned there carries one of their ids. Turbo
+    also spawns monsters that are in no record (map 129's 0x0a, map 128),
+    which are reported, not held against the table.
+    """
+    ids = {record["id"] for record in found if record["kind"] == "monster"}
+    return seen & ids, seen - ids
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("list", "rabite", "patches", "clear"))
+    parser.add_argument("command", choices=("list", "spawn", "rabite", "patches", "clear"))
     parser.add_argument("record", nargs="?", type=int)
+    parser.add_argument("monster", nargs="?", type=lambda text: int(text, 0),
+                        help="spawn: ordinary monster id 0x00-0x56 (default Rabite)")
     parser.add_argument("--map", type=int, help="map id (default: the current map)")
     parser.add_argument("--host", default="root@100.124.74.13")
     parser.add_argument("--allow-npc", action="store_true",
@@ -98,9 +161,15 @@ def main():
         print("Patches removed. Relaunch Turbo to load the original records.")
         return 0
 
-    map_id = args.map if args.map is not None else current_map(args.host)
+    wram = live_wram(args.host)
+    here = wram.u16(0x7E00DC) & 0x1FF
+    map_id = args.map if args.map is not None else here
     rom = load_rom(args.host)
-    found = records(rom, map_id)
+    try:
+        found = records(rom, map_id)
+    except RecordError as exc:
+        raise SystemExit(str(exc))
+    matched, extra = cross_check(found, seen_identities(map_id, wram, here))
     if args.command == "list":
         print(f"map {map_id}: {len(found)} object record(s)")
         for record in found:
@@ -110,21 +179,30 @@ def main():
                   f"range {record['range'][0]}-{record['range'][1]}")
         if not any(record["kind"] == "monster" for record in found):
             print("  no monster record here; try a map with monsters")
+        print(f"  monsters seen here matching records: {sorted(matched) or 'none'}; "
+              f"spawned outside these records: {sorted(extra) or 'none'}")
         return 0
 
+    if not matched:
+        raise SystemExit(f"no monster seen on map {map_id} matches its records "
+                         f"(seen only {sorted(extra) or 'nothing'}); visit it with the AI "
+                         "first (Turbo layout check)")
     if args.record is None or not 0 <= args.record < len(found):
         raise SystemExit(f"choose a record index 0..{len(found) - 1} (see `list`)")
     record = found[args.record]
     if record["kind"] != "monster" and not args.allow_npc:
         raise SystemExit(f"record {args.record} is a {record['kind']}; pick a monster "
                          "record (or --allow-npc, which can break events)")
-    if record["id"] == RABITE:
-        raise SystemExit("that record already is a Rabite")
+    monster = RABITE if args.command == "rabite" or args.monster is None else args.monster
+    if not 0 <= monster <= LAST_MONSTER:
+        raise SystemExit(f"{monster:#04x} is not an ordinary monster id (0x00-0x56)")
+    if record["id"] == monster:
+        raise SystemExit(f"that record already is id {monster:#04x}")
     offset, expected = record["offset"] + 5, record["id"]
-    remote(args.host, f"printf 'patch %06x %02x %02x\\n' {offset} {expected} {RABITE} "
+    remote(args.host, f"printf 'patch %06x %02x %02x\\n' {offset} {expected} {monster} "
                       f">> {PATCH_FILE}")
     print(f"Map {map_id} record {args.record} (id {expected:#04x} at tile "
-          f"({record['x']},{record['y']})) will spawn as a Rabite.")
+          f"({record['x']},{record['y']})) will spawn as monster {monster:#04x}.")
     print("Quit and relaunch Turbo, then enter that map. Undo: "
           "python3 tools/som_map_records.py clear")
     return 0

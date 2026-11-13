@@ -1,7 +1,7 @@
 """Map object-record parsing on a synthetic ROM; no network or ROM needed."""
 import unittest
 
-from som_map_records import BANK_C8, TABLE, records
+from som_map_records import BANK_C8, TABLE, RecordError, cross_check, records
 
 
 def synthetic_rom():
@@ -27,6 +27,25 @@ class TestRecords(unittest.TestCase):
 
     def test_map_without_records(self):
         self.assertEqual(records(synthetic_rom(), 0), [])
+
+
+    def test_relocated_turbo_tables_are_refused_per_map(self):
+        rom = bytearray(synthetic_rom())
+        # Turbo-like: map 6's pointer jumps back to a low, relocated region.
+        rom[TABLE + 12], rom[TABLE + 13] = 0x00, 0x0D
+        with self.assertRaises(RecordError):
+            records(bytes(rom), 5)        # its end now lies before its start
+        with self.assertRaises(RecordError):
+            records(bytes(rom), 6)        # previous map's pointer is higher
+        self.assertEqual(len(records(synthetic_rom(), 5)), 2)
+
+
+class TestCrossCheck(unittest.TestCase):
+    def test_needs_one_spawned_monster_with_a_record_id(self):
+        found = records(synthetic_rom(), 5)                 # monster id 5
+        self.assertEqual(cross_check(found, {5, 10}), ({5}, {10}))
+        # Turbo map 129: only extra monsters seen, records unconfirmed.
+        self.assertEqual(cross_check(found, {10}), (set(), {10}))
 
 
 if __name__ == "__main__":

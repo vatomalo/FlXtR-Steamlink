@@ -495,6 +495,18 @@ python3 tools/som_map_records.py rabite 2    # turn monster record 2 into a Rabi
 python3 tools/som_map_records.py clear       # undo; relaunch again
 ```
 
+```sh
+python3 tools/som_map_records.py spawn 0 0x0a --map 130   # record 0 -> monster 0x0a
+```
+
+Turbo check (2026-11-13): the `$C8:7000` table is used by Turbo, but a few
+maps are relocated (map 181/182 record bounds are out of order and are
+refused), and Turbo also spawns monsters that are in no record (identity 0x0a
+on map 129, monsters on map 128 which has no records). A map is patched only
+when a monster the game really spawned there (live WRAM or the AI's
+observation log) has one of its record ids; on map 130 the records say Rabite
+and only Rabites were seen. `spawn` accepts ordinary monster ids 0x00-0x56.
+
 Only monster records are replaced by default (`--allow-npc` overrides; that
 can break events). The record's own flag range still decides whether it
 spawns. The tool refuses to continue if the `$C8:7000` table does not look like

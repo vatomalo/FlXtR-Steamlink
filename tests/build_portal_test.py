@@ -18,6 +18,12 @@ spec.loader.exec_module(portal)
 
 
 class PortalTest(unittest.TestCase):
+    def test_page_has_copy_output_button_with_http_fallback(self):
+        page = (Path(__file__).resolve().parents[1] / 'web/skyloft/index.html').read_text()
+        self.assertIn('id="copy-output"', page)
+        self.assertIn("navigator.clipboard.writeText(value)", page)
+        self.assertIn("document.execCommand('copy')", page)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

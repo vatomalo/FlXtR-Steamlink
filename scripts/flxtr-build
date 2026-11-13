@@ -71,7 +71,20 @@ exec > >(tee -a "$log") 2>&1
 printf 'Build log: %s\n' "$log"
 trap 'result=$?; if ((result)); then printf "Build failed (exit %s). Log: %s\n" "$result" "$log"; fi' EXIT
 cd "$repo"
-[[ -z "$(git status --porcelain)" ]] || { echo 'Local changes found. Commit or stash them first; nothing was overwritten.' >&2; exit 1; }
+# Builds generate files in source-adjacent directories. Older checked-out
+# branches may not ignore them, so clean only these known outputs before the
+# safety check. Tracked files and unknown untracked work remain untouched.
+generated=(
+    android/.gradle android/app/.cxx android/app/libs
+    android/app/src/main/jniLibs android/local.properties
+    android/moonlight/AndroidManifest.xml
+    companion/FlXtR.Gamez/bin companion/FlXtR.Gamez/obj
+)
+if [[ -n "$(git status --porcelain --untracked-files=all -- "${generated[@]}")" ]]; then
+    echo 'Cleaning generated files from the build checkout…'
+    git clean -fdx -- "${generated[@]}"
+fi
+[[ -z "$(git status --porcelain)" ]] || { echo 'Source changes remain after generated-file cleanup. Commit or stash them first; nothing was overwritten.' >&2; exit 1; }
 [[ -n "$branch" ]] || branch=$(git branch --show-current)
 [[ -n "$branch" && "$branch" != -* ]] && git check-ref-format "refs/heads/$branch" || { echo 'Specify a valid branch name with --branch NAME.' >&2; exit 2; }
 printf 'Pulling origin/%s…\n' "$branch"

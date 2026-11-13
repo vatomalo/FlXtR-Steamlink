@@ -99,6 +99,36 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual(note.read_text(), 'keep me\n')
         self.assertFalse((self.repo / 'build-events').exists())
 
+    def test_generated_checkout_files_are_cleaned_before_build(self):
+        generated = [
+            self.repo / 'android/.gradle/cache.bin',
+            self.repo / 'android/app/.cxx/build.ninja',
+            self.repo / 'android/local.properties',
+            self.repo / 'companion/FlXtR.Gamez/bin/Release/FlXtR.Gamez.dll',
+        ]
+        for path in generated:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('generated\n')
+        result = self.run_build('--android')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Cleaning generated files', result.stdout)
+        self.assertFalse(any(path.exists() for path in generated))
+
+    def test_generated_cleanup_does_not_hide_tracked_edits(self):
+        tracked = self.repo / 'tracked-source'
+        tracked.write_text('original\n')
+        self.git(self.repo, 'add', '.')
+        self.git(self.repo, 'commit', '-qm', 'tracked fixture')
+        self.git(self.repo, 'push', '-q', 'origin', 'main')
+        tracked.write_text('edited\n')
+        generated = self.repo / 'android/.gradle/cache.bin'
+        generated.parent.mkdir(parents=True)
+        generated.write_text('generated\n')
+        result = self.run_build('--android')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(tracked.read_text(), 'edited\n')
+        self.assertFalse(generated.exists())
+
     def test_branch_predating_build_command_uses_installed_runner(self):
         self.assertEqual(self.run_build('--android').returncode, 0)
         self.git(self.producer, 'switch', '-qc', 'older/branch')

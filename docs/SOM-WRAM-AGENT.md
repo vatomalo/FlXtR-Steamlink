@@ -232,6 +232,12 @@ systemctl --user start flxtr-som-ai.service
   walkable on any map without teaching it again. `som_teach_inn.py` and
   `som_teach_shop.py` learn the same way along their walks.
 
+If the AI chooses the same step eight decisions in a row without its pixel
+position changing (for example under a bridge, where taught bridge tiles are
+not walkable from the lower layer, or against an NPC), that step from that
+tile is blocked for 200 decisions and the planner picks another way. The log
+shows `intent=replan: no progress with step_... from tile [...]`.
+
 Inns are recognised by look only as **candidates**: the 7x7 tile pattern around
 a taught inn is stored, and a map whose surroundings match at least 80 percent
 is logged and shown as "looks like an inn". The innkeeper is a sprite, not a

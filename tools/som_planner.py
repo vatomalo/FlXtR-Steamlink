@@ -17,6 +17,9 @@ UNREACHABLE_COOLDOWN = 20
 # HP does not regenerate on its own, so an endless retreat is a dead end.
 INN_WAIT_DECISIONS = 30
 SURVIVAL_GIVE_UP_DECISIONS = 900
+# A step chosen this many times without the hero moving is blocked for a while.
+STALL_DECISIONS = 8
+STALL_BLOCK_DECISIONS = 200
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 
@@ -39,6 +42,11 @@ class MemoryPlanner:
         self.local_intention = None
         self.last_position = None
         self.local_walked = {}
+        # Stall detection: the same step chosen while the hero's pixel
+        # position does not change means the step is not possible here
+        # (wrong layer under a bridge, an NPC, a mislearned tile...).
+        self.stall = None
+        self.blocked_moves = {}
         self.local_signatures = set()
 
     @staticmethod
@@ -73,6 +81,11 @@ class MemoryPlanner:
         return self.local_walked.get(map_id, set())
 
     def _passable_steps(self, context):
+        blocked = self._blocked_here(context)
+        return [step for step in self._passable_steps_unfiltered(context)
+                if step not in blocked]
+
+    def _passable_steps_unfiltered(self, context):
         steps = self._open_steps(context)
         size = context.get("map_size_tiles")
         tile = context.get("actor_tile")
@@ -115,8 +128,10 @@ class MemoryPlanner:
         position = tuple(tile)
         if position not in walked:
             return None
+        blocked = self._blocked_here(context)
         steps = [action for action, offset in STEP_OFFSETS.items()
-                 if self._neighbor(position, offset, tuple(size)) in walked]
+                 if action not in blocked and
+                 self._neighbor(position, offset, tuple(size)) in walked]
         if not steps:
             return None
         heading = {"explore_west": "step_left", "explore_east": "step_right",
@@ -499,7 +514,41 @@ class MemoryPlanner:
 
     def decide(self, observation, previous="none", directive="explore_unknown", errand=None):
         """errand: optional {"place": "shop", "anchor": {...}} to travel to."""
-        return self._decide(observation, previous, directive, errand)
+        self.blocked_moves = {key: turns - 1 for key, turns in self.blocked_moves.items()
+                              if turns > 1}
+        decision = self._decide(observation, previous, directive, errand)
+        return self._check_stall(observation, decision)
+
+    @staticmethod
+    def _stall_key(context, action):
+        tile = context.get("actor_tile") or [None, None]
+        actor = context.get("actor") or {}
+        return f"{context.get('map_id')}:{actor.get('layer')}:{tile[0]}:{tile[1]}:{action}"
+
+    def _blocked_here(self, context):
+        return {action for action in STEP_OFFSETS
+                if self._stall_key(context, action) in self.blocked_moves}
+
+    def _check_stall(self, observation, decision):
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        if not isinstance(context, dict) or decision.action not in STEP_OFFSETS:
+            return decision
+        actor = context.get("actor") or {}
+        position = (context.get("map_id"), actor.get("x_px"), actor.get("y_px"))
+        if (self.stall and self.stall["position"] == position and
+                self.stall["action"] == decision.action):
+            self.stall["count"] += 1
+        else:
+            self.stall = {"position": position, "action": decision.action, "count": 1}
+        if self.stall["count"] < STALL_DECISIONS:
+            return decision
+        self.blocked_moves[self._stall_key(context, decision.action)] = STALL_BLOCK_DECISIONS
+        self.stall = None
+        self._set_intention(None)
+        return PlannerDecision(
+            "wait", f"no progress with {decision.action} from tile "
+            f"{context.get('actor_tile')}; blocking that step for "
+            f"{STALL_BLOCK_DECISIONS} decisions", "replan")
 
     def _decide(self, observation, previous, directive, errand):
         context = observation.get("tile_context") if isinstance(observation, dict) else None

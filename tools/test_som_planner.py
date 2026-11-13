@@ -175,6 +175,24 @@ class TestMemoryPlanner(unittest.TestCase):
         state["tile_context"]["actor_tile"] = [5, 5]   # off the taught path
         self.assertEqual(planner.decide(state, "step_left").intention, "observe")
 
+    def test_step_that_never_moves_the_hero_is_blocked_and_avoided(self):
+        planner = MemoryPlanner()
+        # Only "left" looks open, but the hero never actually moves.
+        state = observation(("###", ".@#", "###"))
+        decisions = [planner.decide(state, directive="explore_west") for _ in range(9)]
+        self.assertEqual(decisions[0].action, "step_left")
+        stalls = [d for d in decisions if "no progress" in d.reason]
+        self.assertEqual(len(stalls), 1)
+        self.assertNotEqual(decisions[-1].action, "step_left")
+        self.assertNotIn("step_left", planner.trusted_steps(state))
+        # Moving resets the count: no block while the position changes.
+        moving = MemoryPlanner()
+        for x in range(12):
+            state = observation(("...", ".@.", "..."))
+            state["tile_context"]["actor"]["x_px"] = 40 - x
+            self.assertNotIn("no progress", moving.decide(state, "step_left",
+                                                          "explore_west").reason)
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

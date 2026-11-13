@@ -504,7 +504,11 @@ class MemoryPlanner:
             # attack/charge logic remains the safe fallback for sparse data.
             weapon = hero.get("weapon") or {}
             learner = self.combat_learner
-            close_in = (learner is not None and weapon.get("verified") and
+            alone = (len([e for e in observation.get("enemy_slots", [])
+                          if e.get("active")]) == 1 and
+                     not any(p.get("availability_byte") == 1
+                             for p in (observation.get("party") or [])[1:]))
+            close_in = (learner is not None and alone and weapon.get("verified") and
                         learner.should_close(
                             enemy.get("identity"), weapon.get("type"), distance,
                             hp / max_hp if max_hp else 1.0))

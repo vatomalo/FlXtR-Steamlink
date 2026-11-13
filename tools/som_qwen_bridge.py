@@ -27,6 +27,7 @@ from som_planner import MemoryPlanner
 from som_personality import Personality, LINES
 from som_learning import CombatLearner
 from som_respawn import RespawnDialogue
+from som_movement import MovementAck
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
 from som_goals import (TRAVEL_TIMEOUT, build_goal_prompt, goal_plan, is_travel,
@@ -739,8 +740,7 @@ def main() -> int:
     directive_map = None
     director_results = queue.Queue()
     director_running = False
-    last_sent_position = None
-    unchanged_polls = 0
+    movement_ack = MovementAck()
     reward_total = 0.0
     hero_facts = (None, None)
     charge_failures = 0
@@ -1100,27 +1100,21 @@ def main() -> int:
                 decision.straight_tiles if args.policy in ("hybrid", "memory") else None)
             if sent_action != action:
                 print(f"[ai] smooth clear route: {action} -> {sent_action}", flush=True)
-            actor = ((observation or {}).get("tile_context") or {}).get("actor") or {}
-            current_position = ((observation or {}).get("map_id"),
-                                actor.get("x_px"), actor.get("y_px"))
-            movement = action in STEP_OFFSETS
-            if movement and current_position == last_sent_position:
-                unchanged_polls += 1
-            else:
-                unchanged_polls = 0
-            await_progress = movement and unchanged_polls <= 2 and current_position == last_sent_position
-            if await_progress:
-                print("[ai] awaiting WRAM movement acknowledgement", flush=True)
+            # A brief step on water or half-tiles can register only facing.
+            # Do not change direction before WRAM confirms displacement.
+            # Retry the SAME already-guarded step once, as a separate pulse.
+            actual, movement_reason = movement_ack.decide(
+                action, observation,
+                decision.intention if args.policy in ("hybrid", "memory") else "qwen")
+            if actual is None:
+                print(f"[movement] {movement_reason}", flush=True)
             elif not args.dry_run:
-                # After two unchanged snapshots, retry only the precise pulse;
-                # never stack another long hold on stale position data.
-                if movement and unchanged_polls > 2:
-                    sent_action = action
+                if movement_reason.startswith("retry same"):
+                    sent_action = actual  # no long hold on an uncertain tile
+                    print(f"[movement] {movement_reason}: {actual}", flush=True)
                 link.send_action(sent_action) if link else send_action(args.host, sent_action)
                 if learner is not None and sent_action == "attack":
                     learner.start(observation)
-                if movement:
-                    last_sent_position = current_position
             previous = action
             if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)

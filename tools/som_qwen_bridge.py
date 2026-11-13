@@ -22,7 +22,7 @@ from pathlib import Path
 from som_memory import (GP_REWARD, HP_PENALTY, WRAM, MapLoadGuard,
                         ObservationHistory)
 from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFailed,
-                      ShopMacro, candy_count, read_gold)
+                      ShopMacro, candy_count, read_gold, ring_open)
 from som_planner import MemoryPlanner
 from som_personality import Personality, LINES
 from som_learning import CombatLearner
@@ -743,6 +743,8 @@ def main() -> int:
     reward_total = 0.0
     hero_facts = (None, None)
     charge_failures = 0
+    orphan_ring_samples = 0
+    orphan_ring_attempted = False
     if history is not None:
         print("[reward] " + ("+%g per GP gained, -%g per %% of max HP lost" %
                              (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
@@ -814,8 +816,40 @@ def main() -> int:
                             print(f"[ai] eagle eye: mapped {learned} tiles of map {here}",
                                   flush=True)
                         surveyed_map, surveys_due = here, SURVEY_EVERY
+            # The service can restart with the Candy item ring still on screen.
+            # In that state CandyMacro.ready() raises BEFORE its cleanup try:
+            # the regular planner then waits forever for field mode.
+            # Require three consecutive raw WRAM snapshots of a genuine item
+            # ring before one bounded recovery attempt. Never touch events,
+            # shops, ordinary dialogs or a non-ring mode.
+            mode = ((observation or {}).get("tile_context") or {}).get("game_mode")
+            observed_ring = (raw is not None and mode == "ring" and
+                             ring_open(WRAM(raw)))
+            if mode == "field":
+                orphan_ring_samples = 0
+                orphan_ring_attempted = False
+            elif observed_ring and link and args.policy in ("hybrid", "memory"):
+                orphan_ring_samples += 1
+                if orphan_ring_samples >= 3 and not orphan_ring_attempted:
+                    orphan_ring_attempted = True
+                    print("[candy] orphan ring after restart/failure; "
+                          "attempting verified Cancel cleanup", flush=True)
+                    try:
+                        if calibration is None:
+                            raise MacroFailed("no ring calibration for Cancel cleanup")
+                        CandyMacro(link, calibration)._close_ring()
+                        print("[candy] orphan ring closed; resuming field play", flush=True)
+                        previous = "wait"
+                        continue
+                    except (MacroFailed, OSError) as exc:
+                        candy_disabled = True
+                        print(f"[candy] orphan ring cleanup failed: {exc}; "
+                              "manual menu exit required", flush=True)
+                        announce("AI: ring stuck|close manually")
+            else:
+                orphan_ring_samples = 0
             if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
-                    candy_wanted(observation)):
+                    candy_wanted(observation) and mode == "field"):
                 announce("AI: HP low|using Candy")
                 try:
                     gained = CandyMacro(link, calibration,
@@ -828,6 +862,10 @@ def main() -> int:
                     candy_disabled = True
                     print(f"[candy] disabled for this run: {exc}", flush=True)
                     announce("AI: Candy failed|see log")
+                    # Handle a failure before CandyMacro entered its own
+                    # cleanup block (for example a stale ring-mode read).
+                    if raw is not None and ring_open(WRAM(raw)):
+                        orphan_ring_samples = 3
                 previous = "wait"
                 continue
             if args.policy in ("hybrid", "memory"):

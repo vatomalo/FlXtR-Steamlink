@@ -409,7 +409,14 @@ python3 tools/som_teach_path.py   # face some grass, attack it, press Enter
 systemctl --user start flxtr-som-ai.service
 ```
 
-The AI also learns whenever one of its own attacks cuts grass. Pots or other
+The AI also learns whenever one of its own attacks cuts grass.
+
+Grass grows back when the map reloads, so a tile the hero once walked
+through (after cutting it) is cut again, not walked into, while the live grid
+shows known grass there. When a step is refused without the hero moving
+(for example from a diagonal ledge tile) and known grass lies one or two
+tiles that way, the AI swings at it instead of blocking the step; a boxed-in
+hero also looks two tiles out for grass. Pots or other
 breakable tiles that behave the same way are learned the same way.
 
 ## Spawn a real Rabite (native map spawn)

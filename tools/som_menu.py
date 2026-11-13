@@ -94,6 +94,9 @@ class MacroFailed(Exception):
     pass
 
 
+RING_SWITCHES = 4   # Up presses allowed to reach the item ring
+
+
 class CandyMacro:
     """Open the item ring, select Candy, use it on the leader, verify healing."""
 
@@ -167,9 +170,19 @@ class CandyMacro:
                            if item["name"] == "candy" and item["verified"])
         try:
             wram = self._press_until(self.cal.open_action, ring_open, what="an open ring")
+            # The ring reopens on whichever ring was used last (weapons,
+            # magic, ...); Up switches rings. Verify the kind after each press.
+            for _ in range(RING_SWITCHES):
+                if wram.u8(RING_KIND) == self.cal.item_ring_kind:
+                    break
+                before = wram.u8(RING_KIND)
+                self.log(f"[candy] ring kind {before}; pressing up for the item ring")
+                wram = self._press_until("step_up",
+                                         lambda w: ring_open(w) and w.u8(RING_KIND) != before,
+                                         timeout=0.8, what="a ring switch")
             if wram.u8(RING_KIND) != self.cal.item_ring_kind:
-                raise MacroFailed(f"ring opened on kind {wram.u8(RING_KIND)}, "
-                                  f"not the item ring {self.cal.item_ring_kind}")
+                raise MacroFailed(f"item ring {self.cal.item_ring_kind} not reached after "
+                                  f"{RING_SWITCHES} ups (kind {wram.u8(RING_KIND)})")
             address = self.cal.cursor_address
             for _ in range(16 if address is not None else 0):
                 cursor = wram.u8(address)
@@ -225,6 +238,20 @@ class CandyMacro:
             raise
 
 
+SAVE_SLOT_CURSOR = 0x7EA211   # save slot list cursor, 0 = top slot (live Turbo)
+
+
+def is_choice(wram):
+    """A yes/no choice box is open (same test as som_event_escape)."""
+    return wram.u8(0x7EA170) in (0x5A, 0x5F) or bool(wram.u8(0x7E1D00) & 0x80)
+
+
+def screen_fingerprint(wram):
+    text = bytes(wram.u8(0x7EA1A4 + i) for i in range(33)).split(b"\0", 1)[0]
+    return (wram.u8(0x7E00D0), wram.u8(0x7E1D01), wram.u8(0x7E1D02), text,
+            is_choice(wram), wram.u8(SAVE_SLOT_CURSOR))
+
+
 class InnMacro:
     """Talk to the taught innkeeper and confirm the stay until HP is full.
 
@@ -235,13 +262,17 @@ class InnMacro:
     """
 
     POLL = 0.1
-    MAX_CONFIRMS = 10
+    # A live Turbo stay (talk, pay, night fade, morning) took more than ten.
+    MAX_CONFIRMS = 20
 
     def __init__(self, link, anchor, confirm="confirm", cancel="cancel", log=print,
-                 sleep=time.sleep, clock=time.monotonic):
+                 sleep=time.sleep, clock=time.monotonic, save_slot=None):
         self.link, self.anchor, self.log = link, anchor, log
         self.confirm, self.cancel = confirm, cancel
         self.sleep, self.clock = sleep, clock
+        # 1-based save slot to answer the after-stay "Save?" with; None declines.
+        self.save_slot = save_slot
+        self.saved = False
 
     def _read(self):
         raw = self.link.fetch_wram(True)
@@ -278,6 +309,60 @@ class InnMacro:
             self.link.send_action(self.cancel)
             self.sleep(0.4)
 
+    def _wait_change(self, fingerprint, seconds=1.5):
+        deadline = self.clock() + seconds
+        while True:
+            wram = self._read()
+            if wram.game_mode() == "field" or screen_fingerprint(wram) != fingerprint:
+                return wram
+            if self.clock() >= deadline:
+                return None
+            self.sleep(self.POLL)
+
+    def _press_until_change(self, wram, action, attempts=3):
+        """Turbo sometimes drops a press in menus; retry until the screen moves."""
+        fingerprint = screen_fingerprint(wram)
+        for _ in range(attempts):
+            self.link.send_action(action)
+            changed = self._wait_change(fingerprint)
+            if changed is not None:
+                return changed
+        raise MacroFailed(f"{action} had no effect on the save screen")
+
+    def _save(self, wram):
+        """Yes -> slot list -> cursor onto save_slot -> confirm -> close message.
+
+        Verified live 2026-11-13 at the Potos inn: the slot cursor is WRAM
+        7E:A211 (0 = top slot) while the list is shown.
+        """
+        self.log(f"[inn] save prompt: Yes, slot {self.save_slot}")
+        wram = self._press_until_change(wram, self.confirm)
+        target = self.save_slot - 1
+        for _ in range(8):
+            if wram.game_mode() == "field" or is_choice(wram):
+                raise MacroFailed("save slot list did not appear after Yes")
+            cursor = wram.u8(SAVE_SLOT_CURSOR)
+            if cursor == target:
+                break
+            step = "step_down" if cursor < target else "step_up"
+            self.link.send_action(step)
+            self.sleep(0.4)
+            wram = self._read()
+        if wram.u8(SAVE_SLOT_CURSOR) != target:
+            raise MacroFailed(f"save cursor stuck at slot {wram.u8(SAVE_SLOT_CURSOR) + 1}")
+        wram = self._press_until_change(wram, self.confirm)
+        for _ in range(6):
+            if wram.game_mode() == "field":
+                self.saved = True
+                self.log(f"[inn] saved into slot {self.save_slot}")
+                return
+            self.sleep(0.6)
+            wram = self._read()
+            if wram.game_mode() == "field":
+                continue
+            wram = self._press_until_change(wram, self.confirm)
+        raise MacroFailed("still in a dialog after saving")
+
     def run(self):
         start = self._read()
         why = self.ready(start)
@@ -306,6 +391,14 @@ class InnMacro:
                 healed = healed or (hero["max_hp"] and hero["hp"] >= hero["max_hp"])
                 if healed and wram.game_mode() == "field":
                     return hero["hp"] - start.character(0)["hp"]
+                if healed and is_choice(wram):
+                    # After the night the innkeeper asks to save. Never confirm
+                    # it blindly: that would write whatever slot is offered.
+                    if not self.save_slot:
+                        self.log("[inn] save prompt left to the player (no --save-slot)")
+                        return hero["hp"] - start.character(0)["hp"]
+                    self._save(wram)
+                    return self._read().character(0)["hp"] - start.character(0)["hp"]
             if healed:
                 self._leave_dialog()
                 return self._read().character(0)["hp"] - start.character(0)["hp"]
@@ -352,6 +445,9 @@ def candy_count(wram):
                  if item["name"] == "candy" and item["verified"]), 0)
 
 
+EXTRA_BUY_CONFIRMS = 2
+
+
 class ShopMacro(InnMacro):
     """Replay the player's recorded Candy purchase and verify it happened.
 
@@ -395,10 +491,12 @@ class ShopMacro(InnMacro):
         if self._tile(self._read()) != before:
             raise MacroFailed("facing tap moved the hero; shopkeeper is not on that side")
         try:
-            # The recorded sequence often ends with Cancel. Verify Buy first.
+            # Everything from the first Cancel on is leaving the shop (and
+            # whatever the player did afterwards, e.g. opening the ring).
+            # Replaying it would exit before the purchase lands.
             buttons = list(self.anchor["buttons"])
-            while buttons and buttons[-1] == self.cancel:
-                buttons.pop()
+            if self.cancel in buttons:
+                buttons = buttons[:buttons.index(self.cancel)]
             if not buttons:
                 raise MacroFailed("shop recording contains only exit buttons")
             wram = start
@@ -414,10 +512,12 @@ class ShopMacro(InnMacro):
                     return gold_before - gold_after
                 if gold_after != gold_before or candy_after != candy_before:
                     raise MacroFailed("shop changed gold or inventory without verified Candy purchase")
-            # A Turbo Buy page may require one final confirmation. Never
-            # issue unbounded confirmations or accept an unknown field state.
-            if buttons[-1] == self.confirm and wram.game_mode() == "event":
-                self.log("[shop] trying one final recorded Buy confirmation")
+            # The Turbo Buy page needs one or two more confirmations than the
+            # recording holds (player, 2026-11-13). Bounded, checked per press.
+            for extra in range(EXTRA_BUY_CONFIRMS):
+                if wram.game_mode() != "event" or buttons[-1] != self.confirm:
+                    break
+                self.log(f"[shop] extra Buy confirmation {extra + 1}/{EXTRA_BUY_CONFIRMS}")
                 self.link.send_action(self.confirm)
                 self.sleep(self.GAP)
                 wram = self._read()
@@ -425,6 +525,8 @@ class ShopMacro(InnMacro):
                 if candy_after > candy_before and gold_after < gold_before:
                     self._leave_dialog()
                     return gold_before - gold_after
+                if gold_after != gold_before or candy_after != candy_before:
+                    raise MacroFailed("shop changed gold or inventory without verified Candy purchase")
             gold_after, candy_after = read_gold(wram, self.gold), candy_count(wram)
             raise MacroFailed(f"purchase not observed (Candy {candy_before}->{candy_after}, "
                               f"gold {gold_before}->{gold_after}); reteach shop if needed")

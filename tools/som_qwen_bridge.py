@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import urllib.request
+import zlib
 from pathlib import Path
 
 from som_memory import (GP_REWARD, HP_PENALTY, WRAM, MapLoadGuard,
@@ -48,6 +49,8 @@ ACTIONS = {
     "dash_right", "dash_left", "dash_up", "dash_down",
 }
 # Held for many seconds and ended by the bridge: never offered to the model.
+GUARD_REFRESHES = 2     # extra block presses per guard decision
+GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
 MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
@@ -386,6 +389,10 @@ REMOTE_LOOP = (
     "if [ \"$cmd\" = obsm ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
     "elif [ -f /tmp/flxtr-som-wram.bin ]; then echo WRAM; cat /tmp/flxtr-som-wram.bin; "
     "else echo NONE; fi;; "
+    "obsz|obsmz) "
+    "if [ \"$cmd\" = obsmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
+    "elif exec 3< /tmp/flxtr-som-wram.bin; then echo WRAMZ; gzip -1 -c <&3; exec 3<&-; "
+    "else echo NONE; fi;; "
     "nav) if [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
     "elif exec 3< /tmp/flxtr-som-wram.bin; then echo NAV; "
     "dd if=/proc/self/fd/3 bs=256 count=1 2>/dev/null; "
@@ -408,11 +415,12 @@ class RemoteLink:
     """Keep one SSH session open for WRAM reads and actions."""
 
     def __init__(self, host: str, timeout: float = 5.0, remote_loop: str = REMOTE_LOOP,
-                 ssh_command=None):
+                 ssh_command=None, compress=True):
         self.host, self.timeout = host, timeout
         self.remote_loop = remote_loop
         self.ssh_command = list(ssh_command or SSH_BASE)
         self.process = None
+        self.compress = compress
 
     def _start(self):
         self.close()
@@ -449,6 +457,26 @@ class RemoteLink:
             remaining -= len(chunk)
         return b"".join(chunks)
 
+    def _read_gzip(self, deadline: float) -> bytes:
+        """One gzip member from the stream; nothing follows it until the next request."""
+        inflater = zlib.decompressobj(wbits=31)
+        fd = self.process.stdout.fileno()
+        out = []
+        while not inflater.eof:
+            wait = deadline - time.monotonic()
+            if wait <= 0 or not select.select([fd], [], [], wait)[0]:
+                raise subprocess.TimeoutExpired("ssh link", self.timeout)
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                raise OSError("SSH link closed")
+            out.append(inflater.decompress(chunk))
+        if inflater.unused_data:
+            raise OSError("unexpected bytes after compressed WRAM")
+        data = b"".join(out)
+        if len(data) != WRAM_BYTES:
+            raise OSError(f"compressed WRAM inflated to {len(data)} bytes")
+        return data
+
     def _read_line(self, deadline: float) -> str:
         data = bytearray()
         while not data.endswith(b"\n"):
@@ -467,6 +495,8 @@ class RemoteLink:
                 status = self._read_line(deadline)
                 payload = (self._read_exact(WRAM_BYTES, deadline)
                            if status == "WRAM" else None)
+                if status == "WRAMZ":
+                    payload = self._read_gzip(deadline)
                 if status == "NAV":
                     payload = self._read_exact(768, deadline)
                 return status, payload
@@ -477,10 +507,13 @@ class RemoteLink:
                     raise
 
     def fetch_wram(self, require_marker=False):
-        status, payload = self._request("obsm" if require_marker else "obs")
+        # The Steam Link link carries ~210 KB/s; gzip -1 shrinks the 128 KiB
+        # snapshot ~3x and roughly halves the time per decision.
+        command = "obsm" if require_marker else "obs"
+        status, payload = self._request(command + "z" if self.compress else command)
         if status == "STOP":
             return None
-        if status != "WRAM":
+        if status not in ("WRAM", "WRAMZ"):
             raise OSError(f"WRAM snapshot unavailable ({status})")
         return payload
 
@@ -700,6 +733,10 @@ def main() -> int:
                         help="play loop hunting map (default: best gold per HP from memory)")
     parser.add_argument("--trip-gold", type=int, default=100,
                         help="play loop: GP to earn per hunting trip")
+    parser.add_argument("--save-slot", type=int, choices=range(0, 5), default=1,
+                        help="answer the innkeeper's after-stay save prompt with Yes "
+                             "and save into this slot (1-4, the player's usual one); "
+                             "0 never saves")
     parser.add_argument("--no-npc-talk", action="store_true",
                         help="Do not initiate conversations with nearby NPCs")
     parser.add_argument("--visit-map", type=int,
@@ -1274,12 +1311,18 @@ def main() -> int:
                         announce("AI: staying at the inn")
                         cancel = calibration.cancel_action if calibration else "cancel"
                         try:
-                            gained = InnMacro(link, anchor, cancel=cancel,
-                                              log=lambda text: print(text, flush=True)).run()
+                            inn = InnMacro(link, anchor, cancel=cancel,
+                                           log=lambda text: print(text, flush=True),
+                                           save_slot=args.save_slot or None)
+                            gained = inn.run()
                             print(f"[inn] stayed at the inn: +{gained} HP", flush=True)
                             announce("AI: rested at the inn|HP restored")
+                            if inn.saved:
+                                announce(f"AI: game saved|slot {args.save_slot}")
                             if play_loop is not None:
                                 play_loop.inn_done()
+                                if inn.saved:
+                                    play_loop.save_done()
                         except MacroFailed as exc:
                             if play_loop is not None:
                                 play_loop.inn_failed(str(exc))
@@ -1400,6 +1443,14 @@ def main() -> int:
                         print(f"[movement] current walk stopped: {exc}",flush=True)
                 else:
                     link.send_action(sent_action) if link else send_action(args.host, sent_action)
+                    if sent_action == "block" and link:
+                        # The proxy holds R for 15 frames but decisions are
+                        # ~40 frames apart, so a single tap left the guard
+                        # down most of the time. A new command replaces the
+                        # unfinished hold: refresh it until the next decision.
+                        for _ in range(GUARD_REFRESHES):
+                            time.sleep(GUARD_REFRESH_S)
+                            link.send_action("block")
                 if learner is not None:
                     learner.action_sent(sent_action, observation)
                 if block_learner is not None and observation is not None:

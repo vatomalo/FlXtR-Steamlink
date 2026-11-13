@@ -3,7 +3,7 @@ import math
 import heapq
 import itertools
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from som_memory import detect_cuts
 
@@ -25,6 +25,7 @@ CLOSE_QUARTERS_PX = 48
 # establish actual per-weapon reach. Do not swing at 48x48 diagonally.
 DEFAULT_STRIKE_AXIAL_PX = 28
 DEFAULT_STRIKE_SIDE_PX = 14
+MAX_SWING_PX = 32           # Manhattan distance; farther swings trade evenly
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -35,6 +36,8 @@ SURVIVAL_GIVE_UP_DECISIONS = 900
 CUT_ATTEMPTS = 3
 # A step chosen this many times without the hero moving is blocked for a while.
 STALL_DECISIONS = 8
+# A learned crossing this close to a native return door went through that door.
+DOOR_CROSSING_TILES = 4
 STALL_BLOCK_DECISIONS = 200
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
@@ -594,8 +597,15 @@ class MemoryPlanner:
         else:
             wants_block = (recharge is not None and recharge >= 50 and distance <= 32 and
                            max_hp and hp * 4 <= max_hp * 3)
-        if wants_block and self.block_cooldown == 0:
-            self.block_cooldown = 4 if self.block_learner is not None else 10
+        proven = (wants_block and hasattr(self.block_learner, "proven") and
+                  self.block_learner.proven(enemy.get("identity")))
+        if wants_block and (self.block_cooldown == 0 or proven):
+            # Once blocking has measurably paid against this enemy, guard on
+            # every exposed decision (swing recovery, just hit, recharging):
+            # strike, guard, strike. While still exploring, keep the cooldown
+            # so unblocked samples keep coming in.
+            self.block_cooldown = (0 if proven else
+                                   4 if self.block_learner is not None else 10)
             return PlannerDecision("block",
                                    f"guard against enemy {enemy['slot']} while weapon recharges",
                                    "defend_enemy")
@@ -617,6 +627,9 @@ class MemoryPlanner:
                            abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
                           (0 < abs(dy) <= DEFAULT_STRIKE_AXIAL_PX and
                            abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
+        # Live samples (normal enemies and boss 0x57 alike): swings from
+        # 32-47 px dealt about what they cost; under 32 px they deal 4-8x more.
+        attack_aligned = attack_aligned and abs(dx) + abs(dy) < MAX_SWING_PX
         if attack_aligned and observation.get("weapons_enabled"):
             # Only a mature learned range can veto a normal swing. Existing
             # attack/charge logic remains the safe fallback for sparse data.
@@ -626,15 +639,22 @@ class MemoryPlanner:
                           if e.get("active")]) == 1 and
                      not any(p.get("availability_byte") == 1
                              for p in (observation.get("party") or [])[1:]))
-            close_in = (learner is not None and alone and weapon.get("verified") and
+            # Counter: right after holding the guard, strike at once (no
+            # charge, no range-learner veto) while the enemy is still close.
+            countering = self.previous_action == "block" and recharge == 0
+            close_in = (not countering and learner is not None and alone and
+                        weapon.get("verified") and
                         recharge == 0 and not self.charge_stage(hero, enemy) and
                         learner.should_close(
                             enemy.get("identity"), weapon.get("type"), distance,
                             hp / max_hp if max_hp else 1.0))
             if not close_in:
                 strike = self._face_and_strike(context, enemy, dx, dy, open_steps,
-                                               recharge == 0, hero)
+                                               recharge == 0, None if countering else hero)
                 if strike is not None:
+                    if countering and strike.action == "attack":
+                        return PlannerDecision("attack", f"counter enemy {enemy['slot']} "
+                                               "after guarding", "engage_enemy")
                     return strike
         # Follow the learned map first. Taking the straight-line step whenever
         # its first tile was open, and the map route only when it was not,
@@ -833,6 +853,15 @@ class MemoryPlanner:
                            self.history.return_waypoint(context.get("map_id"),
                                                         anchor.get("map_id")))
             exit_action = destination.get("action") if isinstance(destination, dict) else None
+            door = self._door_for_crossing(context, destination)
+            if door is not None:
+                # The recorded tile of a return-door crossing is the last tile
+                # verified before the fade, often short of the door; heading
+                # for it would bounce. Walk onto the native door instead.
+                decision = self._return_door(context, open_steps,
+                                             f"leave by return door toward {place}")
+                if decision.intention == "leave_room":
+                    return replace(decision, intention=travel_intent)
         if (isinstance(destination, dict) and
                 destination.get("map_id") == context.get("map_id") and
                 destination.get("layer") == actor.get("layer") and
@@ -867,6 +896,16 @@ class MemoryPlanner:
                                            f"{destination.get('next_map')}", travel_intent)
                 if exit_action is None:
                     return PlannerDecision("wait", f"at learned {place} point", arrive_intent)
+                if (crossing and destination.get("source") == "learned" and
+                        hasattr(self.history, "reject_edge")):
+                    # Standing on the recorded crossing, but its step is a
+                    # verified wall (e.g. a shop counter logged as a map change).
+                    # Falling through would bounce between this tile and a
+                    # return door forever; drop the edge and route another way.
+                    self.history.reject_edge(context.get("map_id"), destination.get("next_map"))
+                    return PlannerDecision("wait", f"learned exit to map "
+                                           f"{destination.get('next_map')} is blocked "
+                                           f"by {exit_action}; rerouting", "replan")
             if target in routes and target != position:
                 action, distance = routes[target]
                 if action in open_steps:
@@ -935,6 +974,21 @@ class MemoryPlanner:
                 unknown.append(waypoint)
         # Prefer a proven connected arrival over ambiguous old map_edges.
         return matching or unknown
+
+    @staticmethod
+    def _door_for_crossing(context, destination):
+        """Return door this learned crossing was made through, if any."""
+        if not isinstance(destination, dict) or destination.get("source") != "learned":
+            return None
+        target = destination.get("target")
+        if (destination.get("map_id") != context.get("map_id") or
+                destination.get("layer") != context["actor"].get("layer") or
+                not isinstance(target, list)):
+            return None
+        near = [door for door in context.get("return_doors") or []
+                if abs(door["target"][0] - target[0]) + abs(door["target"][1] - target[1])
+                <= DOOR_CROSSING_TILES]
+        return near[0] if near else None
 
     def _return_door(self, context, open_steps, reason="leave room through return door"):
         position = tuple(context["actor_tile"])

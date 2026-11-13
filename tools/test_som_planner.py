@@ -270,6 +270,43 @@ class TestMemoryPlanner(unittest.TestCase):
         hit = planner.decide(observation(enemy=enemy, recharge=0, hp=90, max_hp=100), "wait")
         self.assertEqual(hit.action, "block")
 
+    def test_proven_block_guards_every_exposed_decision(self):
+        # Live block_stats: blocked close decisions lost 0 HP, unblocked 0.8-1.8.
+        class Learner:
+            def __init__(self, proven):
+                self.is_proven = proven
+            def should_block(self, enemy_id):
+                return True
+            def proven(self, enemy_id):
+                return self.is_proven
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56, "identity": 5}
+        for proven, second in ((True, "block"), (False, None)):
+            planner = MemoryPlanner()
+            planner.block_learner = Learner(proven)
+            first = planner.decide(observation(enemy=enemy, hp=100, max_hp=100), "attack")
+            again = planner.decide(observation(enemy=enemy, hp=90, max_hp=100), "block")
+            self.assertEqual(first.action, "block")
+            if second:
+                self.assertEqual(again.action, second)
+            else:
+                self.assertNotEqual(again.action, "block")
+
+    def test_counters_right_after_guarding(self):
+        enemy = {"slot": 1, "active": True, "x_px": 60, "y_px": 56, "identity": 5}
+        planner = MemoryPlanner()
+        planner.assumed_facing = "step_right"
+        decision = planner.decide(observation(enemy=enemy, hp=100, max_hp=100), "block")
+        self.assertEqual(decision.action, "attack")
+        self.assertIn("counter", decision.reason)
+
+    def test_does_not_swing_from_beyond_point_blank_range(self):
+        # 20 px ahead and 14 px aside is 34 px: live swings there traded evenly.
+        enemy = {"slot": 1, "active": True, "x_px": 60, "y_px": 42}
+        planner = MemoryPlanner()
+        planner.assumed_facing = "step_right"
+        decision = planner.decide(observation(enemy=enemy, hp=100, max_hp=100), "step_right")
+        self.assertNotEqual(decision.action, "attack")
+
     def test_half_health_latches_return_to_inn_until_recovered(self):
         planner = MemoryPlanner()
         hurt = planner.decide(observation(hp=50, max_hp=100))
@@ -305,6 +342,47 @@ class TestMemoryPlanner(unittest.TestCase):
         here = dict(shop, target=[2, 3])
         arrived = planner.decide(observation(), errand={"place": "shop", "anchor": here})
         self.assertEqual((arrived.action, arrived.intention), ("wait", "at_shop"))
+
+    @staticmethod
+    def _edge(history, from_map, to_map, x, y, action):
+        history.connection.execute(
+            "INSERT INTO map_edges(from_map,to_map,layer,x,y,action,seen,last_ts) "
+            "VALUES(?,?,1,?,?,?,2,0)", (from_map, to_map, x, y, action))
+
+    def test_blocked_learned_exit_is_rejected_instead_of_bouncing(self):
+        # Live 2026-11-13: a shop counter logged as map 257 -> 130 made the
+        # hero alternate go_to_inn (step onto it) and leave_room (step back).
+        inn = {"map_id": 259, "layer": 1, "target": [5, 5]}
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "edge.sqlite")
+            self._edge(history, 131, 130, 2, 3, "step_up")
+            self._edge(history, 130, 259, 1, 1, "step_right")
+            planner = MemoryPlanner(history)
+            state = observation(("###", ".@.", "..."))
+            state["tile_context"]["return_doors"] = [{"target": [6, 6]}]
+            decision = planner.decide(state, errand={"place": "inn", "anchor": inn})
+            self.assertEqual((decision.action, decision.intention), ("wait", "replan"))
+            self.assertIsNone(history.map_path(131, 259))
+            # Actually crossing the edge later trusts it again.
+            history._learn_edge({"map_id": 131, "layer": 1, "target": [2, 3],
+                                 "action": "step_up"},
+                                {"map_id": 130, "layer": 1, "target": [1, 1]})
+            self.assertEqual(history.map_path(131, 259), [131, 130, 259])
+            history.close()
+
+    def test_learned_crossing_near_a_return_door_walks_onto_the_door(self):
+        # The recorded crossing tile is the last verified one before the fade,
+        # short of the door; aiming at it would step back and forth.
+        inn = {"map_id": 259, "layer": 1, "target": [5, 5]}
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "door.sqlite")
+            self._edge(history, 131, 259, 3, 2, "step_up")
+            state = observation()
+            state["tile_context"]["return_doors"] = [{"target": [2, 4]}]
+            decision = MemoryPlanner(history).decide(
+                state, errand={"place": "inn", "anchor": inn})
+            self.assertEqual((decision.action, decision.intention), ("step_down", "go_to_inn"))
+            history.close()
 
     def test_enemy_on_the_way_is_fought_before_shopping(self):
         shop = {"map_id": 131, "layer": 1, "target": [1, 3]}

@@ -652,6 +652,12 @@ class ObservationHistory:
         if not previous or not current or previous["map_id"] == current["map_id"]:
             return
         now = time.time()
+        # A real crossing proves the edge, whatever an earlier run rejected.
+        rejected = self.rejected_edges()
+        crossed = {f"{previous['map_id']}>{current['map_id']}",
+                   f"{current['map_id']}>{previous['map_id']}"}
+        if rejected & crossed:
+            self.set_agent_state("rejected_edges", sorted(rejected - crossed))
         reverse = OPPOSITE_STEP.get(previous["action"])
         for origin, destination, action in (
                 (previous, current["map_id"], previous["action"]),
@@ -1300,9 +1306,11 @@ class ObservationHistory:
                         return path[::-1]
                     queue.append(to_map)
         edges = {}
+        rejected = self.rejected_edges()
         for from_map, to_map in self.connection.execute(
                 "SELECT from_map,to_map FROM map_edges"):
-            edges.setdefault(from_map, set()).add(to_map)
+            if f"{from_map}>{to_map}" not in rejected:
+                edges.setdefault(from_map, set()).add(to_map)
         rom = self.rom_tables if self.rom_exits_trusted() else None
         parents = {current_map: None}
         queue = deque([current_map])
@@ -1322,6 +1330,21 @@ class ObservationHistory:
                     return path[::-1]
                 queue.append(to_map)
         return None
+
+    def rejected_edges(self):
+        """Learned crossings ("from>to") found unusable where they were recorded."""
+        value = self.get_agent_state("rejected_edges")
+        return set(value) if isinstance(value, list) else set()
+
+    def reject_edge(self, from_map, to_map):
+        """Stop routing through a learned crossing whose step is a verified wall.
+
+        Old logs can record a shop counter or a scripted move as a map
+        crossing. The row stays; crossing it for real clears the rejection.
+        """
+        rejected = self.rejected_edges()
+        rejected.add(f"{from_map}>{to_map}")
+        self.set_agent_state("rejected_edges", sorted(rejected))
 
     def exit_waypoints(self, current_map, target_map):
         """Exits of current_map toward target_map, ROM exit tiles first.
@@ -1346,7 +1369,7 @@ class ObservationHistory:
         row = self.connection.execute(
             "SELECT layer,x,y,action FROM map_edges WHERE from_map=? AND to_map=?",
             (current_map, next_map)).fetchone()
-        if row:
+        if row and f"{current_map}>{next_map}" not in self.rejected_edges():
             waypoints.append({"map_id": current_map, "layer": row[0],
                               "target": [row[1], row[2]], "action": row[3],
                               "next_map": next_map, "source": "learned", "path": path})

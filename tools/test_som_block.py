@@ -42,6 +42,16 @@ class BlockLearnerTest(unittest.TestCase):
         self.feed("attack", [5] * 40, identity=8)
         self.assertFalse(self.learner.should_block(8))
 
+    def test_proven_only_with_enough_samples_on_both_sides(self):
+        self.assertFalse(self.learner.proven(7))
+        self.feed("block", [0] * 10)
+        self.assertFalse(self.learner.proven(7))                # still exploring
+        self.feed("attack", [2] * 10)
+        self.assertTrue(self.learner.proven(7))
+        self.feed("block", [5] * 20, identity=8)
+        self.feed("attack", [5] * 20, identity=8)
+        self.assertFalse(self.learner.proven(8))                # no real advantage
+
     def test_ignores_far_enemies_heals_and_ko(self):
         self.learner.record(obs(100, enemy_px=(300, 300)), "block")
         self.assertIsNone(self.learner.pending)

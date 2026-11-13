@@ -13,7 +13,7 @@ HERO_HP = 0x7EE000 + 0x182
 class FakeGame:
     """Tiny ring-menu simulation driven by the same action names as the proxy."""
 
-    def __init__(self, items=(0x20, 0x41, 0x23), opener="open_ring", heal=True):
+    def __init__(self, items=(0x20, 0x41, 0x23), opener="open_ring", heal=True, rings=(0,)):
         self.ram = bytearray(0x20000)
         self.set(0x7EE000, 1)                  # hero slot present
         self.set(0x7E00E4, 1); self.set(0x7E00E6, 0x0F)  # field mode
@@ -22,6 +22,7 @@ class FakeGame:
             self.set(0x7ECC48 + slot, items[slot] if slot < len(items) else 0xFF)
         self.items = len(items)
         self.opener, self.heal = opener, heal
+        self.rings = rings          # ring kinds in Up order; opens on the first
         self.sent = []
 
     def set(self, address, value):
@@ -41,15 +42,19 @@ class FakeGame:
         self.sent.append(action)
         is_open = self.get(RING_OPEN) == 1
         if action == self.opener and not is_open:
-            self.set(RING_OPEN, 1); self.set(RING_KIND, 0)
+            self.set(RING_OPEN, 1); self.set(RING_KIND, self.rings[0])
             self.confirms = 0
+        elif action == "step_up" and is_open:
+            kind = self.rings.index(self.get(RING_KIND))
+            self.set(RING_KIND, self.rings[(kind + 1) % len(self.rings)])
         elif action == "cancel" and is_open:
             self.set(RING_OPEN, 0)
         elif action == "step_right" and is_open:
             self.set(CURSOR, (self.get(CURSOR) + 1) % self.items)
         elif action == "confirm" and is_open:
             self.confirms += 1
-            if self.confirms == 2 and self.heal and self.get(CURSOR) == 0:
+            if (self.confirms == 2 and self.heal and self.get(CURSOR) == 0 and
+                    self.get(RING_KIND) == 0):
                 self.set16(HERO_HP, 100)
                 self.set(0x7ECC48, 0x00 | 0x00)  # count 1 -> code 0 (used up)
                 self.set(0x7ECC48, 0xFF)
@@ -124,6 +129,12 @@ class TestCandyMacro(unittest.TestCase):
             run(game)
         self.assertIn("recalibrate", str(raised.exception))
         self.assertEqual(game.sent, [])
+
+    def test_presses_up_from_another_ring_to_the_item_ring(self):
+        # Live: "ring opened on kind 1, not the item ring" disabled Candy.
+        game = FakeGame(rings=(1, 2, 0))
+        self.assertEqual(run(game), 60)
+        self.assertEqual(game.sent[:3], ["open_ring", "step_up", "step_up"])
 
     def test_wrong_ring_kind_fails_before_selecting(self):
         game = FakeGame()
@@ -211,6 +222,78 @@ class TestInnMacro(unittest.TestCase):
         with self.assertRaises(MacroFailed):
             run_inn(FakeInn(), {"map_id": 131, "layer": 1, "target": [0, 4]})
 
+class FakeSavingInn(FakeInn):
+    """Live Turbo inn: after the night a Save? choice that cancel cannot close,
+    then a slot list (cursor 7E:A211), then a one-page message."""
+
+    def __init__(self, start_cursor=0, drop_first_slot_confirm=False):
+        super().__init__(heals_at=3, closes_at=99)
+        self.stage = "stay"
+        self.saved_slot = None
+        self.start_cursor = start_cursor
+        self.drop = drop_first_slot_confirm
+
+    def send_action(self, action):
+        if self.stage == "stay":
+            super().send_action(action)
+            if self.get(HERO_HP) == 100:
+                self.stage = "prompt"
+                self.set(0x7EA170, 0x5A)
+            return
+        self.sent.append(action)
+        if self.stage == "prompt" and action == "confirm":
+            self.stage = "slots"
+            self.set(0x7EA170, 0)
+            self.set(SAVE_CURSOR, self.start_cursor)
+        elif self.stage == "slots" and action == "step_down":
+            self.set(SAVE_CURSOR, min(3, self.get(SAVE_CURSOR) + 1))
+        elif self.stage == "slots" and action == "step_up":
+            self.set(SAVE_CURSOR, max(0, self.get(SAVE_CURSOR) - 1))
+        elif self.stage == "slots" and action == "confirm":
+            if self.drop:
+                self.drop = False
+                return
+            self.saved_slot = self.get(SAVE_CURSOR) + 1
+            self.stage = "message"
+            self.set(0x7EA1A4, 0xB5)
+        elif self.stage == "message" and action == "confirm":
+            self.stage = "done"
+            self.set(EVENT, 0)
+
+
+SAVE_CURSOR = 0x7EA211
+
+
+class TestInnSave(unittest.TestCase):
+    def run_saving(self, game, slot):
+        now = [0.0]
+        def sleep(seconds):
+            now[0] += seconds
+        inn = TestInn(game, ANCHOR, log=lambda _: None, sleep=sleep,
+                      clock=lambda: now[0], save_slot=slot)
+        return inn, inn.run()
+
+    def test_answers_yes_and_saves_into_the_usual_slot(self):
+        game = FakeSavingInn()
+        inn, gained = self.run_saving(game, 1)
+        self.assertEqual((gained, game.saved_slot, inn.saved), (60, 1, True))
+        self.assertEqual(game.get(EVENT), 0)
+        self.assertNotIn("cancel", game.sent)
+
+    def test_moves_the_cursor_to_the_slot_and_retries_a_dropped_press(self):
+        game = FakeSavingInn(start_cursor=2, drop_first_slot_confirm=True)
+        inn, _ = self.run_saving(game, 1)
+        self.assertEqual(game.saved_slot, 1)
+        # One facing tap toward the innkeeper, then two cursor moves.
+        self.assertEqual(game.sent.count("step_up"), 3)
+
+    def test_without_a_save_slot_the_prompt_is_never_answered(self):
+        game = FakeSavingInn()
+        inn, _ = self.run_saving(game, None)
+        self.assertIsNone(game.saved_slot)
+        self.assertFalse(inn.saved)
+
+
 GOLD = 0x7ECC6A
 
 
@@ -282,6 +365,19 @@ class TestGoldAndShop(unittest.TestCase):
         self.assertEqual(game.sent.count("confirm"), 4)
         self.assertEqual(game.sent[-1], "cancel")
         self.assertEqual(game.get(EVENT), 0)
+
+    def test_live_recording_stops_at_cancel_and_confirms_up_to_twice_more(self):
+        # Taught live: 7 confirms, 2 cancels, then 3 ring presses in the field.
+        taught = dict(SHOP, buttons=["confirm"] * 7 + ["cancel"] * 2 + ["open_ring"] * 3)
+        game = FakeShop(confirm_at=8)       # needs two presses beyond the six in-shop ones
+        self.assertEqual(run_shop(game, taught), 10)
+        self.assertEqual(game.sent.count("confirm"), 9)
+        self.assertNotIn("open_ring", game.sent)
+        self.assertEqual(game.get(EVENT), 0)
+        game = FakeShop(confirm_at=9)       # three more would be needed: give up
+        with self.assertRaises(MacroFailed):
+            run_shop(game, taught)
+        self.assertEqual(game.sent.count("confirm"), 9)
 
     def test_purchase_not_seen_cancels_out_and_fails(self):
         game = FakeShop(sells=False)

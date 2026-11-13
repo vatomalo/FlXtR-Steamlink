@@ -239,6 +239,16 @@ class TestRemoteLink(unittest.TestCase):
         self.assertEqual(self.link.fetch_wram(), image)
         self.assertIs(self.link.process, process)
 
+    def test_compressed_and_plain_reads_return_identical_wram(self):
+        image = bytes((i * 7) & 0xFF if i % 3 else 0 for i in range(0x20000))
+        (self.root / "flxtr-som-wram.bin").write_bytes(image)
+        self.assertTrue(self.link.compress)
+        self.assertEqual(self.link.fetch_wram(), image)
+        self.link.compress = False
+        self.assertEqual(self.link.fetch_wram(), image)
+        self.link.compress = True
+        self.assertEqual(self.link.fetch_wram(), image)     # stream stays in sync
+
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
         self.assertIsNone(self.link.fetch_wram(require_marker=True))

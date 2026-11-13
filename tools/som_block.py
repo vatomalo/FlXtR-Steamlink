@@ -63,6 +63,14 @@ class BlockLearner:
                 "UPDATE SET samples=samples+1, hp_lost=hp_lost+excluded.hp_lost",
                 (int(enemy_id), int(blocked), int(lost)))
 
+    def proven(self, enemy_id):
+        """Both sides have enough samples and blocking clearly cuts damage."""
+        if not isinstance(enemy_id, int):
+            return False
+        (b_n, b_lost), (o_n, o_lost) = self.stats(enemy_id)[True], self.stats(enemy_id)[False]
+        return (b_n >= MIN_SAMPLES and o_n >= MIN_SAMPLES and
+                b_lost / b_n < ADVANTAGE * (o_lost / o_n))
+
     def should_block(self, enemy_id):
         if not isinstance(enemy_id, int):
             return False

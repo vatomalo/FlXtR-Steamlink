@@ -28,6 +28,7 @@ from som_personality import Personality, LINES
 from som_learning import CombatLearner
 from som_doors import DoorLearner
 from som_respawn import RespawnDialogue
+from som_event_escape import EventEscape
 from som_movement import MovementAck
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
@@ -757,6 +758,7 @@ def main() -> int:
     orphan_ring_samples = 0
     orphan_ring_attempted = False
     respawn_dialogue = RespawnDialogue()
+    event_escape = EventEscape(log=lambda line: print(line, flush=True))
     if history is not None:
         respawn_dialogue.restore_recent(history.connection)
         if respawn_dialogue.stage != "idle":
@@ -861,6 +863,23 @@ def main() -> int:
                         respawn_dialogue._limit_logged = True
                         print("[respawn] dialogue did not clear after bounded confirms; "
                               "stopping automatic event input", flush=True)
+                # Any other dialogue/event screen: the planner only acts in
+                # field mode, so press through it with verified, bounded
+                # inputs (som_event_escape.py) instead of waiting forever.
+                if raw is not None and (respawn_dialogue.stage == "idle" or
+                                        respawn_dialogue.finished):
+                    escape = event_escape.observe(WRAM(raw))
+                    if escape is not None:
+                        escape_action, reason = escape
+                        if learner is not None:
+                            learner.cancel("dialogue escape")
+                        if link:
+                            link.send_action(escape_action)
+                        elif not args.dry_run:
+                            send_action(args.host, escape_action)
+                        print(f"[escape] {reason}: {escape_action}", flush=True)
+                        previous = "wait"
+                        continue
             # The service can restart with the Candy item ring still on screen.
             # In that state CandyMacro.ready() raises BEFORE its cleanup try:
             # the regular planner then waits forever for field mode.

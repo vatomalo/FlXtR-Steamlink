@@ -63,6 +63,14 @@ ssh root@100.124.74.13 'printf "ai_on\n" > /tmp/flxtr-som-ai-action'   # start A
 ssh root@100.124.74.13 'printf "ai_off\n" > /tmp/flxtr-som-ai-action'  # stop AI
 ```
 
+Dialogue escape (`tools/som_event_escape.py`): in any event screen the AI
+did not start itself, once the screen has been unchanged for 1 s it presses
+`confirm` on text pages (alternating with `cancel` if a page will not move),
+only `cancel` on yes/no choices and other event states (so it never buys,
+saves or accepts), at most one press per 0.6 s and 40 per event, then leaves
+the screen to the player. KO-respawn and NPC-conversation handling keep
+priority.
+
 Idle auto-start: the proxy raises the same AI signal as `ai_on` after one
 minute (3600 frames) without any physical button, once per idle period (a
 new period starts with a real press; `ai_off` stays off until then; not while

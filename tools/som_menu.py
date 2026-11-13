@@ -395,23 +395,39 @@ class ShopMacro(InnMacro):
         if self._tile(self._read()) != before:
             raise MacroFailed("facing tap moved the hero; shopkeeper is not on that side")
         try:
-            for index, button in enumerate(self.anchor["buttons"]):
+            # The recorded sequence often ends with Cancel. Verify Buy first.
+            buttons = list(self.anchor["buttons"])
+            while buttons and buttons[-1] == self.cancel:
+                buttons.pop()
+            if not buttons:
+                raise MacroFailed("shop recording contains only exit buttons")
+            wram = start
+            for index, button in enumerate(buttons):
                 self.link.send_action(button)
                 self.sleep(self.GAP)
-                if index == 0 and self._read().game_mode() == "field":
-                    raise MacroFailed("shopkeeper did not start talking")
-            deadline = self.clock() + 2.0
-            wram = self._read()
-            while wram.game_mode() != "field" and self.clock() < deadline:
-                self.sleep(self.POLL)
                 wram = self._read()
-            gold_after, candy_after = read_gold(wram, self.gold), candy_count(wram)
-            if candy_after > candy_before and gold_after < gold_before:
-                if wram.game_mode() != "field":
+                if index == 0 and wram.game_mode() == "field":
+                    raise MacroFailed("shopkeeper did not start talking")
+                gold_after, candy_after = read_gold(wram, self.gold), candy_count(wram)
+                if candy_after > candy_before and gold_after < gold_before:
                     self._leave_dialog()
-                return gold_before - gold_after
+                    return gold_before - gold_after
+                if gold_after != gold_before or candy_after != candy_before:
+                    raise MacroFailed("shop changed gold or inventory without verified Candy purchase")
+            # A Turbo Buy page may require one final confirmation. Never
+            # issue unbounded confirmations or accept an unknown field state.
+            if buttons[-1] == self.confirm and wram.game_mode() == "event":
+                self.log("[shop] trying one final recorded Buy confirmation")
+                self.link.send_action(self.confirm)
+                self.sleep(self.GAP)
+                wram = self._read()
+                gold_after, candy_after = read_gold(wram, self.gold), candy_count(wram)
+                if candy_after > candy_before and gold_after < gold_before:
+                    self._leave_dialog()
+                    return gold_before - gold_after
+            gold_after, candy_after = read_gold(wram, self.gold), candy_count(wram)
             raise MacroFailed(f"purchase not observed (Candy {candy_before}->{candy_after}, "
-                              f"gold {gold_before}->{gold_after})")
+                              f"gold {gold_before}->{gold_after}); reteach shop if needed")
         except MacroFailed:
             self._leave_dialog()
             raise

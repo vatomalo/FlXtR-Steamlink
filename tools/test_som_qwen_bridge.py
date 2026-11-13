@@ -70,13 +70,14 @@ class TestTileGuard(unittest.TestCase):
                          "dash_right")
         self.assertEqual(extend_clear_exploration("step_up", wide(), "go_to_inn", None, 12),
                          "dash_up")
-        # Short runs, near targets, nearby monsters and fights keep the walk.
-        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 7),
-                         "right")
+        # Arguments are (remaining tiles, straight tiles).
         self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 6),
-                         "dash_right")
+                         "dash_right")                                  # 6-tile straight run
+        # Short runs, near targets, nearby monsters and fights keep the walk.
         self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 5),
-                         "right")
+                         "right")                                       # straight run too short
+        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 7, 10),
+                         "right")                                       # target too near
         near = {"active": True, "x_px": 500, "y_px": 420}
         self.assertEqual(extend_clear_exploration("step_right", wide([near]), "explore_frontier",
                                                   10, 10), "right")

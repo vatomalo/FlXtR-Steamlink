@@ -34,6 +34,10 @@ class TestWRAM(unittest.TestCase):
         data[0x7EE000 - 0x7E0000] = 1
         data[0x7EE180 - 0x7E0000] = 0x80
         data[0x7EE181 - 0x7E0000] = 12
+        data[0x7EE02C - 0x7E0000] = 1
+        data[0x7ECC73 - 0x7E0000] = 3
+        data[0x7ECC7A - 0x7E0000] = 15
+        data[0x7ECC7D - 0x7E0000] = 2
         put16(data, 0x7EE182, 77)
         put16(data, 0x7EE184, 100)
         put16(data, 0x7EE602, 18)
@@ -46,6 +50,10 @@ class TestWRAM(unittest.TestCase):
         self.assertTrue(state["weapons_enabled"])
         self.assertEqual(state["party"][0]["graphic"], "boy")
         self.assertEqual(state["party"][0]["hp"], 77)
+        self.assertEqual(state["party"][0]["controller_binding"], 1)
+        self.assertEqual(state["party"][0]["native_ai_behavior"], 3)
+        self.assertEqual(state["party"][0]["native_ai_grid_cell"], 15)
+        self.assertEqual(state["party"][0]["native_ai_charge_level"], 2)
         self.assertEqual(state["enemy_slots"][0]["x_px"], 18)
         self.assertEqual(state["enemy_slots"][0]["y_px"], 25)
         self.assertTrue(state["enemy_slots"][0]["active"])

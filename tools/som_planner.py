@@ -113,9 +113,11 @@ class MemoryPlanner:
                 queue.append(neighbor)
         return routes
 
-    def _choose_frontier(self, context, cells, routes):
+    def _choose_frontier(self, context, cells, routes, directive="explore_unknown"):
         map_id, layer = context["map_id"], context["actor"]["layer"]
         size = tuple(context["map_size_tiles"])
+        origin = tuple(context["actor_tile"])
+        direction = directive.removeprefix("explore_")
         candidates = []
         for position, (first, distance) in routes.items():
             if first is None:
@@ -126,15 +128,28 @@ class MemoryPlanner:
             if not unknown_edges:
                 continue
             visits = self._visits(map_id, layer, *position)
-            candidates.append((visits, -distance, -unknown_edges, position))
+            dx = self._wrapped_delta(position[0], origin[0], size[0])
+            dy = self._wrapped_delta(position[1], origin[1], size[1])
+            direction_values = {
+                "east": (dx > 0, dx, abs(dy)),
+                "west": (dx < 0, -dx, abs(dy)),
+                "south": (dy > 0, dy, abs(dx)),
+                "north": (dy < 0, -dy, abs(dx)),
+            }
+            aligned, progress, straightness = direction_values.get(
+                direction, (True, distance, 0))
+            # A Qwen-selected heading is the first priority. Within that
+            # heading, prefer unseen and distant frontier cells.
+            candidates.append((not aligned, visits, -progress, straightness,
+                               -distance, -unknown_edges, position))
         if not candidates:
             for position, (_, distance) in routes.items():
                 if distance:
-                    candidates.append((self._visits(map_id, layer, *position),
-                                       -distance, 0, position))
-        return min(candidates)[3] if candidates else None
+                    candidates.append((False, self._visits(map_id, layer, *position),
+                                       -distance, 0, -distance, 0, position))
+        return min(candidates)[-1] if candidates else None
 
-    def _explore(self, context, open_steps):
+    def _explore(self, context, open_steps, directive="explore_unknown"):
         map_id, layer = context["map_id"], context["actor"]["layer"]
         position = tuple(context["actor_tile"])
         size = tuple(context["map_size_tiles"])
@@ -143,16 +158,18 @@ class MemoryPlanner:
         intention = self._get_intention()
         valid = (isinstance(intention, dict) and intention.get("kind") == "explore" and
                  intention.get("map_id") == map_id and intention.get("layer") == layer and
+                 intention.get("directive") == directive and
                  isinstance(intention.get("target"), list))
         target = tuple(intention["target"]) if valid else None
         if target == position or target not in routes:
             target = None
         if target is None:
-            target = self._choose_frontier(context, cells, routes)
+            target = self._choose_frontier(context, cells, routes, directive)
             if target is None:
                 self._set_intention(None)
                 return None
             intention = {"kind": "explore", "map_id": map_id, "layer": layer,
+                         "directive": directive,
                          "target": list(target), "last_position": list(position),
                          "stagnant": 0}
         else:
@@ -171,7 +188,7 @@ class MemoryPlanner:
                                f"frontier {target[0]},{target[1]} is {distance} known tiles away",
                                "explore_frontier")
 
-    def _combat(self, observation, context, open_steps):
+    def _combat(self, observation, context, open_steps, directive=None):
         actor = context["actor"]
         dimensions = context.get("map_size_tiles", [0, 0])
         width_px, height_px = dimensions[0] * 16, dimensions[1] * 16
@@ -186,7 +203,7 @@ class MemoryPlanner:
         distance, dx, dy, enemy = min(targets, key=lambda value: value[0])
         hero = observation.get("party", [{}])[0]
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-        if max_hp and hp * 4 <= max_hp:
+        if (max_hp and hp * 4 <= max_hp) or directive == "avoid_enemy":
             retreat = []
             for action in open_steps:
                 sx, sy = STEP_OFFSETS[action]
@@ -212,7 +229,7 @@ class MemoryPlanner:
                                        "engage_enemy")
         return None
 
-    def decide(self, observation, previous="none"):
+    def decide(self, observation, previous="none", directive="explore_unknown"):
         context = observation.get("tile_context") if isinstance(observation, dict) else None
         if not isinstance(context, dict) or not context.get("runtime_verified"):
             return PlannerDecision("wait", "no runtime-verified tile context", "observe")
@@ -220,13 +237,13 @@ class MemoryPlanner:
             return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
         open_steps = self._open_steps(context)
         self._remember(observation, context)
-        combat = self._combat(observation, context, open_steps)
+        combat = self._combat(observation, context, open_steps, directive)
         if combat is not None:
             return combat
         if not open_steps:
             self._set_intention(None)
             return PlannerDecision("wait", "no verified open adjacent tile", "stuck")
-        exploration = self._explore(context, open_steps)
+        exploration = self._explore(context, open_steps, directive)
         if exploration is not None:
             return exploration
         reverse = OPPOSITE_STEP.get(previous)

@@ -1,7 +1,9 @@
 """Tile-safety tests; no Ollama, SSH, ROM, or emulator required."""
 import unittest
 
-from som_qwen_bridge import guard_tile_action, parse_action, prefer_open_step
+from som_qwen_bridge import (
+    allowed_directives, build_director_prompt, guard_tile_action, parse_action,
+    parse_directive, prefer_open_step)
 
 
 class TestTileGuard(unittest.TestCase):
@@ -65,6 +67,31 @@ class TestParseAction(unittest.TestCase):
         self.assertIsNone(parse_action("jump"))
         self.assertIsNone(parse_action("rm -rf /"))
         self.assertIsNone(parse_action("upstairs"))
+
+
+class TestQwenDirector(unittest.TestCase):
+    def test_parses_only_allowlisted_intentions(self):
+        self.assertEqual(parse_directive("explore east"), "explore_east")
+        self.assertEqual(parse_directive("Intent: engage_enemy."), "engage_enemy")
+        self.assertIsNone(parse_directive("spawn_everything"))
+
+    def test_combat_intentions_require_a_verified_enemy(self):
+        state = {"party": [{"hp": 80, "max_hp": 100}], "enemy_slots": []}
+        self.assertNotIn("engage_enemy", allowed_directives(state))
+        state["enemy_slots"] = [{"active": True}]
+        self.assertEqual(allowed_directives(state)[0], "engage_enemy")
+        state["party"][0]["hp"] = 20
+        self.assertEqual(allowed_directives(state)[0], "avoid_enemy")
+
+    def test_prompt_exposes_location_memory_and_choices(self):
+        state = {"party": [{"hp": 68, "max_hp": 98}], "enemy_slots": [],
+                 "tile_context": {"map_id": 131, "actor_tile": [10, 23],
+                                  "actor": {"layer": 1}}}
+        prompt = build_director_prompt("Find progress", state, "explore_unknown",
+                                       ["step_right"], 42)
+        self.assertIn("Potos Village", prompt)
+        self.assertIn("known map cells 42", prompt)
+        self.assertIn("explore_east", prompt)
 
 
 if __name__ == "__main__":

@@ -2,18 +2,30 @@
 
 Branch: `feature/som-ai-memory-agent-20261112`.
 
-The supervised service now defaults to `SOM_AI_POLICY=memory`. This policy does
-not ask a language model for every button. It validates the live field tile,
+The supervised service now defaults to `SOM_AI_POLICY=hybrid`. Qwen selects a
+validated strategic directive every twelve decisions (heading, engage, or
+avoid), while deterministic code validates the live field tile,
 learns a persistent map/layer collision graph in SQLite, selects and retains a
 frontier target, and follows a shortest known route until the intention is
 reached or blocked. Combat overrides exploration: it can engage a verified
 enemy, attack when the weapon is ready, or retreat below 25 percent HP. Set
-`SOM_AI_POLICY=qwen` to retain the older local-Ollama controller experiment.
+`SOM_AI_POLICY=memory` disables Qwen; `SOM_AI_POLICY=qwen` retains the older
+unsafe one-model-call-per-button experiment.
 
 The decision log names the current intention (`explore_frontier`,
 `engage_enemy`, `survive`, `replan`, or `observe`) and its target/reason. SSH
 connection reuse keeps the three remote operations per decision from paying a
 new handshake each time.
+
+The observation also reports each hero's controller binding and native Action
+Grid behavior/cell/charge settings. Unbound companions already execute the
+game's original 12 Hz hero AI for following, targeting, weapon positioning,
+attacking, charging, and obstacle detours. Hybrid control will use that native
+AI for recruited companions. The sole controller-bound leader remains under
+the safe input bridge: directly clearing its binding is not sufficient because
+the game must also initialize its AI bytecode program. Native behavior changes
+must therefore go through the Action Grid/menu path rather than partial actor
+WRAM writes.
 
 ## What works in this checkpoint
 

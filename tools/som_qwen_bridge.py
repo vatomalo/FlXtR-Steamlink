@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Persistent WRAM planner / optional Qwen -> FlXtR action bridge.
+"""Qwen-directed persistent WRAM planner -> FlXtR action bridge.
 
 Runs on SkyLoft with a LOCAL Ollama instance. Qwen receives the last action,
 the user-supplied objective, and optionally a read-only WRAM observation. The
-default memory policy is deterministic and uses verified tiles, enemies,
-weapon state and persistent map visits. Qwen remains an optional test policy.
+default hybrid policy lets Qwen choose a durable intention while deterministic
+code executes it using verified tiles, enemies, weapon state and map memory.
 """
 import argparse
 import json
@@ -28,6 +28,16 @@ _ACTION_PATTERN = re.compile(
     r"(?<![a-z_])(" + "|".join(sorted(ACTIONS, key=len, reverse=True)) + r")(?![a-z_])")
 MAX_INVALID_REPLIES = 3
 MAX_REPEATS = 4
+DIRECTIVES = {
+    "explore_unknown", "explore_north", "explore_south",
+    "explore_east", "explore_west", "engage_enemy", "avoid_enemy",
+}
+_DIRECTIVE_PATTERN = re.compile(
+    r"(?<![a-z_])(" + "|".join(sorted(DIRECTIVES, key=len, reverse=True)) +
+    r")(?![a-z_])")
+MAP_NAMES = {128: "Waterfall", 131: "Potos Village", 179: "Prologue",
+             256: "Opening room", 257: "House"}
+DIRECTOR_TURNS = 12
 # Reuse the SkyLoft-to-Steam-Link SSH transport. A fresh handshake for each
 # marker check, WRAM read and action made one nominal one-second decision take
 # four to five seconds on the live machines.
@@ -55,6 +65,74 @@ def parse_action(raw: str):
     text = text.lower().replace("-", "_")
     match = _ACTION_PATTERN.search(text)
     return match.group(1) if match else None
+
+def parse_directive(raw: str):
+    """Extract one allowlisted strategic directive from Qwen output."""
+    text = re.sub(r"<think>.*?(</think>|$)", " ", raw or "", flags=re.S | re.I)
+    text = text.lower().replace("-", "_")
+    text = re.sub(r"\b(explore)\s+(unknown|north|south|east|west)\b", r"\1_\2", text)
+    text = re.sub(r"\b(engage|avoid)\s+(enemy)\b", r"\1_\2", text)
+    match = _DIRECTIVE_PATTERN.search(text)
+    return match.group(1) if match else None
+
+def allowed_directives(observation):
+    choices = ["explore_unknown", "explore_north", "explore_south",
+               "explore_east", "explore_west"]
+    if not isinstance(observation, dict):
+        return choices
+    enemies = [enemy for enemy in observation.get("enemy_slots", [])
+               if isinstance(enemy, dict) and enemy.get("active")]
+    if enemies:
+        hero = (observation.get("party") or [{}])[0]
+        hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
+        if max_hp and hp * 4 <= max_hp:
+            return ["avoid_enemy", "engage_enemy", *choices]
+        return ["engage_enemy", "avoid_enemy", *choices]
+    return choices
+
+def build_director_prompt(objective, observation, current, recent, known_cells):
+    context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
+    actor = context.get("actor", {})
+    hero = (observation.get("party") or [{}])[0] if isinstance(observation, dict) else {}
+    party = observation.get("party") or [] if isinstance(observation, dict) else []
+    native_allies = [member for member in party
+                     if member.get("availability_byte") == 1 and
+                     member.get("controller_binding") == 0]
+    enemies = [enemy for enemy in observation.get("enemy_slots", [])
+               if isinstance(enemy, dict) and enemy.get("active")] if isinstance(observation, dict) else []
+    choices = allowed_directives(observation)
+    map_id = context.get("map_id")
+    location = MAP_NAMES.get(map_id, f"unknown map {map_id}")
+    return (
+        "You are the strategic director for Secret of Mana. Do not choose buttons. "
+        "Choose one durable intention for the safe navigation executor. "
+        f"Player objective: {objective}. Location: {location}, map {map_id}, "
+        f"tile {context.get('actor_tile')}, layer {actor.get('layer')}. "
+        f"HP {hero.get('hp')}/{hero.get('max_hp')}; active enemies {len(enemies)}; "
+        f"native AI allies {len(native_allies)}; "
+        f"known map cells {known_cells}. Current directive: {current}. "
+        f"Recent actions: {recent}. Allowed directives: {', '.join(choices)}. "
+        "Prefer a consistent heading that reveals unknown territory. Engage a real enemy "
+        "when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
+    )
+
+def choose_directive(url, model, objective, observation, current,
+                     recent=None, known_cells=0):
+    choices = allowed_directives(observation)
+    prompt = build_director_prompt(objective, observation, current,
+                                   recent or [], known_cells)
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
+                          "think": False, "keep_alive": "30m",
+                          "options": {"temperature": 0.2, "num_predict": 24}}).encode()
+    req = urllib.request.Request(url.rstrip("/") + "/api/generate", data=payload,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=90) as response:
+        result = json.load(response)
+    raw = result.get("response") or ""
+    directive = parse_directive(raw)
+    if directive not in choices:
+        raise ValueError(f"Qwen director returned {raw.strip()[:80]!r}; allowed={choices}")
+    return directive
 
 def choose_action(url: str, model: str, objective: str, previous: str, observation=None) -> str:
     prompt = (
@@ -172,8 +250,8 @@ def main() -> int:
     parser.add_argument("--host", default="root@100.124.74.13")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3:0.6b")
-    parser.add_argument("--policy", choices=("memory", "qwen"), default="memory",
-                        help="memory uses persistent WRAM planning; qwen asks local Ollama")
+    parser.add_argument("--policy", choices=("hybrid", "memory", "qwen"), default="hybrid",
+                        help="hybrid uses Qwen for intentions and WRAM planning for execution")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--interval", type=float, default=0.5)
@@ -193,7 +271,7 @@ def main() -> int:
         parser.error("steps must be 1..30, or 0 for continuous ring control; interval minimum is 0.25")
     if args.steps == 0 and not args.ring_control:
         parser.error("steps=0 is allowed only with --ring-control")
-    if (args.policy == "qwen" and
+    if (args.policy in ("hybrid", "qwen") and
             args.ollama_url not in ("http://127.0.0.1:11434", "http://localhost:11434")):
         parser.error("only local Ollama is supported for this initial experiment")
     if args.wram_file and args.wram_remote:
@@ -218,6 +296,9 @@ def main() -> int:
     previous = "none"
     repeated = 0
     invalid_replies = 0
+    directive = "explore_unknown"
+    directive_turns = 0
+    directive_map = None
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
@@ -233,8 +314,30 @@ def main() -> int:
                     [*SSH_BASE, args.host, "cat /tmp/flxtr-som-wram.bin"],
                     capture_output=True, check=True, timeout=15).stdout
                 observation = WRAM(raw).observe()
-            if args.policy == "memory":
-                decision = planner.decide(observation, previous)
+            if args.policy in ("hybrid", "memory"):
+                context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
+                current_map = context.get("map_id")
+                if args.policy == "hybrid" and (directive_turns <= 0 or current_map != directive_map):
+                    recent = [item.get("action") for item in history.recent(6)] if history else []
+                    known = 0
+                    if history and context.get("actor"):
+                        known = len(history.known_cells(current_map,
+                                                        context["actor"].get("layer")))
+                    try:
+                        selected = choose_directive(
+                            args.ollama_url, args.model, args.objective, observation,
+                            directive, recent, known)
+                        directive = selected
+                        directive_turns = DIRECTOR_TURNS
+                        directive_map = current_map
+                        print(f"[qwen-director] intention={directive} for "
+                              f"{DIRECTOR_TURNS} decisions", flush=True)
+                    except (OSError, ValueError) as exc:
+                        directive = "explore_unknown"
+                        directive_turns = 3
+                        print(f"[qwen-director] unavailable; safe fallback: {exc}", flush=True)
+                decision = planner.decide(observation, previous, directive)
+                directive_turns -= 1
                 action = decision.action
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)
             else:

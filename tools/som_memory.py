@@ -54,11 +54,15 @@ class WRAM:
         return {
             "slot": index + 1,
             "availability_byte": available,
+            "controller_binding": self.u8(base + 0x02C),
             "graphic": GRAPHICS.get(graphic, f"unknown_{graphic:02x}"),
             "level": self.u8(base + 0x181),
             "hp": hp, "max_hp": max_hp,
             "hp_plausible": 0 <= hp <= max_hp <= 999,
             "weapon_recharge": self.u8(base + 0x1ED),
+            "native_ai_behavior": self.u8(0x7ECC73 + index),
+            "native_ai_grid_cell": self.u8(0x7ECC7A + index),
+            "native_ai_charge_level": self.u8(0x7ECC7D + index),
         }
 
     def game_mode(self):
@@ -235,6 +239,7 @@ class WRAM:
             "tile_context": tile_context,
             "weapons_enabled": bool(self.u8(0x7E00ED) & 0x80),
             "party": [self.character(i) for i in range(3)],
+            "pad_bindings": [self.u8(0x7E00D9 + i) for i in range(3)],
             "enemy_slots": [self.enemy(i) for i in range(3)],
             "limitations": [
                 "Enemy target validation covers the three native monster slots only",

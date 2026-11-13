@@ -7,7 +7,7 @@ mkdir -p "$state_dir"
 
 host=${SOM_AI_HOST:-root@100.124.74.13}
 model=${SOM_AI_MODEL:-qwen3:0.6b}
-policy=${SOM_AI_POLICY:-memory}
+policy=${SOM_AI_POLICY:-hybrid}
 objective=${SOM_AI_OBJECTIVE:-Explore safely using verified tiles and attack when appropriate}
 ollama_url=${SOM_AI_OLLAMA_URL:-http://127.0.0.1:11434}
 interval=${SOM_AI_INTERVAL:-0.5}

@@ -55,6 +55,12 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(decision.intention, "survive")
         self.assertNotEqual(decision.action, "step_right")
 
+    def test_qwen_heading_directs_frontier_target(self):
+        east = MemoryPlanner().decide(observation(), directive="explore_east")
+        west = MemoryPlanner().decide(observation(), directive="explore_west")
+        self.assertEqual(east.action, "step_right")
+        self.assertEqual(west.action, "step_left")
+
     def test_fails_closed_without_verified_context(self):
         state = observation()
         state["tile_context"]["runtime_verified"] = False

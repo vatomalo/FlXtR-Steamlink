@@ -1,4 +1,7 @@
 """Exercise automatic post-death dialogue without emulator or controller."""
+import json
+import sqlite3
+import time
 import unittest
 
 from som_respawn import RespawnDialogue
@@ -58,6 +61,45 @@ class RespawnDialogueTests(unittest.TestCase):
         self.assertIsNone(self.tick("field", advance=1))
         self.assertEqual(self.agent.stage, "idle")
         self.assertEqual(self.agent.confirms, 0)
+
+    def test_restore_witnessed_death_without_manual_controller(self):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE observations "
+                   "(id INTEGER PRIMARY KEY, ts REAL, state TEXT)")
+        observed = [
+            state("field", 12),
+            state("event", 0, ("dead",)),
+            state("transition", 0, ("dead",)),
+            state("event", 35),
+        ]
+        for item in observed:
+            db.execute("INSERT INTO observations(ts,state) VALUES(?,?)",
+                       (time.time(), json.dumps(item)))
+        recovered = RespawnDialogue(clock=lambda: self.time)
+        recovered.restore_recent(db)
+        self.assertEqual(recovered.stage, "respawn_event")
+        self.time += 2
+        self.assertEqual(recovered.observe(state("event", 35), 9), None)
+        self.time += 2
+        self.assertEqual(recovered.observe(state("event", 35), 9), "confirm")
+        db.close()
+
+    def test_restore_does_not_authorize_unrelated_later_event(self):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE observations "
+                   "(id INTEGER PRIMARY KEY, ts REAL, state TEXT)")
+        for item in (state("event", 0, ("dead",)),
+                     state("transition", 0, ("dead",)),
+                     state("event", 35), state("field", 35),
+                     state("event", 35)):
+            db.execute("INSERT INTO observations(ts,state) VALUES(?,?)",
+                       (time.time(), json.dumps(item)))
+        recovered = RespawnDialogue(clock=lambda: self.time)
+        recovered.restore_recent(db)
+        self.assertEqual(recovered.stage, "idle")
+        self.time += 10
+        self.assertIsNone(recovered.observe(state("event", 35), 9))
+        db.close()
 
     def test_changed_event_needs_new_stable_interval(self):
         self.tick("event", 0, ("dead",))

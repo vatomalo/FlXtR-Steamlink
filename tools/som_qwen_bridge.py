@@ -961,15 +961,15 @@ def main() -> int:
                 directive_turns -= 1
                 action = decision.action
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)
+                if decision.reason.startswith("survival abandoned"):
+                    announce("AI: inn did not heal|back to careful play")
+                elif decision.intention in INTENT_MESSAGES:
+                    announce(INTENT_MESSAGES[decision.intention])
                 if (decision.intention != last_intention_spoken and
                         decision.intention in ("explore_frontier", "engage_enemy",
                                                "survive", "return_to_inn", "stuck")):
                     speak(decision.intention)
                     last_intention_spoken = decision.intention
-                if decision.reason.startswith("survival abandoned"):
-                    announce("AI: inn did not heal|back to careful play")
-                elif decision.intention in INTENT_MESSAGES:
-                    announce(INTENT_MESSAGES[decision.intention])
             else:
                 try:
                     action = choose_action(args.ollama_url, args.model,

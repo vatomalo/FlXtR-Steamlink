@@ -55,6 +55,15 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(decision.intention, "survive")
         self.assertNotEqual(decision.action, "step_right")
 
+    def test_combat_intention_survives_transient_missing_enemy(self):
+        enemy = {"slot": 1, "active": True, "x_px": 120, "y_px": 56}
+        planner = MemoryPlanner()
+        first = planner.decide(observation(enemy=enemy, recharge=20))
+        missing = planner.decide(observation(enemy=None, recharge=20), first.action)
+        self.assertEqual(first.intention, "engage_enemy")
+        self.assertEqual(missing.intention, "engage_enemy")
+        self.assertIn("last-known", missing.reason)
+
     def test_qwen_heading_directs_frontier_target(self):
         east = MemoryPlanner().decide(observation(), directive="explore_east")
         west = MemoryPlanner().decide(observation(), directive="explore_west")

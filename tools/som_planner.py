@@ -195,6 +195,24 @@ class MemoryPlanner:
         width_px, height_px = dimensions[0] * 16, dimensions[1] * 16
         enemies = [enemy for enemy in observation.get("enemy_slots", []) if enemy.get("active")]
         if not enemies:
+            # Ordinary monster slots can disappear for a few samples during
+            # phase updates or at the screen edge. Preserve the last verified
+            # target briefly instead of alternating combat and exploration.
+            intention = self._get_intention()
+            if isinstance(intention, dict) and intention.get("kind") == "engage":
+                misses = int(intention.get("misses", 0)) + 1
+                target_x, target_y = intention.get("x_px"), intention.get("y_px")
+                if misses <= 4 and isinstance(target_x, int) and isinstance(target_y, int):
+                    intention["misses"] = misses
+                    self._set_intention(intention)
+                    dx = self._wrapped_delta(target_x, actor["x_px"], width_px)
+                    dy = self._wrapped_delta(target_y, actor["y_px"], height_px)
+                    action = self._approach_direction(dx, dy, open_steps)
+                    if action:
+                        return PlannerDecision(
+                            action, f"pursue last-known enemy position ({misses}/4 missing samples)",
+                            "engage_enemy")
+                    return PlannerDecision("wait", "hold last-known enemy area", "engage_enemy")
             return None
         targets = []
         for enemy in enemies:
@@ -214,20 +232,30 @@ class MemoryPlanner:
                 self._set_intention({"kind": "survive", "enemy": enemy["slot"]})
                 return PlannerDecision(action, f"retreat from enemy {enemy['slot']} at low HP",
                                        "survive")
-        self._set_intention({"kind": "engage", "enemy": enemy["slot"]})
+        self._set_intention({"kind": "engage", "enemy": enemy["slot"],
+                             "x_px": enemy["x_px"], "y_px": enemy["y_px"],
+                             "misses": 0})
         recharge = hero.get("weapon_recharge")
         if (abs(dx) <= 48 and abs(dy) <= 48 and
                 observation.get("weapons_enabled") and recharge == 0):
             return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range",
                                    "engage_enemy")
+        action = self._approach_direction(dx, dy, open_steps)
+        if action:
+            return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px",
+                                   "engage_enemy")
+        return None
+
+    @staticmethod
+    def _approach_direction(dx, dy, open_steps):
         axes = (["step_right" if dx > 0 else "step_left",
                  "step_down" if dy > 0 else "step_up"] if abs(dx) >= abs(dy) else
                 ["step_down" if dy > 0 else "step_up",
                  "step_right" if dx > 0 else "step_left"])
         for action in axes:
-            if action in open_steps:
-                return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px",
-                                       "engage_enemy")
+            if action in open_steps and ((dx and action in ("step_left", "step_right")) or
+                                         (dy and action in ("step_up", "step_down"))):
+                return action
         return None
 
     def decide(self, observation, previous="none", directive="explore_unknown"):

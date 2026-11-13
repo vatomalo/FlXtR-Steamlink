@@ -141,6 +141,8 @@ class MemoryPlanner:
         # this many decisions of fighting back with no evading or retreat.
         self.provoked = 0
         self.last_hp = None
+        self.just_hit = False
+        self.previous_action = "none"
         self.combat_learner = None  # Optional, trained only from verified live attacks
         self.last_pixel = None
         self.block_cooldown = 0
@@ -580,7 +582,11 @@ class MemoryPlanner:
         # weapon is still recharging and an enemy is already in striking
         # distance. Cooldown prevents standing still blocking forever.
         if self.block_learner is not None:
-            wants_block = (recharge is not None and recharge > 0 and distance <= 40 and
+            # Turbo's recharge byte often reads 0 in fights, so also guard in
+            # the recovery window right after a swing and when just hit.
+            exposed = (self.previous_action in ("attack", "charge") or self.just_hit or
+                       (recharge is not None and recharge > 0))
+            wants_block = (exposed and distance <= 40 and
                            self.block_learner.should_block(enemy.get("identity")))
         else:
             wants_block = (recharge is not None and recharge >= 50 and distance <= 32 and
@@ -1072,13 +1078,16 @@ class MemoryPlanner:
                        abs(e["x_px"] - actor["x_px"]) + abs(e["y_px"] - actor["y_px"]) <=
                        PROVOKE_RANGE_PX
                        for e in observation.get("enemy_slots", []))
-        if isinstance(hp, int) and isinstance(self.last_hp, int) and hp < self.last_hp and near:
+        self.just_hit = (isinstance(hp, int) and isinstance(self.last_hp, int) and
+                         hp < self.last_hp and near)
+        if self.just_hit:
             self.provoked = PROVOKED_DECISIONS
         elif self.provoked:
             self.provoked -= 1
         self.last_hp = hp if isinstance(hp, int) else self.last_hp
 
     def decide(self, observation, previous="none", directive="explore_unknown", errand=None):
+        self.previous_action = previous
         """errand: optional {"place": "shop", "anchor": {...}} to travel to."""
         self.blocked_moves = {key: turns - 1 for key, turns in self.blocked_moves.items()
                               if turns > 1}

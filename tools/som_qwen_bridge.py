@@ -33,6 +33,7 @@ from som_respawn import RespawnDialogue
 from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
+from som_boss import BossRecorder
 from som_movement import MovementAck
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
@@ -837,6 +838,7 @@ def main() -> int:
     save_disabled = False
     last_loop_goal = None
     block_learner = None
+    boss_recorder = BossRecorder(log=lambda line: print(line, flush=True)) if args.wram_remote else None
     if history is not None and args.policy in ("hybrid", "memory"):
         block_learner = BlockLearner(history.connection, log=lambda line: print(line, flush=True))
         planner.block_learner = block_learner
@@ -874,6 +876,12 @@ def main() -> int:
                 observation = WRAM(raw).observe(radius=5)
             if observation is not None:
                 map_guard.apply(observation)
+                if boss_recorder is not None and raw is not None:
+                    try:
+                        boss_recorder.observe(raw, WRAM(raw))
+                    except OSError as exc:
+                        print(f"[boss] recording failed: {exc}", flush=True)
+                        boss_recorder = None
                 if doors is not None:
                     doors.observe(WRAM(raw), observation)
                 if npc_dialogue is not None:

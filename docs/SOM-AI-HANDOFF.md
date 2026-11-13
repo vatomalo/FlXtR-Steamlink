@@ -81,6 +81,15 @@ no backing away from unprofitable enemy types, no fight-skipping errands
 close-range decision with and without it (table `block_stats`): explore until
 8 samples each, then block only when it cuts damage by 20 %+.
 
+Boss records (`tools/som_boss.py`, read-only): the bridge saves the
+0x200-byte object and the full WRAM of every monster with max HP >= 200 the
+first time it is seen (replaced once by a full-HP sighting) to
+`~/.local/state/flxtr/som-boss/` with `index.json`. First entry: monster
+0x57 (Potos story boss, map 260, max HP 300), captured at 0 HP while dying
+on 2026-11-13. Summoning is not implemented: the existing `clone_enemy`
+only copies a monster that is live on the current map; writing a recorded
+object elsewhere without its graphics/palette/script loaded is unverified.
+
 Dialogue escape (`tools/som_event_escape.py`): in any event screen the AI
 did not start itself, once the screen has been unchanged for 1 s it presses
 `confirm` on text pages (alternating with `cancel` if a page will not move),

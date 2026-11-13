@@ -241,6 +241,23 @@ class TestMemoryPlanner(unittest.TestCase):
         decision = planner.decide(observation(enemy=enemy, recharge=10, hp=100, max_hp=100))
         self.assertNotEqual(decision.action, "block")
 
+    def test_block_after_swing_or_hit_even_with_zero_recharge(self):
+        class Learner:
+            def should_block(self, enemy_id):
+                return True
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56, "identity": 5}
+        planner = MemoryPlanner()
+        planner.block_learner = Learner()
+        idle = planner.decide(observation(enemy=enemy, recharge=0, hp=100, max_hp=100), "wait")
+        self.assertNotEqual(idle.action, "block")
+        swung = planner.decide(observation(enemy=enemy, recharge=0, hp=100, max_hp=100), "attack")
+        self.assertEqual(swung.action, "block")
+        planner = MemoryPlanner()
+        planner.block_learner = Learner()
+        planner.decide(observation(enemy=enemy, recharge=0, hp=100, max_hp=100), "wait")
+        hit = planner.decide(observation(enemy=enemy, recharge=0, hp=90, max_hp=100), "wait")
+        self.assertEqual(hit.action, "block")
+
     def test_half_health_latches_return_to_inn_until_recovered(self):
         planner = MemoryPlanner()
         hurt = planner.decide(observation(hp=50, max_hp=100))

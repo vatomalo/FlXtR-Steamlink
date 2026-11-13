@@ -39,6 +39,8 @@ static void reset_proxy(void){
     active_action=SOM_ACT_NONE;action_frames=0;
     armed=0;test_enabled=1;on_turbo=1;game_loaded=1;completed=0;cancelled=0;
     pressed=100;
+    memset(&overlay,0,sizeof(overlay));
+    select_holding=select_spoiled=0;
 }
 int main(void){
     char path[]="/tmp/flxtr-ai-test-XXXXXX";
@@ -400,6 +402,33 @@ int main(void){
     som_idle_tick();
     assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
     unlink(idle_off_path);
+    /* Select held alone for one second, then released: AI on (solo hero,
+     * no Action Grid). Short holds, chords and holds begun while the AI
+     * runs never start it; any other button still stops it. */
+    reset_proxy();backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    ring_ai_file=ring_ai_path;unlink(ring_ai_path);
+    frame_number=500000ul;
+    pressed=RETRO_DEVICE_ID_JOYPAD_SELECT;som_input_poll();
+    frame_number+=SOM_SELECT_HOLD_FRAMES-1;som_input_poll();
+    pressed=100;som_input_poll();
+    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);      /* too short */
+    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_SELECT;som_input_poll();
+    frame_number+=SOM_SELECT_HOLD_FRAMES;
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();           /* another button */
+    pressed=100;frame_number+=1;som_input_poll();
+    assert(!ring_ai_enabled);
+    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_SELECT;som_input_poll();
+    frame_number+=SOM_SELECT_HOLD_FRAMES;som_input_poll();
+    frame_number+=1;pressed=100;som_input_poll();
+    assert(ring_ai_enabled&&access(ring_ai_path,F_OK)==0);       /* long hold: on */
+    assert(overlay.frames_left>0&&strstr(overlay.lines[0],"AI ON"));
+    frame_number+=40;pressed=RETRO_DEVICE_ID_JOYPAD_SELECT;som_input_poll();
+    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);      /* press: off */
+    assert(strstr(overlay.lines[0],"AI OFF"));
+    frame_number+=SOM_SELECT_HOLD_FRAMES*2;som_input_poll();
+    frame_number+=1;pressed=100;som_input_poll();
+    assert(!ring_ai_enabled);                  /* the stopping hold does not restart */
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");
     return 0;

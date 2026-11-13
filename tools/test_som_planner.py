@@ -308,6 +308,20 @@ class TestMemoryPlanner(unittest.TestCase):
         decision = planner.decide(observation(enemy=enemy, hp=100, max_hp=100), "step_right")
         self.assertEqual(decision.action, "attack")
 
+    def test_hunting_here_never_explores_over_an_exit_tile(self):
+        # Live 2026-11-14: "hunt here" on map 129 with a west heading routed
+        # the frontier walk over the exit to 128, then the loop sent it back.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "exits.sqlite")
+            self._edge(history, 131, 130, 1, 3, "step_left")
+            for stay, expected_west in ((False, True), (True, False)):
+                planner = MemoryPlanner(history)
+                planner.stay_on_map = stay
+                decision = planner.decide(observation(), directive="explore_west")
+                self.assertEqual(decision.action == "step_left", expected_west,
+                                 (stay, decision))
+            history.close()
+
     def test_half_health_latches_return_to_inn_until_recovered(self):
         planner = MemoryPlanner()
         hurt = planner.decide(observation(hp=50, max_hp=100))

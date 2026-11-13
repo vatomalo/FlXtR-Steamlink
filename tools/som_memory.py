@@ -1261,6 +1261,17 @@ class ObservationHistory:
             "FROM rom_exit_checks").fetchone()
         return confirmed >= 1 and contradicted == 0
 
+    def exit_tiles(self, map_id, layer):
+        """Tiles of map_id that start a map change: cross-checked ROM exit
+        triggers plus the last tile of each learned crossing."""
+        tiles = set()
+        if self.rom_exits_trusted():
+            tiles.update(self.connection.execute(
+                "SELECT x,y FROM map_exits WHERE map_id=? AND layer=?", (map_id, layer)))
+        tiles.update(self.connection.execute(
+            "SELECT x,y FROM map_edges WHERE from_map=? AND layer=?", (map_id, layer)))
+        return {(int(x), int(y)) for x, y in tiles}
+
     def rom_check_summary(self):
         return self.connection.execute(
             "SELECT COALESCE(SUM(confirmed),0), COALESCE(SUM(contradicted),0) "

@@ -146,6 +146,10 @@ class MemoryPlanner:
         # Play loop: every monster is a target; the "cost more HP than GP"
         # avoid list made the hero dance around enemies instead of hunting.
         self.fight_all = False
+        # Set while the play loop hunts on the current map: exploration must
+        # not walk over exit tiles (it used to leave map 129 for 128 and be
+        # sent straight back, over and over).
+        self.stay_on_map = False
         self.just_hit = False
         self.previous_action = "none"
         self.combat_learner = None  # Optional, trained only from verified live attacks
@@ -462,6 +466,10 @@ class MemoryPlanner:
         position = tuple(context["actor_tile"])
         size = tuple(context["map_size_tiles"])
         cells = self._known_cells(map_id, layer)
+        if self.stay_on_map and hasattr(self.history, "exit_tiles"):
+            exits = self.history.exit_tiles(map_id, layer) - {position}
+            if exits:
+                cells = {tile: kind for tile, kind in cells.items() if tile not in exits}
         routes = self._routes(position, cells, size,
                               context["actor"].get("floor_height"))
         intention = self._get_intention()

@@ -1231,6 +1231,7 @@ def main() -> int:
                         isinstance(save_point, dict) and save_point.get("taught") and
                         not save_disabled, reachable)
                     planner.no_retreat = play_loop.cornered(summary, reachable)
+                    planner.stay_on_map = loop_goal == "hunt_here"
                     if loop_goal != last_loop_goal:
                         print(f"[loop] {play_loop.phase}: goal {loop_goal}", flush=True)
                         last_loop_goal = loop_goal

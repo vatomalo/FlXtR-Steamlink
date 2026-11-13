@@ -425,6 +425,38 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertEqual(decision.action, "step_right",
                              f"row {hero_row}: {decision.reason}")
 
+    def test_combat_cuts_known_grass_directly_between_hero_and_enemy(self):
+        planner = MemoryPlanner()
+        planner.local_cuttable.add("03004000")
+        state = observation(
+            ("###", "#@#", "###"),
+            enemy={"slot": 1, "active": True, "x_px": 40, "y_px": 24},
+            recharge=0)
+        state["tile_context"]["attribute_rows"] = [
+            "00000000 03004000 00000000",
+            "00000000 00000000 00000000",
+            "00000000 00000000 00000000"]
+        face = planner.decide(state, previous="wait")
+        self.assertEqual((face.action, face.intention), ("step_up", "cut_grass"))
+        swing = planner.decide(state, previous=face.action)
+        self.assertEqual((swing.action, swing.intention), ("attack", "cut_grass"))
+
+    def test_combat_does_not_cut_unknown_wall_or_side_grass(self):
+        planner = MemoryPlanner()
+        state = observation(
+            ("###", "#@#", "###"),
+            enemy={"slot": 1, "active": True, "x_px": 40, "y_px": 24},
+            recharge=0)
+        state["tile_context"]["attribute_rows"] = [
+            "00000000 03004000 00000000",
+            "03004000 00000000 00000000",
+            "00000000 00000000 00000000"]
+        self.assertIsNone(planner._grass_blocking_enemy(
+            state["tile_context"], 0, -32))
+        planner.local_cuttable.add("03004000")
+        self.assertEqual(planner._grass_blocking_enemy(
+            state["tile_context"], 0, -32), "step_up")
+
     def test_enemy_far_off_screen_is_not_chased(self):
         state = observation(enemy={"slot": 1, "active": True, "x_px": 40 + 380, "y_px": 56})
         state["tile_context"]["map_size_tiles"] = [64, 64]

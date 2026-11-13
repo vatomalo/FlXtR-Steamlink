@@ -124,6 +124,28 @@ class TestWRAM(unittest.TestCase):
         self.assertEqual(context["verification_error"], "actor_tile_attributes_disagree")
         self.assertNotIn("passability_rows", context)
 
+    def test_bridge_deck_is_trusted_although_height_and_priority_are_kept(self):
+        # som-decomp maps.md 14.3: deck tile 0x78 has b0 b1 b2 = 15 00 00; the
+        # hero arrives from the bridge end (b1 07) at height 1 and keeps both.
+        def deck(ground_effect):
+            data = bytearray(128 * 1024)
+            data[0x7EE000 - 0x7E0000] = 1
+            data[0x7E00E4 - 0x7E0000] = 1
+            data[0x7E00E6 - 0x7E0000] = 0x0F
+            put16(data, 0x7E00C0, 16 * 8)
+            put16(data, 0x7E00C2, 16 * 8)
+            data[0x7EE00B - 0x7E0000] = 1          # height 1
+            data[0x7EE04C - 0x7E0000] = 0x77       # stale tile id (the end)
+            data[0x7EE048 - 0x7E0000] = ground_effect
+            data[0x7EE08E - 0x7E0000] = 7          # priority from the end
+            attributes = 0x7FB800 - 0x7E0000
+            data[attributes:attributes + 4] = bytes([0x15, 0x00, 0x00, 0])
+            return WRAM(data).tile_context()
+        context = deck(0x00)
+        self.assertTrue(context["runtime_verified"])
+        self.assertTrue(context["verification_checks"]["pass_through"])
+        self.assertFalse(deck(0x22)["runtime_verified"])   # ground effect still required
+
     def test_tile_context_accepts_stale_priority_on_matching_special_ground(self):
         data = bytearray(128 * 1024)
         data[0x7EE000 - 0x7E0000] = 1

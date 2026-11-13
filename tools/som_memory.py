@@ -203,8 +203,16 @@ class WRAM:
         # independent identity or render priority. Turbo has now exhibited
         # both a stale tile-id cache on ordinary ground and a stale priority
         # cache on a verified special-ground/door tile.
-        verified = (checks["floor_height"] and checks["ground_effect"] and
-                    (checks["tile_id"] or checks["priority"]))
+        # On pass-through tiles (bridge decks, b0 type 4-7) the game keeps the
+        # height and priority the hero arrived with (som-decomp maps.md 14.2),
+        # so those two fields legitimately differ from the tile there.
+        # Requiring them made the AI distrust every bridge deck and wait on
+        # it forever.
+        pass_through = (current_attributes[0] & 7) >= 4
+        checks["pass_through"] = pass_through
+        verified = (checks["ground_effect"] and
+                    (pass_through or
+                     (checks["floor_height"] and (checks["tile_id"] or checks["priority"]))))
         if not verified:
             result["verification_error"] = "actor_tile_attributes_disagree"
             return result

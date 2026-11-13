@@ -267,6 +267,38 @@ class TestMemoryPlanner(unittest.TestCase):
         routes = MemoryPlanner._routes((1, 0), deck, (16, 16), height=1)
         self.assertNotIn((1, 1), routes)
 
+    @staticmethod
+    def dead_end_state(hero_row=6):
+        # 13x13 view: a wall 3 rows above the hero with a gap at the far right;
+        # the enemy is straight up, beyond the wall.
+        rows = ["............."] * 13
+        rows[3] = "############."
+        rows = [row if index != hero_row else row[:6] + "@" + row[7:]
+                for index, row in enumerate(rows)]
+        tile_y = 10 + hero_row - 6
+        return {"weapons_enabled": True,
+                "party": [{"weapon_recharge": 20, "hp": 80, "max_hp": 100}],
+                "enemy_slots": [{"slot": 2, "active": True,
+                                 "x_px": 10 * 16 + 8, "y_px": 4 * 16 + 8}],
+                "tile_context": {
+                    "runtime_verified": True, "game_mode": "field", "radius": 6,
+                    "map_id": 131, "map_size_tiles": [32, 32], "actor_tile": [10, tile_y],
+                    "actor": {"x_px": 10 * 16 + 8, "y_px": tile_y * 16 + 8, "layer": 1},
+                    "passability_rows": rows}}
+
+    def test_walled_enemy_is_reached_by_the_route_not_the_dead_end(self):
+        planner = MemoryPlanner()
+        for hero_row in (6, 5, 4, 6, 5):
+            decision = planner.decide(self.dead_end_state(hero_row))
+            self.assertEqual(decision.intention, "engage_enemy")
+            self.assertEqual(decision.action, "step_right",
+                             f"row {hero_row}: {decision.reason}")
+
+    def test_enemy_far_off_screen_is_not_chased(self):
+        state = observation(enemy={"slot": 1, "active": True, "x_px": 40 + 380, "y_px": 56})
+        state["tile_context"]["map_size_tiles"] = [64, 64]
+        self.assertNotEqual(MemoryPlanner().decide(state).intention, "engage_enemy")
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

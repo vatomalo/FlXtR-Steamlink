@@ -13,6 +13,11 @@ OPPOSITE_STEP = {
     "step_up": "step_down", "step_down": "step_up",
 }
 
+# Chase only monsters on screen (SNES view 256 x 224 around the hero).
+ENGAGE_RANGE_X = 128
+ENGAGE_RANGE_Y = 112
+# Below this distance the straight-line step is used when no route is known.
+CLOSE_QUARTERS_PX = 48
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -378,13 +383,16 @@ class MemoryPlanner:
         cooldowns = {slot: turns - 1 for slot, turns in cooldowns.items() if turns > 1}
         self._set_state("unreachable", cooldowns or None)
         enemies = [enemy for enemy in enemies if str(enemy.get("slot")) not in cooldowns]
-        if not enemies:
-            return None
         targets = []
         for enemy in enemies:
             dx = self._wrapped_delta(enemy["x_px"], actor["x_px"], width_px)
             dy = self._wrapped_delta(enemy["y_px"], actor["y_px"], height_px)
-            targets.append((abs(dx) + abs(dy), dx, dy, enemy))
+            # Only monsters on screen are worth chasing; one 380 px away
+            # behind a wall made the hero walk back and forth for minutes.
+            if abs(dx) <= ENGAGE_RANGE_X and abs(dy) <= ENGAGE_RANGE_Y:
+                targets.append((abs(dx) + abs(dy), dx, dy, enemy))
+        if not targets:
+            return None
         distance, dx, dy, enemy = min(targets, key=lambda value: value[0])
         hero = observation.get("party", [{}])[0]
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
@@ -406,17 +414,18 @@ class MemoryPlanner:
                 observation.get("weapons_enabled") and recharge == 0):
             return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range",
                                    "engage_enemy")
-        action = self._approach_direction(dx, dy, open_steps)
-        if action:
-            return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px",
-                                   "engage_enemy")
-        # The straight line is walled off. Follow the learned map toward the
-        # enemy instead of alternating with exploration every other decision.
+        # Follow the learned map first. Taking the straight-line step whenever
+        # its first tile was open, and the map route only when it was not,
+        # sent the hero up into a dead end and back down, over and over.
         routed = self._route_toward(context, dx, dy, open_steps)
         if routed:
             action, tiles = routed
-            return PlannerDecision(action, f"route around wall to enemy {enemy['slot']} "
+            return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px "
                                    f"({tiles} known tiles)", "engage_enemy", tiles)
+        action = self._approach_direction(dx, dy, open_steps)
+        if action and distance <= CLOSE_QUARTERS_PX:
+            return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px",
+                                   "engage_enemy")
         cooldowns[str(enemy["slot"])] = UNREACHABLE_COOLDOWN
         self._set_state("unreachable", cooldowns)
         self._set_intention(None)

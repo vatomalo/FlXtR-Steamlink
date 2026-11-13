@@ -247,6 +247,113 @@ int main(void){
     assert(som_apply_rom_patches(bare_rom,sizeof(bare_rom))==1&&bare_rom[0x087005]==0);
     unlink(patch_path);
     assert(som_apply_rom_patches(bare_rom,sizeof(bare_rom))==0);
+    /* Living world: native NPC walk (ACTOR_WALK write set, all gates). */
+    assert(som_fnv1a((const uint8_t*)"a",1)==0xe40c292cu);
+    assert(!som_npc_rom_verified(bare_rom,sizeof(bare_rom)));
+    assert(!som_npc_rom_verified(rom,sizeof(rom)));
+    assert(!som_npc_rom_verified(NULL,0));
+    SomNpcWalk walk;
+    assert(som_npc_parse_walk("npc_walk 131 8 199 472 404 3 16",&walk));
+    assert(walk.map==131&&walk.slot==8&&walk.kind==0xC7&&walk.x==472&&walk.y==404&&
+           walk.dir==3&&walk.frames==16);
+    assert(!som_npc_parse_walk("npc_walk 131 8 199 472 404 3 16 9",&walk));
+    assert(!som_npc_parse_walk("npc_walk 131 8 199 472 404 3 16 x",&walk));
+    assert(!som_npc_parse_walk("npc_walk 131 8",&walk));
+    assert(!som_npc_parse_walk("step_left",&walk));
+    assert(som_npc_parse_walk("npc_walk 131 8 199 472 404 3 16",&walk));
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_wram[0xE000]=1;mocked_wram[0x00E4]=1;mocked_wram[0x00E6]=0x0F;
+    mocked_wram[0x00DC]=131;
+    uint8_t *npc=mocked_wram+0xF000;               /* slot 8 */
+    npc[0]=1;npc[0x3D]=0xC7;npc[0x44]=0xC0;npc[0x71]=0x0A;npc[0x30]=0x01;
+    npc[2]=472&0xFF;npc[3]=472>>8;npc[4]=404&0xFF;npc[5]=404>>8;
+    assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk)==NULL);
+    SomNpcWalk bad=walk;bad.slot=2;
+    assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad)!=NULL); /* hero slot */
+    bad=walk;bad.slot=12;assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad)!=NULL);
+    bad=walk;bad.kind=0x50;assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad)!=NULL);
+    bad=walk;bad.frames=0;assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad)!=NULL);
+    bad=walk;bad.frames=33;assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad)!=NULL);
+    bad=walk;bad.dir=4;assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad)!=NULL);
+    bad=walk;bad.x=473;assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad),"stale position"));
+    bad=walk;bad.map=130;assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&bad),"different map"));
+    assert(som_npc_walk_refusal(mocked_wram,0x1000,&walk)!=NULL);
+    npc[0x44]=0x40;   /* wandering NPC: its native script would compete */
+    assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk),"NPC has native AI (not static)"));
+    npc[0x44]=0xC0;
+    mocked_wram[0x00D0]=0x81;   /* dialogue running */
+    assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk),"event running"));
+    mocked_wram[0x00D0]=0;
+    mocked_wram[0x003A]=0x00;mocked_wram[0x003B]=0xF0;  /* talk target is this NPC */
+    assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk),"NPC is the talk target"));
+    mocked_wram[0x003B]=0;
+    mocked_wram[0x00E4]=0;
+    assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk),"map transition"));
+    mocked_wram[0x00E4]=1;
+    mocked_wram[0x00FF]=0x40;
+    assert(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk)!=NULL);
+    mocked_wram[0x00FF]=0;
+    npc[0x3D]=0xC6;assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk),"kind changed"));
+    npc[0x3D]=0xC7;
+    uint8_t before_walk[SOM_WRAM_SIZE];
+    memcpy(before_walk,mocked_wram,sizeof(before_walk));
+    som_npc_apply_walk(mocked_wram,&walk);
+    assert(npc[0x0A]==16&&npc[0x42]==1&&npc[0x06]==0x82&&npc[0x07]==0&&npc[0x10]==0x82&&
+           npc[0x30]==0xFF&&npc[0x11]==1&&npc[0x1C]==0&&npc[0x13]==0&&npc[0x67]==0);
+    {   /* nothing outside the ten ACTOR_WALK fields of this object changes */
+        static const unsigned fields[]={0x06,0x07,0x0A,0x10,0x11,0x13,0x1C,0x30,0x42,0x67};
+        for(size_t i=0;i<sizeof(mocked_wram);i++){
+            int field=0;
+            for(size_t f=0;f<sizeof(fields)/sizeof(fields[0]);f++)if(i==0xF000u+fields[f])field=1;
+            if(!field)assert(mocked_wram[i]==before_walk[i]);
+        }
+    }
+    assert(!strcmp(som_npc_walk_refusal(mocked_wram,sizeof(mocked_wram),&walk),"NPC busy"));
+    memcpy(mocked_wram,before_walk,sizeof(before_walk));
+    static const uint8_t want_vx[4]={0,0,2,0x82},want_vy[4]={0x82,2,0,0},want_face[4]={0,1,2,0x82};
+    for(unsigned dir=0;dir<4;dir++){
+        memcpy(mocked_wram,before_walk,sizeof(before_walk));
+        SomNpcWalk turn=walk;turn.dir=dir;
+        som_npc_apply_walk(mocked_wram,&turn);
+        assert(npc[0x06]==want_vx[dir]&&npc[0x07]==want_vy[dir]&&npc[0x10]==want_face[dir]);
+    }
+    memcpy(mocked_wram,before_walk,sizeof(before_walk));
+    npc[0x71]=0x40;   /* presentation flag 0x40: facing 0 and no walk pose, as ACTOR_WALK */
+    som_npc_apply_walk(mocked_wram,&walk);
+    assert(npc[0x10]==0&&npc[0x11]==0);
+    memcpy(mocked_wram,before_walk,sizeof(before_walk));
+    npc[0x71]=0x20;som_npc_apply_walk(mocked_wram,&walk);
+    assert(npc[0x10]==0x82&&npc[0x11]==0);
+    memcpy(mocked_wram,before_walk,sizeof(before_walk));
+    /* The command path: ROM, enable marker and rate limit all gate it. */
+    char enable_path[]="/tmp/flxtr-npc-enable-XXXXXX";
+    fd=mkstemp(enable_path);assert(fd>=0);close(fd);unlink(enable_path);
+    npc_enable_file=enable_path;
+    reset_proxy();npc_have_walked=0;
+    npc_rom_verified=0;
+    assert(!som_npc_walk_command("npc_walk 131 8 199 472 404 3 16"));
+    npc_rom_verified=1;
+    assert(!som_npc_walk_command("npc_walk 131 8 199 472 404 3 16")); /* not enabled */
+    assert(memcmp(mocked_wram,before_walk,sizeof(before_walk))==0);
+    fd=open(enable_path,O_CREAT|O_WRONLY,0600);assert(fd>=0);close(fd);
+    assert(!som_npc_walk_command("npc_walk 131 8 199 472 404"));
+    assert(som_npc_walk_command("npc_walk 131 8 199 472 404 3 16"));
+    assert(npc[0x0A]==16);
+    memcpy(mocked_wram,before_walk,sizeof(before_walk));
+    frame_number+=2;
+    assert(!som_npc_walk_command("npc_walk 131 8 199 472 404 3 16")); /* rate limit */
+    frame_number+=SOM_NPC_MIN_GAP_FRAMES;
+    assert(som_npc_walk_command("npc_walk 131 8 199 472 404 1 8"));
+    /* The command file is consumed once and never touches the action file. */
+    char npc_cmd_path[]="/tmp/flxtr-npc-cmd-XXXXXX";
+    fd=mkstemp(npc_cmd_path);assert(fd>=0);close(fd);
+    npc_command_file=npc_cmd_path;
+    memcpy(mocked_wram,before_walk,sizeof(before_walk));
+    frame_number+=SOM_NPC_MIN_GAP_FRAMES*2u;frame_number&=~1ul;
+    FILE *cmd=fopen(npc_cmd_path,"w");assert(cmd);fputs("npc_walk 131 8 199 472 404 2 4\n",cmd);fclose(cmd);
+    som_check_npc_command();
+    assert(access(npc_cmd_path,F_OK)!=0&&npc[0x0A]==4&&npc[0x06]==2&&active_action==SOM_ACT_NONE);
+    unlink(enable_path);
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, override, and WRAM export");
     return 0;

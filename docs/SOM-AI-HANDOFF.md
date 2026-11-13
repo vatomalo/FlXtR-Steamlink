@@ -40,6 +40,8 @@ Branch `feature/som-ai-memory-agent-20261112`. Read `docs/SOM-WRAM-AGENT.md`
   cutting, taught-path following, stall detection.
 - `tools/som_menu.py`: closed-loop macros (Candy, inn, shop) that verify each
   press against WRAM and cancel out on anything unexpected.
+- Living world (NPC schedules, world clock, opt-in native NPC walks):
+  `tools/som_living_world.py`, see `docs/SOM-LIVING-WORLD.md`.
 - Teach/probe tools: `som_ring_probe.py`, `som_teach_inn.py`,
   `som_teach_shop.py`, `som_teach_path.py`, `som_map_records.py`, `som_spawn.py`.
 

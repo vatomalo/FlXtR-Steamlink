@@ -1,8 +1,10 @@
 /*
  * FlXtR Secret of Mana Turbo opt-in input proxy.
  * A Libretro core wrapper; loads the installed Snes9x 2005 Plus as a library.
- * It does NOT patch emulator code, ROM, or save data. The only game-RAM write
- * is the explicit experimental clone_enemy command, which is undoable.
+ * It does NOT patch emulator code, ROM, or save data. Game-RAM writes are
+ * limited to the explicit experimental clone_enemy command (undoable) and
+ * the opt-in living-world npc_walk command (src/som_npc_walk.h), which is
+ * off unless its enable marker exists and the ROM fingerprints match.
  *
  * Exact usage and safety caveats: docs/secret-of-mana-ai-input-bridge.md
  */
@@ -10,6 +12,7 @@
 #include "vendor/libretro.h"
 #include "som_ai_actions.h"
 #include "som_overlay.h"
+#include "som_npc_walk.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -327,6 +330,48 @@ static int som_clone_enemy(void){
         SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE);
     return 1;
 }
+/* Living world (EXPERIMENTAL, opt-in): one native NPC walk per command file
+ * write. Refused unless the ROM routines were verified at load, the enable
+ * marker exists and som_npc_walk_refusal() accepts the live state. */
+static const char *npc_command_file=SOM_NPC_COMMAND_FILE;
+static const char *npc_enable_file=SOM_NPC_ENABLE_FILE;
+static int npc_rom_verified;
+static unsigned long npc_last_walk_frame;
+static int npc_have_walked;
+#define SOM_NPC_MIN_GAP_FRAMES 8u
+static int som_npc_walk_command(const char *line){
+    SomNpcWalk walk;
+    if(!som_npc_parse_walk(line,&walk)){
+        fprintf(stderr,"[som-ai] NPC refused: malformed command\n");return 0;
+    }
+    if(!npc_rom_verified){fprintf(stderr,"[som-ai] NPC refused: ROM routines not verified\n");return 0;}
+    if(access(npc_enable_file,F_OK)!=0){fprintf(stderr,"[som-ai] NPC refused: living world not enabled\n");return 0;}
+    if(npc_have_walked&&frame_number<npc_last_walk_frame+SOM_NPC_MIN_GAP_FRAMES){
+        fprintf(stderr,"[som-ai] NPC refused: rate limit\n");return 0;
+    }
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return 0;
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    size_t size=backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
+    const char *refusal=som_npc_walk_refusal(ram,size,&walk);
+    if(refusal){fprintf(stderr,"[som-ai] NPC refused: %s\n",refusal);return 0;}
+    som_npc_apply_walk(ram,&walk);
+    npc_have_walked=1;npc_last_walk_frame=frame_number;
+    fprintf(stderr,"[som-ai] NPC WALK map %u slot %u kind %02X from (%u,%u) dir %u for %u frames\n",
+        walk.map,walk.slot,walk.kind,walk.x,walk.y,walk.dir,walk.frames);
+    return 1;
+}
+static void som_check_npc_command(void){
+    if(!test_enabled||!game_loaded||!on_turbo||frame_number%SOM_TRIGGER_POLL_FRAMES)return;
+    if(access(npc_command_file,F_OK)!=0)return;
+    char line[96]={0};
+    FILE *input=fopen(npc_command_file,"r");
+    if(!input)return;
+    int have=fgets(line,sizeof(line),input)!=NULL;
+    fclose(input);
+    if(unlink(npc_command_file)!=0||!have)return;
+    line[strcspn(line,"\r\n")]=0;
+    som_npc_walk_command(line);
+}
 static int som_undo_spawn(void){
     if(!undo_ready||!backend_retro_unserialize){
         fprintf(stderr,"[som-ai] UNDO refused: no spawn snapshot\n");return 0;
@@ -565,6 +610,11 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     free(patched_rom);patched_rom=NULL;
     struct retro_game_info patched_game;
     const struct retro_game_info *load_info=game;
+    npc_have_walked=0;npc_last_walk_frame=0;
+    npc_rom_verified=on_turbo&&game&&game->data&&
+        som_npc_rom_verified((const uint8_t*)game->data,game->size);
+    if(on_turbo)fprintf(stderr,"[som-ai] living-world NPC routines %s\n",
+        npc_rom_verified?"verified":"NOT verified; npc_walk disabled");
     if(on_turbo&&game&&game->data&&game->size&&(patched_rom=malloc(game->size))){
         memcpy(patched_rom,game->data,game->size);
         if(som_apply_rom_patches(patched_rom,game->size)){
@@ -587,6 +637,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
         }
         if(test_enabled){
             unlink(action_file);unlink(message_file);unlink(record_marker);
+            unlink(npc_command_file);
             recording=0;
             unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
             fprintf(stderr,"[som-ai] READY: legacy %s; actions via %s; read-only WRAM via %s\n",
@@ -599,6 +650,7 @@ RETRO_API void retro_unload_game(void){
     armed=0;autonomous_mode=0;game_loaded=0;
     ring_ai_enabled=0;ring_ai_pending=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
+    unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
     undo_ready=0;
     if(backend_unload_game)backend_unload_game();
@@ -606,6 +658,7 @@ RETRO_API void retro_unload_game(void){
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     som_check_trigger();
+    som_check_npc_command();
     som_check_message();
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)
         recording=access(record_marker,F_OK)==0;

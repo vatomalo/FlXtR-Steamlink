@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "locations": {
+    "potos_c7_spawn": {
+      "map": 131, "x": 29, "y": 25, "layer": 1,
+      "evidence": "ROM object record 131#8 (kind 0xC7, static); live spawn pixel (472,404) on Turbo 2026-11-13"
+    },
+    "potos_c7_doorstep": {
+      "map": 131, "x": 27, "y": 25, "layer": 1, "facing": "up",
+      "evidence": "open floor-2 tile (live work map) directly below door tile 0xC4 at (27,24), a ROM exit to map 257"
+    },
+    "potos_c7_house": {
+      "map": 257, "x": 12, "y": 36, "layer": 2, "abstract": true, "proxy": "potos_c7_doorstep",
+      "evidence": "ROM transition of door (131: 27,24) -> map 257 start tile (12,36), confirmed by map_exits in the AI history"
+    },
+    "potos_lane_west": {
+      "map": 131, "x": 24, "y": 30, "layer": 1,
+      "evidence": "open floor-2 tile in the live work map; 4-way route from the spawn over floor-2 tiles"
+    },
+    "potos_lane_east": {
+      "map": 131, "x": 33, "y": 28, "layer": 1,
+      "evidence": "open floor-2 tile in the live work map; 4-way route from the spawn over floor-2 tiles"
+    }
+  },
+  "npcs": [
+    {
+      "id": "potos_villager_c7",
+      "name": "Potos villager by the house door",
+      "home": "potos_c7_house",
+      "workplace": "potos_lane_west",
+      "native": {"map": 131, "record": 8, "kind": 199, "event": 265, "static": true,
+                 "spawn": "potos_c7_spawn"},
+      "story": [{"flag": 16, "min": 0, "max": 6}],
+      "personality": {"sociable": 0.6, "diligent": 0.8},
+      "schedule": [
+        {"time": "06:00", "activity": "wake_up", "destination": "home"},
+        {"time": "07:00", "activity": "eat", "destination": "home"},
+        {"time": "08:00", "activity": "travel", "destination": "workplace"},
+        {"time": "09:00", "activity": "work", "destination": "workplace"},
+        {"time": "12:00", "activity": "eat", "destination": "potos_lane_east"},
+        {"time": "13:00", "activity": "work", "destination": "workplace"},
+        {"time": "18:00", "activity": "socialize", "destination": "potos_lane_east"},
+        {"time": "21:00", "activity": "return_home", "destination": "home"},
+        {"time": "22:00", "activity": "sleep", "destination": "home"}
+      ],
+      "lines": {
+        "wake_up": "Morning already? I just got up.",
+        "eat": "Can't talk now, I'm eating.",
+        "travel": "Off to work. See you around!",
+        "work": "Busy, busy! Work never ends.",
+        "socialize": "Long day. Nice evening, eh?",
+        "return_home": "Getting late. I'm heading home.",
+        "sleep": "Zzz... (fast asleep)",
+        "night_warning": "Monsters roam at night. Careful!",
+        "repeat": "You again! Twice today already."
+      }
+    }
+  ]
+}

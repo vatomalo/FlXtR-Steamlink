@@ -14,6 +14,7 @@ typedef struct {
     char lines[SOM_OVERLAY_LINES][SOM_OVERLAY_COLUMNS + 1u];
     unsigned line_count;
     unsigned frames_left;
+    int speech_bubble; /* '^' prefix: separate non-modal dialogue style */
 } SomOverlay;
 
 /* Libretro pixel formats: 0 = 0RGB1555, 1 = XRGB8888, 2 = RGB565. */
@@ -27,6 +28,7 @@ static inline uint32_t som_overlay_color(int format, unsigned r, unsigned g, uns
  * two lines of 32 characters. Returns 1 when something is left to show. */
 static inline int som_overlay_set(SomOverlay *overlay, const char *text, unsigned frames){
     memset(overlay,0,sizeof(*overlay));
+    if(text&&text[0]=='^'){overlay->speech_bubble=1;text++;}
     unsigned line=0,column=0;
     for(const char *p=text;p&&*p&&*p!='\n'&&*p!='\r';p++){
         if(*p=='|'){
@@ -67,12 +69,35 @@ static inline void som_overlay_draw(uint8_t *pixels,unsigned width,unsigned heig
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
     const unsigned box_w=(longest*6u+9u)*sx,box_h=(overlay->line_count*10u+7u)*sy;
     if(longest==0||box_w+4u>width||box_h+8u*sy>height)return;
-    const unsigned x0=(width-box_w)/2u,y0=height-box_h-8u*sy;
-    const uint32_t border=som_overlay_color(format,248,248,248);
-    const uint32_t back=som_overlay_color(format,16,24,96);
-    const uint32_t ink=som_overlay_color(format,255,255,255);
+    const unsigned x0=(width-box_w)/2u;
+    /* Speech bubble sits above the usual player-center region. This is a
+     * screen-space anchor, NOT actor tracking: camera offsets are not
+     * validated yet. Keep the original bottom HUD box for status messages. */
+    const unsigned y0=overlay->speech_bubble?
+        (height/2u>box_h+14u*sy?height/2u-box_h-14u*sy:2u*sy):
+        height-box_h-8u*sy;
+    const uint32_t border=overlay->speech_bubble?
+        som_overlay_color(format,25,30,45):
+        som_overlay_color(format,248,248,248);
+    const uint32_t back=overlay->speech_bubble?
+        som_overlay_color(format,248,248,240):
+        som_overlay_color(format,16,24,96);
+    const uint32_t ink=overlay->speech_bubble?
+        som_overlay_color(format,16,24,45):
+        som_overlay_color(format,255,255,255);
     som_overlay_fill(pixels,pitch,format,x0,y0,box_w,box_h,border);
     som_overlay_fill(pixels,pitch,format,x0+sx,y0+sy,box_w-2u*sx,box_h-2u*sy,back);
+    if(overlay->speech_bubble && y0+box_h+6u*sy<height){
+        /* Simple pixel-art speech tail pointing toward the player region. */
+        const unsigned cx=x0+box_w/2u;
+        for(unsigned row=0;row<6u*sy;row++){
+            const unsigned half=((6u*sy-row)*sx)/(2u*sy);
+            const unsigned x=cx>half?cx-half:0;
+            const unsigned w=2u*half+1u;
+            if(x+w<=width)
+                som_overlay_fill(pixels,pitch,format,x,y0+box_h+row,w,1u,back);
+        }
+    }
     for(unsigned line=0;line<overlay->line_count;line++){
         const char *text=overlay->lines[line];
         for(unsigned i=0;text[i];i++){

@@ -246,6 +246,27 @@ on its own (Confirm in a shop can buy things). Teach it with
 `som_teach_inn.py` to use it. Tile IDs may be tileset-specific across maps;
 this has not been validated on hardware.
 
+## Experiment: spawn a monster copy (first game-memory write)
+
+`clone_enemy` is the proxy's only write to game RAM. It copies one live
+monster object (0x200 bytes) into an empty monster slot (7EE600/E800/EA00),
+32 px to the right, after taking a full emulator snapshot; `undo_spawn`
+restores that snapshot exactly (everything since is lost). Stand near a Rabite
+so it is loaded, then on SkyLoft:
+
+```sh
+python3 tools/som_spawn.py clone
+python3 tools/som_spawn.py undo
+```
+
+Basis: `cidwel/som-decomp` `docs/rabite.md` (monster slots 3-5, object
+fields, spawner `$C0:DE3B`). The game's own spawner is not called, so engine
+state outside the slot (sprite allocation, map object records) is not updated:
+the copy may not draw, act, or die cleanly. Running the real spawner for an
+arbitrary monster id would need executing game code from the proxy, which is
+not implemented. Only the explicit tool can send these commands; the model
+cannot. Keep a normal backup save before experimenting.
+
 ## Responsiveness (continuous control)
 
 - The bridge keeps **one** SSH session open to a tiny allowlisted shell loop on

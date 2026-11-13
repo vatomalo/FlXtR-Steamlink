@@ -1,7 +1,8 @@
 /*
  * FlXtR Secret of Mana Turbo opt-in input proxy.
  * A Libretro core wrapper; loads the installed Snes9x 2005 Plus as a library.
- * It does NOT patch emulator code, ROM, save data, or system RAM.
+ * It does NOT patch emulator code, ROM, or save data. The only game-RAM write
+ * is the explicit experimental clone_enemy command, which is undoable.
  *
  * Exact usage and safety caveats: docs/secret-of-mana-ai-input-bridge.md
  */
@@ -277,6 +278,65 @@ static void som_ring_ai_tick(void){
         }else fprintf(stderr,"[som-ai] RING AI start signal failed\n");
     }
 }
+/* EXPERIMENTAL, the proxy's only game-memory write: copy one live monster
+ * object (0x200 bytes, slots 7EE600/E800/EA00 per cidwel/som-decomp) into an
+ * empty monster slot, 32 px to the right. A full emulator snapshot is taken
+ * first; "undo_spawn" restores it exactly. The game's own spawner ($C0:DE3B)
+ * is not called, so engine bookkeeping outside the slot is not updated. */
+#define SOM_MONSTER_BASE 0xE600u
+#define SOM_OBJECT_SIZE 0x200u
+static uint8_t *undo_state;
+static size_t undo_size;
+static int undo_ready;
+static int som_monster_live(const uint8_t *object){
+    uint16_t status=(uint16_t)(object[0x190]|object[0x191]<<8);
+    return object[0]==1&&object[0x180]<0x80&&!(status&0x8000u);
+}
+static int som_clone_enemy(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
+       !backend_retro_serialize_size||!backend_retro_serialize)return 0;
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE){
+        fprintf(stderr,"[som-ai] SPAWN refused: WRAM unavailable\n");return 0;
+    }
+    int source=-1,target=-1;
+    for(unsigned slot=0;slot<3;slot++){
+        uint8_t *object=ram+SOM_MONSTER_BASE+slot*SOM_OBJECT_SIZE;
+        if(som_monster_live(object)){if(source<0)source=(int)slot;}
+        else if(object[0]!=1&&target<0)target=(int)slot;
+    }
+    if(source<0){fprintf(stderr,"[som-ai] SPAWN refused: no live monster to copy\n");return 0;}
+    if(target<0){fprintf(stderr,"[som-ai] SPAWN refused: no empty monster slot\n");return 0;}
+    size_t size=backend_retro_serialize_size();
+    if(size>undo_size){
+        uint8_t *grown=realloc(undo_state,size);
+        if(!grown){fprintf(stderr,"[som-ai] SPAWN refused: no memory for undo\n");return 0;}
+        undo_state=grown;undo_size=size;
+    }
+    if(!size||!backend_retro_serialize(undo_state,size)){
+        fprintf(stderr,"[som-ai] SPAWN refused: undo snapshot failed\n");return 0;
+    }
+    undo_ready=1;
+    uint8_t *from=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
+    uint8_t *to=ram+SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE;
+    memcpy(to,from,SOM_OBJECT_SIZE);
+    uint16_t x=(uint16_t)(to[2]|to[3]<<8);x=(uint16_t)(x+32u);
+    to[2]=(uint8_t)x;to[3]=(uint8_t)(x>>8);
+    fprintf(stderr,"[som-ai] SPAWN copied monster id %u from 7E%04X to 7E%04X; undo with undo_spawn\n",
+        (unsigned)from[0x180],SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE,
+        SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE);
+    return 1;
+}
+static int som_undo_spawn(void){
+    if(!undo_ready||!backend_retro_unserialize){
+        fprintf(stderr,"[som-ai] UNDO refused: no spawn snapshot\n");return 0;
+    }
+    int ok=backend_retro_unserialize(undo_state,undo_size);
+    undo_ready=0;
+    fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
+                      "[som-ai] UNDO failed to restore the snapshot\n");
+    return ok;
+}
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
     active_action=action;
@@ -342,6 +402,8 @@ static void som_check_trigger(void){
         fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
         return;
     }
+    if(!strcmp(command,"clone_enemy")){som_clone_enemy();return;}
+    if(!strcmp(command,"undo_spawn")){som_undo_spawn();return;}
     if(!strcmp(command,"auto_off")){
         autonomous_mode=0;armed=0;
         fprintf(stderr,"[som-ai] AUTO STOP\n");
@@ -461,6 +523,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     wram_export_error_logged=0;
     memset(&overlay,0,sizeof(overlay));
+    undo_ready=0;
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     game_loaded=backend_load_game(game);
@@ -494,6 +557,7 @@ RETRO_API void retro_unload_game(void){
     ring_ai_enabled=0;ring_ai_pending=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
     memset(&overlay,0,sizeof(overlay));
+    undo_ready=0;
     if(backend_unload_game)backend_unload_game();
 }
 RETRO_API void retro_run(void){

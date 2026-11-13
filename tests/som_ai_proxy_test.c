@@ -22,6 +22,17 @@ static const void *shown_frame;
 static void mocked_video(const void *data,unsigned width,unsigned height,size_t pitch){
     (void)width;(void)height;(void)pitch;shown_frame=data;
 }
+static uint8_t saved_wram[SOM_WRAM_SIZE];
+static int unserialized;
+static size_t mocked_serialize_size(void){return sizeof(saved_wram);}
+static bool mocked_serialize(void *data,size_t size){
+    if(size!=sizeof(saved_wram))return false;
+    memcpy(data,mocked_wram,size);return true;
+}
+static bool mocked_unserialize(const void *data,size_t size){
+    if(size!=sizeof(saved_wram))return false;
+    memcpy(mocked_wram,data,size);unserialized++;return true;
+}
 static void reset_proxy(void){
     physical_state=mocked_input;physical_poll=NULL;
     frame_number=180;start_frame=0;injected_queries=0;
@@ -194,6 +205,28 @@ int main(void){
     assert(!strcmp(recorded_text,"confirm\nstep_down\ncancel\n"));
     assert(!armed);
     unlink(record_path);
+    /* Experimental, undoable monster copy into an empty slot. */
+    backend_retro_serialize_size=mocked_serialize_size;
+    backend_retro_serialize=mocked_serialize;
+    backend_retro_unserialize=mocked_unserialize;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    assert(!som_clone_enemy());                       /* nothing to copy */
+    uint8_t *rabite=mocked_wram+0xE600;
+    rabite[0]=1;rabite[0x180]=0;rabite[2]=0x40;rabite[3]=0x01;rabite[4]=0x80;
+    for(unsigned slot=1;slot<3;slot++)mocked_wram[0xE600+slot*0x200]=1; /* all busy */
+    mocked_wram[0xE800+0x180]=0x90;mocked_wram[0xEA00+0x180]=0x90;
+    assert(!som_clone_enemy()&&!undo_ready);         /* no empty slot */
+    mocked_wram[0xEA00]=0;                            /* free the last slot */
+    uint8_t before_clone[SOM_WRAM_SIZE];
+    memcpy(before_clone,mocked_wram,sizeof(before_clone));
+    assert(som_clone_enemy()&&undo_ready);
+    uint8_t *copy=mocked_wram+0xEA00;
+    assert(copy[0]==1&&copy[0x180]==0&&copy[4]==0x80);
+    assert((copy[2]|copy[3]<<8)==0x0140+32);
+    assert(memcmp(mocked_wram+0xE800,before_clone+0xE800,0x200)==0); /* others untouched */
+    assert(som_undo_spawn()&&unserialized==1&&!undo_ready);
+    assert(memcmp(mocked_wram,before_clone,sizeof(before_clone))==0);
+    assert(!som_undo_spawn());                        /* only once */
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, override, and WRAM export");
     return 0;

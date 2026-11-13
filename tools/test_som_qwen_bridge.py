@@ -196,6 +196,14 @@ class TestRemoteLink(unittest.TestCase):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
         self.assertIsNone(self.link.fetch_wram(require_marker=True))
 
+    def test_control_commands_are_separate_from_model_actions(self):
+        with self.assertRaises(ValueError):
+            self.link.send_action("clone_enemy")
+        self.link.send_control("clone_enemy")
+        self.assertEqual((self.root / "flxtr-som-ai-action").read_text(), "clone_enemy\n")
+        with self.assertRaises(ValueError):
+            self.link.send_control("rm")
+
     def test_refuses_non_allowlisted_action_locally(self):
         with self.assertRaises(ValueError):
             self.link.send_action("$(reboot)")

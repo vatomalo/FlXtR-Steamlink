@@ -29,6 +29,8 @@ ACTIONS = {
     "attack", "open_ring", "confirm", "cancel", "next_ring",
     "prev_ring", "snapshot", "menu_x",
 }
+# Proxy commands for explicit tools only; never offered to the model.
+CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off"}
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(
     r"(?<![a-z_])(" + "|".join(sorted(ACTIONS, key=len, reverse=True)) + r")(?![a-z_])")
@@ -407,6 +409,14 @@ class RemoteLink:
         status, _ = self._request("msg " + clean)
         if status != "OK":
             raise OSError(f"Steam Link rejected message ({status})")
+
+    def send_control(self, command: str) -> None:
+        """Experimental proxy commands that only tools (never Qwen) may send."""
+        if command not in CONTROL_COMMANDS:
+            raise ValueError(f"refusing unknown control command {command!r}")
+        status, _ = self._request("act " + command)
+        if status != "OK":
+            raise OSError(f"Steam Link rejected {command!r} ({status})")
 
     def send_action(self, action: str) -> None:
         if action not in ACTIONS and action not in LONG_MOVES.values():

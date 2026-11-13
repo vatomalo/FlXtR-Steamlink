@@ -8,7 +8,7 @@ from pathlib import Path
 from som_qwen_bridge import (REMOTE_LOOP, RemoteLink, 
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
     parse_directive, prefer_open_step, extend_clear_exploration,
-    objective_directive)
+    objective_directive, shop_errand)
 
 
 class TestTileGuard(unittest.TestCase):
@@ -131,6 +131,31 @@ class TestQwenDirector(unittest.TestCase):
         self.assertIn("damage_dealt", prompt)
 
 
+
+class TestShopErrand(unittest.TestCase):
+    def setUp(self):
+        from som_memory import WRAM
+        self.ram = bytearray(0x20000)
+        self.ram[0xCC48] = 0x22            # one Candy
+        self.ram[0xCC49:0xCC53] = b"\xff" * 10
+        self.ram[0xCC6A:0xCC6D] = (800).to_bytes(3, "little")
+        self.wram = lambda: WRAM(bytes(self.ram))
+        self.shop = {"map_id": 131, "layer": 1, "target": [1, 1], "price": 10}
+        self.gold = {"address": 0x7ECC6A, "width": 3}
+
+    def state(self, hp):
+        return {"party": [{"hp": hp, "max_hp": 100}]}
+
+    def test_shops_when_healthy_and_rich(self):
+        errand = shop_errand(self.wram(), self.state(90), self.shop, self.gold, 500)
+        self.assertEqual(errand["place"], "shop")
+
+    def test_no_shopping_when_poor_hurt_full_or_untaught(self):
+        self.assertIsNone(shop_errand(self.wram(), self.state(90), self.shop, self.gold, 900))
+        self.assertIsNone(shop_errand(self.wram(), self.state(40), self.shop, self.gold, 500))
+        self.assertIsNone(shop_errand(self.wram(), self.state(90), None, self.gold, 500))
+        self.ram[0xCC48] = 0x80             # four Candy
+        self.assertIsNone(shop_errand(self.wram(), self.state(90), self.shop, self.gold, 500))
 
 class TestRemoteLink(unittest.TestCase):
     """Run the persistent protocol through a fake ssh that executes locally."""

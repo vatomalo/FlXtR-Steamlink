@@ -68,6 +68,11 @@ static const char *message_file="/tmp/flxtr-som-ai-message";
 static retro_video_refresh_t frontend_video;
 static int pixel_format; /* RETRO_PIXEL_FORMAT_0RGB1555 until the core says otherwise */
 static SomOverlay overlay;
+/* Teaching: while the marker exists, physical presses are appended to a log
+ * as the action names the bridge can replay. Nothing is injected. */
+static const char *record_marker="/tmp/flxtr-som-ai-record";
+static const char *record_file="/tmp/flxtr-som-ai-recorded";
+static int recording;
 static uint8_t *overlay_frame;
 static size_t overlay_frame_size;
 static void load_backend(void); /* RetroArch may query core info before init. */
@@ -130,6 +135,17 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     }
     return actual;
 }
+static void som_record_presses(uint16_t pressed){
+    static const char *const names[16]={"confirm","open_ring","select","start",
+        "step_up","step_down","step_left","step_right","cancel","menu_x",
+        "prev_ring","next_ring","l2","r2","l3","r3"};
+    if(!pressed)return;
+    FILE *log=fopen(record_file,"a");
+    if(!log)return;
+    for(unsigned key=0;key<16;key++)
+        if(pressed&(1u<<key))fprintf(log,"%s\n",names[key]);
+    fclose(log);
+}
 static void som_input_poll(void){
     if(physical_poll)physical_poll();
     /* Observe physical attack edges without mutating the game's inputs. */
@@ -146,6 +162,7 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] COMBO OBSERVED hits=%u frame=%lu (recognition only)\n",
                     combo_count,frame_number);
         }
+        if(recording)som_record_presses((uint16_t)(current&~last_physical_buttons));
         last_physical_buttons=current;
         if(ring_ai_enabled&&current&&frame_number>=ring_ai_grace_until){
             ring_ai_enabled=0;unlink(ring_ai_file);
@@ -463,7 +480,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             test_enabled=0;
         }
         if(test_enabled){
-            unlink(action_file);unlink(message_file);
+            unlink(action_file);unlink(message_file);unlink(record_marker);
+            recording=0;
             unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
             fprintf(stderr,"[som-ai] READY: legacy %s; actions via %s; read-only WRAM via %s\n",
                 trigger_file,action_file,wram_file);
@@ -482,6 +500,8 @@ RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     som_check_trigger();
     som_check_message();
+    if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)
+        recording=access(record_marker,F_OK)==0;
     som_auto_tick();
     if(armed&&!cancelled&&!completed&&game_loaded &&
        frame_number==start_frame+action_frames){

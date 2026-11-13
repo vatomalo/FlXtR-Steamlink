@@ -126,6 +126,22 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertIn(critical.intention, ("recover_at_inn", "return_to_inn"))
             history.close()
 
+    def test_errand_travels_to_taught_shop_and_reports_arrival(self):
+        shop = {"map_id": 131, "layer": 1, "target": [1, 3], "face": "step_up"}
+        planner = MemoryPlanner()
+        going = planner.decide(observation(), errand={"place": "shop", "anchor": shop})
+        self.assertEqual((going.action, going.intention), ("step_left", "go_to_shop"))
+        here = dict(shop, target=[2, 3])
+        arrived = planner.decide(observation(), errand={"place": "shop", "anchor": here})
+        self.assertEqual((arrived.action, arrived.intention), ("wait", "at_shop"))
+
+    def test_enemy_on_the_way_is_fought_before_shopping(self):
+        shop = {"map_id": 131, "layer": 1, "target": [1, 3]}
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}
+        decision = MemoryPlanner().decide(observation(enemy=enemy),
+                                          errand={"place": "shop", "anchor": shop})
+        self.assertEqual(decision.intention, "engage_enemy")
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

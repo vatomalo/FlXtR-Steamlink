@@ -281,3 +281,105 @@ class InnMacro:
         except MacroFailed:
             self._leave_dialog()
             raise
+
+
+# ---------------------------------------------------------------- gold / shop
+
+MAX_ITEM_COUNT = 4  # Secret of Mana carries at most four of each item.
+REPLAYABLE = {"confirm", "cancel", "open_ring", "menu_x", "prev_ring", "next_ring",
+              "step_up", "step_down", "step_left", "step_right"}
+
+
+def find_gold_candidates(wram, amount):
+    """WRAM addresses holding amount as a little-endian 24- or 16-bit number."""
+    found = []
+    for address in range(0x7E0000, 0x7EFFFE):
+        low = wram.u8(address) | wram.u8(address + 1) << 8
+        if amount < 0x10000 and low == amount:
+            found.append((address, 2))
+        if low | wram.u8(address + 2) << 16 == amount:
+            found.append((address, 3))
+    return found
+
+
+def narrow_gold(candidates, wram, amount):
+    return [(address, width) for address, width in candidates
+            if read_gold(wram, {"address": address, "width": width}) == amount]
+
+
+def read_gold(wram, gold):
+    if not isinstance(gold, dict):
+        return None
+    address, width = int(gold["address"]), int(gold.get("width", 3))
+    value = wram.u8(address) | wram.u8(address + 1) << 8
+    return value | wram.u8(address + 2) << 16 if width == 3 else value
+
+
+def candy_count(wram):
+    return next((item["count"] for item in wram.inventory()
+                 if item["name"] == "candy" and item["verified"]), 0)
+
+
+class ShopMacro(InnMacro):
+    """Replay the player's recorded Candy purchase and verify it happened.
+
+    Success needs one more Candy and less gold afterwards. Anything else
+    cancels out of the dialog and disables shopping for the run. A replayed
+    menu can still pick a different item if the shop's cursor remembers a
+    different position, which the Candy check then reports as a failure.
+    """
+
+    GAP = 0.45
+
+    def __init__(self, link, shop, gold, **kwargs):
+        super().__init__(link, shop, **kwargs)
+        self.gold = gold
+
+    def ready(self, wram):
+        buttons = self.anchor.get("buttons") if isinstance(self.anchor, dict) else None
+        if not buttons or any(button not in REPLAYABLE for button in buttons):
+            return "no replayable shop purchase taught; run tools/som_teach_shop.py"
+        if wram.game_mode() != "field":
+            return "not in field mode"
+        target = (self.anchor["map_id"], self.anchor["layer"], *self.anchor["target"])
+        if self._tile(wram) != target:
+            return "not on the taught shopkeeper tile"
+        gold = read_gold(wram, self.gold)
+        if gold is None or gold < int(self.anchor.get("price", 0)):
+            return "not enough gold"
+        if candy_count(wram) >= MAX_ITEM_COUNT:
+            return "already carrying four Candy"
+        return None
+
+    def run(self):
+        start = self._read()
+        why = self.ready(start)
+        if why:
+            raise MacroFailed(why)
+        gold_before, candy_before = read_gold(start, self.gold), candy_count(start)
+        before = self._tile(start)
+        self.link.send_action(self.anchor["face"])
+        self.sleep(0.3)
+        if self._tile(self._read()) != before:
+            raise MacroFailed("facing tap moved the hero; shopkeeper is not on that side")
+        try:
+            for index, button in enumerate(self.anchor["buttons"]):
+                self.link.send_action(button)
+                self.sleep(self.GAP)
+                if index == 0 and self._read().game_mode() == "field":
+                    raise MacroFailed("shopkeeper did not start talking")
+            deadline = self.clock() + 2.0
+            wram = self._read()
+            while wram.game_mode() != "field" and self.clock() < deadline:
+                self.sleep(self.POLL)
+                wram = self._read()
+            gold_after, candy_after = read_gold(wram, self.gold), candy_count(wram)
+            if candy_after > candy_before and gold_after < gold_before:
+                if wram.game_mode() != "field":
+                    self._leave_dialog()
+                return gold_before - gold_after
+            raise MacroFailed(f"purchase not observed (Candy {candy_before}->{candy_after}, "
+                              f"gold {gold_before}->{gold_after})")
+        except MacroFailed:
+            self._leave_dialog()
+            raise

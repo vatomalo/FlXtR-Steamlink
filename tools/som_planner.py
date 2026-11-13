@@ -310,6 +310,50 @@ class MemoryPlanner:
                 best = candidate
         return (best[2], best[1]) if best else None
 
+    def _travel(self, context, anchor, open_steps, place, travel_intent, arrive_intent):
+        """Follow learned maps and tiles to a taught place; None if no route."""
+        actor = context["actor"]
+        destination = anchor
+        exit_action = None
+        if (isinstance(anchor, dict) and anchor.get("map_id") != context.get("map_id") and
+                self.history is not None):
+            destination = self.history.return_waypoint(context.get("map_id"),
+                                                       anchor.get("map_id"))
+            exit_action = destination.get("action") if isinstance(destination, dict) else None
+        if (isinstance(destination, dict) and
+                destination.get("map_id") == context.get("map_id") and
+                destination.get("layer") == actor.get("layer") and
+                isinstance(destination.get("target"), list)):
+            position = tuple(context["actor_tile"])
+            target = tuple(destination["target"])
+            cells = self._known_cells(context["map_id"], actor["layer"])
+            routes = self._routes(position, cells, tuple(context["map_size_tiles"]))
+            if target == position:
+                if exit_action in open_steps:
+                    return PlannerDecision(exit_action, f"take learned exit toward {place}",
+                                           travel_intent, 1)
+                if exit_action is None:
+                    return PlannerDecision("wait", f"at learned {place} point", arrive_intent)
+            if target in routes and target != position:
+                action, distance = routes[target]
+                if action in open_steps:
+                    return PlannerDecision(action,
+                                           f"go to learned {place} ({distance} tiles)",
+                                           travel_intent, distance)
+            # Scanned collision islands can be disconnected when the agent
+            # crossed an area before map learning was enabled. Keep a stable
+            # heading toward the observed exit while checking every next tile.
+            size = tuple(context["map_size_tiles"])
+            dx = self._wrapped_delta(target[0], position[0], size[0])
+            dy = self._wrapped_delta(target[1], position[1], size[1])
+            action = self._approach_direction(dx, dy, open_steps)
+            if action:
+                return PlannerDecision(action,
+                                       f"head toward learned {place} exit at "
+                                       f"{target[0]},{target[1]} vector dx={dx},dy={dy}",
+                                       travel_intent)
+        return None
+
     def _survive(self, observation, context, open_steps, critical=False):
         """Disengage and retrace the learned map toward the inn/safe anchor."""
         actor = context["actor"]
@@ -346,45 +390,10 @@ class MemoryPlanner:
             self._set_state("last_evade", threat_retreat)
 
         anchor = self.history.safe_anchor() if self.history is not None else None
-        destination = anchor
-        exit_action = None
-        if (isinstance(anchor, dict) and anchor.get("map_id") != context.get("map_id") and
-                self.history is not None):
-            destination = self.history.return_waypoint(context.get("map_id"),
-                                                       anchor.get("map_id"))
-            exit_action = destination.get("action") if isinstance(destination, dict) else None
-        if (isinstance(destination, dict) and
-                destination.get("map_id") == context.get("map_id") and
-                destination.get("layer") == actor.get("layer") and
-                isinstance(destination.get("target"), list)):
-            position = tuple(context["actor_tile"])
-            target = tuple(destination["target"])
-            cells = self._known_cells(context["map_id"], actor["layer"])
-            routes = self._routes(position, cells, tuple(context["map_size_tiles"]))
-            if target == position:
-                if exit_action in open_steps:
-                    return PlannerDecision(exit_action, "take learned exit toward inn",
-                                           "return_to_inn", 1)
-                return PlannerDecision("wait", "at learned inn/safe recovery point",
-                                       "recover_at_inn")
-            if target in routes:
-                action, distance = routes[target]
-                if action in open_steps:
-                    return PlannerDecision(action,
-                                           f"return to learned inn/safe point ({distance} tiles)",
-                                           "return_to_inn", distance)
-            # Scanned collision islands can be disconnected when the agent
-            # crossed an area before map learning was enabled. Keep a stable
-            # heading toward the observed exit while checking every next tile.
-            size = tuple(context["map_size_tiles"])
-            dx = self._wrapped_delta(target[0], position[0], size[0])
-            dy = self._wrapped_delta(target[1], position[1], size[1])
-            action = self._approach_direction(dx, dy, open_steps)
-            if action:
-                return PlannerDecision(action,
-                                       f"head toward learned inn exit at {target[0]},{target[1]} "
-                                       f"vector dx={dx},dy={dy}",
-                                       "return_to_inn")
+        travel = self._travel(context, anchor, open_steps, "inn",
+                              "return_to_inn", "recover_at_inn")
+        if travel is not None:
+            return travel
 
         if threat_retreat:
             return PlannerDecision(threat_retreat,
@@ -417,7 +426,11 @@ class MemoryPlanner:
                 return action
         return None
 
-    def decide(self, observation, previous="none", directive="explore_unknown"):
+    def decide(self, observation, previous="none", directive="explore_unknown", errand=None):
+        """errand: optional {"place": "shop", "anchor": {...}} to travel to."""
+        return self._decide(observation, previous, directive, errand)
+
+    def _decide(self, observation, previous, directive, errand):
         context = observation.get("tile_context") if isinstance(observation, dict) else None
         if not isinstance(context, dict) or not context.get("runtime_verified"):
             why = context.get("verification_error") if isinstance(context, dict) else None
@@ -467,6 +480,12 @@ class MemoryPlanner:
         combat = self._combat(observation, context, open_steps, directive)
         if combat is not None:
             return combat
+        if isinstance(errand, dict) and isinstance(errand.get("anchor"), dict):
+            place = errand.get("place", "errand")
+            travel = self._travel(context, errand["anchor"], open_steps, place,
+                                  f"go_to_{place}", f"at_{place}")
+            if travel is not None:
+                return travel
         if not open_steps:
             self._set_intention(None)
             return PlannerDecision("wait", "no verified open adjacent tile", "stuck")

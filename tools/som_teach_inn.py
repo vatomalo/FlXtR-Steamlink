@@ -38,6 +38,43 @@ def walked(previous, current):
     return "step_down" if dy > 0 else "step_up"
 
 
+def record_walk(link, history, interval):
+    """Learn the player's walk until Enter is pressed; returns (tiles, maps)."""
+    last_pixels, last_map, last_action, tiles, maps = None, None, None, 0, set()
+    while True:
+        raw = link.fetch_wram(False)
+        if raw is None:
+            raise SystemExit("no WRAM snapshot; is Turbo running with som_ai_proxy?")
+        state = WRAM(raw).observe()
+        context = state.get("tile_context") or {}
+        if context.get("runtime_verified"):
+            actor = context["actor"]
+            pixels = (actor["x_px"], actor["y_px"])
+            pixels_before = last_pixels if context["map_id"] == last_map else None
+            action = walked(pixels_before, pixels) or last_action
+            # Store the direction walked to reach this sample; at a map
+            # crossing that is the direction that led through the exit.
+            history.record(state, action)
+            history.remember_position(state)
+            tiles += history.remember_world(state)
+            if context["map_id"] != last_map:
+                maps.add(context["map_id"])
+                print(f"  on map {context['map_id']} at tile {context['actor_tile']}",
+                      flush=True)
+            last_pixels, last_map, last_action = pixels, context["map_id"], action
+        if select.select([sys.stdin], [], [], interval)[0]:
+            sys.stdin.readline()
+            return tiles, maps
+
+
+def ask_face(prompt="Which side is the innkeeper on?"):
+    face = None
+    while face is None:
+        answer = input(f"{prompt} [u]p/[d]own/[l]eft/[r]ight: ")
+        face = FACES.get(answer.strip().lower()[:1])
+    return face
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -52,44 +89,14 @@ def main():
     print("Walk from where you are to the INNKEEPER, taking the normal way.\n"
           "Stop on the tile right in front of them (do not talk yet),\n"
           "then press Enter here.\n", flush=True)
-    last_pixels, last_map, last_action, tiles, maps = None, None, None, 0, set()
     try:
-        while True:
-            raw = link.fetch_wram(False)
-            if raw is None:
-                raise SystemExit("no WRAM snapshot; is Turbo running with som_ai_proxy?")
-            state = WRAM(raw).observe()
-            context = state.get("tile_context") or {}
-            if context.get("runtime_verified"):
-                actor = context["actor"]
-                pixels = (actor["x_px"], actor["y_px"])
-                if context["map_id"] != last_map:
-                    pixels_before = None
-                else:
-                    pixels_before = last_pixels
-                action = walked(pixels_before, pixels) or last_action
-                # Store the direction walked to reach this sample; at a map
-                # crossing that is the direction that led through the exit.
-                history.record(state, action)
-                history.remember_position(state)
-                tiles += history.remember_world(state)
-                if context["map_id"] != last_map:
-                    maps.add(context["map_id"])
-                    print(f"  on map {context['map_id']} at tile {context['actor_tile']}",
-                          flush=True)
-                last_pixels, last_map, last_action = pixels, context["map_id"], action
-            if select.select([sys.stdin], [], [], args.interval)[0]:
-                sys.stdin.readline()
-                break
+        tiles, maps = record_walk(link, history, args.interval)
         final = WRAM(link.fetch_wram(False)).observe()
         context = final.get("tile_context") or {}
         if not context.get("runtime_verified") or context.get("game_mode") != "field":
             raise SystemExit("cannot verify the tile under the hero here; step once and retry")
         print(f"\nYou are on map {context['map_id']} tile {context['actor_tile']}.")
-        face = None
-        while face is None:
-            answer = input("Which side is the innkeeper on? [u]p/[d]own/[l]eft/[r]ight: ")
-            face = FACES.get(answer.strip().lower()[:1])
+        face = ask_face()
         anchor = history.teach_inn(final, face)
         print(f"Saved inn: map {anchor['map_id']} tile {anchor['target']} facing "
               f"{face.removeprefix('step_')}. Learned {tiles} tile observations on "

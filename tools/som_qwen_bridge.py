@@ -20,7 +20,8 @@ import urllib.request
 from pathlib import Path
 
 from som_memory import WRAM, ObservationHistory
-from som_menu import CandyMacro, Calibration, InnMacro, MacroFailed
+from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFailed,
+                      ShopMacro, candy_count, read_gold)
 from som_planner import MemoryPlanner
 
 ACTIONS = {
@@ -60,7 +61,7 @@ STEP_OFFSETS = {
     "step_up": (0, -1), "step_down": (0, 1),
 }
 SMOOTH_INTENTIONS = {"explore_frontier", "engage_enemy", "return_to_inn",
-                     "survive", "replan"}
+                     "survive", "replan", "go_to_shop"}
 LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
 OPPOSITE_STEP = {
@@ -415,7 +416,22 @@ INTENT_MESSAGES = {
     "recover_at_inn": "AI: at the inn",
     "survive": "AI: HP low|retreating",
     "stuck": "AI: stuck|no open tile",
+    "go_to_shop": "AI: plenty of GP|going to buy Candy",
 }
+
+
+def shop_errand(wram, observation, shop, gold, threshold):
+    """Shop for Candy when healthy, rich, and not already carrying four."""
+    if not isinstance(shop, dict) or not isinstance(gold, dict):
+        return None
+    hero = (observation.get("party") or [{}])[0]
+    hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
+    if not max_hp or hp * 2 <= max_hp or candy_count(wram) >= MAX_ITEM_COUNT:
+        return None
+    money = read_gold(wram, gold)
+    if money is None or money < max(threshold, int(shop.get("price", 0))):
+        return None
+    return {"place": "shop", "anchor": shop}
 
 
 def candy_wanted(observation):
@@ -491,6 +507,11 @@ def main() -> int:
                         help="Optional persistent SQLite observation log")
     parser.add_argument("--ring-control", action="store_true",
                         help="Wait for the in-game Action Grid start gesture and stop on takeover")
+    parser.add_argument("--hunt-direction", default="west",
+                        choices=("west", "east", "north", "south", "none"),
+                        help="Heading while healthy; Qwen may still choose engage/avoid")
+    parser.add_argument("--shop-gold", type=int, default=500,
+                        help="Buy Candy at the taught shop once gold reaches this")
     parser.add_argument("--no-messages", action="store_true",
                         help="Do not draw AI status message boxes on the game screen")
     parser.add_argument("--ring-calibration", type=Path,
@@ -530,6 +551,12 @@ def main() -> int:
                    else Calibration.load())
     candy_disabled = calibration is None
     inn_disabled = False
+    shop_disabled = False
+    shop = history.get_agent_state("shop") if history is not None else None
+    gold = history.get_agent_state("gold") if history is not None else None
+    print("[shop] " + (f"Candy shop known, buying from {args.shop_gold} GP"
+                       if isinstance(shop, dict) else
+                       "no shop taught: run tools/som_teach_shop.py once"), flush=True)
     print("[candy] " + ("enabled from ring calibration" if calibration else
                         "disabled: run tools/som_ring_probe.py once to enable"), flush=True)
     messages = link is not None and not args.no_messages
@@ -562,8 +589,10 @@ def main() -> int:
     while args.steps == 0 or step < args.steps:
         try:
             observation = None
+            raw = None
             if args.wram_file:
-                observation = WRAM.load(args.wram_file).observe()
+                raw = args.wram_file.read_bytes()
+                observation = WRAM(raw).observe()
             elif args.wram_remote:
                 # Fixed remote path; no model-generated command or file path.
                 raw = (link.fetch_wram(args.ring_control) if link else
@@ -647,7 +676,26 @@ def main() -> int:
                     directive_turns = max(directive_turns, 3)
                     print(f"[qwen-director] thinking asynchronously; meanwhile {directive}",
                           flush=True)
-                decision = planner.decide(observation, previous, directive)
+                if args.hunt_direction != "none" and directive.startswith("explore_"):
+                    # Healthy play heads one way and fights what it meets.
+                    directive = f"explore_{args.hunt_direction}"
+                errand = (shop_errand(WRAM(raw), observation, shop, gold, args.shop_gold)
+                          if (raw is not None and not shop_disabled) else None)
+                decision = planner.decide(observation, previous, directive, errand)
+                if link and errand and decision.intention == "at_shop":
+                    announce("AI: buying Candy")
+                    cancel = calibration.cancel_action if calibration else "cancel"
+                    try:
+                        spent = ShopMacro(link, shop, gold, cancel=cancel,
+                                          log=lambda text: print(text, flush=True)).run()
+                        print(f"[shop] bought Candy for {spent} GP", flush=True)
+                        announce(f"AI: bought Candy|-{spent} GP")
+                    except MacroFailed as exc:
+                        shop_disabled = True
+                        print(f"[shop] disabled for this run: {exc}", flush=True)
+                        announce("AI: shopping failed|see log")
+                    previous = "wait"
+                    continue
                 if (link and not inn_disabled and history is not None and
                         decision.intention == "recover_at_inn"):
                     anchor = history.safe_anchor()

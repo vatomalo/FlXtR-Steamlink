@@ -176,6 +176,24 @@ int main(void){
     som_video_refresh(core_frame,256,224,512);
     assert(shown_frame==core_frame);
     unlink(message_path);
+    /* Teaching records physical press edges as replayable action names. */
+    reset_proxy();
+    char record_path[]="/tmp/flxtr-record-test-XXXXXX";
+    fd=mkstemp(record_path);assert(fd>=0);close(fd);unlink(record_path);
+    record_file=record_path;recording=1;last_physical_buttons=0;
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();som_input_poll();
+    pressed=RETRO_DEVICE_ID_JOYPAD_DOWN;som_input_poll();
+    pressed=100;som_input_poll();
+    pressed=RETRO_DEVICE_ID_JOYPAD_A;som_input_poll();
+    recording=0;pressed=RETRO_DEVICE_ID_JOYPAD_X;som_input_poll();
+    FILE *recorded=fopen(record_path,"r");
+    assert(recorded!=NULL);
+    char recorded_text[64]={0};
+    assert(fread(recorded_text,1,sizeof(recorded_text)-1,recorded)>0);
+    fclose(recorded);
+    assert(!strcmp(recorded_text,"confirm\nstep_down\ncancel\n"));
+    assert(!armed);
+    unlink(record_path);
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, override, and WRAM export");
     return 0;

@@ -2,7 +2,8 @@
 import unittest
 
 from som_menu import (RING_KIND, RING_OPEN, CandyMacro, Calibration, InnMacro,
-                      MacroFailed, find_cursor_candidates)
+                      MacroFailed, ShopMacro, find_cursor_candidates, find_gold_candidates,
+                      narrow_gold, read_gold)
 from som_memory import WRAM
 
 CURSOR = 0x7EA21C
@@ -209,6 +210,90 @@ class TestInnMacro(unittest.TestCase):
             run_inn(FakeInn(), dict(ANCHOR, target=[3, 4]))
         with self.assertRaises(MacroFailed):
             run_inn(FakeInn(), {"map_id": 131, "layer": 1, "target": [0, 4]})
+
+GOLD = 0x7ECC6A
+
+
+class FakeShop(FakeInn):
+    """Shop dialog: talk, then the taught presses buy one Candy for 10 GP."""
+
+    def __init__(self, sells=True, candy=0x20, gold=600):
+        super().__init__()
+        self.set(0x7ECC48, candy)
+        self.set16(GOLD, gold & 0xFFFF); self.set(GOLD + 2, gold >> 16)
+        self.sells = sells
+
+    def send_action(self, action):
+        self.sent.append(action)
+        in_dialog = self.get(EVENT) != 0
+        if action.startswith("step_") and not in_dialog:
+            return
+        if action == "confirm" and not in_dialog:
+            self.set(EVENT, 1); self.dialog_confirms = 0
+        elif action == "confirm" and in_dialog:
+            self.dialog_confirms += 1
+            if self.dialog_confirms == 2 and self.sells:
+                self.set(0x7ECC48, self.get(0x7ECC48) + 0x20)   # one more Candy (count in high nibble)
+                self.set16(GOLD, self.get(GOLD) | self.get(GOLD + 1) << 8)
+                gold = (self.get(GOLD) | self.get(GOLD + 1) << 8) - 10
+                self.set16(GOLD, gold)
+        elif action == "cancel" and in_dialog:
+            self.set(EVENT, 0)
+
+
+class TestShop(ShopMacro):
+    def _tile(self, wram):
+        return (131, 1, wram.u8(TILE_X), 4)
+
+
+SHOP = dict(ANCHOR, face="step_left",
+            buttons=["confirm", "step_down", "confirm", "confirm", "cancel"], price=10)
+GOLD_AT = {"address": GOLD, "width": 3}
+
+
+def run_shop(game, shop=SHOP):
+    now = [0.0]
+    def sleep(seconds):
+        now[0] += seconds
+    return TestShop(game, shop, GOLD_AT, log=lambda _: None, sleep=sleep,
+                    clock=lambda: now[0]).run()
+
+
+class TestGoldAndShop(unittest.TestCase):
+    def test_two_readings_pin_down_the_gold_location(self):
+        game = FakeShop(gold=1234)
+        candidates = find_gold_candidates(WRAM(bytes(game.ram)), 1234)
+        self.assertIn((GOLD, 3), candidates)
+        game.set16(GOLD, 1224)
+        found = narrow_gold(candidates, WRAM(bytes(game.ram)), 1224)
+        self.assertEqual({address for address, _ in found}, {GOLD})
+        self.assertEqual(read_gold(WRAM(bytes(game.ram)), GOLD_AT), 1224)
+
+    def test_replays_purchase_and_verifies_candy_and_gold(self):
+        game = FakeShop()
+        self.assertEqual(run_shop(game), 10)
+        self.assertEqual(game.sent[0], "step_left")
+        self.assertEqual(game.sent[1:], SHOP["buttons"])
+        self.assertEqual(game.get(EVENT), 0)
+
+    def test_purchase_not_seen_cancels_out_and_fails(self):
+        game = FakeShop(sells=False)
+        with self.assertRaises(MacroFailed) as raised:
+            run_shop(game)
+        self.assertIn("purchase not observed", str(raised.exception))
+        self.assertEqual(game.get(EVENT), 0)
+
+    def test_refuses_with_four_candy_or_too_little_gold(self):
+        with self.assertRaises(MacroFailed):
+            run_shop(FakeShop(candy=0x80))
+        with self.assertRaises(MacroFailed):
+            run_shop(FakeShop(gold=5))
+
+    def test_refuses_unreplayable_recording(self):
+        game = FakeShop()
+        with self.assertRaises(MacroFailed):
+            run_shop(game, dict(SHOP, buttons=["confirm", "start"]))
+        self.assertEqual(game.sent, [])
 
 if __name__ == "__main__":
     unittest.main()

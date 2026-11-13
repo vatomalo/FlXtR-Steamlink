@@ -180,6 +180,37 @@ the game is back in field mode. Without a full heal it presses Cancel until the
 dialog closes and disables the inn for the rest of the run. Not enough GP or a
 "No" default therefore fails safely. Reteach if the inn changes.
 
+## Goals: hunt, heal, shop
+
+Each decision the bridge picks one goal, in this order:
+
+1. **HP below half:** use Candy if carried (and no enemy within 64 px);
+   otherwise retreat along learned maps to the taught inn and stay there.
+2. **Healthy and rich:** with fewer than four Candy and at least
+   `SOM_AI_SHOP_GOLD` GP (default 500), walk to the taught Candy shop and buy
+   one, repeating until four Candy or below the threshold. Enemies met on
+   the way are still fought.
+3. **Otherwise hunt:** head `SOM_AI_HUNT_DIRECTION` (default `west`) and
+   fight what is met. Qwen can still pick engage/avoid, but not the heading;
+   use `none` to let Qwen choose the heading again.
+
+### Teach the Candy shop
+
+```sh
+systemctl --user stop flxtr-som-ai.service
+python3 tools/som_teach_shop.py
+systemctl --user start flxtr-som-ai.service
+```
+
+Type your current GP, walk to the shopkeeper, press Enter on the tile in
+front of them, say which side they are on, then buy exactly one Candy by hand
+and close every dialog. The proxy records your physical presses (it presses
+nothing while teaching), and the GP you type before and after identifies the
+gold byte. The AI replays that exact sequence and requires one more Candy and
+less gold; otherwise it cancels out and stops shopping for the run. A shop
+whose cursor remembers a different position could sell a different item; the
+Candy check then reports failure. Proxy rebuild required for recording.
+
 ## Responsiveness (continuous control)
 
 - The bridge keeps **one** SSH session open to a tiny allowlisted shell loop on

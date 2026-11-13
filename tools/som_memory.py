@@ -642,6 +642,20 @@ class ObservationHistory:
                             "inn", "taught innkeeper tile", "player_demonstration")
         return anchor
 
+    def teach_shop(self, state, face, buttons, price, gold):
+        """Store the shopkeeper tile, facing, recorded purchase and gold byte."""
+        position = self._verified_position(state, None)
+        if position is None:
+            raise ValueError("the tile under the hero is not runtime-verified")
+        shop = {"map_id": position["map_id"], "layer": position["layer"],
+                "target": position["target"], "face": face, "buttons": list(buttons),
+                "price": int(price), "item": "candy", "taught": True}
+        self.set_agent_state("shop", shop)
+        self.set_agent_state("gold", gold)
+        self.remember_place(shop["map_id"], shop["layer"], *shop["target"],
+                            "shop", "taught Candy shop", "player_demonstration")
+        return shop
+
     def return_waypoint(self, current_map, target_map):
         """First exit on the shortest learned chain of maps to target_map."""
         edges = {}

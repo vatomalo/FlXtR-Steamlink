@@ -19,6 +19,10 @@ ENGAGE_RANGE_X = 128
 ENGAGE_RANGE_Y = 112
 # Below this distance the straight-line step is used when no route is known.
 CLOSE_QUARTERS_PX = 48
+# Conservative initial sword/glove contact envelope until verified hit events
+# establish actual per-weapon reach. Do not swing at 48x48 diagonally.
+DEFAULT_STRIKE_AXIAL_PX = 28
+DEFAULT_STRIKE_SIDE_PX = 14
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -509,7 +513,14 @@ class MemoryPlanner:
             if cutting is not None:
                 return self._cut(context, cutting)
 
-        if abs(dx) <= 48 and abs(dy) <= 48 and observation.get("weapons_enabled"):
+        # Actual melee reach is much shorter than the old 48x48 test.
+        # Require a forward axial distance and narrow lateral alignment.
+        # The range learner may refine approach choices after valid hits.
+        attack_aligned = ((0 < abs(dx) <= DEFAULT_STRIKE_AXIAL_PX and
+                           abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
+                          (0 < abs(dy) <= DEFAULT_STRIKE_AXIAL_PX and
+                           abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
+        if attack_aligned and observation.get("weapons_enabled"):
             # Only a mature learned range can veto a normal swing. Existing
             # attack/charge logic remains the safe fallback for sparse data.
             weapon = hero.get("weapon") or {}
@@ -619,9 +630,8 @@ class MemoryPlanner:
         if other in open_steps and abs(dy if other in ("step_up", "step_down") else dx) >= 8:
             return PlannerDecision(other, f"turn toward enemy {enemy['slot']} (wall "
                                    "on the direct side)", "engage_enemy", turn_only=True)
-        if ready:
-            return PlannerDecision("attack", f"enemy {enemy['slot']} in range; cannot turn "
-                                   "toward it, swinging anyway", "engage_enemy")
+        # An unverified facing direction is not a reason to swing blindly.
+        # Close distance or find a valid turning tile instead.
         return None
 
     @staticmethod

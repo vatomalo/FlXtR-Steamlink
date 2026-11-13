@@ -26,7 +26,6 @@ TEXT_STATES = (0x81, 0x83, 0x84)
 SETTLE = 1.0
 GAP = 0.6
 MAX_PRESSES = 40
-CONFIRMS_BEFORE_CANCEL = 2
 
 
 def screen_state(wram):
@@ -67,6 +66,10 @@ class EventEscape:
         now = self.clock()
         fingerprint, kind = screen_state(wram)
         if fingerprint != self.fingerprint:
+            # Each genuinely new dialogue page gets a fresh bounded budget.
+            # A long conversation must not exhaust the budget for all pages.
+            if self.fingerprint is not None:
+                self.presses, self.gave_up = 0, False
             self.fingerprint, self.since, self.same_page = fingerprint, now, 0
             return None
         if self.gave_up:
@@ -81,8 +84,7 @@ class EventEscape:
         if self.last_press is not None and now - self.last_press < GAP:
             return None
         if kind == "text":
-            action = "confirm" if self.same_page < CONFIRMS_BEFORE_CANCEL or \
-                self.same_page % 2 == 0 else "cancel"
+            action = "confirm"
             reason = "advance dialogue page"
         elif kind == "choice":
             action, reason = "cancel", "decline choice"

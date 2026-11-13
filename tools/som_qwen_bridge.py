@@ -24,6 +24,7 @@ from som_memory import (GP_REWARD, HP_PENALTY, WRAM, MapLoadGuard,
 from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFailed,
                       ShopMacro, candy_count, read_gold)
 from som_planner import MemoryPlanner
+from som_personality import Personality, LINES
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
 from som_goals import (TRAVEL_TIMEOUT, build_goal_prompt, goal_plan, is_travel,
@@ -606,6 +607,10 @@ def main() -> int:
     parser.add_argument("--host", default="root@100.124.74.13")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3:0.6b")
+    parser.add_argument("--personality", choices=tuple(LINES), default="curious",
+                        help="Non-modal AI dialogue style (default curious)")
+    parser.add_argument("--no-personality", action="store_true",
+                        help="Disable contextual AI speech bubbles")
     parser.add_argument("--policy", choices=("hybrid", "memory", "qwen"), default="hybrid",
                         help="hybrid uses Qwen for intentions and WRAM planning for execution")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
@@ -691,6 +696,9 @@ def main() -> int:
     print("[candy] " + ("enabled from ring calibration" if calibration else
                         "disabled: run tools/som_ring_probe.py once to enable"), flush=True)
     messages = link is not None and not args.no_messages
+    personality = (Personality(args.personality) if messages and
+                   not args.no_personality else None)
+    last_intention_spoken = None
     last_message = None
 
     def announce(text):
@@ -703,6 +711,16 @@ def main() -> int:
         except (OSError, subprocess.SubprocessError) as exc:
             messages = False
             print(f"[ai] message boxes disabled: {exc}", flush=True)
+    def speak(event):
+        if personality is None:
+            return
+        phrase = personality.speak(event)
+        if phrase:
+            # Prefix understood by som_overlay_set: screen-space speech bubble.
+            # The proxy draws on a private video frame, never WRAM.
+            announce("^" + phrase)
+            print(f"[personality] {event}: {phrase}", flush=True)
+
     if args.policy == "hybrid":
         threading.Thread(target=warm_model, args=(args.ollama_url, args.model),
                          daemon=True, name="som-qwen-warmup").start()
@@ -743,6 +761,10 @@ def main() -> int:
                 observation = WRAM(raw).observe()
             if observation is not None:
                 map_guard.apply(observation)
+                if personality is not None:
+                    speech_event = personality.observation_event(observation)
+                    if speech_event:
+                        speak(speech_event)
                 hero_now = (observation.get("party") or [{}])[0]
                 facts = (weapon_note(hero_now.get("weapon")), status_note(hero_now.get("status")))
                 for label, before, after in zip(("weapon", "status"), hero_facts, facts):
@@ -939,6 +961,11 @@ def main() -> int:
                 directive_turns -= 1
                 action = decision.action
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)
+                if (decision.intention != last_intention_spoken and
+                        decision.intention in ("explore_frontier", "engage_enemy",
+                                               "survive", "return_to_inn", "stuck")):
+                    speak(decision.intention)
+                    last_intention_spoken = decision.intention
                 if decision.reason.startswith("survival abandoned"):
                     announce("AI: inn did not heal|back to careful play")
                 elif decision.intention in INTENT_MESSAGES:

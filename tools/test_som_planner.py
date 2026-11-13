@@ -251,6 +251,22 @@ class TestMemoryPlanner(unittest.TestCase):
         moved["tile_context"]["map_id"] = 999                   # different map
         self.assertEqual(detect_cuts(before, moved), [])
 
+    def test_log_bridge_route_follows_the_games_height_rules(self):
+        # Row of the som-decomp log bridge (maps 128/130): land (type 2),
+        # ramp 0x22 (type 0), end (type 1), deck (pass-through), end, ramp, land.
+        row = ["h2", "open", "h1", "pass", "pass", "h1", "open", "h2"]
+        cells = {(x, 0): kind for x, kind in enumerate(row)}
+        routes = MemoryPlanner._routes((0, 0), cells, (16, 16), height=2)
+        self.assertEqual(routes[(7, 0)], ("step_right", 7))
+        # Without the ramp the raised bridge end is a wall from height 2.
+        cells[(1, 0)] = "h2"
+        routes = MemoryPlanner._routes((0, 0), cells, (16, 16), height=2)
+        self.assertNotIn((2, 0), routes)
+        # A river (type 2) next to the bridge end (type 1) is a wall from the deck.
+        deck = {(0, 0): "pass", (1, 0): "h1", (1, 1): "h2"}
+        routes = MemoryPlanner._routes((1, 0), deck, (16, 16), height=1)
+        self.assertNotIn((1, 1), routes)
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

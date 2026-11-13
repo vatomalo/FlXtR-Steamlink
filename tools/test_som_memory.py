@@ -228,6 +228,21 @@ class TestWRAM(unittest.TestCase):
             self.assertIsNone(history.looks_like("inn", state(150, different)))
             history.close()
 
+    def test_tile_rules_match_the_game(self):
+        classify, code = WRAM.classify_tile, WRAM.terrain_code
+        self.assertEqual(classify([0x10, 0x07, 0x22, 0], 2)[0], "open")    # bridge ramp
+        self.assertEqual(classify([0x15, 0x00, 0x00, 0], 1)[0], "open")    # bridge deck
+        self.assertEqual(classify([0x11, 0x07, 0x00, 0], 2)[0], "blocked") # end from bank
+        self.assertEqual(classify([0x11, 0x07, 0x00, 0], 0)[0], "open")    # end from ramp
+        self.assertEqual(classify([0x13, 0x06, 0x00, 0], 0)[0], "blocked") # solid
+        self.assertEqual(classify([0x18, 0x00, 0x00, 0], 1)[0], "open")    # layer switch
+        self.assertEqual(classify([0x10, 0x00, 0x14, 0], 0)[0], "open")    # diagonal slide
+        self.assertEqual(classify([0x10, 0x00, 0x31, 0], 0)[0], "conditional")
+        self.assertEqual([code(a) for a in ([0x10, 7, 0x22, 0], [0x11, 7, 0, 0],
+                                            [0x15, 0, 0, 0], [0x13, 6, 0, 0],
+                                            [0x12, 2, 0, 0])],
+                         [".", "1", "=", "#", "2"])
+
     def test_return_waypoint_reverses_observed_map_transition(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "routes.sqlite")

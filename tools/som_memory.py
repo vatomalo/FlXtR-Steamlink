@@ -111,24 +111,53 @@ class WRAM:
 
     @staticmethod
     def classify_tile(attributes, current_floor):
+        """Can the hero, now at floor height current_floor, step onto this tile?
+
+        Rules of the real movement code (cidwel/som-decomp docs/maps.md 7 and
+        14.2, docs/hero-movement.md 7): a move is refused only into a type-3
+        tile, a type-1 tile at height 2, or a type-2 tile at height 1. Types 0
+        and 4-7 (bridge decks) never block; ramps/stairs (b2 0x20-0x2F) are
+        type 0 and connect heights; layer-switch tiles skip the wall test;
+        diagonal half tiles deflect (the hero slides along them). Only the
+        moving floors and special ground stay conditional (not verified).
+        """
         terrain = attributes[0] & 7
         ground = attributes[2]
         reasons = []
+        if attributes[0] & 8:
+            return "open", ["layer_switch"]
         if terrain == 3:
             return "blocked", ["solid"]
         if terrain in (1, 2) and current_floor in (1, 2) and terrain != current_floor:
             return "blocked", ["floor_height_wall"]
-        if attributes[0] & 8:
-            reasons.append("layer_switch")
         if (ground & 0xF0) == 0x10 and (ground & 7) >= 4:
-            reasons.append("partial_collision_shape")
+            reasons.append("diagonal_half_tile")
         if 0x20 <= ground <= 0x2F:
             reasons.append("ramp_or_stairs")
         elif 0x30 <= ground <= 0x3F:
-            reasons.append("moving_floor")
+            return "conditional", reasons + ["moving_floor"]
         elif ground in (0xD0, 0xD1, 0xD2):
-            reasons.append("special_ground")
-        return ("conditional" if reasons else "open"), reasons
+            return "conditional", reasons + ["special_ground"]
+        return "open", reasons
+
+    @staticmethod
+    def terrain_code(attributes):
+        """Height-independent kind of a tile for multi-step route planning.
+
+        '#' solid, '1'/'2' raised tile of that floor height, '=' pass-through
+        (types 4-7: keeps the arrival height), '.' plain/ramp (height 0),
+        '!' layer switch, '?' moving floor or special ground (unverified).
+        """
+        terrain, ground = attributes[0] & 7, attributes[2]
+        if attributes[0] & 8:
+            return "!"
+        if terrain == 3:
+            return "#"
+        if 0x30 <= ground <= 0x3F or ground in (0xD0, 0xD1, 0xD2):
+            return "?"
+        if terrain in (1, 2):
+            return str(terrain)
+        return "=" if terrain >= 4 else "."
 
     def tile_context(self, actor_index=0, radius=3):
         if not 1 <= radius <= 6:
@@ -180,9 +209,9 @@ class WRAM:
             result["verification_error"] = "actor_tile_attributes_disagree"
             return result
 
-        rows, tile_rows, attribute_rows, special = [], [], [], []
+        rows, tile_rows, attribute_rows, terrain_rows, special = [], [], [], [], []
         for dy in range(-radius, radius + 1):
-            passability, ids, attribute_row = [], [], []
+            passability, ids, attribute_row, terrain_row = [], [], [], []
             for dx in range(-radius, radius + 1):
                 x = (center_x + dx) % width_tiles
                 y = (center_y + dy) % height_tiles
@@ -194,6 +223,7 @@ class WRAM:
                 passability.append(marker)
                 ids.append(f"{tile_id:02x}")
                 attribute_row.append("".join(f"{value:02x}" for value in attributes))
+                terrain_row.append(self.terrain_code(attributes))
                 if reasons:
                     special.append({"offset": [dx, dy], "tile": tile_id,
                                     "attributes": "".join(f"{value:02x}" for value in attributes),
@@ -201,6 +231,7 @@ class WRAM:
             rows.append("".join(passability))
             tile_rows.append(" ".join(ids))
             attribute_rows.append(" ".join(attribute_row))
+            terrain_rows.append("".join(terrain_row))
         result.update({
             "runtime_verified": True,
             "verification_warning": (
@@ -210,6 +241,7 @@ class WRAM:
             "passability_rows": rows,
             "tile_id_rows": tile_rows,
             "attribute_rows": attribute_rows,
+            "terrain_rows": terrain_rows,
             "special_cells": special,
         })
         return result
@@ -583,6 +615,12 @@ class ObservationHistory:
                 isinstance(height, int) and height > 0):
             return 0
         kinds = {".": "open", "@": "open", "#": "blocked", "?": "conditional"}
+        # Height-independent kinds (som-decomp rules); the passability markers
+        # above are relative to the hero's current height and are only the
+        # fallback for observations without terrain rows.
+        terrain_kinds = {"#": "blocked", "1": "h1", "2": "h2", "=": "pass",
+                         ".": "open", "!": "open", "?": "conditional"}
+        terrain_rows = context.get("terrain_rows")
         proven = self.passable_signatures()
         cuttable = self.cuttable_signatures()
         attribute_rows = context.get("attribute_rows") or []
@@ -597,12 +635,15 @@ class ObservationHistory:
                 kind = kinds.get(marker)
                 if kind is None:
                     continue
+                if (isinstance(terrain_rows, list) and row_index < len(terrain_rows) and
+                        column < len(terrain_rows[row_index])):
+                    kind = terrain_kinds.get(terrain_rows[row_index][column], kind)
                 if (kind == "conditional" and
                         special.get((column - radius, row_index - radius)) in proven):
                     kind = "open"
                 attributes = (attribute_rows[row_index].split()[column]
                               if row_index < len(attribute_rows) else None)
-                if kind in ("blocked", "conditional") and attributes in cuttable:
+                if kind in ("blocked", "conditional", "h1", "h2") and attributes in cuttable:
                     kind = "cuttable"
                 x = (center[0] + column - radius) % width
                 y = (center[1] + row_index - radius) % height

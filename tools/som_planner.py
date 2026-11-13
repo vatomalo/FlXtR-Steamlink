@@ -221,19 +221,51 @@ class MemoryPlanner:
             setattr(self, "local_" + key, value)
 
     @staticmethod
-    def _routes(start, cells, size):
-        """Return shortest known-open paths as (first action, distance)."""
+    def _enter(kind, height):
+        """Height after stepping onto a tile of this kind, or None if refused.
+
+        The game's rule (som-decomp docs/maps.md 14.2): type 3 is a wall, a
+        type-1 tile refuses height 2 and a type-2 tile refuses height 1; the
+        height becomes the tile's type for 0-2 and is kept on pass-through
+        (bridge deck) tiles. height None = unknown, so raised tiles are allowed.
+        """
+        if kind in ("open",):
+            return 0
+        if kind in ("pass", "cuttable"):
+            return height
+        if kind == "h1":
+            return None if height == 2 else 1
+        if kind == "h2":
+            return None if height == 1 else 2
+        return None if kind != "walked" else height
+
+    @staticmethod
+    def _routes(start, cells, size, height=None):
+        """Shortest known paths as {position: (first action, distance)}.
+
+        Searches (position, height) states so a bridge reached up a ramp is
+        usable even though, seen from the river bank, its ends look like walls.
+        """
         routes = {start: (None, 0)}
-        queue = deque([start])
+        seen = {(start, height)}
+        queue = deque([(start, height, None, 0)])
         while queue:
-            position = queue.popleft()
-            first, distance = routes[position]
+            position, level, first, distance = queue.popleft()
             for action, offset in STEP_OFFSETS.items():
                 neighbor = MemoryPlanner._neighbor(position, offset, size)
-                if neighbor in routes or cells.get(neighbor) not in ("open", "cuttable"):
+                kind = cells.get(neighbor)
+                if kind not in ("open", "pass", "cuttable", "h1", "h2"):
                     continue
-                routes[neighbor] = (action if first is None else first, distance + 1)
-                queue.append(neighbor)
+                after = MemoryPlanner._enter(kind, level)
+                if after is None and kind in ("h1", "h2"):
+                    continue
+                if (neighbor, after) in seen:
+                    continue
+                seen.add((neighbor, after))
+                step = action if first is None else first
+                if neighbor not in routes:
+                    routes[neighbor] = (step, distance + 1)
+                queue.append((neighbor, after, step, distance + 1))
         return routes
 
     def _choose_frontier(self, context, cells, routes, directive="explore_unknown"):
@@ -277,7 +309,8 @@ class MemoryPlanner:
         position = tuple(context["actor_tile"])
         size = tuple(context["map_size_tiles"])
         cells = self._known_cells(map_id, layer)
-        routes = self._routes(position, cells, size)
+        routes = self._routes(position, cells, size,
+                              context["actor"].get("floor_height"))
         intention = self._get_intention()
         valid = (isinstance(intention, dict) and intention.get("kind") == "explore" and
                  intention.get("map_id") == map_id and intention.get("layer") == layer and
@@ -397,7 +430,8 @@ class MemoryPlanner:
         cells = self._known_cells(context["map_id"], context["actor"]["layer"])
         cells = dict(cells)
         cells[origin] = "open"
-        routes = self._routes(origin, cells, size)
+        routes = self._routes(origin, cells, size,
+                              context["actor"].get("floor_height"))
         goal = (origin[0] + round(dx_px / 16), origin[1] + round(dy_px / 16))
         start_gap = abs(goal[0] - origin[0]) + abs(goal[1] - origin[1])
         best = None
@@ -430,7 +464,8 @@ class MemoryPlanner:
             position = tuple(context["actor_tile"])
             target = tuple(destination["target"])
             cells = self._known_cells(context["map_id"], actor["layer"])
-            routes = self._routes(position, cells, tuple(context["map_size_tiles"]))
+            routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
+                                  actor.get("floor_height"))
             if target == position:
                 if exit_action in open_steps:
                     return PlannerDecision(exit_action, f"take learned exit toward {place}",

@@ -113,6 +113,19 @@ int main(void){
     mocked_wram[0xA212]=0;mocked_wram[0xA136]=3;som_ring_ai_tick();
     mocked_wram[0x007D]=0;som_ring_ai_tick();
     assert(!ring_ai_pending&&!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
+    /* A newer planner command preempts an unfinished hold. */
+    reset_proxy();trigger_file="/tmp/nonexistent-som-ai-test-trigger";
+    som_start_action(SOM_ACT_RIGHT);
+    FILE *steer=fopen(path,"w");
+    assert(steer!=NULL&&fputs("step_up\n",steer)>0&&fclose(steer)==0);
+    frame_number=182;som_check_trigger();
+    assert(armed&&active_action==SOM_ACT_STEP_UP&&start_frame==182);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==0);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP)==1);
+    steer=fopen(path,"w");
+    assert(steer!=NULL&&fputs("wait\n",steer)>0&&fclose(steer)==0);
+    frame_number=184;som_check_trigger();
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP)==0);
     FILE *manual=fopen(path,"w");
     assert(manual!=NULL&&fputs("ai_on\n",manual)>0&&fclose(manual)==0);
     frame_number=180;som_check_trigger();

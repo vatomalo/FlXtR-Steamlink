@@ -1,7 +1,11 @@
 """Tile-safety tests; no Ollama, SSH, ROM, or emulator required."""
+import os
+import stat
+import tempfile
 import unittest
+from pathlib import Path
 
-from som_qwen_bridge import (
+from som_qwen_bridge import (REMOTE_LOOP, RemoteLink, 
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
     parse_directive, prefer_open_step, extend_clear_exploration,
     objective_directive)
@@ -55,10 +59,14 @@ class TestTileGuard(unittest.TestCase):
                                   "radius": 3, "passability_rows": ["......."] * 7}}
         self.assertEqual(
             extend_clear_exploration("step_right", clear, "explore_frontier", 8), "right")
+        # Holds are preemptible, so every movement intention may use them.
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "engage_enemy", 8), "step_right")
+            extend_clear_exploration("step_right", clear, "engage_enemy", None), "right")
         self.assertEqual(
-            extend_clear_exploration("step_right", clear, "explore_frontier", 4),
+            extend_clear_exploration("step_right", clear, "observe", None), "step_right")
+        # Brake with short pulses for the last two tiles before a target.
+        self.assertEqual(
+            extend_clear_exploration("step_right", clear, "explore_frontier", 2),
             "step_right")
         blocked = {"tile_context": dict(clear["tile_context"])}
         blocked["tile_context"]["passability_rows"] = [".......", ".......", ".......",
@@ -122,6 +130,45 @@ class TestQwenDirector(unittest.TestCase):
                                        learned)
         self.assertIn("damage_dealt", prompt)
 
+
+
+class TestRemoteLink(unittest.TestCase):
+    """Run the persistent protocol through a fake ssh that executes locally."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.root = root
+        fake = root / "fake-ssh"
+        # Ignore ssh options and host; run the remote loop with local sh.
+        fake.write_text('#!/bin/sh\nfor last; do :; done\nexec sh -c "$last"\n')
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        loop = REMOTE_LOOP.replace("/tmp/", str(root) + "/")
+        self.link = RemoteLink("host", timeout=5, remote_loop=loop, ssh_command=[str(fake)])
+
+    def tearDown(self):
+        self.link.close()
+        self.tmp.cleanup()
+
+    def test_reads_wram_and_sends_actions_over_one_session(self):
+        image = bytes(range(256)) * 512
+        (self.root / "flxtr-som-wram.bin").write_bytes(image)
+        (self.root / "flxtr-som-ai-enabled").write_text("enabled\n")
+        self.assertEqual(self.link.fetch_wram(require_marker=True), image)
+        process = self.link.process
+        self.link.send_action("up")
+        self.assertEqual((self.root / "flxtr-som-ai-action").read_text(), "up\n")
+        self.assertEqual(self.link.fetch_wram(), image)
+        self.assertIs(self.link.process, process)
+
+    def test_missing_marker_means_takeover(self):
+        (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
+        self.assertIsNone(self.link.fetch_wram(require_marker=True))
+
+    def test_refuses_non_allowlisted_action_locally(self):
+        with self.assertRaises(ValueError):
+            self.link.send_action("$(reboot)")
+        self.assertFalse((self.root / "flxtr-som-ai-action").exists())
 
 if __name__ == "__main__":
     unittest.main()

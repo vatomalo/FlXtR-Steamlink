@@ -120,6 +120,24 @@ attacks or menu actions still stop the session.
 - Odd replies from small models (`Step_Right.`, `<think></think>wait`) are
   now parsed; up to two unparseable replies in a row are treated as `wait`.
 
+## Responsiveness (continuous control)
+
+- The bridge keeps **one** SSH session open to a tiny allowlisted shell loop on
+  the Steam Link (`obs`, `obsm`, `act <name>`), instead of starting two SSH
+  sessions per decision. Action names are checked on both ends.
+- The proxy exports WRAM every 6 frames (10 Hz, no fsync) and reads the action
+  file every 2 frames. A new command **replaces** an unfinished hold, so the
+  bridge re-sends half-second holds each decision for continuous walking and
+  can steer or stop (`wait`) immediately. Physical input still cancels.
+- Holds are used for every movement intention whenever three tiles ahead are
+  verified open, braking to six-frame pulses in the last two tiles.
+- Default decision interval is 0.1 s; the history database uses SQLite WAL.
+- The Qwen director preloads the model at start, logs how long each answer
+  took, uses a 1024-token context, 12 output tokens, a compact prompt, and a
+  30 s timeout. It never blocks movement.
+
+The proxy changes require rebuilding and reinstalling `som_ai_proxy_libretro.so`.
+
 ## Planner behaviour notes (live log findings)
 
 - An enemy behind a wall is approached along the learned map. If no known

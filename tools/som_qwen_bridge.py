@@ -8,7 +8,9 @@ code executes it using verified tiles, enemies, weapon state and map memory.
 """
 import argparse
 import json
+import os
 import re
+import select
 import queue
 import subprocess
 import sys
@@ -40,6 +42,11 @@ _DIRECTIVE_PATTERN = re.compile(
 MAP_NAMES = {128: "Waterfall", 131: "Potos Village", 179: "Prologue",
              256: "Opening room", 257: "House"}
 DIRECTOR_TURNS = 12
+# A directive is a few tokens. A small context window and output budget keep
+# CPU prompt processing short; a stuck request is abandoned well before 90 s.
+DIRECTOR_OPTIONS = {"temperature": 0.2, "num_predict": 12, "num_ctx": 1024}
+DIRECTOR_TIMEOUT = 30
+PROMPT_MEMORY_ITEMS = 4
 # Reuse the SkyLoft-to-Steam-Link SSH transport. A fresh handshake for each
 # marker check, WRAM read and action made one nominal one-second decision take
 # four to five seconds on the live machines.
@@ -51,6 +58,8 @@ STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
     "step_up": (0, -1), "step_down": (0, 1),
 }
+SMOOTH_INTENTIONS = {"explore_frontier", "engage_enemy", "return_to_inn",
+                     "survive", "replan"}
 LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
 OPPOSITE_STEP = {
@@ -125,11 +134,29 @@ def build_director_prompt(objective, observation, current, recent, known_cells,
         f"native AI allies {len(native_allies)}; "
         f"known map cells {known_cells}. Current directive: {current}. "
         f"Recent actions: {recent}. Allowed directives: {', '.join(choices)}. "
-        f"Remembered places on this map: {place_memory or []}. "
-        f"Learned combat outcomes: {combat_memory or []}. "
+        f"Remembered places on this map: {compact(place_memory)}. "
+        f"Learned combat outcomes: {compact(combat_memory)}. "
         "Prefer a consistent heading that reveals unknown territory. Engage a real enemy "
         "when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
     )
+
+def compact(items):
+    """Short JSON for prompt memory; prompt length dominates CPU latency."""
+    return json.dumps(list(items or [])[:PROMPT_MEMORY_ITEMS], separators=(",", ":"))
+
+def warm_model(url, model):
+    """Load the model into memory before the first real directive."""
+    payload = json.dumps({"model": model, "prompt": "", "keep_alive": "30m"}).encode()
+    req = urllib.request.Request(url.rstrip("/") + "/api/generate", data=payload,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        started = time.monotonic()
+        with urllib.request.urlopen(req, timeout=120) as response:
+            response.read()
+        print(f"[qwen-director] {model} loaded in {time.monotonic() - started:.1f}s",
+              flush=True)
+    except (OSError, ValueError) as exc:
+        print(f"[qwen-director] could not preload {model}: {exc}", flush=True)
 
 def choose_directive(url, model, objective, observation, current,
                      recent=None, known_cells=0, combat_memory=None, place_memory=None):
@@ -138,10 +165,10 @@ def choose_directive(url, model, objective, observation, current,
                                    recent or [], known_cells, combat_memory, place_memory)
     payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
                           "think": False, "keep_alive": "30m",
-                          "options": {"temperature": 0.2, "num_predict": 24}}).encode()
+                          "options": DIRECTOR_OPTIONS}).encode()
     req = urllib.request.Request(url.rstrip("/") + "/api/generate", data=payload,
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=90) as response:
+    with urllib.request.urlopen(req, timeout=DIRECTOR_TIMEOUT) as response:
         result = json.load(response)
     raw = result.get("response") or ""
     directive = parse_directive(raw)
@@ -236,11 +263,16 @@ def prefer_open_step(action: str, observation, previous: str) -> str:
 
 def extend_clear_exploration(action: str, observation, intention: str,
                              remaining_tiles=None) -> str:
-    """Use a half-second hold only when the full observed line is clear."""
-    # A hold moves roughly four tiles. Keep a two-tile braking margin so the
-    # agent cannot overshoot a frontier and reverse on the next snapshot.
-    if (intention != "explore_frontier" or action not in LONG_MOVES or
-            not isinstance(remaining_tiles, int) or remaining_tiles < 6):
+    """Use a held direction when the full observed line is clear.
+
+    The proxy lets each new command replace an unfinished hold, so re-sending
+    the same hold every decision walks continuously and a changed decision
+    steers immediately; the hold length only bounds a stalled planner.
+    """
+    if intention not in SMOOTH_INTENTIONS or action not in LONG_MOVES:
+        return action
+    # Brake for the last few tiles so a target is not overshot.
+    if isinstance(remaining_tiles, int) and remaining_tiles < 3:
         return action
     context = observation.get("tile_context") if isinstance(observation, dict) else None
     if (not isinstance(context, dict) or not context.get("runtime_verified") or
@@ -256,6 +288,108 @@ def extend_clear_exploration(action: str, observation, intention: str,
                 0 <= column < len(rows[row]) and rows[row][column] == "."):
             return action
     return LONG_MOVES[action]
+
+# One persistent POSIX-sh loop on the Steam Link. Each request is one line on
+# stdin; no process or SSH channel is created per decision. The remote side
+# accepts only lowercase action names and fixed paths, never model text.
+REMOTE_LOOP = (
+    "while IFS= read -r cmd; do "
+    "case \"$cmd\" in "
+    "obs|obsm) "
+    "if [ \"$cmd\" = obsm ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
+    "elif [ -f /tmp/flxtr-som-wram.bin ]; then echo WRAM; cat /tmp/flxtr-som-wram.bin; "
+    "else echo NONE; fi;; "
+    "act\\ *) a=${cmd#act }; "
+    "case \"$a\" in ''|*[!a-z_]*) echo BAD;; "
+    "*) printf '%s\\n' \"$a\" > /tmp/flxtr-som-ai-action && echo OK || echo BAD;; esac;; "
+    "*) echo BAD;; esac; done"
+)
+WRAM_BYTES = 0x20000
+
+
+class RemoteLink:
+    """Keep one SSH session open for WRAM reads and actions."""
+
+    def __init__(self, host: str, timeout: float = 5.0, remote_loop: str = REMOTE_LOOP,
+                 ssh_command=None):
+        self.host, self.timeout = host, timeout
+        self.remote_loop = remote_loop
+        self.ssh_command = list(ssh_command or SSH_BASE)
+        self.process = None
+
+    def _start(self):
+        self.close()
+        self.process = subprocess.Popen(
+            [*self.ssh_command, "-o", "ServerAliveInterval=5", self.host, self.remote_loop],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            bufsize=0)
+
+    def close(self):
+        process, self.process = self.process, None
+        if process is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def _read_exact(self, size: int, deadline: float) -> bytes:
+        chunks, remaining = [], size
+        fd = self.process.stdout.fileno()
+        while remaining:
+            wait = deadline - time.monotonic()
+            if wait <= 0 or not select.select([fd], [], [], wait)[0]:
+                raise subprocess.TimeoutExpired("ssh link", self.timeout)
+            chunk = os.read(fd, min(remaining, 65536))
+            if not chunk:
+                raise OSError("SSH link closed")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def _read_line(self, deadline: float) -> str:
+        data = bytearray()
+        while not data.endswith(b"\n"):
+            data += self._read_exact(1, deadline)
+            if len(data) > 16:
+                raise OSError(f"unexpected SSH link reply {bytes(data)!r}")
+        return data.decode("ascii", "replace").strip()
+
+    def _request(self, line: str):
+        for attempt in (0, 1):
+            try:
+                if self.process is None or self.process.poll() is not None:
+                    self._start()
+                deadline = time.monotonic() + self.timeout
+                self.process.stdin.write(line.encode() + b"\n")
+                status = self._read_line(deadline)
+                payload = (self._read_exact(WRAM_BYTES, deadline)
+                           if status == "WRAM" else None)
+                return status, payload
+            except (OSError, subprocess.SubprocessError):
+                # The stream may be mid-frame; restart once, then fail safe.
+                self.close()
+                if attempt:
+                    raise
+
+    def fetch_wram(self, require_marker=False):
+        status, payload = self._request("obsm" if require_marker else "obs")
+        if status == "STOP":
+            return None
+        if status != "WRAM":
+            raise OSError(f"WRAM snapshot unavailable ({status})")
+        return payload
+
+    def send_action(self, action: str) -> None:
+        if action not in ACTIONS and action not in LONG_MOVES.values():
+            raise ValueError(f"refusing non-allowlisted action {action!r}")
+        status, _ = self._request("act " + action)
+        if status != "OK":
+            raise OSError(f"Steam Link rejected action {action!r} ({status})")
+
 
 def send_action(host: str, action: str) -> None:
     # stdin carries an allowlisted command. No LLM text is interpolated into shell.
@@ -317,8 +451,8 @@ def main() -> int:
     parser.add_argument("--start-timeout", type=float, default=300.0,
                         help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
-    if not (0 <= args.steps <= 30) or args.interval < 0.25:
-        parser.error("steps must be 1..30, or 0 for continuous ring control; interval minimum is 0.25")
+    if not (0 <= args.steps <= 30) or args.interval < 0.1:
+        parser.error("steps must be 1..30, or 0 for continuous ring control; interval minimum is 0.1")
     if args.steps == 0 and not args.ring_control:
         parser.error("steps=0 is allowed only with --ring-control")
     if (args.policy in ("hybrid", "qwen") and
@@ -343,6 +477,10 @@ def main() -> int:
                 return 1
             time.sleep(1.0)
         print("[ai] Action Grid start received", flush=True)
+    link = RemoteLink(args.host) if not args.dry_run else None
+    if args.policy == "hybrid":
+        threading.Thread(target=warm_model, args=(args.ollama_url, args.model),
+                         daemon=True, name="som-qwen-warmup").start()
     previous = "none"
     repeated = 0
     invalid_replies = 0
@@ -361,7 +499,8 @@ def main() -> int:
                 observation = WRAM.load(args.wram_file).observe()
             elif args.wram_remote:
                 # Fixed remote path; no model-generated command or file path.
-                raw = fetch_remote_wram(args.host, args.ring_control)
+                raw = (link.fetch_wram(args.ring_control) if link else
+                       fetch_remote_wram(args.host, args.ring_control))
                 if raw is None:
                     print("[ai] stopped by physical takeover or game exit", flush=True)
                     break
@@ -408,9 +547,12 @@ def main() -> int:
                     def direct_in_background(request_data=request):
                         requested_map, observed, current, actions, cells, fights, places = request_data
                         try:
+                            started = time.monotonic()
                             selected = choose_directive(
                                 args.ollama_url, args.model, args.objective,
                                 observed, current, actions, cells, fights, places)
+                            print(f"[qwen-director] answered in "
+                                  f"{time.monotonic() - started:.1f}s", flush=True)
                             director_results.put((requested_map, selected, None))
                         except (OSError, ValueError) as exc:
                             director_results.put((requested_map, None, str(exc)))
@@ -487,7 +629,7 @@ def main() -> int:
                 # never stack another long hold on stale position data.
                 if movement and unchanged_polls > 2:
                     sent_action = action
-                send_action(args.host, sent_action)
+                link.send_action(sent_action) if link else send_action(args.host, sent_action)
                 if movement:
                     last_sent_position = current_position
             previous = action
@@ -495,9 +637,13 @@ def main() -> int:
                 time.sleep(args.interval)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             print(f"[ai] stopped safely: {exc}", file=sys.stderr)
+            if link:
+                link.close()
             if args.ring_control:
                 clear_remote_ring_ai(args.host)
             return 1
+    if link:
+        link.close()
     if args.ring_control and args.steps != 0 and step >= args.steps:
         clear_remote_ring_ai(args.host)
     if history is not None:

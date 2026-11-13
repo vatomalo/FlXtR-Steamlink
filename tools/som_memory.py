@@ -284,6 +284,11 @@ class ObservationHistory:
     def __init__(self, path):
         self.path = Path(path)
         self.connection = sqlite3.connect(str(self.path))
+        # Several small commits happen per decision. WAL with NORMAL sync
+        # avoids a full disk flush for each one; at worst a power cut loses
+        # the last few observations, never the database itself.
+        self.connection.execute("PRAGMA journal_mode=WAL")
+        self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS observations "
             "(id INTEGER PRIMARY KEY, ts REAL NOT NULL, action TEXT, state TEXT NOT NULL)")

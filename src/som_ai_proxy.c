@@ -19,11 +19,12 @@
 #ifndef SOM_PROXY_BASE_CORE
 #define SOM_PROXY_BASE_CORE "/home/apps/retroarch/cores/snes9x2005_plus_libretro.so"
 #endif
-#define SOM_TRIGGER_POLL_FRAMES 6u
+#define SOM_TRIGGER_POLL_FRAMES 2u
 #define SOM_TRIGGER_DEFAULT "/tmp/flxtr-som-ai-go"
 #define SOM_HOLD_FRAMES 30u
 #define SOM_WRAM_SIZE 0x20000u
-#define SOM_WRAM_EXPORT_FRAMES 30u
+/* Ten snapshots per second keep the SkyLoft planner on fresh positions. */
+#define SOM_WRAM_EXPORT_FRAMES 6u
 /* Modern cores (including the pinned snes9x2005) read the whole pad with one
  * bitmask query when the frontend reports RETRO_ENVIRONMENT_GET_INPUT_BITMASKS.
  * The vendored libretro.h predates these constants. */
@@ -203,8 +204,9 @@ static int som_export_wram(void){
     FILE *output=fdopen(output_fd,"wb");
     if(!output){close(output_fd);unlink(wram_temp_file);return 0;}
     int ok=fwrite(ram,1,SOM_WRAM_SIZE,output)==SOM_WRAM_SIZE;
+    /* Readers only need the atomic rename; no fsync, so ten snapshots per
+     * second never force flash writes if /tmp is not a RAM disk. */
     if(ok)ok=fflush(output)==0;
-    if(ok)ok=fsync(fileno(output))==0;
     if(fclose(output)!=0)ok=0;
     if(ok)ok=rename(wram_temp_file,wram_file)==0;
     if(!ok)unlink(wram_temp_file);
@@ -258,7 +260,7 @@ static void som_start_action(SomAction action){
         som_action_name(action),start_frame,action_frames);
 }
 /* File commands are polled from the emulation thread.
- * Only allow another action after the previous action is completed. */
+ * A new command may replace an unfinished hold; physical input still wins. */
 static void som_auto_tick(void){
     static const SomAction sequence[]={SOM_ACT_RIGHT,SOM_ACT_ATTACK,
         SOM_ACT_DOWN,SOM_ACT_ATTACK,SOM_ACT_LEFT,SOM_ACT_ATTACK,
@@ -276,9 +278,11 @@ static void som_auto_tick(void){
     auto_step++;
 }
 static void som_check_trigger(void){
-    if(!test_enabled||!game_loaded||!on_turbo||armed||
+    if(!test_enabled||!game_loaded||!on_turbo||
        frame_number%SOM_TRIGGER_POLL_FRAMES)return;
-    if(trigger_file&&access(trigger_file,F_OK)==0){
+    /* A newer action file command replaces an unfinished hold, so the
+     * planner can steer continuously instead of tap-wait-tap. */
+    if(!armed&&trigger_file&&access(trigger_file,F_OK)==0){
         if(unlink(trigger_file)==0){som_start_action(SOM_ACT_RIGHT);return;}
         fprintf(stderr,"[som-ai] could not consume legacy trigger\n");
     }

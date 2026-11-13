@@ -10,7 +10,7 @@ model=${SOM_AI_MODEL:-qwen3:0.6b}
 policy=${SOM_AI_POLICY:-hybrid}
 objective=${SOM_AI_OBJECTIVE:-Explore safely using verified tiles and attack when appropriate}
 ollama_url=${SOM_AI_OLLAMA_URL:-http://127.0.0.1:11434}
-interval=${SOM_AI_INTERVAL:-0.25}
+interval=${SOM_AI_INTERVAL:-0.1}
 start_timeout=${SOM_AI_START_TIMEOUT:-3600}
 history_db=${SOM_AI_HISTORY_DB:-"$state_dir/som-ai.sqlite"}
 

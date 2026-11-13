@@ -24,6 +24,7 @@ import threading
 import time
 
 from som_dialogue import GLYPHS
+from som_game_over import deaths_by_map
 from som_menu import REPLAYABLE, InnMacro, MacroFailed
 
 PHASES = ("hunt", "shop", "inn", "save")
@@ -32,6 +33,8 @@ HUNT_DECISIONS = 3000
 ERRAND_DECISIONS = 1500   # shop/inn/save travel that never arrives moves on
 NEXT = {"hunt": "shop", "shop": "inn", "inn": "save", "save": "hunt"}
 LEAVE_HP_TENTHS = 6
+# HP a game over on a map counts as when ranking hunting maps.
+DEATH_HP_COST = 500
 
 
 def page_text(wram):
@@ -50,11 +53,12 @@ def best_hunt_map(history, reachable, exclude=()):
     if history is None:
         return None
     best = None
+    deaths = deaths_by_map(history.connection)
     for map_id, gold, hp_lost in history.connection.execute(
             "SELECT map_id,SUM(gold_gained),SUM(hp_lost) FROM reward_ledger GROUP BY map_id"):
         if not gold or gold <= 0 or map_id in exclude or not reachable(map_id):
             continue
-        rate = gold / (1 + (hp_lost or 0))
+        rate = gold / (1 + (hp_lost or 0) + DEATH_HP_COST * deaths.get(map_id, 0))
         if best is None or rate > best[0]:
             best = (rate, map_id)
     return best[1] if best else None

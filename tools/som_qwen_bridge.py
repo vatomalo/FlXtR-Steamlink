@@ -30,6 +30,7 @@ from som_doors import DoorLearner
 from som_dialogue import Commentary, NpcDialogue, qwen_comment
 from som_walk import CurrentWalk, WalkFailed
 from som_respawn import RespawnDialogue
+from som_game_over import GameOverWatch
 from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
@@ -846,6 +847,7 @@ def main() -> int:
     orphan_ring_samples = 0
     orphan_ring_attempted = False
     respawn_dialogue = RespawnDialogue()
+    game_over = GameOverWatch(history.connection if history is not None else None)
     event_escape = EventEscape(log=lambda line: print(line, flush=True))
     play_loop = None
     save_disabled = False
@@ -927,6 +929,20 @@ def main() -> int:
                         observation, visited_before=visited_before)
                     if speech_event:
                         speak(speech_event)
+                # Game over -> title screen: record it and leave Continue to
+                # the player. Nothing presses buttons outside a loaded game.
+                death_event = game_over.observe(
+                    observation, play_loop.phase if play_loop is not None else None)
+                if death_event == "game_over":
+                    if learner is not None:
+                        learner.cancel("game over")
+                    print(f"[death] game over: {game_over.describe()}; waiting on the "
+                          "title screen for the player to Continue", flush=True)
+                    announce(f"AI: died on map {game_over.last['map_id']}|press Continue")
+                elif death_event == "resumed":
+                    print("[death] game loaded again after the game over; resuming",
+                          flush=True)
+                    announce("AI: back in the game")
                 hero_now = (observation.get("party") or [{}])[0]
                 facts = (weapon_note(hero_now.get("weapon")), status_note(hero_now.get("status")))
                 for label, before, after in zip(("weapon", "status"), hero_facts, facts):

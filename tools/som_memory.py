@@ -162,13 +162,14 @@ class WRAM:
             "actor_tile": [center_x, center_y],
             "verification_checks": checks,
         })
-        # Turbo can leave actor +04C's tile-id cache stale even while the
-        # terrain fields used by movement are current. Live map 131 showed
-        # cached id 148 at map id 160, but floor, ground and priority all
-        # agreed. Trust collision data only when those three independent
-        # semantic fields match; retain tile_id as a diagnostic check.
-        semantic_checks = ("floor_height", "ground_effect", "priority")
-        if not all(checks[name] for name in semantic_checks):
+        # Turbo can leave individual actor terrain caches stale. Require the
+        # two movement-critical terrain properties plus either
+        # independent identity or render priority. Turbo has now exhibited
+        # both a stale tile-id cache on ordinary ground and a stale priority
+        # cache on a verified special-ground/door tile.
+        verified = (checks["floor_height"] and checks["ground_effect"] and
+                    (checks["tile_id"] or checks["priority"]))
+        if not verified:
             result["verification_error"] = "actor_tile_attributes_disagree"
             return result
 
@@ -193,8 +194,9 @@ class WRAM:
             tile_rows.append(" ".join(ids))
         result.update({
             "runtime_verified": True,
-            "verification_warning": (None if checks["tile_id"] else
-                                     "stale_actor_tile_id_cache"),
+            "verification_warning": (
+                "stale_actor_tile_id_cache" if not checks["tile_id"] else
+                "stale_actor_priority_cache" if not checks["priority"] else None),
             "radius": radius,
             "passability_rows": rows,
             "tile_id_rows": tile_rows,

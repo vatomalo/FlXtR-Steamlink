@@ -108,10 +108,29 @@ class TestWRAM(unittest.TestCase):
         put16(data, 0x7E00C0, 16 * 8)
         put16(data, 0x7E00C2, 16 * 8)
         data[0x7EE08E - 0x7E0000] = 1
+        data[0x7EE048 - 0x7E0000] = 1
         context = WRAM(data).tile_context()
         self.assertFalse(context["runtime_verified"])
         self.assertEqual(context["verification_error"], "actor_tile_attributes_disagree")
         self.assertNotIn("passability_rows", context)
+
+    def test_tile_context_accepts_stale_priority_on_matching_special_ground(self):
+        data = bytearray(128 * 1024)
+        data[0x7EE000 - 0x7E0000] = 1
+        data[0x7E00E4 - 0x7E0000] = 1
+        data[0x7E00E6 - 0x7E0000] = 0x0F
+        put16(data, 0x7E00C0, 16 * 8)
+        put16(data, 0x7E00C2, 16 * 8)
+        data[0x7EE00B - 0x7E0000] = 2
+        data[0x7EE04C - 0x7E0000] = 0
+        data[0x7EE048 - 0x7E0000] = 0x17
+        data[0x7EE08E - 0x7E0000] = 2
+        attributes = 0x7FB800 - 0x7E0000
+        data[attributes:attributes + 4] = bytes([0x12, 0, 0x17, 0])
+        context = WRAM(data).tile_context()
+        self.assertTrue(context["runtime_verified"])
+        self.assertEqual(context["verification_warning"],
+                         "stale_actor_priority_cache")
 
     def test_history(self):
         with tempfile.TemporaryDirectory() as directory:

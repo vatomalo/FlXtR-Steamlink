@@ -13,8 +13,8 @@ class TestPersonality(unittest.TestCase):
     def test_each_style_produces_short_ascii_lines(self):
         for name in LINES:
             voice = Personality(name, seed=1)
-            for event in LINES[name]:
-                line = voice.speak(event, now=100)
+            for index, event in enumerate(LINES[name]):
+                line = voice.speak(event, now=100 + index * 25)
                 self.assertIsNotNone(line)
                 self.assertLessEqual(len(line), 32)
                 self.assertTrue(line.isascii())

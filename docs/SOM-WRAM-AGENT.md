@@ -120,6 +120,18 @@ attacks or menu actions still stop the session.
 - Odd replies from small models (`Step_Right.`, `<think></think>wait`) are
   now parsed; up to two unparseable replies in a row are treated as `wait`.
 
+## Planner behaviour notes (live log findings)
+
+- An enemy behind a wall is approached along the learned map. If no known
+  route gets closer, it is ignored for 20 decisions instead of alternating
+  `engage_enemy` (step toward the wall) with `explore_frontier` (walk away).
+- While evading at low HP, the current escape direction is kept unless another
+  open step is at least 16 px safer, preventing left/right/left jitter.
+- `intent=observe` now names the verification failure, e.g.
+  `(actor_tile_fields_disagree, mode=field)` or `(not_field_mode, mode=event)`.
+- Survival mode is stored in the history database and survives service
+  restarts; it ends only when HP is back to 90 percent.
+
 ## Start from the existing Action Grid ring menu
 
 Run the SkyLoft bridge with `--ring-control --wram-remote`, then open the

@@ -11,6 +11,11 @@ OPPOSITE_STEP = {
     "step_up": "step_down", "step_down": "step_up",
 }
 
+# Decisions to ignore an enemy whose straight line and known routes are walled.
+UNREACHABLE_COOLDOWN = 20
+# Keep the current evasion heading unless another step is clearly safer.
+EVADE_HYSTERESIS_PX = 16
+
 
 @dataclass(frozen=True)
 class PlannerDecision:
@@ -227,6 +232,14 @@ class MemoryPlanner:
                             "engage_enemy")
                     return PlannerDecision("wait", "hold last-known enemy area", "engage_enemy")
             return None
+        cooldowns = self._get_state("unreachable") or {}
+        if not isinstance(cooldowns, dict):
+            cooldowns = {}
+        cooldowns = {slot: turns - 1 for slot, turns in cooldowns.items() if turns > 1}
+        self._set_state("unreachable", cooldowns or None)
+        enemies = [enemy for enemy in enemies if str(enemy.get("slot")) not in cooldowns]
+        if not enemies:
+            return None
         targets = []
         for enemy in enemies:
             dx = self._wrapped_delta(enemy["x_px"], actor["x_px"], width_px)
@@ -257,7 +270,41 @@ class MemoryPlanner:
         if action:
             return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px",
                                    "engage_enemy")
-        return None
+        # The straight line is walled off. Follow the learned map toward the
+        # enemy instead of alternating with exploration every other decision.
+        routed = self._route_toward(context, dx, dy, open_steps)
+        if routed:
+            action, tiles = routed
+            return PlannerDecision(action, f"route around wall to enemy {enemy['slot']} "
+                                   f"({tiles} known tiles)", "engage_enemy", tiles)
+        cooldowns[str(enemy["slot"])] = UNREACHABLE_COOLDOWN
+        self._set_state("unreachable", cooldowns)
+        self._set_intention(None)
+        return PlannerDecision("wait", f"enemy {enemy['slot']} unreachable; ignoring it for "
+                               f"{UNREACHABLE_COOLDOWN} decisions", "engage_enemy")
+
+    def _route_toward(self, context, dx_px, dy_px, open_steps):
+        """First step of the shortest known route ending nearer the target."""
+        size = tuple(context["map_size_tiles"])
+        origin = tuple(context["actor_tile"])
+        cells = self._known_cells(context["map_id"], context["actor"]["layer"])
+        cells = dict(cells)
+        cells[origin] = "open"
+        routes = self._routes(origin, cells, size)
+        goal = (origin[0] + round(dx_px / 16), origin[1] + round(dy_px / 16))
+        start_gap = abs(goal[0] - origin[0]) + abs(goal[1] - origin[1])
+        best = None
+        for position, (first, distance) in routes.items():
+            if first is None or first not in open_steps:
+                continue
+            gap = (abs(self._wrapped_delta(goal[0], position[0], size[0])) +
+                   abs(self._wrapped_delta(goal[1], position[1], size[1])))
+            if gap >= start_gap:
+                continue
+            candidate = (gap, distance, first)
+            if best is None or candidate < best:
+                best = candidate
+        return (best[2], best[1]) if best else None
 
     def _survive(self, observation, context, open_steps, critical=False):
         """Disengage and retrace the learned map toward the inn/safe anchor."""
@@ -280,7 +327,19 @@ class MemoryPlanner:
                                             height_px))
                     for enemy in enemies)
                 scored.append((nearest, action))
-            threat_retreat = max(scored)[1]
+            best_distance, threat_retreat = max(scored)
+            previous_step = self._get_state("last_evade")
+            reverse = OPPOSITE_STEP.get(previous_step)
+            by_action = {action: nearest for nearest, action in scored}
+            if (previous_step in by_action and
+                    by_action[previous_step] + EVADE_HYSTERESIS_PX >= best_distance):
+                threat_retreat = previous_step
+            elif (threat_retreat == reverse and
+                  any(action != reverse and nearest + EVADE_HYSTERESIS_PX >= best_distance
+                      for nearest, action in scored)):
+                threat_retreat = max((nearest, action) for nearest, action in scored
+                                     if action != reverse)[1]
+            self._set_state("last_evade", threat_retreat)
 
         anchor = self.history.safe_anchor() if self.history is not None else None
         destination = anchor
@@ -357,7 +416,11 @@ class MemoryPlanner:
     def decide(self, observation, previous="none", directive="explore_unknown"):
         context = observation.get("tile_context") if isinstance(observation, dict) else None
         if not isinstance(context, dict) or not context.get("runtime_verified"):
-            return PlannerDecision("wait", "no runtime-verified tile context", "observe")
+            why = context.get("verification_error") if isinstance(context, dict) else None
+            mode = context.get("game_mode") if isinstance(context, dict) else None
+            detail = f" ({why}, mode={mode})" if why else ""
+            return PlannerDecision("wait", f"no runtime-verified tile context{detail}",
+                                   "observe")
         if context.get("game_mode") != "field":
             return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
         open_steps = self._open_steps(context)

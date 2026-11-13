@@ -33,6 +33,50 @@ class TestMemoryPlanner(unittest.TestCase):
         state = observation(("...", ".@#", "..."), enemy, recharge=20)
         self.assertNotEqual(MemoryPlanner().decide(state).action, "step_right")
 
+    def test_walled_enemy_routes_around_or_is_ignored_instead_of_flip_flopping(self):
+        # Enemy straight above, wall directly above, open sides.
+        enemy = {"slot": 2, "active": True, "x_px": 40, "y_px": 0}
+        planner = MemoryPlanner()
+        state = observation(("###", ".@.", "..."), enemy, recharge=20)
+        first = planner.decide(state)
+        self.assertEqual(first.intention, "engage_enemy")
+        self.assertNotEqual(first.action, "step_up")
+        if first.action == "wait":
+            self.assertIn("unreachable", first.reason)
+            # Ignored enemy no longer pulls the hero back every other decision.
+            again = planner.decide(state)
+            self.assertNotEqual(again.intention, "engage_enemy")
+
+    def test_unreachable_enemy_cooldown_expires(self):
+        enemy = {"slot": 3, "active": True, "x_px": 40, "y_px": 0}
+        planner = MemoryPlanner()
+        boxed = observation(("###", "#@#", "###"), enemy, recharge=20)
+        self.assertIn("unreachable", planner.decide(boxed).reason)
+        later = [planner.decide(boxed) for _ in range(25)]
+        ignored = [decision for decision in later if decision.intention != "engage_enemy"]
+        self.assertGreaterEqual(len(ignored), 15)
+        # After the cooldown the enemy is reconsidered (and re-ignored if still walled).
+        self.assertTrue(any("unreachable" in decision.reason for decision in later))
+
+    def test_evasion_keeps_heading_between_equal_escape_steps(self):
+        # Low HP; enemy straight below so left and right are equally safe.
+        enemy = {"slot": 1, "active": True, "x_px": 40, "y_px": 120}
+        planner = MemoryPlanner()
+        actions = [planner.decide(observation(("...", ".@.", "..."), enemy,
+                                              hp=20, max_hp=100)).action
+                   for _ in range(6)]
+        for before, after in zip(actions, actions[1:]):
+            self.assertNotEqual({before, after}, {"step_left", "step_right"}, actions)
+
+    def test_observe_reports_verification_reason(self):
+        state = observation()
+        state["tile_context"].update(runtime_verified=False,
+                                     verification_error="not_field_mode",
+                                     game_mode="event")
+        decision = MemoryPlanner().decide(state)
+        self.assertEqual(decision.action, "wait")
+        self.assertIn("not_field_mode", decision.reason)
+
     def test_persistent_frontier_intention_survives_decisions(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "memory.sqlite")

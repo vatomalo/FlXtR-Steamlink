@@ -9,8 +9,10 @@ code executes it using verified tiles, enemies, weapon state and map memory.
 import argparse
 import json
 import re
+import queue
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -299,6 +301,8 @@ def main() -> int:
     directive = "explore_unknown"
     directive_turns = 0
     directive_map = None
+    director_results = queue.Queue()
+    director_running = False
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
@@ -317,25 +321,53 @@ def main() -> int:
             if args.policy in ("hybrid", "memory"):
                 context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
                 current_map = context.get("map_id")
-                if args.policy == "hybrid" and (directive_turns <= 0 or current_map != directive_map):
+                if args.policy == "hybrid":
+                    try:
+                        requested_map, selected, director_error = director_results.get_nowait()
+                        director_running = False
+                        if director_error is not None:
+                            directive_turns = 3
+                            directive_map = current_map
+                            print(f"[qwen-director] unavailable; retaining {directive}: "
+                                  f"{director_error}", flush=True)
+                        elif requested_map == current_map:
+                            directive = selected
+                            directive_turns = DIRECTOR_TURNS
+                            directive_map = current_map
+                            print(f"[qwen-director] intention={directive} for "
+                                  f"{DIRECTOR_TURNS} decisions", flush=True)
+                        else:
+                            print("[qwen-director] ignored stale decision after map change",
+                                  flush=True)
+                    except queue.Empty:
+                        pass
+                if (args.policy == "hybrid" and not director_running and
+                        (directive_turns <= 0 or current_map != directive_map)):
                     recent = [item.get("action") for item in history.recent(6)] if history else []
                     known = 0
                     if history and context.get("actor"):
                         known = len(history.known_cells(current_map,
                                                         context["actor"].get("layer")))
-                    try:
-                        selected = choose_directive(
-                            args.ollama_url, args.model, args.objective, observation,
-                            directive, recent, known)
-                        directive = selected
-                        directive_turns = DIRECTOR_TURNS
-                        directive_map = current_map
-                        print(f"[qwen-director] intention={directive} for "
-                              f"{DIRECTOR_TURNS} decisions", flush=True)
-                    except (OSError, ValueError) as exc:
-                        directive = "explore_unknown"
-                        directive_turns = 3
-                        print(f"[qwen-director] unavailable; safe fallback: {exc}", flush=True)
+                    # Qwen 3.5 can take tens of seconds to load on CPU. Never
+                    # freeze controller output while the strategic director
+                    # thinks; its result arrives through a thread-safe queue.
+                    request = (current_map, observation, directive, recent, known)
+                    def direct_in_background(request_data=request):
+                        requested_map, observed, current, actions, cells = request_data
+                        try:
+                            selected = choose_directive(
+                                args.ollama_url, args.model, args.objective,
+                                observed, current, actions, cells)
+                            director_results.put((requested_map, selected, None))
+                        except (OSError, ValueError) as exc:
+                            director_results.put((requested_map, None, str(exc)))
+                    threading.Thread(target=direct_in_background, daemon=True,
+                                     name="som-qwen-director").start()
+                    director_running = True
+                    directive_map = current_map
+                    directive_turns = max(directive_turns, 3)
+                    print(f"[qwen-director] thinking asynchronously; meanwhile {directive}",
+                          flush=True)
                 decision = planner.decide(observation, previous, directive)
                 directive_turns -= 1
                 action = decision.action

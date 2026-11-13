@@ -16,6 +16,9 @@ The decision log names the current intention (`explore_frontier`,
 `engage_enemy`, `survive`, `replan`, or `observe`) and its target/reason. SSH
 connection reuse keeps the three remote operations per decision from paying a
 new handshake each time.
+Qwen inference runs on a daemon director thread: loading a larger CPU model can
+take tens of seconds, but the safe planner continues acting on its previous
+directive instead of freezing the player while it waits.
 
 The observation also reports each hero's controller binding and native Action
 Grid behavior/cell/charge settings. Unbound companions already execute the

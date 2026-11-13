@@ -73,7 +73,9 @@ class TestTileGuard(unittest.TestCase):
         # Short runs, near targets, nearby monsters and fights keep the walk.
         self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 7),
                          "right")
-        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 6, 10),
+        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 6),
+                         "dash_right")
+        self.assertEqual(extend_clear_exploration("step_right", wide(), "explore_frontier", 10, 5),
                          "right")
         near = {"active": True, "x_px": 500, "y_px": 420}
         self.assertEqual(extend_clear_exploration("step_right", wide([near]), "explore_frontier",

@@ -95,7 +95,8 @@ SMOOTH_INTENTIONS = {"explore_frontier", "engage_enemy", "return_to_inn",
 # follow_taught_path deliberately keeps short pulses on unverified tiles.
 LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
-DASH_MIN_STRAIGHT = 8   # learned straight route tiles (and distance) for a dash
+DASH_MIN_STRAIGHT = 6   # learned straight route tiles for a dash (live runs: mostly 5-7)
+DASH_MIN_REMAINING = 8  # and the target at least this far away
 DASH_ENEMY_PX = 160     # no dashing with a monster this close
 DASH_MOVES = {"right": "dash_right", "left": "dash_left",
               "up": "dash_up", "down": "dash_down"}
@@ -385,7 +386,7 @@ def extend_clear_exploration(action: str, observation, intention: str,
         # needs a long straight run on the learned route and a far target,
         # and never near a monster (travel, not a fight).
         if (intention != "engage_enemy" and straight_tiles >= DASH_MIN_STRAIGHT and
-                (remaining_tiles is None or remaining_tiles >= DASH_MIN_STRAIGHT) and
+                (remaining_tiles is None or remaining_tiles >= DASH_MIN_REMAINING) and
                 not enemy_within(observation, DASH_ENEMY_PX)):
             return DASH_MOVES[LONG_MOVES[action]]
         return LONG_MOVES[action]
@@ -1492,7 +1493,10 @@ def main() -> int:
                 decision.remaining_tiles if args.policy in ("hybrid", "memory") else None,
                 decision.straight_tiles if args.policy in ("hybrid", "memory") else None)
             if sent_action != action:
-                print(f"[ai] smooth clear route: {action} -> {sent_action}", flush=True)
+                print(f"[ai] smooth clear route: {action} -> {sent_action} "
+                      f"(straight {decision.straight_tiles}, remaining "
+                      f"{decision.remaining_tiles}, monster near "
+                      f"{enemy_within(observation, DASH_ENEMY_PX)})", flush=True)
             # A brief step on water or half-tiles can register only facing.
             # Do not change direction before WRAM confirms displacement.
             # Retry the SAME already-guarded step once, as a separate pulse.

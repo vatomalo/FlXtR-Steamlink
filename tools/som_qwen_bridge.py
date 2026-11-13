@@ -25,6 +25,7 @@ from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFa
                       ShopMacro, candy_count, read_gold)
 from som_planner import MemoryPlanner
 from som_personality import Personality, LINES
+from som_learning import CombatLearner
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
 from som_goals import (TRAVEL_TIMEOUT, build_goal_prompt, goal_plan, is_travel,
@@ -659,6 +660,10 @@ def main() -> int:
         parser.error("start-timeout must be 1..3600 seconds")
     history = ObservationHistory(args.history_db) if args.history_db else None
     planner = MemoryPlanner(history)
+    # Opt-in automatically when persistence is configured; supervised
+    # SkyLoft service already supplies a stable history DB.
+    learner = CombatLearner(history.connection) if history is not None else None
+    planner.combat_learner = learner
     map_guard = MapLoadGuard()
     if history is not None and args.wram_remote and not args.dry_run:
         tables = load_rom_exits(args.host)
@@ -761,6 +766,13 @@ def main() -> int:
                 observation = WRAM(raw).observe()
             if observation is not None:
                 map_guard.apply(observation)
+                if learner is not None:
+                    learned = learner.observe(observation)
+                    if learned is not None:
+                        print(f"[learning] enemy={learned['enemy_id']:#04x} "
+                              f"weapon={learned['weapon']} distance={learned['distance']}px "
+                              f"damage={learned['damage']} hp_lost={learned['hp_lost']}",
+                              flush=True)
                 if personality is not None:
                     speech_event = personality.observation_event(observation)
                     if speech_event:
@@ -1038,6 +1050,8 @@ def main() -> int:
                 if movement and unchanged_polls > 2:
                     sent_action = action
                 link.send_action(sent_action) if link else send_action(args.host, sent_action)
+                if learner is not None and sent_action == "attack":
+                    learner.start(observation)
                 if movement:
                     last_sent_position = current_position
             previous = action

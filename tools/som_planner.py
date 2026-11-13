@@ -25,7 +25,6 @@ CLOSE_QUARTERS_PX = 48
 # establish actual per-weapon reach. Do not swing at 48x48 diagonally.
 DEFAULT_STRIKE_AXIAL_PX = 28
 DEFAULT_STRIKE_SIDE_PX = 14
-MAX_SWING_PX = 32           # Manhattan distance; farther swings trade evenly
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -627,9 +626,6 @@ class MemoryPlanner:
                            abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
                           (0 < abs(dy) <= DEFAULT_STRIKE_AXIAL_PX and
                            abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
-        # Live samples (normal enemies and boss 0x57 alike): swings from
-        # 32-47 px dealt about what they cost; under 32 px they deal 4-8x more.
-        attack_aligned = attack_aligned and abs(dx) + abs(dy) < MAX_SWING_PX
         if attack_aligned and observation.get("weapons_enabled"):
             # Only a mature learned range can veto a normal swing. Existing
             # attack/charge logic remains the safe fallback for sparse data.

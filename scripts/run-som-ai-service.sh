@@ -18,6 +18,9 @@ shop_gold=${SOM_AI_SHOP_GOLD:-500}
 gp_reward=${SOM_AI_GP_REWARD:-1}
 hp_penalty=${SOM_AI_HP_PENALTY:-2}
 # Deterministic hunt -> shop -> inn -> save loop; SOM_AI_PLAY_LOOP=0 restores Qwen goals.
+extra_args=()
+# Guard/counter learning; off by default because it cost swings (see bridge).
+[ "${SOM_AI_BLOCK:-0}" != 0 ] && extra_args+=(--block-learning)
 loop_args=()
 if [ "${SOM_AI_PLAY_LOOP:-1}" != 0 ]; then
   loop_args=(--play-loop --trip-gold "${SOM_AI_TRIP_GOLD:-100}")
@@ -40,4 +43,4 @@ exec python3 "$repo/tools/som_qwen_bridge.py" \
   --history-db "$history_db" \
   --wram-remote \
   --ring-control \
-  "${loop_args[@]}"
+  "${loop_args[@]}" "${extra_args[@]}"

@@ -736,6 +736,10 @@ def main() -> int:
                         help="play loop hunting map (default: best gold per HP from memory)")
     parser.add_argument("--trip-gold", type=int, default=100,
                         help="play loop: GP to earn per hunting trip")
+    parser.add_argument("--block-learning", action="store_true",
+                        help="guard with R after swings and when hit, learning per enemy "
+                             "whether it pays, and counter after guarding (costs swings; "
+                             "off by default)")
     parser.add_argument("--save-slot", type=int, choices=range(0, 5), default=1,
                         help="answer the innkeeper's after-stay save prompt with Yes "
                              "and save into this slot (1-4, the player's usual one); "
@@ -894,7 +898,10 @@ def main() -> int:
     last_loop_goal = None
     block_learner = None
     boss_recorder = BossRecorder(log=lambda line: print(line, flush=True)) if args.wram_remote else None
-    if history is not None and args.policy in ("hybrid", "memory"):
+    # Off by default: on maps 129/130 at level 5-6 the hero dealt ~5x the
+    # damage it took with no blocking (13-14 Nov afternoon), but only 0.4-1.6x
+    # once it guarded after swings and when hit; guarding costs swings.
+    if args.block_learning and history is not None and args.policy in ("hybrid", "memory"):
         block_learner = BlockLearner(history.connection, log=lambda line: print(line, flush=True))
         planner.block_learner = block_learner
     if args.play_loop and history is not None and args.policy in ("hybrid", "memory"):

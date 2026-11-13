@@ -56,12 +56,11 @@ class TestFacingAndTurns(unittest.TestCase):
         planner = MemoryPlanner()
         planner.facing_checks = [5, 0]
         # Facing tolerance does not expand the verified lateral strike range.
-        # (Kept under MAX_SWING_PX: live swings from 32+ px traded evenly.)
-        decision = planner.decide(state([(17, -14)], facing="step_right"))
+        decision = planner.decide(state([(20, -14)], facing="step_right"))
         self.assertEqual(decision.action, "attack")
         decision = planner.decide(state([(20, -18)], facing="step_right"))
         self.assertNotEqual(decision.action, "attack")
-        decision = planner.decide(state([(6, -24)], facing="step_right"))
+        decision = planner.decide(state([(10, -26)], facing="step_right"))
         self.assertEqual(decision.action, "step_up")
 
     def test_unverified_facing_keeps_the_last_turn_for_repeated_swings(self):

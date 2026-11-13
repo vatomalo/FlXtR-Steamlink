@@ -299,13 +299,14 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(decision.action, "attack")
         self.assertIn("counter", decision.reason)
 
-    def test_does_not_swing_from_beyond_point_blank_range(self):
-        # 20 px ahead and 14 px aside is 34 px: live swings there traded evenly.
+    def test_swings_at_aligned_enemies_beyond_32_px(self):
+        # Afternoon 13 Nov: swings from 32-55 px landed (e.g. 443 dealt, 10 taken
+        # at 40-47 px); refusing them made the hero circle enemies and get hit.
         enemy = {"slot": 1, "active": True, "x_px": 60, "y_px": 42}
         planner = MemoryPlanner()
         planner.assumed_facing = "step_right"
         decision = planner.decide(observation(enemy=enemy, hp=100, max_hp=100), "step_right")
-        self.assertNotEqual(decision.action, "attack")
+        self.assertEqual(decision.action, "attack")
 
     def test_half_health_latches_return_to_inn_until_recovered(self):
         planner = MemoryPlanner()

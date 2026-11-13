@@ -21,8 +21,8 @@ or byte-exact sources), not re-checked on Turbo; **[H]** hypothesis.
 | off-screen simulation, story overrides, interruptions, encounter memory | implemented and tested (SQLite) |
 | daily Qwen director (one validated schedule change per NPC and day) | implemented and tested; smoke-tested against local Ollama (section 6.1) |
 | reconciliation + route planning + native walk commands | implemented; runs read-only against live WRAM (re-checked 2026-11-13: map 131, slot 8 bound, holds during events) |
-| proxy `npc_walk` (game-RAM write) | implemented, unit-tested, ROM-gated, **off by default, not deployed, never run live** |
-| visible NPC movement in the running game | **not demonstrated yet**: needs your approval for live RAM writes (section 12) |
+| proxy `npc_walk` (game-RAM write) | implemented, unit-tested, ROM-gated, off by default; **deployed 2026-11-13 with the enable marker** |
+| visible NPC movement in the running game | **demonstrated live 2026-11-13** (section 10.1) |
 | NPC disappearing indoors / crossing maps natively | not possible without a further mechanism (section 9) |
 
 ## 2. Reverse-engineering findings
@@ -266,6 +266,26 @@ python3 tools/som_living_world.py run                # read-only + talk overlay
 python3 tools/som_living_world.py run --live         # after approval only
 ```
 
+### 10.1 First live run (2026-11-13, approved by the user)
+
+Save and old proxy backed up to `~/backups/som-saves/20261113-214008/`
+(SkyLoft); new proxy (md5 `04bd131b...`) deployed with the game closed;
+enable marker created; world clock set to 09:00; player in Potos.
+`run --live` sent nine `npc_walk` commands, all accepted by the proxy:
+
+| command (dir, frames) | live pixel before -> after |
+|---|---|
+| down 32 | (472,404) -> (472,415), first walk while an event was ending |
+| down 32 / down 16 / down 8 | -> (472,449) -> (472,468) -> (472,481) |
+| left 32 / 24 / 8 / 8 | (472,481) -> (438,481) -> (413,481) -> (400,481) -> tile (24,30) |
+
+The villager walked from its spawn (29,25) to the west lane (24,30), down
+then left, with its native walk animation, and stopped there ("at place").
+The other six Potos NPCs kept their slots and positions; the game stayed in
+field mode. Measured speed: about 1 px/frame (34 px in 32 frames, 25 px in
+24), consistent with som-decomp; walks stay closed-loop. Each runner cycle
+takes about 2.5 s (WRAM fetch over SSH), so a 5-tile walk takes ~20 s real.
+
 **Feature toggle / restoring original behaviour.** The proxy accepts NPC
 walks only while `/home/apps/retroarch/cores/experimental/som_ai_living_world_enable`
 exists (absent by default) and only when the ROM fingerprints match. Remove
@@ -292,10 +312,9 @@ against the real Turbo ROM (accepted) and a one-byte change (refused).
 
 ## 12. Next steps (need your decision)
 
-1. **Approve a first live NPC write**: rebuild/deploy the proxy (game
-   closed), keep a backup save, create the enable marker, stand in Potos,
-   then `run --live` with the clock set to 09:00. Expected: villager 0xC7
-   walks down from (29,25) toward (24,30) with its walk animation.
+1. ~~First live NPC write~~ done (section 10.1). Still to check live: the
+   evening walk back to the doorstep, talking to the NPC mid-walk, and
+   leaving/re-entering Potos (expected: respawn at the record, then walk).
 2. Make the NPC vanish at night (flag-range or hiding mechanism, section 9).
 3. Wandering NPCs and shopkeepers via record bit 7 patches; merchant
    open/closed lines; guards with patrol routes on maps with monsters.

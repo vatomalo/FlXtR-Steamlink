@@ -40,8 +40,12 @@ class RespawnDialogue:
                     "dead" in (status.get("effects") or []) and
                     hero.get("hp") == 0)
         if dead:
-            # Capture a death, but never send buttons while dead.
-            self.stage = "dead"
+            # The dead bit can persist across the transition for many frames.
+            # Do not lose evidence that the respawn transition was witnessed.
+            if mode == "transition" and self.stage in ("dead", "transition"):
+                self.stage = "transition"
+            elif self.stage != "transition":
+                self.stage = "dead"
             self.last_event = None
             self.stable_since = None
             return None

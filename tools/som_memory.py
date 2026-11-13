@@ -1309,11 +1309,12 @@ class ObservationHistory:
         next_map = path[1]
         waypoints = []
         if self.rom_exits_trusted():
-            for layer, x, y in self.connection.execute(
-                    "SELECT layer,x,y FROM map_exits WHERE map_id=? AND to_map=? "
+            for layer, x, y, to_x, to_y, to_layer in self.connection.execute(
+                    "SELECT layer,x,y,to_x,to_y,to_layer FROM map_exits WHERE map_id=? AND to_map=? "
                     "ORDER BY layer,y,x", (current_map, next_map)):
                 waypoints.append({"map_id": current_map, "layer": layer, "target": [x, y],
                                   "action": None, "next_map": next_map, "source": "rom",
+                                  "arrival": [to_x, to_y], "arrival_layer": to_layer,
                                   "path": path})
         row = self.connection.execute(
             "SELECT layer,x,y,action FROM map_edges WHERE from_map=? AND to_map=?",

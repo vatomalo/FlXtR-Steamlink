@@ -26,6 +26,7 @@ from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFa
 from som_planner import MemoryPlanner
 from som_personality import Personality, LINES
 from som_learning import CombatLearner
+from som_doors import DoorLearner
 from som_respawn import RespawnDialogue
 from som_movement import MovementAck
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
@@ -668,11 +669,14 @@ def main() -> int:
         parser.error("start-timeout must be 1..3600 seconds")
     history = ObservationHistory(args.history_db) if args.history_db else None
     planner = MemoryPlanner(history)
-    # Opt-in automatically when persistence is configured; supervised
-    # SkyLoft service already supplies a stable history DB.
-    learner = CombatLearner(history.connection) if history is not None else None
+    # Train only from live, takeover-guarded input. Offline dumps and sessions
+    # without the physical-input marker cannot establish action attribution.
+    learner = (CombatLearner(history.connection)
+               if history is not None and args.wram_remote and args.ring_control and
+               not args.dry_run else None)
     planner.combat_learner = learner
     map_guard = MapLoadGuard()
+    doors = DoorLearner(history) if history is not None else None
     if history is not None and args.wram_remote and not args.dry_run:
         tables = load_rom_exits(args.host)
         if tables is not None:
@@ -776,11 +780,15 @@ def main() -> int:
                 raw = (link.fetch_wram(args.ring_control) if link else
                        fetch_remote_wram(args.host, args.ring_control))
                 if raw is None:
+                    if learner is not None:
+                        learner.cancel("physical takeover or game exit")
                     print("[ai] stopped by physical takeover or game exit", flush=True)
                     break
                 observation = WRAM(raw).observe()
             if observation is not None:
                 map_guard.apply(observation)
+                if doors is not None:
+                    doors.observe(WRAM(raw), observation)
                 if learner is not None:
                     learned = learner.observe(observation)
                     if learned is not None:
@@ -837,6 +845,8 @@ def main() -> int:
                 event_byte = WRAM(raw).u8(0x7E00D0) if raw is not None else None
                 recovery_action = respawn_dialogue.observe(observation, event_byte)
                 if recovery_action is not None:
+                    if learner is not None:
+                        learner.cancel("KO recovery")
                     if link:
                         link.send_action(recovery_action)
                     elif not args.dry_run:
@@ -866,6 +876,8 @@ def main() -> int:
             elif observed_ring and link and args.policy in ("hybrid", "memory"):
                 orphan_ring_samples += 1
                 if orphan_ring_samples >= 3 and not orphan_ring_attempted:
+                    if learner is not None:
+                        learner.cancel("ring recovery")
                     orphan_ring_attempted = True
                     print("[candy] orphan ring after restart/failure; "
                           "attempting verified Cancel cleanup", flush=True)
@@ -885,6 +897,8 @@ def main() -> int:
                 orphan_ring_samples = 0
             if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
                     candy_wanted(observation) and mode == "field"):
+                if learner is not None:
+                    learner.cancel("Candy macro")
                 announce("AI: HP low|using Candy")
                 try:
                     gained = CandyMacro(link, calibration,
@@ -991,6 +1005,8 @@ def main() -> int:
                               f"({score:.0%} of tiles); teach it to use it", flush=True)
                         announce("AI: this looks like an inn|teach it to use it")
                 if link and decision.action == "charge":
+                    if learner is not None:
+                        learner.cancel("charged attack macro")
                     try:
                         result = ChargeMacro(link, decision.charge_stage,
                                              decision.enemy_slot,
@@ -1013,6 +1029,8 @@ def main() -> int:
                     previous = "attack"
                     continue
                 if link and errand and decision.intention == "at_shop":
+                    if learner is not None:
+                        learner.cancel("shop macro")
                     announce("AI: buying Candy")
                     cancel = calibration.cancel_action if calibration else "cancel"
                     try:
@@ -1030,6 +1048,8 @@ def main() -> int:
                         decision.intention == "recover_at_inn"):
                     anchor = history.safe_anchor()
                     if isinstance(anchor, dict) and anchor.get("face"):
+                        if learner is not None:
+                            learner.cancel("inn macro")
                         announce("AI: staying at the inn")
                         cancel = calibration.cancel_action if calibration else "cancel"
                         try:
@@ -1121,18 +1141,22 @@ def main() -> int:
                 elif actual == "block":
                     sent_action = "block"
                 link.send_action(sent_action) if link else send_action(args.host, sent_action)
-                if learner is not None and sent_action == "attack":
-                    learner.start(observation)
+                if learner is not None:
+                    learner.action_sent(sent_action, observation)
             previous = action
             if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            if learner is not None:
+                learner.cancel("connection or observation failure")
             print(f"[ai] stopped safely: {exc}", file=sys.stderr)
             if link:
                 link.close()
             if args.ring_control:
                 clear_remote_ring_ai(args.host)
             return 1
+    if learner is not None:
+        learner.cancel("session ended")
     if link:
         link.close()
     if args.ring_control and args.steps != 0 and step >= args.steps:

@@ -55,9 +55,12 @@ class TestFacingAndTurns(unittest.TestCase):
     def test_enemy_near_the_diagonal_counts_as_in_front(self):
         planner = MemoryPlanner()
         planner.facing_checks = [5, 0]
-        decision = planner.decide(state([(20, -18)], facing="step_right"))
+        # Facing tolerance does not expand the verified lateral strike range.
+        decision = planner.decide(state([(20, -14)], facing="step_right"))
         self.assertEqual(decision.action, "attack")
-        decision = planner.decide(state([(10, -30)], facing="step_right"))
+        decision = planner.decide(state([(20, -18)], facing="step_right"))
+        self.assertNotEqual(decision.action, "attack")
+        decision = planner.decide(state([(10, -26)], facing="step_right"))
         self.assertEqual(decision.action, "step_up")
 
     def test_unverified_facing_keeps_the_last_turn_for_repeated_swings(self):

@@ -541,6 +541,7 @@ class MemoryPlanner:
                      not any(p.get("availability_byte") == 1
                              for p in (observation.get("party") or [])[1:]))
             close_in = (learner is not None and alone and weapon.get("verified") and
+                        recharge == 0 and not self.charge_stage(hero, enemy) and
                         learner.should_close(
                             enemy.get("identity"), weapon.get("type"), distance,
                             hp / max_hp if max_hp else 1.0))
@@ -738,6 +739,10 @@ class MemoryPlanner:
             if hasattr(self.history, "exit_waypoints"):
                 waypoints = self.history.exit_waypoints(context.get("map_id"),
                                                         anchor.get("map_id"))
+                offered_waypoints = bool(waypoints)
+                waypoints = self._doors_toward_room(waypoints, anchor)
+                if offered_waypoints and not waypoints:
+                    return PlannerDecision("wait", "no doorway leads to the destination room", "observe")
             destination = (self._pick_waypoint(context, waypoints) if waypoints else
                            self.history.return_waypoint(context.get("map_id"),
                                                         anchor.get("map_id")))
@@ -775,6 +780,11 @@ class MemoryPlanner:
                                            travel_intent, distance, routes.straight(target))
                 if action in self._cut_steps(context):
                     return self._cut(context, action)
+            if target not in routes and context.get("return_doors"):
+                # A shared map id does not mean the shop is in this room.
+                # Leave through a native return door, then choose the entrance
+                # whose arrival belongs to the destination's connected room.
+                return self._return_door(context, open_steps, f"leave disconnected room for {place}")
             # Scanned collision islands can be disconnected when the agent
             # crossed an area before map learning was enabled. Keep a stable
             # heading toward the observed exit while checking every next tile.
@@ -788,6 +798,46 @@ class MemoryPlanner:
                                        f"{target[0]},{target[1]} vector dx={dx},dy={dy}",
                                        travel_intent)
         return None
+
+    def _doors_toward_room(self, waypoints, anchor):
+        if not isinstance(anchor.get("target"), list):
+            return waypoints
+        target_map, layer = anchor.get("map_id"), anchor.get("layer")
+        size = self.history.get_agent_state(f"door_map_size_{target_map}")
+        cells = self.history.known_cells(target_map, layer)
+        target = tuple(anchor["target"])
+        if not size or target not in cells:
+            return waypoints
+        room = self._routes(target, cells, tuple(size))
+        matching, unknown = [], []
+        for waypoint in waypoints:
+            arrival = waypoint.get("arrival")
+            if waypoint.get("next_map") != target_map or not isinstance(arrival, list):
+                unknown.append(waypoint)
+            elif waypoint.get("arrival_layer") == layer and tuple(arrival) in room:
+                matching.append(waypoint)
+            elif waypoint.get("arrival_layer") == layer and tuple(arrival) not in cells:
+                unknown.append(waypoint)
+        # Prefer a proven connected arrival over ambiguous old map_edges.
+        return matching or unknown
+
+    def _return_door(self, context, open_steps, reason="leave room through return door"):
+        position = tuple(context["actor_tile"])
+        cells = self._known_cells(context["map_id"], context["actor"]["layer"])
+        routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
+                              context["actor"].get("floor_height"))
+        choices = []
+        for door in context.get("return_doors") or []:
+            target = tuple(door["target"])
+            if target == position:
+                return PlannerDecision("wait", "on native return door; awaiting crossing", "leave_room")
+            if target in routes and routes[target][0] in open_steps:
+                choices.append((routes[target][1], target))
+        if choices:
+            distance, target = min(choices)
+            return PlannerDecision(routes[target][0], reason, "leave_room", distance,
+                                   routes.straight(target))
+        return PlannerDecision("wait", "return door has no verified route", "observe")
 
     def _exit_cells(self, context, destination, cells=None):
         """Known cells; a ROM exit tile is entered whatever its looks say.
@@ -1098,6 +1148,8 @@ class MemoryPlanner:
                                   f"go_to_{slug}", errand.get("arrive", f"at_{slug}"))
             if travel is not None:
                 return travel
+        if context.get("return_doors"):
+            return self._return_door(context, open_steps)
         if not open_steps:
             targets = dict(self._cut_targets(context))
             if not targets:

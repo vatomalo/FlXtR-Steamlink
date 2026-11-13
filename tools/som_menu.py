@@ -121,15 +121,25 @@ class CandyMacro:
                 raise MacroFailed(f"{action} did not produce {what}")
 
     def _close_ring(self):
-        for _ in range(4):
-            try:
-                wram = self._read()
-            except (MacroFailed, OSError):
-                return
+        """Close a lingering item ring and VERIFY the return to field mode.
+
+        Four cancels were insufficient on live Turbo, leaving the agent
+        permanently waiting in ring mode after "Candy failed". Never send
+        buttons in an unrelated event/dialog/transition.
+        """
+        for _ in range(12):
+            wram = self._read()
+            if wram.game_mode() == "field":
+                return True
             if not ring_open(wram):
-                return
+                raise MacroFailed(
+                    f"Candy cleanup blocked: game mode {wram.game_mode()}, "
+                    "not an item ring; refusing blind input")
             self.link.send_action(self.cal.cancel_action)
-            self.sleep(0.25)
+            self.sleep(0.35)
+        if self._read().game_mode() == "field":
+            return True
+        raise MacroFailed("Candy cleanup failed: ring still open after 12 cancels")
 
     def ready(self, wram):
         """Why Candy cannot be used now, or None when it can."""

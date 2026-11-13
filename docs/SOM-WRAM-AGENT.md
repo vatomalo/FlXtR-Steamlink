@@ -74,6 +74,36 @@ python3 tools/som_qwen_bridge.py --ring-control --wram-remote \
 The bridge process must already be running (or supervised as a SkyLoft
 service). The Steam Link ring cannot itself launch a process on SkyLoft.
 
+## Keep the SkyLoft bridge running
+
+Install the provided user service from the AI checkout as the normal SkyLoft
+user (not with `sudo`):
+
+```sh
+git switch feature/som-ai-memory-agent-20261112
+git pull --ff-only
+bash scripts/install-som-ai-service.sh
+sudo loginctl enable-linger "$USER"
+```
+
+The service waits without controlling the game until the Action Grid gesture
+creates the marker. It then runs continuously (`--steps 0`) until physical
+takeover, game exit, or a safety failure clears the marker. `Restart=always`
+restarts the waiting bridge after a process crash, but a safety stop cannot
+resume movement because the marker is removed first.
+
+Configuration is kept outside Git at `~/.config/flxtr/som-ai.env`. After
+changing the model or objective, restart with:
+
+```sh
+systemctl --user restart flxtr-som-ai.service
+journalctl --user -u flxtr-som-ai.service -f
+```
+
+The service needs passwordless BatchMode SSH to the Steam Link and the selected
+Ollama model already installed locally. Check those independently with
+`ssh -o BatchMode=yes root@100.124.74.13 true` and `ollama list`.
+
 Mapping basis: the live work-map and collision-cache layout follows the
 read-only reverse engineering in `cidwel/som-decomp` (`docs/maps.md` and
 `docs/hero-movement.md`), while the 16×16 block/collision organization is

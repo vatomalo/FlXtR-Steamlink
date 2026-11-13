@@ -101,6 +101,17 @@ def remote_ring_ai_enabled(host: str) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
 
+def clear_remote_ring_ai(host: str) -> None:
+    """End one ring-controlled session using only the fixed marker path."""
+    try:
+        subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=7", host,
+             "rm -f /tmp/flxtr-som-ai-enabled"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
+            check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="root@100.124.74.13")
@@ -121,8 +132,10 @@ def main() -> int:
     parser.add_argument("--start-timeout", type=float, default=300.0,
                         help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
-    if not (1 <= args.steps <= 30) or args.interval < 1.0:
-        parser.error("steps must be 1..30 and interval at least 1 second")
+    if not (0 <= args.steps <= 30) or args.interval < 1.0:
+        parser.error("steps must be 1..30, or 0 for continuous ring control")
+    if args.steps == 0 and not args.ring_control:
+        parser.error("steps=0 is allowed only with --ring-control")
     if args.ollama_url not in ("http://127.0.0.1:11434", "http://localhost:11434"):
         parser.error("only local Ollama is supported for this initial experiment")
     if args.wram_file and args.wram_remote:
@@ -145,10 +158,12 @@ def main() -> int:
         print("[qwen] Action Grid start received", flush=True)
     previous = "none"
     repeated = 0
-    for i in range(args.steps):
+    step = 0
+    while args.steps == 0 or step < args.steps:
         try:
             if args.ring_control and not remote_ring_ai_enabled(args.host):
-                raise ValueError("Action Grid AI signal cleared by physical takeover or game exit")
+                print("[qwen] Action Grid AI stopped by physical takeover or game exit", flush=True)
+                break
             observation = None
             if args.wram_file:
                 observation = WRAM.load(args.wram_file).observe()
@@ -172,15 +187,21 @@ def main() -> int:
                 raise ValueError(f"Repeated action {action!r} four times; stopping")
             if history is not None and observation is not None:
                 history.record(observation, action)
-            print(f"[qwen] {i+1}/{args.steps}: {action}", flush=True)
+            step += 1
+            total = "continuous" if args.steps == 0 else str(args.steps)
+            print(f"[qwen] {step}/{total}: {action}", flush=True)
             if not args.dry_run:
                 send_action(args.host, action)
             previous = action
-            if i+1 < args.steps:
+            if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             print(f"[qwen] stopped safely: {exc}", file=sys.stderr)
+            if args.ring_control:
+                clear_remote_ring_ai(args.host)
             return 1
+    if args.ring_control and args.steps != 0 and step >= args.steps:
+        clear_remote_ring_ai(args.host)
     if history is not None:
         history.close()
     return 0

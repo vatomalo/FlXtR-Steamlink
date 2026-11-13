@@ -35,6 +35,14 @@ class TestPersonality(unittest.TestCase):
         self.assertEqual(voice.observation_event(observation(map_id=130, hp=70)),
                          "map_change")
 
+    def test_persistent_visit_changes_map_change_to_return(self):
+        voice = Personality()
+        self.assertIsNone(voice.observation_event(observation(map_id=131)))
+        self.assertEqual(voice.observation_event(
+            observation(map_id=130), visited_before=True), "map_return")
+        self.assertEqual(voice.observation_event(
+            observation(map_id=129), visited_before=False), "map_change")
+
     def test_no_unrecognized_events(self):
         self.assertIsNone(Personality().speak("cast_fire"))
 

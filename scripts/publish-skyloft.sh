@@ -30,14 +30,16 @@ fi
 if [[ "$action" == --android ]]; then
     echo 'Publishing Android update…'
     bash "$storage/projects/FlXtR/check-signing.sh"
+    publisher="$storage/tools/libexec/flxtr-build/publish-android.py"
+    [[ -f "$publisher" ]] || publisher="$repo/scripts/publish-android.py"
     notes_mount=()
     if [[ -n ${FLXTR_RELEASE_NOTES_FILE:-} ]]; then
         notes_mount=(-v "$FLXTR_RELEASE_NOTES_FILE:/release/notes.md:ro" -e FLXTR_RELEASE_NOTES_FILE=/release/notes.md)
     fi
     docker run --rm -e GH_TOKEN -e "GITHUB_SHA=$sha" -e FLXTR_RELEASE_TITLE -e FLXTR_RELEASE_ARCH \
         "${notes_mount[@]}" \
-        -v "$repo:/src" -v "$cli:/usr/local/bin/gh:ro" \
-        flxtr-android-builder:skyloft python3 scripts/publish-android.py \
+        -v "$repo:/src" -v "$cli:/usr/local/bin/gh:ro" -v "$publisher:/release/publish-android.py:ro" \
+        flxtr-android-builder:skyloft python3 /release/publish-android.py \
         --apk dist/FlXtR-Android-preview.apk --sha "$sha"
 else
     # Steam Link release tags identify source commits. Keep existing published

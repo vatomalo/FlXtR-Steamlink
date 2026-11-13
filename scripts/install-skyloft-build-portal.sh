@@ -18,6 +18,7 @@ install -m 0644 "$repo/web/skyloft/index.html" /var/www/html/index.html
 install -m 0755 "$repo/tools/build_portal.py" "$storage/tools/libexec/flxtr-portal/build_portal.py"
 install -m 0755 "$repo/scripts/flxtr-build" /usr/local/bin/flxtr-build
 install -m 0644 "$repo/scripts/verify-android-abis.py" "$storage/tools/libexec/flxtr-build/verify-android-abis.py"
+install -m 0755 "$repo/scripts/publish-android.py" "$storage/tools/libexec/flxtr-build/publish-android.py"
 for runner in build-skyloft-android.sh build-skyloft-steamlink.sh build-skyloft-desktop.sh publish-skyloft.sh; do
     install -m 0755 -o "$account" -g "$account" "$repo/scripts/$runner" "$storage/tools/libexec/flxtr-build/$runner"
 done

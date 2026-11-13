@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Publish an immutable APK, then advance the Android startup-update channel."""
-import argparse,hashlib,json,os,re,subprocess,tempfile,urllib.request,zipfile
+import argparse,hashlib,json,os,re,subprocess,tempfile,time,urllib.request,zipfile
 from pathlib import Path
 parser=argparse.ArgumentParser();parser.add_argument('--apk',required=True);parser.add_argument('--sha',default=os.environ.get('GITHUB_SHA'));args=parser.parse_args()
 repo='vatomalo/FlXtR-Steamlink';apk=Path(args.apk).resolve()
@@ -33,13 +33,18 @@ with tempfile.TemporaryDirectory(prefix='flxtr-publish-') as directory:
         subprocess.run(['gh','release','upload',tag,'-R',repo,str(metadata),'--clobber'],check=True)
         print(f'Architecture-specific APK published ({arch}); universal auto-update channel kept: {url}')
         raise SystemExit(0)
-    current=0
-    try:
-        address=f'https://github.com/{repo}/releases/download/android-latest/android.json?check='+str(__import__('time').time_ns())
-        current=json.load(urllib.request.urlopen(address,timeout=30))['versionCode']
-    except Exception:
+    current=0;channel_error=None
+    address=f'https://github.com/{repo}/releases/download/android-latest/android.json'
+    for attempt in range(3):
+        try:
+            request=urllib.request.Request(address+'?check='+str(time.time_ns()),headers={'Cache-Control':'no-cache'})
+            current=json.load(urllib.request.urlopen(request,timeout=15))['versionCode'];channel_error=None;break
+        except Exception as error:
+            channel_error=error
+            if attempt<2:time.sleep(2**attempt)
+    if channel_error is not None:
         exists=subprocess.run(['gh','release','view','android-latest','-R',repo],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0
-        if exists:raise RuntimeError('Cannot read current channel; refusing to replace it blindly')
+        if exists:raise RuntimeError('Cannot read current channel after 3 attempts; refusing to replace it blindly') from channel_error
         subprocess.run(['gh','release','create','android-latest','-R',repo,'--target',args.sha,'--prerelease','--title','FlXtR Android startup update channel','--notes','Verified Android startup-update manifest.'],check=True)
     if current<code:
         subprocess.run(['gh','release','upload','android-latest','-R',repo,str(metadata),'--clobber'],check=True)

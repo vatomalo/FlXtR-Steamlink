@@ -16,7 +16,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/publish-android.py'
 
 
 class AndroidPublicationTest(unittest.TestCase):
-    def publish(self, abis):
+    def publish(self, abis, channel=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             apk = root / 'build.apk'
@@ -34,10 +34,11 @@ class AndroidPublicationTest(unittest.TestCase):
                 return SimpleNamespace(returncode=1 if command[:3] == ['gh', 'release', 'view'] else 0)
 
             badging = "package: name='org.flxtr.android' versionCode='11' versionName='test'\nsdkVersion:'26'\n"
+            responses = channel if channel is not None else [io.BytesIO(json.dumps({'versionCode': 10}).encode())]
             with patch.dict(os.environ, FLXTR_RELEASE_NOTES_FILE=str(notes), FLXTR_RELEASE_TITLE='Chosen title'), \
                  patch.object(sys, 'argv', [str(SCRIPT), '--apk', str(apk), '--sha', 'a' * 40]), \
                  patch('subprocess.check_output', return_value=badging), patch('subprocess.run', side_effect=run), \
-                 patch('urllib.request.urlopen', return_value=io.BytesIO(json.dumps({'versionCode': 10}).encode())), \
+                 patch('urllib.request.urlopen', side_effect=responses), patch('time.sleep'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 try:
                     runpy.run_path(str(SCRIPT), run_name='__main__')
@@ -55,6 +56,11 @@ class AndroidPublicationTest(unittest.TestCase):
 
     def test_universal_advances_update_channel(self):
         calls = self.publish(['arm64-v8a', 'armeabi-v7a'])
+        self.assertTrue(any(command[:4] == ['gh', 'release', 'upload', 'android-latest'] for command in calls))
+
+    def test_universal_channel_read_retries_transient_timeouts(self):
+        current = io.BytesIO(json.dumps({'versionCode': 10}).encode())
+        calls = self.publish(['arm64-v8a', 'armeabi-v7a'], [TimeoutError(), TimeoutError(), current])
         self.assertTrue(any(command[:4] == ['gh', 'release', 'upload', 'android-latest'] for command in calls))
 
     def test_stale_universal_apk_cannot_satisfy_arm64_request(self):

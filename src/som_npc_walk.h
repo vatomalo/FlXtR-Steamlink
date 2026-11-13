@@ -26,8 +26,13 @@
 #define SOM_NPC_LAST_SLOT 11u
 #define SOM_NPC_MAX_FRAMES 32u
 #define SOM_NPC_OBJECT(slot) (0xE000u+(unsigned)(slot)*0x200u)
+#ifdef __ANDROID__
+#define SOM_NPC_COMMAND_FILE "/data/user/0/org.flxtr.android/files/som-ai/flxtr-som-npc-command"
+#define SOM_NPC_ENABLE_FILE "/data/user/0/org.flxtr.android/files/som-ai/som_ai_living_world_enable"
+#else
 #define SOM_NPC_COMMAND_FILE "/tmp/flxtr-som-npc-command"
 #define SOM_NPC_ENABLE_FILE "/home/apps/retroarch/cores/experimental/som_ai_living_world_enable"
+#endif
 
 typedef struct {
     unsigned map, slot, kind, x, y, dir, frames;

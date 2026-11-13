@@ -62,6 +62,7 @@ STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
     "step_up": (0, -1), "step_down": (0, 1),
 }
+HOLD_MIN_STRAIGHT = 4
 SMOOTH_INTENTIONS = {"explore_frontier", "engage_enemy", "return_to_inn",
                      "survive", "replan", "go_to_shop"}
 # follow_taught_path deliberately keeps short pulses on unverified tiles.
@@ -273,7 +274,7 @@ def prefer_open_step(action: str, observation, previous: str) -> str:
     return action
 
 def extend_clear_exploration(action: str, observation, intention: str,
-                             remaining_tiles=None) -> str:
+                             remaining_tiles=None, straight_tiles=None) -> str:
     """Use a held direction when the full observed line is clear.
 
     The proxy lets each new command replace an unfinished hold, so re-sending
@@ -281,6 +282,11 @@ def extend_clear_exploration(action: str, observation, intention: str,
     steers immediately; the hold length only bounds a stalled planner.
     """
     if intention not in SMOOTH_INTENTIONS or action not in LONG_MOVES:
+        return action
+    # A hold walks about four tiles. Without a straight run that long it
+    # carries the hero past the route's next corner, the route then points
+    # back, and the hero swings left-right around the turn.
+    if not isinstance(straight_tiles, int) or straight_tiles < HOLD_MIN_STRAIGHT:
         return action
     # Brake for the last few tiles so a target is not overshot.
     if isinstance(remaining_tiles, int) and remaining_tiles < 3:
@@ -822,7 +828,8 @@ def main() -> int:
             sent_action = extend_clear_exploration(
                 action, observation,
                 decision.intention if args.policy in ("hybrid", "memory") else "qwen",
-                decision.remaining_tiles if args.policy in ("hybrid", "memory") else None)
+                decision.remaining_tiles if args.policy in ("hybrid", "memory") else None,
+                decision.straight_tiles if args.policy in ("hybrid", "memory") else None)
             if sent_action != action:
                 print(f"[ai] smooth clear route: {action} -> {sent_action}", flush=True)
             actor = ((observation or {}).get("tile_context") or {}).get("actor") or {}

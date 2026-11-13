@@ -299,6 +299,17 @@ class TestMemoryPlanner(unittest.TestCase):
         state["tile_context"]["map_size_tiles"] = [64, 64]
         self.assertNotEqual(MemoryPlanner().decide(state).intention, "engage_enemy")
 
+    def test_route_reports_how_far_it_runs_straight(self):
+        # Corridor: right 2 tiles, then up 5.
+        cells = {(x, 9): "open" for x in range(0, 3)}
+        cells.update({(2, y): "open" for y in range(4, 9)})
+        routes = MemoryPlanner._routes((0, 9), cells, (16, 16))
+        self.assertEqual(routes[(2, 4)][0], "step_right")
+        self.assertEqual(routes.straight((2, 4)), 2)
+        cells.update({(x, 9): "open" for x in range(3, 9)})
+        routes = MemoryPlanner._routes((0, 9), cells, (16, 16))
+        self.assertEqual(routes.straight((8, 9)), 8)
+
     def test_low_health_uses_learned_safe_route_without_fighting(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "safe.sqlite")

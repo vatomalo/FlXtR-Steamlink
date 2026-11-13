@@ -39,6 +39,32 @@ class PlannerDecision:
     reason: str
     intention: str = "observe"
     remaining_tiles: int | None = None
+    # How many tiles the route continues in the direction of `action`. Long
+    # held moves overshoot corners, so the bridge holds only on straight runs.
+    straight_tiles: int | None = None
+
+
+class RouteMap(dict):
+    """{position: (first action, distance)} plus how each was first reached."""
+
+    def __init__(self, start):
+        super().__init__({start: (None, 0)})
+        self.start = start
+        self.parents = {}
+
+    def straight(self, target):
+        """Tiles walked in the first direction before the route to target turns."""
+        steps, position = [], target
+        while position != self.start and position in self.parents:
+            position, action = self.parents[position]
+            steps.append(action)
+        steps.reverse()
+        run = 0
+        for action in steps:
+            if action != steps[0]:
+                break
+            run += 1
+        return run
 
 
 class MemoryPlanner:
@@ -251,7 +277,7 @@ class MemoryPlanner:
         Searches (position, height) states so a bridge reached up a ramp is
         usable even though, seen from the river bank, its ends look like walls.
         """
-        routes = {start: (None, 0)}
+        routes = RouteMap(start)
         seen = {(start, height)}
         queue = deque([(start, height, None, 0)])
         while queue:
@@ -270,6 +296,7 @@ class MemoryPlanner:
                 step = action if first is None else first
                 if neighbor not in routes:
                     routes[neighbor] = (step, distance + 1)
+                    routes.parents[neighbor] = (position, action)
                 queue.append((neighbor, after, step, distance + 1))
         return routes
 
@@ -350,7 +377,7 @@ class MemoryPlanner:
         self._set_intention(intention)
         return PlannerDecision(action,
                                f"frontier {target[0]},{target[1]} is {distance} known tiles away",
-                               "explore_frontier", distance)
+                               "explore_frontier", distance, routes.straight(target))
 
     def _combat(self, observation, context, open_steps, directive=None):
         actor = context["actor"]
@@ -419,9 +446,9 @@ class MemoryPlanner:
         # sent the hero up into a dead end and back down, over and over.
         routed = self._route_toward(context, dx, dy, open_steps)
         if routed:
-            action, tiles = routed
+            action, tiles, straight = routed
             return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px "
-                                   f"({tiles} known tiles)", "engage_enemy", tiles)
+                                   f"({tiles} known tiles)", "engage_enemy", tiles, straight)
         action = self._approach_direction(dx, dy, open_steps)
         if action and distance <= CLOSE_QUARTERS_PX:
             return PlannerDecision(action, f"close on enemy {enemy['slot']} at {distance}px",
@@ -451,10 +478,10 @@ class MemoryPlanner:
                    abs(self._wrapped_delta(goal[1], position[1], size[1])))
             if gap >= start_gap:
                 continue
-            candidate = (gap, distance, first)
+            candidate = (gap, distance, first, position)
             if best is None or candidate < best:
                 best = candidate
-        return (best[2], best[1]) if best else None
+        return (best[2], best[1], routes.straight(best[3])) if best else None
 
     def _travel(self, context, anchor, open_steps, place, travel_intent, arrive_intent):
         """Follow learned maps and tiles to a taught place; None if no route."""
@@ -486,7 +513,7 @@ class MemoryPlanner:
                 if action in open_steps:
                     return PlannerDecision(action,
                                            f"go to learned {place} ({distance} tiles)",
-                                           travel_intent, distance)
+                                           travel_intent, distance, routes.straight(target))
                 if action in self._cut_steps(context):
                     return self._cut(context, action)
             # Scanned collision islands can be disconnected when the agent

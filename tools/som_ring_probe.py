@@ -55,20 +55,27 @@ def main():
         if not ring_open(opened):
             raise SystemExit("ring-open byte 7E007D is not 1; is the ring open?")
         kind = opened.u8(RING_KIND)
-        snaps = [opened]
-        for turn in range(args.rotations):
-            prompt(f"3.{turn + 1} Rotate the ring ONE item to the RIGHT")
-            snaps.append(snapshot(link))
-        candidates = find_cursor_candidates(snaps, items)
-        print(f"   cursor candidates: {[(hex(a), s) for a, s in candidates][:8]}")
-        if len(candidates) != 1:
-            raise SystemExit("need exactly one candidate; rerun with --rotations 6")
-        address, step = candidates[0]
+        if items == 1:
+            # A one-item ring cannot rotate, so Candy is always selected.
+            # The macro re-checks this and asks for recalibration once
+            # another item type is picked up.
+            print("   Only one item type: no rotation needed, Candy is always selected.")
+            address, step, candy_cursor = None, 1, 0
+        else:
+            snaps = [opened]
+            for turn in range(args.rotations):
+                prompt(f"3.{turn + 1} Rotate the ring ONE item to the RIGHT")
+                snaps.append(snapshot(link))
+            candidates = find_cursor_candidates(snaps, items)
+            print(f"   cursor candidates: {[(hex(a), s) for a, s in candidates][:8]}")
+            if len(candidates) != 1:
+                raise SystemExit("need exactly one candidate; rerun with --rotations 6")
+            address, step = candidates[0]
 
-        prompt("4. Rotate until Candy is selected (do not press confirm)")
-        candy_view = snapshot(link)
-        candy_cursor = candy_view.u8(address)
-        print(f"   Candy cursor value {candy_cursor} at {address:#08x}")
+            prompt("4. Rotate until Candy is selected (do not press confirm)")
+            candy_view = snapshot(link)
+            candy_cursor = candy_view.u8(address)
+            print(f"   Candy cursor value {candy_cursor} at {address:#08x}")
 
         prompt("5. Close the ring menu and stand still. The tool will now press "
                "Open Ring and Cancel itself")
@@ -95,7 +102,7 @@ def main():
             "confirm_action": "confirm", "item_ring_kind": kind,
             "cursor_address": address, "cursor_step": step,
             "rotate_action": "step_right", "candy_cursor": candy_cursor,
-            "candy_slot": slot})
+            "candy_slot": slot, "item_types": items})
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(calibration.to_json(), indent=2) + "\n")
         print(f"\nSaved {args.output}: open={open_action} cancel={cancel_action} "

@@ -92,6 +92,18 @@ class TestCandyMacro(unittest.TestCase):
         self.assertEqual(game.sent.count("confirm"), 2)
         self.assertEqual(game.get(RING_OPEN), 0)
 
+    def test_single_item_ring_needs_no_rotation(self):
+        game = FakeGame(items=(0x20,))
+        self.assertEqual(run(game, calibration(cursor_address=None, item_types=1)), 60)
+        self.assertNotIn("step_right", game.sent)
+
+    def test_single_item_calibration_refuses_after_new_item_type(self):
+        game = FakeGame(items=(0x20, 0x41))
+        with self.assertRaises(MacroFailed) as raised:
+            run(game, calibration(cursor_address=None, item_types=1))
+        self.assertIn("rerun", str(raised.exception))
+        self.assertEqual(game.sent, [])
+
     def test_wrong_open_button_fails_closed(self):
         game = FakeGame(opener="menu_x")
         with self.assertRaises(MacroFailed):

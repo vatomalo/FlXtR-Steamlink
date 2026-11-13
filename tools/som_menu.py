@@ -64,7 +64,10 @@ class Calibration:
         self.cancel_action = data.get("cancel_action", "cancel")
         self.confirm_action = data.get("confirm_action", "confirm")
         self.item_ring_kind = int(data["item_ring_kind"])
-        self.cursor_address = int(data["cursor_address"])
+        # None: calibrated with a one-item ring, which never rotates.
+        self.cursor_address = (None if data["cursor_address"] is None
+                               else int(data["cursor_address"]))
+        self.item_types = int(data.get("item_types", 0))
         self.cursor_step = int(data["cursor_step"])
         self.rotate_action = data.get("rotate_action", "step_right")
         self.candy_cursor = int(data["candy_cursor"])
@@ -83,7 +86,8 @@ class Calibration:
                 "item_ring_kind": self.item_ring_kind,
                 "cursor_address": self.cursor_address, "cursor_step": self.cursor_step,
                 "rotate_action": self.rotate_action,
-                "candy_cursor": self.candy_cursor, "candy_slot": self.candy_slot}
+                "candy_cursor": self.candy_cursor, "candy_slot": self.candy_slot,
+                "item_types": self.item_types}
 
 
 class MacroFailed(Exception):
@@ -136,6 +140,11 @@ class CandyMacro:
             return "no Candy in inventory"
         if slot != self.cal.candy_slot:
             return f"Candy moved to inventory slot {slot}; recalibrate the ring"
+        if self.cal.cursor_address is None:
+            types = len([item for item in wram.inventory() if item["verified"]])
+            if types != 1:
+                return ("calibrated with Candy as the only item; you now carry "
+                        f"{types} item types, rerun tools/som_ring_probe.py")
         return None
 
     def run(self):
@@ -152,7 +161,7 @@ class CandyMacro:
                 raise MacroFailed(f"ring opened on kind {wram.u8(RING_KIND)}, "
                                   f"not the item ring {self.cal.item_ring_kind}")
             address = self.cal.cursor_address
-            for _ in range(16):
+            for _ in range(16 if address is not None else 0):
                 cursor = wram.u8(address)
                 if cursor == self.cal.candy_cursor:
                     break
@@ -161,7 +170,8 @@ class CandyMacro:
                                          lambda w: w.u8(address) != before,
                                          timeout=0.8, what="ring rotation")
             else:
-                raise MacroFailed("Candy not reached after 16 ring rotations")
+                if address is not None:
+                    raise MacroFailed("Candy not reached after 16 ring rotations")
             self.log("[candy] Candy selected; confirming")
             # Item select, then target select (leader is the default target).
             self.link.send_action(self.cal.confirm_action)

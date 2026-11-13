@@ -310,6 +310,18 @@ class MemoryPlanner:
                     return PlannerDecision(action,
                                            f"return to learned inn/safe point ({distance} tiles)",
                                            "return_to_inn", distance)
+            # Scanned collision islands can be disconnected when the agent
+            # crossed an area before map learning was enabled. Keep a stable
+            # heading toward the observed exit while checking every next tile.
+            size = tuple(context["map_size_tiles"])
+            dx = self._wrapped_delta(target[0], position[0], size[0])
+            dy = self._wrapped_delta(target[1], position[1], size[1])
+            action = self._approach_direction(dx, dy, open_steps)
+            if action:
+                return PlannerDecision(action,
+                                       f"head toward learned inn exit at {target[0]},{target[1]} "
+                                       f"vector dx={dx},dy={dy}",
+                                       "return_to_inn")
 
         if threat_retreat:
             return PlannerDecision(threat_retreat,

@@ -78,6 +78,17 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertEqual(route.intention, "return_to_inn")
             history.close()
 
+    def test_low_health_keeps_heading_to_disconnected_safe_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "safe-heading.sqlite")
+            history.set_agent_state("safe_anchor",
+                                    {"map_id": 131, "layer": 1, "target": [7, 3]})
+            planner = MemoryPlanner(history)
+            decision = planner.decide(observation(hp=20, max_hp=100))
+            self.assertEqual(decision.action, "step_left")
+            self.assertIn("learned inn", decision.reason)
+            history.close()
+
     def test_combat_intention_survives_transient_missing_enemy(self):
         enemy = {"slot": 1, "active": True, "x_px": 120, "y_px": 56}
         planner = MemoryPlanner()

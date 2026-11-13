@@ -140,6 +140,29 @@ def cross_check(found, seen):
     return seen & ids, seen - ids
 
 
+def tile_near_hero(wram, distance=2):
+    """An open tile `distance` steps from the hero (verified grid), or None.
+
+    Two tiles leave room to turn and swing; straight lines are preferred.
+    """
+    context = wram.tile_context(radius=3)
+    if not context.get("runtime_verified"):
+        return None
+    rows, radius = context["passability_rows"], context["radius"]
+    hero_x, hero_y = context["actor_tile"]
+    width, height = context["map_size_tiles"]
+    choices = []
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if abs(dx) + abs(dy) != distance or rows[radius + dy][radius + dx] != ".":
+                continue
+            choices.append((0 if dx == 0 or dy == 0 else 1, dy, dx))
+    if not choices:
+        return None
+    _, dy, dx = min(choices)
+    return (hero_x + dx) % width, (hero_y + dy) % height
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -149,6 +172,8 @@ def main():
                         help="spawn: ordinary monster id 0x00-0x56 (default Rabite)")
     parser.add_argument("--map", type=int, help="map id (default: the current map)")
     parser.add_argument("--host", default="root@100.124.74.13")
+    parser.add_argument("--near-hero", action="store_true",
+                        help="spawn: also move the record's spawn tile next to the hero")
     parser.add_argument("--allow-npc", action="store_true",
                         help="also allow replacing NPC/chest records (may break events)")
     args = parser.parse_args()
@@ -196,13 +221,30 @@ def main():
     monster = RABITE if args.command == "rabite" or args.monster is None else args.monster
     if not 0 <= monster <= LAST_MONSTER:
         raise SystemExit(f"{monster:#04x} is not an ordinary monster id (0x00-0x56)")
-    if record["id"] == monster:
-        raise SystemExit(f"that record already is id {monster:#04x}")
-    offset, expected = record["offset"] + 5, record["id"]
-    remote(args.host, f"printf 'patch %06x %02x %02x\\n' {offset} {expected} {monster} "
-                      f">> {PATCH_FILE}")
-    print(f"Map {map_id} record {args.record} (id {expected:#04x} at tile "
-          f"({record['x']},{record['y']})) will spawn as monster {monster:#04x}.")
+    lines = []
+    if record["id"] != monster:
+        lines.append((record["offset"] + 5, record["id"], monster))
+    where = f"tile ({record['x']},{record['y']})"
+    if args.near_hero:
+        if map_id != here:
+            raise SystemExit("--near-hero needs the hero standing on that map")
+        tile = tile_near_hero(wram)
+        if tile is None:
+            raise SystemExit("no verified open tile two steps from the hero; move a bit")
+        old_x, old_y = rom[record["offset"] + 2], rom[record["offset"] + 3]
+        new_x, new_y = (old_x & 0x80) | tile[0], (old_y & 0x80) | tile[1]
+        for offset, old, new in ((record["offset"] + 2, old_x, new_x),
+                                 (record["offset"] + 3, old_y, new_y)):
+            if old != new:
+                lines.append((offset, old, new))
+        where = f"tile ({tile[0]},{tile[1]}) next to the hero"
+    if not lines:
+        raise SystemExit(f"that record already is id {monster:#04x} at that tile")
+    for offset, expected, value in lines:
+        remote(args.host, f"printf 'patch %06x %02x %02x\\n' {offset} {expected} {value} "
+                          f">> {PATCH_FILE}")
+    print(f"Map {map_id} record {args.record} (id {record['id']:#04x}) will spawn as "
+          f"monster {monster:#04x} at {where}.")
     print("Quit and relaunch Turbo, then enter that map. Undo: "
           "python3 tools/som_map_records.py clear")
     return 0

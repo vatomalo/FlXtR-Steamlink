@@ -1,7 +1,8 @@
 """Map object-record parsing on a synthetic ROM; no network or ROM needed."""
 import unittest
 
-from som_map_records import BANK_C8, TABLE, RecordError, cross_check, records
+from som_map_records import (BANK_C8, TABLE, RecordError, cross_check, records,
+                              tile_near_hero)
 
 
 def synthetic_rom():
@@ -46,6 +47,25 @@ class TestCrossCheck(unittest.TestCase):
         self.assertEqual(cross_check(found, {5, 10}), ({5}, {10}))
         # Turbo map 129: only extra monsters seen, records unconfirmed.
         self.assertEqual(cross_check(found, {10}), (set(), {10}))
+
+
+class FakeWram:
+    def __init__(self, rows, verified=True):
+        self.rows, self.verified = rows, verified
+
+    def tile_context(self, radius=3):
+        return {"runtime_verified": self.verified, "passability_rows": self.rows,
+                "radius": 3, "actor_tile": [10, 20], "map_size_tiles": [64, 72]}
+
+
+class TestNearHero(unittest.TestCase):
+    def test_picks_an_open_tile_two_steps_away_in_a_straight_line(self):
+        rows = ["#######", "#######", "###.###", "##.@..#",
+                "#######", "#######", "#######"]
+        self.assertEqual(tile_near_hero(FakeWram(rows)), (12, 20))   # two right
+        rows[3] = "##.@.##"
+        self.assertIsNone(tile_near_hero(FakeWram(rows)))
+        self.assertIsNone(tile_near_hero(FakeWram(["......."] * 7, verified=False)))
 
 
 if __name__ == "__main__":

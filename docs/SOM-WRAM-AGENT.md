@@ -19,6 +19,10 @@ new handshake each time.
 Qwen inference runs on a daemon director thread: loading a larger CPU model can
 take tens of seconds, but the safe planner continues acting on its previous
 directive instead of freezing the player while it waits.
+The live loop polls at 250 ms, combines marker validation and WRAM transfer in
+one SSH round trip, and converts exploration steps to half-second holds only
+when every tile across the verified three-tile lookahead is open. Combat and
+uncertain routes retain short six-frame pulses.
 
 The observation also reports each hero's controller binding and native Action
 Grid behavior/cell/charge settings. Unbound companions already execute the

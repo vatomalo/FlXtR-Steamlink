@@ -3,7 +3,7 @@ import unittest
 
 from som_qwen_bridge import (
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
-    parse_directive, prefer_open_step)
+    parse_directive, prefer_open_step, extend_clear_exploration)
 
 
 class TestTileGuard(unittest.TestCase):
@@ -48,6 +48,21 @@ class TestTileGuard(unittest.TestCase):
     def test_wait_stays_when_no_open_tile_exists(self):
         state = self.observation(["###", "#@#", "###"])
         self.assertEqual(prefer_open_step("wait", state, "none"), "wait")
+
+    def test_extends_only_fully_clear_exploration_routes(self):
+        clear = {"tile_context": {"runtime_verified": True, "game_mode": "field",
+                                  "radius": 3, "passability_rows": ["......."] * 7}}
+        self.assertEqual(
+            extend_clear_exploration("step_right", clear, "explore_frontier"), "right")
+        self.assertEqual(
+            extend_clear_exploration("step_right", clear, "engage_enemy"), "step_right")
+        blocked = {"tile_context": dict(clear["tile_context"])}
+        blocked["tile_context"]["passability_rows"] = [".......", ".......", ".......",
+                                                          "...@.#.", ".......", ".......",
+                                                          "......."]
+        self.assertEqual(
+            extend_clear_exploration("step_right", blocked, "explore_frontier"),
+            "step_right")
 
 
 class TestParseAction(unittest.TestCase):

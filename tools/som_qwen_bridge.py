@@ -51,6 +51,8 @@ STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
     "step_up": (0, -1), "step_down": (0, 1),
 }
+LONG_MOVES = {"step_right": "right", "step_left": "left",
+              "step_up": "up", "step_down": "down"}
 OPPOSITE_STEP = {
     "step_right": "step_left", "step_left": "step_right",
     "step_up": "step_down", "step_down": "step_up",
@@ -221,10 +223,41 @@ def prefer_open_step(action: str, observation, previous: str) -> str:
             return step
     return action
 
+def extend_clear_exploration(action: str, observation, intention: str) -> str:
+    """Use a half-second hold only when the full observed line is clear."""
+    if intention != "explore_frontier" or action not in LONG_MOVES:
+        return action
+    context = observation.get("tile_context") if isinstance(observation, dict) else None
+    if (not isinstance(context, dict) or not context.get("runtime_verified") or
+            context.get("game_mode") != "field"):
+        return action
+    rows, radius = context.get("passability_rows"), context.get("radius")
+    if not isinstance(rows, list) or not isinstance(radius, int) or radius < 2:
+        return action
+    dx, dy = STEP_OFFSETS[action]
+    for distance in range(1, radius + 1):
+        row, column = radius + dy * distance, radius + dx * distance
+        if not (0 <= row < len(rows) and isinstance(rows[row], str) and
+                0 <= column < len(rows[row]) and rows[row][column] == "."):
+            return action
+    return LONG_MOVES[action]
+
 def send_action(host: str, action: str) -> None:
     # stdin carries an allowlisted command. No LLM text is interpolated into shell.
     cmd = [*SSH_BASE, host, "cat > /tmp/flxtr-som-ai-action"]
     subprocess.run(cmd, input=action + "\n", text=True, check=True, timeout=15)
+
+def fetch_remote_wram(host: str, require_marker=False):
+    """Read marker and WRAM in one SSH round trip; None means clean takeover."""
+    remote = ("test -f /tmp/flxtr-som-ai-enabled || exit 44; "
+              if require_marker else "") + "cat /tmp/flxtr-som-wram.bin"
+    result = subprocess.run([*SSH_BASE, host, remote], capture_output=True, timeout=15)
+    if require_marker and result.returncode == 44:
+        return None
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, result.args,
+                                            output=result.stdout, stderr=result.stderr)
+    return result.stdout
 
 def remote_ring_ai_enabled(host: str) -> bool:
     try:
@@ -256,7 +289,7 @@ def main() -> int:
                         help="hybrid uses Qwen for intentions and WRAM planning for execution")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
     parser.add_argument("--steps", type=int, default=5)
-    parser.add_argument("--interval", type=float, default=0.5)
+    parser.add_argument("--interval", type=float, default=0.25)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--wram-file", type=Path,
                         help="Path to raw 128-KiB WRAM dump; reread each step")
@@ -306,17 +339,15 @@ def main() -> int:
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
-            if args.ring_control and not remote_ring_ai_enabled(args.host):
-                print("[ai] stopped by physical takeover or game exit", flush=True)
-                break
             observation = None
             if args.wram_file:
                 observation = WRAM.load(args.wram_file).observe()
             elif args.wram_remote:
                 # Fixed remote path; no model-generated command or file path.
-                raw = subprocess.run(
-                    [*SSH_BASE, args.host, "cat /tmp/flxtr-som-wram.bin"],
-                    capture_output=True, check=True, timeout=15).stdout
+                raw = fetch_remote_wram(args.host, args.ring_control)
+                if raw is None:
+                    print("[ai] stopped by physical takeover or game exit", flush=True)
+                    break
                 observation = WRAM(raw).observe()
             if args.policy in ("hybrid", "memory"):
                 context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
@@ -412,8 +443,13 @@ def main() -> int:
             step += 1
             total = "continuous" if args.steps == 0 else str(args.steps)
             print(f"[ai] {step}/{total}: {action}", flush=True)
+            sent_action = extend_clear_exploration(
+                action, observation,
+                decision.intention if args.policy in ("hybrid", "memory") else "qwen")
+            if sent_action != action:
+                print(f"[ai] smooth clear route: {action} -> {sent_action}", flush=True)
             if not args.dry_run:
-                send_action(args.host, action)
+                send_action(args.host, sent_action)
             previous = action
             if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)

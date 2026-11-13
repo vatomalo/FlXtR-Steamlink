@@ -183,13 +183,12 @@ class CandyMacro:
                 if address is not None:
                     raise MacroFailed("Candy not reached after 16 ring rotations")
             self.log("[candy] Candy selected; confirming")
-            # Item select, then target select (leader is the default target).
-            self.link.send_action(self.cal.confirm_action)
-            self.sleep(0.35)
-            self.link.send_action(self.cal.confirm_action)
-            deadline = self.clock() + 3.0
-            while self.clock() < deadline:
-                self.sleep(0.1)
+            # This Turbo build sometimes requires an extra target confirmation.
+            # Two B taps without a release/acknowledgement were insufficient:
+            # the hero reached target selection, waited 3s and died.
+            # Between presses, send an explicit release and inspect fresh WRAM.
+            # At most three taps, and NEVER confirm once the ring is gone.
+            for attempt in range(3):
                 wram = self._read()
                 hp = wram.character(0)["hp"]
                 count = next((item["count"] for item in wram.inventory()
@@ -197,7 +196,30 @@ class CandyMacro:
                 if hp > hero_hp or count < candy_count:
                     self._close_ring()
                     return hp - hero_hp
-            raise MacroFailed("no HP gain or Candy use observed")
+                if wram.game_mode() != "ring" or not ring_open(wram):
+                    raise MacroFailed(
+                        f"Candy confirmation stopped: game mode {wram.game_mode()}")
+                if wram.u8(RING_KIND) != self.cal.item_ring_kind:
+                    raise MacroFailed("Candy confirmation stopped: changed ring kind")
+                self.log(f"[candy] confirm {attempt+1}/3")
+                self.link.send_action(self.cal.confirm_action)
+                self.sleep(0.18)
+                self.link.send_action("wait")  # release B for a new button edge
+                self.sleep(0.20)
+                deadline = self.clock() + 0.35
+                while self.clock() < deadline:
+                    self.sleep(0.08)
+                    wram = self._read()
+                    hp = wram.character(0)["hp"]
+                    count = next((item["count"] for item in wram.inventory()
+                                  if item["name"] == "candy" and item["verified"]), 0)
+                    if hp > hero_hp or count < candy_count:
+                        self._close_ring()
+                        return hp - hero_hp
+                    if wram.game_mode() != "ring" or not ring_open(wram):
+                        raise MacroFailed(
+                            f"Candy confirmation stopped: game mode {wram.game_mode()}")
+            raise MacroFailed("3 Candy confirmations sent without verified item use")
         except MacroFailed:
             self._close_ring()
             raise

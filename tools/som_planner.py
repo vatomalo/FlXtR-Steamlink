@@ -1,4 +1,5 @@
 """Persistent, intention-driven, fail-closed field planner for Secret of Mana."""
+import math
 from collections import deque
 from dataclasses import dataclass
 
@@ -33,6 +34,14 @@ STALL_BLOCK_DECISIONS = 200
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
 FACING_MIN_CONFIRMED = 3
+# An enemy this far sideways still counts as in front when it is no farther
+# sideways than ahead.
+FRONT_SIDE_PX = 20
+# Two enemies within this box whose directions have a cosine below
+# SPLIT_COSINE are "on opposite sides"; a step must raise it by SPLIT_GAIN.
+SPLIT_RANGE_PX = 48
+SPLIT_COSINE = -0.3
+SPLIT_GAIN = 0.5
 # Back away from an unprofitable enemy type closer than this (weapon reach).
 AVOID_DISTANCE_PX = 64
 
@@ -46,6 +55,9 @@ class PlannerDecision:
     # How many tiles the route continues in the direction of `action`. Long
     # held moves overshoot corners, so the bridge holds only on straight runs.
     straight_tiles: int | None = None
+    # A tap that only turns the hero (toward an adjacent enemy or grass);
+    # not moving is expected, so stall detection ignores it.
+    turn_only: bool = False
 
 
 class RouteMap(dict):
@@ -97,6 +109,8 @@ class MemoryPlanner:
         self.local_avoided = set()
         # Facing byte cross-check: [steps agreeing, steps disagreeing].
         self.facing_checks = [0, 0]
+        # Facing assumed from the last step sent while E010 is unverified.
+        self.assumed_facing = None
         self.last_pixel = None
 
     @staticmethod
@@ -455,6 +469,11 @@ class MemoryPlanner:
             return None
         distance, dx, dy, enemy = min(targets, key=lambda value: value[0])
         hero = observation.get("party", [{}])[0]
+        split = self._unsplit([value[3] for value in targets], actor,
+                              (width_px, height_px), open_steps)
+        if split is not None and not (hero.get("max_hp") and
+                                      hero.get("hp", 0) * 4 <= hero["max_hp"]):
+            return split
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
         if (max_hp and hp * 4 <= max_hp) or directive == "avoid_enemy":
             retreat = []
@@ -530,27 +549,77 @@ class MemoryPlanner:
         on the decision before a swing (like facing grass before cutting).
         """
         want = self._toward(dx, dy)
-        facing = (context.get("actor") or {}).get("facing")
-        faced = (facing == want if self.facing_trusted() else
-                 self.previous_action == want)
-        if faced:
+        facing = ((context.get("actor") or {}).get("facing") if self.facing_trusted()
+                  else self.assumed_facing)
+        if self._in_front(facing, dx, dy):
             if ready:
                 return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range, "
                                        f"facing it", "engage_enemy")
             return None
         if want in open_steps:
             return PlannerDecision(want, f"turn to face enemy {enemy['slot']} before "
-                                   "attacking", "engage_enemy")
+                                   "attacking", "engage_enemy", turn_only=True)
         # Cannot turn that way through a wall: try the other axis toward it.
         other = ("step_down" if dy > 0 else "step_up") if want in ("step_left", "step_right") \
             else ("step_right" if dx > 0 else "step_left")
         if other in open_steps and abs(dy if other in ("step_up", "step_down") else dx) >= 8:
             return PlannerDecision(other, f"turn toward enemy {enemy['slot']} (wall "
-                                   "on the direct side)", "engage_enemy")
+                                   "on the direct side)", "engage_enemy", turn_only=True)
         if ready:
             return PlannerDecision("attack", f"enemy {enemy['slot']} in range; cannot turn "
                                    "toward it, swinging anyway", "engage_enemy")
         return None
+
+    @staticmethod
+    def _in_front(facing, dx, dy):
+        """Enemy ahead of the facing and not farther sideways than ahead."""
+        if facing not in STEP_OFFSETS:
+            return False
+        fx, fy = STEP_OFFSETS[facing]
+        along, side = dx * fx + dy * fy, abs(dx * fy) + abs(dy * fx)
+        return along > 0 and side <= max(along, FRONT_SIDE_PX)
+
+    def _unsplit(self, enemies, actor, size_px, open_steps):
+        """Step out from between two enemies on opposite sides, or None.
+
+        Fighting one with the other behind lets the second hit the hero's
+        back on every swing (user report). The open step that puts both on
+        one side (largest cosine between them afterwards) is taken when it
+        clearly helps and keeps a little room to each.
+        """
+        near = []
+        for enemy in enemies:
+            dx = self._wrapped_delta(enemy["x_px"], actor["x_px"], size_px[0])
+            dy = self._wrapped_delta(enemy["y_px"], actor["y_px"], size_px[1])
+            if abs(dx) <= SPLIT_RANGE_PX and abs(dy) <= SPLIT_RANGE_PX:
+                near.append((abs(dx) + abs(dy), dx, dy, enemy))
+        if len(near) < 2:
+            return None
+        near.sort(key=lambda value: value[0])
+
+        def spread(offsets):
+            (ax, ay), (bx, by) = offsets
+            norm = math.hypot(ax, ay) * math.hypot(bx, by)
+            return (ax * bx + ay * by) / norm if norm else -1.0
+
+        pair = [(dx, dy) for _, dx, dy, _ in near[:2]]
+        now = spread(pair)
+        if now > SPLIT_COSINE:
+            return None
+        best = None
+        for step in open_steps:
+            sx, sy = STEP_OFFSETS[step]
+            moved = [(dx - sx * 16, dy - sy * 16) for dx, dy in pair]
+            if min(abs(x) + abs(y) for x, y in moved) < 12:
+                continue
+            score = spread(moved)
+            if score >= now + SPLIT_GAIN and (best is None or score > best[0]):
+                best = (score, step)
+        if best is None:
+            return None
+        slots = " and ".join(str(enemy["slot"]) for *_, enemy in near[:2])
+        return PlannerDecision(best[1], f"enemies {slots} on opposite sides; stepping out "
+                               "to fight both from one side", "engage_enemy")
 
     def _avoided_identities(self):
         if self.history is not None and hasattr(self.history, "unprofitable_enemies"):
@@ -767,6 +836,8 @@ class MemoryPlanner:
         self.blocked_moves = {key: turns - 1 for key, turns in self.blocked_moves.items()
                               if turns > 1}
         self.previous_action = previous
+        if previous in STEP_OFFSETS:
+            self.assumed_facing = previous
         decision = self._decide(observation, previous, directive, errand)
         return self._check_stall(observation, decision)
 
@@ -816,7 +887,7 @@ class MemoryPlanner:
         key = (context.get("map_id"), tile[0] + dx * distance, tile[1] + dy * distance)
         if self.previous_action != action:
             return PlannerDecision(action, f"face grass at {key[1]},{key[2]} to cut it",
-                                   "cut_grass")
+                                   "cut_grass", turn_only=True)
         attempts = self.cut_attempts.get(key, 0) + 1
         self.cut_attempts[key] = attempts
         if attempts > CUT_ATTEMPTS:
@@ -839,7 +910,8 @@ class MemoryPlanner:
 
     def _check_stall(self, observation, decision):
         context = observation.get("tile_context") if isinstance(observation, dict) else None
-        if not isinstance(context, dict) or decision.action not in STEP_OFFSETS:
+        if (not isinstance(context, dict) or decision.action not in STEP_OFFSETS or
+                decision.turn_only):
             return decision
         actor = context.get("actor") or {}
         position = (context.get("map_id"), actor.get("x_px"), actor.get("y_px"))

@@ -358,6 +358,21 @@ dominant direction, otherwise it taps toward the enemy first (or along the
 other axis when a wall is in the way). Until the byte is trusted it always
 taps toward the enemy on the decision before a swing.
 
+A turn tap toward an adjacent enemy (or grass) does not move the hero, so it
+is never counted by stall detection; before, eight such taps blocked that
+direction for 200 decisions and the hero swung facing the wrong way. An
+enemy counts as in front when it is ahead along the facing and no farther
+sideways than ahead (at least 20 px), so an enemy near the diagonal does not
+cause a new turn before every swing.
+
+### Two enemies on opposite sides
+
+When the two nearest enemies within 48 px are on roughly opposite sides
+(cosine of their directions below -0.3), the hero takes the open step that
+puts both on one side (raising that cosine by at least 0.5, keeping 12 px to
+each), then fights them facing one way. Not at critical HP, and not when no
+open step helps (a corridor): then it fights the nearest.
+
 ## Reward: GP gained, HP lost
 
 Every settled field sample is scored: `+1` per GP gained and `-2` per percent

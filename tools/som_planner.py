@@ -59,6 +59,7 @@ class MemoryPlanner:
         if self.history is not None:
             self.history.remember_position(observation)
             self.history.remember_world(observation)
+            self.history.remember_recovery(observation)
             return
         actor = context["actor"]
         key = (context["map_id"], actor["layer"], *context["actor_tile"])
@@ -97,6 +98,17 @@ class MemoryPlanner:
             self.history.set_agent_state("intention", intention)
         else:
             self.local_intention = intention
+
+    def _get_state(self, key):
+        if self.history is not None:
+            return self.history.get_agent_state(key)
+        return getattr(self, "local_" + key, None)
+
+    def _set_state(self, key, value):
+        if self.history is not None:
+            self.history.set_agent_state(key, value)
+        else:
+            setattr(self, "local_" + key, value)
 
     @staticmethod
     def _routes(start, cells, size):
@@ -246,6 +258,62 @@ class MemoryPlanner:
                                    "engage_enemy")
         return None
 
+    def _survive(self, observation, context, open_steps, critical=False):
+        """Disengage and retrace the learned map toward the inn/safe anchor."""
+        actor = context["actor"]
+        dimensions = context.get("map_size_tiles", [0, 0])
+        width_px, height_px = dimensions[0] * 16, dimensions[1] * 16
+        enemies = [enemy for enemy in observation.get("enemy_slots", [])
+                   if enemy.get("active")]
+        if enemies and open_steps:
+            # Survival outranks the route: first increase distance from the
+            # closest current threat, then continue toward safety.
+            scored = []
+            for action in open_steps:
+                sx, sy = STEP_OFFSETS[action]
+                nearest = min(
+                    abs(self._wrapped_delta(enemy["x_px"], actor["x_px"] + sx * 16,
+                                            width_px)) +
+                    abs(self._wrapped_delta(enemy["y_px"], actor["y_px"] + sy * 16,
+                                            height_px))
+                    for enemy in enemies)
+                scored.append((nearest, action))
+            return PlannerDecision(max(scored)[1],
+                                   "retreat from enemies before returning to inn",
+                                   "return_to_inn")
+
+        anchor = self.history.safe_anchor() if self.history is not None else None
+        if (isinstance(anchor, dict) and anchor.get("map_id") == context.get("map_id") and
+                anchor.get("layer") == actor.get("layer") and
+                isinstance(anchor.get("target"), list)):
+            position = tuple(context["actor_tile"])
+            target = tuple(anchor["target"])
+            cells = self._known_cells(context["map_id"], actor["layer"])
+            routes = self._routes(position, cells, tuple(context["map_size_tiles"]))
+            if target == position:
+                return PlannerDecision("wait", "at learned inn/safe recovery point",
+                                       "recover_at_inn")
+            if target in routes:
+                action, distance = routes[target]
+                if action in open_steps:
+                    return PlannerDecision(action,
+                                           f"return to learned inn/safe point ({distance} tiles)",
+                                           "return_to_inn", distance)
+
+        # No complete learned route yet. Never resume combat: use the least
+        # visited verified tile to search for the recorded return trail.
+        if open_steps:
+            position = tuple(context["actor_tile"])
+            size = tuple(context["map_size_tiles"])
+            action = min(open_steps, key=lambda step: self._visits(
+                context["map_id"], actor["layer"],
+                *self._neighbor(position, STEP_OFFSETS[step], size)))
+            return PlannerDecision(action, "search verified return trail to inn",
+                                   "return_to_inn")
+        if critical and observation.get("weapons_enabled") and enemies:
+            return PlannerDecision("attack", "critical and boxed in by enemy", "survive")
+        return PlannerDecision("wait", "no safe retreat tile", "survive")
+
     @staticmethod
     def _approach_direction(dx, dy, open_steps):
         axes = (["step_right" if dx > 0 else "step_left",
@@ -266,6 +334,20 @@ class MemoryPlanner:
             return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
         open_steps = self._open_steps(context)
         self._remember(observation, context)
+        hero = (observation.get("party") or [{}])[0]
+        hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
+        survival = self._get_state("survival")
+        if max_hp and hp * 2 <= max_hp:
+            survival = {"active": True}
+            self._set_state("survival", survival)
+        if isinstance(survival, dict) and survival.get("active"):
+            # Hysteresis prevents bouncing between fighting and retreating.
+            # Resume only after a real recovery, not one lucky HP tick.
+            if max_hp and hp * 10 >= max_hp * 9:
+                self._set_state("survival", None)
+            else:
+                return self._survive(observation, context, open_steps,
+                                     critical=bool(max_hp and hp * 4 <= max_hp))
         combat = self._combat(observation, context, open_steps, directive)
         if combat is not None:
             return combat

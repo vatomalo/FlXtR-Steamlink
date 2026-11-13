@@ -114,6 +114,7 @@ class TestQwenDirector(unittest.TestCase):
         prompt = build_director_prompt("Find progress", state, "explore_unknown",
                                        ["step_right"], 42)
         self.assertIn("Potos Village", prompt)
+        self.assertIn("Remembered places", prompt)
         self.assertIn("known map cells 42", prompt)
         self.assertIn("explore_east", prompt)
         learned = [{"action": "attack", "damage_dealt": 12}]

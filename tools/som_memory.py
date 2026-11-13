@@ -19,6 +19,9 @@ SOURCE = "https://wiki.superfamicom.org/seiken-densetsu-2"
 TILE_BASES = (0x7F0000, 0x7F4000)
 ATTRIBUTE_BASES = (0x7FB800, 0x7FBC00)
 TILE_SIZE = 16
+ITEM_NAMES = ("candy", "medical_herb", "cup_of_wishes", "faerie_walnut",
+              "royal_jam", "chocolate", "barrel", "magic_rope",
+              "flammie_drum", "moogle_belt", "midge_mallet", "unknown_curative")
 
 
 class WRAM:
@@ -232,8 +235,27 @@ class WRAM:
             "active": targetable,
         }
 
+    def inventory(self):
+        """Decode the documented 11 item-ring slots without modifying WRAM."""
+        items = []
+        for slot in range(11):
+            raw = self.u8(0x7ECC48 + slot)
+            if raw == 0xFF:
+                continue
+            item_id, count_code = raw & 0x0F, raw >> 4
+            # Normal inventory uses even high nibbles 2..8 for quantities 1..4.
+            # Reject hacked/ambiguous values rather than invent availability.
+            valid = item_id < len(ITEM_NAMES) and count_code in (2, 4, 6, 8)
+            items.append({"slot": slot, "id": item_id,
+                          "name": ITEM_NAMES[item_id] if item_id < len(ITEM_NAMES)
+                          else f"unknown_{item_id:x}",
+                          "count": count_code // 2 if valid else None,
+                          "raw": raw, "verified": valid})
+        return items
+
     def observe(self):
         tile_context = self.tile_context()
+        inventory = self.inventory()
         return {
             "source": "raw_wram",
             "map_id": tile_context["map_id"],
@@ -243,11 +265,15 @@ class WRAM:
             "party": [self.character(i) for i in range(3)],
             "pad_bindings": [self.u8(0x7E00D9 + i) for i in range(3)],
             "enemy_slots": [self.enemy(i) for i in range(3)],
+            "inventory": inventory,
+            "candy_count": next((item["count"] for item in inventory
+                                 if item["name"] == "candy" and item["verified"]), 0),
             "limitations": [
                 "Enemy target validation covers the three native monster slots only",
                 "Tile control is trusted only when three independent live actor fields agree",
                 "Turbo-specific map changes still require hardware validation",
-                "Companion availability alone is insufficient to force recruitment"
+                "Companion availability alone is insufficient to force recruitment",
+                "Candy quantity is decoded read-only; Turbo item-ring cursor is not verified"
             ],
         }
 
@@ -256,7 +282,8 @@ class ObservationHistory:
     """SQLite observations plus persistent, map-scoped tile visitation memory."""
 
     def __init__(self, path):
-        self.connection = sqlite3.connect(str(path))
+        self.path = Path(path)
+        self.connection = sqlite3.connect(str(self.path))
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS observations "
             "(id INTEGER PRIMARY KEY, ts REAL NOT NULL, action TEXT, state TEXT NOT NULL)")
@@ -279,6 +306,12 @@ class ObservationHistory:
             "enemy_slot INTEGER, action TEXT, distance_px INTEGER, hero_hp INTEGER, "
             "enemy_hp INTEGER, damage_dealt INTEGER NOT NULL, "
             "damage_taken INTEGER NOT NULL, hero_level INTEGER)")
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS places "
+            "(map_id INTEGER NOT NULL, layer INTEGER NOT NULL, x INTEGER NOT NULL, "
+            "y INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, "
+            "source TEXT NOT NULL, seen INTEGER NOT NULL, last_ts REAL NOT NULL, "
+            "PRIMARY KEY(map_id,layer,x,y,kind))")
         self.connection.commit()
 
     def record(self, state, action=None):
@@ -312,6 +345,14 @@ class ObservationHistory:
         if row and row[0] == encoded:
             return False
         now = time.time()
+        if row:
+            previous = json.loads(row[0])
+            if previous[0] != position[0]:
+                self.remember_place(previous[0], previous[1], previous[2], previous[3],
+                                    "exit", f"exit to map {position[0]}", "map_transition")
+                self.remember_place(position[0], position[1], position[2], position[3],
+                                    "entrance", f"entrance from map {previous[0]}",
+                                    "map_transition")
         self.connection.execute(
             "INSERT INTO tile_visits(map_id,layer,x,y,visits,last_ts) VALUES(?,?,?,?,1,?) "
             "ON CONFLICT(map_id,layer,x,y) DO UPDATE SET "
@@ -322,6 +363,51 @@ class ObservationHistory:
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (encoded,))
         self.connection.commit()
         return True
+
+    def remember_place(self, map_id, layer, x, y, kind, name, source="observed"):
+        """Store a higher-level landmark independently from raw collision tiles."""
+        if not all(isinstance(value, int) for value in (map_id, layer, x, y)):
+            return False
+        now = time.time()
+        self.connection.execute(
+            "INSERT INTO places(map_id,layer,x,y,kind,name,source,seen,last_ts) "
+            "VALUES(?,?,?,?,?,?,?,1,?) ON CONFLICT(map_id,layer,x,y,kind) DO UPDATE SET "
+            "name=excluded.name,source=excluded.source,seen=seen+1,last_ts=excluded.last_ts",
+            (map_id, layer, x, y, str(kind), str(name), str(source), now))
+        self.connection.commit()
+        self.export_map_json()
+        return True
+
+    def place_summary(self, map_id=None):
+        query = "SELECT map_id,layer,x,y,kind,name,source,seen FROM places"
+        values = ()
+        if map_id is not None:
+            query += " WHERE map_id=?"
+            values = (map_id,)
+        query += " ORDER BY map_id,kind,y,x"
+        return [{"map_id": row[0], "layer": row[1], "x": row[2], "y": row[3],
+                 "kind": row[4], "name": row[5], "source": row[6], "seen": row[7]}
+                for row in self.connection.execute(query, values).fetchall()]
+
+    def export_map_json(self, path=None):
+        """Export a human-readable, model-readable atlas beside the SQLite DB."""
+        destination = Path(path) if path else self.path.with_suffix(".map.json")
+        maps = {}
+        for map_id, layer, x, y, kind, seen in self.connection.execute(
+                "SELECT map_id,layer,x,y,kind,seen FROM world_cells "
+                "ORDER BY map_id,layer,y,x"):
+            entry = maps.setdefault(str(map_id), {"known_cells": [], "places": []})
+            entry["known_cells"].append(
+                {"layer": layer, "x": x, "y": y, "kind": kind, "seen": seen})
+        for place in self.place_summary():
+            maps.setdefault(str(place["map_id"]),
+                            {"known_cells": [], "places": []})["places"].append(place)
+        payload = {"format": "flxtr-som-atlas-v1", "maps": maps}
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                             encoding="utf-8")
+        temporary.replace(destination)
+        return destination
 
     def visit_count(self, map_id, layer, x, y):
         row = self.connection.execute(
@@ -386,6 +472,68 @@ class ObservationHistory:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, json.dumps(value, separators=(",", ":"))))
         self.connection.commit()
+
+    @staticmethod
+    def _safe_position(state):
+        """Return a verified position suitable for a recovery anchor."""
+        context = state.get("tile_context") if isinstance(state, dict) else None
+        party = state.get("party") or [] if isinstance(state, dict) else []
+        hero = party[0] if party else {}
+        tile = context.get("actor_tile") if isinstance(context, dict) else None
+        actor = context.get("actor") if isinstance(context, dict) else None
+        enemies = [enemy for enemy in state.get("enemy_slots", [])
+                   if isinstance(enemy, dict) and enemy.get("active")]
+        if (not isinstance(context, dict) or not context.get("runtime_verified") or
+                not isinstance(tile, list) or len(tile) != 2 or
+                not isinstance(actor, dict) or enemies or
+                not hero.get("max_hp") or hero.get("hp") != hero.get("max_hp")):
+            return None
+        return {"map_id": context.get("map_id"), "layer": actor.get("layer"),
+                "target": list(tile)}
+
+    def safe_anchor(self):
+        """Return the learned inn/safe position, bootstrapping old runs once."""
+        anchor = self.get_agent_state("safe_anchor")
+        if isinstance(anchor, dict):
+            return anchor
+        # Prefer an early full-health, enemy-free Potos observation. This makes
+        # existing training databases useful immediately without hardcoding a
+        # doorway coordinate. A later observed heal replaces it with the real
+        # recovery location.
+        fallback = None
+        rows = self.connection.execute(
+            "SELECT state FROM observations ORDER BY id ASC LIMIT 5000").fetchall()
+        for (encoded,) in rows:
+            candidate = self._safe_position(json.loads(encoded))
+            if candidate is None:
+                continue
+            fallback = fallback or candidate
+            if candidate.get("map_id") == 131:
+                fallback = candidate
+                break
+        if fallback is not None:
+            self.set_agent_state("safe_anchor", fallback)
+            self.remember_place(fallback["map_id"], fallback["layer"],
+                                *fallback["target"], "safe", "learned safe return point",
+                                "full_health_observation")
+        return fallback
+
+    def remember_recovery(self, state):
+        """Learn the exact inn tile when health rises in an enemy-free area."""
+        party = state.get("party") or [] if isinstance(state, dict) else []
+        hero = party[0] if party else {}
+        previous = self.get_agent_state("health_previous") or {}
+        candidate = self._safe_position(state)
+        healed = (candidate is not None and isinstance(previous.get("hp"), int) and
+                  isinstance(hero.get("hp"), int) and hero["hp"] > previous["hp"])
+        if healed:
+            self.set_agent_state("safe_anchor", candidate)
+            self.remember_place(candidate["map_id"], candidate["layer"],
+                                *candidate["target"], "inn", "observed recovery point",
+                                "health_increase")
+        self.set_agent_state("health_previous", {"hp": hero.get("hp"),
+                                                   "max_hp": hero.get("max_hp")})
+        return candidate if healed else None
 
     def record_combat(self, state, previous_action=None):
         """Persist observed fight outcomes attributable to the previous action."""

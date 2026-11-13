@@ -52,8 +52,31 @@ class TestMemoryPlanner(unittest.TestCase):
         enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}
         decision = MemoryPlanner().decide(
             observation(enemy=enemy, recharge=20, hp=20, max_hp=100))
-        self.assertEqual(decision.intention, "survive")
+        self.assertEqual(decision.intention, "return_to_inn")
         self.assertNotEqual(decision.action, "step_right")
+
+    def test_half_health_latches_return_to_inn_until_recovered(self):
+        planner = MemoryPlanner()
+        hurt = planner.decide(observation(hp=50, max_hp=100))
+        still_hurt = planner.decide(observation(hp=80, max_hp=100), hurt.action)
+        recovered = planner.decide(observation(hp=90, max_hp=100), still_hurt.action)
+        self.assertEqual(hurt.intention, "return_to_inn")
+        self.assertEqual(still_hurt.intention, "return_to_inn")
+        self.assertNotEqual(recovered.intention, "return_to_inn")
+
+    def test_low_health_uses_learned_safe_route_without_fighting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "safe.sqlite")
+            history.set_agent_state("safe_anchor",
+                                    {"map_id": 131, "layer": 1, "target": [1, 3]})
+            planner = MemoryPlanner(history)
+            enemy = {"slot": 1, "active": True, "x_px": 120, "y_px": 56}
+            retreat = planner.decide(observation(enemy=enemy, hp=20, max_hp=100))
+            route = planner.decide(observation(hp=20, max_hp=100), retreat.action)
+            self.assertEqual(retreat.intention, "return_to_inn")
+            self.assertEqual(route.action, "step_left")
+            self.assertEqual(route.intention, "return_to_inn")
+            history.close()
 
     def test_combat_intention_survives_transient_missing_enemy(self):
         enemy = {"slot": 1, "active": True, "x_px": 120, "y_px": 56}

@@ -103,7 +103,7 @@ def objective_directive(objective):
     return "explore_unknown"
 
 def build_director_prompt(objective, observation, current, recent, known_cells,
-                          combat_memory=None):
+                          combat_memory=None, place_memory=None):
     context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
     actor = context.get("actor", {})
     hero = (observation.get("party") or [{}])[0] if isinstance(observation, dict) else {}
@@ -125,16 +125,17 @@ def build_director_prompt(objective, observation, current, recent, known_cells,
         f"native AI allies {len(native_allies)}; "
         f"known map cells {known_cells}. Current directive: {current}. "
         f"Recent actions: {recent}. Allowed directives: {', '.join(choices)}. "
+        f"Remembered places on this map: {place_memory or []}. "
         f"Learned combat outcomes: {combat_memory or []}. "
         "Prefer a consistent heading that reveals unknown territory. Engage a real enemy "
         "when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
     )
 
 def choose_directive(url, model, objective, observation, current,
-                     recent=None, known_cells=0, combat_memory=None):
+                     recent=None, known_cells=0, combat_memory=None, place_memory=None):
     choices = allowed_directives(observation)
     prompt = build_director_prompt(objective, observation, current,
-                                   recent or [], known_cells, combat_memory)
+                                   recent or [], known_cells, combat_memory, place_memory)
     payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
                           "think": False, "keep_alive": "30m",
                           "options": {"temperature": 0.2, "num_predict": 24}}).encode()
@@ -395,6 +396,7 @@ def main() -> int:
                     recent = [item.get("action") for item in history.recent(6)] if history else []
                     known = 0
                     combat_memory = history.combat_summary() if history else []
+                    place_memory = history.place_summary(current_map) if history else []
                     if history and context.get("actor"):
                         known = len(history.known_cells(current_map,
                                                         context["actor"].get("layer")))
@@ -402,13 +404,13 @@ def main() -> int:
                     # freeze controller output while the strategic director
                     # thinks; its result arrives through a thread-safe queue.
                     request = (current_map, observation, directive, recent, known,
-                               combat_memory)
+                               combat_memory, place_memory)
                     def direct_in_background(request_data=request):
-                        requested_map, observed, current, actions, cells, fights = request_data
+                        requested_map, observed, current, actions, cells, fights, places = request_data
                         try:
                             selected = choose_directive(
                                 args.ollama_url, args.model, args.objective,
-                                observed, current, actions, cells, fights)
+                                observed, current, actions, cells, fights, places)
                             director_results.put((requested_map, selected, None))
                         except (OSError, ValueError) as exc:
                             director_results.put((requested_map, None, str(exc)))

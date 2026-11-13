@@ -1,4 +1,5 @@
 """Unit tests: synthetic raw WRAM, no ROM, emulator, or network required."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +59,15 @@ class TestWRAM(unittest.TestCase):
         self.assertEqual(state["enemy_slots"][0]["y_px"], 25)
         self.assertTrue(state["enemy_slots"][0]["active"])
         self.assertIsNone(state["player_position"])
+
+    def test_decodes_candy_only_from_documented_valid_inventory_byte(self):
+        data = bytearray([0xFF]) * (128 * 1024)
+        data[0x7ECC48 - 0x7E0000] = 0x40
+        reader = WRAM(data)
+        self.assertEqual(reader.inventory()[0]["name"], "candy")
+        self.assertEqual(reader.observe()["candy_count"], 2)
+        data[0x7ECC48 - 0x7E0000] = 0x30
+        self.assertIsNone(WRAM(data).inventory()[0]["count"])
 
     def test_runtime_verifies_and_classifies_nearby_tiles(self):
         data = bytearray(128 * 1024)
@@ -157,6 +167,25 @@ class TestWRAM(unittest.TestCase):
             self.assertEqual(attack["damage_dealt"], 12)
             self.assertEqual(attack["damage_taken"], 5)
             self.assertEqual(attack["closest_px"], 20)
+            history.close()
+
+    def test_recovery_location_becomes_safe_anchor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "safety.sqlite")
+            state = {
+                "party": [{"hp": 30, "max_hp": 100}], "enemy_slots": [],
+                "tile_context": {"runtime_verified": True, "map_id": 257,
+                                 "actor_tile": [4, 5], "actor": {"layer": 1}},
+            }
+            history.remember_recovery(state)
+            state["party"][0]["hp"] = 100
+            learned = history.remember_recovery(state)
+            self.assertEqual(learned["target"], [4, 5])
+            self.assertEqual(history.safe_anchor()["map_id"], 257)
+            self.assertEqual(history.place_summary(257)[0]["kind"], "inn")
+            atlas = history.export_map_json()
+            self.assertEqual(json.loads(atlas.read_text())["format"],
+                             "flxtr-som-atlas-v1")
             history.close()
 
 

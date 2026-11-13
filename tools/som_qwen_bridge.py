@@ -36,10 +36,12 @@ from som_goals import (TRAVEL_TIMEOUT, build_goal_prompt, goal_plan, is_travel,
 ACTIONS = {
     "step_right", "step_left", "step_up", "step_down", "wait",
     "attack", "open_ring", "confirm", "cancel", "next_ring",
-    "prev_ring", "snapshot", "menu_x", "charge",
+    "prev_ring", "snapshot", "menu_x", "charge", "block",
+    "dash_right", "dash_left", "dash_up", "dash_down",
 }
 # Held for many seconds and ended by the bridge: never offered to the model.
-MODEL_ACTIONS = ACTIONS - {"charge"}
+MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
+                           "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off"}
 # Longest names first so "step_right" is not read as "right"-style prefixes.
@@ -79,6 +81,8 @@ SMOOTH_INTENTIONS = {"explore_frontier", "engage_enemy", "return_to_inn",
 # follow_taught_path deliberately keeps short pulses on unverified tiles.
 LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
+DASH_MOVES = {"right": "dash_right", "left": "dash_left",
+              "up": "dash_up", "down": "dash_down"}
 OPPOSITE_STEP = {
     "step_right": "step_left", "step_left": "step_right",
     "step_up": "step_down", "step_down": "step_up",
@@ -332,7 +336,9 @@ def extend_clear_exploration(action: str, observation, intention: str,
         if not (0 <= row < len(rows) and isinstance(rows[row], str) and
                 0 <= column < len(rows[row]) and rows[row][column] == "."):
             return action
-    return LONG_MOVES[action]
+    # Turbo dash uses A plus direction. Only verified, fully clear,
+    # four-tile straight routes qualify, never a blind short-step retry.
+    return DASH_MOVES[LONG_MOVES[action]]
 
 # One persistent POSIX-sh loop on the Steam Link. Each request is one line on
 # stdin; no process or SSH channel is created per decision. The remote side
@@ -1112,6 +1118,8 @@ def main() -> int:
                 if movement_reason.startswith("retry same"):
                     sent_action = actual  # no long hold on an uncertain tile
                     print(f"[movement] {movement_reason}: {actual}", flush=True)
+                elif actual == "block":
+                    sent_action = "block"
                 link.send_action(sent_action) if link else send_action(args.host, sent_action)
                 if learner is not None and sent_action == "attack":
                     learner.start(observation)

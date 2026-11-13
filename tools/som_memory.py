@@ -271,6 +271,12 @@ class ObservationHistory:
             "(map_id INTEGER NOT NULL, layer INTEGER NOT NULL, x INTEGER NOT NULL, "
             "y INTEGER NOT NULL, kind TEXT NOT NULL, seen INTEGER NOT NULL, "
             "last_ts REAL NOT NULL, PRIMARY KEY(map_id,layer,x,y))")
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS combat_samples "
+            "(id INTEGER PRIMARY KEY, ts REAL NOT NULL, map_id INTEGER, "
+            "enemy_slot INTEGER, action TEXT, distance_px INTEGER, hero_hp INTEGER, "
+            "enemy_hp INTEGER, damage_dealt INTEGER NOT NULL, "
+            "damage_taken INTEGER NOT NULL, hero_level INTEGER)")
         self.connection.commit()
 
     def record(self, state, action=None):
@@ -378,6 +384,52 @@ class ObservationHistory:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, json.dumps(value, separators=(",", ":"))))
         self.connection.commit()
+
+    def record_combat(self, state, previous_action=None):
+        """Persist observed fight outcomes attributable to the previous action."""
+        if not isinstance(state, dict):
+            return 0
+        party = state.get("party") or []
+        hero = party[0] if party else {}
+        enemies = {enemy.get("slot"): enemy for enemy in state.get("enemy_slots", [])
+                   if isinstance(enemy, dict) and enemy.get("active")}
+        previous = self.get_agent_state("combat_previous") or {}
+        prior_enemies = previous.get("enemies", {})
+        player = state.get("player_position") or {}
+        inserted = 0
+        for slot, enemy in enemies.items():
+            prior = prior_enemies.get(str(slot), {})
+            same_map = previous.get("map_id") == state.get("map_id")
+            damage_dealt = max(0, prior.get("hp", enemy.get("hp", 0)) - enemy.get("hp", 0)) if same_map else 0
+            damage_taken = max(0, previous.get("hero_hp", hero.get("hp", 0)) - hero.get("hp", 0)) if same_map else 0
+            distance = None
+            if player and enemy.get("x_px") is not None and enemy.get("y_px") is not None:
+                distance = abs(enemy["x_px"] - player.get("x_px", enemy["x_px"])) + \
+                           abs(enemy["y_px"] - player.get("y_px", enemy["y_px"]))
+            self.connection.execute(
+                "INSERT INTO combat_samples(ts,map_id,enemy_slot,action,distance_px,"
+                "hero_hp,enemy_hp,damage_dealt,damage_taken,hero_level) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (time.time(), state.get("map_id"), slot, previous_action, distance,
+                 hero.get("hp"), enemy.get("hp"), damage_dealt, damage_taken,
+                 hero.get("level")))
+            inserted += 1
+        snapshot = {"map_id": state.get("map_id"), "hero_hp": hero.get("hp"),
+                    "hero_level": hero.get("level"),
+                    "enemies": {str(slot): {"hp": enemy.get("hp")} for slot, enemy in enemies.items()}}
+        self.set_agent_state("combat_previous", snapshot)
+        self.connection.commit()
+        return inserted
+
+    def combat_summary(self):
+        rows = self.connection.execute(
+            "SELECT COALESCE(action,'none'),COUNT(*),SUM(damage_dealt),SUM(damage_taken),"
+            "MIN(distance_px),MAX(hero_level) FROM combat_samples GROUP BY action "
+            "ORDER BY COUNT(*) DESC LIMIT 8").fetchall()
+        return [{"action": action, "samples": samples, "damage_dealt": dealt or 0,
+                 "damage_taken": taken or 0, "closest_px": closest,
+                 "max_level": level}
+                for action, samples, dealt, taken, closest, level in rows]
 
     def close(self):
         self.connection.close()

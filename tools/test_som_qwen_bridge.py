@@ -3,7 +3,8 @@ import unittest
 
 from som_qwen_bridge import (
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
-    parse_directive, prefer_open_step, extend_clear_exploration)
+    parse_directive, prefer_open_step, extend_clear_exploration,
+    objective_directive)
 
 
 class TestTileGuard(unittest.TestCase):
@@ -85,6 +86,11 @@ class TestParseAction(unittest.TestCase):
 
 
 class TestQwenDirector(unittest.TestCase):
+    def test_explicit_mission_heading_is_immediate(self):
+        self.assertEqual(objective_directive("Go to the woods WEST and level up"),
+                         "explore_west")
+        self.assertEqual(objective_directive("Explore safely"), "explore_unknown")
+
     def test_parses_only_allowlisted_intentions(self):
         self.assertEqual(parse_directive("explore east"), "explore_east")
         self.assertEqual(parse_directive("Intent: engage_enemy."), "engage_enemy")
@@ -107,6 +113,10 @@ class TestQwenDirector(unittest.TestCase):
         self.assertIn("Potos Village", prompt)
         self.assertIn("known map cells 42", prompt)
         self.assertIn("explore_east", prompt)
+        learned = [{"action": "attack", "damage_dealt": 12}]
+        prompt = build_director_prompt("Train", state, "explore_unknown", [], 42,
+                                       learned)
+        self.assertIn("damage_dealt", prompt)
 
 
 if __name__ == "__main__":

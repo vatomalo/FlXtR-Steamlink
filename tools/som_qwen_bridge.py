@@ -94,7 +94,16 @@ def allowed_directives(observation):
         return ["engage_enemy", "avoid_enemy", *choices]
     return choices
 
-def build_director_prompt(objective, observation, current, recent, known_cells):
+def objective_directive(objective):
+    """Seed an explicit travel mission immediately while Qwen thinks."""
+    words = re.sub(r"[^a-z]+", " ", (objective or "").lower()).split()
+    for direction in ("west", "east", "north", "south"):
+        if direction in words:
+            return f"explore_{direction}"
+    return "explore_unknown"
+
+def build_director_prompt(objective, observation, current, recent, known_cells,
+                          combat_memory=None):
     context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
     actor = context.get("actor", {})
     hero = (observation.get("party") or [{}])[0] if isinstance(observation, dict) else {}
@@ -116,15 +125,16 @@ def build_director_prompt(objective, observation, current, recent, known_cells):
         f"native AI allies {len(native_allies)}; "
         f"known map cells {known_cells}. Current directive: {current}. "
         f"Recent actions: {recent}. Allowed directives: {', '.join(choices)}. "
+        f"Learned combat outcomes: {combat_memory or []}. "
         "Prefer a consistent heading that reveals unknown territory. Engage a real enemy "
         "when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
     )
 
 def choose_directive(url, model, objective, observation, current,
-                     recent=None, known_cells=0):
+                     recent=None, known_cells=0, combat_memory=None):
     choices = allowed_directives(observation)
     prompt = build_director_prompt(objective, observation, current,
-                                   recent or [], known_cells)
+                                   recent or [], known_cells, combat_memory)
     payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
                           "think": False, "keep_alive": "30m",
                           "options": {"temperature": 0.2, "num_predict": 24}}).encode()
@@ -331,7 +341,7 @@ def main() -> int:
     previous = "none"
     repeated = 0
     invalid_replies = 0
-    directive = "explore_unknown"
+    directive = objective_directive(args.objective)
     directive_turns = 0
     directive_map = None
     director_results = queue.Queue()
@@ -349,6 +359,8 @@ def main() -> int:
                     print("[ai] stopped by physical takeover or game exit", flush=True)
                     break
                 observation = WRAM(raw).observe()
+            if history is not None and observation is not None:
+                history.record_combat(observation, previous if previous != "none" else None)
             if args.policy in ("hybrid", "memory"):
                 context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
                 current_map = context.get("map_id")
@@ -376,19 +388,21 @@ def main() -> int:
                         (directive_turns <= 0 or current_map != directive_map)):
                     recent = [item.get("action") for item in history.recent(6)] if history else []
                     known = 0
+                    combat_memory = history.combat_summary() if history else []
                     if history and context.get("actor"):
                         known = len(history.known_cells(current_map,
                                                         context["actor"].get("layer")))
                     # Qwen 3.5 can take tens of seconds to load on CPU. Never
                     # freeze controller output while the strategic director
                     # thinks; its result arrives through a thread-safe queue.
-                    request = (current_map, observation, directive, recent, known)
+                    request = (current_map, observation, directive, recent, known,
+                               combat_memory)
                     def direct_in_background(request_data=request):
-                        requested_map, observed, current, actions, cells = request_data
+                        requested_map, observed, current, actions, cells, fights = request_data
                         try:
                             selected = choose_directive(
                                 args.ollama_url, args.model, args.objective,
-                                observed, current, actions, cells)
+                                observed, current, actions, cells, fights)
                             director_results.put((requested_map, selected, None))
                         except (OSError, ValueError) as exc:
                             director_results.put((requested_map, None, str(exc)))

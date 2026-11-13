@@ -9,7 +9,7 @@ learns a persistent map/layer collision graph in SQLite, selects and retains a
 frontier target, and follows a shortest known route until the intention is
 reached or blocked. Combat overrides exploration: it can engage a verified
 enemy, attack when the weapon is ready, or retreat below 25 percent HP. Set
-`SOM_AI_POLICY=memory` disables Qwen; `SOM_AI_POLICY=qwen` retains the older
+Setting `SOM_AI_POLICY=memory` disables Qwen; `SOM_AI_POLICY=qwen` retains the older
 unsafe one-model-call-per-button experiment.
 
 The decision log names the current intention (`explore_frontier`,
@@ -33,6 +33,14 @@ the safe input bridge: directly clearing its binding is not sufficient because
 the game must also initialize its AI bytecode program. Native behavior changes
 must therefore go through the Action Grid/menu path rather than partial actor
 WRAM writes.
+
+Combat learning is observational and persistent. For every verified enemy
+sample the history database stores map, enemy slot, previous action, distance,
+hero/enemy HP, observed damage dealt and taken, and hero level. Aggregated
+outcomes are included in later Qwen director prompts. This can teach selection
+and timing among existing controller attacks; it cannot synthesize new ROM
+attack or spell routines. Magic selection also requires a recruited Girl or
+Sprite and a separately verified ring-menu macro.
 
 ## What works in this checkpoint
 

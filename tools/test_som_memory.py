@@ -120,6 +120,26 @@ class TestWRAM(unittest.TestCase):
             self.assertEqual(history.recent()[0]["action"], "right")
             history.close()
 
+    def test_combat_history_learns_observed_damage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "combat.sqlite")
+            state = {
+                "map_id": 7, "player_position": {"x_px": 10, "y_px": 20},
+                "party": [{"hp": 80, "max_hp": 100, "level": 4}],
+                "enemy_slots": [{"slot": 1, "active": True, "x_px": 30,
+                                 "y_px": 20, "hp": 40}],
+            }
+            history.record_combat(state, "step_right")
+            state["party"][0]["hp"] = 75
+            state["enemy_slots"][0]["hp"] = 28
+            history.record_combat(state, "attack")
+            attack = next(row for row in history.combat_summary()
+                          if row["action"] == "attack")
+            self.assertEqual(attack["damage_dealt"], 12)
+            self.assertEqual(attack["damage_taken"], 5)
+            self.assertEqual(attack["closest_px"], 20)
+            history.close()
+
 
 if __name__ == "__main__":
     unittest.main()

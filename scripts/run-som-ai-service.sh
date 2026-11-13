@@ -15,6 +15,8 @@ start_timeout=${SOM_AI_START_TIMEOUT:-3600}
 history_db=${SOM_AI_HISTORY_DB:-"$state_dir/som-ai.sqlite"}
 hunt_direction=${SOM_AI_HUNT_DIRECTION:-west}
 shop_gold=${SOM_AI_SHOP_GOLD:-500}
+gp_reward=${SOM_AI_GP_REWARD:-1}
+hp_penalty=${SOM_AI_HP_PENALTY:-2}
 
 exec python3 "$repo/tools/som_qwen_bridge.py" \
   --host "$host" \
@@ -23,6 +25,8 @@ exec python3 "$repo/tools/som_qwen_bridge.py" \
   --policy "$policy" \
   --hunt-direction "$hunt_direction" \
   --shop-gold "$shop_gold" \
+  --gp-reward "$gp_reward" \
+  --hp-penalty "$hp_penalty" \
   --objective "$objective" \
   --interval "$interval" \
   --steps 0 \

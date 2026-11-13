@@ -20,6 +20,7 @@ SOURCE = "https://wiki.superfamicom.org/seiken-densetsu-2"
 TILE_BASES = (0x7F0000, 0x7F4000)
 ATTRIBUTE_BASES = (0x7FB800, 0x7FBC00)
 TILE_SIZE = 16
+FACINGS = {0x00: "step_up", 0x01: "step_down", 0x02: "step_right", 0x82: "step_left"}
 # Learned map kinds the route search may enter (see MemoryPlanner._enter).
 WALKABLE_KINDS = ("open", "pass", "cuttable", "h1", "h2")
 OPPOSITE_STEP = {"step_right": "step_left", "step_left": "step_right",
@@ -98,6 +99,10 @@ class WRAM:
             "reported_tile_id": self.u8(base + 0x04C),
             "reported_ground_effect": self.u8(base + 0x048),
             "reported_priority": self.u8(base + 0x08E) & 7,
+            # E010 (som-decomp docs/hero-movement.md 2): set from the velocity
+            # word each frame; a diagonal faces left/right. Cross-checked by
+            # the planner against real steps before it is trusted.
+            "facing": FACINGS.get(self.u8(base + 0x010)),
         }
 
     def tile(self, tile_x, tile_y, layer):
@@ -327,6 +332,36 @@ class WRAM:
         }
 
 
+# Reward weights: points per GP gained and per percent of max HP lost.
+GP_REWARD = 1.0
+HP_PENALTY = 2.0
+# A larger one-sample gold rise is treated as a misread, not a reward.
+MAX_GOLD_STEP = 5000
+# Stop engaging an enemy type after this net loss over this many events
+# (-200 = two full HP bars more than the GP it paid, at default weights).
+AVOID_SCORE = 200
+AVOID_MIN_EVENTS = 5
+# Enemies count for reward bookkeeping only while on screen.
+REWARD_RANGE_X, REWARD_RANGE_Y = 128, 112
+
+
+def nearest_enemy_identity(state):
+    """Type (+180 identity) of the nearest targetable on-screen enemy, or -1."""
+    context = state.get("tile_context") or {}
+    actor = context.get("actor") or {}
+    best = None
+    for enemy in state.get("enemy_slots") or []:
+        if not (isinstance(enemy, dict) and enemy.get("active") and
+                isinstance(enemy.get("identity"), int) and
+                isinstance(actor.get("x_px"), int) and isinstance(enemy.get("x_px"), int)):
+            continue
+        dx, dy = abs(enemy["x_px"] - actor["x_px"]), abs(enemy["y_px"] - actor["y_px"])
+        if dx <= REWARD_RANGE_X and dy <= REWARD_RANGE_Y:
+            if best is None or dx + dy < best[0]:
+                best = (dx + dy, enemy["identity"])
+    return best[1] if best else -1
+
+
 # Snapshots a new map id may still show the previous map's tiles (see below).
 MAP_SETTLE_SAMPLES = 8
 
@@ -515,7 +550,16 @@ class ObservationHistory:
             "predicted INTEGER NOT NULL, confirmed INTEGER NOT NULL, "
             "contradicted INTEGER NOT NULL, last_ts REAL NOT NULL, "
             "PRIMARY KEY(from_map,tile_id))")
+        # Reward ledger: GP gained (reward) and HP lost (penalty) per map and
+        # per nearest enemy type (-1 = no enemy on screen).
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS reward_ledger "
+            "(map_id INTEGER NOT NULL, enemy_id INTEGER NOT NULL, "
+            "hp_lost INTEGER NOT NULL, gold_gained INTEGER NOT NULL, "
+            "score REAL NOT NULL, events INTEGER NOT NULL, last_ts REAL NOT NULL, "
+            "PRIMARY KEY(map_id,enemy_id))")
         self.connection.commit()
+        self._reward_previous = None
         self.rom_tables = None
         self._last_verified_state = None
         self._last_verified = None
@@ -993,6 +1037,65 @@ class ObservationHistory:
                     return dict(first_hop[to_map])
                 queue.append(to_map)
         return self._scan_return_waypoint(current_map, target_map)
+
+    # --- Reward: GP gained is good, HP lost is bad --------------------------
+
+    def record_reward(self, state, gold, gp_weight=GP_REWARD, hp_weight=HP_PENALTY):
+        """Score the change since the previous sample and book it.
+
+        gold: current GP from the calibrated address, or None (uncalibrated:
+        GP is then not rewarded, HP loss is still penalized). Returns
+        {"score", "hp_lost", "gold_gained", "map_id", "enemy_id"} when
+        something was scored, else None. Only settled field samples with
+        plausible HP count; HP gains and GP spending are neither.
+        """
+        context = state.get("tile_context") if isinstance(state, dict) else None
+        party = state.get("party") if isinstance(state, dict) else None
+        hero = party[0] if isinstance(party, list) and party else {}
+        if (not isinstance(context, dict) or context.get("game_mode") != "field" or
+                context.get("map_loading") or not hero.get("hp_plausible", True) or
+                not isinstance(hero.get("hp"), int) or not hero.get("max_hp")):
+            self._reward_previous = None
+            return None
+        current = {"map_id": context.get("map_id"), "hp": hero["hp"],
+                   "max_hp": hero["max_hp"], "gold": gold}
+        previous, self._reward_previous = self._reward_previous, current
+        if previous is None or previous["max_hp"] != current["max_hp"]:
+            return None          # level-up or first sample: no comparison
+        hp_lost = max(0, previous["hp"] - current["hp"])
+        gold_gained = 0
+        if isinstance(gold, int) and isinstance(previous["gold"], int):
+            step = gold - previous["gold"]
+            if 0 < step <= MAX_GOLD_STEP:
+                gold_gained = step
+        if not hp_lost and not gold_gained:
+            return None
+        score = gold_gained * gp_weight - hp_lost * 100.0 / current["max_hp"] * hp_weight
+        enemy_id = nearest_enemy_identity(state)
+        self.connection.execute(
+            "INSERT INTO reward_ledger VALUES(?,?,?,?,?,1,?) "
+            "ON CONFLICT(map_id,enemy_id) DO UPDATE SET hp_lost=hp_lost+excluded.hp_lost,"
+            "gold_gained=gold_gained+excluded.gold_gained,score=score+excluded.score,"
+            "events=events+1,last_ts=excluded.last_ts",
+            (current["map_id"], enemy_id, hp_lost, gold_gained, score, time.time()))
+        self.connection.commit()
+        return {"score": score, "hp_lost": hp_lost, "gold_gained": gold_gained,
+                "map_id": current["map_id"], "enemy_id": enemy_id}
+
+    def unprofitable_enemies(self, threshold=AVOID_SCORE, min_events=AVOID_MIN_EVENTS):
+        """Enemy types whose fights cost clearly more HP than the GP they paid."""
+        return {enemy for enemy, score, events in self.connection.execute(
+            "SELECT enemy_id,SUM(score),SUM(events) FROM reward_ledger "
+            "WHERE enemy_id>=0 GROUP BY enemy_id")
+            if events >= min_events and score <= -threshold}
+
+    def reward_summary(self, limit=4):
+        """Compact per-map lines for the Qwen director, best maps first."""
+        rows = self.connection.execute(
+            "SELECT map_id,SUM(gold_gained),SUM(hp_lost),SUM(score) FROM reward_ledger "
+            "GROUP BY map_id ORDER BY SUM(score) DESC LIMIT ?", (limit,)).fetchall()
+        return [f"map {m}: +{gold}GP -{hp}HP score {score:.0f}"
+                for m, gold, hp, score in rows]
 
     # --- ROM exit table, cross-checked against real crossings -------------
 

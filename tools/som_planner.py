@@ -31,6 +31,10 @@ STALL_DECISIONS = 8
 STALL_BLOCK_DECISIONS = 200
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
+# Facing byte E010 is trusted after this many steps agreed with it.
+FACING_MIN_CONFIRMED = 3
+# Back away from an unprofitable enemy type closer than this (weapon reach).
+AVOID_DISTANCE_PX = 64
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,11 @@ class MemoryPlanner:
         self.cut_attempts = {}
         self.previous_action = "none"
         self.local_signatures = set()
+        # Enemy identities to avoid when no history database is used.
+        self.local_avoided = set()
+        # Facing byte cross-check: [steps agreeing, steps disagreeing].
+        self.facing_checks = [0, 0]
+        self.last_pixel = None
 
     @staticmethod
     def _open_steps(context):
@@ -410,6 +419,26 @@ class MemoryPlanner:
         cooldowns = {slot: turns - 1 for slot, turns in cooldowns.items() if turns > 1}
         self._set_state("unreachable", cooldowns or None)
         enemies = [enemy for enemy in enemies if str(enemy.get("slot")) not in cooldowns]
+        # Reward ledger: types that cost far more HP than the GP they pay
+        # are not engaged, and the hero backs away when one comes close.
+        avoided = self._avoided_identities()
+        shunned = [enemy for enemy in enemies if enemy.get("identity") in avoided]
+        enemies = [enemy for enemy in enemies if enemy.get("identity") not in avoided]
+        close = []
+        for enemy in shunned:
+            dx = self._wrapped_delta(enemy["x_px"], actor["x_px"], width_px)
+            dy = self._wrapped_delta(enemy["y_px"], actor["y_px"], height_px)
+            if abs(dx) + abs(dy) <= AVOID_DISTANCE_PX:
+                close.append((abs(dx) + abs(dy), dx, dy, enemy))
+        if close and open_steps:
+            _, dx, dy, enemy = min(close, key=lambda value: value[0])
+            # Straight away from it (squared distance; Manhattan ties sideways).
+            action = max(open_steps, key=lambda step: (
+                (dx - STEP_OFFSETS[step][0] * 16) ** 2 +
+                (dy - STEP_OFFSETS[step][1] * 16) ** 2, step))
+            return PlannerDecision(action, f"back away from enemy type "
+                                   f"{enemy['identity']:#04x}: it cost more HP than GP",
+                                   "evade_enemy")
         targets = []
         for enemy in enemies:
             dx = self._wrapped_delta(enemy["x_px"], actor["x_px"], width_px)
@@ -437,10 +466,12 @@ class MemoryPlanner:
                              "x_px": enemy["x_px"], "y_px": enemy["y_px"],
                              "misses": 0})
         recharge = hero.get("weapon_recharge")
-        if (abs(dx) <= 48 and abs(dy) <= 48 and
-                observation.get("weapons_enabled") and recharge == 0):
-            return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range",
-                                   "engage_enemy")
+        if abs(dx) <= 48 and abs(dy) <= 48 and observation.get("weapons_enabled"):
+            # A swing only connects in the facing direction (user report).
+            strike = self._face_and_strike(context, enemy, dx, dy, open_steps,
+                                           recharge == 0)
+            if strike is not None:
+                return strike
         # Follow the learned map first. Taking the straight-line step whenever
         # its first tile was open, and the map route only when it was not,
         # sent the hero up into a dead end and back down, over and over.
@@ -458,6 +489,69 @@ class MemoryPlanner:
         self._set_intention(None)
         return PlannerDecision("wait", f"enemy {enemy['slot']} unreachable; ignoring it for "
                                f"{UNREACHABLE_COOLDOWN} decisions", "engage_enemy")
+
+    @staticmethod
+    def _toward(dx, dy):
+        """Facing that points at an offset; the horizontal axis wins ties,
+        as the game's own diagonal facing does."""
+        if abs(dx) >= abs(dy):
+            return "step_right" if dx > 0 else "step_left"
+        return "step_down" if dy > 0 else "step_up"
+
+    def _learn_facing(self, context):
+        """Cross-check the facing byte: a step that moved the hero that way
+        must leave the hero facing that way (Turbo layouts are verified)."""
+        actor = context.get("actor") or {}
+        here = (context.get("map_id"), actor.get("x_px"), actor.get("y_px"))
+        last, self.last_pixel = self.last_pixel, here
+        step = self.previous_action
+        if (step not in STEP_OFFSETS or last is None or last[0] != here[0] or
+                not isinstance(here[1], int) or not isinstance(last[1], int)):
+            return
+        sx, sy = STEP_OFFSETS[step]
+        moved = (here[1] - last[1]) * sx + (here[2] - last[2]) * sy
+        sideways = abs((here[1] - last[1]) * sy) + abs((here[2] - last[2]) * sx)
+        if moved < 2 or sideways > moved or actor.get("facing") is None:
+            return
+        self.facing_checks[0 if actor["facing"] == step else 1] += 1
+
+    def facing_trusted(self):
+        confirmed, contradicted = self.facing_checks
+        return confirmed >= FACING_MIN_CONFIRMED and contradicted * 10 <= confirmed
+
+    def _face_and_strike(self, context, enemy, dx, dy, open_steps, ready):
+        """Attack only while facing the enemy; otherwise tap toward it first.
+
+        With an unverified facing byte the hero always taps toward the enemy
+        on the decision before a swing (like facing grass before cutting).
+        """
+        want = self._toward(dx, dy)
+        facing = (context.get("actor") or {}).get("facing")
+        faced = (facing == want if self.facing_trusted() else
+                 self.previous_action == want)
+        if faced:
+            if ready:
+                return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range, "
+                                       f"facing it", "engage_enemy")
+            return None
+        if want in open_steps:
+            return PlannerDecision(want, f"turn to face enemy {enemy['slot']} before "
+                                   "attacking", "engage_enemy")
+        # Cannot turn that way through a wall: try the other axis toward it.
+        other = ("step_down" if dy > 0 else "step_up") if want in ("step_left", "step_right") \
+            else ("step_right" if dx > 0 else "step_left")
+        if other in open_steps and abs(dy if other in ("step_up", "step_down") else dx) >= 8:
+            return PlannerDecision(other, f"turn toward enemy {enemy['slot']} (wall "
+                                   "on the direct side)", "engage_enemy")
+        if ready:
+            return PlannerDecision("attack", f"enemy {enemy['slot']} in range; cannot turn "
+                                   "toward it, swinging anyway", "engage_enemy")
+        return None
+
+    def _avoided_identities(self):
+        if self.history is not None and hasattr(self.history, "unprofitable_enemies"):
+            return self.history.unprofitable_enemies()
+        return self.local_avoided
 
     def _route_toward(self, context, dx_px, dy_px, open_steps):
         """First step of the shortest known route ending nearer the target."""
@@ -759,6 +853,7 @@ class MemoryPlanner:
         if context.get("game_mode") != "field":
             return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
         open_steps = self._passable_steps(context)
+        self._learn_facing(context)
         self._remember(observation, context)
         hero = (observation.get("party") or [{}])[0]
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
@@ -800,8 +895,9 @@ class MemoryPlanner:
             return combat
         if isinstance(errand, dict) and isinstance(errand.get("anchor"), dict):
             place = errand.get("place", "errand")
+            slug = str(place).replace(" ", "_")
             travel = self._travel(context, errand["anchor"], open_steps, place,
-                                  f"go_to_{place}", f"at_{place}")
+                                  f"go_to_{slug}", errand.get("arrive", f"at_{slug}"))
             if travel is not None:
                 return travel
         if not open_steps:

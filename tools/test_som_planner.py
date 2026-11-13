@@ -23,10 +23,42 @@ def observation(rows=("...", ".@.", "..."), enemy=None, recharge=0, hp=80, max_h
 
 class TestMemoryPlanner(unittest.TestCase):
     def test_attacks_verified_nearby_enemy_when_weapon_ready(self):
+        # Facing byte not yet verified: turn toward the enemy, then swing.
         enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}
-        decision = MemoryPlanner().decide(observation(enemy=enemy))
+        planner = MemoryPlanner()
+        self.assertEqual(planner.decide(observation(enemy=enemy)).action, "step_right")
+        decision = planner.decide(observation(enemy=enemy), previous="step_right")
         self.assertEqual(decision.action, "attack")
         self.assertIn("enemy 1", decision.reason)
+
+    def test_swings_only_while_facing_the_enemy(self):
+        planner = MemoryPlanner()
+        planner.facing_checks = [5, 0]                 # E010 verified
+        enemy = {"slot": 1, "active": True, "x_px": 40, "y_px": 20}   # straight above
+        state = observation(enemy=enemy)
+        state["tile_context"]["actor"]["facing"] = "step_right"
+        self.assertEqual(planner.decide(state).action, "step_up")
+        state["tile_context"]["actor"]["facing"] = "step_up"
+        self.assertEqual(planner.decide(state).action, "attack")
+        # Wall above: turn along the other axis only if the enemy is off it.
+        state["tile_context"]["actor"]["facing"] = "step_right"
+        walled = observation(("###", ".@.", "..."), enemy=dict(enemy, x_px=52))
+        walled["tile_context"]["actor"]["facing"] = "step_down"
+        self.assertEqual(planner.decide(walled).action, "step_right")
+
+    def test_facing_byte_is_trusted_only_after_real_steps_agree(self):
+        planner = MemoryPlanner()
+        for x in range(40, 52, 2):
+            state = observation()
+            state["tile_context"]["actor"].update(x_px=x, facing="step_right")
+            planner.decide(state, previous="step_right")
+        self.assertTrue(planner.facing_trusted())
+        wrong = MemoryPlanner()
+        for x in range(40, 52, 2):
+            state = observation()
+            state["tile_context"]["actor"].update(x_px=x, facing="step_up")
+            wrong.decide(state, previous="step_right")
+        self.assertFalse(wrong.facing_trusted())
 
     def test_approaches_enemy_but_never_crosses_blocked_tile(self):
         enemy = {"slot": 1, "active": True, "x_px": 120, "y_px": 56}

@@ -19,11 +19,14 @@ import time
 import urllib.request
 from pathlib import Path
 
-from som_memory import WRAM, MapLoadGuard, ObservationHistory
+from som_memory import (GP_REWARD, HP_PENALTY, WRAM, MapLoadGuard,
+                        ObservationHistory)
 from som_menu import (MAX_ITEM_COUNT, CandyMacro, Calibration, InnMacro, MacroFailed,
                       ShopMacro, candy_count, read_gold)
 from som_planner import MemoryPlanner
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
+from som_goals import (TRAVEL_TIMEOUT, build_goal_prompt, goal_plan, is_travel,
+                       memory_summary, offered_goals, parse_goal)
 
 ACTIONS = {
     "step_right", "step_left", "step_up", "step_down", "wait",
@@ -183,6 +186,22 @@ def choose_directive(url, model, objective, observation, current,
         raise ValueError(f"Qwen director returned {raw.strip()[:80]!r}; allowed={choices}")
     return directive
 
+def choose_goal(url, model, objective, summary, offered, current):
+    """Ask Qwen for one goal from `offered`; ValueError on anything else."""
+    prompt = build_goal_prompt(objective, summary, offered, current)
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
+                          "think": False, "keep_alive": "30m",
+                          "options": DIRECTOR_OPTIONS}).encode()
+    req = urllib.request.Request(url.rstrip("/") + "/api/generate", data=payload,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=DIRECTOR_TIMEOUT) as response:
+        result = json.load(response)
+    raw = result.get("response") or ""
+    goal = parse_goal(raw, offered)
+    if goal is None:
+        raise ValueError(f"Qwen returned {raw.strip()[:80]!r}; allowed={offered}")
+    return goal
+
 def choose_action(url: str, model: str, objective: str, previous: str, observation=None) -> str:
     prompt = (
         "You are a primitive test controller for Secret of Mana Turbo. "
@@ -282,7 +301,8 @@ def extend_clear_exploration(action: str, observation, intention: str,
     the same hold every decision walks continuously and a changed decision
     steers immediately; the hold length only bounds a stalled planner.
     """
-    if intention not in SMOOTH_INTENTIONS or action not in LONG_MOVES:
+    if ((intention not in SMOOTH_INTENTIONS and not str(intention).startswith("go_to_"))
+            or action not in LONG_MOVES):
         return action
     # A hold walks about four tiles. Without a straight run that long it
     # carries the hero past the route's next corner, the route then points
@@ -576,6 +596,10 @@ def main() -> int:
                         help="Heading while healthy; Qwen may still choose engage/avoid")
     parser.add_argument("--shop-gold", type=int, default=500,
                         help="Buy Candy at the taught shop once gold reaches this")
+    parser.add_argument("--gp-reward", type=float, default=GP_REWARD,
+                        help="Reward points per GP gained")
+    parser.add_argument("--hp-penalty", type=float, default=HP_PENALTY,
+                        help="Penalty points per percent of max HP lost")
     parser.add_argument("--no-messages", action="store_true",
                         help="Do not draw AI status message boxes on the game screen")
     parser.add_argument("--ring-calibration", type=Path,
@@ -657,12 +681,19 @@ def main() -> int:
     repeated = 0
     invalid_replies = 0
     directive = objective_directive(args.objective)
+    goal, goal_deadline = "hunt_here", 0
     directive_turns = 0
     directive_map = None
     director_results = queue.Queue()
     director_running = False
     last_sent_position = None
     unchanged_polls = 0
+    reward_total = 0.0
+    if history is not None:
+        print("[reward] " + ("+%g per GP gained, -%g per %% of max HP lost" %
+                             (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
+                             else "GP not calibrated (run tools/som_teach_shop.py); "
+                             "only HP loss is penalized"), flush=True)
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
@@ -683,6 +714,17 @@ def main() -> int:
                 map_guard.apply(observation)
             if history is not None and observation is not None:
                 history.record_combat(observation, previous if previous != "none" else None)
+                money = read_gold(WRAM(raw), gold) if raw is not None else None
+                reward = history.record_reward(observation, money, args.gp_reward,
+                                               args.hp_penalty)
+                if reward is not None:
+                    reward_total += reward["score"]
+                    enemy = (f"enemy type {reward['enemy_id']:#04x}"
+                             if reward["enemy_id"] >= 0 else "no enemy near")
+                    print(f"[reward] {reward['score']:+.1f} "
+                          f"(+{reward['gold_gained']} GP, -{reward['hp_lost']} HP, map "
+                          f"{reward['map_id']}, {enemy}); run total {reward_total:+.1f}",
+                          flush=True)
                 here_context = observation.get("tile_context") or {}
                 here = here_context.get("map_id")
                 surveys_due -= 1
@@ -720,6 +762,16 @@ def main() -> int:
             if args.policy in ("hybrid", "memory"):
                 context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
                 current_map = context.get("map_id")
+                wram_now = WRAM(raw) if raw is not None else None
+                money = read_gold(wram_now, gold) if wram_now is not None else None
+                shop_offer = (shop_errand(wram_now, observation, shop, gold, 0)
+                              if wram_now is not None and not shop_disabled else None)
+                summary = memory_summary(history, observation, money, shop_offer)
+
+                def reachable(map_id, here=current_map):
+                    return (history is not None and
+                            history.map_path(here, map_id) is not None)
+                offered = offered_goals(summary, args.hunt_direction, reachable)
                 if args.policy == "hybrid":
                     try:
                         requested_map, selected, director_error = director_results.get_nowait()
@@ -727,41 +779,35 @@ def main() -> int:
                         if director_error is not None:
                             directive_turns = 3
                             directive_map = current_map
-                            print(f"[qwen-director] unavailable; retaining {directive}: "
+                            print(f"[qwen-director] unavailable; keeping goal {goal}: "
                                   f"{director_error}", flush=True)
-                        elif requested_map == current_map:
-                            directive = selected
+                        elif requested_map != current_map or selected not in offered:
+                            print(f"[qwen-director] ignored stale goal {selected}", flush=True)
+                        else:
+                            if selected != goal:
+                                announce("Qwen goal: " + selected.replace("_", " "))
+                            goal = selected
+                            goal_deadline = step + TRAVEL_TIMEOUT
                             directive_turns = DIRECTOR_TURNS
                             directive_map = current_map
-                            announce("Qwen: " + directive.replace("_", " "))
-                            print(f"[qwen-director] intention={directive} for "
-                                  f"{DIRECTOR_TURNS} decisions", flush=True)
-                        else:
-                            print("[qwen-director] ignored stale decision after map change",
+                            print(f"[qwen-director] goal={goal} (offered {', '.join(offered)})",
                                   flush=True)
                     except queue.Empty:
                         pass
-                if (args.policy == "hybrid" and not director_running and
+                # A journey is kept until arrival or timeout; other goals are
+                # reconsidered every DIRECTOR_TURNS decisions or on a new map.
+                travelling = is_travel(goal) and step < goal_deadline
+                if (args.policy == "hybrid" and not director_running and not travelling and
                         (directive_turns <= 0 or current_map != directive_map)):
-                    recent = [item.get("action") for item in history.recent(6)] if history else []
-                    known = 0
-                    combat_memory = history.combat_summary() if history else []
-                    place_memory = history.place_summary(current_map) if history else []
-                    if history and context.get("actor"):
-                        known = len(history.known_cells(current_map,
-                                                        context["actor"].get("layer")))
-                    # Qwen 3.5 can take tens of seconds to load on CPU. Never
-                    # freeze controller output while the strategic director
-                    # thinks; its result arrives through a thread-safe queue.
-                    request = (current_map, observation, directive, recent, known,
-                               combat_memory, place_memory)
+                    # Qwen can take tens of seconds on CPU. Never freeze the
+                    # controller; the goal arrives through a thread-safe queue.
+                    request = (current_map, dict(summary), list(offered), goal)
                     def direct_in_background(request_data=request):
-                        requested_map, observed, current, actions, cells, fights, places = request_data
+                        requested_map, facts, choices, current = request_data
                         try:
                             started = time.monotonic()
-                            selected = choose_directive(
-                                args.ollama_url, args.model, args.objective,
-                                observed, current, actions, cells, fights, places)
+                            selected = choose_goal(args.ollama_url, args.model,
+                                                   args.objective, facts, choices, current)
                             print(f"[qwen-director] answered in "
                                   f"{time.monotonic() - started:.1f}s", flush=True)
                             director_results.put((requested_map, selected, None))
@@ -772,13 +818,22 @@ def main() -> int:
                     director_running = True
                     directive_map = current_map
                     directive_turns = max(directive_turns, 3)
-                    print(f"[qwen-director] thinking asynchronously; meanwhile {directive}",
+                    print(f"[qwen-director] thinking asynchronously; meanwhile goal {goal}",
                           flush=True)
-                if args.hunt_direction != "none" and directive.startswith("explore_"):
-                    # Healthy play heads one way and fights what it meets.
-                    directive = f"explore_{args.hunt_direction}"
-                errand = (shop_errand(WRAM(raw), observation, shop, gold, args.shop_gold)
-                          if (raw is not None and not shop_disabled) else None)
+                if goal not in offered and not is_travel(goal):
+                    goal = "hunt_here"
+                directive, goal_errand, done = goal_plan(
+                    goal, summary, args.hunt_direction,
+                    history.safe_anchor() if history is not None else None, shop_offer)
+                if done or (is_travel(goal) and (step >= goal_deadline or
+                                                 (goal_errand is None and not done))):
+                    print(f"[goal] {goal} {'reached' if done else 'ended'}; hunting here",
+                          flush=True)
+                    goal, directive_turns = "hunt_here", 0
+                    directive, goal_errand, _ = goal_plan(goal, summary, args.hunt_direction)
+                auto_errand = (shop_errand(wram_now, observation, shop, gold, args.shop_gold)
+                               if wram_now is not None and not shop_disabled else None)
+                errand = goal_errand or auto_errand
                 decision = planner.decide(observation, previous, directive, errand)
                 if history is not None and context.get("map_id") not in inn_lookalikes:
                     score = history.looks_like("inn", observation)

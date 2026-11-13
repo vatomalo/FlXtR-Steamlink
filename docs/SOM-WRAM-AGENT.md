@@ -347,6 +347,50 @@ nearest reachable exit tile of the first hop. A reachable ROM exit tile is
 preferred to a learned crossing, whose recorded tile can be off for return
 doors and scripted moves.
 
+## Face the enemy before swinging
+
+A swing only connects in the facing direction. The hero's facing is `E010`
+(som-decomp `docs/hero-movement.md` 2: 0x00 up, 0x01 down, 0x02 right, 0x82
+left; a diagonal faces left/right). It is trusted after three steps that
+really moved the hero agreed with it and contradictions stay below 10 percent
+(verified live on Turbo). The planner attacks only while facing the enemy's
+dominant direction, otherwise it taps toward the enemy first (or along the
+other axis when a wall is in the way). Until the byte is trusted it always
+taps toward the enemy on the decision before a swing.
+
+## Reward: GP gained, HP lost
+
+Every settled field sample is scored: `+1` per GP gained and `-2` per percent
+of max HP lost (`SOM_AI_GP_REWARD`, `SOM_AI_HP_PENALTY`). HP gains and GP
+spending score nothing; a gold jump above 5000 is a misread and is ignored,
+and GP is only rewarded with a calibrated gold address
+(`som_teach_shop.py`). Points are booked per map and per nearest on-screen
+enemy type in `reward_ledger` and logged as `[reward] +20.0 (+20 GP, -0 HP,
+map 129, enemy type 0x0a)`. An enemy type with at least five scored events
+and a net score of -200 or worse (two full HP bars more than it paid) is no
+longer engaged; the hero backs away when one comes within 64 px
+(`intent=evade_enemy`). Per-map scores go into the Qwen goal summary.
+
+## Qwen chooses goals
+
+In the hybrid policy Qwen now picks a goal, not buttons or tiles. The bridge
+builds a short summary from memory (map, HP, level, gold, Candy, enemies near,
+inn and shop maps, known maps, reward per map) and an allowlist of goals the
+planner can carry out right now:
+
+- `hunt_here` (default), `engage_enemy` / `avoid_enemy` (enemies near),
+  `explore_<heading>` (only with `SOM_AI_HUNT_DIRECTION=none`),
+- `go_to_inn` (inn taught, HP below 90 percent, route known),
+- `go_to_shop` (shop taught, Candy affordable and fewer than four),
+- `return_to_potos`, `hunt_map_N` (the two best-scoring reachable maps).
+
+Only an offered goal is accepted; anything else keeps the current goal.
+Travel goals stay chosen until arrival or 600 decisions so a small model
+cannot undo a journey, and use the multi-map routes above. Survival below
+half HP, fighting enemies met on the way and the closed-loop inn/shop macros
+still override any goal. Log: `[qwen-director] goal=hunt_map_128 (offered
+...)`, `[goal] hunt_map_128 reached; hunting here`.
+
 ## Cutting grass
 
 Grass blocks the way until it is hit; then the game replaces it with an open

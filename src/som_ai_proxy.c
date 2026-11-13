@@ -514,6 +514,40 @@ RETRO_API void retro_deinit(void){
     unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
     (void)environment_callback;
 }
+/* EXPERIMENTAL map-record patches, applied to the proxy's in-memory copy of
+ * the ROM before the core sees it (the .smc file is never modified). Lines:
+ *   patch <offset> <expected> <new>     (hex; offset without a copier header)
+ * A line applies only if the ROM byte equals <expected>, so a different ROM
+ * build is never altered. Used to turn a map's monster record into a Rabite,
+ * which the game then spawns natively (drawing, AI, death and drops). */
+#ifndef SOM_ROM_PATCH_FILE
+#define SOM_ROM_PATCH_FILE "/home/apps/retroarch/cores/experimental/som_ai_rom_patch.txt"
+#endif
+static const char *rom_patch_file=SOM_ROM_PATCH_FILE;
+static uint8_t *patched_rom;
+static size_t som_apply_rom_patches(uint8_t *rom,size_t size){
+    FILE *input=fopen(rom_patch_file,"r");
+    if(!input)return 0;
+    size_t header=size%0x8000u==512u?512u:0u,applied=0;
+    char line[96];
+    while(fgets(line,sizeof(line),input)){
+        unsigned long offset;unsigned expected,value;
+        if(sscanf(line,"patch %lx %x %x",&offset,&expected,&value)!=3)continue;
+        if(expected>0xFFu||value>0xFFu||offset+header>=size){
+            fprintf(stderr,"[som-ai] ROM PATCH skipped (out of range): %s",line);continue;
+        }
+        uint8_t *byte=rom+header+offset;
+        if(*byte!=expected){
+            fprintf(stderr,"[som-ai] ROM PATCH skipped at %06lX: found %02X, expected %02X\n",
+                offset,(unsigned)*byte,expected);continue;
+        }
+        *byte=(uint8_t)value;applied++;
+        fprintf(stderr,"[som-ai] ROM PATCH %06lX %02X -> %02X (memory only)\n",
+            offset,expected,value);
+    }
+    fclose(input);
+    return applied;
+}
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
@@ -526,9 +560,18 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     undo_ready=0;
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
-    game_loaded=backend_load_game(game);
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
+    free(patched_rom);patched_rom=NULL;
+    struct retro_game_info patched_game;
+    const struct retro_game_info *load_info=game;
+    if(on_turbo&&game&&game->data&&game->size&&(patched_rom=malloc(game->size))){
+        memcpy(patched_rom,game->data,game->size);
+        if(som_apply_rom_patches(patched_rom,game->size)){
+            patched_game=*game;patched_game.data=patched_rom;load_info=&patched_game;
+        }
+    }
+    game_loaded=backend_load_game(load_info);
     /* Selecting this experimental core is explicit opt-in. No injection
      * occurs until the separate one-shot trigger is consumed. A
      * launcher-provided environment variable is not reliable across the

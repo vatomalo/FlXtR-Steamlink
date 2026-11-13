@@ -227,6 +227,22 @@ int main(void){
     assert(som_undo_spawn()&&unserialized==1&&!undo_ready);
     assert(memcmp(mocked_wram,before_clone,sizeof(before_clone))==0);
     assert(!som_undo_spawn());                        /* only once */
+    /* Load-time ROM record patches touch memory only and verify the byte. */
+    char patch_path[]="/tmp/flxtr-rom-patch-test-XXXXXX";
+    fd=mkstemp(patch_path);assert(fd>=0);
+    const char *patch_text="patch 087005 2a 00\npatch 087015 2a 00\npatch ffffff 00 01\njunk\n";
+    assert(write(fd,patch_text,strlen(patch_text))==(ssize_t)strlen(patch_text));close(fd);
+    rom_patch_file=patch_path;
+    static uint8_t rom[0x100000+512];
+    memset(rom,0,sizeof(rom));
+    rom[512+0x087005]=0x2a;rom[512+0x087015]=0x2b;         /* second byte differs */
+    assert(som_apply_rom_patches(rom,sizeof(rom))==1);
+    assert(rom[512+0x087005]==0x00&&rom[512+0x087015]==0x2b);
+    static uint8_t bare_rom[0x100000];
+    memset(bare_rom,0,sizeof(bare_rom));bare_rom[0x087005]=0x2a;
+    assert(som_apply_rom_patches(bare_rom,sizeof(bare_rom))==1&&bare_rom[0x087005]==0);
+    unlink(patch_path);
+    assert(som_apply_rom_patches(bare_rom,sizeof(bare_rom))==0);
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, override, and WRAM export");
     return 0;

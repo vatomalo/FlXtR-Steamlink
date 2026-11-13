@@ -259,6 +259,11 @@ python3 tools/som_spawn.py clone
 python3 tools/som_spawn.py undo
 ```
 
+**Result on hardware: the copy is not drawn.** Drawing goes through a sorted
+actor list and per-actor piece buffers at `$7E:F800` (som-decomp
+`docs/graphics.md`), which a slot copy does not join. Use the map-record
+method below for visible monsters.
+
 Basis: `cidwel/som-decomp` `docs/rabite.md` (monster slots 3-5, object
 fields, spawner `$C0:DE3B`). The game's own spawner is not called, so engine
 state outside the slot (sprite allocation, map object records) is not updated:
@@ -266,6 +271,29 @@ the copy may not draw, act, or die cleanly. Running the real spawner for an
 arbitrary monster id would need executing game code from the proxy, which is
 not implemented. Only the explicit tool can send these commands; the model
 cannot. Keep a normal backup save before experimenting.
+
+## Spawn a real Rabite (native map spawn)
+
+The game creates monsters from each map's 8-byte object records while the map
+loads (som-decomp `docs/maps.md` section 10: pointers at `$C8:7000`,
+record `+5` = object id, `0x00` = Rabite). A monster created this way is
+complete: drawn, animated, AI, death, EXP and drops. `som_ai_proxy` can
+change a record's object id in its in-memory ROM copy at game load; the ROM
+file and saves are never modified, and every patch line names the byte it
+expects so a different ROM build is left alone.
+
+```sh
+python3 tools/som_map_records.py list        # records of the current map
+python3 tools/som_map_records.py rabite 2    # turn monster record 2 into a Rabite
+# quit and relaunch Turbo, enter the map
+python3 tools/som_map_records.py clear       # undo; relaunch again
+```
+
+Only monster records are replaced by default (`--allow-npc` overrides; that
+can break events). The record's own flag range still decides whether it
+spawns. The tool refuses to continue if the `$C8:7000` table does not look like
+Secret of Mana's, because the Turbo hack may have moved it. Patches live in
+`/home/apps/retroarch/cores/experimental/som_ai_rom_patch.txt`.
 
 ## Responsiveness (continuous control)
 

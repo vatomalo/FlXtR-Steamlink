@@ -73,13 +73,15 @@ static int idle_started;
 static uint8_t ring_ai_initial_cell;
 static unsigned long ring_ai_grace_until;
 /* In-game switch that works with a solo hero (the Action Grid only exists
- * once companions have joined): hold Select ALONE for one second and release
- * to raise the same AI signal as "ai_on". Any button still stops the AI.
- * A hold that starts while the AI runs only stops it, so the release cannot
- * switch it straight back on. */
-#define SOM_SELECT_HOLD_FRAMES 60ul
-static int select_holding,select_spoiled;
-static unsigned long select_hold_start;
+ * once companions have joined): hold R2 or R3 ALONE for one second and
+ * release to raise the same AI signal as "ai_on". The SNES has neither, so
+ * the game never reacts to them. (Select cannot be used: on the Steam Link
+ * it is RetroArch's hotkey-enable button, which RetroArch withholds from
+ * the core while held.) Any button still stops the AI. A hold that starts
+ * while the AI runs only stops it, so the release cannot switch it back on. */
+#define SOM_SWITCH_HOLD_FRAMES 60ul
+static int switch_holding,switch_spoiled;
+static unsigned long switch_hold_start;
 static int som_write_ring_ai_marker(void);
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
@@ -190,29 +192,30 @@ static void som_input_poll(void){
         if(recording)som_record_presses((uint16_t)(current&~last_physical_buttons));
         last_physical_buttons=current;
         if(current){last_input_frame=frame_number;idle_started=0;}
-        const uint16_t select=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT);
-        if(current==select){
-            if(!select_holding){
-                select_holding=1;select_hold_start=frame_number;
-                select_spoiled=ring_ai_enabled||armed;
+        const uint16_t ai_switch=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+                                            (1u<<RETRO_DEVICE_ID_JOYPAD_R3));
+        if(current&&!(current&~ai_switch)){
+            if(!switch_holding){
+                switch_holding=1;switch_hold_start=frame_number;
+                switch_spoiled=ring_ai_enabled||armed;
             }
         }else if(current){
-            select_spoiled=1;                 /* another button joined in */
-        }else if(select_holding){
-            select_holding=0;
-            if(!select_spoiled&&frame_number-select_hold_start>=SOM_SELECT_HOLD_FRAMES){
+            switch_spoiled=1;                 /* another button joined in */
+        }else if(switch_holding){
+            switch_holding=0;
+            if(!switch_spoiled&&frame_number-switch_hold_start>=SOM_SWITCH_HOLD_FRAMES){
                 if(som_write_ring_ai_marker()){
                     ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
                     idle_started=1;
                     som_overlay_set(&overlay,"AI ON|any button: you play",SOM_MESSAGE_FRAMES);
-                    fprintf(stderr,"[som-ai] SELECT-HOLD AI START signal ready at %s\n",
+                    fprintf(stderr,"[som-ai] SWITCH-HOLD AI START signal ready at %s\n",
                         ring_ai_file);
-                }else fprintf(stderr,"[som-ai] SELECT-HOLD AI start signal failed\n");
+                }else fprintf(stderr,"[som-ai] SWITCH-HOLD AI start signal failed\n");
             }
         }
         if(ring_ai_enabled&&current&&frame_number>=ring_ai_grace_until){
             ring_ai_enabled=0;unlink(ring_ai_file);
-            som_overlay_set(&overlay,"AI OFF|hold Select 1s: AI plays",SOM_MESSAGE_FRAMES);
+            som_overlay_set(&overlay,"AI OFF|hold R2 or R3 1s: AI plays",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] RING AI STOP physical controller takeover\n");
         }
         if(autonomous_mode && current){
@@ -665,7 +668,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     undo_ready=0;
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
-    select_holding=select_spoiled=0;select_hold_start=0;
+    switch_holding=switch_spoiled=0;switch_hold_start=0;
     last_input_frame=frame_number;idle_started=0;
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;

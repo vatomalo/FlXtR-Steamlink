@@ -32,6 +32,7 @@ from som_walk import CurrentWalk, WalkFailed
 from som_respawn import RespawnDialogue
 from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
+from som_block import BlockLearner
 from som_movement import MovementAck
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
 from som_combat import ChargeFailed, ChargeMacro
@@ -835,6 +836,10 @@ def main() -> int:
     play_loop = None
     save_disabled = False
     last_loop_goal = None
+    block_learner = None
+    if history is not None and args.policy in ("hybrid", "memory"):
+        block_learner = BlockLearner(history.connection, log=lambda line: print(line, flush=True))
+        planner.block_learner = block_learner
     if args.play_loop and history is not None and args.policy in ("hybrid", "memory"):
         play_loop = PlayLoop(history, args.hunt_map, args.trip_gold,
                              log=lambda line: print(line, flush=True))
@@ -984,8 +989,9 @@ def main() -> int:
                 # Any other dialogue/event screen: the planner only acts in
                 # field mode, so press through it with verified, bounded
                 # inputs (som_event_escape.py) instead of waiting forever.
-                if raw is not None and (respawn_dialogue.stage == "idle" or
-                                        respawn_dialogue.finished):
+                # The respawn handler `continue`s when it presses, so it keeps
+                # priority; waiting on it alone deadlocked on KO text pages.
+                if raw is not None:
                     escape = event_escape.observe(WRAM(raw))
                     if escape is not None:
                         escape_action, reason = escape
@@ -1139,6 +1145,7 @@ def main() -> int:
                         not inn_disabled,
                         isinstance(save_point, dict) and save_point.get("taught") and
                         not save_disabled, reachable)
+                    planner.no_retreat = play_loop.cornered(summary, reachable)
                     if loop_goal != last_loop_goal:
                         print(f"[loop] {play_loop.phase}: goal {loop_goal}", flush=True)
                         last_loop_goal = loop_goal
@@ -1356,6 +1363,8 @@ def main() -> int:
                     link.send_action(sent_action) if link else send_action(args.host, sent_action)
                 if learner is not None:
                     learner.action_sent(sent_action, observation)
+                if block_learner is not None and observation is not None:
+                    block_learner.record(observation, sent_action)
             if history is not None and observation is not None:
                 history.record(observation, action if args.dry_run else
                                sent_action if actual is not None else None)

@@ -72,6 +72,15 @@ full HP); save replays the save taught with `tools/som_teach_save.py` and
 requires the taught final page, else saving is skipped. Shop/inn/save give
 up after 1500 decisions. Phase persists in agent_state `play_loop`.
 
+Combat: when provoked (HP lost with an enemy within 96 px) the planner
+fights back for 40 decisions: no low-HP retreat, no survival walk to the inn,
+no backing away from unprofitable enemy types, no fight-skipping errands
+(Candy still heals). With no learned route from the current map to the inn
+(boss arena) the play loop fights instead of retreating. Guarding with R1
+(`block`, `tools/som_block.py`) is learned per enemy type from HP lost per
+close-range decision with and without it (table `block_stats`): explore until
+8 samples each, then block only when it cuts damage by 20 %+.
+
 Dialogue escape (`tools/som_event_escape.py`): in any event screen the AI
 did not start itself, once the screen has been unchanged for 1 s it presses
 `confirm` on text pages (alternating with `cancel` if a page will not move),

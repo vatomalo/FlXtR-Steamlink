@@ -96,6 +96,12 @@ class PlayLoop:
         go_to_inn or go_to_save. Advances the phase when its work is done."""
         hp, max_hp = summary.get("hp") or 0, summary.get("max_hp") or 0
         gold, here = summary.get("gold"), summary.get("map_id")
+        if self.cornered(summary, reachable):
+            # No way out to the inn/shop from here (boss arena, story pit):
+            # fight where we are; the phase resumes once a route exists.
+            self._warn_once(("cornered", here), f"[loop] no learned route from map {here} "
+                            "to the inn; fighting here")
+            return "hunt_here"
         for _ in PHASES:                       # fall through skipped phases
             phase = self.phase
             self.state["steps"] = self.state.get("steps", 0) + 1
@@ -150,6 +156,12 @@ class PlayLoop:
                     continue
                 return "go_to_save"
         return "hunt_here"
+
+    @staticmethod
+    def cornered(summary, reachable):
+        inn_map, here = summary.get("inn_map"), summary.get("map_id")
+        return (inn_map is not None and here is not None and here != inn_map and
+                not reachable(inn_map))
 
     # Macro outcomes ------------------------------------------------------
     def inn_done(self):

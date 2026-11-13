@@ -186,6 +186,61 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(decision.intention, "return_to_inn")
         self.assertNotEqual(decision.action, "step_right")
 
+    def test_no_retreat_fights_at_low_hp(self):
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}
+        planner = MemoryPlanner()
+        planner.decide(observation(hp=20, max_hp=100))            # survival latched
+        planner.no_retreat = True
+        decision = planner.decide(observation(enemy=enemy, recharge=20, hp=20, max_hp=100))
+        self.assertNotIn(decision.intention, ("return_to_inn", "recover_at_inn"))
+
+    def test_provoked_hero_fights_back_at_critical_hp(self):
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56, "identity": 5}
+        planner = MemoryPlanner()
+        calm = planner.decide(observation(enemy=enemy, recharge=20, hp=30, max_hp=100))
+        self.assertIn(calm.intention, ("return_to_inn", "survive"))
+        hit = planner.decide(observation(enemy=enemy, recharge=0, hp=20, max_hp=100))
+        self.assertGreater(planner.provoked, 0)
+        self.assertNotIn(hit.intention, ("return_to_inn", "recover_at_inn", "survive",
+                                         "evade_enemy"))
+
+    def test_provocation_needs_a_nearby_enemy_and_wears_off(self):
+        far = {"slot": 1, "active": True, "x_px": 400, "y_px": 400, "identity": 5}
+        planner = MemoryPlanner()
+        planner.decide(observation(enemy=far, hp=90))
+        planner.decide(observation(enemy=far, hp=80))
+        self.assertEqual(planner.provoked, 0)
+        near = dict(far, x_px=64, y_px=56)
+        planner.decide(observation(enemy=near, hp=70))
+        self.assertEqual(planner.provoked, 40)
+        for _ in range(40):
+            planner.decide(observation(hp=70))
+        self.assertEqual(planner.provoked, 0)
+
+    def test_provoked_hero_attacks_avoided_enemy_types(self):
+        enemy = {"slot": 1, "active": True, "x_px": 56, "y_px": 56, "identity": 9}
+        planner = MemoryPlanner()
+        planner.local_avoided.add(9)
+        planner.decide(observation(enemy=enemy, hp=90))
+        hit = planner.decide(observation(enemy=enemy, hp=80))
+        self.assertNotEqual(hit.intention, "evade_enemy")
+
+    def test_block_learner_drives_guard_decision(self):
+        class Learner:
+            def __init__(self, answer):
+                self.answer = answer
+            def should_block(self, enemy_id):
+                return self.answer
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56, "identity": 5}
+        planner = MemoryPlanner()
+        planner.block_learner = Learner(True)
+        decision = planner.decide(observation(enemy=enemy, recharge=10, hp=100, max_hp=100))
+        self.assertEqual(decision.action, "block")
+        planner = MemoryPlanner()
+        planner.block_learner = Learner(False)
+        decision = planner.decide(observation(enemy=enemy, recharge=10, hp=100, max_hp=100))
+        self.assertNotEqual(decision.action, "block")
+
     def test_half_health_latches_return_to_inn_until_recovered(self):
         planner = MemoryPlanner()
         hurt = planner.decide(observation(hp=50, max_hp=100))

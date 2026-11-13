@@ -108,6 +108,16 @@ class PlayLoopTest(unittest.TestCase):
         play.save_failed("page missing")
         self.assertEqual(play.phase, "hunt")
 
+    def test_cornered_fights_without_changing_phase(self):
+        play = self.make()
+        play._enter("inn", "test")
+        here = summary(hp=30, map_id=260)
+        here["inn_map"] = 259
+        self.assertTrue(play.cornered(here, lambda m: m != 259))
+        self.assertEqual(play.goal(here, False, True, True, lambda m: m != 259), "hunt_here")
+        self.assertEqual(play.phase, "inn")
+        self.assertEqual(play.goal(here, False, True, True, ALL), "go_to_inn")
+
     def test_phase_survives_restart(self):
         play = self.make()
         play._enter("inn", "test")

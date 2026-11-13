@@ -56,6 +56,9 @@ SPLIT_GAIN = 0.5
 AVOID_DISTANCE_PX = 64
 
 
+PROVOKE_RANGE_PX = 96       # a hit with an enemy this close counts as provocation
+PROVOKED_DECISIONS = 40     # how long the hero keeps fighting back after a hit
+
 @dataclass(frozen=True)
 class PlannerDecision:
     action: str
@@ -127,6 +130,17 @@ class MemoryPlanner:
         self.assumed_facing = None
         # Set by the bridge after charged attacks failed this run.
         self.charge_disabled = False
+        # Set by the play loop when no learned route leads from this map to
+        # the inn (boss arena, story pit): retreating is pointless, so the
+        # planner fights on instead of evading at low HP.
+        self.no_retreat = False
+        # Optional som_block.BlockLearner: decides per enemy type whether
+        # guarding with R pays off (learned from HP lost with/without it).
+        self.block_learner = None
+        # "When provoked, always fight": HP lost with an enemy close by sets
+        # this many decisions of fighting back with no evading or retreat.
+        self.provoked = 0
+        self.last_hp = None
         self.combat_learner = None  # Optional, trained only from verified live attacks
         self.last_pixel = None
         self.block_cooldown = 0
@@ -512,7 +526,7 @@ class MemoryPlanner:
         enemies = [enemy for enemy in enemies if str(enemy.get("slot")) not in cooldowns]
         # Reward ledger: types that cost far more HP than the GP they pay
         # are not engaged, and the hero backs away when one comes close.
-        avoided = self._avoided_identities()
+        avoided = set() if self.provoked else self._avoided_identities()
         shunned = [enemy for enemy in enemies if enemy.get("identity") in avoided]
         enemies = [enemy for enemy in enemies if enemy.get("identity") not in avoided]
         close = []
@@ -548,7 +562,7 @@ class MemoryPlanner:
                                       hero.get("hp", 0) * 4 <= hero["max_hp"]):
             return split
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-        if (max_hp and hp * 4 <= max_hp) or directive == "avoid_enemy":
+        if not self.provoked and ((max_hp and hp * 4 <= max_hp) or directive == "avoid_enemy"):
             retreat = []
             for action in open_steps:
                 sx, sy = STEP_OFFSETS[action]
@@ -565,9 +579,14 @@ class MemoryPlanner:
         # Turbo's R guard blocks physical hits. Defend briefly when the
         # weapon is still recharging and an enemy is already in striking
         # distance. Cooldown prevents standing still blocking forever.
-        if (recharge is not None and recharge >= 50 and distance <= 32 and
-                max_hp and hp * 4 <= max_hp * 3 and self.block_cooldown == 0):
-            self.block_cooldown = 10
+        if self.block_learner is not None:
+            wants_block = (recharge is not None and recharge > 0 and distance <= 40 and
+                           self.block_learner.should_block(enemy.get("identity")))
+        else:
+            wants_block = (recharge is not None and recharge >= 50 and distance <= 32 and
+                           max_hp and hp * 4 <= max_hp * 3)
+        if wants_block and self.block_cooldown == 0:
+            self.block_cooldown = 4 if self.block_learner is not None else 10
             return PlannerDecision("block",
                                    f"guard against enemy {enemy['slot']} while weapon recharges",
                                    "defend_enemy")
@@ -1043,6 +1062,22 @@ class MemoryPlanner:
                 return action
         return None
 
+    def _update_provoked(self, observation, context, hp):
+        """Start (or count down) fight-back mode after a hit from a nearby enemy."""
+        actor = context.get("actor") or {}
+        near = False
+        if isinstance(actor.get("x_px"), int) and isinstance(actor.get("y_px"), int):
+            near = any(isinstance(e, dict) and e.get("active") and
+                       isinstance(e.get("x_px"), int) and isinstance(e.get("y_px"), int) and
+                       abs(e["x_px"] - actor["x_px"]) + abs(e["y_px"] - actor["y_px"]) <=
+                       PROVOKE_RANGE_PX
+                       for e in observation.get("enemy_slots", []))
+        if isinstance(hp, int) and isinstance(self.last_hp, int) and hp < self.last_hp and near:
+            self.provoked = PROVOKED_DECISIONS
+        elif self.provoked:
+            self.provoked -= 1
+        self.last_hp = hp if isinstance(hp, int) else self.last_hp
+
     def decide(self, observation, previous="none", directive="explore_unknown", errand=None):
         """errand: optional {"place": "shop", "anchor": {...}} to travel to."""
         self.blocked_moves = {key: turns - 1 for key, turns in self.blocked_moves.items()
@@ -1192,21 +1227,25 @@ class MemoryPlanner:
         self._remember(observation, context)
         hero = (observation.get("party") or [{}])[0]
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
+        self._update_provoked(observation, context, hp)
         survival = self._get_state("survival")
         if not isinstance(survival, dict):
             survival = {}
+        if self.no_retreat and survival.get("active"):
+            survival = {}
+            self._set_state("survival", None)
         critical = bool(max_hp and hp * 4 <= max_hp)
         if max_hp and hp * 10 >= max_hp * 9:
             # Real recovery ends survival and any earlier give-up.
             if survival:
                 self._set_state("survival", None)
             survival = {}
-        elif max_hp and hp * 2 <= max_hp and not survival.get("active"):
+        elif max_hp and hp * 2 <= max_hp and not survival.get("active") and not self.no_retreat:
             # After a give-up, only a new critical drop restarts the retreat.
             if not survival.get("abandoned") or critical:
                 survival = {"active": True, "turns": 0, "at_inn": 0}
                 self._set_state("survival", survival)
-        if survival.get("active"):
+        if survival.get("active") and not self.provoked:
             # Hysteresis prevents bouncing between fighting and retreating.
             decision = self._survive(observation, context, open_steps, critical=critical)
             survival["turns"] = survival.get("turns", 0) + 1
@@ -1225,7 +1264,7 @@ class MemoryPlanner:
                                        "resuming cautious play", "replan")
             self._set_state("survival", survival)
             return decision
-        if (isinstance(errand, dict) and errand.get("avoid_fights") and
+        if (not self.provoked and isinstance(errand, dict) and errand.get("avoid_fights") and
                 isinstance(errand.get("anchor"), dict) and max_hp and hp*2 > max_hp):
             place = errand.get("place", "destination")
             travel = self._travel(context, errand["anchor"], open_steps, place,

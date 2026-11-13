@@ -272,6 +272,26 @@ arbitrary monster id would need executing game code from the proxy, which is
 not implemented. Only the explicit tool can send these commands; the model
 cannot. Keep a normal backup save before experimenting.
 
+## Movement rules and eagle-eye map scans
+
+Tile rules follow the real movement code (som-decomp `docs/maps.md` 7 and
+14.2, `docs/hero-movement.md` 7): a move is refused only into a type-3 tile,
+a type-1 tile at height 2, or a type-2 tile at height 1. Ramps and stairs
+(including the log-bridge ends), bridge decks (types 4-7), layer-switch tiles
+and diagonal half tiles are walkable; the game slides the 13x9 px hero box
+around corners at 2 px per frame, so a held direction enters one-tile gaps.
+Only moving floors and special ground stay conditional.
+
+Map memory stores height-independent kinds (`h1`, `h2`, `pass`, `open`,
+`blocked`), and routes search tile and height together, so a bridge reached
+up its ramp is used even though its raised ends look like walls from the bank.
+
+Every decision acts on the 7x7 close-up. Because each WRAM snapshot already
+contains the whole work map, wider views cost no extra SSH traffic: a 65x65
+scan when a map is entered (`[ai] eagle eye: mapped N tiles`) and a 33x33
+scan every 10 decisions feed the learned map (about 11 ms and 3 ms on
+SkyLoft-class CPUs).
+
 ## Cutting grass
 
 Grass blocks the way until it is hit; then the game replaces it with an open

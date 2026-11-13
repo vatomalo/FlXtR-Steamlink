@@ -160,8 +160,8 @@ class WRAM:
         return "=" if terrain >= 4 else "."
 
     def tile_context(self, actor_index=0, radius=3):
-        if not 1 <= radius <= 6:
-            raise ValueError("Tile radius must be 1..6")
+        if not 1 <= radius <= 32:
+            raise ValueError("Tile radius must be 1..32")
         actor = self.actor_position(actor_index)
         width_px = self.u16(0x7E00C0)
         height_px = self.u16(0x7E00C2)

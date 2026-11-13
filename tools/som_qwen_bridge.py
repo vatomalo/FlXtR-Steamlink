@@ -452,6 +452,22 @@ def shop_errand(wram, observation, shop, gold, threshold):
     return {"place": "shop", "anchor": shop}
 
 
+# "Eagle eye": the whole work map is already inside each WRAM snapshot, so
+# wider scans cost no extra SSH traffic. Each decision still acts on the 7x7
+# close-up; wider views only fill the learned map that routes are planned on.
+SURVEY_EVERY = 10          # decisions between 33x33 scans
+SURVEY_RADIUS = 16
+MAP_SURVEY_RADIUS = 32     # 65x65 scan when a new map is entered
+
+
+def survey(history, raw, radius):
+    """Store a wide verified view in map memory; returns cells learned."""
+    context = WRAM(raw).tile_context(radius=radius)
+    if not context.get("runtime_verified"):
+        return 0
+    return history.remember_world({"tile_context": context})
+
+
 def candy_wanted(observation):
     """Use Candy below half HP when no enemy is within weapon reach."""
     if not isinstance(observation, dict) or not observation.get("candy_count"):
@@ -570,6 +586,7 @@ def main() -> int:
     candy_disabled = calibration is None
     inn_disabled = False
     inn_lookalikes = set()
+    surveyed_map, surveys_due = None, 0
     shop_disabled = False
     shop = history.get_agent_state("shop") if history is not None else None
     gold = history.get_agent_state("gold") if history is not None else None
@@ -622,6 +639,16 @@ def main() -> int:
                 observation = WRAM(raw).observe()
             if history is not None and observation is not None:
                 history.record_combat(observation, previous if previous != "none" else None)
+                here = (observation.get("tile_context") or {}).get("map_id")
+                surveys_due -= 1
+                if raw is not None and (here != surveyed_map or surveys_due <= 0):
+                    radius = MAP_SURVEY_RADIUS if here != surveyed_map else SURVEY_RADIUS
+                    learned = survey(history, raw, radius)
+                    if learned:
+                        if here != surveyed_map:
+                            print(f"[ai] eagle eye: mapped {learned} tiles of map {here}",
+                                  flush=True)
+                        surveyed_map, surveys_due = here, SURVEY_EVERY
             if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
                     candy_wanted(observation)):
                 announce("AI: HP low|using Candy")

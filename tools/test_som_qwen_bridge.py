@@ -163,6 +163,36 @@ class TestShopErrand(unittest.TestCase):
         self.ram[0xCC48] = 0x80             # four Candy
         self.assertIsNone(shop_errand(self.wram(), self.state(90), self.shop, self.gold, 500))
 
+class TestEagleEye(unittest.TestCase):
+    def field_wram(self):
+        ram = bytearray(0x20000)
+        ram[0xE000] = 1                      # hero present
+        ram[0x00E4], ram[0x00E6] = 1, 0x0F   # field mode
+        ram[0x00C0:0x00C2] = (64 * 16).to_bytes(2, "little")   # 64 x 64 tile map
+        ram[0x00C2:0x00C4] = (64 * 16).to_bytes(2, "little")
+        ram[0xE002:0xE004] = (20 * 16 + 8).to_bytes(2, "little")
+        ram[0xE004:0xE006] = (30 * 16 + 8).to_bytes(2, "little")
+        ram[0x1B800 + 4 * 7] = 0x13          # $7F:B800 attributes: tile id 7 is solid
+        for x in range(0, 64):
+            ram[0x10000 + 10 * 128 + x] = 7  # a wall along row 10, far outside 7x7
+        return bytes(ram)
+
+    def test_wide_scan_maps_far_tiles_quickly(self):
+        import time as clock
+        from som_memory import ObservationHistory
+        from som_qwen_bridge import survey
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "eagle.sqlite")
+            started = clock.monotonic()
+            learned = survey(history, self.field_wram(), 32)
+            elapsed = clock.monotonic() - started
+            self.assertEqual(learned, 65 * 65)
+            cells = history.known_cells(0, 1)
+            self.assertEqual(cells[(20, 10)], "blocked")   # 20 tiles north of the hero
+            self.assertEqual(cells[(20, 29)], "open")
+            self.assertLess(elapsed, 2.0)
+            history.close()
+
 class TestRemoteLink(unittest.TestCase):
     """Run the persistent protocol through a fake ssh that executes locally."""
 

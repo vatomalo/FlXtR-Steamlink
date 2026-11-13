@@ -249,6 +249,18 @@ class TestRemoteLink(unittest.TestCase):
         self.link.compress = True
         self.assertEqual(self.link.fetch_wram(), image)     # stream stays in sync
 
+    def test_missing_snapshot_answers_none_and_keeps_the_session(self):
+        for compress in (True, False):
+            self.link.compress = compress
+            with self.assertRaises(OSError) as raised:
+                self.link.fetch_wram()
+            self.assertIn("NONE", str(raised.exception))
+        process = self.link.process
+        (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
+        self.link.compress = True
+        self.assertEqual(self.link.fetch_wram(), bytes(0x20000))
+        self.assertIs(self.link.process, process)              # same shell survived
+
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
         self.assertIsNone(self.link.fetch_wram(require_marker=True))

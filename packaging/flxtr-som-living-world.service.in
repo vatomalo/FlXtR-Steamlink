@@ -1,0 +1,18 @@
+[Unit]
+Description=FlXtR Secret of Mana living world (native NPC schedules)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/flxtr/som-ai.env
+ExecStart=/bin/bash @REPO@/scripts/run-som-living-world-service.sh
+Restart=always
+RestartSec=10
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

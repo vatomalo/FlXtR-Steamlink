@@ -149,6 +149,27 @@ class DriverTest(unittest.TestCase):
         self.assertIn("*[!0-9\\ ]*", lw.REMOTE_LOOP)
         self.assertNotIn("flxtr-som-ai-action", lw.REMOTE_LOOP)
 
+    def test_remote_loop_serves_the_default_compressed_read(self):
+        # RemoteLink requests gzip snapshots ("obsz") by default; a loop
+        # that only knew "obs" made every living-world read fail.
+        import stat, tempfile
+        from pathlib import Path
+        from som_qwen_bridge import RemoteLink
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake = root / "fake-ssh"
+            fake.write_text('#!/bin/sh\nfor last; do :; done\nexec sh -c "$last"\n')
+            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            image = bytes((i * 5) & 0xFF for i in range(0x20000))
+            (root / "flxtr-som-wram.bin").write_bytes(image)
+            link = RemoteLink("host", remote_loop=lw.REMOTE_LOOP.replace("/tmp/", directory + "/"),
+                              ssh_command=[str(fake)])
+            try:
+                self.assertTrue(link.compress)
+                self.assertEqual(link.fetch_wram(False), image)
+            finally:
+                link.close()
+
     def test_observe_once_reports_without_sending(self):
         world = lw.LivingWorld(sqlite3.connect(":memory:"), self.world,
                                WorldClock(sqlite3.connect(":memory:"), real=0.0))

@@ -25,13 +25,15 @@ else
 fi
 
 escaped_repo=${repo//&/\\&}
-sed "s&@REPO@&$escaped_repo&g" "$repo/packaging/flxtr-som-ai.service.in" \
-  > "$unit_dir/flxtr-som-ai.service"
-chmod 0644 "$unit_dir/flxtr-som-ai.service"
+units=(flxtr-som-ai.service flxtr-som-living-world.service)
+for unit in "${units[@]}"; do
+  sed "s&@REPO@&$escaped_repo&g" "$repo/packaging/$unit.in" > "$unit_dir/$unit"
+  chmod 0644 "$unit_dir/$unit"
+done
 
 systemctl --user daemon-reload
-systemctl --user enable --now flxtr-som-ai.service
+systemctl --user enable --now "${units[@]}"
 
-echo "Installed and started flxtr-som-ai.service"
+echo "Installed and started ${units[*]}"
 echo "Enable boot without login once with: sudo loginctl enable-linger $USER"
-echo "Logs: journalctl --user -u flxtr-som-ai.service -f"
+echo "Logs: journalctl --user -u flxtr-som-ai.service -u flxtr-som-living-world.service -f"

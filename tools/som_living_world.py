@@ -48,10 +48,15 @@ STORY_FLAGS = (0x10, 0x11, 0x12, 0x0D)
 
 # Same shape as som_qwen_bridge.REMOTE_LOOP; only `obs`, `msg` and a strictly
 # numeric `npc_walk` line are accepted on the Steam Link.
+GAME_WAIT_S = 5.0   # retry interval while the game is closed
+
 REMOTE_LOOP = (
     "while IFS= read -r cmd; do "
     "case \"$cmd\" in "
     "obs) if [ -f /tmp/flxtr-som-wram.bin ]; then echo WRAM; cat /tmp/flxtr-som-wram.bin; "
+    "else echo NONE; fi;; "
+    # RemoteLink asks for gzip-compressed snapshots by default.
+    "obsz) if command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMZ; gzip -1 -c <&3; exec 3<&-; "
     "else echo NONE; fi;; "
     "npc\\ *) a=${cmd#npc }; "
     "case \"$a\" in 'npc_walk '*) b=${a#npc_walk }; "
@@ -421,10 +426,22 @@ def run_loop(world, args):
     print(f"[living-world] {'LIVE native NPC walks' if args.live else 'read-only'}; "
           f"world time {world.clock.now().describe()}", flush=True)
     try:
+        waiting = False
         while not args.steps or step < args.steps:
+            try:
+                payload = link.fetch_wram(False)
+            except OSError as exc:
+                # Game closed or restarting: wait for it instead of exiting.
+                if not waiting:
+                    print(f"[living-world] waiting for the game ({exc})", flush=True)
+                waiting = True
+                time.sleep(GAME_WAIT_S)
+                continue
+            if waiting:
+                print("[living-world] game is back", flush=True)
+                waiting = False
             step += 1
             real = time.time()
-            payload = link.fetch_wram(False)
             wram = WRAM(payload)
             world.clock.checkpoint(real)
             if daily is not None:

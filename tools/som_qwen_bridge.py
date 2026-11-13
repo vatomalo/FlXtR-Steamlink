@@ -382,6 +382,9 @@ def extend_clear_exploration(action: str, observation, intention: str,
 # One persistent POSIX-sh loop on the Steam Link. Each request is one line on
 # stdin; no process or SSH channel is created per decision. The remote side
 # accepts only lowercase action names and fixed paths, never model text.
+# A failed redirect on the special builtin `exec` makes a POSIX shell exit,
+# which would drop the session when the game is closed; `command exec` keeps
+# the loop alive so it can answer NONE.
 REMOTE_LOOP = (
     "while IFS= read -r cmd; do "
     "case \"$cmd\" in "
@@ -391,10 +394,10 @@ REMOTE_LOOP = (
     "else echo NONE; fi;; "
     "obsz|obsmz) "
     "if [ \"$cmd\" = obsmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
-    "elif exec 3< /tmp/flxtr-som-wram.bin; then echo WRAMZ; gzip -1 -c <&3; exec 3<&-; "
+    "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMZ; gzip -1 -c <&3; exec 3<&-; "
     "else echo NONE; fi;; "
     "nav) if [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
-    "elif exec 3< /tmp/flxtr-som-wram.bin; then echo NAV; "
+    "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo NAV; "
     "dd if=/proc/self/fd/3 bs=256 count=1 2>/dev/null; "
     "dd if=/proc/self/fd/3 bs=256 skip=224 count=2 2>/dev/null; exec 3<&-; "
     "else echo NONE; fi;; "

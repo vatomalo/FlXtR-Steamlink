@@ -1076,16 +1076,76 @@ static int weapon_trace_on,weapon_trace_busy,weapon_trace_has_prev;
 static unsigned weapon_trace_wait,weapon_trace_from,weapon_trace_to;
 static uint8_t *weapon_trace_prev_ram,*weapon_trace_prev_vram;
 static uint8_t *weapon_trace_before_ram,*weapon_trace_before_vram;
+/* Separate per-frame snapshots: keep previous field state for switch detection
+ * while recording all frames, including ring/menu frames. */
+static uint8_t *weapon_trace_frame_ram,*weapon_trace_frame_vram;
+static int weapon_trace_frame_valid;
+static unsigned weapon_trace_frame_count,weapon_trace_vram_dumps;
+static FILE *weapon_trace_timeline;
+#define SOM_WEAPON_TRACE_MAX_FRAMES 480u
+#define SOM_WEAPON_TRACE_MAX_VRAM_DUMPS 32u
+static void som_weapon_trace_timeline_stop(void){
+    if(weapon_trace_timeline){fclose(weapon_trace_timeline);weapon_trace_timeline=NULL;}
+}
+static void som_weapon_trace_timeline_reset(void){
+    som_weapon_trace_timeline_stop();
+    weapon_trace_frame_valid=0;weapon_trace_frame_count=0;weapon_trace_vram_dumps=0;
+}
+static void som_weapon_trace_timeline_frame(const uint8_t *ram,const uint8_t *vram){
+    if(!weapon_trace_frame_ram||!weapon_trace_frame_vram)return;
+    if(!weapon_trace_timeline){
+        weapon_trace_timeline=fopen("/tmp/flxtr-weapon-timeline.txt","w");
+        if(!weapon_trace_timeline)return;
+        fprintf(weapon_trace_timeline,
+                "frame game_mode ring_state weapon wr_change vr_change vram_snapshot\\n");
+    }
+    unsigned wr=0,vr=0;
+    if(weapon_trace_frame_valid){
+        for(unsigned i=0;i<SOM_WRAM_SIZE;i++)wr+=ram[i]!=weapon_trace_frame_ram[i];
+        for(unsigned i=0;i<0x10000u;i++)vr+=vram[i]!=weapon_trace_frame_vram[i];
+    }
+    char filename[128]="-";
+    if(weapon_trace_frame_valid&&vr&&
+       weapon_trace_vram_dumps<SOM_WEAPON_TRACE_MAX_VRAM_DUMPS){
+        snprintf(filename,sizeof(filename),"/tmp/flxtr-weapon-frame-%03u.vram",
+                 weapon_trace_frame_count);
+        FILE *out=fopen(filename,"wb");
+        if(out){int ok=fwrite(vram,1,0x10000u,out)==0x10000u;
+            if(fclose(out)!=0)ok=0;
+            if(!ok){unlink(filename);strcpy(filename,"-");}
+            else weapon_trace_vram_dumps++;
+        }else strcpy(filename,"-");
+    }
+    fprintf(weapon_trace_timeline,"%u %02X %02X %u %u %u %s\\n",
+            weapon_trace_frame_count,ram[0xE4],ram[0xD0],
+            ram[0xE1E4],wr,vr,filename);
+    if(weapon_trace_frame_valid&&vr){
+        fprintf(weapon_trace_timeline,"VRAM tiles changed:");
+        for(unsigned t=0;t<2048u;t++)
+            if(memcmp(vram+t*32u,weapon_trace_frame_vram+t*32u,32u))
+                fprintf(weapon_trace_timeline," %03X",t);
+        fprintf(weapon_trace_timeline,"\\n");
+    }
+    memcpy(weapon_trace_frame_ram,ram,SOM_WRAM_SIZE);
+    memcpy(weapon_trace_frame_vram,vram,0x10000u);
+    weapon_trace_frame_valid=1;
+    weapon_trace_frame_count++;
+    fflush(weapon_trace_timeline);
+}
 static void som_weapon_trace_reset(void){
     weapon_trace_busy=weapon_trace_has_prev=0;weapon_trace_wait=0;
+    som_weapon_trace_timeline_reset();
 }
 static int som_weapon_trace_allocate(void){
     if(!weapon_trace_prev_ram)weapon_trace_prev_ram=malloc(SOM_WRAM_SIZE);
     if(!weapon_trace_prev_vram)weapon_trace_prev_vram=malloc(0x10000u);
     if(!weapon_trace_before_ram)weapon_trace_before_ram=malloc(SOM_WRAM_SIZE);
     if(!weapon_trace_before_vram)weapon_trace_before_vram=malloc(0x10000u);
+    if(!weapon_trace_frame_ram)weapon_trace_frame_ram=malloc(SOM_WRAM_SIZE);
+    if(!weapon_trace_frame_vram)weapon_trace_frame_vram=malloc(0x10000u);
     return weapon_trace_prev_ram&&weapon_trace_prev_vram&&
-           weapon_trace_before_ram&&weapon_trace_before_vram;
+           weapon_trace_before_ram&&weapon_trace_before_vram&&
+           weapon_trace_frame_ram&&weapon_trace_frame_vram;
 }
 static void som_weapon_trace_dump(const uint8_t *before_ram,
                                   const uint8_t *before_vram,
@@ -1133,6 +1193,7 @@ static void som_weapon_trace_dump(const uint8_t *before_ram,
             som_weapon_types[weapon_trace_from],
             som_weapon_types[weapon_trace_to],changes_ram,changes_vram);
     weapon_trace_on=0;weapon_trace_busy=0;
+    som_weapon_trace_timeline_stop();
 }
 static void som_weapon_trace_frame(void){
     if(!weapon_trace_on||!backend_retro_get_memory_data||
@@ -1143,6 +1204,12 @@ static void som_weapon_trace_frame(void){
     const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     const uint8_t *vram=backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
     if(!ram||!vram)return;
+    som_weapon_trace_timeline_frame(ram,vram);
+    if(weapon_trace_frame_count>=SOM_WEAPON_TRACE_MAX_FRAMES){
+        fprintf(stderr,"[som-ai] WEAPON TRACE timed out after %u frames\\n",
+                weapon_trace_frame_count);
+        weapon_trace_on=0;som_weapon_trace_timeline_stop();return;
+    }
     /* Preserve the last field-play frame across the native ring menu.
      * The actual equip byte may change while the menu is open, so comparing
      * consecutive frames would miss that transition entirely. */

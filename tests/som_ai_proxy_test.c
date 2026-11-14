@@ -688,6 +688,20 @@ int main(void){
         assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
         unlink(pkg_path);unlink(any_path);
     }
+    /* give_<weapon>: only an unowned weapon, tier 0, with an undo snapshot. */
+    {
+        backend_retro_serialize_size=mocked_serialize_size;
+        backend_retro_serialize=mocked_serialize;
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));memset(ram+0xCC54,0xFF,8);ram[0xCC55]=0x40;
+        ram[0xE4]=1;ram[0xE6]=0x0F;
+        undo_ready=0;
+        assert(som_give_weapon(ram,0)&&ram[0xCC54]==0x00&&undo_ready);   /* glove */
+        assert(!som_give_weapon(ram,0)&&ram[0xCC54]==0x00);               /* owned now */
+        assert(!som_give_weapon(ram,1)&&ram[0xCC55]==0x40);               /* sword kept */
+        ram[0xD0]=0x81;assert(!som_give_weapon(ram,2)&&ram[0xCC56]==0xFF); /* dialogue */
+        undo_ready=0;
+    }
     /* use_candy: one Candy fewer, 100 HP queued for the game; never the last. */
     {
         static uint8_t ram[SOM_WRAM_SIZE];

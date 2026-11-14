@@ -73,7 +73,9 @@ MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
-                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy"}
+                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy",
+                    "give_glove", "give_axe", "give_spear", "give_whip", "give_bow",
+                    "give_boomerang", "give_javelin"}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(

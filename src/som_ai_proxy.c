@@ -570,6 +570,31 @@ static int som_summon_boss(void);
  * does with an emptied ring slot is not verified, so the last Candy is
  * left to the ring macro. */
 #define SOM_CANDY_HEAL 100u
+/* Give an unowned weapon, as the published Pro Action Replay codes do:
+ * owned weapons are 7E:CC54 + type (0xFF = not owned; low bits tier, bit 6
+ * held by the boy; e.g. 7ECC5548 = Mana Sword). Live 2026-11-14: only the
+ * sword (0x40) is owned. Gives tier 0, not equipped; never changes an owned
+ * weapon. A full undo snapshot is taken first (undo_spawn). */
+static const char *const som_weapon_types[8]={"glove","sword","axe","spear","whip","bow",
+    "boomerang","javelin"};
+static int som_take_undo(void);
+static int som_give_weapon(uint8_t *ram,unsigned type){
+    if(!ram||type>=8u)return 0;
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
+        fprintf(stderr,"[som-ai] WEAPON refused: not in field play\n");return 0;
+    }
+    uint8_t *owned=ram+0xCC54u+type;
+    if(*owned!=0xFF){
+        fprintf(stderr,"[som-ai] WEAPON refused: %s already owned (%#04x)\n",
+                som_weapon_types[type],(unsigned)*owned);return 0;
+    }
+    if(!som_take_undo())return 0;
+    *owned=0x00;
+    som_overlay_set(&overlay,"^A new weapon appears!",SOM_MESSAGE_FRAMES);
+    fprintf(stderr,"[som-ai] WEAPON given: %s (tier 0); undo with undo_spawn\n",
+            som_weapon_types[type]);
+    return 1;
+}
 static int som_use_candy(uint8_t *ram){
     if(!ram)return 0;
     if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0xE000]!=1){
@@ -842,6 +867,12 @@ static int som_handle_command(const char *command){
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
     if(!strcmp(command,"summon_boss"))return som_summon_boss();
     if(!strcmp(command,"vram_dump")){som_vram_dump();return 1;}
+    if(!strncmp(command,"give_",5)){
+        for(unsigned t=0;t<8u;t++)
+            if(!strcmp(command+5,som_weapon_types[t]))
+                return som_give_weapon(backend_retro_get_memory_data?
+                    (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL,t);
+    }
     if(!strcmp(command,"use_candy"))
         return som_use_candy(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);

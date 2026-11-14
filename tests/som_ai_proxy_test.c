@@ -130,8 +130,30 @@ int main(void){
     assert(!ring_ai_selector_open&&ring_ai_pending);
     mocked_wram[0x007D]=0;som_ring_ai_tick();
     assert(ring_ai_enabled&&!ring_ai_pending&&access(ring_ai_path,F_OK)==0);
-    ring_ai_grace_until=0;pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
-    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
+    /* A press while the AI plays opens the gambit menu instead of taking
+     * control; the menu's Exit entry gives the controls back. */
+    char gambit_path[]="/tmp/flxtr-gambits-test-XXXXXX";
+    {int gfd=mkstemp(gambit_path);assert(gfd>=0);close(gfd);unlink(gambit_path);}
+    gambit_file=gambit_path;gambits.enabled=SOM_GAMBIT_ALL;gambits.open=0;
+    ring_ai_grace_until=0;pressed=100;som_input_poll();             /* buttons up */
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+    assert(ring_ai_enabled&&gambits.open&&access(ring_ai_path,F_OK)==0);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0); /* not to game */
+    pressed=100;som_input_poll();
+    pressed=RETRO_DEVICE_ID_JOYPAD_DOWN;som_input_poll();pressed=100;som_input_poll();
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;som_input_poll();
+    assert(ring_ai_enabled&&gambits.enabled==(SOM_GAMBIT_ALL&~2u));      /* inn off */
+    {FILE *g=fopen(gambit_path,"r");unsigned m=0;assert(g&&fscanf(g,"%u",&m)==1&&fclose(g)==0);
+     assert(m==(SOM_GAMBIT_ALL&~2u));}
+    pressed=RETRO_DEVICE_ID_JOYPAD_A;som_input_poll();pressed=100;som_input_poll();
+    assert(ring_ai_enabled&&!gambits.open);                               /* A: close */
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;som_input_poll();
+    pressed=RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();pressed=100;som_input_poll();
+    assert(gambits.cursor==SOM_GAMBIT_COUNT);                             /* wraps to Exit */
+    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+    assert(!ring_ai_enabled&&!gambits.open&&access(ring_ai_path,F_OK)!=0);
+    assert(strstr(overlay.lines[0],"You play"));
+    unlink(gambit_path);
     pressed=100;mocked_wram[0x007D]=1;mocked_wram[0xA20F]=4;
     mocked_wram[0xA212]=0x20;mocked_wram[0xA136]=2;som_ring_ai_tick();
     mocked_wram[0xA212]=0;mocked_wram[0xA136]=3;som_ring_ai_tick();
@@ -367,6 +389,7 @@ int main(void){
     fd=mkstemp(idle_off_path);assert(fd>=0);close(fd);unlink(idle_off_path);
     idle_disable_file=idle_off_path;
     frame_number=SOM_MESSAGE_POLL_FRAMES*1000ul;last_input_frame=frame_number;idle_started=0;
+    gambit_file="/nonexistent/flxtr-gambits";gambits.open=0;gambits.cursor=0;
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;
     assert(last_input_frame==frame_number);
     frame_number+=SOM_IDLE_AUTOSTART_FRAMES-SOM_MESSAGE_POLL_FRAMES;som_idle_tick();
@@ -379,7 +402,12 @@ int main(void){
     frame_number+=1;pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;
     assert(ring_ai_enabled);                                     /* 30-frame grace */
     frame_number+=40;pressed=RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();pressed=100;
-    assert(!ring_ai_enabled&&!idle_started&&access(ring_ai_path,F_OK)!=0);
+    assert(ring_ai_enabled&&gambits.open);                       /* press: gambit menu */
+    frame_number+=1;som_input_poll();
+    frame_number+=1;pressed=RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();pressed=100;
+    frame_number+=1;som_input_poll();
+    frame_number+=1;pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;
+    assert(!ring_ai_enabled&&!idle_started&&access(ring_ai_path,F_OK)!=0); /* Exit */
     /* Bridge cleared the marker itself: no restart within the same period. */
     frame_number=(frame_number/SOM_MESSAGE_POLL_FRAMES+1)*SOM_MESSAGE_POLL_FRAMES;
     last_input_frame=frame_number;
@@ -425,16 +453,43 @@ int main(void){
     assert(ring_ai_enabled&&access(ring_ai_path,F_OK)==0);       /* long hold: on */
     assert(overlay.frames_left>0&&strstr(overlay.lines[0],"AI ON"));
     frame_number+=40;pressed=RETRO_DEVICE_ID_JOYPAD_R3;som_input_poll();
-    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);      /* press: off */
-    assert(strstr(overlay.lines[0],"AI OFF"));
+    assert(ring_ai_enabled&&gambits.open);                       /* press: gambit menu */
     frame_number+=SOM_SWITCH_HOLD_FRAMES*2;som_input_poll();
     frame_number+=1;pressed=100;som_input_poll();
-    assert(!ring_ai_enabled);                  /* the stopping hold does not restart */
+    assert(ring_ai_enabled&&gambits.open);     /* a long hold while it plays: no toggle */
+    frame_number+=1;pressed=RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();
+    frame_number+=1;pressed=100;som_input_poll();
+    frame_number+=1;pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+    frame_number+=1;pressed=100;som_input_poll();
+    assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);      /* Exit: you play */
+    assert(strstr(overlay.lines[0],"You play"));
+    /* The bridge removing the marker gives the controls back too. */
+    assert(som_write_ring_ai_marker());ring_ai_enabled=1;ring_ai_grace_until=0;
+    unlink(ring_ai_path);
+    frame_number=(frame_number/30u+1u)*30u;som_input_poll();
+    assert(!ring_ai_enabled&&strstr(overlay.lines[0],"AI stopped"));
     /* Select (RetroArch's hotkey button here) is not the switch. */
     frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_SELECT;som_input_poll();
     frame_number+=SOM_SWITCH_HOLD_FRAMES*2;som_input_poll();
     frame_number+=1;pressed=100;som_input_poll();
     assert(!ring_ai_enabled);
+    /* Gambit menu text and drawing. */
+    {
+        SomGambits g={1,1,(uint16_t)(SOM_GAMBIT_ALL&~1u)};
+        char text[33];
+        assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
+        assert(som_gambit_line(&g,1,text)&&!strcmp(text,"  -- Fight monsters"));
+        assert(som_gambit_line(&g,2,text)&&!strcmp(text,"> ON Rest at the inn"));
+        assert(som_gambit_line(&g,SOM_GAMBIT_ITEMS,text)&&strstr(text,"Exit gambits"));
+        assert(!som_gambit_line(&g,SOM_GAMBIT_ITEMS+1,text));
+        static uint16_t frame[224][256];
+        memset(frame,0,sizeof(frame));
+        som_gambit_draw((uint8_t*)frame,256,224,512,2,&g);
+        assert(frame[10][10]!=0);                                 /* menu box drawn */
+        g.open=0;memset(frame,0,sizeof(frame));
+        som_gambit_draw((uint8_t*)frame,256,224,512,2,&g);
+        assert(frame[10][10]==0);
+    }
     /* Bubble anchor: hero screen position under a hero-centred camera that
      * stops at the map edges. */
     backend_retro_get_memory_data=mocked_memory_data;

@@ -696,6 +696,15 @@ class TestMemoryPlanner(unittest.TestCase):
         a["x_px"] = 40 + 66                                      # now 66 vs 69
         self.assertIn("enemy 3", planner.decide(state, first.action).reason)
 
+    def test_fight_gambit_off_ignores_monsters_until_attacked(self):
+        enemy = {"slot": 1, "active": True, "x_px": 60, "y_px": 56}
+        planner = MemoryPlanner()
+        planner.peaceful = True
+        self.assertNotEqual(planner.decide(observation(enemy=enemy)).intention, "engage_enemy")
+        planner.provoked = 10
+        self.assertIn(planner.decide(observation(enemy=enemy, hp=70)).intention,
+                      ("engage_enemy", "defend_enemy"))
+
     def test_enemy_far_off_screen_is_not_chased(self):
         state = observation(enemy={"slot": 1, "active": True, "x_px": 40 + 380, "y_px": 56})
         state["tile_context"]["map_size_tiles"] = [64, 64]

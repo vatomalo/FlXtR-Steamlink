@@ -167,6 +167,8 @@ class MemoryPlanner:
         self.last_swing = None
         # Optional som_tactics.TacticLearner: per enemy type fighting style.
         self.tactic_learner = None
+        # "Fight monsters" gambit off: ignore monsters unless they attack.
+        self.peaceful = False
         # Optional som_anticipate.AttackPredictor: guard before likely hits.
         self.attack_predictor = None
         self.anticipated = 0
@@ -553,6 +555,8 @@ class MemoryPlanner:
                             action, f"pursue last-known enemy position ({misses}/4 missing samples)",
                             "engage_enemy")
                     return PlannerDecision("wait", "hold last-known enemy area", "engage_enemy")
+            return None
+        if self.peaceful and not self.provoked:
             return None
         cooldowns = self._get_state("unreachable") or {}
         if not isinstance(cooldowns, dict):

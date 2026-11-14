@@ -54,6 +54,12 @@ ACTIONS = {
 CANDY_TRANSIENT = ("did not produce an open ring", "not in field mode")
 CANDY_RETRY_S = 4.0
 CANDY_MAX_RETRIES = 6
+# Gambits: activities the player switches on/off from the gamepad menu drawn
+# by the proxy (src/som_gambit.h, same bit order). All on by default.
+GAMBIT_FIGHT, GAMBIT_INN, GAMBIT_SHOP, GAMBIT_SAVE, GAMBIT_CANDY, GAMBIT_TALK = range(6)
+GAMBITS_ALL = 0x3F
+GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
+GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
 GUARD_REFRESHES = 2     # extra block presses per guard decision
 GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
 MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
@@ -433,6 +439,8 @@ REMOTE_LOOP = (
     "{ " + "; ".join(f"dd if=/proc/self/fd/3 bs=1024 skip={start} count={count} 2>/dev/null"
                      for start, count in HOT_RANGES_KB) + "; } | gzip -1 -c; exec 3<&-; "
     "else echo NONE; fi;; "
+    "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
+    "case \"$m\" in ''|*[!0-9]*) m=" + str(GAMBITS_ALL) + ";; esac; echo \"GMB $m\";; "
     "obsz|obsmz) "
     "if [ \"$cmd\" = obsmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
     "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMZ; gzip -1 -c <&3; exec 3<&-; "
@@ -580,6 +588,13 @@ class RemoteLink:
             raise OSError(f"WRAM snapshot unavailable ({status})")
         self.base, self.hot_reads = payload, 0
         return payload
+
+    def fetch_gambits(self):
+        """The gambit mask the player set in the in-game menu."""
+        status, _ = self._request("gmb")
+        if not status.startswith("GMB ") or not status[4:].isdigit():
+            raise OSError(f"gambits unavailable ({status})")
+        return int(status[4:]) & GAMBITS_ALL
 
     def show_message(self, text: str) -> None:
         """Ask the proxy to draw a short two-line message box ('|' = new line)."""
@@ -897,6 +912,10 @@ def main() -> int:
                    else Calibration.load())
     candy_disabled = calibration is None
     candy_retry_at, candy_failures = 0.0, 0
+    gambits = GAMBITS_ALL
+
+    def gambit(bit):
+        return bool(gambits >> bit & 1)
     inn_disabled = False
     inn_lookalikes = set()
     surveyed_map, surveys_due = None, 0
@@ -1199,7 +1218,7 @@ def main() -> int:
             else:
                 orphan_ring_samples = 0
             if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
-                    time.monotonic() >= candy_retry_at and
+                    time.monotonic() >= candy_retry_at and gambit(GAMBIT_CANDY) and
                     candy_wanted(observation) and mode == "field"):
                 if learner is not None:
                     learner.cancel("Candy macro")
@@ -1237,8 +1256,22 @@ def main() -> int:
                 current_map = context.get("map_id")
                 wram_now = WRAM(raw) if raw is not None else None
                 money = read_gold(wram_now, gold) if wram_now is not None else None
+                if link and step % GAMBIT_REFRESH == 0:
+                    try:
+                        mask = link.fetch_gambits()
+                    except (OSError, subprocess.SubprocessError):
+                        mask = gambits
+                    if mask != gambits:
+                        names = ("fight", "inn", "shop", "save", "candy", "talk")
+                        print("[gambits] " + ", ".join(
+                            f"{name} {'on' if mask >> bit & 1 else 'off'}"
+                            for bit, name in enumerate(names)), flush=True)
+                    gambits = mask
+                    planner.peaceful = not gambit(GAMBIT_FIGHT)
+                    planner.no_retreat = not gambit(GAMBIT_INN)
                 shop_offer = (shop_errand(wram_now, observation, shop, gold, 0)
-                              if wram_now is not None and not shop_disabled else None)
+                              if wram_now is not None and not shop_disabled and
+                              gambit(GAMBIT_SHOP) else None)
                 summary = memory_summary(history, observation, money, shop_offer)
 
                 def reachable(map_id, here=current_map):
@@ -1306,7 +1339,8 @@ def main() -> int:
                     goal, directive_turns = "hunt_here", 0
                     directive, goal_errand, _ = goal_plan(goal, summary, args.hunt_direction)
                 auto_errand = (shop_errand(wram_now, observation, shop, gold, args.shop_gold)
-                               if wram_now is not None and not shop_disabled else None)
+                               if wram_now is not None and not shop_disabled and
+                               gambit(GAMBIT_SHOP) else None)
                 if play_loop is not None:
                     # The loop owns goals: no Qwen goal and no automatic shop detour.
                     inn_anchor = history.safe_anchor()
@@ -1314,10 +1348,11 @@ def main() -> int:
                     loop_goal = play_loop.goal(
                         summary, shop_offer is not None,
                         isinstance(inn_anchor, dict) and bool(inn_anchor.get("face")) and
-                        not inn_disabled,
+                        not inn_disabled and gambit(GAMBIT_INN),
                         isinstance(save_point, dict) and save_point.get("taught") and
-                        not save_disabled, reachable)
-                    planner.no_retreat = play_loop.cornered(summary, reachable)
+                        not save_disabled and gambit(GAMBIT_SAVE), reachable)
+                    planner.no_retreat = (play_loop.cornered(summary, reachable) or
+                                          not gambit(GAMBIT_INN))
                     planner.stay_on_map = loop_goal == "hunt_here"
                     if loop_goal != last_loop_goal:
                         print(f"[loop] {play_loop.phase}: goal {loop_goal}", flush=True)
@@ -1343,7 +1378,7 @@ def main() -> int:
                 if (args.visit_map == current_map and decision.intention in
                         ("explore_frontier", "leave_room", "replan", "stuck")):
                     decision = PlannerDecision("wait", "at requested visit map", "visit_map")
-                if (npc_dialogue is not None and not args.no_npc_talk and
+                if (npc_dialogue is not None and not args.no_npc_talk and gambit(GAMBIT_TALK) and
                         decision.intention in ("explore_frontier", "leave_room", "replan", "stuck", "visit_map")):
                     npc_action = npc_dialogue.consider(WRAM(raw), observation, planner)
                     if npc_action is not None:
@@ -1411,7 +1446,8 @@ def main() -> int:
                         try:
                             inn = InnMacro(link, anchor, cancel=cancel,
                                            log=lambda text: print(text, flush=True),
-                                           save_slot=args.save_slot or None)
+                                           save_slot=(args.save_slot or None)
+                                           if gambit(GAMBIT_SAVE) else None)
                             gained = inn.run()
                             print(f"[inn] stayed at the inn: +{gained} HP", flush=True)
                             announce("AI: rested at the inn|HP restored")

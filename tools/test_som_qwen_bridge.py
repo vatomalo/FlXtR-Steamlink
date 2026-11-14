@@ -306,6 +306,18 @@ class TestRemoteLink(unittest.TestCase):
         self.assertEqual(self.link.fetch_wram(), bytes(0x20000))
         self.assertIs(self.link.process, process)              # same shell survived
 
+    def test_reads_the_gambit_mask_the_player_set(self):
+        import som_qwen_bridge as bridge
+        path = Path(bridge.GAMBIT_FILE)
+        loop = self.link.remote_loop.replace(str(path), str(self.root / "gambits"))
+        self.link.close()
+        self.link.remote_loop = loop
+        self.assertEqual(self.link.fetch_gambits(), bridge.GAMBITS_ALL)   # no file: all on
+        (self.root / "gambits").write_text("45\n")
+        self.assertEqual(self.link.fetch_gambits(), 45)
+        (self.root / "gambits").write_text("rm -rf /\n")
+        self.assertEqual(self.link.fetch_gambits(), bridge.GAMBITS_ALL)   # garbage ignored
+
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
         self.assertIsNone(self.link.fetch_wram(require_marker=True))

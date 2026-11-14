@@ -12,6 +12,7 @@
 #include "vendor/libretro.h"
 #include "som_ai_actions.h"
 #include "som_overlay.h"
+#include "som_gambit.h"
 #include "som_npc_walk.h"
 #include <dlfcn.h>
 #include <stdio.h>
@@ -83,6 +84,26 @@ static unsigned long ring_ai_grace_until;
 static int switch_holding,switch_spoiled;
 static unsigned long switch_hold_start;
 static int som_write_ring_ai_marker(void);
+/* Gambits (src/som_gambit.h): while the AI plays, buttons drive this menu
+ * instead of taking control. The enabled mask persists for the bridge. */
+#define SOM_GAMBIT_FILE "/home/apps/retroarch/cores/experimental/som_ai_gambits"
+static const char *gambit_file=SOM_GAMBIT_FILE;
+static SomGambits gambits={0,0,SOM_GAMBIT_ALL};
+static void som_gambit_load(void){
+    FILE *in=fopen(gambit_file,"r");
+    unsigned mask=SOM_GAMBIT_ALL;
+    if(in){if(fscanf(in,"%u",&mask)!=1)mask=SOM_GAMBIT_ALL;fclose(in);}
+    gambits.enabled=(uint16_t)(mask&SOM_GAMBIT_ALL);gambits.open=0;gambits.cursor=0;
+}
+static void som_gambit_save(void){
+    char temp[256];
+    snprintf(temp,sizeof(temp),"%s.tmp",gambit_file);
+    FILE *out=fopen(temp,"w");
+    if(!out)return;
+    int ok=fprintf(out,"%u\n",(unsigned)gambits.enabled)>0;
+    if(fclose(out)!=0)ok=0;
+    if(ok)rename(temp,gambit_file);else unlink(temp);
+}
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
 static uint8_t som_previous_menu[SOM_MENU_SCAN_LENGTH];
@@ -149,6 +170,8 @@ static void (*backend_run)(void);
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
+    if(ring_ai_enabled&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
+        actual=0;                    /* the player's buttons drive the gambit menu */
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && (id<16||bitmask) && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
@@ -189,7 +212,8 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] COMBO OBSERVED hits=%u frame=%lu (recognition only)\n",
                     combo_count,frame_number);
         }
-        if(recording)som_record_presses((uint16_t)(current&~last_physical_buttons));
+        const uint16_t pressed=(uint16_t)(current&~last_physical_buttons);
+        if(recording)som_record_presses(pressed);
         last_physical_buttons=current;
         if(current){last_input_frame=frame_number;idle_started=0;}
         const uint16_t ai_switch=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
@@ -207,16 +231,33 @@ static void som_input_poll(void){
                 if(som_write_ring_ai_marker()){
                     ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
                     idle_started=1;
-                    som_overlay_set(&overlay,"AI ON|any button: you play",SOM_MESSAGE_FRAMES);
+                    som_overlay_set(&overlay,"AI ON|any button: gambits",SOM_MESSAGE_FRAMES);
                     fprintf(stderr,"[som-ai] SWITCH-HOLD AI START signal ready at %s\n",
                         ring_ai_file);
                 }else fprintf(stderr,"[som-ai] SWITCH-HOLD AI start signal failed\n");
             }
         }
-        if(ring_ai_enabled&&current&&frame_number>=ring_ai_grace_until){
-            ring_ai_enabled=0;unlink(ring_ai_file);
-            som_overlay_set(&overlay,"AI OFF|hold R2 or R3 1s: AI plays",SOM_MESSAGE_FRAMES);
-            fprintf(stderr,"[som-ai] RING AI STOP physical controller takeover\n");
+        /* The bridge removes the marker when it stops (safety stop, game
+         * exit): never keep swallowing the player's buttons after that. */
+        if(ring_ai_enabled&&frame_number%30u==0&&access(ring_ai_file,F_OK)!=0){
+            ring_ai_enabled=0;gambits.open=0;
+            som_overlay_set(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
+        }
+        if(ring_ai_enabled&&pressed&&frame_number>=ring_ai_grace_until){
+            switch(som_gambit_press(&gambits,pressed)){
+            case SOM_GAMBIT_CHANGED:
+                som_gambit_save();
+                fprintf(stderr,"[som-ai] GAMBITS %u\n",(unsigned)gambits.enabled);
+                break;
+            case SOM_GAMBIT_EXIT:
+                ring_ai_enabled=0;unlink(ring_ai_file);
+                som_overlay_set(&overlay,"You play|hold R2 or R3 1s: AI plays",
+                                SOM_MESSAGE_FRAMES);
+                fprintf(stderr,"[som-ai] GAMBIT EXIT: controls back to the player\n");
+                break;
+            default:break;
+            }
         }
         if(autonomous_mode && current){
             autonomous_mode=0;armed=0;cancelled=1;
@@ -225,7 +266,7 @@ static void som_input_poll(void){
     }
     /* Check all physical buttons before injecting input, regardless of which
      * individual IDs the emulator requests in this frame. */
-    if(armed&&!cancelled&&!completed&&on_turbo&&physical_state)
+    if(armed&&!cancelled&&!completed&&on_turbo&&physical_state&&!ring_ai_enabled)
         for(unsigned id=0;id<16;id++)
             if(physical_state(0,RETRO_DEVICE_JOYPAD,0,id)){
                 cancelled=1;armed=0;autonomous_mode=0;
@@ -497,7 +538,7 @@ static void som_check_trigger(void){
         return;
     }
     if(!strcmp(command,"ai_off")){
-        ring_ai_enabled=0;ring_ai_pending=0;armed=0;cancelled=1;
+        ring_ai_enabled=0;ring_ai_pending=0;armed=0;cancelled=1;gambits.open=0;
         unlink(ring_ai_file);
         idle_started=1;                  /* stay off until the player plays */
         fprintf(stderr,"[som-ai] MANUAL AI STOP\n");
@@ -563,7 +604,8 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */
-    if(!overlay.frames_left||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    const int menu=gambits.open&&ring_ai_enabled;
+    if((!overlay.frames_left&&!menu)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         frontend_video(data,width,height,pitch);
         return;
@@ -577,8 +619,11 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     memcpy(overlay_frame,data,size);
     int hero_x=-1,hero_y=-1;
     if(overlay.speech_bubble)som_hero_screen(&hero_x,&hero_y);
-    som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
-    overlay.frames_left--;
+    if(overlay.frames_left){
+        som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
+        overlay.frames_left--;
+    }
+    if(menu)som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
     frontend_video(overlay_frame,width,height,pitch);
 }
 static bool som_environment(unsigned cmd,void *data){
@@ -691,6 +736,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
+    som_gambit_load();
     last_input_frame=frame_number;idle_started=0;
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;

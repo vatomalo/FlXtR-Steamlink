@@ -22,6 +22,10 @@ extra_args=()
 # Guard/counter learning; off by default because it cost swings (see bridge).
 [ "${SOM_AI_BLOCK:-0}" != 0 ] && extra_args+=(--block-learning)
 loop_args=()
+transport_args=(--wram-remote --ring-control)
+if [ "${SOM_AI_ANDROID:-0}" != 0 ]; then
+  transport_args+=(--android-listen "${SOM_AI_ANDROID_LISTEN:-100.69.7.81:43928}")
+fi
 if [ "${SOM_AI_PLAY_LOOP:-1}" != 0 ]; then
   loop_args=(--play-loop --trip-gold "${SOM_AI_TRIP_GOLD:-100}")
   [ -n "${SOM_AI_HUNT_MAP:-}" ] && loop_args+=(--hunt-map "$SOM_AI_HUNT_MAP")
@@ -41,6 +45,5 @@ exec python3 "$repo/tools/som_qwen_bridge.py" \
   --steps 0 \
   --start-timeout "$start_timeout" \
   --history-db "$history_db" \
-  --wram-remote \
-  --ring-control \
+  "${transport_args[@]}" \
   "${loop_args[@]}" "${extra_args[@]}"

@@ -20,3 +20,9 @@ target_compile_definitions(flxtr_retro PRIVATE __LIBRETRO__ HAVE_STDINT_H HAVE_I
 target_compile_features(flxtr_retro PRIVATE cxx_std_11)
 target_compile_options(flxtr_retro PRIVATE -O2 -fno-strict-aliasing)
 target_link_libraries(flxtr_retro PRIVATE android log m dl EGL GLESv2)
+
+add_library(flxtr_som_ai SHARED "${REPO}/src/som_ai_proxy.c")
+target_include_directories(flxtr_som_ai PRIVATE "${REPO}/src")
+target_compile_features(flxtr_som_ai PRIVATE c_std_99)
+target_compile_options(flxtr_som_ai PRIVATE -Os -Wall -Wextra -Werror)
+target_link_libraries(flxtr_som_ai PRIVATE dl)

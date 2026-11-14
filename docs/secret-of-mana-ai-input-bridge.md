@@ -1,5 +1,9 @@
 # Secret of Mana Turbo: experimental Libretro input proxy
 
+Android packaging, service transport and deployment are documented in
+[`SOM-ANDROID-AI.md`](SOM-ANDROID-AI.md). The Steam Link protocol below remains
+supported and is still the default service mode.
+
 This branch introduces a **side-by-side** Libretro proxy core. It forwards
 the installed `snes9x2005_plus_libretro.so` core's calls and optionally
 substitutes a RIGHT button on **controller port 0 / Player 1** for exactly

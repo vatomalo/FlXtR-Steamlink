@@ -640,6 +640,15 @@ int main(void){
     mocked_wram[0xE004]=0xF0;mocked_wram[0xE005]=0x02;          /* y 752 */
     assert(som_hero_screen(&sx_,&sy_)&&sx_==1000-768&&sy_==752-544); /* far edge */
     mocked_wram[0x00D0]=0x81;assert(!som_hero_screen(&sx_,&sy_)); /* dialogue */
+    reset_proxy();direct_transport=1;ring_ai_enabled=0;
+    assert(flxtr_som_ai_command("ai_on")&&flxtr_som_ai_enabled());
+    assert(flxtr_som_ai_command("step_right")&&armed&&active_action==SOM_ACT_STEP_RIGHT);
+    assert(flxtr_som_ai_message("AI: Android relay")&&overlay.frames_left);
+    char direct_gambits[SOM_GAMBIT_COUNT+1]={0};
+    flxtr_som_ai_gambits(direct_gambits);
+    assert(strlen(direct_gambits)==SOM_GAMBIT_COUNT);
+    assert(flxtr_som_ai_command("ai_off")&&!flxtr_som_ai_enabled());
+    direct_transport=0;
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");
     return 0;

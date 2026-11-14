@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdarg>
+#include <cstdlib>
 #include <atomic>
 #include <new>
 #include <mutex>
@@ -32,6 +33,22 @@ struct Core {
 #undef DECLARE
 } core;
 static void *coreHandle;
+using SomCommand=bool(*)(const char*);
+using SomMessage=bool(*)(const char*);
+using SomEnabled=bool(*)(void);
+using SomFamiliar=unsigned(*)(void);
+using SomGambits=void(*)(char*);
+static SomCommand somCommand;
+static SomMessage somMessage;
+static SomEnabled somEnabled;
+static SomFamiliar somFamiliar;
+static SomGambits somGambits;
+static std::mutex somMutex;
+static std::string pendingSomCommand,pendingSomMessage;
+static std::vector<uint8_t> somWram;
+static bool somActive;
+static unsigned somFamiliarSlot;
+static std::string somGambitValues;
 static ANativeWindow *window;
 static unsigned bufferWidth,bufferHeight;
 static std::vector<uint8_t> rom;
@@ -108,8 +125,9 @@ static void sample(int16_t l,int16_t r){if(sound.size()<32768){sound.push_back(l
 static size_t batch(const int16_t *data,size_t frames){if(frames<=16384&&sound.size()+frames*2<=32768)sound.insert(sound.end(),data,data+frames*2);return frames;}
 static void poll(){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id){if(port)return 0;device&=RETRO_DEVICE_MASK;if(device==RETRO_DEVICE_POINTER){if(index)return 0;return id==RETRO_DEVICE_ID_POINTER_X?pointerX:id==RETRO_DEVICE_ID_POINTER_Y?pointerY:id==RETRO_DEVICE_ID_POINTER_PRESSED?pointerPressed:0;}if(device==RETRO_DEVICE_MOUSE)return id==RETRO_DEVICE_ID_MOUSE_X?mouseX:id==RETRO_DEVICE_ID_MOUSE_Y?mouseY:id==RETRO_DEVICE_ID_MOUSE_LEFT?(pointerPressed||((buttons>>8)&1)):id==RETRO_DEVICE_ID_MOUSE_RIGHT?(buttons&1):0;if(device==RETRO_DEVICE_ANALOG)return index<2&&id<2?analogAxes[index*2+id]:0;if(device!=RETRO_DEVICE_JOYPAD)return 0;if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)buttons;return id<16?((buttons>>id)&1):0;}
-static void cleanup(){if(loaded)core.unload_game();hardwareClose();if(initialized)core.deinit();loaded=initialized=false;if(window)ANativeWindow_release(window);window=nullptr;bufferWidth=bufferHeight=0;if(coreHandle)dlclose(coreHandle);coreHandle=nullptr;rom.clear();sound.clear();options.clear();disks={};pixel=RETRO_PIXEL_FORMAT_0RGB1555;core=Core();}
+static void cleanup(){if(loaded)core.unload_game();hardwareClose();if(initialized)core.deinit();loaded=initialized=false;if(window)ANativeWindow_release(window);window=nullptr;bufferWidth=bufferHeight=0;if(coreHandle)dlclose(coreHandle);coreHandle=nullptr;rom.clear();sound.clear();options.clear();disks={};pixel=RETRO_PIXEL_FORMAT_0RGB1555;core=Core();somCommand=nullptr;somMessage=nullptr;somEnabled=nullptr;somFamiliar=nullptr;somGambits=nullptr;{std::lock_guard<std::mutex> lock(somMutex);pendingSomCommand.clear();pendingSomMessage.clear();somWram.clear();somActive=false;somFamiliarSlot=0;somGambitValues.clear();}}
 static std::string string(JNIEnv *env,jstring value){if(!value)return "";const char *s=env->GetStringUTFChars(value,nullptr);if(!s)return "";std::string result=s;env->ReleaseStringUTFChars(value,s);return result;}
+static std::string jsonString(const std::string &value);
 extern "C" JNIEXPORT jstring JNICALL Java_org_flxtr_android_RetroActivity_coreInfo(JNIEnv *env,jclass,jstring library){
     if(initialized)return nullptr;std::string path=string(env,library);void *handle=dlopen(path.c_str(),RTLD_NOW|RTLD_LOCAL);if(!handle)return nullptr;
     auto getInfo=reinterpret_cast<decltype(&retro_get_system_info)>(dlsym(handle,"retro_get_system_info"));retro_system_info info={};
@@ -128,10 +146,16 @@ extern "C" JNIEXPORT jdoubleArray JNICALL Java_org_flxtr_android_RetroActivity_s
         CORE_FUNCTIONS(BUILTIN)
 #undef BUILTIN
     }else{
+        if(lib.size()>=18&&lib.compare(lib.size()-18,18,"libflxtr_som_ai.so")==0){size_t slash=lib.find_last_of('/');std::string base=(slash==std::string::npos?std::string():lib.substr(0,slash+1))+"libflxtr_snes9x.so";setenv("FLXTR_AI_BASE_CORE",base.c_str(),1);setenv("FLXTR_SOM_AI_DIRECT","1",1);}
         coreHandle=dlopen(lib.c_str(),RTLD_NOW|RTLD_LOCAL);if(!coreHandle){__android_log_print(ANDROID_LOG_ERROR,"FlXtR-Libretro","Core load failed: %s",dlerror());return nullptr;}
 #define RESOLVE(name) core.name=reinterpret_cast<decltype(core.name)>(dlsym(coreHandle,"retro_" #name));if(!core.name){cleanup();return nullptr;}
         CORE_FUNCTIONS(RESOLVE)
 #undef RESOLVE
+        somCommand=reinterpret_cast<SomCommand>(dlsym(coreHandle,"flxtr_som_ai_command"));
+        somMessage=reinterpret_cast<SomMessage>(dlsym(coreHandle,"flxtr_som_ai_message"));
+        somEnabled=reinterpret_cast<SomEnabled>(dlsym(coreHandle,"flxtr_som_ai_enabled"));
+        somFamiliar=reinterpret_cast<SomFamiliar>(dlsym(coreHandle,"flxtr_som_ai_familiar"));
+        somGambits=reinterpret_cast<SomGambits>(dlsym(coreHandle,"flxtr_som_ai_gambits"));
     }
     window=ANativeWindow_fromSurface(env,surface);if(!window){cleanup();return nullptr;}
     core.set_environment(environment);core.set_video_refresh(video);core.set_audio_sample(sample);core.set_audio_sample_batch(batch);core.set_input_poll(poll);core.set_input_state(input);core.init();initialized=true;
@@ -144,7 +168,11 @@ if(!gamePath.empty()&&!info.need_fullpath){FILE *file=fopen(gamePath.c_str(),"rb
     if(hardware.context_reset&&!hardwareOpen(window,av.geometry.base_width,av.geometry.base_height)){cleanup();return nullptr;}
     jdouble values[]={av.timing.fps,av.timing.sample_rate,av.geometry.aspect_ratio>0?av.geometry.aspect_ratio:(double)av.geometry.base_width/av.geometry.base_height,(double)av.geometry.base_width,(double)av.geometry.base_height};auto result=env->NewDoubleArray(5);if(result)env->SetDoubleArrayRegion(result,0,5,values);else cleanup();return result;
 }
-extern "C" JNIEXPORT jshortArray JNICALL Java_org_flxtr_android_RetroActivity_frame(JNIEnv *env,jclass,jint mask,jshort leftX,jshort leftY,jshort rightX,jshort rightY,jshort deltaX,jshort deltaY,jshort absoluteX,jshort absoluteY,jboolean pressed){mouseX=deltaX;mouseY=deltaY;pointerX=absoluteX;pointerY=absoluteY;pointerPressed=pressed;analogAxes[0]=leftX;analogAxes[1]=leftY;analogAxes[2]=rightX;analogAxes[3]=rightY;sound.clear();buttons=(unsigned)mask;if(loaded)core.run();auto result=env->NewShortArray(sound.size());if(result)env->SetShortArrayRegion(result,0,sound.size(),sound.data());return result;}
+extern "C" JNIEXPORT jshortArray JNICALL Java_org_flxtr_android_RetroActivity_frame(JNIEnv *env,jclass,jint mask,jshort leftX,jshort leftY,jshort rightX,jshort rightY,jshort deltaX,jshort deltaY,jshort absoluteX,jshort absoluteY,jboolean pressed){mouseX=deltaX;mouseY=deltaY;pointerX=absoluteX;pointerY=absoluteY;pointerPressed=pressed;analogAxes[0]=leftX;analogAxes[1]=leftY;analogAxes[2]=rightX;analogAxes[3]=rightY;sound.clear();buttons=(unsigned)mask;if(loaded){std::string command,message;{std::lock_guard<std::mutex> lock(somMutex);command.swap(pendingSomCommand);message.swap(pendingSomMessage);}if(somCommand&&!command.empty())somCommand(command.c_str());if(somMessage&&!message.empty())somMessage(message.c_str());core.run();if(somEnabled){bool active=somEnabled();std::vector<uint8_t> snapshot;if(active){size_t size=core.get_memory_size(RETRO_MEMORY_SYSTEM_RAM);void *data=core.get_memory_data(RETRO_MEMORY_SYSTEM_RAM);if(data&&size==0x20000){snapshot.resize(size);memcpy(snapshot.data(),data,size);}}char gambits[7]={0};if(somGambits)somGambits(gambits);std::lock_guard<std::mutex> lock(somMutex);somActive=active;somWram.swap(snapshot);somFamiliarSlot=somFamiliar?somFamiliar():0;somGambitValues.assign(gambits,strnlen(gambits,6));}}auto result=env->NewShortArray(sound.size());if(result)env->SetShortArrayRegion(result,0,sound.size(),sound.data());return result;}
+extern "C" JNIEXPORT jbyteArray JNICALL Java_org_flxtr_android_RetroActivity_somSnapshot(JNIEnv *env,jclass){std::lock_guard<std::mutex> lock(somMutex);if(!somActive||somWram.size()!=0x20000)return nullptr;auto result=env->NewByteArray(somWram.size());if(result)env->SetByteArrayRegion(result,0,somWram.size(),(const jbyte*)somWram.data());return result;}
+extern "C" JNIEXPORT jstring JNICALL Java_org_flxtr_android_RetroActivity_somStatus(JNIEnv *env,jclass){std::lock_guard<std::mutex> lock(somMutex);std::string result="{\"enabled\":"+std::string(somActive?"true":"false")+",\"familiar\":"+std::to_string(somFamiliarSlot)+",\"gambits\":"+jsonString(somGambitValues)+"}";return env->NewStringUTF(result.c_str());}
+extern "C" JNIEXPORT void JNICALL Java_org_flxtr_android_RetroActivity_queueSomCommand(JNIEnv *env,jclass,jstring value){std::string command=string(env,value);if(command.size()>39)return;std::lock_guard<std::mutex> lock(somMutex);pendingSomCommand=command;}
+extern "C" JNIEXPORT void JNICALL Java_org_flxtr_android_RetroActivity_queueSomMessage(JNIEnv *env,jclass,jstring value){std::string message=string(env,value);if(message.size()>95)return;std::lock_guard<std::mutex> lock(somMutex);pendingSomMessage=message;}
 extern "C" JNIEXPORT jbyteArray JNICALL Java_org_flxtr_android_RetroActivity_readMemory(JNIEnv *env,jclass,jboolean state)try{
     if(!loaded)return nullptr;size_t size=state?core.serialize_size():core.get_memory_size(RETRO_MEMORY_SAVE_RAM);if(!size||size>128*1024*1024)return nullptr;std::vector<uint8_t> bytes(size);
     if(state){if(!core.serialize(bytes.data(),size))return nullptr;}else{void *data=core.get_memory_data(RETRO_MEMORY_SAVE_RAM);if(!data)return nullptr;memcpy(bytes.data(),data,size);}

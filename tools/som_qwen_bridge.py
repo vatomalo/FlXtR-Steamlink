@@ -7,6 +7,7 @@ default hybrid policy lets Qwen choose a durable intention while deterministic
 code executes it using verified tiles, enemies, weapon state and map memory.
 """
 import argparse
+import http.server
 import json
 import os
 import re
@@ -657,6 +658,140 @@ class RemoteLink:
             raise OSError(f"Steam Link rejected action {action!r} ({status})")
 
 
+class AndroidRelayLink:
+    """In-memory request/reply transport for the Android core relay."""
+
+    def __init__(self, address: str):
+        host, separator, port = address.rpartition(":")
+        if not separator or not host or not port.isdigit():
+            raise ValueError("Android listen address must be HOST:PORT")
+        self.condition = threading.Condition()
+        self.pending = None
+        self.reply = None
+        self.message = ""
+        self.closed = False
+        relay = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.0"
+            def do_POST(self):
+                if self.path != "/som-ai/v1/step":
+                    self.send_error(404); return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = 0
+                if length < WRAM_BYTES or length > WRAM_BYTES + 4096:
+                    self.send_error(400); return
+                data = self.rfile.read(length)
+                header, separator, raw = data.partition(b"\n")
+                if not separator or len(raw) != WRAM_BYTES:
+                    self.send_error(400); return
+                try:
+                    status = json.loads(header.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    self.send_error(400); return
+                with relay.condition:
+                    if relay.closed or relay.pending is not None:
+                        self.send_error(409); return
+                    relay.pending = (raw, status)
+                    relay.reply = None
+                    relay.condition.notify_all()
+                    deadline = time.monotonic() + 12
+                    while relay.reply is None and not relay.closed:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0: break
+                        relay.condition.wait(remaining)
+                    reply = relay.reply
+                    relay.reply = None
+                    relay.pending = None
+                    relay.condition.notify_all()
+                if reply is None:
+                    self.send_error(504); return
+                body = json.dumps(reply, separators=(",", ":")).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers(); self.wfile.write(body)
+            def log_message(self, *_):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer((host, int(port)), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True, name="som-android-relay")
+        self.thread.start()
+
+    def _wait_pending(self):
+        with self.condition:
+            while self.pending is None and not self.closed:
+                self.condition.wait(1.0)
+            if self.closed:
+                return None
+            return self.pending
+
+    def fetch_wram(self, require_marker=False):
+        pending = self._wait_pending()
+        return pending[0] if pending is not None else None
+
+    def fetch_gambits(self):
+        pending = self._wait_pending()
+        text = pending[1].get("gambits", "") if pending else ""
+        if len(text) != len(GAMBIT_NAMES) or any(c not in "012345" for c in text):
+            raise OSError("Android gambits unavailable")
+        return tuple(int(c) for c in text)
+
+    def fetch_familiar(self):
+        pending = self._wait_pending()
+        value = pending[1].get("familiar", 0) if pending else 0
+        return value if isinstance(value, int) and 0 <= value <= 3 else 0
+
+    def fetch_navigation(self):
+        raw = self.fetch_wram(True)
+        if raw is None: return None
+        low, hero = raw[:256], raw[0xE000:0xE200]
+        word = lambda data, offset: data[offset] | data[offset + 1] << 8
+        hp, maximum = word(hero, 0x182), word(hero, 0x184)
+        return {"tick": low[0xF4], "map": word(low, 0xDC) & 0x1FF,
+                "x": word(hero, 2), "y": word(hero, 4), "hp": hp,
+                "max_hp": maximum, "layer": hero[0xB] & 0x80,
+                "ground": hero[0x48], "valid": True}
+
+    def show_message(self, text: str) -> None:
+        clean = MESSAGE_ALLOWED.sub("", text.replace("_", " "))[:65].strip()
+        if clean:
+            with self.condition: self.message = clean
+
+    def send_control(self, command: str) -> None:
+        if command not in CONTROL_COMMANDS:
+            raise ValueError(f"refusing unknown control command {command!r}")
+        self._respond(command)
+
+    def send_action(self, action: str) -> None:
+        if action not in ACTIONS and action not in LONG_MOVES.values():
+            raise ValueError(f"refusing non-allowlisted action {action!r}")
+        self._respond(action)
+
+    def _respond(self, action):
+        self._wait_pending()
+        with self.condition:
+            if self.closed or self.pending is None:
+                raise OSError("Android relay closed")
+            self.reply = {"action": action, "message": self.message}
+            self.message = ""
+            self.condition.notify_all()
+            while self.pending is not None and not self.closed:
+                self.condition.wait(1.0)
+
+    def close(self):
+        with self.condition:
+            self.closed = True
+            if self.pending is not None and self.reply is None:
+                self.reply = {"action": "ai_off", "message": "AI stopped"}
+            self.condition.notify_all()
+        self.server.shutdown(); self.server.server_close()
+        self.thread.join(timeout=2)
+
+
 INTENT_MESSAGES = {
     "explore_frontier": "AI: exploring",
     "engage_enemy": "AI: fighting",
@@ -887,6 +1022,8 @@ def main() -> int:
                         help="Path to raw 128-KiB WRAM dump; reread each step")
     parser.add_argument("--wram-remote", action="store_true",
                         help="Read /tmp/flxtr-som-wram.bin on target via SSH per step")
+    parser.add_argument("--android-listen",
+                        help="Receive Android snapshots on HOST:PORT instead of using SSH")
     parser.add_argument("--history-db", type=Path,
                         help="Optional persistent SQLite observation log")
     parser.add_argument("--ring-control", action="store_true",
@@ -935,7 +1072,7 @@ def main() -> int:
     planner.combat_learner = learner
     map_guard = MapLoadGuard()
     doors = DoorLearner(history) if history is not None else None
-    if history is not None and args.wram_remote and not args.dry_run:
+    if history is not None and args.wram_remote and not args.dry_run and not args.android_listen:
         tables = load_rom_exits(args.host)
         if tables is not None:
             history.attach_rom(tables)
@@ -946,7 +1083,9 @@ def main() -> int:
             print(f"[rom] exit table of {len(tables.maps)} maps: {state} "
                   f"({confirmed} confirmed, {contradicted} contradicted crossings)",
                   flush=True)
-    if args.ring_control:
+    link = (AndroidRelayLink(args.android_listen) if args.android_listen else
+            RemoteLink(args.host) if not args.dry_run else None)
+    if args.ring_control and not args.android_listen:
         print(f"[ai] {args.policy} policy waiting for Action Grid confirmation", flush=True)
         deadline = time.monotonic() + args.start_timeout
         while not remote_ring_ai_enabled(args.host):
@@ -955,7 +1094,8 @@ def main() -> int:
                 return 1
             time.sleep(1.0)
         print("[ai] Action Grid start received", flush=True)
-    link = RemoteLink(args.host) if not args.dry_run else None
+    elif args.ring_control:
+        print(f"[ai] {args.policy} policy waiting for Android AI gesture", flush=True)
     calibration = (Calibration.load(args.ring_calibration) if args.ring_calibration
                    else Calibration.load())
     candy_disabled = calibration is None
@@ -1683,14 +1823,14 @@ def main() -> int:
             print(f"[ai] stopped safely: {exc}", file=sys.stderr)
             if link:
                 link.close()
-            if args.ring_control:
+            if args.ring_control and not args.android_listen:
                 clear_remote_ring_ai(args.host)
             return 1
     if learner is not None:
         learner.cancel("session ended")
     if link:
         link.close()
-    if args.ring_control and args.steps != 0 and step >= args.steps:
+    if args.ring_control and not args.android_listen and args.steps != 0 and step >= args.steps:
         clear_remote_ring_ai(args.host)
     if history is not None:
         history.close()

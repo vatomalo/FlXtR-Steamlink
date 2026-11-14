@@ -7,6 +7,8 @@ func TestPrivatePeerBoundary(t *testing.T){
     if _,err:=validRequest("GET",good);err!=nil{t.Fatal(err)}
     for _,bad:=range []string{"http://192.168.10.2:43927/.well-known/flxtr","http://100.70.1.2:22/.well-known/flxtr","http://8.8.8.8:43927/.well-known/flxtr","http://user@100.70.1.2:43927/.well-known/flxtr","http://100.70.1.2:43927/localapi/v0/status","http://100.70.1.2:43927/.well-known/flxtr?redirect=1"}{if _,err:=validRequest("GET",bad);err==nil{t.Fatalf("accepted %s",bad)}}
     if _,err:=validRequest("POST",good);err==nil{t.Fatal("allowed upload outside handoff")}
+    if _,err:=validRequest("POST","http://100.69.7.81:43928/som-ai/v1/step");err!=nil{t.Fatal(err)}
+    if _,err:=validRequest("GET","http://100.69.7.81:43928/som-ai/v1/step");err==nil{t.Fatal("allowed AI snapshot over GET")}
 }
 
 func TestAndroidInterfaceAddresses(t *testing.T){

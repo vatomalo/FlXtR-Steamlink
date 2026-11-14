@@ -28,6 +28,10 @@ public final class RetroActivity extends Activity implements SurfaceHolder.Callb
     static native boolean writeMemory(byte[] data,boolean state);
     static native void resetCore();
     static native void stopCore();
+    static native byte[] somSnapshot();
+    static native String somStatus();
+    static native void queueSomCommand(String command);
+    static native void queueSomMessage(String message);
     private volatile boolean running,paused;
     private volatile int touch,keys,stick;
     private volatile short leftX,leftY,rightX,rightY;
@@ -52,6 +56,7 @@ public final class RetroActivity extends Activity implements SurfaceHolder.Callb
     private final ConcurrentLinkedQueue<Runnable> commands=new ConcurrentLinkedQueue<>();
     private File rom,save;
     private String coreName;
+    private SomAiRelay somAiRelay;
     private int scaling,baseWidth=160,baseHeight=144;
     private double aspect=160.0/144;
     @Override public void onCreate(Bundle state){
@@ -66,7 +71,7 @@ String optionsKey=getIntent().getStringExtra("optionsKey");if(optionsKey!=null&&
         LinearLayout dpad=new LinearLayout(this);dpad.setOrientation(LinearLayout.VERTICAL);dpad.addView(row(control("↑",4)));dpad.addView(row(control("←",6),control("↓",5),control("→",7)));root.addView(dpad,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT));
         LinearLayout buttons=new LinearLayout(this);buttons.setOrientation(LinearLayout.VERTICAL);
         if(coreName.equals("pcsx_rearmed")||coreName.equals("ppsspp")){buttons.addView(row(control("L2",12),control("R2",13)));buttons.addView(row(control("□",1),control("△",9)));buttons.addView(row(control("×",0),control("○",8)));}
-        else{if(coreName.equals("snes9x"))buttons.addView(row(control("Y",1),control("X",9)));buttons.addView(row(control("B",0),control("A",8)));}
+        else{if(coreName.equals("snes9x")||coreName.equals("som_ai"))buttons.addView(row(control("Y",1),control("X",9)));buttons.addView(row(control("B",0),control("A",8)));}
         if(!coreName.equals("gambatte")&&!coreName.equals("fceumm"))buttons.addView(row(control("L",10),control("R",11)));
         buttons.addView(row(control("Select",2),control("Start",3)));root.addView(buttons,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.RIGHT));
 Button menu=new Button(this);menu.setText("⋮");menu.setContentDescription("Game menu");menu.setAlpha(.75f);menu.setOnClickListener(v->menu());root.addView(menu,new FrameLayout.LayoutParams(dp(56),dp(48),Gravity.TOP|Gravity.RIGHT));touchDpad=dpad;touchButtons=buttons;setTouchControls(getSharedPreferences("retro-ui",MODE_PRIVATE).getBoolean("touch-controls",false));setContentView(root);hideBars();
@@ -91,7 +96,7 @@ Button menu=new Button(this);menu.setText("⋮");menu.setContentDescription("Gam
             runOnUiThread(()->loadingText.setText("Starting "+GameFormats.label(coreName)+"..."));
             File coreSaves=new File(getFilesDir(),"games/core-saves/"+coreName);if(!coreSaves.isDirectory()&&!coreSaves.mkdirs())throw new IOException("Cannot create engine save directory");
             String library=coreName.equals("gambatte")?"":new File(getApplicationInfo().nativeLibraryDir,"libflxtr_"+coreName+".so").getAbsolutePath();
-double[] av=startCore(coreName.equals("scummvm")&&getIntent().getBooleanExtra("coreOnly",false)?"":rom.getAbsolutePath(),coreName.equals("ppsspp")||coreName.equals("scummvm")||coreName.equals("dolphin")?coreSaves.getAbsolutePath():save.getParent(),new File(getFilesDir(),"games/system").getAbsolutePath(),library,surface.getHolder().getSurface());if(av==null)throw new IOException("This "+GameFormats.label(coreName)+" game couldn't be loaded. Check the game files and, for PlayStation, its BIOS and disc tracks.");started=true;aspect=av[2];if(av.length>=5){baseWidth=Math.max(1,(int)av[3]);baseHeight=Math.max(1,(int)av[4]);}runOnUiThread(this::fit);
+double[] av=startCore(coreName.equals("scummvm")&&getIntent().getBooleanExtra("coreOnly",false)?"":rom.getAbsolutePath(),coreName.equals("ppsspp")||coreName.equals("scummvm")||coreName.equals("dolphin")?coreSaves.getAbsolutePath():save.getParent(),new File(getFilesDir(),"games/system").getAbsolutePath(),library,surface.getHolder().getSurface());if(av==null)throw new IOException("This "+GameFormats.label(coreName)+" game couldn't be loaded. Check the game files and, for PlayStation, its BIOS and disc tracks.");started=true;if(coreName.equals("som_ai")){somAiRelay=new SomAiRelay(this);somAiRelay.start();}aspect=av[2];if(av.length>=5){baseWidth=Math.max(1,(int)av[3]);baseHeight=Math.max(1,(int)av[4]);}runOnUiThread(this::fit);
             restore(".srm",false);if(!coreName.equals("scummvm"))restore(".auto",true);
             int rate=(int)Math.round(av[1]);if(rate<8000||rate>192000)throw new IOException("Unsupported game audio");int buffer=Math.max(AudioTrack.getMinBufferSize(rate,AudioFormat.CHANNEL_OUT_STEREO,AudioFormat.ENCODING_PCM_16BIT),rate/5*4);
             audio=new AudioTrack.Builder().setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()).setAudioFormat(new AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()).setBufferSizeInBytes(buffer).setTransferMode(AudioTrack.MODE_STREAM).build();if(audio.getState()!=AudioTrack.STATE_INITIALIZED)throw new IOException("Game audio is unavailable");audio.play();
@@ -103,7 +108,7 @@ double[] av=startCore(coreName.equals("scummvm")&&getIntent().getBooleanExtra("c
                 next+=period;long wait=next-System.nanoTime();if(wait>0)Thread.sleep(wait/1000000,(int)(wait%1000000));else if(wait<-period*3)next=System.nanoTime();
             }
         }catch(InterruptedException stopped){Thread.currentThread().interrupt();}catch(Exception failure){runOnUiThread(()->{if(!isFinishing()&&!isDestroyed()&&resumed)new AlertDialog.Builder(this).setTitle("Libretro").setMessage(failure.getMessage()==null?"Game playback stopped.":failure.getMessage()).setPositiveButton("Close",(d,i)->finish()).setOnCancelListener(d->finish()).show();});}
-        finally{if(started){persist(".srm",false);if(!coreName.equals("scummvm"))persist(".auto",true);stopCore();}AudioTrack track=audio;audio=null;if(track!=null){track.pause();track.flush();track.release();}running=false;}
+        finally{SomAiRelay relay=somAiRelay;somAiRelay=null;if(relay!=null)relay.close();if(started){persist(".srm",false);if(!coreName.equals("scummvm"))persist(".auto",true);stopCore();}AudioTrack track=audio;audio=null;if(track!=null){track.pause();track.flush();track.release();}running=false;}
     }
     private boolean persist(String suffix,boolean state){try{byte[] data=readMemory(state);if(data==null)return !state;android.util.AtomicFile file=new android.util.AtomicFile(new File(save+suffix));FileOutputStream out=file.startWrite();try{out.write(data);file.finishWrite(out);}catch(Exception failure){file.failWrite(out);return false;}return true;}catch(Exception ignored){return false;}catch(OutOfMemoryError memory){return false;}}
     private boolean restore(String suffix,boolean state){try{File file=new File(save+suffix);return file.isFile()&&file.length()<=128*1024*1024&&writeMemory(Files.readAllBytes(file.toPath()),state);}catch(Exception failure){return false;}catch(OutOfMemoryError memory){return false;}}

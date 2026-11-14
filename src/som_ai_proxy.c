@@ -347,14 +347,14 @@ static void som_input_poll(void){
             const unsigned want=som_disc_weapons[disciplines.selected][which];
             if(wram&&wram[0xE1E4]!=want)som_equip_weapon(wram,want);
         }
-        /* L2+R2 opens the skill page during manual play. This chord has no
-         * native SNES equivalent and is swallowed while the overlay is open.
-         * Prevent the R2-only AI switch from interpreting the chord. */
+        /* Start opens Class Progress manually; retain L2+R2 as an alias.
+         * While open, all pad input is consumed by the overlay. */
         const uint16_t class_chord=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                               (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+        const uint16_t class_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
         if(!ring_ai_enabled && !som_manual_disciplines &&
-           (current&class_chord)==class_chord &&
-           (pressed&class_chord)){
+           ((pressed&class_start)||
+            ((current&class_chord)==class_chord&&(pressed&class_chord)))){
             som_manual_disciplines=1;
             disciplines.open=1;
             disciplines.cursor=0;

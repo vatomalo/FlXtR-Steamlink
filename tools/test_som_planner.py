@@ -164,6 +164,39 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(decision.action, "wait")
         self.assertIn("not_field_mode", decision.reason)
 
+    def test_frontier_quarantine_after_repeated_no_progress(self):
+        # Regression: live map oscillated around distance 59/60 for >3000
+        # decisions, immediately reselecting the same distant frontier.
+        planner = MemoryPlanner()
+        ctx = observation()["tile_context"]
+        ctx["actor"]["floor_height"] = 0
+        # Known area surrounded by unknown cells provides alternate frontiers.
+        planner._known_cells = lambda map_id, layer: {
+            (x, y): "open" for x in range(1, 5) for y in range(1, 5)
+        }
+        steps = ["step_left", "step_right", "step_up", "step_down"]
+        first = planner._explore(ctx, steps, "explore_west")
+        self.assertEqual(first.intention, "explore_frontier")
+        first_target = tuple(planner._get_intention()["target"])
+        for _ in range(30):
+            planner._explore(ctx, steps, "explore_west")
+        key = (ctx["map_id"], ctx["actor"]["layer"], first_target)
+        self.assertGreater(planner.frontier_rejected.get(key, 0),
+                           planner.frontier_clock)
+        active = planner._get_intention()
+        if active is not None:
+            self.assertNotEqual(tuple(active["target"]), first_target)
+
+    def test_frontier_selector_rejects_routes_with_blocked_first_step(self):
+        planner = MemoryPlanner()
+        ctx = observation()["tile_context"]
+        planner._known_cells = lambda map_id, layer: {
+            (x, y): "open" for x in range(1, 5) for y in range(1, 5)
+        }
+        result = planner._explore(ctx, ["step_right"], "explore_west")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.action, "step_right")
+
     def test_persistent_frontier_intention_survives_decisions(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "memory.sqlite")

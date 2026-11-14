@@ -981,6 +981,31 @@ int main(void){
         for(unsigned t=0;t<sizeof(artifacts)/sizeof(artifacts[0]);t++)unlink(artifacts[t]);
         weapon_trace_on=0;som_weapon_trace_reset();mocked_has_vram=0;
     }
+    /* A long ring interaction retains the LAST 32 VRAM-changing frames,
+     * including the critical sprite upload just before equipment changes. */
+    {
+        mocked_has_vram=1;memset(mocked_wram,0,sizeof(mocked_wram));
+        memset(mocked_vram,0,sizeof(mocked_vram));
+        mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;
+        mocked_wram[0xE6]=0x0F;mocked_wram[0xE1E4]=1;
+        weapon_trace_on=1;som_weapon_trace_reset();
+        som_weapon_trace_frame();
+        for(unsigned t=1;t<=40;t++){
+            mocked_vram[0xC100]=(uint8_t)t;
+            som_weapon_trace_frame();
+        }
+        assert(weapon_trace_vram_dumps==40);
+        assert(access("/tmp/flxtr-weapon-frame-001.vram",F_OK)!=0);
+        assert(access("/tmp/flxtr-weapon-frame-009.vram",F_OK)==0);
+        assert(access("/tmp/flxtr-weapon-frame-040.vram",F_OK)==0);
+        weapon_trace_on=0;som_weapon_trace_reset();mocked_has_vram=0;
+        for(unsigned t=1;t<=40;t++){
+            char filename[128];
+            snprintf(filename,sizeof(filename),"/tmp/flxtr-weapon-frame-%03u.vram",t);
+            unlink(filename);
+        }
+        unlink("/tmp/flxtr-weapon-timeline.txt");
+    }
     reset_proxy();direct_transport=1;ring_ai_enabled=0;
     assert(flxtr_som_ai_command("ai_on")&&flxtr_som_ai_enabled());
     assert(flxtr_som_ai_command("step_right")&&armed&&active_action==SOM_ACT_STEP_RIGHT);

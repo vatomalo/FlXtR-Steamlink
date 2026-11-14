@@ -1143,6 +1143,10 @@ static void som_weapon_trace_frame(void){
     const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     const uint8_t *vram=backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
     if(!ram||!vram)return;
+    /* Preserve the last field-play frame across the native ring menu.
+     * The actual equip byte may change while the menu is open, so comparing
+     * consecutive frames would miss that transition entirely. */
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xE000]!=1)return;
     if(weapon_trace_busy){
         if(++weapon_trace_wait>=SOM_WEAPON_TRACE_FRAMES){
             som_weapon_trace_dump(weapon_trace_before_ram,weapon_trace_before_vram,

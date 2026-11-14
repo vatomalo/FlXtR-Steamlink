@@ -1393,7 +1393,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_disc_load();
-    class_supply_pending=class_equip_pending=0;class_last_equip_attempt=0;
+    /* A previously selected class also receives missing weapons after load. */
+    som_class_selected();
     som_weapon_cache_reset();
     hero_pal_have=0;
     som_gambit_load();

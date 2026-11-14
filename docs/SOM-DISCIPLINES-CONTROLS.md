@@ -4,6 +4,15 @@ Development branch: `feature/som-disciplines-controls-20261114`, based on the **
 
 ## Current implementation
 
+### Manual Class Progress and stall recovery (14 November)
+
+- Open the Disciplines menu during **manual gameplay** with L2+R2 together (hold L2 and tap R2 also works). Up/Down selects a discipline; B selects its appearance specialization; A closes. While open, physical P1 inputs are swallowed by the proxy so the native ring menu does not open. No AI activation required.
+- With AI running, use a button to open Gambits, then L/R to switch to Disciplines.
+- The SkyLoft bridge no longer turns missing `inn_ready` / `save_ready` into an unconditional infinite `wait`. The strategic phase stays `inn` or `save`; the deterministic planner may still explore/defend while the taught interaction is unavailable. Once available, it resumes the committed trip. This avoids immobilizing the hero for thousands of decisions.
+- These changes require **rebuilding/deploying the proxy** for the menu and **restarting the SkyLoft AI service** for bridge changes. Switching Git branches alone does not replace the installed Steam Link libretro core or a running Python process.
+- Test with `make test-som-ai-proxy test-som-ai-player2`, plus Python tests. Do not deploy until the tests pass.
+
+
 ### Appearance profiles
 
 - `src/som_class_palette.h`: pure, reusable 16-color SNES BGR555 transformations with palette index 0 left unchanged. Profiles: Swordmaster frost-blue, Monk crimson/gold, Ninja midnight-blue, Summoner grayscale white, and celestial familiar blue-white.

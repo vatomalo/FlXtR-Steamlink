@@ -945,6 +945,42 @@ int main(void){
     mocked_wram[0xE004]=0xF0;mocked_wram[0xE005]=0x02;          /* y 752 */
     assert(som_hero_screen(&sx_,&sy_)&&sx_==1000-768&&sy_==752-544); /* far edge */
     mocked_wram[0x00D0]=0x81;assert(!som_hero_screen(&sx_,&sy_)); /* dialogue */
+    /* Native-ring transition trace must remember the pre-menu graphics and
+     * record the actual native WRAM and VRAM differences without changing RAM. */
+    {
+        mocked_has_vram=1;
+        memset(mocked_wram,0,sizeof(mocked_wram));
+        memset(mocked_vram,0,sizeof(mocked_vram));
+        mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
+        mocked_wram[0xE1E4]=1;
+        assert(som_weapon_trace_allocate());
+        weapon_trace_on=1;som_weapon_trace_reset();
+        som_weapon_trace_frame();
+        assert(weapon_trace_has_prev&&!weapon_trace_busy);
+        mocked_wram[0xE4]=2; /* native ring opened */
+        mocked_wram[0xE1E4]=2; /* native ring changed equipped weapon */
+        mocked_vram[0xC020]=0x77;
+        som_weapon_trace_frame();
+        assert(!weapon_trace_busy); /* preserve pre-ring frame */
+        mocked_wram[0xE4]=1;
+        som_weapon_trace_frame();
+        assert(weapon_trace_busy&&weapon_trace_from==1&&weapon_trace_to==2);
+        for(unsigned t=0;t<SOM_WEAPON_TRACE_FRAMES;t++)som_weapon_trace_frame();
+        assert(!weapon_trace_on&&!weapon_trace_busy);
+        FILE *report=fopen("/tmp/flxtr-weapon-trace.txt","r");
+        assert(report);
+        char header[160]={0};
+        assert(fgets(header,sizeof(header),report));
+        assert(strstr(header,"sword")&&strstr(header,"axe"));
+        fclose(report);
+        const char *const artifacts[]={
+            "/tmp/flxtr-weapon-trace.txt",
+            "/tmp/flxtr-weapon-ram-before.bin","/tmp/flxtr-weapon-ram-after.bin",
+            "/tmp/flxtr-weapon-vram-before.bin","/tmp/flxtr-weapon-vram-after.bin"
+        };
+        for(unsigned t=0;t<sizeof(artifacts)/sizeof(artifacts[0]);t++)unlink(artifacts[t]);
+        weapon_trace_on=0;som_weapon_trace_reset();mocked_has_vram=0;
+    }
     reset_proxy();direct_transport=1;ring_ai_enabled=0;
     assert(flxtr_som_ai_command("ai_on")&&flxtr_som_ai_enabled());
     assert(flxtr_som_ai_command("step_right")&&armed&&active_action==SOM_ACT_STEP_RIGHT);

@@ -571,7 +571,9 @@ int main(void){
         mocked_wram[0xE600]=1;mocked_wram[0xE600+0x180]=0;          /* live monster */
         mocked_wram[0xDFA0+2]=0x1F;mocked_wram[0xDFA0+3]=0x00;       /* slot 1: pure red */
         familiar_pending=1;assert(som_clone_enemy());som_familiar_bind();
-        assert(mocked_wram[0xDFC0+2]==0xE0&&mocked_wram[0xDFC0+3]==0x03); /* tinted green */
+        /* Celestial tint maps pure red (0x001F) to blue-white shaded BGR555
+         * (0x2506), rather than the old green channel-rotation (0x03E0). */
+        assert(mocked_wram[0xDFC0+2]==0x06&&mocked_wram[0xDFC0+3]==0x25);
         assert(familiar.slot==1&&familiar.map==129&&!familiar_pending);
         FILE *ff=fopen(fam_path,"r");int n=0;assert(ff&&fscanf(ff,"%d",&n)==1&&fclose(ff)==0);
         assert(n==2);                                              /* bridge slot number */

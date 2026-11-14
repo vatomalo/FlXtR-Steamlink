@@ -193,6 +193,11 @@ static inline void som_familiar_reapply(const SomFamiliarCarry *c, uint8_t *ram,
     for (unsigned i = 0; i < c->tile_count; i++)
         memcpy(vram + SOM_FAMILIAR_OBJ_VRAM + c->tile_id[i] * 32u, c->tile_data[i], 32);
     memcpy(ram + c->palette_address, c->sprite_palette, sizeof(c->sprite_palette));
+    /* And the working palette the game sends to the screen: 7E:0700 +
+     * sprite palette * 32 (the shadow above is at 7E:DE00 + (128+p*16)*2). */
+    const unsigned sprite_palette = (c->palette_address - 0xDF00u) / 32u;
+    if (sprite_palette < 8u)
+        memcpy(ram + 0x0700u + sprite_palette * 32u, c->sprite_palette, sizeof(c->sprite_palette));
 }
 
 /* Object fields that belong to a monster slot (VRAM tiles/addresses,

@@ -611,7 +611,7 @@ int main(void){
             assert(slot==0&&som_fam_u16(ram+0xE600+0x8A)==0x2EA0);   /* home layout */
             assert(vram[0xC000+0xA0*32]==0xA0&&vram[0xC000+0xB1*32]==0xB1);
             assert(vram[0xC000+0x60*32]==0);                         /* others untouched */
-            assert(ram[0xDFE0]==0x66);
+            assert(ram[0xDFE0]==0x66&&ram[0x07E0]==0x66);           /* shadow + working */
             memcpy(ram+0xE600,slots_before,sizeof(slots_before));
             memcpy(ram+0xDFE0,pal_before,sizeof(pal_before));
         }
@@ -724,7 +724,7 @@ int main(void){
         static uint8_t ram[SOM_WRAM_SIZE];
         memset(ram,0,sizeof(ram));
         ram[0xE000]=1;ram[0xE08B]=0x22;                       /* palette 1 -> 7EDF20 */
-        for(unsigned i=0;i<32;i++)ram[0xDF20+i]=(uint8_t)(0x40+i);
+        for(unsigned i=0;i<32;i++)ram[0xDF20+i]=ram[0x0720+i]=(uint8_t)(0x40+i);
         uint8_t original[32];memcpy(original,ram+0xDF20,32);
         som_disc_init(&disciplines);hero_pal_have=0;
         som_hero_palette_frame(ram);
@@ -734,6 +734,11 @@ int main(void){
         uint8_t once[32];memcpy(once,ram+0xDF20,32);
         assert(!memcmp(once,original,16)&&!memcmp(once+30,original+30,2)); /* 0-7, 15 kept */
         assert(memcmp(once+16,original+16,14));                    /* clothes 8-14 tinted */
+        assert(!memcmp(ram+0x0720,once,32));                       /* working buffer too */
+        memset(ram+0x0720,0x77,32);                                /* a flash is running */
+        som_hero_palette_frame(ram);
+        assert(ram[0x0720+2]==0x77);                               /* left alone */
+        memcpy(ram+0x0720,once,32);
         assert(memcmp(once,original,32)&&once[0]==original[0]&&once[1]==original[1]);
         som_hero_palette_frame(ram);
         assert(!memcmp(ram+0xDF20,once,32));                   /* does not stack */

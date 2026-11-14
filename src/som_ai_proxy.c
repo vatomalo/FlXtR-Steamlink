@@ -157,6 +157,13 @@ static void som_hero_palette_frame(uint8_t *ram){
     for(unsigned i=0;i<16u;i++)
         if(SOM_HERO_CLOTHES&(1u<<i)){dressed[2u*i]=tinted[2u*i];dressed[2u*i+1u]=tinted[2u*i+1u];}
     memcpy(current,dressed,32);
+    /* The game works on (and sends to the screen) a second buffer,
+     * 7E:0700 + palette*32 (live trace 2026-11-14: hero palette 1 at 7E:0720
+     * equals 7E:DF20, and only it changes during dash/block flashes). Put the
+     * tint there too while it holds the plain colours; leave flashes alone. */
+    uint8_t *working=ram+0x0700u+((ram[0xE08B]>>1)&7u)*32u;
+    if(!memcmp(working,hero_pal_orig,32)||!memcmp(working,hero_pal_written,32))
+        memcpy(working,dressed,32);
     memcpy(hero_pal_written,dressed,32);
 }
 static int som_menu_disciplines;

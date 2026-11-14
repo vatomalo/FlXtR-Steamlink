@@ -6,11 +6,11 @@
 #include <unistd.h>
 #include "../src/som_ai_proxy.c"
 
-static unsigned pressed=100;
+static unsigned pressed=100,pressed_too=100;
 static uint8_t mocked_wram[SOM_WRAM_SIZE];
 static int16_t mocked_input(unsigned port,unsigned device,unsigned index,unsigned id){
     (void)index;
-    return port==0&&device==RETRO_DEVICE_JOYPAD&&id==pressed?1:0;
+    return port==0&&device==RETRO_DEVICE_JOYPAD&&(id==pressed||id==pressed_too)?1:0;
 }
 static uint16_t mocked_buttons;
 static int16_t mocked_input_mask(unsigned port,unsigned device,unsigned index,unsigned id){
@@ -687,6 +687,50 @@ int main(void){
         pfd=open(pkg_path,O_WRONLY|O_TRUNC);assert(pfd>=0&&write(pfd,"junk",4)==4);close(pfd);
         assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
         unlink(pkg_path);unlink(any_path);
+    }
+    /* Weapon switch without the ring: the fields a live ring switch wrote. */
+    {
+        backend_retro_get_memory_data=mocked_memory_data;
+        backend_retro_get_memory_size=mocked_memory_size;
+        memset(mocked_wram,0,sizeof(mocked_wram));
+        uint8_t *ram=mocked_wram,*hero=ram+0xE000;
+        ram[0xE4]=1;ram[0xE6]=0x0F;hero[0]=1;
+        memset(ram+0xCC54,0xFF,8);ram[0xCC55]=0x40;ram[0xCC56]=0x00;ram[0xCC59]=0x00;
+        hero[0x1C0]=0x01;                                   /* sword level 1 */
+        hero[0x1E4]=1;hero[0x1E3]=hero[0x1E8]=9;hero[0x198]=24;hero[0x19C]=1;hero[0x196]=3;
+        assert(!som_equip_weapon(ram,3));                    /* spear not owned */
+        assert(som_equip_weapon(ram,2));                     /* axe, as recorded */
+        assert(hero[0x1E4]==2&&hero[0x1E3]==0x12&&hero[0x1E8]==0x12&&hero[0x198]==25);
+        assert(hero[0x19C]==0&&hero[0x196]==0&&hero[0x068]==2&&hero[0x07F]==0x12);
+        assert(hero[0x066]==0x32&&hero[0x02B]==0x24&&hero[0x065]==0x20&&hero[0x06B]==0x33);
+        assert(ram[0xCC55]==0x00&&ram[0xCC56]==0x40);         /* held bit moved */
+        assert(som_cycle_weapon(ram)&&hero[0x1E4]==5);       /* next owned: bow */
+        assert(som_cycle_weapon(ram)&&hero[0x1E4]==1&&hero[0x196]==3&&hero[0x19C]==1);
+        assert(hero[0x198]==24);                              /* attack back */
+        /* Swordsmanship: B = sword, Y = axe; the game sees Y as B. */
+        on_turbo=1;physical_state=mocked_input;ring_ai_enabled=0;som_manual_disciplines=0;
+        som_disc_init(&disciplines);disciplines.selected=0;
+        pressed=100;pressed_too=100;som_input_poll();
+        pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
+        assert(hero[0x1E4]==2);                               /* second weapon: axe */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        pressed=100;som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+        pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+        assert(hero[0x1E4]==1);                               /* B: back to the sword */
+        pressed=100;som_input_poll();
+        pressed=RETRO_DEVICE_ID_JOYPAD_Y;pressed_too=RETRO_DEVICE_ID_JOYPAD_L2;som_input_poll();
+        assert(hero[0x1E4]==1);                               /* L2+Y: the ring */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
+        pressed=100;pressed_too=100;som_input_poll();
+        ram[0xD0]=0x81;pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
+        assert(hero[0x1E4]==1&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
+        pressed=100;som_input_poll();ram[0xD0]=0;
+        disciplines.selected=SOM_DISCIPLINE_NONE;                /* no discipline: native Y */
+        pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
+        assert(hero[0x1E4]==1&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
+        pressed=100;som_input_poll();som_disc_init(&disciplines);
     }
     /* give_<weapon>: only an unowned weapon, tier 0, with an undo snapshot. */
     {

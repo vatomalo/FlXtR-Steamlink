@@ -253,12 +253,48 @@ static void (*backend_run)(void);
 
 /* Keep all Libretro callbacks on the same thread as the original frontend.
  * Never try to emulate frames from a timer/network worker. */
+/* Each discipline fights with two weapons: B attacks with the first, Y with
+ * the second (player's design, 2026-11-14). Weapon types: 0 glove, 1 sword,
+ * 2 axe, 3 spear, 4 whip, 5 bow, 6 boomerang, 7 javelin. */
+static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
+    {1,2},   /* Swordsmanship: sword, axe */
+    {0,3},   /* Martial Arts: glove, spear */
+    {1,6},   /* Ninjutsu: sword, boomerang */
+    {4,6},   /* Magic: whip, boomerang */
+    {3,4},   /* Divine Arts: spear, whip */
+    {4,7},   /* Dark Arts: whip, javelin */
+    {6,4},   /* Summoning: boomerang, whip */
+    {4,0},   /* Support & Dance: whip, glove */
+    {1,3},   /* Weapon Flow: sword, spear */
+    {1,5},   /* Roguecraft: sword, bow */
+    {1,3},   /* Bushido: sword, spear */
+    {5,7},   /* Archery: bow, javelin */
+};
+static int som_equip_weapon(uint8_t *ram,unsigned type);
+/* Set each poll: the player is in field play with a discipline and Y (not
+ * L2+Y) held. */
+static int y_weapon_swap;
+static int som_cycle_weapon(uint8_t *ram);
+static int som_y_field_play(void){
+    if(!backend_retro_get_memory_data||ring_ai_enabled||som_manual_disciplines||
+       disciplines.selected>=SOM_DISCIPLINE_COUNT)return 0;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    return ram&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
+}
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
     if((ring_ai_enabled||som_manual_disciplines)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
         actual=0;                    /* the player's buttons drive the gambit menu */
+    /* With a discipline, Y attacks with its second weapon: the game sees B
+     * (so holding Y charges) and never Y; L2+Y still opens the ring. */
+    if(y_weapon_swap&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        if(bitmask)actual=(int16_t)((actual&~(1<<RETRO_DEVICE_ID_JOYPAD_Y))|
+                                     (1<<RETRO_DEVICE_ID_JOYPAD_B));
+        else if(id==RETRO_DEVICE_ID_JOYPAD_Y)actual=0;
+        else if(id==RETRO_DEVICE_ID_JOYPAD_B)actual=1;
+    }
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && (id<16||bitmask) && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
@@ -300,6 +336,17 @@ static void som_input_poll(void){
                     combo_count,frame_number);
         }
         const uint16_t pressed=(uint16_t)(current&~last_physical_buttons);
+        const uint16_t y_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+        const uint16_t l2_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+        const uint16_t b_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+        const int field=som_y_field_play();
+        y_weapon_swap=(current&y_bit)&&!(current&l2_bit)&&field;
+        if(field&&(pressed&(y_bit|b_bit))&&!(current&l2_bit)){
+            uint8_t *wram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+            const unsigned which=(pressed&y_bit)?1u:0u;    /* Y second, B first */
+            const unsigned want=som_disc_weapons[disciplines.selected][which];
+            if(wram&&wram[0xE1E4]!=want)som_equip_weapon(wram,want);
+        }
         /* L2+R2 opens the skill page during manual play. This chord has no
          * native SNES equivalent and is swallowed while the overlay is open.
          * Prevent the R2-only AI switch from interpreting the chord. */
@@ -578,6 +625,66 @@ static int som_summon_boss(void);
 static const char *const som_weapon_types[8]={"glove","sword","axe","spear","whip","bow",
     "boomerang","javelin"};
 static int som_take_undo(void);
+/* Switching weapons without the ring (EXPERIMENTAL). Live traces of ring
+ * switches through all 8 weapons (2026-11-14) showed what the game writes
+ * on the hero: type +0x1E4, row +0x1E3/+0x1E8 (type*9 + tier), attack
+ * +0x198, the weapon's level +0x19C (from the level nibbles at +0x1C0) and
+ * progress +0x196, and the weapon animation set +0x068/+0x07F/+0x066/
+ * +0x02B/+0x065/+0x06B. Values per weapon as recorded (tier 0): */
+typedef struct { uint8_t attack,f07F,f066,f02B,f065,f06B; } SomWeaponLook;
+static const SomWeaponLook som_weapon_look[8]={
+    {23,0x10,0x30,0x20,0x40,0x30},   /* glove */
+    {24,0x11,0x31,0x22,0x30,0x31},   /* sword */
+    {25,0x12,0x32,0x24,0x20,0x33},   /* axe */
+    {25,0x13,0x33,0x26,0x10,0x35},   /* spear */
+    {23,0x14,0x34,0x28,0x00,0x37},   /* whip */
+    {24,0x15,0x34,0x2A,0xF0,0x39},   /* bow */
+    {23,0x16,0x35,0x2C,0xE0,0x3B},   /* boomerang */
+    {23,0x17,0x36,0x2E,0xD0,0x3D},   /* javelin */
+};
+static uint8_t weapon_progress[8];      /* +0x196 per weapon, kept while away */
+static int som_equip_weapon(uint8_t *ram,unsigned type){
+    if(!ram||type>=8u||ram[0xE000]!=1)return 0;
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    uint8_t *hero=ram+0xE000u;
+    const unsigned current=hero[0x1E4];
+    if(current>=8u||current==type)return 0;
+    uint8_t *owned=ram+0xCC54u;
+    if(owned[type]==0xFF)return 0;                         /* not owned */
+    const unsigned tier=owned[type]&0x0Fu;
+    weapon_progress[current]=hero[0x196];
+    int attack=(int)hero[0x198]+(int)som_weapon_look[type].attack-
+               (int)som_weapon_look[current].attack;
+    if(attack<0)attack=0;
+    if(attack>255)attack=255;
+    const uint8_t levels=hero[0x1C0u+type/2u];
+    const unsigned level=type%2u?(levels&0x0Fu):(levels>>4);
+    hero[0x1E4]=(uint8_t)type;
+    hero[0x1E3]=hero[0x1E8]=(uint8_t)(type*9u+tier);
+    hero[0x198]=(uint8_t)attack;
+    hero[0x19C]=(uint8_t)level;
+    hero[0x196]=weapon_progress[type];
+    hero[0x068]=(uint8_t)type;
+    hero[0x07F]=som_weapon_look[type].f07F;
+    hero[0x066]=som_weapon_look[type].f066;
+    hero[0x02B]=som_weapon_look[type].f02B;
+    hero[0x065]=som_weapon_look[type].f065;
+    hero[0x06B]=som_weapon_look[type].f06B;
+    if(owned[current]!=0xFF)owned[current]&=(uint8_t)~0x40u;  /* no longer held */
+    owned[type]|=0x40u;                                        /* held by the boy */
+    fprintf(stderr,"[som-ai] WEAPON equipped without the ring: %s\n",som_weapon_types[type]);
+    return 1;
+}
+/* Next owned weapon after the current one (Y while playing). */
+static int som_cycle_weapon(uint8_t *ram){
+    if(!ram)return 0;
+    const unsigned current=ram[0xE1E4];
+    for(unsigned step=1;step<8u;step++){
+        const unsigned type=(current+step)%8u;
+        if(ram[0xCC54u+type]!=0xFF)return som_equip_weapon(ram,type);
+    }
+    return 0;
+}
 static int som_give_weapon(uint8_t *ram,unsigned type){
     if(!ram||type>=8u)return 0;
     if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
@@ -867,6 +974,15 @@ static int som_handle_command(const char *command){
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
     if(!strcmp(command,"summon_boss"))return som_summon_boss();
     if(!strcmp(command,"vram_dump")){som_vram_dump();return 1;}
+    if(!strncmp(command,"equip_",6)){
+        for(unsigned t=0;t<8u;t++)
+            if(!strcmp(command+6,som_weapon_types[t]))
+                return som_equip_weapon(backend_retro_get_memory_data?
+                    (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL,t);
+    }
+    if(!strcmp(command,"next_weapon"))
+        return som_cycle_weapon(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strncmp(command,"give_",5)){
         for(unsigned t=0;t<8u;t++)
             if(!strcmp(command+5,som_weapon_types[t]))

@@ -45,8 +45,10 @@ jobs:
         env:
           FLXTR_ANDROID_RELEASE: '1'
         run: |
-          export FLXTR_ANDROID_VERSION_CODE="$((1000 + GITHUB_RUN_NUMBER))"
-          export FLXTR_ANDROID_VERSION_NAME="0.9-steamlink-menus.${GITHUB_RUN_NUMBER}"
+          # The old 1000-series formula fell behind the already-published 1097
+          # channel build after Actions run numbers were reset/migrated.
+          export FLXTR_ANDROID_VERSION_CODE="$((2000 + GITHUB_RUN_NUMBER))"
+          export FLXTR_ANDROID_VERSION_NAME="0.10.28-som-ai.${GITHUB_RUN_NUMBER}"
           bash scripts/build-android.sh
       - uses: actions/upload-artifact@v4
         with:

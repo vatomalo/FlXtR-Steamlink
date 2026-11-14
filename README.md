@@ -5,11 +5,11 @@ Add `--branch NAME` to select a branch; add `--no-publish` to skip the default
 publication to auto-update channels. See
 [commands, build logs and artifacts](docs/SKYLOFT-BUILDS.md).
 
-**Downloads — November 5, 2026**
+**Downloads — updated November 14, 2026**
 
 | Platform | Package |
 | --- | --- |
-| Android 8+ | [Signed APK 0.10.27 — Tailscale connection support](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-1027-tailscale/FlXtR-Android-preview.apk) |
+| Android 8+ | [Latest signed APK — build 2093 (November 14, 2026)](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-2093-24d58748e045/FlXtR-Android-preview.apk) |
 | Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Windows-x86_64.zip) |
 | Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Linux-x86_64.tgz) |
 | Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-SteamDeck-x86_64.tgz) |

@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define SOM_FAMILIAR_MONSTER_BASE 0xE600u
 #define SOM_FAMILIAR_OBJECT 0x200u
@@ -41,13 +42,21 @@ static inline int som_fam_alive(const uint8_t *object) {
     return object[0] == 1 && object[0x180] < 0x80 && !(status & 0x8000u);
 }
 
-/* One frame of the familiar; returns 0 once it is gone (then f->slot = -1). */
+enum { SOM_FAMILIAR_DIED = 0, SOM_FAMILIAR_HERE = 1, SOM_FAMILIAR_LEFT_MAP = 2 };
+
+/* One frame of the familiar. Returns SOM_FAMILIAR_HERE while it is with the
+ * hero, SOM_FAMILIAR_DIED or SOM_FAMILIAR_LEFT_MAP once it is gone from this
+ * map (then f->slot = -1). */
 static inline int som_familiar_tick(SomFamiliar *f, uint8_t *ram, unsigned long frame) {
-    if (f->slot < 0) return 0;
+    if (f->slot < 0) return SOM_FAMILIAR_DIED;
     uint8_t *me = ram + SOM_FAMILIAR_MONSTER_BASE + (unsigned)f->slot * SOM_FAMILIAR_OBJECT;
-    if (!som_fam_alive(me) || som_fam_u16(ram + 0xDC) != f->map) {
+    if (som_fam_u16(ram + 0xDC) != f->map) {
         f->slot = f->target = -1;
-        return 0;
+        return SOM_FAMILIAR_LEFT_MAP;
+    }
+    if (!som_fam_alive(me)) {
+        f->slot = f->target = -1;
+        return SOM_FAMILIAR_DIED;
     }
     /* Friendly fire cannot kill it: queued damage is cleared before the
      * game applies it and HP stays full (the player killed the first one). */
@@ -93,7 +102,79 @@ static inline int som_familiar_tick(SomFamiliar *f, uint8_t *ram, unsigned long 
         t[0x1F1] = (uint8_t)(pending > 0xFF ? 0xFF : pending);
         f->last_strike = frame;
     }
-    return 1;
+    return SOM_FAMILIAR_HERE;
+}
+
+/* Summons look different from the monsters they copy: each colour of the
+ * 16-colour BGR555 palette has its channels rotated (r->g, g->b, b->r);
+ * colour 0 stays transparent. */
+static inline void som_familiar_tint(uint8_t *palette) {
+    for (unsigned i = 1; i < 16; i++) {
+        const unsigned c = som_fam_u16(palette + i * 2);
+        const unsigned r = c & 31u, g = (c >> 5) & 31u, b = (c >> 10) & 31u;
+        som_fam_put16(palette + i * 2, b | r << 5 | g << 10);
+    }
+}
+
+/* Only summoners summon: a character whose mind (intelligence or wisdom,
+ * +0x18B/+0x18C) is at least its strength, agility and constitution
+ * (+0x188..+0x18A). Live: girl 11/11/11/7/15 and sprite 8/13/9/15/5 are
+ * summoners, the boy 19/19/18/8/9 is not. */
+static inline int som_familiar_summoner(const uint8_t *character) {
+    const unsigned str = character[0x188], agi = character[0x189], con = character[0x18A];
+    const unsigned mind = character[0x18B] > character[0x18C] ? character[0x18B] : character[0x18C];
+    const unsigned body = str > agi ? (str > con ? str : con) : (agi > con ? agi : con);
+    return mind > 0 && mind >= body;
+}
+
+/* Everything that makes up the familiar, carried to the next map. */
+typedef struct {
+    int valid;
+    uint8_t object[SOM_FAMILIAR_OBJECT];
+    uint8_t tiles[0x1000];
+    uint8_t palette[0x20];
+} SomFamiliarCarry;
+
+/* Object fields that belong to a monster slot (VRAM tiles/addresses,
+ * palette attribute +0x8B and address +0xF8); same list as the clone. */
+static const uint8_t som_familiar_slot_fields[] = {0x6C,0x6E,0x86,0x8A,0x92,0x96,0x9A,0x9E,0xA2,
+    0xA6,0xAA,0xAE,0xB2,0xB6,0xD2,0xD6,0xDA,0xF8,0xFA};
+
+static inline void som_familiar_save(SomFamiliarCarry *c, const uint8_t *ram, int slot) {
+    memcpy(c->object, ram + SOM_FAMILIAR_MONSTER_BASE + (unsigned)slot * SOM_FAMILIAR_OBJECT,
+           SOM_FAMILIAR_OBJECT);
+    memcpy(c->tiles, ram + 0x5000u + (unsigned)slot * 0x1000u, sizeof(c->tiles));
+    memcpy(c->palette, ram + 0xDFA0u + (unsigned)slot * 0x20u, sizeof(c->palette));
+    c->valid = 1;
+}
+
+/* Put a carried familiar into the first empty monster slot next to the
+ * hero; returns the slot or -1 (no empty slot yet). Occupied slots, which
+ * in towns hold villagers, are never touched. */
+static inline int som_familiar_restore(const SomFamiliarCarry *c, uint8_t *ram) {
+    if (!c->valid) return -1;
+    for (int slot = 0; slot < 3; slot++) {
+        uint8_t *to = ram + SOM_FAMILIAR_MONSTER_BASE + (unsigned)slot * SOM_FAMILIAR_OBJECT;
+        if (to[0] == 1) continue;
+        uint8_t keep[sizeof(som_familiar_slot_fields)][2];
+        for (unsigned i = 0; i < sizeof(som_familiar_slot_fields); i++) {
+            keep[i][0] = to[som_familiar_slot_fields[i]];
+            keep[i][1] = to[som_familiar_slot_fields[i] + 1];
+        }
+        memcpy(to, c->object, SOM_FAMILIAR_OBJECT);
+        for (unsigned i = 0; i < sizeof(som_familiar_slot_fields); i++) {
+            to[som_familiar_slot_fields[i]] = keep[i][0];
+            to[som_familiar_slot_fields[i] + 1] = keep[i][1];
+        }
+        memcpy(ram + 0x5000u + (unsigned)slot * 0x1000u, c->tiles, sizeof(c->tiles));
+        memcpy(ram + 0xDFA0u + (unsigned)slot * 0x20u, c->palette, sizeof(c->palette));
+        som_fam_put16(to + 2, som_fam_u16(ram + 0xE002) + 24u);
+        som_fam_put16(to + 4, som_fam_u16(ram + 0xE004));
+        to[0x1F1] = 0;
+        som_fam_put16(to + 0x182, som_fam_u16(to + 0x184));
+        return slot;
+    }
+    return -1;
 }
 
 #endif

@@ -536,8 +536,28 @@ int main(void){
         som_fam_put16(me+2,200);som_fam_put16(me+4,200);
         som_familiar_tick(&f,ram,5000);
         assert(f.target==-1&&som_fam_u16(me+2)==198&&som_fam_u16(me+4)==198); /* follows */
+        /* Carried to the next map: saved, then restored into an empty slot
+         * next to the hero with that slot's own drawing fields. */
+        static SomFamiliarCarry carry;
+        memset(ram+0x5000,0x33,0x1000);memset(ram+0xDFA0,0x44,0x20);
+        som_fam_put16(me+0x184,40);me[0x8B]=0x2A;
+        som_familiar_save(&carry,ram,0);
         ram[0xDC]=130;                                             /* map changed */
-        assert(!som_familiar_tick(&f,ram,5001)&&f.slot==-1);
+        assert(som_familiar_tick(&f,ram,5001)==SOM_FAMILIAR_LEFT_MAP&&f.slot==-1);
+        memset(ram+0xE600,0,0x600);                                /* new map, slots */
+        ram[0xE600]=1;ram[0xE600+0x3D]=0xC7;                       /* villager in slot 1 */
+        ram[0xE800+0x8B]=0x2C;ram[0xE800+0xF8]=0xC2;               /* slot 2's fields */
+        assert(som_familiar_restore(&carry,ram)==1);
+        uint8_t *back=ram+0xE800;
+        assert(back[0]==1&&back[0x8B]==0x2C&&back[0xF8]==0xC2);    /* own fields kept */
+        assert(ram[0x6000]==0x33&&ram[0xDFC0]==0x44);              /* tiles, colours */
+        assert(som_fam_u16(back+2)==som_fam_u16(ram+0xE002)+24u);  /* by the hero */
+        assert(ram[0xE600+0x3D]==0xC7);                            /* villager kept */
+        ram[0xEA00]=1;
+        assert(som_familiar_restore(&carry,ram)==-1);              /* no empty slot */
+        ram[0xE800+0x190]=0;ram[0xE800+0x191]=0x80;                /* now dead */
+        f.slot=1;f.map=130;
+        assert(som_familiar_tick(&f,ram,5002)==SOM_FAMILIAR_DIED);
     }
     /* summon_familiar: clone, bind, publish the slot; dismiss ends it. */
     {
@@ -549,7 +569,9 @@ int main(void){
         memset(mocked_wram,0,sizeof(mocked_wram));
         mocked_wram[0xDC]=129;
         mocked_wram[0xE600]=1;mocked_wram[0xE600+0x180]=0;          /* live monster */
+        mocked_wram[0xDFA0+2]=0x1F;mocked_wram[0xDFA0+3]=0x00;       /* slot 1: pure red */
         familiar_pending=1;assert(som_clone_enemy());som_familiar_bind();
+        assert(mocked_wram[0xDFC0+2]==0xE0&&mocked_wram[0xDFC0+3]==0x03); /* tinted green */
         assert(familiar.slot==1&&familiar.map==129&&!familiar_pending);
         FILE *ff=fopen(fam_path,"r");int n=0;assert(ff&&fscanf(ff,"%d",&n)==1&&fclose(ff)==0);
         assert(n==2);                                              /* bridge slot number */
@@ -557,6 +579,15 @@ int main(void){
         assert(familiar.slot==-1&&access(fam_path,F_OK)!=0);
         assert(mocked_wram[0xE800+0x1F1]==0xFF);
         undo_ready=0;
+    }
+    /* Only summoners summon. */
+    {
+        uint8_t boy[0x200]={0},girl[0x200]={0},sprite[0x200]={0};
+        boy[0x188]=19;boy[0x189]=19;boy[0x18A]=18;boy[0x18B]=8;boy[0x18C]=9;
+        girl[0x188]=11;girl[0x189]=11;girl[0x18A]=11;girl[0x18B]=7;girl[0x18C]=15;
+        sprite[0x188]=8;sprite[0x189]=13;sprite[0x18A]=9;sprite[0x18B]=15;sprite[0x18C]=5;
+        assert(!som_familiar_summoner(boy)&&som_familiar_summoner(girl)&&
+               som_familiar_summoner(sprite));
     }
     /* Bubble anchor: hero screen position under a hero-centred camera that
      * stops at the map edges. */

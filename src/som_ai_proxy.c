@@ -419,6 +419,11 @@ static int clone_no_slot,last_clone_target=-1;
 static const char *familiar_file=SOM_FAMILIAR_FILE;
 static SomFamiliar familiar={-1,-1,0,0};
 static int familiar_pending;
+/* Carried between maps: saved every second while it is with the hero and
+ * restored into an empty slot once the new map has settled. */
+static SomFamiliarCarry familiar_carry;
+static unsigned long familiar_arrived;
+#define SOM_FAMILIAR_SETTLE_FRAMES 60ul
 static void som_familiar_bind(void);
 static void som_familiar_dismiss(void);
 static uint8_t *undo_state;
@@ -526,6 +531,7 @@ static int som_undo_spawn(void){
     int ok=backend_retro_unserialize(undo_state,undo_size);
     undo_ready=0;
     familiar.slot=familiar.target=-1;familiar_pending=0;   /* memory is pre-clone */
+    familiar_carry.valid=0;
     unlink(familiar_file);
     fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
                       "[som-ai] UNDO failed to restore the snapshot\n");
@@ -599,10 +605,20 @@ static void som_check_trigger(void){
     }
     if(!strcmp(command,"clone_enemy")||!strcmp(command,"summon_familiar")){
         familiar_pending=!strcmp(command,"summon_familiar");
-        if(familiar_pending&&familiar.slot>=0){
+        if(familiar_pending&&(familiar.slot>=0||familiar_carry.valid)){
             familiar_pending=0;
             fprintf(stderr,"[som-ai] FAMILIAR refused: one is already with you\n");
             return;
+        }
+        if(familiar_pending){
+            const uint8_t *ram=backend_retro_get_memory_data?
+                (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+            if(!ram||!som_familiar_summoner(ram+0xE000)){
+                familiar_pending=0;
+                som_overlay_set(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
+                fprintf(stderr,"[som-ai] FAMILIAR refused: the leader is not a summoner\n");
+                return;
+            }
         }
         if(som_clone_enemy()){som_familiar_bind();return;}
         if(clone_no_slot){
@@ -844,6 +860,7 @@ RETRO_API void retro_unload_game(void){
     ring_ai_enabled=0;ring_ai_pending=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
+    familiar_carry.valid=0;
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
     undo_ready=0;
@@ -862,19 +879,47 @@ static void som_familiar_bind(void){
     familiar_pending=0;
     familiar.slot=last_clone_target;familiar.target=-1;familiar.last_strike=0;
     familiar.map=ram?(unsigned)(ram[0xDC]|ram[0xDD]<<8):0;
+    if(ram){
+        som_familiar_tint((uint8_t*)ram+SOM_MONSTER_PALETTE+
+                          (unsigned)familiar.slot*SOM_MONSTER_PALETTE_SIZE);
+        som_familiar_save(&familiar_carry,ram,familiar.slot);
+    }
     som_familiar_publish();
     som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] FAMILIAR bound to monster slot %d\n",familiar.slot+1);
 }
-/* Runs the familiar each field frame; drops it when it dies or the map changes. */
+/* Runs the familiar each field frame; carries it to the next map. */
 static void som_familiar_frame(void){
-    if(familiar.slot<0||!backend_retro_get_memory_data)return;
+    if((familiar.slot<0&&!familiar_carry.valid)||!backend_retro_get_memory_data)return;
     uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
-    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return;     /* field only */
-    if(!som_familiar_tick(&familiar,ram,frame_number)){
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){            /* field only */
+        familiar_arrived=0;
+        return;
+    }
+    if(familiar.slot<0){                                          /* carried */
+        if(!familiar_arrived)familiar_arrived=frame_number;
+        if(frame_number-familiar_arrived<SOM_FAMILIAR_SETTLE_FRAMES)return;
+        int slot=som_familiar_restore(&familiar_carry,ram);
+        if(slot<0)return;                                         /* wait for a slot */
+        familiar.slot=slot;familiar.target=-1;familiar.last_strike=0;
+        familiar.map=(unsigned)(ram[0xDC]|ram[0xDD]<<8);
         som_familiar_publish();
-        fprintf(stderr,"[som-ai] FAMILIAR gone (died or map changed)\n");
+        fprintf(stderr,"[som-ai] FAMILIAR followed to map %u (slot %d)\n",familiar.map,slot+1);
+        return;
+    }
+    int state=som_familiar_tick(&familiar,ram,frame_number);
+    if(state==SOM_FAMILIAR_HERE){
+        if(frame_number%60u==0)som_familiar_save(&familiar_carry,ram,familiar.slot);
+        return;
+    }
+    som_familiar_publish();
+    if(state==SOM_FAMILIAR_LEFT_MAP){
+        familiar_arrived=0;
+        fprintf(stderr,"[som-ai] FAMILIAR follows the hero to the next map\n");
+    }else{
+        familiar_carry.valid=0;
+        fprintf(stderr,"[som-ai] FAMILIAR gone (died)\n");
     }
 }
 static void som_familiar_dismiss(void){
@@ -884,7 +929,7 @@ static void som_familiar_dismiss(void){
         uint8_t *me=ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE;
         me[0x182]=1;me[0x183]=0;me[0x1F1]=0xFF;    /* ends through its own death */
     }
-    familiar.slot=familiar.target=-1;familiar_pending=0;
+    familiar.slot=familiar.target=-1;familiar_pending=0;familiar_carry.valid=0;
     som_familiar_publish();
     fprintf(stderr,"[som-ai] FAMILIAR dismissed\n");
 }

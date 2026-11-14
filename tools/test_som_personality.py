@@ -43,6 +43,17 @@ class TestPersonality(unittest.TestCase):
         self.assertEqual(voice.observation_event(
             observation(map_id=129), visited_before=False), "map_change")
 
+    def test_every_spoken_moment_has_varied_lines_in_every_style(self):
+        from som_qwen_bridge import SPOKEN_INTENTIONS
+        for style, events in LINES.items():
+            for event in SPOKEN_INTENTIONS | {"map_change", "map_return", "hurt", "victory"}:
+                self.assertIn(event, events, (style, event))
+            for event, lines in events.items():
+                self.assertGreaterEqual(len(lines), 2, (style, event))
+                self.assertEqual(len(set(lines)), len(lines), (style, event))
+                for line in lines:
+                    self.assertNotIn("'", line)      # stripped by the Steam Link filter
+
     def test_no_unrecognized_events(self):
         self.assertIsNone(Personality().speak("cast_fire"))
 

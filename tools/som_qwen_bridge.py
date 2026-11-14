@@ -60,6 +60,10 @@ GAMBIT_FIGHT, GAMBIT_INN, GAMBIT_SHOP, GAMBIT_SAVE, GAMBIT_CANDY, GAMBIT_TALK = 
 GAMBITS_ALL = 0x3F
 GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
+# Intentions the personality comments on (som_personality.LINES events).
+SPOKEN_INTENTIONS = {"explore_frontier", "engage_enemy", "defend_enemy", "kite_enemy",
+                     "evade_enemy", "cut_grass", "survive", "return_to_inn", "go_to_inn",
+                     "go_to_shop", "go_to_map", "leave_room", "stuck"}
 GUARD_REFRESHES = 2     # extra block presses per guard decision
 GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
 MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
@@ -1493,11 +1497,11 @@ def main() -> int:
                     # Avoid re-issuing the generic status box every frame:
                     # it would immediately cover a timed speech bubble.
                     announce(INTENT_MESSAGES[decision.intention])
-                if (decision.intention != last_intention_spoken and
-                    decision.intention in ("explore_frontier", "engage_enemy",
-                                           "evade_enemy", "survive", "return_to_inn", "stuck")):
-                    speak(decision.intention)
-                    last_intention_spoken = decision.intention
+                spoken = ("go_to_map" if str(decision.intention).startswith("go_to_map")
+                          else decision.intention)
+                if spoken != last_intention_spoken and spoken in SPOKEN_INTENTIONS:
+                    speak(spoken)
+                    last_intention_spoken = spoken
             else:
                 try:
                     action = choose_action(args.ollama_url, args.model,

@@ -1097,7 +1097,7 @@ static void som_weapon_trace_timeline_frame(const uint8_t *ram,const uint8_t *vr
         weapon_trace_timeline=fopen("/tmp/flxtr-weapon-timeline.txt","w");
         if(!weapon_trace_timeline)return;
         fprintf(weapon_trace_timeline,
-                "frame game_mode ring_state weapon wr_change vr_change vram_snapshot\\n");
+                "frame game_mode ring_state weapon wr_change vr_change vram_snapshot\n");
     }
     unsigned wr=0,vr=0;
     if(weapon_trace_frame_valid){
@@ -1116,7 +1116,7 @@ static void som_weapon_trace_timeline_frame(const uint8_t *ram,const uint8_t *vr
             else weapon_trace_vram_dumps++;
         }else strcpy(filename,"-");
     }
-    fprintf(weapon_trace_timeline,"%u %02X %02X %u %u %u %s\\n",
+    fprintf(weapon_trace_timeline,"%u %02X %02X %u %u %u %s\n",
             weapon_trace_frame_count,ram[0xE4],ram[0xD0],
             ram[0xE1E4],wr,vr,filename);
     if(weapon_trace_frame_valid&&vr){
@@ -1124,7 +1124,7 @@ static void som_weapon_trace_timeline_frame(const uint8_t *ram,const uint8_t *vr
         for(unsigned t=0;t<2048u;t++)
             if(memcmp(vram+t*32u,weapon_trace_frame_vram+t*32u,32u))
                 fprintf(weapon_trace_timeline," %03X",t);
-        fprintf(weapon_trace_timeline,"\\n");
+        fprintf(weapon_trace_timeline,"\n");
     }
     memcpy(weapon_trace_frame_ram,ram,SOM_WRAM_SIZE);
     memcpy(weapon_trace_frame_vram,vram,0x10000u);

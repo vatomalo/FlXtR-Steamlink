@@ -12,6 +12,13 @@ static int16_t mocked_input(unsigned port,unsigned device,unsigned index,unsigne
     (void)index;
     return port==0&&device==RETRO_DEVICE_JOYPAD&&id==pressed?1:0;
 }
+static uint16_t mocked_buttons;
+static int16_t mocked_input_mask(unsigned port,unsigned device,unsigned index,unsigned id){
+    (void)index;
+    if(port!=0||device!=RETRO_DEVICE_JOYPAD)return 0;
+    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)mocked_buttons;
+    return id<16&&(mocked_buttons&(uint16_t)(1u<<id))?1:0;
+}
 static void *mocked_memory_data(unsigned id){
     return id==RETRO_MEMORY_SYSTEM_RAM?mocked_wram:NULL;
 }
@@ -86,6 +93,30 @@ int main(void){
     assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
     frame_number=start_frame+action_frames;
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+    /* Manual-play Class Progress menu via L2+R2. */
+    reset_proxy();
+    som_disc_init(&disciplines);
+    som_manual_disciplines=0;
+    ring_ai_enabled=0;
+    last_physical_buttons=0;
+    physical_state=mocked_input_mask;
+    mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
+                               (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+    som_input_poll();
+    assert(som_manual_disciplines&&disciplines.open&&!ring_ai_enabled);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);som_input_poll();
+    assert(disciplines.cursor==1);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN)==0);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
+    assert(disciplines.selected==1);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
+    assert(!som_manual_disciplines&&!disciplines.open);
+    mocked_buttons=0;
+    physical_state=mocked_input;
     /* snes9x2005 queries the whole pad with one bitmask when supported. */
     reset_proxy();som_start_action(SOM_ACT_STEP_DOWN);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==

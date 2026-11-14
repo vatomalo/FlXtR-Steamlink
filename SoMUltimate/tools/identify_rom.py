@@ -9,7 +9,7 @@ import hashlib
 from pathlib import Path
 
 def read_title(buf, offset):
-    if offset + 32 > len(buf):
+    if offset + 0x40 > len(buf):
         return None
     raw = buf[offset:offset+21]
     title = ''.join(chr(x) if 32 <= x <= 126 else '.' for x in raw).rstrip()

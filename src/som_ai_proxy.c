@@ -275,7 +275,7 @@ static void (*backend_run)(void);
 static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {1,2},   /* Swordsmanship: sword, axe */
     {0,3},   /* Martial Arts: glove, spear */
-    {1,6},   /* Ninjutsu: sword, boomerang */
+    {1,6},   /* Ninjutsu: sword, chakram (boomerang engine slot) */
     {4,6},   /* Magic: whip, boomerang */
     {3,4},   /* Divine Arts: spear, whip */
     {4,7},   /* Dark Arts: whip, javelin */
@@ -283,7 +283,7 @@ static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {4,0},   /* Support & Dance: whip, glove */
     {1,3},   /* Weapon Flow: sword, spear */
     {1,5},   /* Roguecraft: sword, bow */
-    {1,3},   /* Bushido: sword, spear */
+    {1,5},   /* Bushido: katana (sword), yumi (bow) */
     {5,7},   /* Archery: bow, javelin */
 };
 static int som_equip_weapon(uint8_t *ram,unsigned type);

@@ -307,7 +307,7 @@ static void som_class_selected(void){
 }
 /* Set each poll: the player is in field play with a discipline and Y (not
  * L2+Y) held. */
-static int y_weapon_swap;
+static int y_weapon_swap, y_weapon_blocked;
 static int som_cycle_weapon(uint8_t *ram);
 static int som_y_field_play(void){
     if(!backend_retro_get_memory_data||ring_ai_enabled||som_manual_disciplines||
@@ -376,6 +376,10 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         if(actual){som_combo_clear();return actual;}
         if(bitmask)return (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         if(id==RETRO_DEVICE_ID_JOYPAD_B)return 1;
+    }
+    if(y_weapon_blocked&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        if(bitmask)actual=(int16_t)(actual&~(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
+        else if(id==RETRO_DEVICE_ID_JOYPAD_Y)actual=0;
     }
     if(y_weapon_swap&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         if(bitmask)actual=(int16_t)((actual&~(1<<RETRO_DEVICE_ID_JOYPAD_Y))|
@@ -446,12 +450,17 @@ static void som_input_poll(void){
                 special_suppress=1;
             }
         }
-        y_weapon_swap=(current&y_bit)&&!(current&(l2_bit|r2))&&field&&!special_suppress;
-        if(field&&(pressed&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
+        y_weapon_swap=0;y_weapon_blocked=0;
+        if(field&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             uint8_t *wram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-            const unsigned which=(pressed&y_bit)?1u:0u;    /* Y second, B first */
+            const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
             const unsigned want=som_disc_weapons[disciplines.selected][which];
-            if(wram&&wram[0xE1E4]!=want)som_equip_weapon(wram,want);
+            const int equipped=wram&&wram[0xE1E4]==want;
+            if(!equipped&&(pressed&(y_bit|b_bit)))som_equip_weapon(wram,want);
+            if(current&y_bit){
+                y_weapon_swap=equipped;
+                y_weapon_blocked=!equipped; /* never attack with the wrong weapon */
+            }
         }
         /* Start opens Class Progress manually; retain L2+R2 as an alias.
          * While open, all pad input is consumed by the overlay. */
@@ -741,7 +750,7 @@ static uint8_t *som_vram(void);
  * progress +0x196, and the weapon animation set +0x068/+0x07F/+0x066/
  * +0x02B/+0x065/+0x06B. Values per weapon as recorded (tier 0): */
 typedef struct { uint8_t attack,f07F,f066,f02B,f065,f06B; } SomWeaponLook;
-static const SomWeaponLook som_weapon_look[8]={
+static const SomWeaponLook som_weapon_look[8] __attribute__((unused))={
     {23,0x10,0x30,0x20,0x40,0x30},   /* glove */
     {24,0x11,0x31,0x22,0x30,0x31},   /* sword */
     {25,0x12,0x32,0x24,0x20,0x33},   /* axe */
@@ -751,7 +760,7 @@ static const SomWeaponLook som_weapon_look[8]={
     {23,0x16,0x35,0x2C,0xE0,0x3B},   /* boomerang */
     {23,0x17,0x36,0x2E,0xD0,0x3D},   /* javelin */
 };
-static uint8_t weapon_progress[8];      /* +0x196 per weapon, kept while away */
+static uint8_t weapon_progress[8] __attribute__((unused));      /* +0x196 per weapon, kept while away */
 /* The game decompresses only the equipped weapon's sprite tiles. Directly
  * changing the object fields without running that loader leaves the old
  * weapon in VRAM and produces garbled sprites. Learn a bank only after the
@@ -774,7 +783,7 @@ static uint32_t som_cache_hash(const void *data,size_t size){
     for(size_t i=0;i<size;i++)h=(h^p[i])*16777619u;
     return h;
 }
-static void som_weapon_cache_save(void){
+static void __attribute__((unused)) som_weapon_cache_save(void){
     /* Disabled: prior data was captured with monster-sprite assumptions. */
     if(!weapon_rom_hash)return;
     SomWeaponCacheFile *c=calloc(1,sizeof(*c));
@@ -792,7 +801,7 @@ static void som_weapon_cache_save(void){
     }
     free(c);
 }
-static unsigned som_weapon_cache_load(void){
+static unsigned __attribute__((unused)) som_weapon_cache_load(void){
     if(!weapon_rom_hash)return 0;
     FILE *file=fopen(weapon_cache_file,"rb");
     if(!file)return 0;
@@ -823,7 +832,7 @@ static void som_weapon_cache_reset(void){
     memset(weapon_graphics,0,sizeof(weapon_graphics));
     weapon_cache_candidate=8u;weapon_cache_stable=0;
 }
-static void som_weapon_cache_frame(void){
+static void __attribute__((unused)) som_weapon_cache_frame(void){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
     uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     uint8_t *vram=som_vram();
@@ -975,10 +984,8 @@ static void som_class_supply_frame(void){
         unsigned primary=som_disc_weapons[disciplines.selected][0];
         if(ram[0xE1E4]==primary||som_equip_weapon(ram,primary))
             class_equip_pending=0;
-        else if(!weapon_graphics[primary].has_vram){
-            class_equip_pending=0;
-            fprintf(stderr,"[som-ai] CLASS weapon owned but sprite uncached; "
-                           "equip it once through native ring\n");
+        else{
+            class_equip_pending=0; /* never retry unsafe instant equipment */
         }
     }
 }
@@ -1495,6 +1502,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
     special_chord=0;special_suppress=0;
+    y_weapon_swap=y_weapon_blocked=0;
     combo_input_held=0;combo_charge_frame=0;
     memset(combo_hp,0,sizeof(combo_hp));memset(combo_ids,0,sizeof(combo_ids));
     memset(combo_live,0,sizeof(combo_live));

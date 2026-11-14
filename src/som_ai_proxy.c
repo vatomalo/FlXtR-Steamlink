@@ -1067,6 +1067,107 @@ static void som_vram_dump(void){
         fprintf(stderr,"[som-ai] VRAM dump: %lu bytes at frame %lu\n",(unsigned long)size,frame_number);
     else unlink(temp);
 }
+/* Observe native weapon-ring graphics loading without altering RAM/VRAM.
+ * Capture before native weapon change, then 12 frames after. The snapshots
+ * include complete WRAM and VRAM so we can find DMA/upload state changes. */
+#define SOM_WEAPON_TRACE_DIR "/tmp"
+#define SOM_WEAPON_TRACE_FRAMES 12u
+static int weapon_trace_on,weapon_trace_busy,weapon_trace_has_prev;
+static unsigned weapon_trace_wait,weapon_trace_from,weapon_trace_to;
+static uint8_t *weapon_trace_prev_ram,*weapon_trace_prev_vram;
+static uint8_t *weapon_trace_before_ram,*weapon_trace_before_vram;
+static void som_weapon_trace_reset(void){
+    weapon_trace_busy=weapon_trace_has_prev=0;weapon_trace_wait=0;
+}
+static int som_weapon_trace_allocate(void){
+    if(!weapon_trace_prev_ram)weapon_trace_prev_ram=malloc(SOM_WRAM_SIZE);
+    if(!weapon_trace_prev_vram)weapon_trace_prev_vram=malloc(0x10000u);
+    if(!weapon_trace_before_ram)weapon_trace_before_ram=malloc(SOM_WRAM_SIZE);
+    if(!weapon_trace_before_vram)weapon_trace_before_vram=malloc(0x10000u);
+    return weapon_trace_prev_ram&&weapon_trace_prev_vram&&
+           weapon_trace_before_ram&&weapon_trace_before_vram;
+}
+static void som_weapon_trace_dump(const uint8_t *before_ram,
+                                  const uint8_t *before_vram,
+                                  const uint8_t *after_ram,
+                                  const uint8_t *after_vram){
+    static const char *const names[4]={"ram-before","vram-before","ram-after","vram-after"};
+    const uint8_t *sources[4]={before_ram,before_vram,after_ram,after_vram};
+    const size_t lengths[4]={SOM_WRAM_SIZE,0x10000u,SOM_WRAM_SIZE,0x10000u};
+    char path[160];
+    for(unsigned i=0;i<4;i++){
+        snprintf(path,sizeof(path),SOM_WEAPON_TRACE_DIR "/flxtr-weapon-%s.bin",names[i]);
+        FILE *out=fopen(path,"wb");
+        if(!out)continue;
+        int ok=fwrite(sources[i],1,lengths[i],out)==lengths[i];
+        if(fclose(out)!=0)ok=0;
+        if(!ok)unlink(path);
+    }
+    unsigned changes_ram=0,changes_vram=0;
+    for(size_t i=0;i<SOM_WRAM_SIZE;i++)changes_ram+=before_ram[i]!=after_ram[i];
+    for(size_t i=0;i<0x10000u;i++)changes_vram+=before_vram[i]!=after_vram[i];
+    snprintf(path,sizeof(path),SOM_WEAPON_TRACE_DIR "/flxtr-weapon-trace.txt");
+    FILE *report=fopen(path,"w");
+    if(report){
+        fprintf(report,"native weapon switch: %s (%u) -> %s (%u)\\n",
+                som_weapon_types[weapon_trace_from],weapon_trace_from,
+                som_weapon_types[weapon_trace_to],weapon_trace_to);
+        fprintf(report,"WRAM changed bytes: %u; VRAM changed bytes: %u\\n",
+                changes_ram,changes_vram);
+        fprintf(report,"WRAM byte changes (first 512, hex offsets):\\n");
+        unsigned printed=0;
+        for(size_t i=0;i<SOM_WRAM_SIZE&&printed<512u;i++)
+            if(before_ram[i]!=after_ram[i]){
+                fprintf(report,"%05lX %02X -> %02X\\n",
+                        (unsigned long)i,before_ram[i],after_ram[i]);printed++;
+            }
+        fprintf(report,"VRAM changed 32-byte tile blocks (hex tile IDs):\\n");
+        for(unsigned t=0;t<2048u;t++)
+            if(memcmp(before_vram+t*32u,after_vram+t*32u,32u))
+                fprintf(report,"%03X ",t);
+        fprintf(report,"\\n");
+        fclose(report);
+    }
+    fprintf(stderr,"[som-ai] WEAPON TRACE native %s -> %s; "
+                   "RAM %u VRAM %u changed bytes; /tmp/flxtr-weapon-*\\n",
+            som_weapon_types[weapon_trace_from],
+            som_weapon_types[weapon_trace_to],changes_ram,changes_vram);
+    weapon_trace_on=0;weapon_trace_busy=0;
+}
+static void som_weapon_trace_frame(void){
+    if(!weapon_trace_on||!backend_retro_get_memory_data||
+       !backend_retro_get_memory_size||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE||
+       backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)<0x10000u||
+       !som_weapon_trace_allocate())return;
+    const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    const uint8_t *vram=backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
+    if(!ram||!vram)return;
+    if(weapon_trace_busy){
+        if(++weapon_trace_wait>=SOM_WEAPON_TRACE_FRAMES){
+            som_weapon_trace_dump(weapon_trace_before_ram,weapon_trace_before_vram,
+                                  ram,vram);
+            weapon_trace_has_prev=0;
+        }
+        return;
+    }
+    if(weapon_trace_has_prev&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
+       ram[0xE000]==1&&ram[0xE1E4]<8u&&
+       weapon_trace_prev_ram[0xE1E4]<8u&&
+       ram[0xE1E4]!=weapon_trace_prev_ram[0xE1E4]){
+        weapon_trace_from=weapon_trace_prev_ram[0xE1E4];
+        weapon_trace_to=ram[0xE1E4];
+        memcpy(weapon_trace_before_ram,weapon_trace_prev_ram,SOM_WRAM_SIZE);
+        memcpy(weapon_trace_before_vram,weapon_trace_prev_vram,0x10000u);
+        weapon_trace_busy=1;weapon_trace_wait=0;
+        fprintf(stderr,"[som-ai] WEAPON TRACE native switch observed, "
+                       "recording 12 more frames\\n");
+    }else{
+        memcpy(weapon_trace_prev_ram,ram,SOM_WRAM_SIZE);
+        memcpy(weapon_trace_prev_vram,vram,0x10000u);
+        weapon_trace_has_prev=1;
+    }
+}
 static void som_familiar_dismiss(void);
 static uint8_t *undo_state;
 static size_t undo_size;
@@ -1262,6 +1363,13 @@ static int som_handle_command(const char *command){
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
     if(!strcmp(command,"summon_boss"))return som_summon_boss();
     if(!strcmp(command,"vram_dump")){som_vram_dump();return 1;}
+    if(!strcmp(command,"weapon_trace")){
+        if(!som_weapon_trace_allocate())return 0;
+        weapon_trace_on=1;som_weapon_trace_reset();
+        som_overlay_set(&overlay,"WEAPON TRACE ON|Equip via native ring",SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] WEAPON TRACE armed; equip via native ring\\n");
+        return 1;
+    }
     if(!strncmp(command,"equip_",6)){
         for(unsigned t=0;t<8u;t++)
             if(!strcmp(command+6,som_weapon_types[t]))
@@ -1518,6 +1626,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
     som_weapon_cache_reset();
+    weapon_trace_on=0;som_weapon_trace_reset();
     hero_pal_have=0;
     som_gambit_load();
     last_input_frame=frame_number;idle_started=0;
@@ -1579,6 +1688,7 @@ RETRO_API void retro_unload_game(void){
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     familiar_carry.valid=0;
     som_weapon_cache_reset();
+    weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
     undo_ready=0;
@@ -1737,6 +1847,7 @@ RETRO_API void retro_run(void){
     backend_run();
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo)som_special_tick();
+    if(test_enabled&&on_turbo)som_weapon_trace_frame();
     if(test_enabled&&on_turbo)som_ring_ai_tick();
     som_idle_tick();
     if(!direct_transport&&test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&

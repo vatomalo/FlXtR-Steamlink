@@ -2,6 +2,33 @@
 
 Development branch: `feature/som-disciplines-controls-20261114`, based on the **working** familiar branch `feature/som-familiars-working-20261114` (commit `595d57e`). Do not merge older `clone_familiar_visual` experiments over `som_familiar.h`.
 
+## Weapon graphics cache and native charged specials (14 November 2026)
+
+- The proxy captures verified sprite tiles after the native game loader has equipped a
+  weapon for at least 12 frames. It persists the eight weapon sprite banks in
+  `som_ai_weapon_graphics.bin` next to the experimental core, using a versioned,
+  checksummed file keyed to the exact Turbo ROM bytes. It does not write the
+  SNES save. Only the sprite tile descriptors and data are saved; hero combat
+  stats are not retained in the cache. Reopening the same ROM restores
+  previously observed banks, so class switching no longer needs to warm up
+  every weapon on each game start.
+- A weapon whose tiles have **never** been loaded natively still needs one
+  initial native ring equip. This is deliberate: guessing missing tiles would
+  corrupt the animation. Incompatible or corrupt caches are rejected.
+- Manual field controls: **R2+B** requests the primary class weapon's native
+  **level-1** charged attack; **R2+Y** requests the secondary weapon's native
+  **level-2** attack. The proxy checks the charge level, equipped weapon,
+  field mode and recharge before starting. It holds the game's B attack
+  input, releases when WRAM confirms the requested charge stage, and cancels
+  after 360 frames or upon a field/weapon change. Other physical inputs cancel.
+  The R2 combinations do not replace L2+Y's item ring.
+- These are *native charged attacks with class-specific weapon selection*,
+  not invented animation routines. Shunshin, teleportation and new combat
+  status effects still need their own validated implementation.
+- Build verification: `make test-som-ai-proxy test-som-ai-player2`,
+  then `bash scripts/build-som-ai-proxy.sh` on SkyLoft with the SDK.
+  A build and Steam Link hardware playtest have not yet been confirmed.
+
 ## Current implementation
 
 ### Manual Class Progress and stall recovery (14 November)

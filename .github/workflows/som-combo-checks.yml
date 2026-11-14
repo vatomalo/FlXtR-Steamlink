@@ -1,0 +1,27 @@
+name: Secret of Mana combo build checks
+on:
+  push:
+    branches:
+      - feature/som-disciplines-controls-20261114
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proxy-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run C proxy regression tests
+        run: |
+          make test-som-ai-proxy test-som-ai-player2
+          cc -std=c11 -Wall -Wextra -Werror -Isrc tests/som_disciplines_test.c -o /tmp/som-disciplines-test
+          /tmp/som-disciplines-test
+      - name: Build native Linux diagnostic proxy
+        run: |
+          mkdir -p build/som-ai
+          cc -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared src/som_ai_proxy.c -o build/som-ai/som_ai_proxy_libretro-linux.so -ldl
+          file build/som-ai/som_ai_proxy_libretro-linux.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: som-ai-proxy-linux-diagnostic
+          path: build/som-ai/som_ai_proxy_libretro-linux.so

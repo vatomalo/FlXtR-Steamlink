@@ -473,6 +473,7 @@ REMOTE_LOOP = (
 # Characters the Steam Link loop and the overlay font both accept.
 MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|^-]")
 WRAM_BYTES = 0x20000
+ANDROID_PROTOCOL = 2
 
 
 class RemoteLink:
@@ -691,6 +692,8 @@ class AndroidRelayLink:
                     status = json.loads(header.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     self.send_error(400); return
+                if status.get("protocol") != ANDROID_PROTOCOL:
+                    self.send_error(426); return
                 with relay.condition:
                     if relay.closed or relay.pending is not None:
                         self.send_error(409); return
@@ -776,7 +779,9 @@ class AndroidRelayLink:
         with self.condition:
             if self.closed or self.pending is None:
                 raise OSError("Android relay closed")
-            self.reply = {"action": action, "message": self.message}
+            self.reply = {"protocol": ANDROID_PROTOCOL, "action": action,
+                          "message": self.message,
+                          "features": ["play_loop", "disciplines", "familiar", "learning"]}
             self.message = ""
             self.condition.notify_all()
             while self.pending is not None and not self.closed:
@@ -786,7 +791,8 @@ class AndroidRelayLink:
         with self.condition:
             self.closed = True
             if self.pending is not None and self.reply is None:
-                self.reply = {"action": "ai_off", "message": "AI stopped"}
+                self.reply = {"protocol": ANDROID_PROTOCOL, "action": "ai_off",
+                              "message": "AI stopped"}
             self.condition.notify_all()
         self.server.shutdown(); self.server.server_close()
         self.thread.join(timeout=2)

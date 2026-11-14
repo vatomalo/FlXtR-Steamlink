@@ -21,7 +21,8 @@ class TestAndroidRelay(unittest.TestCase):
             probe.bind(("127.0.0.1", 0)); port = probe.getsockname()[1]
         link = AndroidRelayLink(f"127.0.0.1:{port}")
         result = {}
-        status = json.dumps({"enabled": True, "familiar": 2, "gambits": "543210"})
+        status = json.dumps({"protocol": 2, "enabled": True, "familiar": 2,
+                             "gambits": "543210"})
         body = status.encode() + b"\n" + bytes(0x20000)
         def request():
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
@@ -40,7 +41,10 @@ class TestAndroidRelay(unittest.TestCase):
         worker.join(5); link.close()
         self.assertFalse(worker.is_alive())
         self.assertEqual(result["status"], 200)
-        self.assertEqual(result["body"], {"action": "step_right", "message": "AI: exploring"})
+        self.assertEqual(result["body"]["protocol"], 2)
+        self.assertEqual(result["body"]["action"], "step_right")
+        self.assertEqual(result["body"]["message"], "AI: exploring")
+        self.assertIn("play_loop", result["body"]["features"])
 
 
 class TestTileGuard(unittest.TestCase):

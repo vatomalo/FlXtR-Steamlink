@@ -1446,7 +1446,9 @@ def main() -> int:
                 decision = planner.decide(observation, previous, directive, errand)
                 # Do not replace a durable return/save commitment with aimless
                 # exploration when its verified inn/save interaction is missing.
-                if play_loop is not None and goal in ("await_inn_setup", "await_save_setup"):
+                if (play_loop is not None and goal in ("await_inn_setup", "await_save_setup")
+                        and decision.intention not in ("engage_enemy", "defend_enemy",
+                                                       "kite_enemy", "evade_enemy", "survive")):
                     decision = PlannerDecision("wait", "committed errand requires taught interaction",
                                                goal)
                 if (args.visit_map == current_map and decision.intention in

@@ -287,6 +287,14 @@ static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {5,7},   /* Archery: bow, javelin */
 };
 static int som_equip_weapon(uint8_t *ram,unsigned type);
+static void som_class_supply_frame(void);
+static int class_supply_pending, class_equip_pending;
+static unsigned long class_last_equip_attempt;
+static void som_class_selected(void){
+    class_supply_pending=disciplines.selected<SOM_DISCIPLINE_COUNT;
+    class_equip_pending=class_supply_pending;
+    class_last_equip_attempt=0;
+}
 /* Set each poll: the player is in field play with a discipline and Y (not
  * L2+Y) held. */
 static int y_weapon_swap;
@@ -430,6 +438,7 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
             }else if(result==SOM_DISC_SELECTED){
                 som_disc_save();
+                som_class_selected();
                 fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)disciplines.selected);
             }
@@ -477,6 +486,7 @@ static void som_input_poll(void){
                 int result=som_disc_press(&disciplines,pressed);
                 if(result==SOM_DISC_SELECTED){
                     som_disc_save();
+                    som_class_selected();
                     fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)disciplines.selected);
                 }
@@ -817,6 +827,48 @@ static int som_give_weapon(uint8_t *ram,unsigned type){
     fprintf(stderr,"[som-ai] WEAPON given: %s (tier 0); undo with undo_spawn\n",
             som_weapon_types[type]);
     return 1;
+}
+/* Grant both class weapons only when absent (0xFF); never overwrite an
+ * owned weapon's tier. No save file is modified directly. */
+static unsigned som_class_supply(uint8_t *ram,unsigned discipline){
+    if(!ram||discipline>=SOM_DISCIPLINE_COUNT||ram[0xE000]!=1||
+       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    unsigned given=0;
+    for(unsigned i=0;i<2;i++){
+        unsigned type=som_disc_weapons[discipline][i];
+        if(type<8u&&ram[0xCC54u+type]==0xFF){
+            ram[0xCC54u+type]=0;
+            given++;
+            fprintf(stderr,"[som-ai] CLASS granted missing %s tier 0\n",som_weapon_types[type]);
+        }
+    }
+    return given;
+}
+static void som_class_supply_frame(void){
+    if((!class_supply_pending&&!class_equip_pending)||
+       disciplines.selected>=SOM_DISCIPLINE_COUNT||
+       !backend_retro_get_memory_data||!backend_retro_get_memory_size||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
+       ram[0xD0]!=0||ram[0x7D]==1)return;
+    if(class_supply_pending){
+        unsigned n=som_class_supply(ram,disciplines.selected);
+        class_supply_pending=0;
+        if(n)som_overlay_set(&overlay,"^Class weapons unlocked!",SOM_MESSAGE_FRAMES);
+    }
+    if(class_equip_pending&&(!class_last_equip_attempt||
+                             frame_number-class_last_equip_attempt>=120ul)){
+        class_last_equip_attempt=frame_number;
+        unsigned primary=som_disc_weapons[disciplines.selected][0];
+        if(ram[0xE1E4]==primary||som_equip_weapon(ram,primary))
+            class_equip_pending=0;
+        else if(!weapon_graphics[primary].has_vram){
+            class_equip_pending=0;
+            fprintf(stderr,"[som-ai] CLASS weapon owned but sprite uncached; "
+                           "equip it once through native ring\n");
+        }
+    }
 }
 static int som_use_candy(uint8_t *ram){
     if(!ram)return 0;
@@ -1341,6 +1393,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_disc_load();
+    class_supply_pending=class_equip_pending=0;class_last_equip_attempt=0;
     som_weapon_cache_reset();
     hero_pal_have=0;
     som_gambit_load();
@@ -1538,6 +1591,7 @@ RETRO_API void retro_run(void){
     som_clone_tick();
     som_familiar_frame();
     if(test_enabled&&on_turbo)som_weapon_cache_frame();
+    if(test_enabled&&on_turbo)som_class_supply_frame();
     if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_hero_palette_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));

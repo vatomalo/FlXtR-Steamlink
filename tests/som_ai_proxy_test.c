@@ -688,6 +688,22 @@ int main(void){
         assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
         unlink(pkg_path);unlink(any_path);
     }
+    /* pal_trace: per-frame low WRAM + palette shadow, written when done. */
+    {
+        char trace_path[]="/tmp/flxtr-paltrace-test-XXXXXX";
+        int tfd=mkstemp(trace_path);assert(tfd>=0);close(tfd);unlink(trace_path);
+        pal_trace_file=trace_path;
+        static uint8_t ram[SOM_WRAM_SIZE];memset(ram,0,sizeof(ram));
+        pal_trace_frames=0;pal_trace_on=1;
+        for(unsigned f=0;f<SOM_PAL_TRACE_FRAMES;f++){ram[0x10]=(uint8_t)f;ram[0xDF20]=(uint8_t)(f*3);som_pal_trace_frame(ram);}
+        assert(!pal_trace_on);
+        FILE *tf=fopen(trace_path,"rb");assert(tf);
+        fseek(tf,0,SEEK_END);assert(ftell(tf)==(long)((SOM_PAL_TRACE_LOW+0x200u)*SOM_PAL_TRACE_FRAMES));
+        uint8_t first[SOM_PAL_TRACE_LOW+0x200u];fseek(tf,(long)(SOM_PAL_TRACE_LOW+0x200u)*5,SEEK_SET);
+        assert(fread(first,1,sizeof(first),tf)==sizeof(first)&&fclose(tf)==0);
+        assert(first[0x10]==5&&first[SOM_PAL_TRACE_LOW+0x120]==15);
+        unlink(trace_path);
+    }
     /* vram_dump: read-only copy of the core's video RAM, if exposed. */
     {
         char vram_path[]="/tmp/flxtr-vram-test-XXXXXX";

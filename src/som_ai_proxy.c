@@ -551,6 +551,39 @@ static int som_summon_allowed(const uint8_t *ram){
 static int som_summon_boss(void);
 /* Read-only diagnostic: the core's video RAM (sprite tiles live there, loaded
  * per map for that map's monsters) to SOM_VRAM_FILE for analysis. */
+/* Read-only diagnostic: every frame for SOM_PAL_TRACE_FRAMES, the low WRAM
+ * (7E:0000-1FFF, where an upload request flag would live) and the hero's
+ * palette shadow, to find what makes the game send palettes to CGRAM (it
+ * does so only during effects such as dash and block). Written to
+ * SOM_PAL_TRACE_FILE when done. */
+#define SOM_PAL_TRACE_FILE "/tmp/flxtr-som-paltrace.bin"
+#define SOM_PAL_TRACE_FRAMES 240u
+#define SOM_PAL_TRACE_LOW 0x2000u
+static const char *pal_trace_file=SOM_PAL_TRACE_FILE;
+static uint8_t *pal_trace;
+static unsigned pal_trace_frames;
+static int pal_trace_on;
+static void som_pal_trace_frame(const uint8_t *ram){
+    if(!pal_trace_on||!ram)return;
+    const size_t record=SOM_PAL_TRACE_LOW+0x200u;          /* low WRAM + 7EDE00-DFFF */
+    if(!pal_trace){
+        pal_trace=malloc(record*SOM_PAL_TRACE_FRAMES);
+        if(!pal_trace){pal_trace_on=0;return;}
+    }
+    uint8_t *at=pal_trace+record*pal_trace_frames;
+    memcpy(at,ram,SOM_PAL_TRACE_LOW);
+    memcpy(at+SOM_PAL_TRACE_LOW,ram+0xDE00u,0x200u);
+    if(++pal_trace_frames<SOM_PAL_TRACE_FRAMES)return;
+    pal_trace_on=0;
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",pal_trace_file);
+    FILE *out=fopen(temp,"wb");
+    if(out){
+        int ok=fwrite(pal_trace,record,SOM_PAL_TRACE_FRAMES,out)==SOM_PAL_TRACE_FRAMES;
+        if(fclose(out)!=0)ok=0;
+        if(ok)rename(temp,pal_trace_file);else unlink(temp);
+        fprintf(stderr,"[som-ai] PALETTE TRACE written (%u frames)\n",SOM_PAL_TRACE_FRAMES);
+    }
+}
 #define SOM_VRAM_FILE "/tmp/flxtr-som-vram.bin"
 static const char *vram_file=SOM_VRAM_FILE;
 static void som_vram_dump(void){
@@ -778,6 +811,12 @@ static void som_check_trigger(void){
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return;}
     if(!strcmp(command,"summon_boss")){som_summon_boss();return;}
     if(!strcmp(command,"vram_dump")){som_vram_dump();return;}
+    if(!strcmp(command,"pal_trace")){
+        pal_trace_frames=0;pal_trace_on=1;
+        som_overlay_set(&overlay,"Trace: dash and block now!",SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] PALETTE TRACE started\n");
+        return;
+    }
     if(!strcmp(command,"undo_spawn")){som_undo_spawn();return;}
     if(!strcmp(command,"auto_off")){
         autonomous_mode=0;armed=0;
@@ -1162,6 +1201,8 @@ RETRO_API void retro_run(void){
     if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_hero_palette_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    if(pal_trace_on&&backend_retro_get_memory_data)
+        som_pal_trace_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)
         recording=access(record_marker,F_OK)==0;
     som_auto_tick();

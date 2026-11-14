@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "som_class_palette.h"
 
 #define SOM_FAMILIAR_MONSTER_BASE 0xE600u
 #define SOM_FAMILIAR_OBJECT 0x200u
@@ -105,15 +106,10 @@ static inline int som_familiar_tick(SomFamiliar *f, uint8_t *ram, unsigned long 
     return SOM_FAMILIAR_HERE;
 }
 
-/* Summons look different from the monsters they copy: each colour of the
- * 16-colour BGR555 palette has its channels rotated (r->g, g->b, b->r);
- * colour 0 stays transparent. */
+/* Blue-white familiar identity. The same pure BGR555 transform applies to
+ * the copied monster's palette, without touching its allegiance or logic. */
 static inline void som_familiar_tint(uint8_t *palette) {
-    for (unsigned i = 1; i < 16; i++) {
-        const unsigned c = som_fam_u16(palette + i * 2);
-        const unsigned r = c & 31u, g = (c >> 5) & 31u, b = (c >> 10) & 31u;
-        som_fam_put16(palette + i * 2, b | r << 5 | g << 10);
-    }
+    som_pal_apply(palette,SOM_PAL_CELESTIAL_FAMILIAR);
 }
 
 /* Only summoners summon: a character whose mind (intelligence or wisdom,

@@ -723,6 +723,65 @@ static uint8_t weapon_progress[8];      /* +0x196 per weapon, kept while away */
  * equip), then restore those exact tiles for subsequent instant switches. */
 static SomFamiliarCarry weapon_graphics[8];
 static unsigned weapon_cache_candidate=8u,weapon_cache_stable;
+/* Never serialize save-game state. Persist only verified weapon sprite tiles
+ * captured from the game's own loader, bound to the exact Turbo ROM bytes. */
+#define SOM_WEAPON_CACHE_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_graphics.bin"
+static const char *weapon_cache_file=SOM_WEAPON_CACHE_FILE;
+static uint32_t weapon_rom_hash;
+typedef struct {
+    uint32_t magic,version,rom_hash,entry_size,checksum;
+    SomFamiliarCarry entries[8];
+} SomWeaponCacheFile;
+static uint32_t som_cache_hash(const void *data,size_t size){
+    const uint8_t *p=data;
+    uint32_t h=2166136261u;
+    for(size_t i=0;i<size;i++)h=(h^p[i])*16777619u;
+    return h;
+}
+static void som_weapon_cache_save(void){
+    if(!weapon_rom_hash)return;
+    SomWeaponCacheFile *c=calloc(1,sizeof(*c));
+    if(!c)return;
+    c->magic=0x534f4d57u;c->version=1u;c->rom_hash=weapon_rom_hash;
+    c->entry_size=(uint32_t)sizeof(SomFamiliarCarry);
+    memcpy(c->entries,weapon_graphics,sizeof(c->entries));
+    c->checksum=som_cache_hash(c->entries,sizeof(c->entries));
+    char path[512];snprintf(path,sizeof(path),"%s.tmp",weapon_cache_file);
+    FILE *file=fopen(path,"wb");
+    if(file){
+        int ok=fwrite(c,sizeof(*c),1,file)==1;
+        if(fclose(file)!=0)ok=0;
+        if(ok)rename(path,weapon_cache_file);else unlink(path);
+    }
+    free(c);
+}
+static unsigned som_weapon_cache_load(void){
+    if(!weapon_rom_hash)return 0;
+    FILE *file=fopen(weapon_cache_file,"rb");
+    if(!file)return 0;
+    SomWeaponCacheFile *c=malloc(sizeof(*c));
+    if(!c){fclose(file);return 0;}
+    int ok=fread(c,sizeof(*c),1,file)==1&&fgetc(file)==EOF;
+    fclose(file);
+    ok=ok&&c->magic==0x534f4d57u&&c->version==1u&&
+        c->entry_size==sizeof(SomFamiliarCarry)&&c->rom_hash==weapon_rom_hash&&
+        c->checksum==som_cache_hash(c->entries,sizeof(c->entries));
+    unsigned loaded=0;
+    if(ok){
+        for(unsigned n=0;n<8;n++){
+            SomFamiliarCarry *e=&c->entries[n];
+            if(!e->valid||!e->has_vram||!e->tile_count||
+               e->tile_count>SOM_FAMILIAR_MAX_TILES)continue;
+            int valid=1;
+            for(unsigned t=0;t<e->tile_count;t++)
+                if(e->tile_id[t]>=512u)valid=0;
+            if(valid){weapon_graphics[n]=*e;loaded++;}
+        }
+    }
+    free(c);
+    if(loaded)fprintf(stderr,"[som-ai] WEAPON graphics cache restored: %u/8\\n",loaded);
+    return loaded;
+}
 static void som_weapon_cache_reset(void){
     memset(weapon_graphics,0,sizeof(weapon_graphics));
     weapon_cache_candidate=8u;weapon_cache_stable=0;
@@ -745,6 +804,7 @@ static void som_weapon_cache_frame(void){
         (unsigned)(ram[0xDC]|ram[0xDD]<<8));
     if(!learned.has_vram)return;
     learned.valid=1;weapon_graphics[type]=learned;
+    som_weapon_cache_save();
     fprintf(stderr,"[som-ai] WEAPON graphics cached: %s (%u tiles)\n",
         som_weapon_types[type],learned.tile_count);
 }
@@ -1417,7 +1477,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             patched_game=*game;patched_game.data=patched_rom;load_info=&patched_game;
         }
     }
+    weapon_rom_hash=on_turbo&&game&&game->data&&game->size?
+        som_cache_hash(game->data,game->size):0;
     game_loaded=backend_load_game(load_info);
+    if(game_loaded&&on_turbo)som_weapon_cache_load();
     /* Selecting this experimental core is explicit opt-in. No injection
      * occurs until the separate one-shot trigger is consumed. A
      * launcher-provided environment variable is not reliable across the

@@ -39,13 +39,10 @@ bridge_args=("$repo/tools/som_qwen_bridge.py" \
   --ring-control \
   "${loop_args[@]}")
 
-if [ -z "${SOM_AI_HTTP_ENDPOINT:-}" ]; then
-  exec python3 "${bridge_args[@]}" --history-db "$history_db" --wram-remote
-fi
-
-# With an Android endpoint configured, keep independent planners alive for
-# both devices. Stable world knowledge is shared through SQLite WAL, while
-# each device namespaces transient goals and combat/session state.
+# Keep independent planners alive for both devices. Stable world knowledge is
+# shared through SQLite WAL, while each device namespaces transient goals and
+# combat/session state. Android is discovered automatically through Tailscale;
+# SOM_AI_HTTP_ENDPOINT remains an optional troubleshooting override.
 
 worker(){
   local label=$1 database=$2 child= status
@@ -65,9 +62,35 @@ worker(){
   done
 }
 
+android_worker(){
+  local child= status endpoint waiting=0
+  stop_android_worker(){
+    if [ -n "$child" ]; then kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi
+    exit 0
+  }
+  trap stop_android_worker TERM INT
+  while true; do
+    endpoint=${SOM_AI_HTTP_ENDPOINT:-}
+    if [ -z "$endpoint" ]; then endpoint=$(python3 "$repo/tools/som_android_discovery.py" 2>/dev/null || true); fi
+    if [ -z "$endpoint" ]; then
+      if [ "$waiting" = 0 ]; then printf '[service] waiting for Android SoM AI bridge on Tailscale\n'; waiting=1; fi
+      sleep 10
+      continue
+    fi
+    waiting=0
+    printf '[service] discovered Android SoM AI bridge\n'
+    python3 "${bridge_args[@]}" --history-db "$history_db" --agent-namespace android \
+      --boss-dir "$state_dir/som-boss-android" --http-endpoint "$endpoint" & child=$!
+    if wait "$child"; then status=0; else status=$?; fi
+    child=
+    printf '[service] Android planner exited (%s); rediscovering in 5 seconds\n' "$status" >&2
+    sleep 5
+  done
+}
+
 workers=()
 worker "Steam Link" "$history_db" --agent-namespace steamlink --wram-remote & workers+=("$!")
-worker "Android" "$history_db" --agent-namespace android --boss-dir "$state_dir/som-boss-android" --http-endpoint "$SOM_AI_HTTP_ENDPOINT" & workers+=("$!")
+android_worker & workers+=("$!")
 cleanup(){ kill "${workers[@]}" 2>/dev/null || true; wait "${workers[@]}" 2>/dev/null || true; }
 trap 'exit 0' TERM INT
 trap cleanup EXIT

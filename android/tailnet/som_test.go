@@ -54,3 +54,23 @@ func TestSOMBridgeRequiresMarkerAndExactWRAM(t *testing.T) {
 		t.Fatal("marker remained")
 	}
 }
+
+func TestSOMBridgeDiscoveryIsAutomaticAndPeerRestricted(t *testing.T) {
+	client := &Client{}
+	client.rom.port = 1234
+	client.som = somBridge{dir: t.TempDir(), token: strings.Repeat("b", 32), peer: "100.69.7.81"}
+	request := func(peer string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "http://100.70.1.2:43927/.well-known/flxtr/som", nil)
+		r.RemoteAddr = peer + ":1234"
+		response := httptest.NewRecorder()
+		client.romHTTP(response, r)
+		return response
+	}
+	if response := request("100.69.7.82"); response.Code != 403 {
+		t.Fatal("unapproved peer discovered endpoint", response.Code)
+	}
+	response := request("100.69.7.81")
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "http://100.70.1.2:43927/"+strings.Repeat("b", 32)+"/som") {
+		t.Fatal("approved peer could not discover endpoint", response.Code, response.Body.String())
+	}
+}

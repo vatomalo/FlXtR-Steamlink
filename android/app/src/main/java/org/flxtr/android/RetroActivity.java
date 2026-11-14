@@ -93,6 +93,9 @@ Button menu=new Button(this);menu.setText("⋮");menu.setContentDescription("Gam
                 File aiDir=new File(getFilesDir(),"som-ai");
                 if(!aiDir.isDirectory()&&!aiDir.mkdirs())
                     throw new IOException("Cannot prepare SoM AI bridge directory");
+                // Starting this core also brings up the private embedded tailnet;
+                // SkyLoft discovers the authenticated endpoint automatically.
+                TailscaleRuntime.IO.execute(()->{try{TailscaleRuntime.connect(this);}catch(Exception ignored){}});
             }
             runOnUiThread(()->loadingText.setText("Starting "+GameFormats.label(coreName)+"..."));
             File coreSaves=new File(getFilesDir(),"games/core-saves/"+coreName);if(!coreSaves.isDirectory()&&!coreSaves.mkdirs())throw new IOException("Cannot create engine save directory");

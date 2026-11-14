@@ -16,10 +16,11 @@ Branch `feature/som-ai-memory-agent-20261112`. Read `docs/SOM-WRAM-AGENT.md`
   The game is launched by the user from the FlXtR menu with core `som_ai_proxy`.
 - **Android**: runs the same proxy core with app-private command files. FlXtR's
   embedded Tailscale listener exposes only the allowlisted SoM commands and
-  exact 128-KiB WRAM snapshot to the selected SkyLoft peer. Copy the endpoint
-  from **Network and devices > Secret of Mana AI bridge** and set it as
-  `SOM_AI_HTTP_ENDPOINT` in `~/.config/flxtr/som-ai.env`. When set, the
-  service runs independent Android and Steam Link planners at the same time.
+  exact 128-KiB WRAM snapshot to the selected SkyLoft peer. The SkyLoft
+  service discovers the endpoint automatically through `tailscale status`
+  and the peer-restricted `/.well-known/flxtr/som` route; no environment edit
+  is required. `SOM_AI_HTTP_ENDPOINT` remains an optional manual override.
+  The service runs independent Android and Steam Link planners at the same time.
   They share learned maps, routes, places, combat results and calibration in
   `som-ai.sqlite`, while current goals and live combat state are namespaced
   per device. Binary boss captures stay separate in `som-boss/` and
@@ -73,8 +74,8 @@ ssh root@100.124.74.13 'printf "ai_on\n" > /tmp/flxtr-som-ai-action'   # start A
 ssh root@100.124.74.13 'printf "ai_off\n" > /tmp/flxtr-som-ai-action'  # stop AI
 ```
 
-For Android, replace the SSH target by adding the copied endpoint to the
-service environment and restarting it:
+Android normally needs no endpoint configuration. For troubleshooting only,
+the copied endpoint can override automatic discovery:
 
 ```sh
 printf '%s\n' 'SOM_AI_HTTP_ENDPOINT=http://ANDROID_TAILSCALE_IP:43927/TOKEN/som' >> ~/.config/flxtr/som-ai.env

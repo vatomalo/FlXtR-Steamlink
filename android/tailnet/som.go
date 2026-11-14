@@ -108,6 +108,23 @@ func (c *Client) somHTTP(w http.ResponseWriter, r *http.Request, remote string) 
 	c.som.mu.Lock()
 	dir, token, peer := c.som.dir, c.som.token, c.som.peer
 	c.som.mu.Unlock()
+	if r.URL.Path == "/.well-known/flxtr/som" {
+		if r.Method != "GET" {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return true
+		}
+		if token == "" || remote != peer || r.URL.RawQuery != "" {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "SoM discovery peer denied"})
+			return true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"app": "FlXtR", "protocol": 1, "role": "som-ai",
+			"endpoint": "http://" + r.Host + "/" + token + "/som",
+		})
+		return true
+	}
 	prefix := "/" + token + "/som/"
 	if token == "" || !strings.HasPrefix(r.URL.Path, prefix) {
 		return false

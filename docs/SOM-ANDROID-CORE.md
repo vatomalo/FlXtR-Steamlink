@@ -51,13 +51,16 @@ The Android core now uses the same SkyLoft planner as Steam Link through a
 small HTTP bridge carried entirely over the app's embedded Tailscale network.
 Both devices must be signed into the same tailnet.
 
-1. In FlXtR on Android, open **Network and devices**, then
-   **Secret of Mana AI bridge**.
-2. Enter SkyLoft's Tailscale IPv4 address (the default is `100.69.7.81`) and
-   press **Enable and copy endpoint**.
-3. On SkyLoft, paste the copied value into
-   `~/.config/flxtr/som-ai.env` as `SOM_AI_HTTP_ENDPOINT=...`.
-4. Restart `flxtr-som-ai.service`, then launch Turbo with the SoM AI core.
+1. Keep `flxtr-som-ai.service` running on SkyLoft.
+2. Launch Turbo with the SoM AI core on Android. Starting the core brings up
+   FlXtR's embedded Tailscale node automatically.
+3. SkyLoft discovers the private endpoint from its online Tailscale peers and
+   starts the Android planner. No endpoint copy or environment edit is needed.
+
+The bridge screen under **Network and devices** remains available to change
+the allowed SkyLoft Tailscale IPv4 address if it is not `100.69.7.81`, and it
+copies the endpoint for troubleshooting only. `SOM_AI_HTTP_ENDPOINT` is also
+accepted as an optional manual override.
 
 Setting the Android endpoint does not replace Steam Link. SkyLoft keeps two
 independent planner sessions alive, and either device—or both devices—can use

@@ -13,6 +13,7 @@
 #include "som_ai_actions.h"
 #include "som_overlay.h"
 #include "som_gambit.h"
+#include "som_familiar.h"
 #include "som_npc_walk.h"
 #include <dlfcn.h>
 #include <stdio.h>
@@ -410,7 +411,16 @@ static const uint8_t som_slot_fields[]={0x6C,0x6E,0x86,0x8A,0x92,0x96,0x9A,0x9E,
     0xAA,0xAE,0xB2,0xB6,0xD2,0xD6,0xDA,0xF8,0xFA};   /* 16-bit fields */
 #define SOM_CLONE_WAIT_FRAMES 600ul           /* slots refill ~3 s after a kill */
 static unsigned long clone_pending_until;
-static int clone_no_slot;
+static int clone_no_slot,last_clone_target=-1;
+/* Familiar (src/som_familiar.h): a clone bound to fight for the hero. Its
+ * monster slot (1..3) is published for the SkyLoft bridge, which must not
+ * attack it. */
+#define SOM_FAMILIAR_FILE "/tmp/flxtr-som-familiar"
+static const char *familiar_file=SOM_FAMILIAR_FILE;
+static SomFamiliar familiar={-1,-1,0,0};
+static int familiar_pending;
+static void som_familiar_bind(void);
+static void som_familiar_dismiss(void);
 static uint8_t *undo_state;
 static size_t undo_size;
 static int undo_ready;
@@ -461,6 +471,7 @@ static int som_clone_enemy(void){
            SOM_MONSTER_PALETTE_SIZE);
     uint16_t x=(uint16_t)(to[2]|to[3]<<8);x=(uint16_t)(x+32u);
     to[2]=(uint8_t)x;to[3]=(uint8_t)(x>>8);
+    last_clone_target=target;
     fprintf(stderr,"[som-ai] SPAWN copied monster id %u from 7E%04X to 7E%04X; undo with undo_spawn\n",
         (unsigned)from[0x180],SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE,
         SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE);
@@ -514,6 +525,8 @@ static int som_undo_spawn(void){
     }
     int ok=backend_retro_unserialize(undo_state,undo_size);
     undo_ready=0;
+    familiar.slot=familiar.target=-1;familiar_pending=0;   /* memory is pre-clone */
+    unlink(familiar_file);
     fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
                       "[som-ai] UNDO failed to restore the snapshot\n");
     return ok;
@@ -584,13 +597,21 @@ static void som_check_trigger(void){
         fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
         return;
     }
-    if(!strcmp(command,"clone_enemy")){
-        if(!som_clone_enemy()&&clone_no_slot){
+    if(!strcmp(command,"clone_enemy")||!strcmp(command,"summon_familiar")){
+        familiar_pending=!strcmp(command,"summon_familiar");
+        if(familiar_pending&&familiar.slot>=0){
+            familiar_pending=0;
+            fprintf(stderr,"[som-ai] FAMILIAR refused: one is already with you\n");
+            return;
+        }
+        if(som_clone_enemy()){som_familiar_bind();return;}
+        if(clone_no_slot){
             clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;
             fprintf(stderr,"[som-ai] SPAWN waiting up to 10 s for a free monster slot\n");
-        }
+        }else familiar_pending=0;
         return;
     }
+    if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return;}
     if(!strcmp(command,"undo_spawn")){som_undo_spawn();return;}
     if(!strcmp(command,"auto_off")){
         autonomous_mode=0;armed=0;
@@ -822,10 +843,50 @@ RETRO_API void retro_unload_game(void){
     armed=0;autonomous_mode=0;game_loaded=0;
     ring_ai_enabled=0;ring_ai_pending=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
+    unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
     undo_ready=0;
     if(backend_unload_game)backend_unload_game();
+}
+static void som_familiar_publish(void){
+    if(familiar.slot<0){unlink(familiar_file);return;}
+    FILE *out=fopen(familiar_file,"w");
+    if(!out)return;
+    fprintf(out,"%d\n",familiar.slot+1);
+    fclose(out);
+}
+static void som_familiar_bind(void){
+    if(!familiar_pending||last_clone_target<0)return;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    familiar_pending=0;
+    familiar.slot=last_clone_target;familiar.target=-1;familiar.last_strike=0;
+    familiar.map=ram?(unsigned)(ram[0xDC]|ram[0xDD]<<8):0;
+    som_familiar_publish();
+    som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
+    fprintf(stderr,"[som-ai] FAMILIAR bound to monster slot %d\n",familiar.slot+1);
+}
+/* Runs the familiar each field frame; drops it when it dies or the map changes. */
+static void som_familiar_frame(void){
+    if(familiar.slot<0||!backend_retro_get_memory_data)return;
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return;     /* field only */
+    if(!som_familiar_tick(&familiar,ram,frame_number)){
+        som_familiar_publish();
+        fprintf(stderr,"[som-ai] FAMILIAR gone (died or map changed)\n");
+    }
+}
+static void som_familiar_dismiss(void){
+    if(familiar.slot<0||!backend_retro_get_memory_data)return;
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(ram){
+        uint8_t *me=ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE;
+        me[0x182]=1;me[0x183]=0;me[0x1F1]=0xFF;    /* ends through its own death */
+    }
+    familiar.slot=familiar.target=-1;familiar_pending=0;
+    som_familiar_publish();
+    fprintf(stderr,"[som-ai] FAMILIAR dismissed\n");
 }
 /* A clone request made while every slot was busy fires on the first frame
  * a slot is free (the game refills slots about 3 s after a kill). */
@@ -836,7 +897,8 @@ static void som_clone_tick(void){
         fprintf(stderr,"[som-ai] SPAWN refused: no monster slot came free\n");
         return;
     }
-    if(som_clone_enemy()||!clone_no_slot)clone_pending_until=0;
+    if(som_clone_enemy()){clone_pending_until=0;som_familiar_bind();return;}
+    if(!clone_no_slot){clone_pending_until=0;familiar_pending=0;}
 }
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
@@ -844,6 +906,7 @@ RETRO_API void retro_run(void){
     som_check_npc_command();
     som_check_message();
     som_clone_tick();
+    som_familiar_frame();
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)
         recording=access(record_marker,F_OK)==0;
     som_auto_tick();

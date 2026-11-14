@@ -71,7 +71,9 @@ GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
 MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
-CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off"}
+CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
+                    "summon_familiar", "dismiss_familiar"}
+FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(
     r"(?<![a-z_])(" + "|".join(sorted(ACTIONS, key=len, reverse=True)) + r")(?![a-z_])")
@@ -448,6 +450,8 @@ REMOTE_LOOP = (
     "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
     "case \"$m\" in [0-5][0-5][0-5][0-5][0-5][0-5]) ;; *) m=" + GAMBIT_DEFAULTS + ";; esac; "
     "echo \"GMB $m\";; "
+    "fam) f=; [ -f " + FAMILIAR_FILE + " ] && read -r f < " + FAMILIAR_FILE + "; "
+    "case \"$f\" in [1-3]) ;; *) f=0;; esac; echo \"FAM $f\";; "
     "obsz|obsmz) "
     "if [ \"$cmd\" = obsmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
     "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMZ; gzip -1 -c <&3; exec 3<&-; "
@@ -604,6 +608,13 @@ class RemoteLink:
             raise OSError(f"gambits unavailable ({status})")
         return tuple(int(c) for c in digits)
 
+    def fetch_familiar(self):
+        """Monster slot (1..3) of the hero's familiar, or 0 for none."""
+        status, _ = self._request("fam")
+        if status not in ("FAM 0", "FAM 1", "FAM 2", "FAM 3"):
+            raise OSError(f"familiar unavailable ({status})")
+        return int(status[4:])
+
     def show_message(self, text: str) -> None:
         """Ask the proxy to draw a short two-line message box ('|' = new line)."""
         clean = MESSAGE_ALLOWED.sub("", text.replace("_", " "))[:65].strip()
@@ -749,6 +760,16 @@ def survey(history, raw, radius):
     if not context.get("runtime_verified"):
         return 0
     return history.remember_world({"tile_context": context})
+
+
+def hide_familiar(observation, slot):
+    """The hero's familiar is not an enemy: never target or fear it."""
+    if not slot or not isinstance(observation, dict):
+        return
+    for enemy in observation.get("enemy_slots", []):
+        if isinstance(enemy, dict) and enemy.get("slot") == slot:
+            enemy["active"] = False
+            enemy["familiar"] = True
 
 
 def candy_fraction(weights):
@@ -938,6 +959,7 @@ def main() -> int:
     candy_disabled = calibration is None
     candy_retry_at, candy_failures = 0.0, 0
     gambits = tuple(int(c) for c in GAMBIT_DEFAULTS)
+    familiar_slot = 0
     apply_gambits(planner, None, gambits)       # the play loop follows on the first read
 
     def gambit(index):
@@ -1059,6 +1081,12 @@ def main() -> int:
                     break
                 observation = WRAM(raw).observe(radius=5)
             if observation is not None:
+                if link and step % GAMBIT_REFRESH == 0:
+                    try:
+                        familiar_slot = link.fetch_familiar()
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                hide_familiar(observation, familiar_slot)
                 map_guard.apply(observation)
                 if boss_recorder is not None and raw is not None:
                     try:

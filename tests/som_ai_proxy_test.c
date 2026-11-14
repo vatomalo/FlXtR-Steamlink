@@ -510,6 +510,51 @@ int main(void){
         som_gambit_draw((uint8_t*)frame,256,224,512,2,&g);
         assert(frame[10][10]==0);
     }
+    /* Familiar: fights the nearest monster with the player's rules, never
+     * targets heroes, follows the hero when idle, goes when dead/map changes. */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));
+        ram[0xDC]=131;
+        uint8_t *hero=ram+0xE000,*me=ram+0xE600,*foe=ram+0xE800;
+        hero[0]=1;som_fam_put16(hero+2,100);som_fam_put16(hero+4,100);
+        me[0]=1;me[0x180]=0;som_fam_put16(me+2,100);som_fam_put16(me+4,130);
+        me[0x1AC]=0;me[0x1ED]=0;me[6]=0x82;
+        foe[0]=1;foe[0x180]=0;som_fam_put16(foe+2,140);som_fam_put16(foe+4,130);
+        SomFamiliar f={0,-1,0,131};
+        assert(som_familiar_tick(&f,ram,1000));
+        assert(me[0x1AC]==0xFF&&me[0x1ED]==0x7F&&me[6]==0);      /* no aggression */
+        assert(f.target==1&&som_fam_u16(me+2)==102);             /* closes in, 2 px */
+        for(unsigned long t=1001;t<1020;t++)som_familiar_tick(&f,ram,t);
+        assert(foe[0x1F1]==SOM_FAMILIAR_DAMAGE);                   /* one paced strike */
+        for(unsigned long t=1020;t<1036+1001;t++)som_familiar_tick(&f,ram,t);
+        assert(foe[0x1F1]>=2*SOM_FAMILIAR_DAMAGE);
+        foe[0]=0;                                                  /* foe gone */
+        som_fam_put16(me+2,200);som_fam_put16(me+4,200);
+        som_familiar_tick(&f,ram,5000);
+        assert(f.target==-1&&som_fam_u16(me+2)==198&&som_fam_u16(me+4)==198); /* follows */
+        ram[0xDC]=130;                                             /* map changed */
+        assert(!som_familiar_tick(&f,ram,5001)&&f.slot==-1);
+    }
+    /* summon_familiar: clone, bind, publish the slot; dismiss ends it. */
+    {
+        char fam_path[]="/tmp/flxtr-familiar-test-XXXXXX";
+        int ffd=mkstemp(fam_path);assert(ffd>=0);close(ffd);unlink(fam_path);
+        familiar_file=fam_path;
+        backend_retro_get_memory_data=mocked_memory_data;
+        backend_retro_get_memory_size=mocked_memory_size;
+        memset(mocked_wram,0,sizeof(mocked_wram));
+        mocked_wram[0xDC]=129;
+        mocked_wram[0xE600]=1;mocked_wram[0xE600+0x180]=0;          /* live monster */
+        familiar_pending=1;assert(som_clone_enemy());som_familiar_bind();
+        assert(familiar.slot==1&&familiar.map==129&&!familiar_pending);
+        FILE *ff=fopen(fam_path,"r");int n=0;assert(ff&&fscanf(ff,"%d",&n)==1&&fclose(ff)==0);
+        assert(n==2);                                              /* bridge slot number */
+        som_familiar_dismiss();
+        assert(familiar.slot==-1&&access(fam_path,F_OK)!=0);
+        assert(mocked_wram[0xE800+0x1F1]==0xFF);
+        undo_ready=0;
+    }
     /* Bubble anchor: hero screen position under a hero-centred camera that
      * stops at the map edges. */
     backend_retro_get_memory_data=mocked_memory_data;

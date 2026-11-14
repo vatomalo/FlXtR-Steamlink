@@ -41,7 +41,7 @@ def show(link):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("clone", "undo", "show"))
+    parser.add_argument("command", choices=("clone", "familiar", "dismiss", "undo", "show"))
     parser.add_argument("--host", default="root@100.124.74.13")
     args = parser.parse_args()
     link = RemoteLink(args.host)
@@ -49,7 +49,8 @@ def main():
         print("before:")
         show(link)
         if args.command != "show":
-            link.send_control("clone_enemy" if args.command == "clone" else "undo_spawn")
+            link.send_control({"clone": "clone_enemy", "familiar": "summon_familiar",
+                               "dismiss": "dismiss_familiar"}.get(args.command, "undo_spawn"))
             time.sleep(0.5)  # proxy reads commands every 2 frames, WRAM every 6
             print("after:")
             show(link)

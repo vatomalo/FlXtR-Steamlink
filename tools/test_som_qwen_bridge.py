@@ -334,6 +334,18 @@ class TestRemoteLink(unittest.TestCase):
         self.assertEqual(bridge.candy_fraction((4, 3, 3, 3, 4, 1)), 0.5)   # candy >= inn
         self.assertEqual(bridge.candy_fraction((4, 5, 3, 3, 2, 1)), 0.25)  # inn first
 
+    def test_familiar_slot_is_read_and_hidden_from_the_enemies(self):
+        import som_qwen_bridge as bridge
+        fam = self.root / "flxtr-som-familiar"          # setUp maps /tmp/ to root
+        self.assertEqual(self.link.fetch_familiar(), 0)
+        fam.write_text("2\n")
+        self.assertEqual(self.link.fetch_familiar(), 2)
+        fam.write_text("; rm -rf /\n")
+        self.assertEqual(self.link.fetch_familiar(), 0)
+        observation = {"enemy_slots": [{"slot": 1, "active": True}, {"slot": 2, "active": True}]}
+        bridge.hide_familiar(observation, 2)
+        self.assertEqual([e["active"] for e in observation["enemy_slots"]], [True, False])
+
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
         self.assertIsNone(self.link.fetch_wram(require_marker=True))

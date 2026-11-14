@@ -16,6 +16,11 @@ enum SomPaletteProfile {
     SOM_PAL_ROGUE_SHADOW,
     SOM_PAL_SAMURAI_INDIGO,
     SOM_PAL_ARCHER_FOREST,
+    SOM_PAL_MAGE_ARCANE,
+    SOM_PAL_DIVINE_GOLD,
+    SOM_PAL_DARK_CRIMSON,
+    SOM_PAL_DANCER_ROSE,
+    SOM_PAL_FLOW_TEAL,
     SOM_PAL_PROFILE_COUNT
 };
 
@@ -56,6 +61,24 @@ static inline uint16_t som_pal_color(uint16_t source, unsigned profile) {
         break;
     case SOM_PAL_ARCHER_FOREST:         /* forest green and leaf */
         nr=lum*9u/31u;ng=lum;nb=lum*10u/31u;
+        break;
+    case SOM_PAL_MAGE_ARCANE:           /* arcane violet */
+        nr=lum*21u/31u;ng=lum*10u/31u;nb=lum;
+        break;
+    case SOM_PAL_DIVINE_GOLD:           /* white robes, gold trim */
+        if(lum>20u){nr=lum;ng=lum;nb=lum*27u/31u;}
+        else {nr=lum;ng=lum*24u/31u;nb=lum*8u/31u;}
+        break;
+    case SOM_PAL_DARK_CRIMSON:          /* black with blood red */
+        if(lum>18u){nr=lum*26u/31u;ng=lum*4u/31u;nb=lum*6u/31u;}
+        else {nr=lum*8u/31u;ng=lum*5u/31u;nb=lum*7u/31u;}
+        break;
+    case SOM_PAL_DANCER_ROSE:           /* rose and blush */
+        nr=lum;ng=lum*14u/31u;nb=lum*21u/31u;
+        break;
+    case SOM_PAL_FLOW_TEAL:             /* teal with silver */
+        if(lum>22u){nr=lum*25u/31u;ng=lum*29u/31u;nb=lum*29u/31u;}
+        else {nr=lum*4u/31u;ng=lum*22u/31u;nb=lum*21u/31u;}
         break;
     default: return source;
     }

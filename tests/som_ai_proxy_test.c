@@ -1189,6 +1189,14 @@ int main(void){
         disciplines.selected=SOM_DISCIPLINE_NONE;
         som_hero_palette_frame(ram);
         assert(!memcmp(ram+0xDF20,original,32));               /* colours restored */
+        ram[0xE4]=1;ram[0xE6]=0x0F;memset(ram+0x0720,0x55,32);  /* no class, block glow */
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0x0720,original,32));               /* glow held off */
+        ram[0xE4]=0;ram[0xE6]=0;
+        for(unsigned d=0;d<SOM_DISCIPLINE_COUNT;d++){           /* every class has colours */
+            disciplines.selected=(uint8_t)d;
+            assert(som_disc_visual_profile(&disciplines)!=SOM_PAL_ORIGINAL);
+        }
         som_disc_init(&disciplines);hero_pal_have=0;
     }
     /* Disciplines survive restarts; a damaged file starts fresh. */

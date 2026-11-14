@@ -213,7 +213,8 @@ be added as disciplines first. Every other discipline has no dodge roll.
   disciplines with a dodge. A does not reach the game while R1 is held. Not yet checked
   live: whether the roll respects walls.
 - **AI**: `tools/som_class_director.py` picks the class from weapon levels, build and MP
-  (`class_<n>`), forces a sword class when grass blocks the route, casts `cast_heal` /
+  (`class_<n>`); for grass it keeps the class, pulls the sword (`equip_sword`) to slash and
+  puts the class weapon back 10 decisions later; it casts `cast_heal` /
   `cast_attack` from the class list, and uses `special_<n>` instead of holding for
   charged attacks.
 - **Ninjutsu jutsu on R1+A**, by the weapon in hand: sword = **Shunshin** (native forward
@@ -233,3 +234,6 @@ be added as disciplines first. Every other discipline has no dodge roll.
   through the browser Gamepad API).
 - The game still decides who pad 2 plays: the girl must be in the party and set to
   controller 2 in the game's own controller settings.
+- **Colours for every class** (2026-11-14): Magic arcane violet, Divine Arts white/gold, Dark
+  Arts black/crimson, Support & Dance rose, Weapon Flow teal/silver. With no class the shown
+  palette is still held to the plain colours in field play.

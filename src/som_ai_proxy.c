@@ -175,6 +175,10 @@ static void som_hero_palette_frame(uint8_t *ram){
     if(profile==SOM_PAL_ORIGINAL){
         if(hero_pal_have&&!memcmp(current,hero_pal_written,32))memcpy(current,hero_pal_orig,32);
         hero_pal_have=0;
+        /* No discipline: still no block/dash glow. The shadow keeps the
+         * plain colours (the glow only touches the shown buffer). */
+        if(ram[0xE4]==1&&ram[0xE6]==0x0F)
+            memcpy(ram+0x0700u+((ram[0xE08B]>>1)&7u)*32u,current,32);
         return;
     }
     if(!hero_pal_have||memcmp(current,hero_pal_written,32)){

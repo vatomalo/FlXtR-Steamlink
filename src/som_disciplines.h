@@ -42,7 +42,12 @@ static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
     case 0: return SOM_PAL_SWORDMASTER_FROST;
     case 1: return SOM_PAL_MONK_CRIMSON_GOLD;
     case 2: return SOM_PAL_NINJA_MIDNIGHT;
+    case 3: return SOM_PAL_MAGE_ARCANE;
+    case 4: return SOM_PAL_DIVINE_GOLD;
+    case 5: return SOM_PAL_DARK_CRIMSON;
     case 6: return SOM_PAL_SUMMONER_WHITE;
+    case 7: return SOM_PAL_DANCER_ROSE;
+    case 8: return SOM_PAL_FLOW_TEAL;
     case 9: return SOM_PAL_ROGUE_SHADOW;
     case 10: return SOM_PAL_SAMURAI_INDIGO;
     case 11: return SOM_PAL_ARCHER_FOREST;

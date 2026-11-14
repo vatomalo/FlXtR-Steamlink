@@ -76,7 +76,7 @@ class TacticLearner:
     def score(samples, dealt, taken):
         return (dealt - HP_WEIGHT * taken) / samples if samples else float("-inf")
 
-    def tactic(self, enemy_id, preferred=None):
+    def tactic(self, enemy_id, preferred=None, allowed=None):
         """The tactic in force against this enemy type.
 
         preferred: the build's tactic (som_build). It is tried first and used
@@ -86,29 +86,31 @@ class TacticLearner:
         if not isinstance(enemy_id, int):
             return preferred or DEFAULT
         current = self.current.get(enemy_id)
-        if current is not None and current[1] > 0 and current[2] == preferred:
+        allowed = tuple(t for t in (allowed or TACTICS) if t in TACTICS) or TACTICS
+        if (current is not None and current[1] > 0 and current[2] == preferred and
+                current[0] in allowed):
             return current[0]
-        chosen = self._choose(enemy_id, preferred)
+        chosen = self._choose(enemy_id, preferred, allowed)
         self.current[enemy_id] = [chosen, COMMIT, preferred]
         return chosen
 
-    def _choose(self, enemy_id, preferred=None):
+    def _choose(self, enemy_id, preferred=None, allowed=TACTICS):
         stats = self.stats(enemy_id)
-        untried = [t for t in TACTICS if stats[t][0] < MIN_SAMPLES]
+        untried = [t for t in allowed if stats[t][0] < MIN_SAMPLES]
         if preferred in untried:
             return preferred
         if untried:
             return min(untried, key=lambda t: (stats[t][0], TACTICS.index(t)))
-        best = max(TACTICS, key=lambda t: self.score(*stats[t]))
-        if (preferred in TACTICS and preferred != best and
+        best = max(allowed, key=lambda t: self.score(*stats[t]))
+        if (preferred in allowed and preferred != best and
                 self.score(*stats[preferred]) >= self.score(*stats[best]) - BUILD_MARGIN):
             best = preferred
         if self.verdicts.get(enemy_id) != best:
             self.verdicts[enemy_id] = best
-            summary = ", ".join(f"{t} {self.score(*stats[t]):+.1f}" for t in TACTICS)
+            summary = ", ".join(f"{t} {self.score(*stats[t]):+.1f}" for t in allowed)
             self.log(f"[tactics] enemy {enemy_id:#04x}: {best} works best ({summary} per decision)")
-        if self.random.random() < EXPLORE:
-            return self.random.choice([t for t in TACTICS if t != best])
+        if self.random.random() < EXPLORE and len(allowed) > 1:
+            return self.random.choice([t for t in allowed if t != best])
         return best
 
     def _add(self, enemy_id, tactic, dealt, taken):

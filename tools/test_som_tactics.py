@@ -92,7 +92,7 @@ class FixedTactic:
     def __init__(self, name):
         self.name = name
 
-    def tactic(self, enemy_id, preferred=None):
+    def tactic(self, enemy_id, preferred=None, allowed=None):
         return self.name
 
 
@@ -113,6 +113,26 @@ class PlannerTacticsTest(unittest.TestCase):
         now[0] = 1.3
         gap = planner.decide(observed, previous="attack")
         self.assertEqual((gap.action, gap.intention), ("step_left", "kite_enemy"))
+
+    def test_kite_steps_back_only_once_per_swing(self):
+        planner, now = self.paced("kite")
+        observed = state([(16, 0)])
+        planner.decide(observed, previous="step_right")
+        now[0] = 1.0
+        planner.decide(observed, previous="step_right")              # swing
+        now[0] = 1.2
+        self.assertEqual(planner.decide(observed, previous="attack").action, "step_left")
+        now[0] = 1.4                       # no second step back (it turns to face it)
+        self.assertNotEqual(planner.decide(observed, previous="step_left").action, "step_left")
+
+    def test_builds_only_try_their_own_tactics(self):
+        db = sqlite3.connect(":memory:")
+        learner = tactics.TacticLearner(db, lambda _: None, seed=1)
+        seen = set()
+        for _ in range(200):
+            seen.add(learner.tactic(7, None, ("press", "close")))
+            learner.record(obs(100))
+        self.assertNotIn("kite", seen)
 
     def test_press_guards_in_the_recharge_gap(self):
         planner, now = self.paced("press")

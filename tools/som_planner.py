@@ -175,6 +175,7 @@ class MemoryPlanner:
         # Optional som_anticipate.AttackPredictor: guard before likely hits.
         self.attack_predictor = None
         self.anticipated = 0
+        self.kited_swing = None
         self.swing_decided_at = None
         self.just_hit = False
         self.previous_action = "none"
@@ -770,7 +771,8 @@ class MemoryPlanner:
         if self.tactic_learner is None:
             return self.build_profile.get("preferred") or "press"
         return self.tactic_learner.tactic(enemy.get("identity"),
-                                          self.build_profile.get("preferred"))
+                                          self.build_profile.get("preferred"),
+                                          self.build_profile.get("tactics"))
 
     def _face_and_strike(self, context, enemy, dx, dy, open_steps, ready, hero=None):
         """Attack only while facing the enemy; otherwise tap toward it first.
@@ -795,9 +797,12 @@ class MemoryPlanner:
                     # (live: 1.6 vs 3.6 per swing). Hold the guard instead,
                     # or with the kite tactic step out of reach; the next
                     # swing is the counter.
-                    if self._tactic(enemy) == "kite":
+                    if self._tactic(enemy) == "kite" and self.kited_swing != self.last_swing:
                         away = OPPOSITE_STEP.get(want)
                         if away in open_steps:
+                            # One step back per swing: more looked like
+                            # walking back and forth.
+                            self.kited_swing = self.last_swing
                             return PlannerDecision(away, f"step back from enemy {enemy['slot']} "
                                                    "while the weapon recharges", "kite_enemy")
                     return PlannerDecision("block", f"guard while the weapon recharges "

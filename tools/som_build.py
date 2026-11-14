@@ -11,7 +11,8 @@ A build is the stat that clearly leads (by LEAD or more); otherwise
   clearly worse than another (som_tactics.TacticLearner);
 - anticipate_risk: predicted hit chance at which the hero reacts before a
   swing (lower = more careful);
-- dodge: react to a predicted hit by stepping away instead of guarding.
+- dodge: react to a predicted hit by stepping away instead of guarding;
+- tactics: the som_tactics styles this build tries at all.
 """
 
 LEAD = 3
@@ -19,15 +20,22 @@ STATS = ("strength", "agility", "constitution", "intelligence", "wisdom")
 
 PROFILES = {
     # Head-on: trade blows, rarely guard.
-    "brawler": {"preferred": "press", "anticipate_risk": 0.55, "dodge": False},
+    "brawler": {"preferred": "press", "anticipate_risk": 0.55, "dodge": False,
+                "tactics": ("press", "close")},
     # Hit and run: step out after swings, sidestep predicted hits.
-    "skirmisher": {"preferred": "kite", "anticipate_risk": 0.35, "dodge": True},
+    "skirmisher": {"preferred": "kite", "anticipate_risk": 0.35, "dodge": True,
+                   "tactics": ("kite", "press")},
     # Hold the line: guard early, then counter.
-    "guardian": {"preferred": "press", "anticipate_risk": 0.25, "dodge": False},
+    "guardian": {"preferred": "press", "anticipate_risk": 0.25, "dodge": False,
+                 "tactics": ("press", "close")},
     # Fragile: keep distance, never trade.
-    "caster": {"preferred": "kite", "anticipate_risk": 0.25, "dodge": True},
+    "caster": {"preferred": "kite", "anticipate_risk": 0.25, "dodge": True,
+               "tactics": ("kite", "press")},
     # No preference: learned per enemy.
-    "balanced": {"preferred": None, "anticipate_risk": 0.35, "dodge": False},
+    # Kiting (stepping back) looks like walking back and forth and scored
+    # worst live, so only agile and fragile builds use it.
+    "balanced": {"preferred": None, "anticipate_risk": 0.35, "dodge": False,
+                 "tactics": ("press", "close")},
 }
 
 

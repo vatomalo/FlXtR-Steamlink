@@ -992,6 +992,7 @@ def main() -> int:
     # Off by default: on maps 129/130 at level 5-6 the hero dealt ~5x the
     # damage it took with no blocking (13-14 Nov afternoon), but only 0.4-1.6x
     # once it guarded after swings and when hit; guarding costs swings.
+    planner.build = None              # log the hero's build once it is read
     tactic_learner = attack_predictor = None
     if not args.no_anticipation and history is not None and args.policy in ("hybrid", "memory"):
         attack_predictor = AttackPredictor(history.connection)

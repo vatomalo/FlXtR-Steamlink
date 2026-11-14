@@ -4,6 +4,15 @@ Development branch: `feature/som-disciplines-controls-20261114`, based on the **
 
 ## Current implementation
 
+### Appearance profiles
+
+- `src/som_class_palette.h`: pure, reusable 16-color SNES BGR555 transformations with palette index 0 left unchanged. Profiles: Swordmaster frost-blue, Monk crimson/gold, Ninja midnight-blue, Summoner grayscale white, and celestial familiar blue-white.
+- Familiar calls `som_familiar_tint` using the celestial profile and **retains its existing friendly allegiance, map following, and anti-friendly-fire**.
+- `som_disciplines.h` maps selection to a visual profile and draws a four-shade swatch in the Disciplines menu. **This is only an overlay preview**: selecting it does not currently recolor the actual hero sprite, because we have not verified the hero's correct CGRAM shadow location, sprite palette slot, and native palette reload path on the user's exact Turbo ROM. Do not guess by writing monster palette addresses into hero memory.
+- Test with `cc -std=c11 -Wall -Wextra -Werror -Isrc tests/som_class_palette_test.c -o /tmp/som_class_palette_test && /tmp/som_class_palette_test`. Also run existing `tests/som_disciplines_test.c` and proxy tests.
+- A next milestone is to locate the player character's actual palette and redraw path through read-only observation, persist the selected visual profile per character, and apply only after a safe save/restore strategy.
+
+
 - `src/som_disciplines.h`: nine independent, classless discipline XP tracks and a specialisation marker. Selection has no gameplay effects, no level restrictions, no palette changes, and no persistence yet.
 - Disciplines overlay renders next to the Gambits overlay when the AI is controlling the leader. L/R toggles the tab; Up/Down moves; B selects/deselects a specialization; A closes. All control interception is inside the **AI overlay mode**, so the normal game's ring controls are deliberately untouched.
 - `som_disc_award` rejects unverified and duplicate event IDs. It is *not yet hooked to real combat outcomes*, so no XP is currently earned from playing. XP is not yet stored to disk.

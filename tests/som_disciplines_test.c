@@ -6,6 +6,24 @@
 int main(void){
     SomDisciplines d;som_disc_init(&d);
     assert(d.selected==SOM_DISCIPLINE_NONE);
+    assert(som_disc_title(&d)==NULL);
+    {   /* Class label: centred under the hero, clipped, outlined. */
+        uint16_t frame[224][256];memset(frame,0,sizeof(frame));
+        assert(!som_disc_draw_label((uint8_t*)frame,256,224,512,0,NULL,128,100));
+        assert(!som_disc_draw_label((uint8_t*)frame,256,224,512,0,"Monk",-1,100));
+        assert(som_disc_draw_label((uint8_t*)frame,256,224,512,0,"Monk",128,100));
+        const uint16_t white=(uint16_t)som_overlay_color(0,255,255,255);
+        unsigned ink=0,above=0;
+        for(unsigned y=0;y<224;y++)for(unsigned x=0;x<256;x++)if(frame[y][x]==white){
+            ink++;if(y<100u+SOM_CLASS_LABEL_DROP_PX)above++;
+            assert(x>=128-12&&x<=128+12);
+        }
+        assert(ink>0&&above==0);
+        memset(frame,0,sizeof(frame));
+        assert(som_disc_draw_label((uint8_t*)frame,256,224,512,0,"Weaponmaster",250,223));
+        memset(frame,0,sizeof(frame));
+        assert(som_disc_draw_label((uint8_t*)frame,256,224,512,0,"Weaponmaster",2,0));
+    }
     for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++)assert(d.level[i]==1&&d.experience[i]==0);
     assert(som_disc_press(&d,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_DISC_OPENED);
     assert(d.open&&d.selected==SOM_DISCIPLINE_NONE);
@@ -14,6 +32,7 @@ int main(void){
     assert(som_disc_press(&d,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_DISC_SELECTED);
     assert(d.selected==1);
     assert(som_disc_visual_profile(&d)==SOM_PAL_MONK_CRIMSON_GOLD);
+    assert(!strcmp(som_disc_title(&d),"Monk"));
     assert(som_disc_press(&d,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_DISC_SELECTED);
     assert(d.selected==SOM_DISCIPLINE_NONE);
     assert(som_disc_visual_profile(&d)==SOM_PAL_ORIGINAL);

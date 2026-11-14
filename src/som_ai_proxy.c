@@ -1983,7 +1983,11 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
      * hardware-rendered frame that has no CPU pixels to draw on. */
     const int menu=som_manual_disciplines||
         (ring_ai_enabled&&(gambits.open||disciplines.open));
-    if((!overlay.frames_left&&!menu)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    /* Class title under the hero; field mode only (som_hero_screen). */
+    const char *class_title=menu?NULL:som_disc_title(&disciplines);
+    int hero_x=-1,hero_y=-1;
+    if(class_title&&!som_hero_screen(&hero_x,&hero_y))class_title=NULL;
+    if((!overlay.frames_left&&!menu&&!class_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         frontend_video(data,width,height,pitch);
         return;
@@ -1995,8 +1999,10 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
         overlay_frame=grown;overlay_frame_size=size;
     }
     memcpy(overlay_frame,data,size);
-    int hero_x=-1,hero_y=-1;
-    if(overlay.speech_bubble)som_hero_screen(&hero_x,&hero_y);
+    if(overlay.speech_bubble&&!class_title)som_hero_screen(&hero_x,&hero_y);
+    if(class_title)
+        som_disc_draw_label(overlay_frame,width,height,pitch,pixel_format,
+                            class_title,hero_x,hero_y);
     if(overlay.frames_left){
         som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
         overlay.frames_left--;

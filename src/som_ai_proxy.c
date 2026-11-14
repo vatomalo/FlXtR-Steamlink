@@ -13,6 +13,7 @@
 #include "som_ai_actions.h"
 #include "som_overlay.h"
 #include "som_gambit.h"
+#include "som_disciplines.h"
 #include "som_familiar.h"
 #include "som_npc_walk.h"
 #include <dlfcn.h>
@@ -90,6 +91,8 @@ static int som_write_ring_ai_marker(void);
 #define SOM_GAMBIT_FILE "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 static const char *gambit_file=SOM_GAMBIT_FILE;
 static SomGambits gambits={0,0,{4,3,3,3,4,1}};
+static SomDisciplines disciplines;
+static int som_menu_disciplines;
 static void som_gambit_load(void){
     char text[16]={0};
     FILE *in=fopen(gambit_file,"r");
@@ -243,12 +246,25 @@ static void som_input_poll(void){
         /* The bridge removes the marker when it stops (safety stop, game
          * exit): never keep swallowing the player's buttons after that. */
         if(ring_ai_enabled&&frame_number%30u==0&&access(ring_ai_file,F_OK)!=0){
-            ring_ai_enabled=0;gambits.open=0;
+            ring_ai_enabled=0;gambits.open=0;disciplines.open=0;som_menu_disciplines=0;
             som_overlay_set(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
         }
         if(ring_ai_enabled&&pressed&&frame_number>=ring_ai_grace_until){
-            switch(som_gambit_press(&gambits,pressed)){
+            /* Shoulder tabs switch the overlay page, never reach the game. */
+            const uint16_t tabs=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L)|
+                                           (1u<<RETRO_DEVICE_ID_JOYPAD_R));
+            if(pressed&tabs){
+                som_menu_disciplines=!som_menu_disciplines;
+                gambits.open=!som_menu_disciplines;
+                disciplines.open=som_menu_disciplines;
+            }else if(som_menu_disciplines){
+                int result=som_disc_press(&disciplines,pressed);
+                if(result==SOM_DISC_SELECTED){
+                    fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (visual preference only)\n",
+                        (unsigned)disciplines.selected);
+                }
+            }else switch(som_gambit_press(&gambits,pressed)){
             case SOM_GAMBIT_CHANGED:
                 som_gambit_save();
                 {char text[SOM_GAMBIT_COUNT+1];som_gambit_format(&gambits,text);
@@ -680,7 +696,7 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */
-    const int menu=gambits.open&&ring_ai_enabled;
+    const int menu=ring_ai_enabled&&(gambits.open||disciplines.open);
     if((!overlay.frames_left&&!menu)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         frontend_video(data,width,height,pitch);
@@ -699,7 +715,11 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
         som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
         overlay.frames_left--;
     }
-    if(menu)som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
+    if(menu){
+        if(som_menu_disciplines)
+            som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines);
+        else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
+    }
     frontend_video(overlay_frame,width,height,pitch);
 }
 static bool som_environment(unsigned cmd,void *data){
@@ -812,6 +832,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
+    som_disc_init(&disciplines);som_menu_disciplines=0;
     som_gambit_load();
     last_input_frame=frame_number;idle_started=0;
     const char *path=game?game->path:NULL;

@@ -2,24 +2,105 @@
   "version": 1,
   "locations": {
     "potos_c7_spawn": {
-      "map": 131, "x": 29, "y": 25, "layer": 1,
+      "map": 131,
+      "x": 29,
+      "y": 25,
+      "layer": 1,
       "evidence": "ROM object record 131#8 (kind 0xC7, static); live spawn pixel (472,404) on Turbo 2026-11-13"
     },
     "potos_c7_doorstep": {
-      "map": 131, "x": 27, "y": 25, "layer": 1, "facing": "up",
+      "map": 131,
+      "x": 27,
+      "y": 25,
+      "layer": 1,
+      "facing": "up",
       "evidence": "open floor-2 tile (live work map) directly below door tile 0xC4 at (27,24), a ROM exit to map 257"
     },
     "potos_c7_house": {
-      "map": 257, "x": 12, "y": 36, "layer": 2, "abstract": true, "proxy": "potos_c7_doorstep",
+      "map": 257,
+      "x": 12,
+      "y": 36,
+      "layer": 2,
+      "abstract": true,
+      "proxy": "potos_c7_doorstep",
       "evidence": "ROM transition of door (131: 27,24) -> map 257 start tile (12,36), confirmed by map_exits in the AI history"
     },
     "potos_lane_west": {
-      "map": 131, "x": 24, "y": 30, "layer": 1,
+      "map": 131,
+      "x": 24,
+      "y": 30,
+      "layer": 1,
       "evidence": "open floor-2 tile in the live work map; 4-way route from the spawn over floor-2 tiles"
     },
     "potos_lane_east": {
-      "map": 131, "x": 33, "y": 28, "layer": 1,
+      "map": 131,
+      "x": 33,
+      "y": 28,
+      "layer": 1,
       "evidence": "open floor-2 tile in the live work map; 4-way route from the spawn over floor-2 tiles"
+    },
+    "potos_r0_home": {
+      "map": 131,
+      "x": 35,
+      "y": 18,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 0 (kind 0xc0, static) and reachable floor-2 route on the live work map; spawn tile"
+    },
+    "potos_r0_work": {
+      "map": 131,
+      "x": 34,
+      "y": 21,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 0 (kind 0xc0, static) and reachable floor-2 route on the live work map"
+    },
+    "potos_r0_meet": {
+      "map": 131,
+      "x": 40,
+      "y": 17,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 0 (kind 0xc0, static) and reachable floor-2 route on the live work map"
+    },
+    "potos_r1_home": {
+      "map": 131,
+      "x": 35,
+      "y": 19,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 1 (kind 0xc1, static) and reachable floor-2 route on the live work map; spawn tile"
+    },
+    "potos_r1_work": {
+      "map": 131,
+      "x": 39,
+      "y": 17,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 1 (kind 0xc1, static) and reachable floor-2 route on the live work map"
+    },
+    "potos_r1_meet": {
+      "map": 131,
+      "x": 32,
+      "y": 24,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 1 (kind 0xc1, static) and reachable floor-2 route on the live work map"
+    },
+    "potos_r9_home": {
+      "map": 131,
+      "x": 33,
+      "y": 37,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 9 (kind 0xc4, static) and reachable floor-2 route on the live work map; spawn tile"
+    },
+    "potos_r9_work": {
+      "map": 131,
+      "x": 35,
+      "y": 31,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 9 (kind 0xc4, static) and reachable floor-2 route on the live work map"
+    },
+    "potos_r9_meet": {
+      "map": 131,
+      "x": 28,
+      "y": 38,
+      "layer": 1,
+      "evidence": "live Turbo map 131: object record 9 (kind 0xc4, static) and reachable floor-2 route on the live work map"
     }
   },
   "npcs": [
@@ -28,20 +109,71 @@
       "name": "Potos villager by the house door",
       "home": "potos_c7_house",
       "workplace": "potos_lane_west",
-      "native": {"map": 131, "record": 8, "kind": 199, "event": 265, "static": true,
-                 "spawn": "potos_c7_spawn"},
-      "story": [{"flag": 16, "min": 0, "max": 6}],
-      "personality": {"sociable": 0.6, "diligent": 0.8},
+      "native": {
+        "map": 131,
+        "record": 8,
+        "kind": 199,
+        "event": 265,
+        "static": true,
+        "spawn": "potos_c7_spawn"
+      },
+      "story": [
+        {
+          "flag": 16,
+          "min": 0,
+          "max": 6
+        }
+      ],
+      "personality": {
+        "sociable": 0.6,
+        "diligent": 0.8
+      },
       "schedule": [
-        {"time": "06:00", "activity": "wake_up", "destination": "home"},
-        {"time": "07:00", "activity": "eat", "destination": "home"},
-        {"time": "08:00", "activity": "travel", "destination": "workplace"},
-        {"time": "09:00", "activity": "work", "destination": "workplace"},
-        {"time": "12:00", "activity": "eat", "destination": "potos_lane_east"},
-        {"time": "13:00", "activity": "work", "destination": "workplace"},
-        {"time": "18:00", "activity": "socialize", "destination": "potos_lane_east"},
-        {"time": "21:00", "activity": "return_home", "destination": "home"},
-        {"time": "22:00", "activity": "sleep", "destination": "home"}
+        {
+          "time": "06:00",
+          "activity": "wake_up",
+          "destination": "home"
+        },
+        {
+          "time": "07:00",
+          "activity": "eat",
+          "destination": "home"
+        },
+        {
+          "time": "08:00",
+          "activity": "travel",
+          "destination": "workplace"
+        },
+        {
+          "time": "09:00",
+          "activity": "work",
+          "destination": "workplace"
+        },
+        {
+          "time": "12:00",
+          "activity": "eat",
+          "destination": "potos_lane_east"
+        },
+        {
+          "time": "13:00",
+          "activity": "work",
+          "destination": "workplace"
+        },
+        {
+          "time": "18:00",
+          "activity": "socialize",
+          "destination": "potos_lane_east"
+        },
+        {
+          "time": "21:00",
+          "activity": "return_home",
+          "destination": "home"
+        },
+        {
+          "time": "22:00",
+          "activity": "sleep",
+          "destination": "home"
+        }
       ],
       "lines": {
         "wake_up": "Morning already? I just got up.",
@@ -53,6 +185,222 @@
         "sleep": "Zzz... (fast asleep)",
         "night_warning": "Monsters roam at night. Careful!",
         "repeat": "You again! Twice today already."
+      }
+    },
+    {
+      "id": "potos_villager_r0",
+      "name": "Potos villager (record 0)",
+      "home": "potos_r0_home",
+      "workplace": "potos_r0_work",
+      "native": {
+        "map": 131,
+        "record": 0,
+        "kind": 192,
+        "event": 0,
+        "static": true,
+        "spawn": "potos_r0_home"
+      },
+      "personality": {
+        "sociable": 0.4,
+        "diligent": 0.5
+      },
+      "schedule": [
+        {
+          "time": "06:00",
+          "activity": "wake_up",
+          "destination": "home"
+        },
+        {
+          "time": "07:00",
+          "activity": "eat",
+          "destination": "home"
+        },
+        {
+          "time": "08:00",
+          "activity": "travel",
+          "destination": "workplace"
+        },
+        {
+          "time": "09:00",
+          "activity": "work",
+          "destination": "workplace"
+        },
+        {
+          "time": "12:00",
+          "activity": "eat",
+          "destination": "potos_r0_meet"
+        },
+        {
+          "time": "13:00",
+          "activity": "work",
+          "destination": "workplace"
+        },
+        {
+          "time": "18:00",
+          "activity": "socialize",
+          "destination": "potos_r0_meet"
+        },
+        {
+          "time": "21:00",
+          "activity": "return_home",
+          "destination": "home"
+        },
+        {
+          "time": "22:00",
+          "activity": "sleep",
+          "destination": "home"
+        }
+      ],
+      "lines": {
+        "wake_up": "Up already? Me too.",
+        "eat": "Lunch first, chat later.",
+        "travel": "Off to work!",
+        "work": "Work, work, work...",
+        "socialize": "Long day. Nice evening.",
+        "return_home": "Home time!",
+        "sleep": "Zzz...",
+        "night_warning": "Monsters roam at night!",
+        "repeat": "You again? Hello!"
+      }
+    },
+    {
+      "id": "potos_villager_r1",
+      "name": "Potos villager (record 1)",
+      "home": "potos_r1_home",
+      "workplace": "potos_r1_work",
+      "native": {
+        "map": 131,
+        "record": 1,
+        "kind": 193,
+        "event": 270,
+        "static": true,
+        "spawn": "potos_r1_home"
+      },
+      "personality": {
+        "sociable": 0.5,
+        "diligent": 0.6
+      },
+      "schedule": [
+        {
+          "time": "07:17",
+          "activity": "wake_up",
+          "destination": "home"
+        },
+        {
+          "time": "08:17",
+          "activity": "wander",
+          "destination": "potos_r1_meet"
+        },
+        {
+          "time": "10:17",
+          "activity": "wander",
+          "destination": "workplace"
+        },
+        {
+          "time": "12:17",
+          "activity": "eat",
+          "destination": "home"
+        },
+        {
+          "time": "14:17",
+          "activity": "wander",
+          "destination": "potos_r1_meet"
+        },
+        {
+          "time": "17:17",
+          "activity": "socialize",
+          "destination": "workplace"
+        },
+        {
+          "time": "20:17",
+          "activity": "return_home",
+          "destination": "home"
+        },
+        {
+          "time": "21:17",
+          "activity": "sleep",
+          "destination": "home"
+        }
+      ],
+      "lines": {
+        "wake_up": "What a morning!",
+        "wander": "Just stretching my legs.",
+        "eat": "Smells good, right?",
+        "socialize": "Lovely weather today.",
+        "return_home": "Getting late, bye!",
+        "sleep": "Zzz... mm, cake...",
+        "night_warning": "Careful in the dark!",
+        "repeat": "Twice today!"
+      }
+    },
+    {
+      "id": "potos_villager_r9",
+      "name": "Potos villager (record 9)",
+      "home": "potos_r9_home",
+      "workplace": "potos_r9_work",
+      "native": {
+        "map": 131,
+        "record": 9,
+        "kind": 196,
+        "event": 267,
+        "static": true,
+        "spawn": "potos_r9_home"
+      },
+      "personality": {
+        "sociable": 0.8,
+        "diligent": 0.6
+      },
+      "schedule": [
+        {
+          "time": "07:03",
+          "activity": "wake_up",
+          "destination": "home"
+        },
+        {
+          "time": "08:03",
+          "activity": "wander",
+          "destination": "potos_r9_meet"
+        },
+        {
+          "time": "10:03",
+          "activity": "wander",
+          "destination": "workplace"
+        },
+        {
+          "time": "12:03",
+          "activity": "eat",
+          "destination": "home"
+        },
+        {
+          "time": "14:03",
+          "activity": "wander",
+          "destination": "potos_r9_meet"
+        },
+        {
+          "time": "17:03",
+          "activity": "socialize",
+          "destination": "workplace"
+        },
+        {
+          "time": "20:03",
+          "activity": "return_home",
+          "destination": "home"
+        },
+        {
+          "time": "21:03",
+          "activity": "sleep",
+          "destination": "home"
+        }
+      ],
+      "lines": {
+        "wake_up": "What a morning!",
+        "wander": "Just stretching my legs.",
+        "eat": "Smells good, right?",
+        "socialize": "Lovely weather today.",
+        "return_home": "Getting late, bye!",
+        "sleep": "Zzz... mm, cake...",
+        "night_warning": "Careful in the dark!",
+        "repeat": "Twice today!"
       }
     }
   ]

@@ -579,7 +579,7 @@ static int som_use_candy(uint8_t *ram){
         uint8_t *item=ram+0xCC48u+slot;
         if(*item==0xFF||(*item&0x0F)!=0)continue;
         const unsigned code=*item>>4;
-        if(code!=4u&&code!=6u&&code!=8u){
+        if(code<4u||code>14u||(code&1u)){        /* Turbo carries up to 7 */
             fprintf(stderr,"[som-ai] CANDY refused: %u left (the ring handles the last)\n",code/2u);
             return 0;
         }

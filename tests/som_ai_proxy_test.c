@@ -698,6 +698,7 @@ int main(void){
         assert(som_use_candy(ram)&&ram[0xCC49]==0x40&&ram[0xE1F3]==100&&ram[0xCC48]==0x43);
         ram[0xE1F3]=200;assert(som_use_candy(ram)&&ram[0xE1F3]==255&&ram[0xCC49]==0x20);
         assert(!som_use_candy(ram)&&ram[0xCC49]==0x20);        /* last Candy: ring */
+        ram[0xCC49]=0xE0;assert(som_use_candy(ram)&&ram[0xCC49]==0xC0); /* Turbo: 7 */
         ram[0xCC49]=0x60;ram[0xD0]=0x81;assert(!som_use_candy(ram)); /* dialogue */
         ram[0xD0]=0;ram[0xE182]=0;assert(!som_use_candy(ram));      /* KO */
     }

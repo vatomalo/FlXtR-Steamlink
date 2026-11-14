@@ -363,9 +363,10 @@ class WRAM:
             if raw == 0xFF:
                 continue
             item_id, count_code = raw & 0x0F, raw >> 4
-            # Normal inventory uses even high nibbles 2..8 for quantities 1..4.
-            # Reject hacked/ambiguous values rather than invent availability.
-            valid = item_id < len(ITEM_NAMES) and count_code in (2, 4, 6, 8)
+            # Even high nibbles hold the quantity times two: 2..8 for 1..4 in
+            # the original game; Turbo carries up to 7 (0xE0 = 7 Candy, live
+            # 2026-11-14). Odd codes stay unverified rather than invented.
+            valid = item_id < len(ITEM_NAMES) and count_code in (2, 4, 6, 8, 10, 12, 14)
             items.append({"slot": slot, "id": item_id,
                           "name": ITEM_NAMES[item_id] if item_id < len(ITEM_NAMES)
                           else f"unknown_{item_id:x}",

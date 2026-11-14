@@ -9,6 +9,7 @@
 #include <string.h>
 #include "vendor/libretro.h"
 #include "som_overlay.h"
+#include "som_class_palette.h"
 
 #define SOM_DISCIPLINE_COUNT 9u
 #define SOM_DISCIPLINE_NONE 255u
@@ -25,6 +26,16 @@ typedef struct {
     uint64_t last_event[SOM_DISCIPLINE_COUNT];
 } SomDisciplines;
 enum {SOM_DISC_NONE, SOM_DISC_OPENED, SOM_DISC_CLOSED, SOM_DISC_SELECTED};
+static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
+    if(!d)return SOM_PAL_ORIGINAL;
+    switch(d->selected){
+    case 0: return SOM_PAL_SWORDMASTER_FROST;
+    case 1: return SOM_PAL_MONK_CRIMSON_GOLD;
+    case 2: return SOM_PAL_NINJA_MIDNIGHT;
+    case 6: return SOM_PAL_SUMMONER_WHITE;
+    default:return SOM_PAL_ORIGINAL;
+    }
+}
 static inline void som_disc_init(SomDisciplines *d){
     memset(d,0,sizeof(*d));
     d->selected=SOM_DISCIPLINE_NONE;
@@ -80,7 +91,7 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
                                 size_t pitch,int format,const SomDisciplines *d){
     if(!d->open||!pixels)return;
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
-    const unsigned lines=SOM_DISCIPLINE_COUNT+1u;
+    const unsigned lines=SOM_DISCIPLINE_COUNT+2u;
     const unsigned bw=195u*sx,bh=(lines*10u+8u)*sy;
     if(bw+12u*sx>width||bh+12u*sy>height)return;
     unsigned x0=6u*sx,y0=6u*sy;
@@ -88,7 +99,7 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
     som_overlay_fill(pixels,pitch,format,x0+sx,y0+sy,bw-2u*sx,bh-2u*sy,
                      som_overlay_color(format,24,21,73));
     char out[33];
-    for(unsigned line=0;line<lines;line++){
+    for(unsigned line=0;line<lines-1u;line++){
         if(!som_disc_line(d,line,out))break;
         for(unsigned i=0;out[i];i++){
             unsigned char c=(unsigned char)out[i];
@@ -101,6 +112,18 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
                     som_overlay_color(format,255,255,255));
             }
         }
+    }
+    /* Visual preview only. Native hero palettes and saves stay untouched. */
+    unsigned profile=som_disc_visual_profile(d);
+    const unsigned shades[4]={6u,13u,22u,31u};
+    for(unsigned i=0;i<4u;i++){
+        uint16_t color=som_pal_color(som_pal_rgb(shades[i],shades[i],shades[i]),profile);
+        unsigned red=(color&31u)*255u/31u;
+        unsigned green=((color>>5)&31u)*255u/31u;
+        unsigned blue=((color>>10)&31u)*255u/31u;
+        som_overlay_fill(pixels,pitch,format,x0+(6u+i*17u)*sx,
+            y0+(4u+(lines-1u)*10u)*sy,14u*sx,7u*sy,
+            som_overlay_color(format,(uint8_t)red,(uint8_t)green,(uint8_t)blue));
     }
 }
 #endif

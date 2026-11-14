@@ -987,14 +987,16 @@ int main(void){
         hero[0x1E4]=6;hero[0x191]=0;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         assert(evade_active&&hero[0x011]==SOM_EVADE_POSE&&bunshin_until);
-        som_bunshin_frame(ram);
+        frame_number|=1u;som_bunshin_frame(ram);
+        assert(ram[0x0809]==0xF0);                             /* odd frame: hidden */
+        frame_number++;som_bunshin_frame(ram);
         assert(ram[0x0808]==96&&ram[0x0809]==100&&ram[0x080A]==0xC0&&ram[0x080B]==0x03);
         assert(ram[0x080C]==144&&ram[0x080D]==100);           /* right clone */
         assert(ram[0x0804]==10&&ram[0x0810+1]==0xF0);          /* others untouched */
         ram[0x0800]=10;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
-        som_bunshin_frame(ram);                                /* left of x 0: wraps */
+        frame_number+=2;som_bunshin_frame(ram);                /* left of x 0: wraps */
         assert(ram[0x0808]==(uint8_t)(10-24)&&(ram[0x0A00]&(1u<<4)));   /* x bit 8 */
-        frame_number+=SOM_CLONE_FRAMES+1;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
+        frame_number+=SOM_CLONE_FRAMES+2;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
         som_bunshin_frame(ram);assert(!bunshin_until&&ram[0x0809]==0xF0);  /* gone */
         hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x1E4]=1;hero[0x191]=0;
         /* AI commands: class choice and casts within the class. */

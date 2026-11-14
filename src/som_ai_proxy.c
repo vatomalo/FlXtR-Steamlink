@@ -1181,6 +1181,10 @@ static void som_bunshin_frame(uint8_t *ram){
     if(frame_number>bunshin_until||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F){
         bunshin_until=frame_number>bunshin_until?0:bunshin_until;return;
     }
+    /* Every other frame only: the boy's palette 1 cannot use colour math
+     * (only OBJ palettes 4-7 can), so a 30 Hz flicker gives the ghostly
+     * half-transparent look instead. */
+    if(frame_number&1u)return;
     uint8_t *oam=ram+0x0800u,*high=ram+0x0A00u;
     unsigned hero_ids[16],heroes=0,free_ids[128],frees=0;
     for(unsigned i=0;i<128u;i++){

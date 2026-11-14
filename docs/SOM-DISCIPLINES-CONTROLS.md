@@ -69,3 +69,19 @@ PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py'
 ```
 
 No Steam Link deployment should occur before build and hardware validation.
+
+## Dodge roll from the native somersault (planned, waiting on a recording)
+
+The player wants the game's own somersault animation used as a dodge roll.
+It first appears later in the story (cannonball travel, or the rubber
+ducky), so it cannot be recorded yet. When it comes up: send `pal_trace`
+(records low WRAM, the palette shadow and the hero object 7E:E000-E1FF
+every frame for 8 s, read-only) while it plays, then find the hero state,
+animation, velocity and invulnerability fields that start and drive it.
+Trigger it only through those verified fields, in verified field state,
+toward collision-checked open ground (see the evade discovery steps above).
+
+Availability (player's decision, 14 Nov): only these disciplines get the
+dodge roll: swordsman (Swordsmanship), monk (Martial Arts), ninja
+(Ninjutsu), and the not-yet-existing rogue, samurai and archer, which must
+be added as disciplines first. Every other discipline has no dodge roll.

@@ -9,6 +9,7 @@ import org.json.JSONObject;
 
 /** Moves AI observations over FlXtR's private tailnet without Python on Android. */
 final class SomAiRelay implements AutoCloseable {
+    static final int PROTOCOL=2;
     private static final String ENDPOINT="http://"+AdbSetup.SKYLOFT+":43928/som-ai/v1/step";
     private static final Set<String> ACTIONS=new HashSet<>(Arrays.asList(
         "right","left","up","down","attack","open_ring","confirm","cancel",
@@ -21,22 +22,24 @@ final class SomAiRelay implements AutoCloseable {
     SomAiRelay(Context context){this.context=context.getApplicationContext();}
     void start(){if(running)return;running=true;thread=new Thread(this::run,"FlXtR-SoM-AI");thread.start();}
     private void run(){
-        boolean reported=false;
+        boolean reported=false,announced=false;
         while(running){
             try{
                 byte[] wram=RetroActivity.somSnapshot();
                 if(wram==null){Thread.sleep(200);continue;}
-                String status=RetroActivity.somStatus();
+                String status=new JSONObject(RetroActivity.somStatus()).put("protocol",PROTOCOL).toString();
                 byte[] header=(status+"\n").getBytes(StandardCharsets.UTF_8);
                 byte[] request=new byte[header.length+wram.length];
                 System.arraycopy(header,0,request,0,header.length);
                 System.arraycopy(wram,0,request,header.length,wram.length);
                 String raw=TailscaleRuntime.get(context).requestBytes(ENDPOINT,request);
                 JSONObject response=new JSONObject(raw);
+                if(response.optInt("protocol")!=PROTOCOL)throw new java.io.IOException("Update the SkyLoft AI service");
                 String action=response.optString("action","");
                 String message=response.optString("message","");
                 if(ACTIONS.contains(action))RetroActivity.queueSomCommand(action);
-                if(!message.isEmpty()&&message.length()<=95)RetroActivity.queueSomMessage(message);
+                if(!announced){RetroActivity.queueSomMessage("AI bridge v2|new planner active");announced=true;}
+                else if(!message.isEmpty()&&message.length()<=95)RetroActivity.queueSomMessage(message);
                 reported=false;
             }catch(InterruptedException stopped){Thread.currentThread().interrupt();break;}
             catch(Exception failure){

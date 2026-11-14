@@ -13,6 +13,11 @@ overlay message. The request blocks until the planner responds, so decisions
 cannot overtake snapshots. The Steam Link build keeps its existing SSH and
 atomic-file transport; `SOM_AI_ANDROID=0` remains the default.
 
+Android and SkyLoft require AI relay protocol 2. The app rejects older relay
+responses instead of silently running an old planner, and shows `AI bridge v2`
+after the first current-service response. Android build 1098 is newer than the
+previously published build 1097, so it can be installed as an update.
+
 ## Build the APK
 
 Use Linux or WSL with JDK 17, Android SDK 35, build-tools 35.0.0 and NDK

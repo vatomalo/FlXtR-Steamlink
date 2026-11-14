@@ -688,6 +688,19 @@ int main(void){
         assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
         unlink(pkg_path);unlink(any_path);
     }
+    /* use_candy: one Candy fewer, 100 HP queued for the game; never the last. */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));memset(ram+0xCC48,0xFF,11);
+        ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xE000]=1;
+        ram[0xE182]=40;ram[0xE184]=117;
+        ram[0xCC48]=0x43;ram[0xCC49]=0x60;                     /* 2 of item 3, 3 Candy */
+        assert(som_use_candy(ram)&&ram[0xCC49]==0x40&&ram[0xE1F3]==100&&ram[0xCC48]==0x43);
+        ram[0xE1F3]=200;assert(som_use_candy(ram)&&ram[0xE1F3]==255&&ram[0xCC49]==0x20);
+        assert(!som_use_candy(ram)&&ram[0xCC49]==0x20);        /* last Candy: ring */
+        ram[0xCC49]=0x60;ram[0xD0]=0x81;assert(!som_use_candy(ram)); /* dialogue */
+        ram[0xD0]=0;ram[0xE182]=0;assert(!som_use_candy(ram));      /* KO */
+    }
     /* pal_trace: per-frame low WRAM + palette shadow, written when done. */
     {
         char trace_path[]="/tmp/flxtr-paltrace-test-XXXXXX";

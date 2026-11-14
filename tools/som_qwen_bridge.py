@@ -72,7 +72,7 @@ MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
-                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace"}
+                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy"}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(
@@ -774,6 +774,30 @@ def hide_familiar(observation, slot):
             enemy["familiar"] = True
 
 
+def direct_candy(link, raw, timeout=1.5):
+    """Candy without the ring: the proxy's use_candy queues the game's own
+    heal (hero +0x1F3) and removes one Candy. Only with 2+ Candies; True
+    once a Candy is gone and HP rose, else the ring macro takes over."""
+    if raw is None or candy_count(WRAM(raw)) < 2:
+        return False
+    before = WRAM(raw)
+    count, hp = candy_count(before), before.character(0)["hp"]
+    try:
+        link.send_control("use_candy")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(0.25)
+            now = WRAM(link.fetch_wram(False))
+            if candy_count(now) < count and now.character(0)["hp"] > hp:
+                print(f"[candy] used without the ring: +{now.character(0)['hp'] - hp} HP, "
+                      f"{candy_count(now)} left", flush=True)
+                return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    print("[candy] direct use not confirmed; using the ring", flush=True)
+    return False
+
+
 def candy_fraction(weights):
     """HP fraction below which Candy is used: half when Candy weighs at
     least as much as resting at the inn, else only at critical HP."""
@@ -1280,6 +1304,9 @@ def main() -> int:
                 if learner is not None:
                     learner.cancel("Candy macro")
                 announce("AI: HP low|using Candy")
+                if direct_candy(link, raw):
+                    previous = "wait"
+                    continue
                 try:
                     gained = CandyMacro(link, calibration,
                                         log=lambda text: print(text, flush=True)).run()

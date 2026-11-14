@@ -560,6 +560,39 @@ static int som_summon_allowed(const uint8_t *ram){
     return ram&&som_familiar_summoner(ram+0xE000);
 }
 static int som_summon_boss(void);
+/* Candy without the ring menu. A live trace of a ring Candy use (2026-11-14)
+ * showed the menu requesting the heal through the hero's pending-healing
+ * byte +0x1F3 (100 = Candy), which the game applies itself on the hero's
+ * next update, like pending damage +0x1F1. Inventory bytes at 7E:CC48 are
+ * (count*2)<<4 | item id (Candy = 0). Only with 2+ Candies: what the game
+ * does with an emptied ring slot is not verified, so the last Candy is
+ * left to the ring macro. */
+#define SOM_CANDY_HEAL 100u
+static int som_use_candy(uint8_t *ram){
+    if(!ram)return 0;
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0xE000]!=1){
+        fprintf(stderr,"[som-ai] CANDY refused: not in field play\n");return 0;
+    }
+    const unsigned hp=ram[0xE182]|ram[0xE183]<<8,max_hp=ram[0xE184]|ram[0xE185]<<8;
+    if(!hp||hp>max_hp){fprintf(stderr,"[som-ai] CANDY refused: hero HP %u/%u\n",hp,max_hp);return 0;}
+    for(unsigned slot=0;slot<11;slot++){
+        uint8_t *item=ram+0xCC48u+slot;
+        if(*item==0xFF||(*item&0x0F)!=0)continue;
+        const unsigned code=*item>>4;
+        if(code!=4u&&code!=6u&&code!=8u){
+            fprintf(stderr,"[som-ai] CANDY refused: %u left (the ring handles the last)\n",code/2u);
+            return 0;
+        }
+        *item=(uint8_t)(*item-0x20u);
+        const unsigned heal=ram[0xE1F3]+SOM_CANDY_HEAL;
+        ram[0xE1F3]=(uint8_t)(heal>0xFFu?0xFFu:heal);
+        fprintf(stderr,"[som-ai] CANDY used without the ring: %u left, +%u HP queued\n",
+                code/2u-1u,SOM_CANDY_HEAL);
+        return 1;
+    }
+    fprintf(stderr,"[som-ai] CANDY refused: no Candy\n");
+    return 0;
+}
 /* Read-only diagnostic: the core's video RAM (sprite tiles live there, loaded
  * per map for that map's monsters) to SOM_VRAM_FILE for analysis. */
 /* Read-only diagnostic: every frame for SOM_PAL_TRACE_FRAMES, the low WRAM
@@ -824,6 +857,11 @@ static void som_check_trigger(void){
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return;}
     if(!strcmp(command,"summon_boss")){som_summon_boss();return;}
     if(!strcmp(command,"vram_dump")){som_vram_dump();return;}
+    if(!strcmp(command,"use_candy")){
+        som_use_candy(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+        return;
+    }
     if(!strcmp(command,"pal_trace")){
         pal_trace_frames=0;pal_trace_on=1;
         som_overlay_set(&overlay,"Recording 8 s: move now!",SOM_MESSAGE_FRAMES);

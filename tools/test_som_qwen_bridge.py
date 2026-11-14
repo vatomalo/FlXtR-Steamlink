@@ -346,6 +346,28 @@ class TestRemoteLink(unittest.TestCase):
         bridge.hide_familiar(observation, 2)
         self.assertEqual([e["active"] for e in observation["enemy_slots"]], [True, False])
 
+    def test_direct_candy_needs_two_and_a_confirmed_heal(self):
+        import som_qwen_bridge as bridge
+        def image(candy_code, hp):
+            ram = bytearray(0x20000)
+            ram[0xCC48:0xCC48 + 11] = b"\xff" * 11
+            ram[0xCC48] = candy_code << 4
+            ram[0xE000] = 1
+            ram[0xE182], ram[0xE184] = hp, 117
+            return bytes(ram)
+        class Link:
+            def __init__(self, after): self.after, self.sent = after, []
+            def send_control(self, command): self.sent.append(command)
+            def fetch_wram(self, marker=False): return self.after
+        healed = Link(image(4, 117))
+        self.assertTrue(bridge.direct_candy(healed, image(6, 40)))
+        self.assertEqual(healed.sent, ["use_candy"])
+        last = Link(image(0, 117))
+        self.assertFalse(bridge.direct_candy(last, image(2, 40)))         # 1 left: ring
+        self.assertEqual(last.sent, [])
+        nothing = Link(image(6, 40))
+        self.assertFalse(bridge.direct_candy(nothing, image(6, 40), timeout=0.3))  # not confirmed
+
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))
         self.assertIsNone(self.link.fetch_wram(require_marker=True))

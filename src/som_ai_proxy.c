@@ -428,10 +428,9 @@ static void som_input_poll(void){
         if(((current&attack)&&!(last_physical_buttons&attack))||
            ((current&secondary)&&!(last_physical_buttons&secondary)&&!(current&l2))){
             /* Modifier specials have their own charge, not basic sword hits. */
-            if(current&r2)goto after_combo_swing;
-            if(!som_manual_disciplines&&!ring_ai_enabled)som_combo_swing();
+            if(!(current&r2)&&!som_manual_disciplines&&!ring_ai_enabled)
+                som_combo_swing();
         }
-after_combo_swing:
         const uint16_t pressed=(uint16_t)(current&~last_physical_buttons);
         const uint16_t y_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
         const uint16_t l2_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);

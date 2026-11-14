@@ -77,6 +77,10 @@ class WRAM:
             "graphic": GRAPHICS.get(graphic, f"unknown_{graphic:02x}"),
             "level": self.u8(base + 0x181),
             "hp": hp, "max_hp": max_hp,
+            "mp": self.u8(base + 0x186), "max_mp": self.u8(base + 0x187),
+            # strength, agility, constitution, intelligence, wisdom (som_build)
+            "stats": {name: self.u8(base + 0x188 + offset) for offset, name in enumerate(
+                ("strength", "agility", "constitution", "intelligence", "wisdom"))},
             "hp_plausible": 0 <= hp <= max_hp <= 999,
             "weapon_recharge": self.u8(base + 0x1ED),
             "native_ai_behavior": self.u8(0x7ECC73 + index),

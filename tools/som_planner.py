@@ -6,6 +6,7 @@ import itertools
 from collections import deque
 from dataclasses import dataclass, replace
 
+from som_build import profile as build_profile
 from som_tactics import CLOSE_SWING_PX
 
 from som_memory import detect_cuts
@@ -167,6 +168,8 @@ class MemoryPlanner:
         self.last_swing = None
         # Optional som_tactics.TacticLearner: per enemy type fighting style.
         self.tactic_learner = None
+        # som_build profile of the hero (set by the bridge from its stats).
+        self.build, self.build_profile = "balanced", build_profile("balanced")
         # "Fight monsters" gambit off: ignore monsters unless they attack.
         self.peaceful = False
         # Optional som_anticipate.AttackPredictor: guard before likely hits.
@@ -765,8 +768,9 @@ class MemoryPlanner:
 
     def _tactic(self, enemy):
         if self.tactic_learner is None:
-            return "press"
-        return self.tactic_learner.tactic(enemy.get("identity"))
+            return self.build_profile.get("preferred") or "press"
+        return self.tactic_learner.tactic(enemy.get("identity"),
+                                          self.build_profile.get("preferred"))
 
     def _face_and_strike(self, context, enemy, dx, dy, open_steps, ready, hero=None):
         """Attack only while facing the enemy; otherwise tap toward it first.
@@ -801,8 +805,14 @@ class MemoryPlanner:
                 if self.attack_predictor is not None and self.anticipated < ANTICIPATE_MAX:
                     risk, samples = self.attack_predictor.risk(enemy.get("identity"),
                                                                abs(dx) + abs(dy))
-                    if samples >= ANTICIPATE_MIN_SAMPLES and risk >= ANTICIPATE_RISK:
+                    threshold = self.build_profile.get("anticipate_risk", ANTICIPATE_RISK)
+                    if samples >= ANTICIPATE_MIN_SAMPLES and risk >= threshold:
                         self.anticipated += 1
+                        away = OPPOSITE_STEP.get(want)
+                        if self.build_profile.get("dodge") and away in open_steps:
+                            return PlannerDecision(away, f"sidestep enemy {enemy['slot']}'s "
+                                                   f"attack ({risk:.0%} hit chance now)",
+                                                   "kite_enemy")
                         return PlannerDecision("block", f"anticipate enemy {enemy['slot']}'s "
                                                f"attack ({risk:.0%} hit chance now)",
                                                "defend_enemy")

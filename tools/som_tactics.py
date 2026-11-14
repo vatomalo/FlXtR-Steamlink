@@ -30,6 +30,7 @@ HP_WEIGHT = 2.0
 MIN_SAMPLES = 30
 COMMIT = 20
 EXPLORE = 0.1
+BUILD_MARGIN = 1.0    # how much worse per decision a build's tactic may score
 
 
 def _nearest(observation, limit=RANGE_PX):
@@ -75,23 +76,33 @@ class TacticLearner:
     def score(samples, dealt, taken):
         return (dealt - HP_WEIGHT * taken) / samples if samples else float("-inf")
 
-    def tactic(self, enemy_id):
-        """The tactic in force against this enemy type."""
+    def tactic(self, enemy_id, preferred=None):
+        """The tactic in force against this enemy type.
+
+        preferred: the build's tactic (som_build). It is tried first and used
+        unless learned data shows it clearly worse (BUILD_MARGIN per decision)
+        than the best tactic against this enemy.
+        """
         if not isinstance(enemy_id, int):
-            return DEFAULT
+            return preferred or DEFAULT
         current = self.current.get(enemy_id)
-        if current is not None and current[1] > 0:
+        if current is not None and current[1] > 0 and current[2] == preferred:
             return current[0]
-        chosen = self._choose(enemy_id)
-        self.current[enemy_id] = [chosen, COMMIT]
+        chosen = self._choose(enemy_id, preferred)
+        self.current[enemy_id] = [chosen, COMMIT, preferred]
         return chosen
 
-    def _choose(self, enemy_id):
+    def _choose(self, enemy_id, preferred=None):
         stats = self.stats(enemy_id)
         untried = [t for t in TACTICS if stats[t][0] < MIN_SAMPLES]
+        if preferred in untried:
+            return preferred
         if untried:
             return min(untried, key=lambda t: (stats[t][0], TACTICS.index(t)))
         best = max(TACTICS, key=lambda t: self.score(*stats[t]))
+        if (preferred in TACTICS and preferred != best and
+                self.score(*stats[preferred]) >= self.score(*stats[best]) - BUILD_MARGIN):
+            best = preferred
         if self.verdicts.get(enemy_id) != best:
             self.verdicts[enemy_id] = best
             summary = ", ".join(f"{t} {self.score(*stats[t]):+.1f}" for t in TACTICS)

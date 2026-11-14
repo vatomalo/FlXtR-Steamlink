@@ -69,11 +69,30 @@ class TacticLearnerTest(unittest.TestCase):
             self.assertEqual(self.learner.tactic(7), first)
 
 
+class BuildPreferenceTest(unittest.TestCase):
+    def test_build_tactic_goes_first_and_stays_unless_clearly_worse(self):
+        db = sqlite3.connect(":memory:")
+        learner = tactics.TacticLearner(db, lambda _: None, seed=1)
+        self.assertEqual(learner.tactic(7, "kite"), "kite")             # tried first
+        def fill(tactic, dealt, taken):
+            db.execute("INSERT OR REPLACE INTO tactic_stats VALUES (7,?,?,?,?)",
+                       (tactic, tactics.MIN_SAMPLES, dealt, taken))
+        with mock.patch.object(tactics, "EXPLORE", 0.0):
+            fill("press", 60, 0); fill("kite", 50, 0); fill("close", 0, 0)   # 2.0 vs 1.67
+            learner.current.clear()
+            self.assertEqual(learner.tactic(7, "kite"), "kite")          # within margin
+            fill("kite", 0, 15)                                           # -1.0: clearly worse
+            learner.current.clear()
+            self.assertEqual(learner.tactic(7, "kite"), "press")
+            learner.current.clear()
+            self.assertEqual(learner.tactic(7, None), "press")           # balanced: best
+
+
 class FixedTactic:
     def __init__(self, name):
         self.name = name
 
-    def tactic(self, enemy_id):
+    def tactic(self, enemy_id, preferred=None):
         return self.name
 
 

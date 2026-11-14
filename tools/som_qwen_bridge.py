@@ -36,6 +36,7 @@ from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
 from som_tactics import TacticLearner
+from som_build import classify as classify_build, profile as build_profile
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -1260,6 +1261,15 @@ def main() -> int:
                 current_map = context.get("map_id")
                 wram_now = WRAM(raw) if raw is not None else None
                 money = read_gold(wram_now, gold) if wram_now is not None else None
+                hero_stats = ((observation.get("party") or [{}])[0] or {}).get("stats") \
+                    if isinstance(observation, dict) else None
+                build = classify_build(hero_stats)
+                if build != planner.build:
+                    planner.build, planner.build_profile = build, build_profile(build)
+                    stats_text = " ".join(f"{k[:3].upper()} {v}" for k, v in (hero_stats or {}).items())
+                    print(f"[build] hero is a {build} ({stats_text}): fights "
+                          f"{build_profile(build).get('preferred') or 'by learned tactics'}",
+                          flush=True)
                 if link and step % GAMBIT_REFRESH == 0:
                     try:
                         mask = link.fetch_gambits()

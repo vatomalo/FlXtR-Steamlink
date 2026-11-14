@@ -45,6 +45,7 @@ static bool mocked_unserialize(const void *data,size_t size){
     memcpy(mocked_wram,data,size);unserialized++;return true;
 }
 static void reset_proxy(void){
+    disc_file="/nonexistent/flxtr-disciplines";
     physical_state=mocked_input;physical_poll=NULL;
     frame_number=180;start_frame=0;injected_queries=0;
     active_action=SOM_ACT_NONE;action_frames=0;
@@ -715,6 +716,8 @@ int main(void){
         disciplines.selected=0;                               /* Swordmaster frost */
         som_hero_palette_frame(ram);
         uint8_t once[32];memcpy(once,ram+0xDF20,32);
+        assert(!memcmp(once,original,16)&&!memcmp(once+30,original+30,2)); /* 0-7, 15 kept */
+        assert(memcmp(once+16,original+16,14));                    /* clothes 8-14 tinted */
         assert(memcmp(once,original,32)&&once[0]==original[0]&&once[1]==original[1]);
         som_hero_palette_frame(ram);
         assert(!memcmp(ram+0xDF20,once,32));                   /* does not stack */
@@ -725,6 +728,22 @@ int main(void){
         som_hero_palette_frame(ram);
         assert(!memcmp(ram+0xDF20,original,32));               /* colours restored */
         som_disc_init(&disciplines);hero_pal_have=0;
+    }
+    /* Disciplines survive restarts; a damaged file starts fresh. */
+    {
+        char disc_path[]="/tmp/flxtr-disc-test-XXXXXX";
+        int dfd=mkstemp(disc_path);assert(dfd>=0);close(dfd);
+        disc_file=disc_path;
+        som_disc_init(&disciplines);
+        disciplines.selected=6;disciplines.level[6]=7;disciplines.experience[6]=42;
+        som_disc_save();
+        som_disc_init(&disciplines);som_disc_load();
+        assert(disciplines.selected==6&&disciplines.level[6]==7&&disciplines.experience[6]==42);
+        assert(disciplines.level[0]==1);
+        FILE *bad=fopen(disc_path,"w");assert(bad&&fputs("v1 200 junk\n",bad)>=0&&fclose(bad)==0);
+        som_disc_init(&disciplines);som_disc_load();
+        assert(disciplines.selected==SOM_DISCIPLINE_NONE);
+        unlink(disc_path);som_disc_init(&disciplines);
     }
     /* Bubble anchor: hero screen position under a hero-centred camera that
      * stops at the map edges. */

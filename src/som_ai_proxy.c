@@ -96,9 +96,42 @@ static SomDisciplines disciplines;
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
  * The original colours are kept and re-read whenever the game rewrites
  * the palette (map change, events), so the tint never stacks. */
+#define SOM_HERO_CLOTHES 0x7F00u     /* palette colours 8-14 */
 static uint8_t hero_pal_orig[32],hero_pal_written[32];
 static int hero_pal_have;
 static unsigned hero_pal_addr;
+/* The chosen discipline, levels and experience survive game restarts. */
+#define SOM_DISC_FILE "/home/apps/retroarch/cores/experimental/som_ai_disciplines"
+static const char *disc_file=SOM_DISC_FILE;
+static void som_disc_save(void){
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",disc_file);
+    FILE *out=fopen(temp,"w");
+    if(!out)return;
+    int ok=fprintf(out,"v1 %u",(unsigned)disciplines.selected)>0;
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++)
+        ok=fprintf(out," %u %lu",(unsigned)disciplines.level[i],
+                   (unsigned long)disciplines.experience[i])>0;
+    ok=ok&&fprintf(out,"\n")>0;
+    if(fclose(out)!=0)ok=0;
+    if(ok)rename(temp,disc_file);else unlink(temp);
+}
+static void som_disc_load(void){
+    FILE *in=fopen(disc_file,"r");
+    if(!in)return;
+    SomDisciplines loaded;som_disc_init(&loaded);
+    unsigned selected=0;
+    int ok=fscanf(in,"v1 %u",&selected)==1&&
+        (selected<SOM_DISCIPLINE_COUNT||selected==SOM_DISCIPLINE_NONE);
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++){
+        unsigned level=0;unsigned long xp=0;
+        ok=fscanf(in," %u %lu",&level,&xp)==2&&level>=1u&&level<=100u;
+        if(ok){loaded.level[i]=(uint16_t)level;loaded.experience[i]=(uint32_t)xp;}
+    }
+    fclose(in);
+    if(!ok){fprintf(stderr,"[som-ai] DISCIPLINES file unreadable; starting fresh\n");return;}
+    loaded.selected=(uint8_t)selected;
+    disciplines=loaded;
+}
 static void som_hero_palette_frame(uint8_t *ram){
     if(!ram||ram[0xE000]!=1)return;
     const unsigned addr=0xDE00u+(128u+((ram[0xE08B]>>1)&7u)*16u)*2u;
@@ -117,8 +150,14 @@ static void som_hero_palette_frame(uint8_t *ram){
     uint8_t tinted[32];
     memcpy(tinted,hero_pal_orig,32);
     som_pal_apply(tinted,profile);
-    memcpy(current,tinted,32);
-    memcpy(hero_pal_written,tinted,32);
+    /* Clothes only: outline, hair and skin (1-7) and white (15) keep their
+     * colours. Judged from the boy's live palette, not from sprite data. */
+    uint8_t dressed[32];
+    memcpy(dressed,hero_pal_orig,32);
+    for(unsigned i=0;i<16u;i++)
+        if(SOM_HERO_CLOTHES&(1u<<i)){dressed[2u*i]=tinted[2u*i];dressed[2u*i+1u]=tinted[2u*i+1u];}
+    memcpy(current,dressed,32);
+    memcpy(hero_pal_written,dressed,32);
 }
 static int som_menu_disciplines;
 static int som_manual_disciplines;
@@ -269,7 +308,8 @@ static void som_input_poll(void){
                 som_manual_disciplines=0;
                 fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
             }else if(result==SOM_DISC_SELECTED){
-                fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (preview)\n",
+                som_disc_save();
+                fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)disciplines.selected);
             }
         }
@@ -315,7 +355,8 @@ static void som_input_poll(void){
             }else if(som_menu_disciplines){
                 int result=som_disc_press(&disciplines,pressed);
                 if(result==SOM_DISC_SELECTED){
-                    fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (visual preference only)\n",
+                    som_disc_save();
+                    fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)disciplines.selected);
                 }
             }else switch(som_gambit_press(&gambits,pressed)){
@@ -927,6 +968,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
+    som_disc_load();
     hero_pal_have=0;
     som_gambit_load();
     last_input_frame=frame_number;idle_started=0;

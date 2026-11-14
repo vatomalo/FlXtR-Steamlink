@@ -24,7 +24,8 @@ Branch `feature/som-ai-memory-agent-20261112`. Read `docs/SOM-WRAM-AGENT.md`
   `/tmp/flxtr-som-ai-message`, records physical presses while
   `/tmp/flxtr-som-ai-record` exists, applies verified in-memory ROM patches
   from `.../experimental/som_ai_rom_patch.txt` at load, and has the undoable
-  `clone_enemy`/`undo_spawn` experiment (copies do not draw).
+  `clone_enemy`/`undo_spawn` experiment (copies draw and fight since
+  2026-11-14, see Summoning below).
 - `tools/som_qwen_bridge.py`: main loop. One persistent SSH link
   (`RemoteLink`: `obs`/`obsm`/`act`/`msg`), goal selection (Candy/inn when
   HP < 50 %, shop when rich, else hunt `SOM_AI_HUNT_DIRECTION`), tile guard,
@@ -86,9 +87,20 @@ Boss records (`tools/som_boss.py`, read-only): the bridge saves the
 first time it is seen (replaced once by a full-HP sighting) to
 `~/.local/state/flxtr/som-boss/` with `index.json`. First entry: monster
 0x57 (Potos story boss, map 260, max HP 300), captured at 0 HP while dying
-on 2026-11-13. Summoning is not implemented: the existing `clone_enemy`
-only copies a monster that is live on the current map; writing a recorded
-object elsewhere without its graphics/palette/script loaded is unverified.
+on 2026-11-13 (the 0x55 entry is junk: HP/X/Y read 0x5555 mid-transition).
+
+Summoning (clone_enemy, verified live 2026-11-14 on map 130/131: the copied
+Rabite drew and fought). Besides the 0x200-byte object (7EE600 + slot*0x200)
+the game's spawner prepares per monster slot a sprite tile buffer at
+7E5000 + slot*0x1000 and a 16-colour sprite palette at 7EDFA0 + slot*0x20
+(sprite palettes 5-7), and the object holds slot-specific pointers to them
+(VRAM tiles/addresses at +0x6C..+0xFA, OAM palette attribute +0x8B =
+0x2A/0x2C/0x2E, palette address +0xF8). The clone keeps the target slot's
+fields, copies the source's tiles and palette, and if every slot is busy
+waits up to 10 s for one to free (slots refill ~3 s after a kill). Only a
+monster live on the current map can be copied; summoning a recorded boss
+elsewhere would also need its graphics, palette and AI script loaded, which
+is still unverified.
 
 Dialogue escape (`tools/som_event_escape.py`): in any event screen the AI
 did not start itself, once the screen has been unchanged for 1 s it presses

@@ -2,32 +2,38 @@
 
 Development branch: `feature/som-disciplines-controls-20261114`, based on the **working** familiar branch `feature/som-familiars-working-20261114` (commit `595d57e`). Do not merge older `clone_familiar_visual` experiments over `som_familiar.h`.
 
-## Weapon graphics cache and native charged specials (14 November 2026)
+## Weapon graphics regression and native charged attacks (14 November 2026)
 
-- The proxy captures verified sprite tiles after the native game loader has equipped a
-  weapon for at least 12 frames. It persists the eight weapon sprite banks in
-  `som_ai_weapon_graphics.bin` next to the experimental core, using a versioned,
-  checksummed file keyed to the exact Turbo ROM bytes. It does not write the
-  SNES save. Only the sprite tile descriptors and data are saved; hero combat
-  stats are not retained in the cache. Reopening the same ROM restores
-  previously observed banks, so class switching no longer needs to warm up
-  every weapon on each game start.
-- A weapon whose tiles have **never** been loaded natively still needs one
-  initial native ring equip. This is deliberate: guessing missing tiles would
-  corrupt the animation. Incompatible or corrupt caches are rejected.
-- Manual field controls: **R2+B** requests the primary class weapon's native
-  **level-1** charged attack; **R2+Y** requests the secondary weapon's native
-  **level-2** attack. The proxy checks the charge level, equipped weapon,
-  field mode and recharge before starting. It holds the game's B attack
-  input, releases when WRAM confirms the requested charge stage, and cancels
-  after 360 frames or upon a field/weapon change. Other physical inputs cancel.
-  The R2 combinations do not replace L2+Y's item ring.
-- These are *native charged attacks with class-specific weapon selection*,
-  not invented animation routines. Shunshin, teleportation and new combat
-  status effects still need their own validated implementation.
-- Build verification: `make test-som-ai-proxy test-som-ai-player2`,
-  then `bash scripts/build-som-ai-proxy.sh` on SkyLoft with the SDK.
-  A build and Steam Link hardware playtest have not yet been confirmed.
+**IMPORTANT: safe rollback after live Steam Link reports of garbled weapons.**
+
+- The earlier persistent "weapon graphics cache" reused the monster/familiar
+  OBJ tile capture routine for the playable hero. That is not a verified
+  weapon-sprite loader or VRAM destination. The resulting sprites garbled
+  during manual class switching. The runtime now **does not invoke** this
+  cache or restore its VRAM data. The old file
+  `/home/apps/retroarch/cores/experimental/som_ai_weapon_graphics.bin`
+  can be renamed as a backup; it is ignored by the revised runtime.
+- **Class weapon grants stay active** and existing upgrade tiers remain intact.
+  Manual class B/Y attacks do not try to switch the weapon by editing hero
+  attributes or restoring guessed graphics. If the desired weapon is not
+  currently equipped, the overlay directs the player to select it once in
+  the **native weapon ring**. Secondary Y does not attack with an incorrect
+  weapon while this prerequisite is unmet.
+- **R2+B** requests a level-1 charge with the already-native-equipped primary
+  weapon, and **R2+Y** requests a level-2 charge with the already-equipped
+  secondary weapon. Both use the game's **existing native animations**, not
+  new class-specific animations. The charge and input path still require
+  hardware playtesting.
+- To implement instant weapon flow properly, capture a read-only before/after
+  trace of the game's original weapon ring equip, including graphics upload
+  scheduling and sprite tile-bank selection. Then call the verified loader
+  or reproduce its complete queued transition, rather than copying monster
+  tiles into hero VRAM.
+- New techniques (Shunshin, Iai, Shadow Chakram, etc.) require dedicated
+  movements, attack-state transitions and validated animation hooks. Merely
+  renaming level-1/2 native charges cannot produce new visual moves.
+- Re-run C tests and the Steam Link ARM build before deployment. Keep a
+  backup of the last working core and save.
 
 ## Current implementation
 

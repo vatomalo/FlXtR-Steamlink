@@ -35,6 +35,42 @@ Development branch: `feature/som-disciplines-controls-20261114`, based on the **
 - Re-run C tests and the Steam Link ARM build before deployment. Keep a
   backup of the last working core and save.
 
+## Native weapon graphics trace (14 November 2026)
+
+Keep the existing B/Y class weapon mapping and direct-switch design. The native
+game can change weapons during field play, but the proxy has only copied the
+hero's equipment/attack metadata; it has **not** captured the game's graphics
+upload. The previous monster-style sprite cache was removed from runtime after
+real Steam Link sprites appeared garbled. Do not restore it.
+
+A new **read-only** `weapon_trace` action records exactly what the native ring
+does to WRAM and VRAM, without modifying either. Use the newly rebuilt and
+deployed experimental proxy, start **field play with a weapon already equipped**,
+then on Steam Link (via SSH):
+
+```sh
+printf 'weapon_trace\\n' > /tmp/flxtr-som-ai-action
+```
+
+Open the **native weapon ring** with L2+Y, select a **different** weapon and
+return to field play. Allow 12 frames to elapse. The proxy should log
+`WEAPON TRACE native ...` and create:
+
+- `/tmp/flxtr-weapon-trace.txt`: original-to-new weapon IDs and changed WRAM
+  offsets / VRAM tile IDs
+- `/tmp/flxtr-weapon-ram-before.bin` and `-ram-after.bin` (128 KiB each)
+- `/tmp/flxtr-weapon-vram-before.bin` and `-vram-after.bin` (64 KiB each)
+
+Transfer the four binary snapshots and report back for comparison. Run traces
+on the same map for sword -> axe, axe -> sword, sword -> boomerang, and (if
+possible) boomerang -> sword. Save backups first; no state is written by
+the trace. If the native core reports no VRAM exposure, only the WRAM side is
+available and no speculative graphics patch should be deployed.
+
+After observing the original loader's tiles and WRAM staging flags, implement
+the missing graphics operation as a **targeted addition to direct switching**.
+Do not replace class weapon switching with artificial ring menu input.
+
 ## Current implementation
 
 ### Manual Class Progress and stall recovery (14 November)

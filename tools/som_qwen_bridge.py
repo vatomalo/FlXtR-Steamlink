@@ -1217,6 +1217,7 @@ def main() -> int:
     planner.build = None              # log the hero's build once it is read
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
     spell_ready_at = 0.0
+    grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
     tactic_learner = attack_predictor = None
     if not args.no_anticipation and history is not None and args.policy in ("hybrid", "memory"):
         attack_predictor = AttackPredictor(history.connection)
@@ -1661,9 +1662,38 @@ def main() -> int:
                         levels = wram_now.weapons(0).get("levels") or {}
                     except (ValueError, KeyError, IndexError):
                         levels = {}
+                    # Grass: keep the class, just slash with the sword and
+                    # put the class weapon back afterwards.
+                    try:
+                        held = wram_now.weapons(0).get("type")
+                    except (ValueError, KeyError, IndexError):
+                        held = None
+                    if decision.intention == "cut_grass":
+                        grass_clear_steps = 0
+                        if held is not None and held != "sword":
+                            try:
+                                link.send_control("equip_sword")
+                                if grass_restore is None:
+                                    grass_restore = held
+                                print(f"[grass] sword out to cut (was {held})", flush=True)
+                                previous = "wait"
+                                continue
+                            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                print(f"[grass] sword switch failed: {exc}", flush=True)
+                    elif grass_restore is not None:
+                        grass_clear_steps += 1
+                        if grass_clear_steps >= 10 and held == "sword":
+                            try:
+                                link.send_control(f"equip_{grass_restore}")
+                                print(f"[grass] back to the {grass_restore}", flush=True)
+                            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                print(f"[grass] weapon restore failed: {exc}", flush=True)
+                            grass_restore = None
+                        elif held != "sword":
+                            grass_restore = None
                     pick = class_director.choose(
-                        build, levels, max_mp, decision.intention == "cut_grass",
-                        enemy_within(observation, DASH_ENEMY_PX))
+                        build, levels, max_mp, False,
+                        enemy_within(observation, DASH_ENEMY_PX) or grass_restore is not None)
                     if pick is not None:
                         index, why = pick
                         try:

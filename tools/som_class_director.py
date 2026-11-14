@@ -6,8 +6,9 @@ only decides which one to ask for with the `class_<n>` control command.
 
 Fit = weapon levels of the class's two weapons (B counts double) + how well
 the class suits the hero's build (som_build) + spells only when the hero
-has the MP to cast them. Grass in the way needs a sword on B, so a cut
-request restricts the choice to sword classes. Switches wait for a calm
+has the MP to cast them. need_cut can restrict the choice to sword
+classes, but the bridge does not use it: for grass it keeps the class and
+only pulls the sword for the cut (equip_sword). Switches wait for a calm
 moment and a cooldown so the hero does not flip classes every step.
 Pure logic; the bridge sends the command.
 """

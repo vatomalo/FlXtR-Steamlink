@@ -102,6 +102,7 @@ static int hero_pal_have;
 static unsigned hero_pal_addr;
 /* The chosen discipline, levels and experience survive game restarts. */
 #define SOM_DISC_FILE "/home/apps/retroarch/cores/experimental/som_ai_disciplines"
+#define SOM_DISCIPLINES_V1 9u          /* disciplines before rogue/samurai/archer */
 static const char *disc_file=SOM_DISC_FILE;
 static void som_disc_save(void){
     char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",disc_file);
@@ -124,7 +125,10 @@ static void som_disc_load(void){
         (selected<SOM_DISCIPLINE_COUNT||selected==SOM_DISCIPLINE_NONE);
     for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++){
         unsigned level=0;unsigned long xp=0;
-        ok=fscanf(in," %u %lu",&level,&xp)==2&&level>=1u&&level<=100u;
+        int got=fscanf(in," %u %lu",&level,&xp);
+        /* Older files have fewer disciplines; the rest start fresh. */
+        if(got==EOF&&i>=SOM_DISCIPLINES_V1)break;
+        ok=got==2&&level>=1u&&level<=100u;
         if(ok){loaded.level[i]=(uint16_t)level;loaded.experience[i]=(uint32_t)xp;}
     }
     fclose(in);

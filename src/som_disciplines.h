@@ -11,12 +11,22 @@
 #include "som_overlay.h"
 #include "som_class_palette.h"
 
-#define SOM_DISCIPLINE_COUNT 9u
+#define SOM_DISCIPLINE_COUNT 12u
 #define SOM_DISCIPLINE_NONE 255u
 static const char *const som_discipline_names[SOM_DISCIPLINE_COUNT]={
     "Swordsmanship","Martial Arts","Ninjutsu","Magic","Divine Arts",
-    "Dark Arts","Summoning","Support & Dance","Weapon Flow"
+    "Dark Arts","Summoning","Support & Dance","Weapon Flow",
+    "Roguecraft","Bushido","Archery"
 };
+/* Who gets the dodge roll (the game's somersault; planned, see
+ * docs/SOM-DISCIPLINES-CONTROLS.md): swordsman, monk, ninja, rogue,
+ * samurai and archer only. */
+static inline int som_disc_has_dodge(unsigned discipline){
+    switch(discipline){
+    case 0: case 1: case 2: case 9: case 10: case 11: return 1;
+    default: return 0;
+    }
+}
 typedef struct {
     int open;
     unsigned cursor;
@@ -33,6 +43,9 @@ static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
     case 1: return SOM_PAL_MONK_CRIMSON_GOLD;
     case 2: return SOM_PAL_NINJA_MIDNIGHT;
     case 6: return SOM_PAL_SUMMONER_WHITE;
+    case 9: return SOM_PAL_ROGUE_SHADOW;
+    case 10: return SOM_PAL_SAMURAI_INDIGO;
+    case 11: return SOM_PAL_ARCHER_FOREST;
     default:return SOM_PAL_ORIGINAL;
     }
 }

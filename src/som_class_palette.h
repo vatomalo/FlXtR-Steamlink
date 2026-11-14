@@ -13,6 +13,9 @@ enum SomPaletteProfile {
     SOM_PAL_NINJA_MIDNIGHT,
     SOM_PAL_SUMMONER_WHITE,
     SOM_PAL_CELESTIAL_FAMILIAR,
+    SOM_PAL_ROGUE_SHADOW,
+    SOM_PAL_SAMURAI_INDIGO,
+    SOM_PAL_ARCHER_FOREST,
     SOM_PAL_PROFILE_COUNT
 };
 
@@ -43,6 +46,16 @@ static inline uint16_t som_pal_color(uint16_t source, unsigned profile) {
         break;
     case SOM_PAL_CELESTIAL_FAMILIAR:
         nr=lum*22u/31u;ng=lum*28u/31u;nb=lum;
+        break;
+    case SOM_PAL_ROGUE_SHADOW:          /* dark plum and charcoal */
+        nr=lum*20u/31u;ng=lum*13u/31u;nb=lum*22u/31u;
+        break;
+    case SOM_PAL_SAMURAI_INDIGO:        /* indigo with steel highlights */
+        if(lum>20u){nr=lum*24u/31u;ng=lum*26u/31u;nb=lum;}
+        else {nr=lum*6u/31u;ng=lum*8u/31u;nb=4u+lum*20u/31u;}
+        break;
+    case SOM_PAL_ARCHER_FOREST:         /* forest green and leaf */
+        nr=lum*9u/31u;ng=lum;nb=lum*10u/31u;
         break;
     default: return source;
     }

@@ -763,6 +763,12 @@ int main(void){
         som_disc_init(&disciplines);som_disc_load();
         assert(disciplines.selected==6&&disciplines.level[6]==7&&disciplines.experience[6]==42);
         assert(disciplines.level[0]==1);
+        /* A save from before rogue/samurai/archer (9 disciplines) loads. */
+        FILE *old=fopen(disc_path,"w");
+        assert(old&&fputs("v1 2 3 10 1 0 4 20 1 0 1 0 1 0 1 0 1 0 1 0\n",old)>=0&&fclose(old)==0);
+        som_disc_init(&disciplines);som_disc_load();
+        assert(disciplines.selected==2&&disciplines.level[0]==3&&disciplines.level[2]==4&&
+               disciplines.level[9]==1&&disciplines.level[11]==1);
         FILE *bad=fopen(disc_path,"w");assert(bad&&fputs("v1 200 junk\n",bad)>=0&&fclose(bad)==0);
         som_disc_init(&disciplines);som_disc_load();
         assert(disciplines.selected==SOM_DISCIPLINE_NONE);

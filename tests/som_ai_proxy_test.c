@@ -249,13 +249,27 @@ int main(void){
     for(unsigned slot=1;slot<3;slot++)mocked_wram[0xE600+slot*0x200]=1; /* all busy */
     mocked_wram[0xE800+0x180]=0x90;mocked_wram[0xEA00+0x180]=0x90;
     assert(!som_clone_enemy()&&!undo_ready);         /* no empty slot */
+    assert(clone_no_slot);                            /* retryable */
+    /* Waiting request: fires on the first frame a slot is free. */
+    frame_number=1000;clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;
+    som_clone_tick();assert(clone_pending_until&&!undo_ready);
     mocked_wram[0xEA00]=0;                            /* free the last slot */
+    /* Per-slot drawing setup: slot 3's own fields, slot 1's tiles and colours. */
+    rabite[0x8B]=0x2A;rabite[0xF8]=0xA2;rabite[0x92]=0x40;
+    mocked_wram[0xEA00+0x8B]=0x2E;mocked_wram[0xEA00+0xF8]=0xE2;mocked_wram[0xEA00+0x92]=0xA0;
+    memset(mocked_wram+0x5000,0x11,0x1000);memset(mocked_wram+0x7000,0,0x1000);
+    memset(mocked_wram+0xDFA0,0x22,0x20);memset(mocked_wram+0xDFE0,0,0x20);
     uint8_t before_clone[SOM_WRAM_SIZE];
     memcpy(before_clone,mocked_wram,sizeof(before_clone));
-    assert(som_clone_enemy()&&undo_ready);
+    frame_number+=1;som_clone_tick();
+    assert(!clone_pending_until&&undo_ready);
     uint8_t *copy=mocked_wram+0xEA00;
     assert(copy[0]==1&&copy[0x180]==0&&copy[4]==0x80);
     assert((copy[2]|copy[3]<<8)==0x0140+32);
+    assert(copy[0x8B]==0x2E&&copy[0xF8]==0xE2&&copy[0x92]==0xA0);   /* slot 3's own */
+    assert(mocked_wram[0x7000]==0x11&&mocked_wram[0x7FFF]==0x11);  /* tiles copied */
+    assert(mocked_wram[0xDFE0]==0x22&&mocked_wram[0xDFFF]==0x22);  /* palette copied */
+    assert(mocked_wram[0xDFC0]==0&&mocked_wram[0x6000]==0);        /* slot 2 untouched */
     assert(memcmp(mocked_wram+0xE800,before_clone+0xE800,0x200)==0); /* others untouched */
     assert(som_undo_spawn()&&unserialized==1&&!undo_ready);
     assert(memcmp(mocked_wram,before_clone,sizeof(before_clone))==0);

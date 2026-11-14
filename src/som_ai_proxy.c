@@ -394,6 +394,23 @@ static void som_idle_tick(void){
  * is not called, so engine bookkeeping outside the slot is not updated. */
 #define SOM_MONSTER_BASE 0xE600u
 #define SOM_OBJECT_SIZE 0x200u
+/* What the game's spawner sets up per monster slot, measured live on Turbo
+ * 2026-11-14 (native spawns into slots 1 and 3, map 130): a sprite tile
+ * buffer at 7E:5000 + slot*0x1000, a 16-colour sprite palette in the CGRAM
+ * shadow at 7E:DFA0 + slot*0x20 (sprite palettes 5..7), and object fields
+ * that point at them (VRAM tile numbers/addresses, OAM palette attribute
+ * +0x8B = 0x2A/0x2C/0x2E, palette address +0xF8). A copy must keep the
+ * target slot's own fields and get the source's tiles and colours, or it
+ * draws from the wrong slot or not at all. */
+#define SOM_MONSTER_GFX 0x5000u
+#define SOM_MONSTER_GFX_SIZE 0x1000u
+#define SOM_MONSTER_PALETTE 0xDFA0u
+#define SOM_MONSTER_PALETTE_SIZE 0x20u
+static const uint8_t som_slot_fields[]={0x6C,0x6E,0x86,0x8A,0x92,0x96,0x9A,0x9E,0xA2,0xA6,
+    0xAA,0xAE,0xB2,0xB6,0xD2,0xD6,0xDA,0xF8,0xFA};   /* 16-bit fields */
+#define SOM_CLONE_WAIT_FRAMES 600ul           /* slots refill ~3 s after a kill */
+static unsigned long clone_pending_until;
+static int clone_no_slot;
 static uint8_t *undo_state;
 static size_t undo_size;
 static int undo_ready;
@@ -414,8 +431,9 @@ static int som_clone_enemy(void){
         if(som_monster_live(object)){if(source<0)source=(int)slot;}
         else if(object[0]!=1&&target<0)target=(int)slot;
     }
+    clone_no_slot=0;
     if(source<0){fprintf(stderr,"[som-ai] SPAWN refused: no live monster to copy\n");return 0;}
-    if(target<0){fprintf(stderr,"[som-ai] SPAWN refused: no empty monster slot\n");return 0;}
+    if(target<0){clone_no_slot=1;return 0;}
     size_t size=backend_retro_serialize_size();
     if(size>undo_size){
         uint8_t *grown=realloc(undo_state,size);
@@ -428,7 +446,19 @@ static int som_clone_enemy(void){
     undo_ready=1;
     uint8_t *from=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
     uint8_t *to=ram+SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE;
+    uint8_t keep[sizeof(som_slot_fields)][2];
+    for(unsigned i=0;i<sizeof(som_slot_fields);i++){
+        keep[i][0]=to[som_slot_fields[i]];keep[i][1]=to[som_slot_fields[i]+1];
+    }
     memcpy(to,from,SOM_OBJECT_SIZE);
+    for(unsigned i=0;i<sizeof(som_slot_fields);i++){
+        to[som_slot_fields[i]]=keep[i][0];to[som_slot_fields[i]+1]=keep[i][1];
+    }
+    memcpy(ram+SOM_MONSTER_GFX+(unsigned)target*SOM_MONSTER_GFX_SIZE,
+           ram+SOM_MONSTER_GFX+(unsigned)source*SOM_MONSTER_GFX_SIZE,SOM_MONSTER_GFX_SIZE);
+    memcpy(ram+SOM_MONSTER_PALETTE+(unsigned)target*SOM_MONSTER_PALETTE_SIZE,
+           ram+SOM_MONSTER_PALETTE+(unsigned)source*SOM_MONSTER_PALETTE_SIZE,
+           SOM_MONSTER_PALETTE_SIZE);
     uint16_t x=(uint16_t)(to[2]|to[3]<<8);x=(uint16_t)(x+32u);
     to[2]=(uint8_t)x;to[3]=(uint8_t)(x>>8);
     fprintf(stderr,"[som-ai] SPAWN copied monster id %u from 7E%04X to 7E%04X; undo with undo_spawn\n",
@@ -554,7 +584,13 @@ static void som_check_trigger(void){
         fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
         return;
     }
-    if(!strcmp(command,"clone_enemy")){som_clone_enemy();return;}
+    if(!strcmp(command,"clone_enemy")){
+        if(!som_clone_enemy()&&clone_no_slot){
+            clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;
+            fprintf(stderr,"[som-ai] SPAWN waiting up to 10 s for a free monster slot\n");
+        }
+        return;
+    }
     if(!strcmp(command,"undo_spawn")){som_undo_spawn();return;}
     if(!strcmp(command,"auto_off")){
         autonomous_mode=0;armed=0;
@@ -791,11 +827,23 @@ RETRO_API void retro_unload_game(void){
     undo_ready=0;
     if(backend_unload_game)backend_unload_game();
 }
+/* A clone request made while every slot was busy fires on the first frame
+ * a slot is free (the game refills slots about 3 s after a kill). */
+static void som_clone_tick(void){
+    if(!clone_pending_until)return;
+    if(frame_number>clone_pending_until){
+        clone_pending_until=0;
+        fprintf(stderr,"[som-ai] SPAWN refused: no monster slot came free\n");
+        return;
+    }
+    if(som_clone_enemy()||!clone_no_slot)clone_pending_until=0;
+}
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     som_check_trigger();
     som_check_npc_command();
     som_check_message();
+    som_clone_tick();
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)
         recording=access(record_marker,F_OK)==0;
     som_auto_tick();

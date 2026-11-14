@@ -78,20 +78,22 @@ class PlayLoopTest(unittest.TestCase):
         play = self.make(hunt_decisions=5)
         goals = [play.goal(summary(map_id=129), False, True, False, ALL) for _ in range(6)]
         self.assertEqual(goals[:4], ["hunt_here"] * 4)
-        self.assertEqual(play.phase, "hunt")          # full HP, no save: back to hunting
-        self.assertEqual(play.state["cycles"], 1)
+        self.assertEqual(play.phase, "save")          # no save: remain committed
+        self.assertEqual(play.state["cycles"], 0)
 
-    def test_full_hp_skips_inn_and_missing_save_skips_save(self):
+    def test_full_hp_skips_inn_and_missing_save_blocks_cycle(self):
         play = self.make()
         play._enter("shop", "test")
-        self.assertEqual(play.goal(summary(), False, True, False, ALL), "hunt_map_129")
-        self.assertTrue(any("no save taught" in line for line in self.logs))
+        self.assertEqual(play.goal(summary(), False, True, False, ALL), "await_save_setup")
+        self.assertEqual(play.phase, "save")
+        self.assertTrue(any("save unavailable" in line for line in self.logs))
         self.assertTrue(any("HP already full" in line for line in self.logs))
 
     def test_unusable_inn_goes_to_save(self):
         play = self.make()
         play._enter("inn", "test")
-        self.assertEqual(play.goal(summary(hp=40), False, False, True, ALL), "go_to_save")
+        self.assertEqual(play.goal(summary(hp=40), False, False, True, ALL), "await_inn_setup")
+        self.assertEqual(play.phase, "inn")
 
     def test_errand_timeout_moves_on(self):
         play = self.make()
@@ -104,8 +106,40 @@ class PlayLoopTest(unittest.TestCase):
         play = self.make()
         play._enter("inn", "test")
         play.inn_failed("no gold")
+        self.assertEqual(play.phase, "inn")  # failed rest does not complete
+        play.inn_done()
         self.assertEqual(play.phase, "save")
         play.save_failed("page missing")
+        self.assertEqual(play.phase, "save")
+
+    def test_inn_trip_stays_committed_across_timeout_and_restart(self):
+        play = self.make()
+        play._enter("inn", "hero is hurt")
+        for _ in range(loop.ERRAND_DECISIONS + 3):
+            self.assertEqual(play.goal(summary(hp=40), False, True, True, ALL),
+                             "go_to_inn")
+        self.assertEqual(play.phase, "inn")
+        restored = loop.PlayLoop(self.history, log=self.logs.append)
+        self.assertEqual(restored.phase, "inn")
+        restored.inn_done()
+        self.assertEqual(restored.goal(summary(hp=100), False, True, True, ALL),
+                         "go_to_save")
+        self.assertEqual(restored.phase, "save")
+        restored.save_done()
+        self.assertEqual(restored.phase, "hunt")
+
+    def test_save_failure_cannot_cancel_long_term_objective(self):
+        play = self.make()
+        play._enter("inn", "need rest and save")
+        play.inn_done()
+        for _ in range(3):
+            play.save_failed("page missing")
+            self.assertEqual(play.goal(summary(), False, True, False, ALL),
+                             "await_save_setup")
+        self.assertEqual(play.phase, "save")
+        self.assertEqual(play.goal(summary(), False, True, True, ALL),
+                         "go_to_save")
+        play.save_done()
         self.assertEqual(play.phase, "hunt")
 
     def test_cornered_fights_without_changing_phase(self):

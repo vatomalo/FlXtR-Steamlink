@@ -322,6 +322,24 @@ class TestMemoryPlanner(unittest.TestCase):
                                  (stay, decision))
             history.close()
 
+    def test_tiles_next_to_exits_are_not_endless_frontiers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "exits.sqlite")
+            self._edge(history, 131, 130, 1, 3, "step_left")
+            planner = MemoryPlanner(history)
+            planner.stay_on_map = True
+            context = observation()["tile_context"]
+            cells = {(x, y): "open" for x in range(8) for y in range(8)}
+            planner._known_cells = lambda map_id, layer: dict(cells)
+            exits = history.exit_tiles(131, 1)
+            known = dict(cells); known.update({tile: "exit" for tile in exits})
+            routes = MemoryPlanner._routes((2, 3), known, (8, 8))
+            self.assertNotIn((1, 3), routes)                     # never walked over
+            self.assertIn((1, 3), known)                         # but known: no frontier
+            neighbours = {(2 + dx, 3 + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))}
+            self.assertTrue(neighbours <= set(known))
+            history.close()
+
     def test_half_health_latches_return_to_inn_until_recovered(self):
         planner = MemoryPlanner()
         hurt = planner.decide(observation(hp=50, max_hp=100))

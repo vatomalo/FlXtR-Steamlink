@@ -496,7 +496,11 @@ class MemoryPlanner:
         if self.stay_on_map and hasattr(self.history, "exit_tiles"):
             exits = self.history.exit_tiles(map_id, layer) - {position}
             if exits:
-                cells = {tile: kind for tile, kind in cells.items() if tile not in exits}
+                # Walls, not unknown: removing them made every tile next to an
+                # exit a frontier forever, and the hero walked between the
+                # exits at both ends of the map (14 Nov).
+                cells = dict(cells)
+                cells.update({tile: "exit" for tile in exits})
         routes = self._routes(position, cells, size,
                               context["actor"].get("floor_height"))
         intention = self._get_intention()

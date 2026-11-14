@@ -121,6 +121,20 @@ int main(void){
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
     assert(!som_manual_disciplines&&!disciplines.open);
     mocked_buttons=0;
+    /* Start is the new manual Class Progress shortcut. */
+    som_manual_disciplines=0;disciplines.open=0;last_physical_buttons=0;
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+    som_input_poll();
+    assert(som_manual_disciplines&&disciplines.open);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+    som_input_poll();
+    assert(!som_manual_disciplines&&!disciplines.open);
+    assert(som_disc_weapons[0][0]==1&&som_disc_weapons[0][1]==2);
+    assert(som_disc_weapons[1][0]==0&&som_disc_weapons[1][1]==3);
+    assert(som_disc_weapons[2][0]==1&&som_disc_weapons[2][1]==6);
+    assert(som_disc_weapons[10][0]==1&&som_disc_weapons[10][1]==5);
     physical_state=mocked_input;
     /* snes9x2005 queries the whole pad with one bitmask when supported. */
     reset_proxy();som_start_action(SOM_ACT_STEP_DOWN);

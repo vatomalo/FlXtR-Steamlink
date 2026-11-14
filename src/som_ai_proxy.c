@@ -973,6 +973,13 @@ static void som_familiar_bind(void){
         som_familiar_tint((uint8_t*)ram+SOM_MONSTER_PALETTE+
                           (unsigned)familiar.slot*SOM_MONSTER_PALETTE_SIZE);
         som_familiar_save(&familiar_carry,ram,familiar.slot);
+        uint8_t *vram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
+        if(vram&&backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=0x10000){
+            som_familiar_capture_vram(&familiar_carry,ram,vram,
+                ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE,familiar.map);
+            fprintf(stderr,"[som-ai] FAMILIAR sprite captured: %u tiles, palette 7E%04X\n",
+                    familiar_carry.tile_count,familiar_carry.palette_address);
+        }
     }
     som_familiar_publish();
     som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
@@ -1010,6 +1017,11 @@ static int som_summon_boss(void){
             (unsigned)loaded.object[0x180]);
     return 1;
 }
+static uint8_t *som_vram(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
+       backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)<0x10000)return NULL;
+    return (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
+}
 /* Runs the familiar each field frame; carries it to the next map. */
 static void som_familiar_frame(void){
     if((familiar.slot<0&&!familiar_carry.valid)||!backend_retro_get_memory_data)return;
@@ -1022,7 +1034,7 @@ static void som_familiar_frame(void){
     if(familiar.slot<0){                                          /* carried */
         if(!familiar_arrived)familiar_arrived=frame_number;
         if(frame_number-familiar_arrived<SOM_FAMILIAR_SETTLE_FRAMES)return;
-        int slot=som_familiar_restore(&familiar_carry,ram);
+        int slot=som_familiar_restore(&familiar_carry,ram,som_vram());
         if(slot<0)return;                                         /* wait for a slot */
         familiar.slot=slot;familiar.target=-1;familiar.last_strike=0;
         familiar.map=(unsigned)(ram[0xDC]|ram[0xDD]<<8);
@@ -1031,6 +1043,8 @@ static void som_familiar_frame(void){
         return;
     }
     int state=som_familiar_tick(&familiar,ram,frame_number);
+    if(state==SOM_FAMILIAR_HERE&&familiar.map!=familiar_carry.home_map)
+        som_familiar_reapply(&familiar_carry,ram,som_vram());      /* keep it drawn */
     if(state==SOM_FAMILIAR_HERE){
         if(frame_number%60u==0)som_familiar_save(&familiar_carry,ram,familiar.slot);
         return;

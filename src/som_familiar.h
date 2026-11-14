@@ -124,12 +124,76 @@ static inline int som_familiar_summoner(const uint8_t *character) {
 }
 
 /* Everything that makes up the familiar, carried to the next map. */
+/* Sprite tiles are in VRAM, loaded per map for that map's monster types, so
+ * a familiar taken to another map draws nothing (only the shared shadow).
+ * Its own tiles are captured from VRAM while it is visible on its home map
+ * and written back, with its home sprite layout and palette, elsewhere.
+ * OBJ tiles start at VRAM byte 0xC000 (tile n at 0xC000 + n*32), measured
+ * live 2026-11-14: map 130 slot 3 Rabite = tiles 0xA0.., palette 7. */
+#define SOM_FAMILIAR_OBJ_VRAM 0xC000u
+#define SOM_FAMILIAR_MAX_TILES 64u
+static const uint8_t som_familiar_tile_fields[] = {0x8A,0x92,0x96,0x9A,0x9E,0xA2,0xA6,0xAA,
+    0xAE,0xB2,0xB6};          /* 16-bit: tile (low byte, attr bit 0 = +256), attr */
+
 typedef struct {
     int valid;
     uint8_t object[SOM_FAMILIAR_OBJECT];
     uint8_t tiles[0x1000];
     uint8_t palette[0x20];
+    /* VRAM capture (has_vram): exact tiles of its sprites and its palette. */
+    int has_vram;
+    unsigned home_map;
+    unsigned tile_count;
+    uint16_t tile_id[SOM_FAMILIAR_MAX_TILES];
+    uint8_t tile_data[SOM_FAMILIAR_MAX_TILES][32];
+    unsigned palette_address;          /* WRAM CGRAM shadow address */
+    uint8_t sprite_palette[0x20];
 } SomFamiliarCarry;
+
+/* Palette address of an object's sprites in the CGRAM shadow (7E:DE00). */
+static inline unsigned som_familiar_palette_address(const uint8_t *object) {
+    const unsigned palette = (object[0x8B] >> 1) & 7u;
+    return 0xDE00u + (128u + palette * 16u) * 2u;
+}
+
+/* Capture the tiles and palette the object's sprites use (it must be
+ * visible, i.e. on its home map). 16x16 sprites use n, n+1, n+16, n+17. */
+static inline void som_familiar_capture_vram(SomFamiliarCarry *c, const uint8_t *ram,
+                                             const uint8_t *vram, const uint8_t *object,
+                                             unsigned map) {
+    c->has_vram = 0;
+    c->tile_count = 0;
+    if (!vram) return;
+    for (unsigned f = 0; f < sizeof(som_familiar_tile_fields); f++) {
+        const unsigned v = som_fam_u16(object + som_familiar_tile_fields[f]);
+        if (!v) continue;                      /* unused field, not tile 0 */
+        const unsigned base = (v & 0xFFu) | ((v >> 8) & 1u) << 8;
+        const unsigned corner[4] = {base, base + 1u, base + 16u, base + 17u};
+        for (unsigned k = 0; k < 4; k++) {
+            const unsigned t = corner[k];
+            if (t >= 512u) continue;
+            int known = 0;
+            for (unsigned i = 0; i < c->tile_count; i++) known |= c->tile_id[i] == t;
+            if (known || c->tile_count >= SOM_FAMILIAR_MAX_TILES) continue;
+            c->tile_id[c->tile_count] = (uint16_t)t;
+            memcpy(c->tile_data[c->tile_count], vram + SOM_FAMILIAR_OBJ_VRAM + t * 32u, 32);
+            c->tile_count++;
+        }
+    }
+    c->palette_address = som_familiar_palette_address(object);
+    memcpy(c->sprite_palette, ram + c->palette_address, sizeof(c->sprite_palette));
+    c->home_map = map;
+    c->has_vram = c->tile_count > 0;
+}
+
+/* Write the captured tiles and palette back (away from the home map the
+ * game may overwrite them, so this runs every frame there). */
+static inline void som_familiar_reapply(const SomFamiliarCarry *c, uint8_t *ram, uint8_t *vram) {
+    if (!c->has_vram || !vram) return;
+    for (unsigned i = 0; i < c->tile_count; i++)
+        memcpy(vram + SOM_FAMILIAR_OBJ_VRAM + c->tile_id[i] * 32u, c->tile_data[i], 32);
+    memcpy(ram + c->palette_address, c->sprite_palette, sizeof(c->sprite_palette));
+}
 
 /* Object fields that belong to a monster slot (VRAM tiles/addresses,
  * palette attribute +0x8B and address +0xF8); same list as the clone. */
@@ -147,11 +211,21 @@ static inline void som_familiar_save(SomFamiliarCarry *c, const uint8_t *ram, in
 /* Put a carried familiar into the first empty monster slot next to the
  * hero; returns the slot or -1 (no empty slot yet). Occupied slots, which
  * in towns hold villagers, are never touched. */
-static inline int som_familiar_restore(const SomFamiliarCarry *c, uint8_t *ram) {
+static inline int som_familiar_restore(const SomFamiliarCarry *c, uint8_t *ram, uint8_t *vram) {
     if (!c->valid) return -1;
     for (int slot = 0; slot < 3; slot++) {
         uint8_t *to = ram + SOM_FAMILIAR_MONSTER_BASE + (unsigned)slot * SOM_FAMILIAR_OBJECT;
         if (to[0] == 1) continue;
+        if (c->has_vram && vram) {
+            /* Home layout: its own tile numbers and palette, with its tiles. */
+            memcpy(to, c->object, SOM_FAMILIAR_OBJECT);
+            som_familiar_reapply(c, ram, vram);
+            som_fam_put16(to + 2, som_fam_u16(ram + 0xE002) + 24u);
+            som_fam_put16(to + 4, som_fam_u16(ram + 0xE004));
+            to[0x1F1] = 0;
+            som_fam_put16(to + 0x182, som_fam_u16(to + 0x184));
+            return slot;
+        }
         uint8_t keep[sizeof(som_familiar_slot_fields)][2];
         for (unsigned i = 0; i < sizeof(som_familiar_slot_fields); i++) {
             keep[i][0] = to[som_familiar_slot_fields[i]];

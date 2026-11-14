@@ -582,14 +582,40 @@ int main(void){
         memset(ram+0xE600,0,0x600);                                /* new map, slots */
         ram[0xE600]=1;ram[0xE600+0x3D]=0xC7;                       /* villager in slot 1 */
         ram[0xE800+0x8B]=0x2C;ram[0xE800+0xF8]=0xC2;               /* slot 2's fields */
-        assert(som_familiar_restore(&carry,ram)==1);
+        assert(som_familiar_restore(&carry,ram,NULL)==1);
         uint8_t *back=ram+0xE800;
         assert(back[0]==1&&back[0x8B]==0x2C&&back[0xF8]==0xC2);    /* own fields kept */
         assert(ram[0x6000]==0x33&&ram[0xDFC0]==0x44);              /* tiles, colours */
         assert(som_fam_u16(back+2)==som_fam_u16(ram+0xE002)+24u);  /* by the hero */
         assert(ram[0xE600+0x3D]==0xC7);                            /* villager kept */
+        /* VRAM capture: its exact sprite tiles and palette go with it and
+         * are written back with its home layout on the next map. */
+        {
+            static uint8_t vram[0x10000],slots_before[0x600],pal_before[0x20];
+            static SomFamiliarCarry vc;
+            memcpy(slots_before,ram+0xE600,sizeof(slots_before));
+            memcpy(pal_before,ram+0xDFE0,sizeof(pal_before));
+            memset(vram,0,sizeof(vram));
+            uint8_t home[0x200];memset(home,0,sizeof(home));
+            home[0]=1;som_fam_put16(home+0x8A,0x2EA0);som_fam_put16(home+0x92,0x7EA2);
+            for(unsigned t=0;t<512;t++)vram[0xC000+t*32]=(uint8_t)t;
+            memset(ram+0xDFE0,0x66,0x20);                        /* palette 7 */
+            memcpy(vc.object,home,sizeof(home));vc.valid=1;
+            som_familiar_capture_vram(&vc,ram,vram,home,130);
+            assert(vc.has_vram&&vc.tile_count==8&&vc.palette_address==0xDFE0);
+            /* sprites at 0xA0 and 0xA2: A0 A1 B0 B1 A2 A3 B2 B3; zero fields skipped */
+            memset(vram+0xC000,0,0x4000);memset(ram+0xDFE0,0,0x20);  /* new map */
+            memset(ram+0xE600,0,0x600);
+            int slot=som_familiar_restore(&vc,ram,vram);
+            assert(slot==0&&som_fam_u16(ram+0xE600+0x8A)==0x2EA0);   /* home layout */
+            assert(vram[0xC000+0xA0*32]==0xA0&&vram[0xC000+0xB1*32]==0xB1);
+            assert(vram[0xC000+0x60*32]==0);                         /* others untouched */
+            assert(ram[0xDFE0]==0x66);
+            memcpy(ram+0xE600,slots_before,sizeof(slots_before));
+            memcpy(ram+0xDFE0,pal_before,sizeof(pal_before));
+        }
         ram[0xEA00]=1;
-        assert(som_familiar_restore(&carry,ram)==-1);              /* no empty slot */
+        assert(som_familiar_restore(&carry,ram,NULL)==-1);              /* no empty slot */
         ram[0xE800+0x190]=0;ram[0xE800+0x191]=0x80;                /* now dead */
         f.slot=1;f.map=130;
         assert(som_familiar_tick(&f,ram,5002)==SOM_FAMILIAR_DIED);

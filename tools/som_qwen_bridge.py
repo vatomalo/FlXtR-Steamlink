@@ -673,7 +673,9 @@ INTENT_MESSAGES = {
 LOOP_MESSAGES = {"hunt_here": "AI: hunting here|fighting monsters",
                  "go_to_shop": "AI: going shopping|buying Candy",
                  "go_to_inn": "AI: going to the inn|to rest",
-                 "go_to_save": "AI: going to save"}
+                 "go_to_save": "AI: going to save",
+                 "await_inn_setup": "AI: inn unavailable|return commitment held",
+                 "await_save_setup": "AI: save unavailable|commitment held"}
 
 
 def loop_message(goal):
@@ -1423,7 +1425,10 @@ def main() -> int:
                         last_loop_goal = loop_goal
                         announce(loop_message(loop_goal))
                     goal = loop_goal
-                    if goal == "go_to_save":
+                    if goal in ("await_inn_setup", "await_save_setup"):
+                        directive = "explore_unknown"
+                        goal_errand = None
+                    elif goal == "go_to_save":
                         directive = (f"explore_{args.hunt_direction}"
                                      if args.hunt_direction != "none" else "explore_unknown")
                         goal_errand = {"place": "save", "anchor": save_point,
@@ -1439,6 +1444,11 @@ def main() -> int:
                 elif args.visit_map == current_map:
                     errand = None
                 decision = planner.decide(observation, previous, directive, errand)
+                # Do not replace a durable return/save commitment with aimless
+                # exploration when its verified inn/save interaction is missing.
+                if play_loop is not None and goal in ("await_inn_setup", "await_save_setup"):
+                    decision = PlannerDecision("wait", "committed errand requires taught interaction",
+                                               goal)
                 if (args.visit_map == current_map and decision.intention in
                         ("explore_frontier", "leave_room", "replan", "stuck")):
                     decision = PlannerDecision("wait", "at requested visit map", "visit_map")

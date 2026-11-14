@@ -18,8 +18,12 @@ Branch `feature/som-ai-memory-agent-20261112`. Read `docs/SOM-WRAM-AGENT.md`
   embedded Tailscale listener exposes only the allowlisted SoM commands and
   exact 128-KiB WRAM snapshot to the selected SkyLoft peer. Copy the endpoint
   from **Network and devices > Secret of Mana AI bridge** and set it as
-  `SOM_AI_HTTP_ENDPOINT` in `~/.config/flxtr/som-ai.env`. When unset, the
-  service retains the existing Steam Link SSH transport.
+  `SOM_AI_HTTP_ENDPOINT` in `~/.config/flxtr/som-ai.env`. When set, the
+  service runs independent Android and Steam Link planners at the same time.
+  They share learned maps, routes, places, combat results and calibration in
+  `som-ai.sqlite`, while current goals and live combat state are namespaced
+  per device. Binary boss captures stay separate in `som-boss/` and
+  `som-boss-android/`. When unset, only the Steam Link planner runs.
 
 ## Architecture
 

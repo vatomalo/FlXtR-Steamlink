@@ -849,6 +849,10 @@ def main() -> int:
                         help="Private Android SoM bridge endpoint copied from FlXtR")
     parser.add_argument("--history-db", type=Path,
                         help="Optional persistent SQLite observation log")
+    parser.add_argument("--agent-namespace", default="",
+                        help="Namespace live planner state while sharing learned history")
+    parser.add_argument("--boss-dir", type=Path,
+                        help="Optional target-specific boss snapshot directory")
     parser.add_argument("--ring-control", action="store_true",
                         help="Wait for the in-game Action Grid start gesture and stop on takeover")
     parser.add_argument("--hunt-direction", default="west",
@@ -891,7 +895,8 @@ def main() -> int:
         parser.error("--ring-control requires --wram-remote for fail-closed perception")
     if not 1 <= args.start_timeout <= 3600:
         parser.error("start-timeout must be 1..3600 seconds")
-    history = ObservationHistory(args.history_db) if args.history_db else None
+    history = (ObservationHistory(args.history_db, args.agent_namespace)
+               if args.history_db else None)
     planner = MemoryPlanner(history)
     # Train only from live, takeover-guarded input. Offline dumps and sessions
     # without the physical-input marker cannot establish action attribution.
@@ -993,7 +998,11 @@ def main() -> int:
     save_disabled = False
     last_loop_goal = None
     block_learner = None
-    boss_recorder = BossRecorder(log=lambda line: print(line, flush=True)) if args.wram_remote else None
+    boss_recorder = None
+    if args.wram_remote:
+        boss_log = lambda line: print(line, flush=True)
+        boss_recorder = (BossRecorder(directory=args.boss_dir, log=boss_log)
+                         if args.boss_dir else BossRecorder(log=boss_log))
     if history is not None and args.policy in ("hybrid", "memory"):
         block_learner = BlockLearner(history.connection, log=lambda line: print(line, flush=True))
         planner.block_learner = block_learner

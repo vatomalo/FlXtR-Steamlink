@@ -429,6 +429,12 @@ def nearest_enemy_identity(state):
 # Snapshots a new map id may still show the previous map's tiles (see below).
 MAP_SETTLE_SAMPLES = 8
 
+# These values describe one currently running game, unlike learned map cells,
+# routes, places, combat samples and calibration records. Namespace only the
+# live values when several devices learn from the same history database.
+SESSION_AGENT_STATE = {"health_previous", "combat_previous", "intention",
+                       "unreachable", "last_evade", "survival", "play_loop"}
+
 
 class MapLoadGuard:
     """Distrust the tile buffers for a moment after the map id changes.
@@ -534,8 +540,9 @@ def detect_cuts(previous, current):
 class ObservationHistory:
     """SQLite observations plus persistent, map-scoped tile visitation memory."""
 
-    def __init__(self, path):
+    def __init__(self, path, agent_namespace=""):
         self.path = Path(path)
+        self.agent_namespace = agent_namespace
         self.connection = sqlite3.connect(str(self.path))
         # Several small commits happen per decision. WAL with NORMAL sync
         # avoids a full disk flush for each one; at worst a power cut loses
@@ -967,11 +974,15 @@ class ObservationHistory:
             "SELECT x,y FROM walked_cells WHERE map_id=?", (map_id,))}
 
     def get_agent_state(self, key):
+        if self.agent_namespace and key in SESSION_AGENT_STATE:
+            key = f"{self.agent_namespace}:{key}"
         row = self.connection.execute(
             "SELECT value FROM agent_meta WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def set_agent_state(self, key, value):
+        if self.agent_namespace and key in SESSION_AGENT_STATE:
+            key = f"{self.agent_namespace}:{key}"
         if value is None:
             self.connection.execute("DELETE FROM agent_meta WHERE key=?", (key,))
         else:

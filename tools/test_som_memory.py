@@ -323,6 +323,20 @@ class TestWRAM(unittest.TestCase):
             self.assertEqual(history.safe_anchor()["target"], [9, 4])
             history.close()
 
+    def test_devices_share_world_knowledge_but_not_live_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "shared.sqlite"
+            steam = ObservationHistory(path, "steamlink")
+            android = ObservationHistory(path, "android")
+            steam.set_agent_state("shop", {"map_id": 131})
+            steam.set_agent_state("play_loop", {"phase": "shop"})
+            android.set_agent_state("play_loop", {"phase": "hunt"})
+            self.assertEqual(android.get_agent_state("shop"), {"map_id": 131})
+            self.assertEqual(steam.get_agent_state("play_loop"), {"phase": "shop"})
+            self.assertEqual(android.get_agent_state("play_loop"), {"phase": "hunt"})
+            steam.close()
+            android.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,6 +59,12 @@ Both devices must be signed into the same tailnet.
    `~/.config/flxtr/som-ai.env` as `SOM_AI_HTTP_ENDPOINT=...`.
 4. Restart `flxtr-som-ai.service`, then launch Turbo with the SoM AI core.
 
+Setting the Android endpoint does not replace Steam Link. SkyLoft keeps two
+independent planner sessions alive, and either device—or both devices—can use
+AI whenever its own in-game enable signal is active. Both planners share
+learned world knowledge, but keep their current goals and live combat state
+separate.
+
 The endpoint contains a private random token. Do not post or share it. The
 Android listener additionally rejects every device except the selected
 SkyLoft Tailscale address. Disabling the core or handing control back removes

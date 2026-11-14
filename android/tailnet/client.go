@@ -41,6 +41,7 @@ type Client struct {
     adbMu sync.Mutex
     adb *adbBridge
     rom romReceiver
+    som somBridge
 }
 
 var platformOnce sync.Once
@@ -94,7 +95,7 @@ func (c *Client) Status() (string,error) {
     }
     ips:=[]string{}
     if status.Self!=nil{for _,ip:=range status.Self.TailscaleIPs{if ip.Is4(){ips=append(ips,ip.String())}}}
-    out,err:=json.Marshal(map[string]any{"state":status.BackendState,"authUrl":status.AuthURL,"peers":peers,"id":c.identity,"ips":ips,"adb":c.adbStatus()})
+    out,err:=json.Marshal(map[string]any{"state":status.BackendState,"authUrl":status.AuthURL,"peers":peers,"id":c.identity,"ips":ips,"adb":c.adbStatus(),"som":c.somStatus()})
     return string(out),err
 }
 

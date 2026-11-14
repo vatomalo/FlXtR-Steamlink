@@ -45,7 +45,26 @@ absent by default. No NPC RAM write should occur unless explicitly enabled
 and the existing ROM/live-state gates approve it. The existing ROM patch file
 is also absent by default.
 
-## Scope of this first port
+## Connecting the Android core to SkyLoft
+
+The Android core now uses the same SkyLoft planner as Steam Link through a
+small HTTP bridge carried entirely over the app's embedded Tailscale network.
+Both devices must be signed into the same tailnet.
+
+1. In FlXtR on Android, open **Network and devices**, then
+   **Secret of Mana AI bridge**.
+2. Enter SkyLoft's Tailscale IPv4 address (the default is `100.69.7.81`) and
+   press **Enable and copy endpoint**.
+3. On SkyLoft, paste the copied value into
+   `~/.config/flxtr/som-ai.env` as `SOM_AI_HTTP_ENDPOINT=...`.
+4. Restart `flxtr-som-ai.service`, then launch Turbo with the SoM AI core.
+
+The endpoint contains a private random token. Do not post or share it. The
+Android listener additionally rejects every device except the selected
+SkyLoft Tailscale address. Disabling the core or handing control back removes
+the enable marker and makes WRAM reads fail closed.
+
+## Scope of this port
 
 Implemented:
 - Android NDK native target for the shared proxy source
@@ -57,10 +76,7 @@ Still required for autonomous Android AI:
 - Test the core against a real Android device/ROM (video, audio, input,
   128-KiB WRAM export and save states)
 - Verify original WRAM assumptions against the bundled Snes9x core
-- Implement a local Android transport/controller (or explicitly connect
-  to SkyLoft); the existing SSH-based Python script cannot directly access
-  Android app-private files
-- Port or host the Python planner, SQLite and optional Ollama director
+- Validate the Android-to-SkyLoft Tailscale bridge during real gameplay
 - Add controlled UI enable/disable for autonomous play and NPC schedules
 
 The Android native build itself has **not** been executed by this commit.

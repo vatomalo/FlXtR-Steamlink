@@ -49,7 +49,7 @@ final class TailscaleRuntime {
             public String defaultInterface(){
                 try{ConnectivityManager cm=(ConnectivityManager)app.getSystemService(Context.CONNECTIVITY_SERVICE);LinkProperties props=cm.getLinkProperties(cm.getActiveNetwork());return props==null||props.getInterfaceName()==null?"":props.getInterfaceName();}catch(Exception unavailable){return "";}
             }
-        });client.setROMDirectory(new File(app.getFilesDir(),"games/received").getCanonicalPath());}finally{network.edit().putBoolean("tailnet-starting",false).commit();}
+        });client.setROMDirectory(new File(app.getFilesDir(),"games/received").getCanonicalPath());String somPeer=app.getSharedPreferences("som-ai-bridge",0).getString("peer","100.69.7.81");client.setSOMDirectory(new File(app.getFilesDir(),"som-ai").getCanonicalPath(),somPeer);}finally{network.edit().putBoolean("tailnet-starting",false).commit();}
         ConnectivityManager cm=(ConnectivityManager)app.getSystemService(Context.CONNECTIVITY_SERVICE);
         callback=new ConnectivityManager.NetworkCallback(){
             private void changed(){Client active=client;if(active!=null)IO.execute(()->{try{active.networkChanged();}catch(Exception ignored){}});}

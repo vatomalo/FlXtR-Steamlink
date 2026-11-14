@@ -23,6 +23,8 @@ if [ "${SOM_AI_PLAY_LOOP:-1}" != 0 ]; then
   loop_args=(--play-loop --trip-gold "${SOM_AI_TRIP_GOLD:-100}")
   [ -n "${SOM_AI_HUNT_MAP:-}" ] && loop_args+=(--hunt-map "$SOM_AI_HUNT_MAP")
 fi
+transport_args=(--wram-remote)
+if [ -n "${SOM_AI_HTTP_ENDPOINT:-}" ]; then transport_args=(--http-endpoint "$SOM_AI_HTTP_ENDPOINT"); fi
 
 exec python3 "$repo/tools/som_qwen_bridge.py" \
   --host "$host" \
@@ -38,6 +40,6 @@ exec python3 "$repo/tools/som_qwen_bridge.py" \
   --steps 0 \
   --start-timeout "$start_timeout" \
   --history-db "$history_db" \
-  --wram-remote \
+  "${transport_args[@]}" \
   --ring-control \
   "${loop_args[@]}"

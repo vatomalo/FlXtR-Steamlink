@@ -14,6 +14,12 @@ Branch `feature/som-ai-memory-agent-20261112`. Read `docs/SOM-WRAM-AGENT.md`
   `/home/apps/retroarch/cores/experimental/som_ai_proxy_libretro.so`, which
   wraps `snes9x2005_plus`. ROM `/home/apps/retroarch/roms/Snes/Secret of Mana, Turbo.smc`.
   The game is launched by the user from the FlXtR menu with core `som_ai_proxy`.
+- **Android**: runs the same proxy core with app-private command files. FlXtR's
+  embedded Tailscale listener exposes only the allowlisted SoM commands and
+  exact 128-KiB WRAM snapshot to the selected SkyLoft peer. Copy the endpoint
+  from **Network and devices > Secret of Mana AI bridge** and set it as
+  `SOM_AI_HTTP_ENDPOINT` in `~/.config/flxtr/som-ai.env`. When unset, the
+  service retains the existing Steam Link SSH transport.
 
 ## Architecture
 
@@ -62,6 +68,17 @@ journalctl --user -u flxtr-som-ai.service -n 80 --no-pager | grep -v awaiting
 ssh root@100.124.74.13 'printf "ai_on\n" > /tmp/flxtr-som-ai-action'   # start AI
 ssh root@100.124.74.13 'printf "ai_off\n" > /tmp/flxtr-som-ai-action'  # stop AI
 ```
+
+For Android, replace the SSH target by adding the copied endpoint to the
+service environment and restarting it:
+
+```sh
+printf '%s\n' 'SOM_AI_HTTP_ENDPOINT=http://ANDROID_TAILSCALE_IP:43927/TOKEN/som' >> ~/.config/flxtr/som-ai.env
+systemctl --user restart flxtr-som-ai.service
+```
+
+Treat the endpoint as a password. The Android app accepts it only from the
+SkyLoft Tailscale IPv4 address configured in its bridge screen.
 
 Play loop (`tools/som_play_loop.py`, on by default in the service;
 `SOM_AI_PLAY_LOOP=0` restores Qwen goals): hunt -> shop -> inn -> save ->

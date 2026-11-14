@@ -17,6 +17,9 @@ import sys
 import threading
 import time
 import urllib.request
+import urllib.error
+import urllib.parse
+import ipaddress
 import zlib
 from pathlib import Path
 
@@ -443,6 +446,12 @@ class RemoteLink:
                 process.wait()
             process.stdout.close()
 
+    def ring_enabled(self):
+        return remote_ring_ai_enabled(self.host)
+
+    def clear_ring(self):
+        clear_remote_ring_ai(self.host)
+
     def _read_exact(self, size: int, deadline: float) -> bytes:
         chunks, remaining = [], size
         fd = self.process.stdout.fileno()
@@ -557,6 +566,91 @@ class RemoteLink:
         status, _ = self._request("act " + action)
         if status != "OK":
             raise OSError(f"Steam Link rejected action {action!r} ({status})")
+
+
+class HttpRemoteLink:
+    """Authenticated Android WRAM/action bridge over embedded Tailscale."""
+
+    def __init__(self, endpoint: str, timeout: float = 5.0):
+        parsed = urllib.parse.urlparse(endpoint.rstrip("/"))
+        try:
+            address = ipaddress.ip_address(parsed.hostname or "")
+        except ValueError as exc:
+            raise ValueError("Android bridge endpoint requires a Tailscale IPv4 address") from exc
+        parts = parsed.path.strip("/").split("/")
+        if (parsed.scheme != "http" or parsed.port != 43927 or
+                address not in ipaddress.ip_network("100.64.0.0/10") or
+                len(parts) != 2 or not re.fullmatch(r"[0-9a-f]{32}", parts[0]) or
+                parts[1] != "som" or parsed.username or parsed.query or parsed.fragment):
+            raise ValueError("invalid private Android SoM bridge endpoint")
+        self.endpoint, self.timeout = endpoint.rstrip("/"), timeout
+
+    def close(self):
+        pass
+
+    def _request(self, method, route, body=None):
+        data = body.encode("utf-8") if body is not None else None
+        request = urllib.request.Request(self.endpoint + "/" + route, data=data, method=method)
+        request.add_header("Content-Type", "text/plain; charset=utf-8")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return response.read(WRAM_BYTES + 1)
+        except urllib.error.HTTPError as error:
+            if error.code == 409:
+                return None
+            try:
+                detail = json.loads(error.read(4096)).get("error")
+            except (ValueError, OSError):
+                detail = None
+            raise OSError(detail or f"Android bridge rejected request ({error.code})") from error
+
+    def ring_enabled(self):
+        raw = self._request("GET", "status")
+        return bool(json.loads(raw).get("enabled"))
+
+    def clear_ring(self):
+        try:
+            self._request("DELETE", "enabled")
+        except OSError:
+            pass
+
+    def fetch_wram(self, require_marker=False):
+        raw = self._request("GET", "wram")
+        if raw is None and require_marker:
+            return None
+        if raw is None or len(raw) != WRAM_BYTES:
+            raise OSError("Android WRAM snapshot unavailable")
+        return raw
+
+    def fetch_navigation(self):
+        raw = self.fetch_wram(require_marker=True)
+        if raw is None:
+            return None
+        low, hero = raw[:256], raw[0xE000:0xE200]
+        def word(data, offset):
+            return data[offset] | data[offset+1] << 8
+        hp, maximum = word(hero,0x182), word(hero,0x184)
+        return {"tick":low[0xF4], "map":word(low,0xDC)&0x1FF,
+                "x":word(hero,2),"y":word(hero,4),"hp":hp,"max_hp":maximum,
+                "layer":hero[0xB]&0x80,"ground":hero[0x48],
+                "valid":low[0xE4]==1 and low[0xE6]==0xF and low[0xD0]==0 and
+                low[0x7D]!=1 and low[0xD9]==1 and hero[0]==1 and hero[0x2C]==1 and
+                not word(hero,0x190)&0xC160 and 0 < hp <= maximum <= 999}
+
+    def show_message(self, text: str) -> None:
+        clean = MESSAGE_ALLOWED.sub("", text.replace("_", " "))[:65].strip()
+        if clean:
+            self._request("POST", "message", clean)
+
+    def send_control(self, command: str) -> None:
+        if command not in CONTROL_COMMANDS:
+            raise ValueError(f"refusing unknown control command {command!r}")
+        self._request("POST", "action", command)
+
+    def send_action(self, action: str) -> None:
+        if action not in ACTIONS and action not in LONG_MOVES.values():
+            raise ValueError(f"refusing non-allowlisted action {action!r}")
+        self._request("POST", "action", action)
 
 
 INTENT_MESSAGES = {
@@ -751,6 +845,8 @@ def main() -> int:
                         help="Path to raw 128-KiB WRAM dump; reread each step")
     parser.add_argument("--wram-remote", action="store_true",
                         help="Read /tmp/flxtr-som-wram.bin on target via SSH per step")
+    parser.add_argument("--http-endpoint",
+                        help="Private Android SoM bridge endpoint copied from FlXtR")
     parser.add_argument("--history-db", type=Path,
                         help="Optional persistent SQLite observation log")
     parser.add_argument("--ring-control", action="store_true",
@@ -781,8 +877,14 @@ def main() -> int:
     if (args.policy in ("hybrid", "qwen") and
             args.ollama_url not in ("http://127.0.0.1:11434", "http://localhost:11434")):
         parser.error("only local Ollama is supported for this initial experiment")
-    if args.wram_file and args.wram_remote:
+    if args.wram_file and (args.wram_remote or args.http_endpoint):
         parser.error("choose one of --wram-file or --wram-remote")
+    if args.http_endpoint:
+        try:
+            HttpRemoteLink(args.http_endpoint)
+        except ValueError as error:
+            parser.error(str(error))
+        args.wram_remote = True
     if args.ring_control and args.dry_run:
         parser.error("--ring-control requires a live SSH target")
     if args.ring_control and not args.wram_remote:
@@ -799,7 +901,7 @@ def main() -> int:
     planner.combat_learner = learner
     map_guard = MapLoadGuard()
     doors = DoorLearner(history) if history is not None else None
-    if history is not None and args.wram_remote and not args.dry_run:
+    if history is not None and args.wram_remote and not args.dry_run and not args.http_endpoint:
         tables = load_rom_exits(args.host)
         if tables is not None:
             history.attach_rom(tables)
@@ -810,16 +912,17 @@ def main() -> int:
             print(f"[rom] exit table of {len(tables.maps)} maps: {state} "
                   f"({confirmed} confirmed, {contradicted} contradicted crossings)",
                   flush=True)
+    link = ((HttpRemoteLink(args.http_endpoint) if args.http_endpoint else RemoteLink(args.host))
+            if not args.dry_run else None)
     if args.ring_control:
         print(f"[ai] {args.policy} policy waiting for Action Grid confirmation", flush=True)
         deadline = time.monotonic() + args.start_timeout
-        while not remote_ring_ai_enabled(args.host):
+        while not link.ring_enabled():
             if time.monotonic() >= deadline:
                 print("[ai] stopped safely: Action Grid start timed out", file=sys.stderr)
                 return 1
             time.sleep(1.0)
         print("[ai] Action Grid start received", flush=True)
-    link = RemoteLink(args.host) if not args.dry_run else None
     calibration = (Calibration.load(args.ring_calibration) if args.ring_calibration
                    else Calibration.load())
     candy_disabled = calibration is None
@@ -1468,14 +1571,14 @@ def main() -> int:
             if link:
                 link.close()
             if args.ring_control:
-                clear_remote_ring_ai(args.host)
+                link.clear_ring()
             return 1
     if learner is not None:
         learner.cancel("session ended")
     if link:
         link.close()
     if args.ring_control and args.steps != 0 and step >= args.steps:
-        clear_remote_ring_ai(args.host)
+        link.clear_ring()
     if history is not None:
         history.close()
     return 0

@@ -116,6 +116,7 @@ func (c *Client) romHTTP(w http.ResponseWriter,r *http.Request){
     c.rom.mu.Lock();root,token,lanPort:=c.rom.root,c.rom.token,c.rom.port;c.rom.mu.Unlock()
     address:=net.ParseIP(host).To4();tail:=address!=nil&&address[0]==100&&address[1]>=64&&address[1]<=127
     if !(tail&&port=="43927"||localIPv4(host)&&port==strconv.Itoa(lanPort))||(r.Header.Get("Origin")!=""&&r.Header.Get("Origin")!="http://"+r.Host){fail(403,"invalid device origin");return}
+    if tail&&c.somHTTP(w,r,peer){return}
     if r.Method=="GET"&&r.URL.Path=="/.well-known/flxtr"{raw,e:=c.Announcement(host);if e!=nil{fail(400,e.Error());return};_,_=io.WriteString(w,raw);return}
     if token==""||root==""||!strings.HasPrefix(r.URL.Path,"/"+token+"/")||r.URL.RawQuery!=""{fail(403,"invalid device endpoint");return}
     route:=strings.TrimPrefix(r.URL.Path,"/"+token+"/")

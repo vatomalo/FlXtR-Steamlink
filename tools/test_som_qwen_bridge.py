@@ -3,12 +3,60 @@ import os
 import stat
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
-from som_qwen_bridge import (REMOTE_LOOP, RemoteLink, 
+from som_qwen_bridge import (REMOTE_LOOP, HttpRemoteLink, RemoteLink,
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
     parse_directive, prefer_open_step, extend_clear_exploration,
     objective_directive, shop_errand)
+
+
+class HttpReply:
+    def __init__(self,data):self.data=data
+    def __enter__(self):return self
+    def __exit__(self,*unused):pass
+    def read(self,limit=-1):return self.data[:limit] if limit>=0 else self.data
+
+
+class TestHttpRemoteLink(unittest.TestCase):
+    endpoint="http://100.70.1.2:43927/"+"a"*32+"/som"
+
+    def test_validates_private_endpoint(self):
+        HttpRemoteLink(self.endpoint)
+        for value in ("https://100.70.1.2:43927/"+"a"*32+"/som",
+                      "http://192.168.1.2:43927/"+"a"*32+"/som",
+                      "http://100.70.1.2:43927/bad/som"):
+            with self.assertRaises(ValueError):HttpRemoteLink(value)
+
+    def test_reads_wram_and_sends_allowlisted_action(self):
+        link=HttpRemoteLink(self.endpoint);image=bytes(range(256))*512;requests=[]
+        def reply(request,timeout):
+            requests.append(request)
+            return HttpReply(image if request.full_url.endswith("/wram") else b'{"status":"ok"}')
+        with patch("urllib.request.urlopen",side_effect=reply):
+            self.assertEqual(link.fetch_wram(require_marker=True),image)
+            link.send_action("step_right")
+        self.assertEqual(requests[1].data,b"step_right")
+        with self.assertRaises(ValueError):link.send_action("rm")
+
+    def test_disabled_marker_is_clean_takeover(self):
+        link=HttpRemoteLink(self.endpoint)
+        error=urllib.error.HTTPError(self.endpoint+"/wram",409,"disabled",{},None)
+        with patch("urllib.request.urlopen",side_effect=error):
+            self.assertIsNone(link.fetch_wram(require_marker=True))
+
+    def test_navigation_and_marker_clear(self):
+        link=HttpRemoteLink(self.endpoint);image=bytes(range(256))*512;requests=[]
+        def reply(request,timeout):
+            requests.append(request)
+            return HttpReply(image if request.full_url.endswith("/wram") else b'{"status":"ok"}')
+        with patch("urllib.request.urlopen",side_effect=reply):
+            frame=link.fetch_navigation()
+            self.assertEqual((frame["tick"],frame["x"],frame["y"]),(244,770,1284))
+            link.clear_ring()
+        self.assertEqual(requests[1].method,"DELETE")
 
 
 class TestTileGuard(unittest.TestCase):

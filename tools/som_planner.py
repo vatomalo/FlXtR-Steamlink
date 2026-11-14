@@ -41,6 +41,7 @@ STALL_DECISIONS = 8
 # Minimum time between swings. Turbo's recharge byte is unreliable; swings
 # sent sooner after the last one dealt under half the damage (2026-11-14).
 SWING_INTERVAL_S = 0.6
+TARGET_SWITCH_PX = 24       # another enemy must be this much closer to switch
 # A learned crossing this close to a native return door went through that door.
 DOOR_CROSSING_TILES = 4
 STALL_BLOCK_DECISIONS = 200
@@ -581,6 +582,14 @@ class MemoryPlanner:
         if not targets:
             return None
         distance, dx, dy, enemy = min(targets, key=lambda value: value[0])
+        # Keep the current target unless another is clearly closer: two
+        # monsters at 70 and 71 px made the hero turn back and forth.
+        engaged = self._get_intention()
+        if isinstance(engaged, dict) and engaged.get("kind") == "engage":
+            kept = next((value for value in targets
+                         if value[3].get("slot") == engaged.get("enemy")), None)
+            if kept is not None and kept[0] <= distance + TARGET_SWITCH_PX:
+                distance, dx, dy, enemy = kept
         hero = observation.get("party", [{}])[0]
         split = self._unsplit([value[3] for value in targets], actor,
                               (width_px, height_px), open_steps)
@@ -636,7 +645,12 @@ class MemoryPlanner:
         if observation.get("weapons_enabled") and recharge == 0:
             cutting = self._grass_blocking_enemy(context, dx, dy)
             if cutting is not None:
-                return self._cut(context, cutting)
+                action, reach = cutting
+                if reach == 1:
+                    return self._cut(context, action)
+                if action in open_steps:
+                    return PlannerDecision(action, f"step up to grass blocking enemy "
+                                           f"{enemy['slot']}", "cut_grass")
 
         # Actual melee reach is much shorter than the old 48x48 test.
         # Require a forward axial distance and narrow lateral alignment.
@@ -1216,17 +1230,21 @@ class MemoryPlanner:
         to the side cannot hijack a fight. The cut signature must already be
         learned from a real terrain transition.
         """
-        choices = self._cut_targets(context, reach=1)
+        choices = self._cut_targets(context, reach=2)
         if not choices:
             return None
         options = []
-        for action, _ in choices:
+        for action, reach in choices:
             ox, oy = STEP_OFFSETS[action]
             ahead = dx * ox + dy * oy
             side = abs(dx * oy - dy * ox)
-            if ahead > 0 and ahead >= side:
-                options.append((ahead, -side, action))
-        return max(options)[2] if options else None
+            # The enemy must lie beyond the grass along that axis.
+            if ahead > 16 * reach and ahead >= side:
+                options.append((-reach, ahead, -side, action, reach))
+        if not options:
+            return None
+        best = max(options)
+        return best[3], best[4]
 
     def _cut_targets(self, context, reach=1):
         """[(action, distance)] toward cuttable tiles within reach tiles."""

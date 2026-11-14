@@ -683,7 +683,18 @@ class TestMemoryPlanner(unittest.TestCase):
             state["tile_context"], 0, -32))
         planner.local_cuttable.add("03004000")
         self.assertEqual(planner._grass_blocking_enemy(
-            state["tile_context"], 0, -32), "step_up")
+            state["tile_context"], 0, -32), ("step_up", 1))
+
+    def test_keeps_its_target_unless_another_is_clearly_closer(self):
+        planner = MemoryPlanner()
+        a = {"slot": 2, "active": True, "x_px": 40 + 70, "y_px": 56}
+        b = {"slot": 3, "active": True, "x_px": 40 - 69, "y_px": 56}
+        state = observation(enemy=a); state["enemy_slots"] = [a, b]
+        state["tile_context"]["map_size_tiles"] = [32, 32]
+        first = planner.decide(state)
+        self.assertIn("enemy 3", first.reason)                  # nearest at the start
+        a["x_px"] = 40 + 66                                      # now 66 vs 69
+        self.assertIn("enemy 3", planner.decide(state, first.action).reason)
 
     def test_enemy_far_off_screen_is_not_chased(self):
         state = observation(enemy={"slot": 1, "active": True, "x_px": 40 + 380, "y_px": 56})

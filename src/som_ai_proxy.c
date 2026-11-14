@@ -55,6 +55,22 @@ static unsigned long auto_deadline;
 static uint16_t last_physical_buttons;
 static unsigned long last_attack_frame;
 static unsigned combo_count;
+static uint16_t combo_hp[3];
+static uint8_t combo_ids[3],combo_live[3];
+static int combo_pending,combo_hit,combo_queued,combo_charging,combo_input_held;
+static unsigned long combo_charge_frame;
+#define SOM_COMBO_HIT_WINDOW 75ul
+#define SOM_COMBO_GAP 180ul
+#define SOM_COMBO_CHARGE_TIMEOUT 300ul
+static void som_combo_clear(void){
+    combo_count=combo_pending=combo_hit=combo_queued=combo_charging=0;
+}
+static void som_combo_swing(void){
+    if(combo_queued||combo_charging)return;
+    if(combo_count&&frame_number-last_attack_frame>SOM_COMBO_GAP)combo_count=0;
+    combo_pending=1;combo_hit=0;last_attack_frame=frame_number;
+}
+
 static const char *trigger_file;
 static const char *action_file="/tmp/flxtr-som-ai-action";
 static const char *wram_file="/tmp/flxtr-som-wram.bin";
@@ -281,6 +297,47 @@ static int som_y_field_play(void){
     const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     return ram&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
 }
+/* Observe HP changes following sword swings, not button-tap counts. */
+static void som_combo_frame(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram)return;
+    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    if(!field||ram[0xE1E4]!=1||som_manual_disciplines||disciplines.open){
+        som_combo_clear();return;
+    }
+    if(combo_pending&&frame_number-last_attack_frame>SOM_COMBO_HIT_WINDOW){
+        combo_pending=0;combo_count=0; /* a missed swing breaks the chain */
+    }
+    if(combo_count&&frame_number-last_attack_frame>SOM_COMBO_GAP)combo_count=0;
+    for(unsigned i=0;i<3;i++){
+        const uint8_t *e=ram+0xE600u+0x200u*i;
+        const unsigned hp=(unsigned)e[0x182]|((unsigned)e[0x183]<<8);
+        const int live=e[0]==1&&e[0x180]<0x80;
+        if(combo_pending&&!combo_hit&&live&&combo_live[i]&&
+           combo_ids[i]==e[0x180]&&hp<combo_hp[i]){
+            combo_pending=0;combo_hit=1;last_attack_frame=frame_number;
+            if(++combo_count>=4){
+                combo_count=0;combo_queued=1;
+                fprintf(stderr,"[som-ai] COMBO four sword hits confirmed, charging finisher next\\n");
+            }
+        }
+        combo_hp[i]=(uint16_t)hp;combo_ids[i]=e[0x180];combo_live[i]=(uint8_t)live;
+    }
+    if(combo_charging){
+        if(combo_input_held||frame_number-combo_charge_frame>SOM_COMBO_CHARGE_TIMEOUT){
+            som_combo_clear();return;
+        }
+        if(ram[0xE19B]>=1){ /* hero charge stage +0x19B */
+            combo_charging=combo_queued=0;
+            fprintf(stderr,"[som-ai] COMBO level-1 charge released\\n");
+        }
+    }else if(combo_queued&&!combo_input_held&&!armed&&
+             ram[0xE19C]>=1){ /* verified weapon charge level */
+        combo_charging=1;combo_charge_frame=frame_number;
+    }
+}
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
@@ -289,6 +346,11 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         actual=0;                    /* the player's buttons drive the gambit menu */
     /* With a discipline, Y attacks with its second weapon: the game sees B
      * (so holding Y charges) and never Y; L2+Y still opens the ring. */
+    if(combo_charging&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        if(actual){som_combo_clear();return actual;}
+        if(bitmask)return (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+        if(id==RETRO_DEVICE_ID_JOYPAD_B)return 1;
+    }
     if(y_weapon_swap&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         if(bitmask)actual=(int16_t)((actual&~(1<<RETRO_DEVICE_ID_JOYPAD_Y))|
                                      (1<<RETRO_DEVICE_ID_JOYPAD_B));
@@ -327,13 +389,13 @@ static void som_input_poll(void){
         for(unsigned key=0;key<16;key++)
             if(physical_state(0,RETRO_DEVICE_JOYPAD,0,key))current|=(uint16_t)(1u<<key);
         const uint16_t attack=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
-        if((current&attack)&&!(last_physical_buttons&attack)){
-            combo_count=(frame_number-last_attack_frame<=30 && combo_count<3)?
-                combo_count+1:1;
-            last_attack_frame=frame_number;
-            if(combo_count>=2)
-                fprintf(stderr,"[som-ai] COMBO OBSERVED hits=%u frame=%lu (recognition only)\n",
-                    combo_count,frame_number);
+        const uint16_t secondary=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+        const uint16_t l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+        combo_input_held=current!=0;
+        if(combo_charging&&current)som_combo_clear(); /* player takes over */
+        if(((current&attack)&&!(last_physical_buttons&attack))||
+           ((current&secondary)&&!(last_physical_buttons&secondary)&&!(current&l2))){
+            if(!som_manual_disciplines&&!ring_ai_enabled)som_combo_swing();
         }
         const uint16_t pressed=(uint16_t)(current&~last_physical_buttons);
         const uint16_t y_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
@@ -954,6 +1016,7 @@ static int som_undo_spawn(void){
 }
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
+    if(action==SOM_ACT_ATTACK)som_combo_swing();
     active_action=action;
     action_frames=som_action_frames(action);
     armed=1;cancelled=0;completed=0;
@@ -1265,7 +1328,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
-    last_physical_buttons=0;last_attack_frame=0;combo_count=0;
+    last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
+    combo_input_held=0;combo_charge_frame=0;
+    memset(combo_hp,0,sizeof(combo_hp));memset(combo_ids,0,sizeof(combo_ids));
+    memset(combo_live,0,sizeof(combo_live));
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
     wram_export_error_logged=0;
     memset(&overlay,0,sizeof(overlay));
@@ -1487,6 +1553,7 @@ RETRO_API void retro_run(void){
                 som_action_name(active_action),frame_number,injected_queries);
     }
     backend_run();
+    if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo)som_ring_ai_tick();
     som_idle_tick();
     if(!direct_transport&&test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&

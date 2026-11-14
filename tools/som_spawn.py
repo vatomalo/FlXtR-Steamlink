@@ -4,6 +4,7 @@
 Stand near a Rabite (or any monster) so it is loaded, then:
 
     python3 tools/som_spawn.py clone     # copy it 32 px to the right
+    python3 tools/som_spawn.py familiar  # celestial colors; still HOSTILE
     python3 tools/som_spawn.py undo      # restore the snapshot taken first
     python3 tools/som_spawn.py show      # list the three monster slots
 
@@ -41,7 +42,7 @@ def show(link):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("clone", "undo", "show"))
+    parser.add_argument("command", choices=("clone", "familiar", "undo", "show"))
     parser.add_argument("--host", default="root@100.124.74.13")
     args = parser.parse_args()
     link = RemoteLink(args.host)
@@ -49,7 +50,12 @@ def main():
         print("before:")
         show(link)
         if args.command != "show":
-            link.send_control("clone_enemy" if args.command == "clone" else "undo_spawn")
+            control = {"clone": "clone_enemy",
+                       "familiar": "clone_familiar_visual",
+                       "undo": "undo_spawn"}[args.command]
+            if args.command == "familiar":
+                print("WARNING: visual preview only. Clone retains HOSTILE enemy AI.")
+            link.send_control(control)
             time.sleep(0.5)  # proxy reads commands every 2 frames, WRAM every 6
             print("after:")
             show(link)

@@ -1,4 +1,4 @@
-"""Deterministic play loop: hunt -> shop -> inn -> save -> hunt.
+"""Deterministic play loop with durable return-to-inn-and-save commitment.
 
 Used to soak-test game edits with a hero that actually plays. Qwen does not
 pick goals while the loop runs; each phase maps onto goals the planner and
@@ -7,14 +7,14 @@ the existing closed-loop macros already carry out:
 - hunt: travel to the hunting map (best gold per HP lost in the reward
   ledger, or --hunt-map) and fight there. The trip ends when it has earned
   `trip_gold`, HP drops below 60 %, or after `hunt_decisions` decisions
-  (travel included). Shop, inn and save each give up after
-  ERRAND_DECISIONS so a route that never arrives cannot stall the loop.
+  (travel included). Once the return trip starts, it remains committed until
+  a verified save succeeds; fighting may interrupt movement but not erase it.
 - shop: buy Candy (ShopMacro) while the shop errand is available.
 - inn: rest (InnMacro); skipped when HP is already full, because the inn
   macro rejects a full-HP stay and would disable the inn for the run.
 - save: replay the save the player taught with tools/som_teach_save.py and
-  verify that the taught final page appeared; skipped (logged once) when no
-  save is taught, so a save slot is never written by guesswork.
+  verify that the taught final page appeared. An untaught/failed save is
+  blocked rather than being silently counted as complete.
 
 Survival (HP at or below half) stays with the planner, which retreats to the
 inn by itself; a successful inn stay from any cause advances the loop to
@@ -30,7 +30,7 @@ from som_menu import REPLAYABLE, InnMacro, MacroFailed
 PHASES = ("hunt", "shop", "inn", "save")
 TRIP_GOLD = 100
 HUNT_DECISIONS = 3000
-ERRAND_DECISIONS = 1500   # shop/inn/save travel that never arrives moves on
+ERRAND_DECISIONS = 1500   # shop alone may time out; inn/save never expire
 NEXT = {"hunt": "shop", "shop": "inn", "inn": "save", "save": "hunt"}
 LEAVE_HP_TENTHS = 6
 # HP a game over on a map counts as when ranking hunting maps.
@@ -75,6 +75,8 @@ class PlayLoop:
         self.state = state if isinstance(state, dict) and state.get("phase") in PHASES else \
             {"phase": "hunt", "trip_gold": None, "steps": 0, "cycles": 0}
         self.warned = set()
+        # The durable objective survives game resets and tactical interruptions.
+        # Phase is persisted; the short-term tactical decision is not.
 
     @property
     def phase(self):
@@ -113,7 +115,7 @@ class PlayLoop:
             self.state["steps"] = self.state.get("steps", 0) + 1
             if self.state["steps"] % 100 == 0:
                 self._save_state()
-            if phase != "hunt" and self.state["steps"] > ERRAND_DECISIONS:
+            if phase == "shop" and self.state["steps"] > ERRAND_DECISIONS:
                 self._enter(NEXT[phase], f"{phase} errand did not finish in "
                             f"{ERRAND_DECISIONS} decisions")
                 continue
@@ -147,19 +149,18 @@ class PlayLoop:
                 continue
             if phase == "inn":
                 if not inn_ready:
-                    self._warn_once("no_inn", "[loop] inn not taught or disabled; skipping rest")
-                    self._enter("save", "no usable inn")
-                    continue
+                    self._warn_once("no_inn", "[loop] inn unavailable; committed "
+                                    "return objective remains active")
+                    return "await_inn_setup"
                 if max_hp and hp >= max_hp:
                     self._enter("save", "HP already full; no rest needed")
                     continue
                 return "go_to_inn"
             if phase == "save":
                 if not save_ready:
-                    self._warn_once("no_save", "[loop] no save taught (run "
-                                    "tools/som_teach_save.py); not saving")
-                    self._enter("hunt", "save skipped")
-                    continue
+                    self._warn_once("no_save", "[loop] save unavailable: teach/repair "
+                                    "save (tools/som_teach_save.py); commitment held")
+                    return "await_save_setup"
                 return "go_to_save"
         return "hunt_here"
 
@@ -174,13 +175,17 @@ class PlayLoop:
         self._enter("save", "rested at the inn")
 
     def inn_failed(self, why):
-        self._enter("save", f"inn failed: {why}")
+        self._warn_once(("inn_failed", why),
+                        f"[loop] inn attempt failed ({why}); retain return objective")
+        self._save_state()
 
     def save_done(self):
         self._enter("hunt", "game saved")
 
     def save_failed(self, why):
-        self._enter("hunt", f"save failed: {why}")
+        self._warn_once(("save_failed", why),
+                        f"[loop] save attempt failed ({why}); do not resume hunting")
+        self._save_state()
 
 
 class SaveMacro(InnMacro):

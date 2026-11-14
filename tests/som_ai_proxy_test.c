@@ -745,108 +745,73 @@ int main(void){
         assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
         unlink(pkg_path);unlink(any_path);
     }
-    /* Weapon switch without the ring: the fields a live ring switch wrote. */
+    /* Regression: no wrong sprite data is written by class weapon switching.
+     * The native ring must first equip the weapon. */
     {
         backend_retro_get_memory_data=mocked_memory_data;
         backend_retro_get_memory_size=mocked_memory_size;
-        mocked_has_vram=1;memset(mocked_vram,0,sizeof(mocked_vram));
-        som_weapon_cache_reset();
+        mocked_has_vram=1;
         memset(mocked_wram,0,sizeof(mocked_wram));
+        memset(mocked_vram,0x5A,sizeof(mocked_vram));
         uint8_t *ram=mocked_wram,*hero=ram+0xE000;
         ram[0xE4]=1;ram[0xE6]=0x0F;hero[0]=1;
-        memset(ram+0xCC54,0xFF,8);ram[0xCC55]=0x40;ram[0xCC56]=0x00;ram[0xCC59]=0x00;
-        hero[0x1C0]=0x01;                                   /* sword level 1 */
-        hero[0x1E4]=1;hero[0x1E3]=hero[0x1E8]=9;hero[0x198]=24;hero[0x19C]=1;hero[0x196]=3;
-        hero[0x8A]=0xC0;memset(mocked_vram+SOM_FAMILIAR_OBJ_VRAM+0xC0*32,0x11,32);
-        for(unsigned i=0;i<13;i++)som_weapon_cache_frame();
-        assert(weapon_graphics[1].valid&&weapon_graphics[1].has_vram); /* real loader learned */
-        /* Verified cache survives restart, but rejects a different ROM. */
-        char cache_path[]="/tmp/flxtr-weapon-cache-test-XXXXXX";
-        int cfd=mkstemp(cache_path);assert(cfd>=0);close(cfd);unlink(cache_path);
-        weapon_cache_file=cache_path;weapon_rom_hash=0x12345678u;
-        som_weapon_cache_save();
-        assert(access(cache_path,F_OK)==0);
-        som_weapon_cache_reset();
-        assert(som_weapon_cache_load()==1&&weapon_graphics[1].valid);
-        weapon_rom_hash=0x87654321u;
-        som_weapon_cache_reset();
-        assert(som_weapon_cache_load()==0&&!weapon_graphics[1].valid);
-        weapon_rom_hash=0x12345678u;
-        assert(som_weapon_cache_load()==1);
-        unlink(cache_path);weapon_cache_file=SOM_WEAPON_CACHE_FILE;
-        weapon_rom_hash=0;
-        /* Pretend the real ring loader has also shown axe and bow once. */
-        const unsigned cached_type[2]={2,5};
-        for(unsigned n=0;n<2;n++){
-            SomFamiliarCarry *c=&weapon_graphics[cached_type[n]];
-            memset(c,0,sizeof(*c));c->valid=c->has_vram=1;c->tile_count=1;
-            c->tile_id[0]=(uint16_t)(0xC0u+cached_type[n]);
-            c->object[0x8A]=(uint8_t)c->tile_id[0];
-            memset(c->tile_data[0],(int)(0x20u+cached_type[n]),32);
-        }
-        assert(!som_equip_weapon(ram,3));                    /* spear not owned */
-        assert(som_equip_weapon(ram,2));                     /* axe, as recorded */
-        assert(hero[0x1E4]==2&&hero[0x1E3]==0x12&&hero[0x1E8]==0x12&&hero[0x198]==25);
-        assert(hero[0x19C]==0&&hero[0x196]==0&&hero[0x068]==2&&hero[0x07F]==0x12);
-        assert(hero[0x066]==0x32&&hero[0x02B]==0x24&&hero[0x065]==0x20&&hero[0x06B]==0x33);
-        assert(hero[0x8A]==0xC2&&mocked_vram[SOM_FAMILIAR_OBJ_VRAM+0xC2*32]==0x22);
-        assert(ram[0xCC55]==0x00&&ram[0xCC56]==0x40);         /* held bit moved */
-        assert(som_cycle_weapon(ram)&&hero[0x1E4]==5);       /* next owned: bow */
-        assert(som_cycle_weapon(ram)&&hero[0x1E4]==1&&hero[0x196]==3&&hero[0x19C]==1);
-        assert(hero[0x198]==24);                              /* attack back */
-        ram[0xCC57]=0;assert(!som_equip_weapon(ram,3)&&hero[0x1E4]==1);
-        assert(overlay.frames_left&&strstr(overlay.lines[0],"Equip spear")&&
-               strstr(overlay.lines[1],"cache its graphics"));              /* never garble */
-        /* Swordsmanship: B = sword, Y = axe; the game sees Y as B. */
-        on_turbo=1;physical_state=mocked_input;ring_ai_enabled=0;som_manual_disciplines=0;
+        memset(ram+0xCC54,0xFF,8);
+        ram[0xCC55]=0x40;ram[0xCC56]=0;ram[0xCC59]=0;
+        hero[0x1E4]=1;hero[0x19C]=1;
+        uint8_t hero_before[SOM_FAMILIAR_OBJECT];
+        memcpy(hero_before,hero,sizeof(hero_before));
+        assert(!som_equip_weapon(ram,2)); /* no unsafe instant swap */
+        assert(hero[0x1E4]==1);
+        assert(memcmp(hero,hero_before,sizeof(hero_before))==0);
+        assert(mocked_vram[0xC000]==0x5A&&mocked_vram[0xFFFF]==0x5A);
+        assert(!som_cycle_weapon(ram));
         som_disc_init(&disciplines);disciplines.selected=0;
-        pressed=100;pressed_too=100;som_input_poll();
-        pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
-        assert(hero[0x1E4]==2);                               /* second weapon: axe */
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
-        pressed=100;som_input_poll();
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
-        pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
-        assert(hero[0x1E4]==1);                               /* B: back to the sword */
-        pressed=100;som_input_poll();
-        pressed=RETRO_DEVICE_ID_JOYPAD_Y;pressed_too=RETRO_DEVICE_ID_JOYPAD_L2;som_input_poll();
-        assert(hero[0x1E4]==1);                               /* L2+Y: the ring */
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        pressed=100;pressed_too=100;som_input_poll();
-        ram[0xD0]=0x81;pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
-        assert(hero[0x1E4]==1&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        pressed=100;som_input_poll();ram[0xD0]=0;
-        disciplines.selected=SOM_DISCIPLINE_NONE;                /* no discipline: native Y */
-        pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
-        assert(hero[0x1E4]==1&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        pressed=100;som_input_poll();
-        /* R2+B charges a native level-1 sword special; R2+Y uses the
-         * secondary weapon's level-2 charge when unlocked. */
-        som_disc_init(&disciplines);disciplines.selected=0;
-        mocked_wram[0xE1ED]=0;mocked_wram[0xE19B]=0;
-        physical_state=mocked_input_mask;mocked_buttons=0;
-        som_input_poll();mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
-                                                   (1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        ring_ai_enabled=0;som_manual_disciplines=0;
+        on_turbo=1;special_stage=special_suppress=0;
+        physical_state=mocked_input_mask;mocked_buttons=0;last_physical_buttons=0;
         som_input_poll();
-        assert(special_stage==1&&special_weapon==1);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
-               (1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+        som_input_poll();
+        assert(y_weapon_blocked&&!y_weapon_swap);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+        assert(hero[0x1E4]==1);
         mocked_buttons=0;som_input_poll();
-        mocked_wram[0xE19B]=1;som_special_tick();
-        assert(!special_stage);
-        mocked_wram[0xE19B]=0;som_input_poll();
-        hero[0x1C1]=0x20; /* axe level 2 */
+        /* A real game-ring equip changes the equipped type and level. */
+        hero[0x1E4]=2;hero[0x19C]=2;hero[0x19B]=0;
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+        som_input_poll();
+        assert(y_weapon_swap&&!y_weapon_blocked);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        mocked_buttons=0;som_input_poll();
+        /* Level-2 secondary special can charge the already-native-equipped axe. */
         mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
                                    (1u<<RETRO_DEVICE_ID_JOYPAD_Y));
         som_input_poll();
-        assert(special_stage==2&&special_weapon==2&&hero[0x1E4]==2);
+        assert(special_stage==2&&special_weapon==2);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
+               (1u<<RETRO_DEVICE_ID_JOYPAD_B));
         mocked_buttons=0;som_input_poll();
-        mocked_wram[0xE19B]=2;som_special_tick();
+        hero[0x19B]=2;som_special_tick();
         assert(!special_stage);
-        mocked_wram[0xE19B]=0;som_input_poll();
-        physical_state=mocked_input;
-        pressed=100;som_disc_init(&disciplines);mocked_has_vram=0;
+        hero[0x19B]=0;som_input_poll();
+        /* Level-1 primary special is not allowed until the native ring equips sword. */
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+                                   (1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        som_input_poll();
+        assert(!special_stage&&hero[0x1E4]==2);
+        mocked_buttons=0;som_input_poll();
+        hero[0x1E4]=1;hero[0x19C]=1;
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+                                   (1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        som_input_poll();
+        assert(special_stage==1&&special_weapon==1);
+        mocked_buttons=0;som_input_poll();
+        hero[0x19B]=1;som_special_tick();
+        assert(!special_stage);
+        hero[0x19B]=0;mocked_buttons=0;som_input_poll();
+        physical_state=mocked_input;mocked_has_vram=0;
+        pressed=100;pressed_too=100;
+        som_disc_init(&disciplines);
     }
     /* give_<weapon>: only an unowned weapon, tier 0, with an undo snapshot. */
     {

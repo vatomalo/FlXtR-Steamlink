@@ -135,6 +135,35 @@ int main(void){
     assert(som_disc_weapons[1][0]==0&&som_disc_weapons[1][1]==3);
     assert(som_disc_weapons[2][0]==1&&som_disc_weapons[2][1]==6);
     assert(som_disc_weapons[10][0]==1&&som_disc_weapons[10][1]==5);
+    /* Four distinct sword swings with observed HP loss queue the finisher.
+     * Button presses without damage must not count. */
+    backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;
+    mocked_wram[0xE6]=0x0F;mocked_wram[0xE1E4]=1;
+    mocked_wram[0xE19C]=1;
+    mocked_wram[0xE600]=1;mocked_wram[0xE780]=7;
+    mocked_wram[0xE782]=100;mocked_wram[0xE783]=0;
+    som_combo_clear();frame_number=500;
+    som_combo_frame();
+    for(unsigned h=0;h<4;h++){
+        frame_number+=20;som_combo_swing();
+        mocked_wram[0xE782]--;
+        som_combo_frame();
+        assert(combo_count==(h==3?0:h+1));
+    }
+    assert(combo_queued);
+    combo_input_held=0;armed=0;som_combo_frame();
+    assert(combo_charging);
+    mocked_wram[0xE19B]=1;frame_number++;som_combo_frame();
+    assert(!combo_charging&&!combo_queued);
+    som_combo_clear();mocked_wram[0xE19B]=0;
+    frame_number+=20;som_combo_swing();som_combo_frame();
+    assert(!combo_count);
+    frame_number+=SOM_COMBO_HIT_WINDOW+1;som_combo_frame();
+    assert(!combo_pending&&!combo_count);
+    memset(mocked_wram,0,sizeof(mocked_wram));
     physical_state=mocked_input;
     /* snes9x2005 queries the whole pad with one bitmask when supported. */
     reset_proxy();som_start_action(SOM_ACT_STEP_DOWN);

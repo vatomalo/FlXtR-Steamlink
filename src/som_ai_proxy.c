@@ -564,7 +564,7 @@ static int som_summon_boss(void);
  * does so only during effects such as dash and block). Written to
  * SOM_PAL_TRACE_FILE when done. */
 #define SOM_PAL_TRACE_FILE "/tmp/flxtr-som-paltrace.bin"
-#define SOM_PAL_TRACE_FRAMES 240u
+#define SOM_PAL_TRACE_FRAMES 480u          /* 8 s */
 #define SOM_PAL_TRACE_LOW 0x2000u
 static const char *pal_trace_file=SOM_PAL_TRACE_FILE;
 static uint8_t *pal_trace;
@@ -572,7 +572,8 @@ static unsigned pal_trace_frames;
 static int pal_trace_on;
 static void som_pal_trace_frame(const uint8_t *ram){
     if(!pal_trace_on||!ram)return;
-    const size_t record=SOM_PAL_TRACE_LOW+0x200u;          /* low WRAM + 7EDE00-DFFF */
+    /* low WRAM + palette shadow 7EDE00-DFFF + hero object 7EE000-E1FF */
+    const size_t record=SOM_PAL_TRACE_LOW+0x400u;
     if(!pal_trace){
         pal_trace=malloc(record*SOM_PAL_TRACE_FRAMES);
         if(!pal_trace){pal_trace_on=0;return;}
@@ -580,6 +581,7 @@ static void som_pal_trace_frame(const uint8_t *ram){
     uint8_t *at=pal_trace+record*pal_trace_frames;
     memcpy(at,ram,SOM_PAL_TRACE_LOW);
     memcpy(at+SOM_PAL_TRACE_LOW,ram+0xDE00u,0x200u);
+    memcpy(at+SOM_PAL_TRACE_LOW+0x200u,ram+0xE000u,0x200u);
     if(++pal_trace_frames<SOM_PAL_TRACE_FRAMES)return;
     pal_trace_on=0;
     char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",pal_trace_file);
@@ -820,7 +822,7 @@ static void som_check_trigger(void){
     if(!strcmp(command,"vram_dump")){som_vram_dump();return;}
     if(!strcmp(command,"pal_trace")){
         pal_trace_frames=0;pal_trace_on=1;
-        som_overlay_set(&overlay,"Trace: dash and block now!",SOM_MESSAGE_FRAMES);
+        som_overlay_set(&overlay,"Recording 8 s: move now!",SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] PALETTE TRACE started\n");
         return;
     }

@@ -695,13 +695,15 @@ int main(void){
         pal_trace_file=trace_path;
         static uint8_t ram[SOM_WRAM_SIZE];memset(ram,0,sizeof(ram));
         pal_trace_frames=0;pal_trace_on=1;
-        for(unsigned f=0;f<SOM_PAL_TRACE_FRAMES;f++){ram[0x10]=(uint8_t)f;ram[0xDF20]=(uint8_t)(f*3);som_pal_trace_frame(ram);}
+        for(unsigned f=0;f<SOM_PAL_TRACE_FRAMES;f++){ram[0x10]=(uint8_t)f;ram[0xDF20]=(uint8_t)(f*3);
+            ram[0xE01C]=(uint8_t)(f+1);som_pal_trace_frame(ram);}
         assert(!pal_trace_on);
         FILE *tf=fopen(trace_path,"rb");assert(tf);
-        fseek(tf,0,SEEK_END);assert(ftell(tf)==(long)((SOM_PAL_TRACE_LOW+0x200u)*SOM_PAL_TRACE_FRAMES));
-        uint8_t first[SOM_PAL_TRACE_LOW+0x200u];fseek(tf,(long)(SOM_PAL_TRACE_LOW+0x200u)*5,SEEK_SET);
+        fseek(tf,0,SEEK_END);assert(ftell(tf)==(long)((SOM_PAL_TRACE_LOW+0x400u)*SOM_PAL_TRACE_FRAMES));
+        uint8_t first[SOM_PAL_TRACE_LOW+0x400u];fseek(tf,(long)(SOM_PAL_TRACE_LOW+0x400u)*5,SEEK_SET);
         assert(fread(first,1,sizeof(first),tf)==sizeof(first)&&fclose(tf)==0);
         assert(first[0x10]==5&&first[SOM_PAL_TRACE_LOW+0x120]==15);
+        assert(first[SOM_PAL_TRACE_LOW+0x200+0x1C]==6);           /* hero object */
         unlink(trace_path);
     }
     /* vram_dump: read-only copy of the core's video RAM, if exposed. */

@@ -692,21 +692,39 @@ int main(void){
     {
         backend_retro_get_memory_data=mocked_memory_data;
         backend_retro_get_memory_size=mocked_memory_size;
+        mocked_has_vram=1;memset(mocked_vram,0,sizeof(mocked_vram));
+        som_weapon_cache_reset();
         memset(mocked_wram,0,sizeof(mocked_wram));
         uint8_t *ram=mocked_wram,*hero=ram+0xE000;
         ram[0xE4]=1;ram[0xE6]=0x0F;hero[0]=1;
         memset(ram+0xCC54,0xFF,8);ram[0xCC55]=0x40;ram[0xCC56]=0x00;ram[0xCC59]=0x00;
         hero[0x1C0]=0x01;                                   /* sword level 1 */
         hero[0x1E4]=1;hero[0x1E3]=hero[0x1E8]=9;hero[0x198]=24;hero[0x19C]=1;hero[0x196]=3;
+        hero[0x8A]=0xC0;memset(mocked_vram+SOM_FAMILIAR_OBJ_VRAM+0xC0*32,0x11,32);
+        for(unsigned i=0;i<13;i++)som_weapon_cache_frame();
+        assert(weapon_graphics[1].valid&&weapon_graphics[1].has_vram); /* real loader learned */
+        /* Pretend the real ring loader has also shown axe and bow once. */
+        const unsigned cached_type[2]={2,5};
+        for(unsigned n=0;n<2;n++){
+            SomFamiliarCarry *c=&weapon_graphics[cached_type[n]];
+            memset(c,0,sizeof(*c));c->valid=c->has_vram=1;c->tile_count=1;
+            c->tile_id[0]=(uint16_t)(0xC0u+cached_type[n]);
+            c->object[0x8A]=(uint8_t)c->tile_id[0];
+            memset(c->tile_data[0],(int)(0x20u+cached_type[n]),32);
+        }
         assert(!som_equip_weapon(ram,3));                    /* spear not owned */
         assert(som_equip_weapon(ram,2));                     /* axe, as recorded */
         assert(hero[0x1E4]==2&&hero[0x1E3]==0x12&&hero[0x1E8]==0x12&&hero[0x198]==25);
         assert(hero[0x19C]==0&&hero[0x196]==0&&hero[0x068]==2&&hero[0x07F]==0x12);
         assert(hero[0x066]==0x32&&hero[0x02B]==0x24&&hero[0x065]==0x20&&hero[0x06B]==0x33);
+        assert(hero[0x8A]==0xC2&&mocked_vram[SOM_FAMILIAR_OBJ_VRAM+0xC2*32]==0x22);
         assert(ram[0xCC55]==0x00&&ram[0xCC56]==0x40);         /* held bit moved */
         assert(som_cycle_weapon(ram)&&hero[0x1E4]==5);       /* next owned: bow */
         assert(som_cycle_weapon(ram)&&hero[0x1E4]==1&&hero[0x196]==3&&hero[0x19C]==1);
         assert(hero[0x198]==24);                              /* attack back */
+        ram[0xCC57]=0;assert(!som_equip_weapon(ram,3)&&hero[0x1E4]==1);
+        assert(overlay.frames_left&&strstr(overlay.lines[0],"Equip spear")&&
+               strstr(overlay.lines[1],"cache its graphics"));              /* never garble */
         /* Swordsmanship: B = sword, Y = axe; the game sees Y as B. */
         on_turbo=1;physical_state=mocked_input;ring_ai_enabled=0;som_manual_disciplines=0;
         som_disc_init(&disciplines);disciplines.selected=0;
@@ -730,7 +748,7 @@ int main(void){
         disciplines.selected=SOM_DISCIPLINE_NONE;                /* no discipline: native Y */
         pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
         assert(hero[0x1E4]==1&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        pressed=100;som_input_poll();som_disc_init(&disciplines);
+        pressed=100;som_input_poll();som_disc_init(&disciplines);mocked_has_vram=0;
     }
     /* give_<weapon>: only an unowned weapon, tier 0, with an undo snapshot. */
     {

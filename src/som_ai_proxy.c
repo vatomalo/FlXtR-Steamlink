@@ -625,6 +625,7 @@ static int som_summon_boss(void);
 static const char *const som_weapon_types[8]={"glove","sword","axe","spear","whip","bow",
     "boomerang","javelin"};
 static int som_take_undo(void);
+static uint8_t *som_vram(void);
 /* Switching weapons without the ring (EXPERIMENTAL). Live traces of ring
  * switches through all 8 weapons (2026-11-14) showed what the game writes
  * on the hero: type +0x1E4, row +0x1E3/+0x1E8 (type*9 + tier), attack
@@ -643,6 +644,51 @@ static const SomWeaponLook som_weapon_look[8]={
     {23,0x17,0x36,0x2E,0xD0,0x3D},   /* javelin */
 };
 static uint8_t weapon_progress[8];      /* +0x196 per weapon, kept while away */
+/* The game decompresses only the equipped weapon's sprite tiles. Directly
+ * changing the object fields without running that loader leaves the old
+ * weapon in VRAM and produces garbled sprites. Learn a bank only after the
+ * game has held a weapon steadily in field play (map entry or a real ring
+ * equip), then restore those exact tiles for subsequent instant switches. */
+static SomFamiliarCarry weapon_graphics[8];
+static unsigned weapon_cache_candidate=8u,weapon_cache_stable;
+static void som_weapon_cache_reset(void){
+    memset(weapon_graphics,0,sizeof(weapon_graphics));
+    weapon_cache_candidate=8u;weapon_cache_stable=0;
+}
+static void som_weapon_cache_frame(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    uint8_t *vram=som_vram();
+    if(!ram||!vram||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1||
+       ram[0xE000]!=1){weapon_cache_candidate=8u;weapon_cache_stable=0;return;}
+    uint8_t *hero=ram+0xE000u;
+    const unsigned type=hero[0x1E4];
+    if(type>=8u){weapon_cache_candidate=8u;weapon_cache_stable=0;return;}
+    if(weapon_cache_candidate!=type){weapon_cache_candidate=type;weapon_cache_stable=1;return;}
+    if(weapon_cache_stable<12u){weapon_cache_stable++;return;}
+    if(weapon_graphics[type].has_vram&&frame_number%120u!=0)return;
+    SomFamiliarCarry learned;memset(&learned,0,sizeof(learned));
+    memcpy(learned.object,hero,sizeof(learned.object));
+    som_familiar_capture_vram(&learned,ram,vram,hero,
+        (unsigned)(ram[0xDC]|ram[0xDD]<<8));
+    if(!learned.has_vram)return;
+    learned.valid=1;weapon_graphics[type]=learned;
+    fprintf(stderr,"[som-ai] WEAPON graphics cached: %s (%u tiles)\n",
+        som_weapon_types[type],learned.tile_count);
+}
+static int som_weapon_restore_graphics(uint8_t *hero,unsigned type){
+    SomFamiliarCarry *cached=type<8u?&weapon_graphics[type]:NULL;
+    uint8_t *vram=som_vram();
+    if(!cached||!cached->valid||!cached->has_vram||!vram)return 0;
+    for(unsigned i=0;i<sizeof(som_familiar_tile_fields);i++){
+        const unsigned field=som_familiar_tile_fields[i];
+        hero[field]=cached->object[field];hero[field+1u]=cached->object[field+1u];
+    }
+    for(unsigned i=0;i<cached->tile_count;i++)
+        memcpy(vram+SOM_FAMILIAR_OBJ_VRAM+cached->tile_id[i]*32u,
+               cached->tile_data[i],32u);
+    return 1;
+}
 static int som_equip_weapon(uint8_t *ram,unsigned type){
     if(!ram||type>=8u||ram[0xE000]!=1)return 0;
     if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
@@ -651,6 +697,14 @@ static int som_equip_weapon(uint8_t *ram,unsigned type){
     if(current>=8u||current==type)return 0;
     uint8_t *owned=ram+0xCC54u;
     if(owned[type]==0xFF)return 0;                         /* not owned */
+    if(!som_weapon_restore_graphics(hero,type)){
+        char message[96];snprintf(message,sizeof(message),"^Equip %s once in ring|to cache its graphics",
+            som_weapon_types[type]);
+        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] WEAPON refused: %s graphics are not cached\n",
+            som_weapon_types[type]);
+        return 0;
+    }
     const unsigned tier=owned[type]&0x0Fu;
     weapon_progress[current]=hero[0x196];
     int attack=(int)hero[0x198]+(int)som_weapon_look[type].attack-
@@ -1221,6 +1275,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_disc_load();
+    som_weapon_cache_reset();
     hero_pal_have=0;
     som_gambit_load();
     last_input_frame=frame_number;idle_started=0;
@@ -1276,6 +1331,7 @@ RETRO_API void retro_unload_game(void){
     unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     familiar_carry.valid=0;
+    som_weapon_cache_reset();
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
     undo_ready=0;
@@ -1415,6 +1471,7 @@ RETRO_API void retro_run(void){
     }
     som_clone_tick();
     som_familiar_frame();
+    if(test_enabled&&on_turbo)som_weapon_cache_frame();
     if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_hero_palette_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));

@@ -135,6 +135,20 @@ int main(void){
     assert(som_disc_weapons[1][0]==0&&som_disc_weapons[1][1]==3);
     assert(som_disc_weapons[2][0]==1&&som_disc_weapons[2][1]==6);
     assert(som_disc_weapons[10][0]==1&&som_disc_weapons[10][1]==5);
+    /* Grant only missing weapons on selection, retaining tiers/ownership. */
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
+    for(unsigned i=0;i<8;i++)mocked_wram[0xCC54+i]=0xFF;
+    mocked_wram[0xCC55]=0x43; /* already-owned tier-3 sword */
+    assert(som_class_supply(mocked_wram,2)==1); /* Ninja gains chakram */
+    assert(mocked_wram[0xCC55]==0x43&&mocked_wram[0xCC5A]==0);
+    assert(som_class_supply(mocked_wram,2)==0); /* idempotent */
+    assert(som_class_supply(mocked_wram,10)==1); /* Samurai gains yumi */
+    assert(mocked_wram[0xCC59]==0&&mocked_wram[0xCC55]==0x43);
+    mocked_wram[0xE4]=0;mocked_wram[0xCC56]=0xFF;
+    assert(som_class_supply(mocked_wram,0)==0); /* no changes outside field */
+    assert(mocked_wram[0xCC56]==0xFF);
+
     /* Four distinct sword swings with observed HP loss queue the finisher.
      * Button presses without damage must not count. */
     backend_retro_get_memory_data=mocked_memory_data;

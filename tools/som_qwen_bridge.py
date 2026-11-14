@@ -55,10 +55,11 @@ ACTIONS = {
 CANDY_TRANSIENT = ("did not produce an open ring", "not in field mode")
 CANDY_RETRY_S = 4.0
 CANDY_MAX_RETRIES = 6
-# Gambits: activities the player switches on/off from the gamepad menu drawn
-# by the proxy (src/som_gambit.h, same bit order). All on by default.
+# Gambits: activity priorities 0..5 (0 = never) the player sets from the
+# gamepad menu drawn by the proxy (src/som_gambit.h, same order and defaults).
 GAMBIT_FIGHT, GAMBIT_INN, GAMBIT_SHOP, GAMBIT_SAVE, GAMBIT_CANDY, GAMBIT_TALK = range(6)
-GAMBITS_ALL = 0x3F
+GAMBIT_DEFAULTS = "433341"
+GAMBIT_NAMES = ("fight", "inn", "shop", "save", "candy", "talk")
 GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
 # Intentions the personality comments on (som_personality.LINES events).
@@ -445,7 +446,8 @@ REMOTE_LOOP = (
                      for start, count in HOT_RANGES_KB) + "; } | gzip -1 -c; exec 3<&-; "
     "else echo NONE; fi;; "
     "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
-    "case \"$m\" in ''|*[!0-9]*) m=" + str(GAMBITS_ALL) + ";; esac; echo \"GMB $m\";; "
+    "case \"$m\" in [0-5][0-5][0-5][0-5][0-5][0-5]) ;; *) m=" + GAMBIT_DEFAULTS + ";; esac; "
+    "echo \"GMB $m\";; "
     "obsz|obsmz) "
     "if [ \"$cmd\" = obsmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
     "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMZ; gzip -1 -c <&3; exec 3<&-; "
@@ -595,11 +597,12 @@ class RemoteLink:
         return payload
 
     def fetch_gambits(self):
-        """The gambit mask the player set in the in-game menu."""
+        """The gambit priorities (tuple of 0..5) the player set in the game."""
         status, _ = self._request("gmb")
-        if not status.startswith("GMB ") or not status[4:].isdigit():
+        digits = status[4:] if status.startswith("GMB ") else ""
+        if len(digits) != len(GAMBIT_NAMES) or any(c not in "012345" for c in digits):
             raise OSError(f"gambits unavailable ({status})")
-        return int(status[4:]) & GAMBITS_ALL
+        return tuple(int(c) for c in digits)
 
     def show_message(self, text: str) -> None:
         """Ask the proxy to draw a short two-line message box ('|' = new line)."""
@@ -669,13 +672,13 @@ def loop_message(goal):
     return LOOP_MESSAGES.get(goal, f"AI: {str(goal).replace('_', ' ')}")
 
 
-def shop_errand(wram, observation, shop, gold, threshold):
-    """Shop for Candy when healthy, rich, and not already carrying four."""
+def shop_errand(wram, observation, shop, gold, threshold, stock=MAX_ITEM_COUNT):
+    """Shop for Candy when healthy, rich, and carrying fewer than `stock`."""
     if not isinstance(shop, dict) or not isinstance(gold, dict):
         return None
     hero = (observation.get("party") or [{}])[0]
     hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-    if not max_hp or hp * 2 <= max_hp or candy_count(wram) >= MAX_ITEM_COUNT:
+    if not max_hp or hp * 2 <= max_hp or candy_count(wram) >= min(stock, MAX_ITEM_COUNT):
         return None
     money = read_gold(wram, gold)
     if money is None or money < max(threshold, int(shop.get("price", 0))):
@@ -748,13 +751,30 @@ def survey(history, raw, radius):
     return history.remember_world({"tile_context": context})
 
 
-def candy_wanted(observation):
-    """Use Candy below half HP when no enemy is within weapon reach."""
+def candy_fraction(weights):
+    """HP fraction below which Candy is used: half when Candy weighs at
+    least as much as resting at the inn, else only at critical HP."""
+    return 0.5 if weights[GAMBIT_CANDY] >= weights[GAMBIT_INN] else 0.25
+
+
+def apply_gambits(planner, play_loop, weights):
+    """Weigh the activities against each other (see GAMBIT_DEFAULTS)."""
+    fight, inn = weights[GAMBIT_FIGHT], weights[GAMBIT_INN]
+    planner.peaceful = fight == 0
+    planner.no_retreat = inn == 0
+    # Fight over inn: rest later; inn over fight: rest earlier (8 % per step).
+    planner.retreat_fraction = min(0.75, max(0.25, 0.5 + 0.08 * (inn - fight)))
+    if play_loop is not None:
+        play_loop.leave_fraction = min(0.85, max(0.3, 0.6 + 0.08 * (inn - fight)))
+
+
+def candy_wanted(observation, fraction=0.5):
+    """Use Candy below `fraction` of max HP when no enemy is within weapon reach."""
     if not isinstance(observation, dict) or not observation.get("candy_count"):
         return False
     hero = (observation.get("party") or [{}])[0]
     hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-    if not max_hp or hp * 2 > max_hp:
+    if not max_hp or hp > max_hp * fraction:
         return False
     actor = ((observation.get("tile_context") or {}).get("actor") or {})
     for enemy in observation.get("enemy_slots", []):
@@ -917,10 +937,11 @@ def main() -> int:
                    else Calibration.load())
     candy_disabled = calibration is None
     candy_retry_at, candy_failures = 0.0, 0
-    gambits = GAMBITS_ALL
+    gambits = tuple(int(c) for c in GAMBIT_DEFAULTS)
+    apply_gambits(planner, None, gambits)       # the play loop follows on the first read
 
-    def gambit(bit):
-        return bool(gambits >> bit & 1)
+    def gambit(index):
+        return gambits[index] > 0
     inn_disabled = False
     inn_lookalikes = set()
     surveyed_map, surveys_due = None, 0
@@ -1225,7 +1246,7 @@ def main() -> int:
                 orphan_ring_samples = 0
             if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
                     time.monotonic() >= candy_retry_at and gambit(GAMBIT_CANDY) and
-                    candy_wanted(observation) and mode == "field"):
+                    candy_wanted(observation, candy_fraction(gambits)) and mode == "field"):
                 if learner is not None:
                     learner.cancel("Candy macro")
                 announce("AI: HP low|using Candy")
@@ -1273,18 +1294,17 @@ def main() -> int:
                           flush=True)
                 if link and step % GAMBIT_REFRESH == 0:
                     try:
-                        mask = link.fetch_gambits()
+                        weights = link.fetch_gambits()
                     except (OSError, subprocess.SubprocessError):
-                        mask = gambits
-                    if mask != gambits:
-                        names = ("fight", "inn", "shop", "save", "candy", "talk")
+                        weights = gambits
+                    if weights != gambits:
                         print("[gambits] " + ", ".join(
-                            f"{name} {'on' if mask >> bit & 1 else 'off'}"
-                            for bit, name in enumerate(names)), flush=True)
-                    gambits = mask
-                    planner.peaceful = not gambit(GAMBIT_FIGHT)
-                    planner.no_retreat = not gambit(GAMBIT_INN)
-                shop_offer = (shop_errand(wram_now, observation, shop, gold, 0)
+                            f"{name} {weight}" for name, weight in zip(GAMBIT_NAMES, weights)),
+                              flush=True)
+                    gambits = weights
+                    apply_gambits(planner, play_loop, gambits)
+                shop_offer = (shop_errand(wram_now, observation, shop, gold, 0,
+                                          gambits[GAMBIT_SHOP])
                               if wram_now is not None and not shop_disabled and
                               gambit(GAMBIT_SHOP) else None)
                 summary = memory_summary(history, observation, money, shop_offer)
@@ -1353,7 +1373,8 @@ def main() -> int:
                           flush=True)
                     goal, directive_turns = "hunt_here", 0
                     directive, goal_errand, _ = goal_plan(goal, summary, args.hunt_direction)
-                auto_errand = (shop_errand(wram_now, observation, shop, gold, args.shop_gold)
+                auto_errand = (shop_errand(wram_now, observation, shop, gold, args.shop_gold,
+                                           gambits[GAMBIT_SHOP])
                                if wram_now is not None and not shop_disabled and
                                gambit(GAMBIT_SHOP) else None)
                 if play_loop is not None:
@@ -1394,6 +1415,8 @@ def main() -> int:
                         ("explore_frontier", "leave_room", "replan", "stuck")):
                     decision = PlannerDecision("wait", "at requested visit map", "visit_map")
                 if (npc_dialogue is not None and not args.no_npc_talk and gambit(GAMBIT_TALK) and
+                        (gambits[GAMBIT_TALK] > gambits[GAMBIT_FIGHT] or
+                         not enemy_within(observation, DASH_ENEMY_PX)) and
                         decision.intention in ("explore_frontier", "leave_room", "replan", "stuck", "visit_map")):
                     npc_action = npc_dialogue.consider(WRAM(raw), observation, planner)
                     if npc_action is not None:

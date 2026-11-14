@@ -88,19 +88,21 @@ static int som_write_ring_ai_marker(void);
  * instead of taking control. The enabled mask persists for the bridge. */
 #define SOM_GAMBIT_FILE "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 static const char *gambit_file=SOM_GAMBIT_FILE;
-static SomGambits gambits={0,0,SOM_GAMBIT_ALL};
+static SomGambits gambits={0,0,{4,3,3,3,4,1}};
 static void som_gambit_load(void){
+    char text[16]={0};
     FILE *in=fopen(gambit_file,"r");
-    unsigned mask=SOM_GAMBIT_ALL;
-    if(in){if(fscanf(in,"%u",&mask)!=1)mask=SOM_GAMBIT_ALL;fclose(in);}
-    gambits.enabled=(uint16_t)(mask&SOM_GAMBIT_ALL);gambits.open=0;gambits.cursor=0;
+    if(in){if(!fgets(text,sizeof(text),in))text[0]=0;fclose(in);}
+    som_gambit_parse(&gambits,text[0]?text:NULL);gambits.open=0;gambits.cursor=0;
 }
 static void som_gambit_save(void){
     char temp[256];
     snprintf(temp,sizeof(temp),"%s.tmp",gambit_file);
     FILE *out=fopen(temp,"w");
     if(!out)return;
-    int ok=fprintf(out,"%u\n",(unsigned)gambits.enabled)>0;
+    char text[SOM_GAMBIT_COUNT+1];
+    som_gambit_format(&gambits,text);
+    int ok=fprintf(out,"%s\n",text)>0;
     if(fclose(out)!=0)ok=0;
     if(ok)rename(temp,gambit_file);else unlink(temp);
 }
@@ -248,7 +250,8 @@ static void som_input_poll(void){
             switch(som_gambit_press(&gambits,pressed)){
             case SOM_GAMBIT_CHANGED:
                 som_gambit_save();
-                fprintf(stderr,"[som-ai] GAMBITS %u\n",(unsigned)gambits.enabled);
+                {char text[SOM_GAMBIT_COUNT+1];som_gambit_format(&gambits,text);
+                 fprintf(stderr,"[som-ai] GAMBITS %s\n",text);}
                 break;
             case SOM_GAMBIT_EXIT:
                 ring_ai_enabled=0;unlink(ring_ai_file);

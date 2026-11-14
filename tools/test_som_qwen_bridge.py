@@ -312,11 +312,27 @@ class TestRemoteLink(unittest.TestCase):
         loop = self.link.remote_loop.replace(str(path), str(self.root / "gambits"))
         self.link.close()
         self.link.remote_loop = loop
-        self.assertEqual(self.link.fetch_gambits(), bridge.GAMBITS_ALL)   # no file: all on
-        (self.root / "gambits").write_text("45\n")
-        self.assertEqual(self.link.fetch_gambits(), 45)
-        (self.root / "gambits").write_text("rm -rf /\n")
-        self.assertEqual(self.link.fetch_gambits(), bridge.GAMBITS_ALL)   # garbage ignored
+        defaults = tuple(int(c) for c in bridge.GAMBIT_DEFAULTS)
+        self.assertEqual(self.link.fetch_gambits(), defaults)              # no file: defaults
+        (self.root / "gambits").write_text("504321\n")
+        self.assertEqual(self.link.fetch_gambits(), (5, 0, 4, 3, 2, 1))
+        for bad in ("rm -rf /\n", "9999999\n", "12\n"):
+            (self.root / "gambits").write_text(bad)
+            self.assertEqual(self.link.fetch_gambits(), defaults)          # garbage ignored
+
+    def test_gambit_weights_are_weighed_against_each_other(self):
+        from types import SimpleNamespace
+        import som_qwen_bridge as bridge
+        planner, loop = SimpleNamespace(), SimpleNamespace()
+        bridge.apply_gambits(planner, loop, (5, 1, 3, 3, 4, 1))     # fight >> inn
+        self.assertLess(planner.retreat_fraction, 0.5)
+        self.assertLess(loop.leave_fraction, 0.6)
+        bridge.apply_gambits(planner, loop, (1, 5, 3, 3, 4, 1))     # inn >> fight
+        self.assertGreater(planner.retreat_fraction, 0.5)
+        bridge.apply_gambits(planner, loop, (0, 0, 3, 3, 4, 1))
+        self.assertTrue(planner.peaceful and planner.no_retreat)
+        self.assertEqual(bridge.candy_fraction((4, 3, 3, 3, 4, 1)), 0.5)   # candy >= inn
+        self.assertEqual(bridge.candy_fraction((4, 5, 3, 3, 2, 1)), 0.25)  # inn first
 
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))

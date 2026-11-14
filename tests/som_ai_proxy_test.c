@@ -134,17 +134,22 @@ int main(void){
      * control; the menu's Exit entry gives the controls back. */
     char gambit_path[]="/tmp/flxtr-gambits-test-XXXXXX";
     {int gfd=mkstemp(gambit_path);assert(gfd>=0);close(gfd);unlink(gambit_path);}
-    gambit_file=gambit_path;gambits.enabled=SOM_GAMBIT_ALL;gambits.open=0;
+    gambit_file=gambit_path;som_gambit_defaults_into(&gambits);gambits.open=0;
     ring_ai_grace_until=0;pressed=100;som_input_poll();             /* buttons up */
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
     assert(ring_ai_enabled&&gambits.open&&access(ring_ai_path,F_OK)==0);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0); /* not to game */
     pressed=100;som_input_poll();
     pressed=RETRO_DEVICE_ID_JOYPAD_DOWN;som_input_poll();pressed=100;som_input_poll();
-    pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;som_input_poll();
-    assert(ring_ai_enabled&&gambits.enabled==(SOM_GAMBIT_ALL&~2u));      /* inn off */
-    {FILE *g=fopen(gambit_path,"r");unsigned m=0;assert(g&&fscanf(g,"%u",&m)==1&&fclose(g)==0);
-     assert(m==(SOM_GAMBIT_ALL&~2u));}
+    pressed=RETRO_DEVICE_ID_JOYPAD_RIGHT;som_input_poll();pressed=100;som_input_poll();
+    assert(ring_ai_enabled&&gambits.weight[1]==4);                       /* inn 3 -> 4 */
+    pressed=RETRO_DEVICE_ID_JOYPAD_LEFT;som_input_poll();pressed=100;som_input_poll();
+    pressed=RETRO_DEVICE_ID_JOYPAD_LEFT;som_input_poll();pressed=100;som_input_poll();
+    assert(gambits.weight[1]==2);
+    {FILE *g=fopen(gambit_path,"r");char t[16]={0};assert(g&&fgets(t,sizeof(t),g)&&fclose(g)==0);
+     assert(!strcmp(t,"423341\n"));}
+    {SomGambits loaded;som_gambit_parse(&loaded,"423341\n");assert(loaded.weight[1]==2);
+     som_gambit_parse(&loaded,"9x");assert(loaded.weight[1]==3);}       /* bad: defaults */
     pressed=RETRO_DEVICE_ID_JOYPAD_A;som_input_poll();pressed=100;som_input_poll();
     assert(ring_ai_enabled&&!gambits.open);                               /* A: close */
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;som_input_poll();
@@ -475,11 +480,12 @@ int main(void){
     assert(!ring_ai_enabled);
     /* Gambit menu text and drawing. */
     {
-        SomGambits g={1,1,(uint16_t)(SOM_GAMBIT_ALL&~1u)};
+        SomGambits g={1,1,{0,5,3,3,4,1}};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
-        assert(som_gambit_line(&g,1,text)&&!strcmp(text,"  -- Fight monsters"));
-        assert(som_gambit_line(&g,2,text)&&!strcmp(text,"> ON Rest at the inn"));
+        assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));
+        assert(som_gambit_line(&g,2,text)&&text[0]=='>'&&strstr(text,"5 ooooo"));
+        assert(strlen(text)<=32);
         assert(som_gambit_line(&g,SOM_GAMBIT_ITEMS,text)&&strstr(text,"Exit gambits"));
         assert(!som_gambit_line(&g,SOM_GAMBIT_ITEMS+1,text));
         static uint16_t frame[224][256];

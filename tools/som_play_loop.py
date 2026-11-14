@@ -69,6 +69,8 @@ class PlayLoop:
                  hunt_decisions=HUNT_DECISIONS, log=print):
         self.history, self.fixed_hunt_map = history, hunt_map
         self.trip_gold, self.hunt_decisions, self.log = trip_gold, hunt_decisions, log
+        # HP fraction that ends a hunting trip; the gambit weights move it.
+        self.leave_fraction = LEAVE_HP_TENTHS / 10
         state = history.get_agent_state("play_loop") if history is not None else None
         self.state = state if isinstance(state, dict) and state.get("phase") in PHASES else \
             {"phase": "hunt", "trip_gold": None, "steps": 0, "cycles": 0}
@@ -123,7 +125,7 @@ class PlayLoop:
                           if isinstance(gold, int) and self.state.get("trip_gold") is not None
                           else 0)
                 target = self.fixed_hunt_map or best_hunt_map(self.history, reachable)
-                if max_hp and hp * 10 < max_hp * LEAVE_HP_TENTHS:
+                if max_hp and hp < max_hp * self.leave_fraction:
                     self._enter("shop", f"HP {hp}/{max_hp}, earned {earned} GP")
                     continue
                 if earned >= self.trip_gold:

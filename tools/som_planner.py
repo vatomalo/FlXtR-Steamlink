@@ -172,6 +172,8 @@ class MemoryPlanner:
         self.build, self.build_profile = "balanced", build_profile("balanced")
         # "Fight monsters" gambit off: ignore monsters unless they attack.
         self.peaceful = False
+        # HP fraction at which the hero heads for the inn (gambit weights).
+        self.retreat_fraction = 0.5
         # Optional som_anticipate.AttackPredictor: guard before likely hits.
         self.attack_predictor = None
         self.anticipated = 0
@@ -1409,7 +1411,8 @@ class MemoryPlanner:
             if survival:
                 self._set_state("survival", None)
             survival = {}
-        elif max_hp and hp * 2 <= max_hp and not survival.get("active") and not self.no_retreat:
+        elif (max_hp and hp <= max_hp * self.retreat_fraction and not survival.get("active")
+              and not self.no_retreat):
             # After a give-up, only a new critical drop restarts the retreat.
             if not survival.get("abandoned") or critical:
                 survival = {"active": True, "turns": 0, "at_inn": 0}

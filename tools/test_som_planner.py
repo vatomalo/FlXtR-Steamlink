@@ -466,6 +466,17 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertEqual((decision.action, decision.intention), ("step_down", "go_to_inn"))
             history.close()
 
+    def test_unreachable_return_door_does_not_freeze_the_hero(self):
+        # Live 2026-11-14, map 258: its door tiles all lay in other rooms
+        # sharing the map id; with no errand the hero waited 649 decisions.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "room.sqlite")
+            state = observation()
+            state["tile_context"]["return_doors"] = [{"target": [40, 40]}]
+            decision = MemoryPlanner(history).decide(state)
+            self.assertNotEqual(decision.reason, "return door has no verified route")
+            history.close()
+
     def test_enemy_on_the_way_is_fought_before_shopping(self):
         shop = {"map_id": 131, "layer": 1, "target": [1, 3]}
         enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}

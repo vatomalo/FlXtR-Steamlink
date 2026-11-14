@@ -1479,7 +1479,13 @@ class MemoryPlanner:
             if travel is not None:
                 return travel
         if context.get("return_doors"):
-            return self._return_door(context, open_steps)
+            # Rooms sharing a map id carry each other's door tiles (map 258,
+            # 2026-11-14: every door was in another room, the ROM exit 10
+            # steps away). An unreachable door must not freeze the hero:
+            # fall through to exploring instead of waiting on it forever.
+            decision = self._return_door(context, open_steps)
+            if decision.intention != "observe":
+                return decision
         if not open_steps:
             targets = dict(self._cut_targets(context))
             if not targets:

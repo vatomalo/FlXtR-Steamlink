@@ -59,6 +59,16 @@ static uint16_t combo_hp[3];
 static uint8_t combo_ids[3],combo_live[3];
 static int combo_pending,combo_hit,combo_queued,combo_charging,combo_input_held;
 static unsigned long combo_charge_frame;
+/* R2+B: native level-1 charged primary attack.
+ * R2+Y: native level-2 charged secondary attack.
+ * These are existing weapon animations, not new ROM routines. */
+static unsigned special_stage,special_weapon;
+static unsigned long special_started;
+static uint16_t special_chord;
+static int special_suppress;
+#define SOM_SPECIAL_TIMEOUT 360ul
+static int som_special_start(unsigned which,unsigned stage);
+static void som_special_tick(void);
 #define SOM_COMBO_HIT_WINDOW 75ul
 #define SOM_COMBO_GAP 180ul
 #define SOM_COMBO_CHARGE_TIMEOUT 300ul
@@ -354,6 +364,14 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         actual=0;                    /* the player's buttons drive the gambit menu */
     /* With a discipline, Y attacks with its second weapon: the game sees B
      * (so holding Y charges) and never Y; L2+Y still opens the ring. */
+    if((special_stage||special_suppress)&&port==0&&
+       (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        if(special_stage){
+            if(bitmask)return (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+            return id==RETRO_DEVICE_ID_JOYPAD_B?1:0;
+        }
+        return 0; /* consume held combo after automatic release */
+    }
     if(combo_charging&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         if(actual){som_combo_clear();return actual;}
         if(bitmask)return (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
@@ -399,19 +417,38 @@ static void som_input_poll(void){
         const uint16_t attack=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         const uint16_t secondary=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
         const uint16_t l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+        const uint16_t r2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
+        if(special_stage&&current&&(current&~special_chord)){
+            fprintf(stderr,"[som-ai] SPECIAL cancelled by manual input\\n");
+            special_stage=0;special_suppress=0;
+        }
+        if(special_suppress&&!(current&special_chord))special_suppress=0;
         combo_input_held=current!=0;
         if(combo_charging&&current)som_combo_clear(); /* player takes over */
         if(((current&attack)&&!(last_physical_buttons&attack))||
            ((current&secondary)&&!(last_physical_buttons&secondary)&&!(current&l2))){
+            /* Modifier specials have their own charge, not basic sword hits. */
+            if(current&r2)goto after_combo_swing;
             if(!som_manual_disciplines&&!ring_ai_enabled)som_combo_swing();
         }
+after_combo_swing:
         const uint16_t pressed=(uint16_t)(current&~last_physical_buttons);
         const uint16_t y_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
         const uint16_t l2_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
         const uint16_t b_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         const int field=som_y_field_play();
-        y_weapon_swap=(current&y_bit)&&!(current&l2_bit)&&field;
-        if(field&&(pressed&(y_bit|b_bit))&&!(current&l2_bit)){
+        /* R2+attack is handled before ordinary B/Y weapon switching. */
+        if(field&&!special_stage&&!special_suppress&&!ring_ai_enabled&&
+           (current&r2)&&(pressed&(y_bit|b_bit))&&!(current&l2_bit)){
+            unsigned which=(pressed&y_bit)?1u:0u;
+            unsigned stage=which?2u:1u;
+            if(som_special_start(which,stage)){
+                special_chord=(uint16_t)(r2|(which?y_bit:b_bit));
+                special_suppress=1;
+            }
+        }
+        y_weapon_swap=(current&y_bit)&&!(current&(l2_bit|r2))&&field&&!special_suppress;
+        if(field&&(pressed&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             uint8_t *wram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
             const unsigned which=(pressed&y_bit)?1u:0u;    /* Y second, B first */
             const unsigned want=som_disc_weapons[disciplines.selected][which];
@@ -873,6 +910,43 @@ static int som_equip_weapon(uint8_t *ram,unsigned type){
     owned[type]|=0x40u;                                        /* held by the boy */
     fprintf(stderr,"[som-ai] WEAPON equipped without the ring: %s\n",som_weapon_types[type]);
     return 1;
+}
+/* Charge the game's actual weapon stage through its normal B input. */
+static int som_special_start(unsigned which,unsigned stage){
+    if(which>1||stage<1||stage>2||special_stage||combo_charging||
+       ring_ai_enabled||som_manual_disciplines||
+       disciplines.selected>=SOM_DISCIPLINE_COUNT||
+       !backend_retro_get_memory_data)return 0;
+    uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
+       ram[0xD0]!=0||ram[0x7D]==1||ram[0xE1ED]!=0)return 0;
+    unsigned weapon=som_disc_weapons[disciplines.selected][which];
+    if(ram[0xE1E4]!=weapon&&!som_equip_weapon(ram,weapon))return 0;
+    if(ram[0xE19C]<stage||ram[0xE19B]!=0){
+        fprintf(stderr,"[som-ai] SPECIAL refused: %s needs charge level %u\\n",
+                som_weapon_types[weapon],stage);
+        return 0;
+    }
+    special_stage=stage;special_weapon=weapon;special_started=frame_number;
+    som_combo_clear();
+    fprintf(stderr,"[som-ai] SPECIAL charging %s level %u\\n",
+            som_weapon_types[weapon],stage);
+    return 1;
+}
+static void som_special_tick(void){
+    if(!special_stage||!backend_retro_get_memory_data)return;
+    const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
+       ram[0xD0]!=0||ram[0xE1E4]!=special_weapon||
+       frame_number-special_started>SOM_SPECIAL_TIMEOUT){
+        fprintf(stderr,"[som-ai] SPECIAL abort: state changed or charge timeout\\n");
+        special_stage=0;return;
+    }
+    if(ram[0xE19B]>=special_stage){
+        fprintf(stderr,"[som-ai] SPECIAL release %s level %u\\n",
+                som_weapon_types[special_weapon],special_stage);
+        special_stage=0; /* B releases on next emulated frame */
+    }
 }
 /* Next owned weapon after the current one (Y while playing). */
 static int som_cycle_weapon(uint8_t *ram){
@@ -1454,6 +1528,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
+    special_stage=0;special_weapon=0;special_started=0;
+    special_chord=0;special_suppress=0;
     combo_input_held=0;combo_charge_frame=0;
     memset(combo_hp,0,sizeof(combo_hp));memset(combo_ids,0,sizeof(combo_ids));
     memset(combo_live,0,sizeof(combo_live));
@@ -1685,6 +1761,7 @@ RETRO_API void retro_run(void){
     }
     backend_run();
     if(test_enabled&&on_turbo)som_combo_frame();
+    if(test_enabled&&on_turbo)som_special_tick();
     if(test_enabled&&on_turbo)som_ring_ai_tick();
     som_idle_tick();
     if(!direct_transport&&test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&

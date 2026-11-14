@@ -52,6 +52,8 @@ ANTICIPATE_MAX = 2
 # A learned crossing this close to a native return door went through that door.
 DOOR_CROSSING_TILES = 4
 STALL_BLOCK_DECISIONS = 200
+FRONTIER_NO_PROGRESS = 24
+FRONTIER_COOLDOWN = 200
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
@@ -186,6 +188,8 @@ class MemoryPlanner:
         self.block_cooldown = 0
         self.route_diagonals = {}
         self.route_threats = []
+        self.frontier_clock = 0
+        self.frontier_rejected = {}
 
     @staticmethod
     def _open_steps(context):
@@ -454,7 +458,8 @@ class MemoryPlanner:
                 queue.append((neighbor, after, step, distance + 1))
         return routes
 
-    def _choose_frontier(self, context, cells, routes, directive="explore_unknown"):
+    def _choose_frontier(self, context, cells, routes, directive="explore_unknown",
+                         open_steps=None):
         map_id, layer = context["map_id"], context["actor"]["layer"]
         size = tuple(context["map_size_tiles"])
         origin = tuple(context["actor_tile"])
@@ -462,6 +467,10 @@ class MemoryPlanner:
         candidates = []
         for position, (first, distance) in routes.items():
             if first is None:
+                continue
+            if open_steps is not None and first not in open_steps:
+                continue
+            if self.frontier_rejected.get((map_id, layer, position), 0) > self.frontier_clock:
                 continue
             unknown_edges = sum(
                 self._neighbor(position, offset, size) not in cells
@@ -484,13 +493,16 @@ class MemoryPlanner:
             candidates.append((not aligned, visits, -progress, straightness,
                                -distance, -unknown_edges, position))
         if not candidates:
-            for position, (_, distance) in routes.items():
-                if distance:
+            for position, (first, distance) in routes.items():
+                if (distance and (open_steps is None or first in open_steps) and
+                        self.frontier_rejected.get((map_id, layer, position), 0)
+                        <= self.frontier_clock):
                     candidates.append((False, self._visits(map_id, layer, *position),
                                        -distance, 0, -distance, 0, position))
         return min(candidates)[-1] if candidates else None
 
     def _explore(self, context, open_steps, directive="explore_unknown"):
+        self.frontier_clock += 1
         map_id, layer = context["map_id"], context["actor"]["layer"]
         position = tuple(context["actor_tile"])
         size = tuple(context["map_size_tiles"])
@@ -511,22 +523,35 @@ class MemoryPlanner:
                  intention.get("directive") == directive and
                  isinstance(intention.get("target"), list))
         target = tuple(intention["target"]) if valid else None
-        if target == position or target not in routes:
+        if (target == position or target not in routes or
+                self.frontier_rejected.get((map_id, layer, target), 0) > self.frontier_clock):
             target = None
         if target is None:
-            target = self._choose_frontier(context, cells, routes, directive)
+            target = self._choose_frontier(context, cells, routes, directive,
+                                           open_steps)
             if target is None:
                 self._set_intention(None)
                 return None
             intention = {"kind": "explore", "map_id": map_id, "layer": layer,
                          "directive": directive,
                          "target": list(target), "last_position": list(position),
-                         "stagnant": 0}
+                         "stagnant": 0, "best_distance": routes[target][1],
+                         "no_progress": 0}
         else:
             last = tuple(intention.get("last_position", []))
             intention["stagnant"] = intention.get("stagnant", 0) + 1 if last == position else 0
             intention["last_position"] = list(position)
-            if intention["stagnant"] >= 8:
+            distance_now = routes[target][1]
+            best = intention.get("best_distance", distance_now)
+            if distance_now < best:
+                intention["best_distance"] = distance_now
+                intention["no_progress"] = 0
+            else:
+                intention["no_progress"] = intention.get("no_progress", 0) + 1
+            if (intention["stagnant"] >= 8 or
+                    intention["no_progress"] >= FRONTIER_NO_PROGRESS):
+                self.frontier_rejected[(map_id, layer, target)] = (
+                    self.frontier_clock + FRONTIER_COOLDOWN)
                 self._set_intention(None)
                 return None
         action, distance = routes[target]

@@ -775,6 +775,7 @@ static uint32_t som_cache_hash(const void *data,size_t size){
     return h;
 }
 static void som_weapon_cache_save(void){
+    /* Disabled: prior data was captured with monster-sprite assumptions. */
     if(!weapon_rom_hash)return;
     SomWeaponCacheFile *c=calloc(1,sizeof(*c));
     if(!c)return;
@@ -857,58 +858,23 @@ static void som_weapon_cache_frame(void){
     fprintf(stderr,"[som-ai] WEAPON graphics cached: %s (%u tiles)\n",
         som_weapon_types[type],learned.tile_count);
 }
-static int som_weapon_restore_graphics(uint8_t *hero,unsigned type){
-    SomFamiliarCarry *cached=type<8u?&weapon_graphics[type]:NULL;
-    uint8_t *vram=som_vram();
-    if(!cached||!cached->valid||!cached->has_vram||!vram)return 0;
-    for(unsigned i=0;i<sizeof(som_familiar_tile_fields);i++){
-        const unsigned field=som_familiar_tile_fields[i];
-        hero[field]=cached->object[field];hero[field+1u]=cached->object[field+1u];
-    }
-    for(unsigned i=0;i<cached->tile_count;i++)
-        memcpy(vram+SOM_FAMILIAR_OBJ_VRAM+cached->tile_id[i]*32u,
-               cached->tile_data[i],32u);
-    return 1;
-}
+/* SAFE MODE: The familiar capture used for weapons was not a weapon sprite
+ * capture. It copies hero OBJ references as though they were monster sprites,
+ * and the resulting VRAM writes scramble weapon graphics. Native weapon-ring
+ * equipment is the only verified method of loading a different weapon's art.
+ * Keep class grants and mappings, but fail closed on instant equipment until
+ * the native loader and its DMA/VRAM sequence have been traced. */
 static int som_equip_weapon(uint8_t *ram,unsigned type){
-    if(!ram||type>=8u||ram[0xE000]!=1)return 0;
-    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
-    uint8_t *hero=ram+0xE000u;
-    const unsigned current=hero[0x1E4];
-    if(current>=8u||current==type)return 0;
-    uint8_t *owned=ram+0xCC54u;
-    if(owned[type]==0xFF)return 0;                         /* not owned */
-    if(!som_weapon_restore_graphics(hero,type)){
-        char message[96];snprintf(message,sizeof(message),"^Equip %s once in ring|to cache its graphics",
+    if(!ram||type>=8u||ram[0xE000]!=1||
+       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    if(ram[0xE1E4]==type)return 1; /* already equipped by the game */
+    char message[96];
+    snprintf(message,sizeof(message),"^Select %s from weapon ring|Native graphics only",
+             som_weapon_types[type]);
+    som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+    fprintf(stderr,"[som-ai] SAFE EQUIP: %s requires native ring to load graphics\\n",
             som_weapon_types[type]);
-        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
-        fprintf(stderr,"[som-ai] WEAPON refused: %s graphics are not cached\n",
-            som_weapon_types[type]);
-        return 0;
-    }
-    const unsigned tier=owned[type]&0x0Fu;
-    weapon_progress[current]=hero[0x196];
-    int attack=(int)hero[0x198]+(int)som_weapon_look[type].attack-
-               (int)som_weapon_look[current].attack;
-    if(attack<0)attack=0;
-    if(attack>255)attack=255;
-    const uint8_t levels=hero[0x1C0u+type/2u];
-    const unsigned level=type%2u?(levels&0x0Fu):(levels>>4);
-    hero[0x1E4]=(uint8_t)type;
-    hero[0x1E3]=hero[0x1E8]=(uint8_t)(type*9u+tier);
-    hero[0x198]=(uint8_t)attack;
-    hero[0x19C]=(uint8_t)level;
-    hero[0x196]=weapon_progress[type];
-    hero[0x068]=(uint8_t)type;
-    hero[0x07F]=som_weapon_look[type].f07F;
-    hero[0x066]=som_weapon_look[type].f066;
-    hero[0x02B]=som_weapon_look[type].f02B;
-    hero[0x065]=som_weapon_look[type].f065;
-    hero[0x06B]=som_weapon_look[type].f06B;
-    if(owned[current]!=0xFF)owned[current]&=(uint8_t)~0x40u;  /* no longer held */
-    owned[type]|=0x40u;                                        /* held by the boy */
-    fprintf(stderr,"[som-ai] WEAPON equipped without the ring: %s\n",som_weapon_types[type]);
-    return 1;
+    return 0;
 }
 /* Charge the game's actual weapon stage through its normal B input. */
 static int som_special_start(unsigned which,unsigned stage){
@@ -1568,7 +1534,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     weapon_rom_hash=on_turbo&&game&&game->data&&game->size?
         som_cache_hash(game->data,game->size):0;
     game_loaded=backend_load_game(load_info);
-    if(game_loaded&&on_turbo)som_weapon_cache_load();
+    /* Do not restore legacy weapon graphics snapshots. They are unsafe. */
+    if(game_loaded&&on_turbo)
+        fprintf(stderr,"[som-ai] WEAPON graphics cache disabled: use native ring\\n");
     /* Selecting this experimental core is explicit opt-in. No injection
      * occurs until the separate one-shot trigger is consumed. A
      * launcher-provided environment variable is not reliable across the
@@ -1742,7 +1710,7 @@ RETRO_API void retro_run(void){
     }
     som_clone_tick();
     som_familiar_frame();
-    if(test_enabled&&on_turbo)som_weapon_cache_frame();
+    /* No automatic hero VRAM caching: old monster-style snapshots garbled art. */
     if(test_enabled&&on_turbo)som_class_supply_frame();
     if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)

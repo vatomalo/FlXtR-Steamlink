@@ -480,6 +480,24 @@ static int som_summon_allowed(const uint8_t *ram){
     return ram&&som_familiar_summoner(ram+0xE000);
 }
 static int som_summon_boss(void);
+/* Read-only diagnostic: the core's video RAM (sprite tiles live there, loaded
+ * per map for that map's monsters) to SOM_VRAM_FILE for analysis. */
+#define SOM_VRAM_FILE "/tmp/flxtr-som-vram.bin"
+static const char *vram_file=SOM_VRAM_FILE;
+static void som_vram_dump(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
+    const uint8_t *vram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
+    size_t size=backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM);
+    if(!vram||!size){fprintf(stderr,"[som-ai] VRAM dump: the core does not expose VRAM\n");return;}
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",vram_file);
+    FILE *out=fopen(temp,"wb");
+    if(!out)return;
+    int ok=fwrite(vram,1,size,out)==size;
+    if(fclose(out)!=0)ok=0;
+    if(ok&&rename(temp,vram_file)==0)
+        fprintf(stderr,"[som-ai] VRAM dump: %lu bytes at frame %lu\n",(unsigned long)size,frame_number);
+    else unlink(temp);
+}
 static void som_familiar_dismiss(void);
 static uint8_t *undo_state;
 static size_t undo_size;
@@ -690,6 +708,7 @@ static void som_check_trigger(void){
     }
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return;}
     if(!strcmp(command,"summon_boss")){som_summon_boss();return;}
+    if(!strcmp(command,"vram_dump")){som_vram_dump();return;}
     if(!strcmp(command,"undo_spawn")){som_undo_spawn();return;}
     if(!strcmp(command,"auto_off")){
         autonomous_mode=0;armed=0;
@@ -904,6 +923,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
      * launcher-provided environment variable is not reliable across the
      * greenlink -> greenlink-catalog -> RetroArch process boundary. */
     test_enabled=game_loaded&&on_turbo;
+    if(game_loaded&&backend_retro_get_memory_size)
+        fprintf(stderr,"[som-ai] VRAM exposed by the core: %lu bytes\n",(unsigned long)
+                backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM));
     if(test_enabled){
         trigger_file=getenv("FLXTR_SOM_AI_TRIGGER_FILE");
         if(!trigger_file || !*trigger_file) trigger_file=SOM_TRIGGER_DEFAULT;

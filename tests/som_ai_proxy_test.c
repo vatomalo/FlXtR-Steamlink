@@ -19,10 +19,14 @@ static int16_t mocked_input_mask(unsigned port,unsigned device,unsigned index,un
     if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)mocked_buttons;
     return id<16&&(mocked_buttons&(uint16_t)(1u<<id))?1:0;
 }
+static uint8_t mocked_vram[0x10000];
+static int mocked_has_vram;
 static void *mocked_memory_data(unsigned id){
+    if(id==RETRO_MEMORY_VIDEO_RAM)return mocked_has_vram?mocked_vram:NULL;
     return id==RETRO_MEMORY_SYSTEM_RAM?mocked_wram:NULL;
 }
 static size_t mocked_memory_size(unsigned id){
+    if(id==RETRO_MEMORY_VIDEO_RAM)return mocked_has_vram?sizeof(mocked_vram):0;
     return id==RETRO_MEMORY_SYSTEM_RAM?sizeof(mocked_wram):0;
 }
 static const void *shown_frame;
@@ -656,6 +660,21 @@ int main(void){
         pfd=open(pkg_path,O_WRONLY|O_TRUNC);assert(pfd>=0&&write(pfd,"junk",4)==4);close(pfd);
         assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
         unlink(pkg_path);unlink(any_path);
+    }
+    /* vram_dump: read-only copy of the core's video RAM, if exposed. */
+    {
+        char vram_path[]="/tmp/flxtr-vram-test-XXXXXX";
+        int vfd=mkstemp(vram_path);assert(vfd>=0);close(vfd);unlink(vram_path);
+        vram_file=vram_path;
+        backend_retro_get_memory_data=mocked_memory_data;
+        backend_retro_get_memory_size=mocked_memory_size;
+        mocked_has_vram=0;som_vram_dump();assert(access(vram_path,F_OK)!=0);
+        mocked_has_vram=1;for(unsigned i=0;i<sizeof(mocked_vram);i++)mocked_vram[i]=(uint8_t)i;
+        som_vram_dump();
+        FILE *vf=fopen(vram_path,"rb");static uint8_t back[0x10000];
+        assert(vf&&fread(back,1,sizeof(back),vf)==sizeof(back)&&fclose(vf)==0);
+        assert(!memcmp(back,mocked_vram,sizeof(back)));
+        unlink(vram_path);mocked_has_vram=0;
     }
     /* Bubble anchor: hero screen position under a hero-centred camera that
      * stops at the map edges. */

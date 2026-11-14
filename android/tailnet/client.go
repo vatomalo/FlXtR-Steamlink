@@ -135,11 +135,28 @@ func (c *Client) NetworkChanged() {
 func validRequest(method,address string)(*url.URL,error){
     u,err:=url.Parse(address);if err!=nil{return nil,err}
     ip,iperr:=netip.ParseAddr(u.Hostname())
-    if iperr!=nil||!ip.Is4()||!tailRange.Contains(ip)||u.Scheme!="http"||u.Port()!="43927"||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||!routes.MatchString(u.Path)||(method!="GET"&&method!="POST") {
+    ai:=u.Port()=="43928"&&u.Path=="/som-ai/v1/step"&&method=="POST"
+    peer:=u.Port()=="43927"&&routes.MatchString(u.Path)
+    if iperr!=nil||!ip.Is4()||!tailRange.Contains(ip)||u.Scheme!="http"||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(!peer&&!ai)||(method!="GET"&&method!="POST") {
         return nil,errors.New("request is not a private FlXtR peer endpoint")
     }
-    if method=="POST"&&!(strings.HasSuffix(u.Path,"/handoff")||strings.HasSuffix(u.Path,"/roms")){return nil,errors.New("unsupported upload route")}
+    if method=="POST"&&!ai&&!(strings.HasSuffix(u.Path,"/handoff")||strings.HasSuffix(u.Path,"/roms")){return nil,errors.New("unsupported upload route")}
     return u,nil
+}
+
+func (c *Client) RequestBytes(address string,upload []byte)(string,error){
+    u,err:=validRequest("POST",address);if err!=nil{return "",err}
+    if len(upload)<0x20000||len(upload)>0x21000{return "",errors.New("invalid AI snapshot size")}
+    ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second);defer cancel()
+    request,err:=http.NewRequestWithContext(ctx,"POST",u.String(),strings.NewReader(string(upload)));if err!=nil{return "",err}
+    request.ContentLength=int64(len(upload));request.Header.Set("Content-Type","application/octet-stream")
+    transport:=&http.Transport{DialContext:c.server.Dial,DisableKeepAlives:true};defer transport.CloseIdleConnections()
+    response,err:=(&http.Client{Transport:transport,CheckRedirect:func(*http.Request,[]*http.Request)error{return errors.New("AI redirects are unsupported")}}).Do(request);if err!=nil{return "",err};defer response.Body.Close()
+    raw,err:=io.ReadAll(io.LimitReader(response.Body,4097));if err!=nil{return "",err}
+    if len(raw)>4096{return "",errors.New("AI response is too large")}
+    if response.StatusCode<200||response.StatusCode>=300{return "",errors.New("AI service rejected the snapshot")}
+    if !json.Valid(raw){return "",errors.New("AI response is not JSON")}
+    return string(raw),nil
 }
 
 // Request streams uploads through the embedded node, never the device's global VPN.

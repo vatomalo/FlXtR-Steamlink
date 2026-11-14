@@ -1,14 +1,46 @@
 """Tile-safety tests; no Ollama, SSH, ROM, or emulator required."""
 import os
+import http.client
+import json
+import socket
 import stat
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
-from som_qwen_bridge import (REMOTE_LOOP, RemoteLink, 
+from som_qwen_bridge import (REMOTE_LOOP, AndroidRelayLink, RemoteLink,
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
     parse_directive, prefer_open_step, extend_clear_exploration,
     objective_directive, shop_errand)
+
+
+class TestAndroidRelay(unittest.TestCase):
+    def test_snapshot_metadata_action_and_message_round_trip(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0)); port = probe.getsockname()[1]
+        link = AndroidRelayLink(f"127.0.0.1:{port}")
+        result = {}
+        status = json.dumps({"enabled": True, "familiar": 2, "gambits": "543210"})
+        body = status.encode() + b"\n" + bytes(0x20000)
+        def request():
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("POST", "/som-ai/v1/step", body,
+                               {"Content-Type": "application/octet-stream"})
+            response = connection.getresponse()
+            result["status"] = response.status
+            result["body"] = json.loads(response.read())
+            connection.close()
+        worker = threading.Thread(target=request); worker.start()
+        self.assertEqual(len(link.fetch_wram(True)), 0x20000)
+        self.assertEqual(link.fetch_gambits(), (5, 4, 3, 2, 1, 0))
+        self.assertEqual(link.fetch_familiar(), 2)
+        link.show_message("AI: exploring")
+        link.send_action("step_right")
+        worker.join(5); link.close()
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["body"], {"action": "step_right", "message": "AI: exploring"})
 
 
 class TestTileGuard(unittest.TestCase):

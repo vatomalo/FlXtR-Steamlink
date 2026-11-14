@@ -45,6 +45,7 @@ static retro_input_state_t physical_state;
 static retro_input_poll_t physical_poll;
 static unsigned long frame_number;
 static int armed, cancelled, completed, game_loaded, on_turbo, test_enabled;
+static int direct_transport;
 static unsigned long start_frame, injected_queries;
 static SomAction active_action;
 static unsigned action_frames;
@@ -350,7 +351,7 @@ static void som_input_poll(void){
         }
         /* The bridge removes the marker when it stops (safety stop, game
          * exit): never keep swallowing the player's buttons after that. */
-        if(ring_ai_enabled&&frame_number%30u==0&&access(ring_ai_file,F_OK)!=0){
+        if(!direct_transport&&ring_ai_enabled&&frame_number%30u==0&&access(ring_ai_file,F_OK)!=0){
             ring_ai_enabled=0;gambits.open=0;disciplines.open=0;som_menu_disciplines=0;
             som_overlay_set(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
@@ -458,6 +459,7 @@ static int som_export_wram(void){
 }
 
 static int som_write_ring_ai_marker(void){
+    if(direct_transport)return 1;
     int fd=open(ring_ai_file,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
     if(fd<0)return 0;
     static const char enabled[]="enabled\n";
@@ -791,6 +793,76 @@ static void som_auto_tick(void){
     som_start_action(sequence[auto_step%8u]);
     auto_step++;
 }
+static int som_handle_command(const char *command){
+    if(!command||!*command||!test_enabled||!game_loaded||!on_turbo)return 0;
+    if(!strcmp(command,"ai_on")){
+        if(!som_write_ring_ai_marker())return 0;
+        ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
+        fprintf(stderr,"[som-ai] MANUAL AI START signal ready%s\n",
+                direct_transport?" in process":" on disk");
+        return 1;
+    }
+    if(!strcmp(command,"ai_off")){
+        ring_ai_enabled=0;ring_ai_pending=0;armed=0;cancelled=1;gambits.open=0;
+        if(!direct_transport)unlink(ring_ai_file);
+        idle_started=1;
+        fprintf(stderr,"[som-ai] MANUAL AI STOP\n");
+        return 1;
+    }
+    if(!strcmp(command,"auto_on")){
+        autonomous_mode=1;auto_step=0;auto_deadline=frame_number+600;
+        start_frame=frame_number>50?frame_number-50:0;action_frames=0;
+        fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
+        return 1;
+    }
+    if(!strcmp(command,"clone_enemy")||!strcmp(command,"summon_familiar")){
+        familiar_pending=!strcmp(command,"summon_familiar");
+        if(familiar_pending&&(familiar.slot>=0||familiar_carry.valid)){
+            familiar_pending=0;
+            fprintf(stderr,"[som-ai] FAMILIAR refused: one is already with you\n");
+            return 0;
+        }
+        if(familiar_pending){
+            const uint8_t *ram=backend_retro_get_memory_data?
+                (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+            if(!som_summon_allowed(ram)){
+                familiar_pending=0;
+                som_overlay_set(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
+                fprintf(stderr,"[som-ai] FAMILIAR refused: the leader is not a summoner\n");
+                return 0;
+            }
+        }
+        if(som_clone_enemy()){som_familiar_bind();return 1;}
+        if(clone_no_slot){
+            clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;
+            fprintf(stderr,"[som-ai] SPAWN waiting up to 10 s for a free monster slot\n");
+        }else familiar_pending=0;
+        return clone_no_slot;
+    }
+    if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
+    if(!strcmp(command,"summon_boss"))return som_summon_boss();
+    if(!strcmp(command,"vram_dump")){som_vram_dump();return 1;}
+    if(!strcmp(command,"use_candy"))
+        return som_use_candy(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+    if(!strcmp(command,"pal_trace")){
+        pal_trace_frames=0;pal_trace_on=1;
+        som_overlay_set(&overlay,"Recording 8 s: move now!",SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] PALETTE TRACE started\n");
+        return 1;
+    }
+    if(!strcmp(command,"undo_spawn"))return som_undo_spawn();
+    if(!strcmp(command,"auto_off")){
+        autonomous_mode=0;armed=0;
+        fprintf(stderr,"[som-ai] AUTO STOP\n");
+        return 1;
+    }
+    if(autonomous_mode){autonomous_mode=0;armed=0;}
+    SomAction action=som_parse_action(command);
+    if(action==SOM_ACT_NONE){fprintf(stderr,"[som-ai] unknown action %s\n",command);return 0;}
+    som_start_action(action);
+    return 1;
+}
 static void som_check_trigger(void){
     if(!test_enabled||!game_loaded||!on_turbo||
        frame_number%SOM_TRIGGER_POLL_FRAMES)return;
@@ -809,78 +881,7 @@ static void som_check_trigger(void){
     if(unlink(action_file)!=0)return;
     if(!have)return;
     command[strcspn(command,"\r\n")]=0;
-    if(!strcmp(command,"ai_on")){
-        if(som_write_ring_ai_marker()){
-            ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
-            fprintf(stderr,"[som-ai] MANUAL AI START signal ready at %s\n",ring_ai_file);
-        }else fprintf(stderr,"[som-ai] MANUAL AI start signal failed\n");
-        return;
-    }
-    if(!strcmp(command,"ai_off")){
-        ring_ai_enabled=0;ring_ai_pending=0;armed=0;cancelled=1;gambits.open=0;
-        unlink(ring_ai_file);
-        idle_started=1;                  /* stay off until the player plays */
-        fprintf(stderr,"[som-ai] MANUAL AI STOP\n");
-        return;
-    }
-    if(!strcmp(command,"auto_on")){
-        autonomous_mode=1;auto_step=0;
-        auto_deadline=frame_number+600; /* ten seconds maximum at 60fps */
-        start_frame=frame_number>50?frame_number-50:0;action_frames=0;
-        fprintf(stderr,"[som-ai] AUTO START: bounded 600-frame movement/attack demo\n");
-        return;
-    }
-    if(!strcmp(command,"clone_enemy")||!strcmp(command,"summon_familiar")){
-        familiar_pending=!strcmp(command,"summon_familiar");
-        if(familiar_pending&&(familiar.slot>=0||familiar_carry.valid)){
-            familiar_pending=0;
-            fprintf(stderr,"[som-ai] FAMILIAR refused: one is already with you\n");
-            return;
-        }
-        if(familiar_pending){
-            const uint8_t *ram=backend_retro_get_memory_data?
-                (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
-            if(!som_summon_allowed(ram)){
-                familiar_pending=0;
-                som_overlay_set(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
-                fprintf(stderr,"[som-ai] FAMILIAR refused: the leader is not a summoner\n");
-                return;
-            }
-        }
-        if(som_clone_enemy()){som_familiar_bind();return;}
-        if(clone_no_slot){
-            clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;
-            fprintf(stderr,"[som-ai] SPAWN waiting up to 10 s for a free monster slot\n");
-        }else familiar_pending=0;
-        return;
-    }
-    if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return;}
-    if(!strcmp(command,"summon_boss")){som_summon_boss();return;}
-    if(!strcmp(command,"vram_dump")){som_vram_dump();return;}
-    if(!strcmp(command,"use_candy")){
-        som_use_candy(backend_retro_get_memory_data?
-            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
-        return;
-    }
-    if(!strcmp(command,"pal_trace")){
-        pal_trace_frames=0;pal_trace_on=1;
-        som_overlay_set(&overlay,"Recording 8 s: move now!",SOM_MESSAGE_FRAMES);
-        fprintf(stderr,"[som-ai] PALETTE TRACE started\n");
-        return;
-    }
-    if(!strcmp(command,"undo_spawn")){som_undo_spawn();return;}
-    if(!strcmp(command,"auto_off")){
-        autonomous_mode=0;armed=0;
-        fprintf(stderr,"[som-ai] AUTO STOP\n");
-        return;
-    }
-    if(autonomous_mode){autonomous_mode=0;armed=0;}
-    SomAction action=som_parse_action(command);
-    if(action==SOM_ACT_NONE){
-        fprintf(stderr,"[som-ai] unknown action %s\n",command);
-        return;
-    }
-    som_start_action(action);
+    som_handle_command(command);
 }
 
 /* Show one message from the SkyLoft bridge. '|' starts the second line. */
@@ -895,6 +896,20 @@ static void som_check_message(void){
     unlink(message_file);
     if(have&&som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES))
         fprintf(stderr,"[som-ai] MESSAGE %s\n",text);
+}
+RETRO_API bool flxtr_som_ai_command(const char *command){
+    return som_handle_command(command)!=0;
+}
+RETRO_API bool flxtr_som_ai_message(const char *text){
+    return test_enabled&&game_loaded&&on_turbo&&text&&
+           som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES)!=0;
+}
+RETRO_API bool flxtr_som_ai_enabled(void){return ring_ai_enabled!=0;}
+RETRO_API unsigned flxtr_som_ai_familiar(void){
+    return familiar.slot>=0?(unsigned)familiar.slot+1u:0u;
+}
+RETRO_API void flxtr_som_ai_gambits(char output[SOM_GAMBIT_COUNT+1]){
+    if(output)som_gambit_format(&gambits,output);
 }
 /* The hero's position on the base 256x224 screen, from read-only WRAM:
  * world position (7E:E002/E004) minus a camera that centres on the hero and
@@ -1062,6 +1077,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     hero_pal_have=0;
     som_gambit_load();
     last_input_frame=frame_number;idle_started=0;
+    const char *direct=getenv("FLXTR_SOM_AI_DIRECT");
+    direct_transport=direct&&direct[0]=='1'&&direct[1]=='\0';
     const char *path=game?game->path:NULL;
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
     free(patched_rom);patched_rom=NULL;
@@ -1095,14 +1112,14 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             fprintf(stderr,"[som-ai] cannot clear stale trigger; disabled\n");
             test_enabled=0;
         }
-        if(test_enabled){
+        if(test_enabled&&!direct_transport){
             unlink(action_file);unlink(message_file);unlink(record_marker);
             unlink(npc_command_file);
             recording=0;
             unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
             fprintf(stderr,"[som-ai] READY: legacy %s; actions via %s; read-only WRAM via %s\n",
                 trigger_file,action_file,wram_file);
-        }
+        }else if(test_enabled)fprintf(stderr,"[som-ai] READY: Android in-process transport\n");
     }else fprintf(stderr,"[som-ai] disabled (Turbo filename missing or game failed to load)\n");
     return game_loaded;
 }
@@ -1244,9 +1261,11 @@ static void som_clone_tick(void){
 }
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
-    som_check_trigger();
-    som_check_npc_command();
-    som_check_message();
+    if(!direct_transport){
+        som_check_trigger();
+        som_check_npc_command();
+        som_check_message();
+    }
     som_clone_tick();
     som_familiar_frame();
     if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
@@ -1266,7 +1285,7 @@ RETRO_API void retro_run(void){
     backend_run();
     if(test_enabled&&on_turbo)som_ring_ai_tick();
     som_idle_tick();
-    if(test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&
+    if(!direct_transport&&test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&
        !som_export_wram()&&!wram_export_error_logged){
         wram_export_error_logged=1;
         fprintf(stderr,"[som-ai] WRAM export unavailable; live observer disabled\n");

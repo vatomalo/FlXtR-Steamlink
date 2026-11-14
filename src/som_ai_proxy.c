@@ -92,6 +92,34 @@ static int som_write_ring_ai_marker(void);
 static const char *gambit_file=SOM_GAMBIT_FILE;
 static SomGambits gambits={0,0,{4,3,3,3,4,1}};
 static SomDisciplines disciplines;
+/* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
+ * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
+ * The original colours are kept and re-read whenever the game rewrites
+ * the palette (map change, events), so the tint never stacks. */
+static uint8_t hero_pal_orig[32],hero_pal_written[32];
+static int hero_pal_have;
+static unsigned hero_pal_addr;
+static void som_hero_palette_frame(uint8_t *ram){
+    if(!ram||ram[0xE000]!=1)return;
+    const unsigned addr=0xDE00u+(128u+((ram[0xE08B]>>1)&7u)*16u)*2u;
+    uint8_t *current=ram+addr;
+    const unsigned profile=som_disc_visual_profile(&disciplines);
+    if(hero_pal_have&&addr!=hero_pal_addr)hero_pal_have=0;
+    if(profile==SOM_PAL_ORIGINAL){
+        if(hero_pal_have&&!memcmp(current,hero_pal_written,32))memcpy(current,hero_pal_orig,32);
+        hero_pal_have=0;
+        return;
+    }
+    if(!hero_pal_have||memcmp(current,hero_pal_written,32)){
+        memcpy(hero_pal_orig,current,32);       /* the game wrote fresh colours */
+        hero_pal_have=1;hero_pal_addr=addr;
+    }
+    uint8_t tinted[32];
+    memcpy(tinted,hero_pal_orig,32);
+    som_pal_apply(tinted,profile);
+    memcpy(current,tinted,32);
+    memcpy(hero_pal_written,tinted,32);
+}
 static int som_menu_disciplines;
 static int som_manual_disciplines;
 static void som_gambit_load(void){
@@ -899,6 +927,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
+    hero_pal_have=0;
     som_gambit_load();
     last_input_frame=frame_number;idle_started=0;
     const char *path=game?game->path:NULL;
@@ -1088,6 +1117,9 @@ RETRO_API void retro_run(void){
     som_check_message();
     som_clone_tick();
     som_familiar_frame();
+    if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_hero_palette_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)
         recording=access(record_marker,F_OK)==0;
     som_auto_tick();

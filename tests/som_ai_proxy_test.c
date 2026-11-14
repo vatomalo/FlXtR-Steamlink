@@ -702,6 +702,30 @@ int main(void){
         assert(!memcmp(back,mocked_vram,sizeof(back)));
         unlink(vram_path);mocked_has_vram=0;
     }
+    /* The hero's palette follows the chosen discipline, never stacking. */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));
+        ram[0xE000]=1;ram[0xE08B]=0x22;                       /* palette 1 -> 7EDF20 */
+        for(unsigned i=0;i<32;i++)ram[0xDF20+i]=(uint8_t)(0x40+i);
+        uint8_t original[32];memcpy(original,ram+0xDF20,32);
+        som_disc_init(&disciplines);hero_pal_have=0;
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0xDF20,original,32));               /* no discipline */
+        disciplines.selected=0;                               /* Swordmaster frost */
+        som_hero_palette_frame(ram);
+        uint8_t once[32];memcpy(once,ram+0xDF20,32);
+        assert(memcmp(once,original,32)&&once[0]==original[0]&&once[1]==original[1]);
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0xDF20,once,32));                   /* does not stack */
+        memcpy(ram+0xDF20,original,32);                       /* game rewrote it */
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0xDF20,once,32));
+        disciplines.selected=SOM_DISCIPLINE_NONE;
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0xDF20,original,32));               /* colours restored */
+        som_disc_init(&disciplines);hero_pal_have=0;
+    }
     /* Bubble anchor: hero screen position under a hero-centred camera that
      * stops at the map edges. */
     backend_retro_get_memory_data=mocked_memory_data;

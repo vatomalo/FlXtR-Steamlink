@@ -2,38 +2,77 @@
 
 Development branch: `feature/som-disciplines-controls-20261114`, based on the **working** familiar branch `feature/som-familiars-working-20261114` (commit `595d57e`). Do not merge older `clone_familiar_visual` experiments over `som_familiar.h`.
 
-## Weapon graphics regression and native charged attacks (14 November 2026)
+## Direct weapon switching and X/Triangle Fire Ball (14 November 2026, evening)
 
-**IMPORTANT: safe rollback after live Steam Link reports of garbled weapons.**
+### Why weapons garbled, and the fix
 
-- The earlier persistent "weapon graphics cache" reused the monster/familiar
-  OBJ tile capture routine for the playable hero. That is not a verified
-  weapon-sprite loader or VRAM destination. The resulting sprites garbled
-  during manual class switching. The runtime now **does not invoke** this
-  cache or restore its VRAM data. The old file
-  `/home/apps/retroarch/cores/experimental/som_ai_weapon_graphics.bin`
-  can be renamed as a backup; it is ignored by the revised runtime.
-- **Class weapon grants stay active** and existing upgrade tiers remain intact.
-  Manual class B/Y attacks do not try to switch the weapon by editing hero
-  attributes or restoring guessed graphics. If the desired weapon is not
-  currently equipped, the overlay directs the player to select it once in
-  the **native weapon ring**. Secondary Y does not attack with an incorrect
-  weapon while this prerequisite is unmet.
-- **R2+B** requests a level-1 charge with the already-native-equipped primary
-  weapon, and **R2+Y** requests a level-2 charge with the already-equipped
-  secondary weapon. Both use the game's **existing native animations**, not
-  new class-specific animations. The charge and input path still require
-  hardware playtesting.
-- To implement instant weapon flow properly, capture a read-only before/after
-  trace of the game's original weapon ring equip, including graphics upload
-  scheduling and sprite tile-bank selection. Then call the verified loader
-  or reproduce its complete queued transition, rather than copying monster
-  tiles into hero VRAM.
-- New techniques (Shunshin, Iai, Shadow Chakram, etc.) require dedicated
-  movements, attack-state transitions and validated animation hooks. Merely
-  renaming level-1/2 native charges cannot produce new visual moves.
-- Re-run C tests and the Steam Link ARM build before deployment. Keep a
-  backup of the last working core and save.
+The native `weapon_trace` (sword -> boomerang, captured 16:46 on the Steam
+Link) plus the `cidwel/som-decomp` disassembly located the missing piece.
+The game's equip refresh (`$C0:EA19` -> `$C0:EA41`) does two things:
+
+1. Points the hero at the weapon's tables: `+0x2A` frame table
+   (`D0:FFD0[g]`), `+0x65` script table (`+0x77 + 240*type`), `+0x6A`
+   (`D4:C002[4g]`), `+0x7E` (`0x1040 + g<<8`), `+0x68` type, `7E:D030`
+   graphics set (weapon row byte 3), `+0x69` palette id only if unset.
+2. **Expands the weapon's 64 effect tiles from ROM bank `$D4` into the
+   hero's WRAM buffer `7E:2000` (boy; 0x800 bytes).** The game streams that
+   buffer into OBJ tiles `0x144+` itself. The old direct switch skipped
+   this, so new weapon frames were drawn with the old weapon's tiles.
+
+Turbo re-encodes bank `$D4` (per tile: 8 `(a,b)` row pairs, then 8 `c`
+bytes) and patches the converter to match: planes `a/b/c & ~(b&c)`,
+plane 3 = 0. The proxy's expansion of the Turbo ROM reproduces the live
+sword buffer **byte for byte** (2048/2048). The VRAM tiles that changed at
+native equip time (`0x491-0x498`, `0x582-0x589`) are only the HUD weapon
+name; the native refresh itself is deferred (the trace shows `7E:D7F1=0x80`
+and an unchanged `7E:2000` 12 frames later).
+
+Implementation (`src/som_ai_proxy.c`, `som_equip_weapon_direct`):
+
+- Fields and tiles are computed from the loaded ROM (`patched_rom`), with
+  stats from the 12-byte weapon row `D0:1000+12*row`: attack/hit by row
+  delta, crit `3*level + row crit` (halved for types > 4), level nibble
+  `+0x1C0`, `+0x194`, `+0x199/19A`, `+0x1F7`. `+0x196` is crit base, not
+  weapon progress (progress lives in `+0x1D0..1D7` and is untouched).
+- **Fail closed:** no direct switch until, once per session, the model
+  reproduces the game's own `7E:2000` and table pointers for the held
+  weapon. Refused (use the ring): Turbo alternate-bank rows (byte 3 >= 0xEE)
+  and rows with stat bonuses (byte 1 / byte 2 bits 0-1, upgraded tiers only),
+  which need the full `$C0:4530` rebuild.
+- Switches only while the hero is idle (`+0x1C`, `+0x60`, `+0x19B` zero,
+  `$F1` bit 7 clear). B/Y held during a swing wait and switch when free;
+  the game then sees a fresh press. Y never attacks with the wrong weapon;
+  B falls back to the held weapon if a switch is refused. No VRAM writes.
+- Not reproduced: the HUD weapon-name text and `7E:D7F1` (meaning unknown).
+
+### X/Triangle: Fire Ball (experimental)
+
+With a discipline selected, X in field play casts spell `0x0C` (Fire Ball);
+L2+X still reaches the game. This reproduces what the ring does on confirm
+(decomp `docs/summon-cast.md` section 2, same as its validated `Sim.cast`):
+request `+0x170` spell, `+0x177` element 2, `+0x176` 1, `+0x178` nearest
+live on-screen monster (slots 3-5) + 1, `+0x179/17A` 0, hit list
+`+0x172..174` = FF, level `+0x171` from `+0x1C5` high nibble (capped at 7);
+then `$C1:88C7` (unchanged in Turbo): `+0x111`, `+0x108`, `+0x4F`=CE,
+`+0x1C`=40, `+0x30`=FF, `+0x11`=94, `+0x06..08`=0, `+0x60`=20, and the spark
+tiles `D4:BA00` into `7E:2800`. The game's scripts do the rest, take MP on
+the first hit and restore the weapon art when the hero is released.
+
+- MP must cover the cost (spell row `D0:2AD0+64*id` byte 15 = 2). **The boy
+  had 0/0 MP in the 16:46 trace, so X currently reports "not enough MP".**
+- Not reproduced: the `Fire Ball Lv.n` banner; the spark palette for frames
+  0-59 (Turbo filters palettes through `$F0:4A46`; the game copies the cast
+  palette itself at frame 60).
+- **Testing without MP:** turn the AI on (hold R2/R3 1 s), press a button
+  for Gambits, move to `Infinite MP (test)` and press B (or Left/Right), then
+  `Exit gambits: you play`. While ON the proxy sets the boy's current MP
+  (`+0x186`) to 99 every field frame; the game still pays each cast. Turning
+  it off clamps MP to the real maximum. It is not saved in the gambits file
+  and resets on every game load. Avoid saving the game while it is ON.
+- `x_spell` holds the spell id, ready for a future magic-selection menu.
+  Only hostile single-target spells (row byte 8 = 0x81) are accepted.
+
+Both need hardware playtesting. Nothing here writes VRAM or save data.
 
 ## Native weapon graphics trace (14 November 2026)
 
@@ -154,3 +193,43 @@ Availability (player's decision, 14 Nov): only these disciplines get the
 dodge roll: swordsman (Swordsmanship), monk (Martial Arts), ninja
 (Ninjutsu), and the not-yet-existing rogue, samurai and archer, which must
 be added as disciplines first. Every other discipline has no dodge roll.
+
+## Class magic, seals, evade and AI class choice (2026-11-14)
+
+- **Spells per class** (`src/som_magic.h`): every discipline has its own list (38 of the
+  42 spells; Analyzer, Revivifier and the undecoded 0x20/0x23 are left out). Tap **X** to
+  cast the current one (cast on release), **hold X** to step to the next (every 0.5 s,
+  name shown). Hostile spells (row byte 8 = 0x81) target the nearest live monster; ally
+  (0x01) and self (0x00) spells target the boy (target 1). MP cost comes from the ROM;
+  the boy starts with 0 MP, so use "Infinite MP (test)" until he has some.
+- **Seals** (charge levels without holding): hold **R2**, tap the D-pad once per seal
+  (Tiger/Boar/Dog/Ram; the D-pad does not move the hero meanwhile), then **B** (primary)
+  or **Y** (secondary). Level = number of seals, capped at the weapon's learned level
+  (`+0x19C`). No seals keeps R2+B = 1, R2+Y = 2. Once the swing ends the proxy sets the
+  gauge word `+0x01A` = stage<<8 | 44 and `+0x19B` (som-decomp rom-combat.md 11.3),
+  then releases B.
+- **Evade**: **R1+A** plays the native back-roll pose 0x8D (55 px away from the facing,
+  65 frames; hero-poses.md) with status 0x0400 (no hit resolved) for its length. Only
+  disciplines with a dodge. A does not reach the game while R1 is held. Not yet checked
+  live: whether the roll respects walls.
+- **AI**: `tools/som_class_director.py` picks the class from weapon levels, build and MP
+  (`class_<n>`), forces a sword class when grass blocks the route, casts `cast_heal` /
+  `cast_attack` from the class list, and uses `special_<n>` instead of holding for
+  charged attacks.
+- **Ninjutsu jutsu on R1+A**, by the weapon in hand: sword = **Shunshin** (native forward
+  leap pose 0x9E, 85 px, untouchable while it plays); chakram/boomerang = **Kage Bunshin**
+  (the back roll, then two cosmetic shadow clones 24 px either side for 6 s: copies of the
+  boy's OAM entries, tiles 0x1C0-0x1D7 palette 1, written into free entries of the OAM
+  shadow 7E:0800 before each frame; no objects, no hits).
+
+## Network player 2 (2026-11-14)
+
+- The core listens on **UDP 43931** (`src/som_net_pad.h`) and feeds SNES **pad 2**. Packets:
+  `'S' '2' 1 0 buttons(LE16, Libretro ids) seq(LE16)`. Only 100.64.0.0/10 (Tailscale) and
+  localhost; one player at a time (first sender, until 3 s quiet); buttons released after
+  0.5 s of silence; Select never passes.
+- Join page: `tools/som_remote_pad.py`, service `flxtr-som-remote-pad` on the PC, listening on
+  its Tailscale address only: **http://100.69.7.81:43932/** (touch buttons, or any controller
+  through the browser Gamepad API).
+- The game still decides who pad 2 plays: the girl must be in the party and set to
+  controller 2 in the game's own controller settings.

@@ -14,8 +14,11 @@
 #include "som_overlay.h"
 #include "som_gambit.h"
 #include "som_disciplines.h"
+#include "som_magic.h"
 #include "som_familiar.h"
 #include "som_npc_walk.h"
+#include "som_net_pad.h"
+#include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,7 +120,7 @@ static int som_write_ring_ai_marker(void);
  * instead of taking control. The enabled mask persists for the bridge. */
 #define SOM_GAMBIT_FILE "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 static const char *gambit_file=SOM_GAMBIT_FILE;
-static SomGambits gambits={0,0,{4,3,3,3,4,1}};
+static SomGambits gambits={0,0,{4,3,3,3,4,1},0};
 static SomDisciplines disciplines;
 /* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
@@ -190,10 +193,17 @@ static void som_hero_palette_frame(uint8_t *ram){
     memcpy(current,dressed,32);
     /* The game works on (and sends to the screen) a second buffer,
      * 7E:0700 + palette*32 (live trace 2026-11-14: hero palette 1 at 7E:0720
-     * equals 7E:DF20, and only it changes during dash/block flashes). Put the
-     * tint there too while it holds the plain colours; leave flashes alone. */
+     * equals 7E:DF20, and only it changes during dash/block flashes).
+     * In field play it is held at the tint every frame: the dash/block glow
+     * is the attack-palette routine $C1:CA04 (cidwel/som-decomp
+     * actor-attack-palette.md), which reloads the 15 ROM colours (the
+     * "old palette" coming back) and then flashes them. retro_run ends at
+     * vblank, so this write is what the NMI sends to CGRAM: no glow, no
+     * relapse. Outside field play (events, fades) only plain or tinted
+     * colours are replaced, as before. */
     uint8_t *working=ram+0x0700u+((ram[0xE08B]>>1)&7u)*32u;
-    if(!memcmp(working,hero_pal_orig,32)||!memcmp(working,hero_pal_written,32))
+    const int field_play=ram[0xE4]==1&&ram[0xE6]==0x0F;
+    if(field_play||!memcmp(working,hero_pal_orig,32)||!memcmp(working,hero_pal_written,32))
         memcpy(working,dressed,32);
     memcpy(hero_pal_written,dressed,32);
 }
@@ -204,6 +214,7 @@ static void som_gambit_load(void){
     FILE *in=fopen(gambit_file,"r");
     if(in){if(!fgets(text,sizeof(text),in))text[0]=0;fclose(in);}
     som_gambit_parse(&gambits,text[0]?text:NULL);gambits.open=0;gambits.cursor=0;
+    gambits.infinite_mp=0;                 /* test switch never carries over */
 }
 static void som_gambit_save(void){
     char temp[256];
@@ -276,6 +287,29 @@ static void (*backend_deinit)(void);
 static bool (*backend_load_game)(const struct retro_game_info *);
 static void (*backend_unload_game)(void);
 static void (*backend_run)(void);
+/* Gambit test switch: keep the boy's MP full so spells can be tried before
+ * he has any (he has 0/0 MP early on). Only current MP +0x186 is written,
+ * every frame in field play; the game still pays each cast and this
+ * refills it. Turning it off clamps MP back to the real maximum. */
+#define SOM_TEST_MP 99u
+static uint8_t *som_live_wram(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return NULL;
+    return (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+}
+static void som_infinite_mp_frame(void){
+    uint8_t *ram=gambits.infinite_mp?som_live_wram():NULL;
+    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F)return;
+    ram[0xE186]=SOM_TEST_MP;
+}
+static void som_infinite_mp_changed(void){
+    uint8_t *ram=som_live_wram();
+    if(!gambits.infinite_mp&&ram&&ram[0xE000]==1&&ram[0xE186]>ram[0xE187])
+        ram[0xE186]=ram[0xE187];
+    som_overlay_set(&overlay,gambits.infinite_mp?"^Infinite MP ON|test only":
+                    "^Infinite MP off",SOM_MESSAGE_FRAMES);
+    fprintf(stderr,"[som-ai] TEST infinite MP %s\n",gambits.infinite_mp?"on":"off");
+}
 
 /* Keep all Libretro callbacks on the same thread as the original frontend.
  * Never try to emulate frames from a timer/network worker. */
@@ -297,6 +331,53 @@ static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {5,7},   /* Archery: bow, javelin */
 };
 static int som_equip_weapon(uint8_t *ram,unsigned type);
+static int som_equip_weapon_direct(uint8_t *ram,unsigned type);
+#define SOM_EQUIP_OK 1
+#define SOM_EQUIP_BUSY 0                /* hero mid-action: retry later */
+#define SOM_EQUIP_REFUSED (-1)          /* will not work: use the ring */
+static int som_cast_spell(uint8_t *ram,unsigned spell);
+#define SOM_SPELL_FIRE_BALL 0x0Cu
+/* X casts the current spell of the chosen discipline (som_magic.h); holding
+ * X steps to the next one. One cursor per discipline (+1: no discipline). */
+static unsigned spell_cursor[SOM_DISCIPLINE_COUNT+1u];
+static unsigned long x_press_frame;
+static int x_cycled;
+#define SOM_X_HOLD_FRAMES 30ul
+static unsigned som_current_spell(void){
+    const unsigned d=disciplines.selected<SOM_DISCIPLINE_COUNT?disciplines.selected:SOM_DISCIPLINE_COUNT;
+    return som_class_spell(disciplines.selected,spell_cursor[d]);
+}
+static void som_next_spell(void){
+    const unsigned d=disciplines.selected<SOM_DISCIPLINE_COUNT?disciplines.selected:SOM_DISCIPLINE_COUNT;
+    spell_cursor[d]=(spell_cursor[d]+1u)%som_class_spell_count(disciplines.selected);
+}
+/* Seals: D-pad presses counted while R2 is held (som_magic.h). */
+static unsigned seal_count;
+static int seal_mode;
+static int special_from_ai;           /* special_<n> command while the AI plays */
+/* R1+A evade: the hero plays the game's own back-roll pose 0x8D (rolls
+ * 55 px away from the facing, 65 frames; som-decomp hero-poses.md 1-3:
+ * pose = +0x1C 0x40, +0x11 code, +0x42 busy, as ACTOR_ANIM does) and is
+ * untouchable meanwhile: status 0x0400 (+0x191 bit 2), "no hit is
+ * resolved on the actor" ($C0:4F7B, rom-combat.md 12). Only the
+ * disciplines with a dodge (som_disc_has_dodge). */
+#define SOM_EVADE_POSE 0x8Du
+#define SOM_SHUNSHIN_POSE 0x9Eu         /* 55-frame forward leap, 85 px */
+#define SOM_EVADE_FRAMES 75ul
+static int evade_active,evade_set_guard,evade_a_hidden;
+static unsigned evade_pose;
+static unsigned long evade_started;
+static int som_evade_start(uint8_t *ram);
+/* Kage Bunshin (cosmetic): extra copies of the boy's body sprites, beside
+ * him, written into free entries of the OAM shadow 7E:0800 (512 + 32 bytes,
+ * sent by the NMI; som-decomp graphics.md: boy pieces use tiles
+ * 0x1C0-0x1C7/0x1D0-0x1D7, palette 1, all 16x16 small). Written before the
+ * frame like the palette, so the NMI sends them; the game rebuilds OAM
+ * every frame, so nothing stays behind. No objects, no hits. */
+#define SOM_CLONE_FRAMES 360ul
+#define SOM_CLONE_SPACING 24
+static unsigned long bunshin_until;
+static void som_bunshin_frame(uint8_t *ram);
 static void som_class_supply_frame(void);
 static int class_supply_pending, class_equip_pending;
 static unsigned long class_last_equip_attempt;
@@ -307,7 +388,7 @@ static void som_class_selected(void){
 }
 /* Set each poll: the player is in field play with a discipline and Y (not
  * L2+Y) held. */
-static int y_weapon_swap, y_weapon_blocked;
+static int y_weapon_swap, y_weapon_blocked, b_weapon_blocked, x_spell_blocked;
 static int som_cycle_weapon(uint8_t *ram);
 static int som_y_field_play(void){
     if(!backend_retro_get_memory_data||ring_ai_enabled||som_manual_disciplines||
@@ -356,9 +437,39 @@ static void som_combo_frame(void){
         combo_charging=1;combo_charge_frame=frame_number;
     }
 }
+/* Network player 2 (src/som_net_pad.h): pad 2 from a Tailscale device. */
+static SomNetPad net_pad={-1,0,0,0,0,0,0};
+static int net_pad_was_active;
+static uint64_t som_now_ms(void){
+    struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
+    return (uint64_t)t.tv_sec*1000u+(uint64_t)t.tv_nsec/1000000u;
+}
+static void som_net_pad_frame(void){
+    if(net_pad.fd<0)return;
+    const uint64_t now=som_now_ms();
+    som_net_pad_poll(&net_pad,now);
+    const int active=som_net_pad_active(&net_pad,now);
+    if(net_pad.joined){
+        net_pad.joined=0;
+        struct in_addr a;a.s_addr=htonl(net_pad.owner_ip);
+        char text[64];snprintf(text,sizeof(text),"Player 2 joined|%s",inet_ntoa(a));
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] NETPAD player 2 joined from %s\n",inet_ntoa(a));
+    }else if(net_pad_was_active&&!active){
+        som_overlay_set(&overlay,"Player 2 left",SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] NETPAD player 2 left\n");
+    }
+    net_pad_was_active=active;
+}
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
+    if(port==1&&index==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&
+       net_pad.fd>=0&&som_net_pad_active(&net_pad,som_now_ms())){
+        const uint16_t remote=som_net_pad_buttons(&net_pad,som_now_ms());
+        if(bitmask)return (int16_t)remote;
+        return id<16u&&(remote&(1u<<id))?1:0;
+    }
     if((ring_ai_enabled||som_manual_disciplines)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
         actual=0;                    /* the player's buttons drive the gambit menu */
@@ -377,9 +488,27 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         if(bitmask)return (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         if(id==RETRO_DEVICE_ID_JOYPAD_B)return 1;
     }
-    if(y_weapon_blocked&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
-        if(bitmask)actual=(int16_t)(actual&~(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
-        else if(id==RETRO_DEVICE_ID_JOYPAD_Y)actual=0;
+    if((evade_a_hidden||evade_active)&&port==0&&
+       (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+        if(bitmask)actual=(int16_t)(actual&~a);
+        else if(id==RETRO_DEVICE_ID_JOYPAD_A)actual=0;
+    }
+    if(seal_mode&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+        if(bitmask)actual=(int16_t)(actual&~dpad);
+        else if(id<16u&&(dpad&(1u<<id)))actual=0;
+    }
+    if((y_weapon_blocked||b_weapon_blocked||x_spell_blocked)&&port==0&&
+       (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        const uint16_t hidden=(uint16_t)(
+            (y_weapon_blocked?1u<<RETRO_DEVICE_ID_JOYPAD_Y:0u)|
+            (b_weapon_blocked?1u<<RETRO_DEVICE_ID_JOYPAD_B:0u)|
+            (x_spell_blocked?1u<<RETRO_DEVICE_ID_JOYPAD_X:0u));
+        if(bitmask)actual=(int16_t)(actual&~hidden);
+        else if(id<16u&&(hidden&(1u<<id)))actual=0;
     }
     if(y_weapon_swap&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         if(bitmask)actual=(int16_t)((actual&~(1<<RETRO_DEVICE_ID_JOYPAD_Y))|
@@ -413,6 +542,7 @@ static void som_record_presses(uint16_t pressed){
 }
 static void som_input_poll(void){
     if(physical_poll)physical_poll();
+    som_net_pad_frame();
     /* Observe physical attack edges without mutating the game's inputs. */
     if(physical_state && on_turbo){
         uint16_t current=0;
@@ -440,27 +570,76 @@ static void som_input_poll(void){
         const uint16_t l2_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
         const uint16_t b_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         const int field=som_y_field_play();
+        /* Seals: with R2 held, each D-pad press is one seal (hidden from
+         * the game); B or Y then fires charge level = seals. */
+        const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+        if(field&&(current&r2)&&!(current&l2_bit)&&!ring_ai_enabled&&
+           !som_manual_disciplines&&!special_stage&&
+           disciplines.selected<SOM_DISCIPLINE_COUNT){
+            seal_mode=1;
+            if((pressed&dpad)&&seal_count<SOM_SEALS_MAX){
+                static const unsigned dir_ids[4]={RETRO_DEVICE_ID_JOYPAD_UP,
+                    RETRO_DEVICE_ID_JOYPAD_DOWN,RETRO_DEVICE_ID_JOYPAD_LEFT,
+                    RETRO_DEVICE_ID_JOYPAD_RIGHT};
+                unsigned sign=0;
+                for(unsigned d=0;d<4u;d++)if(pressed&(1u<<dir_ids[d])){sign=d;break;}
+                seal_count++;
+                char text[64];
+                snprintf(text,sizeof(text),"^%s seal|level %u: B or Y",
+                         som_seal_names[sign],seal_count);
+                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+            }
+        }else{seal_mode=0;seal_count=0;}
         /* R2+attack is handled before ordinary B/Y weapon switching. */
         if(field&&!special_stage&&!special_suppress&&!ring_ai_enabled&&
            (current&r2)&&(pressed&(y_bit|b_bit))&&!(current&l2_bit)){
             unsigned which=(pressed&y_bit)?1u:0u;
-            unsigned stage=which?2u:1u;
+            unsigned stage=som_seal_level(seal_count,which);
+            seal_count=0;
             if(som_special_start(which,stage)){
                 special_chord=(uint16_t)(r2|(which?y_bit:b_bit));
                 special_suppress=1;
             }
         }
-        y_weapon_swap=0;y_weapon_blocked=0;
-        if(field&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
-            uint8_t *wram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        y_weapon_swap=0;y_weapon_blocked=0;b_weapon_blocked=0;x_spell_blocked=0;
+        uint8_t *wram=field?(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+        if(wram&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
             const unsigned want=som_disc_weapons[disciplines.selected][which];
-            const int equipped=wram&&wram[0xE1E4]==want;
-            if(!equipped&&(pressed&(y_bit|b_bit)))som_equip_weapon(wram,want);
-            if(current&y_bit){
-                y_weapon_swap=equipped;
-                y_weapon_blocked=!equipped; /* never attack with the wrong weapon */
+            /* Switch on the press, or as soon as the hero is free while the
+             * button stays held; the game then sees a fresh press. */
+            int result=wram[0xE1E4]==want?SOM_EQUIP_OK:
+                (pressed&(y_bit|b_bit))?som_equip_weapon(wram,want):
+                som_equip_weapon_direct(wram,want);
+            if(result==SOM_EQUIP_OK)y_weapon_swap=which;
+            else if(which)y_weapon_blocked=1;  /* never the wrong weapon on Y */
+            else if(result==SOM_EQUIP_BUSY)b_weapon_blocked=1;
+            /* B with a weapon that cannot be switched directly keeps the
+             * held weapon rather than leaving the hero unable to attack. */
+        }
+        /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
+        const uint16_t x_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        /* R1+A: evade (A never reaches the game while R1 is held). */
+        const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        const uint16_t a_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+        evade_a_hidden=wram&&(current&r1_bit)&&!ring_ai_enabled&&!som_manual_disciplines;
+        if(evade_a_hidden&&(pressed&a_bit))som_evade_start(wram);
+        /* Tap X: cast on release. Hold X: next spell every 0.5 s. */
+        if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+            x_spell_blocked=1;
+            if(pressed&x_bit){x_press_frame=frame_number;x_cycled=0;}
+            else if(frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
+                som_next_spell();x_cycled=1;x_press_frame=frame_number;
+                char text[64];
+                snprintf(text,sizeof(text),"^%s|tap X: cast",som_spell_label(som_current_spell()));
+                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
             }
+        }else if(wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
+                 !(current&(l2_bit|r2))&&!special_suppress){
+            if(!x_cycled)som_cast_spell(wram,som_current_spell());
+            x_cycled=0;
         }
         /* Start opens Class Progress manually; retain L2+R2 as an alias.
          * While open, all pad input is consumed by the overlay. */
@@ -540,6 +719,9 @@ static void som_input_poll(void){
                 som_gambit_save();
                 {char text[SOM_GAMBIT_COUNT+1];som_gambit_format(&gambits,text);
                  fprintf(stderr,"[som-ai] GAMBITS %s\n",text);}
+                break;
+            case SOM_GAMBIT_TEST_SWITCH:
+                som_infinite_mp_changed();
                 break;
             case SOM_GAMBIT_EXIT:
                 ring_ai_enabled=0;unlink(ring_ai_file);
@@ -743,163 +925,344 @@ static const char *const som_weapon_types[8]={"glove","sword","axe","spear","whi
     "boomerang","javelin"};
 static int som_take_undo(void);
 static uint8_t *som_vram(void);
-/* Switching weapons without the ring (EXPERIMENTAL). Live traces of ring
- * switches through all 8 weapons (2026-11-14) showed what the game writes
- * on the hero: type +0x1E4, row +0x1E3/+0x1E8 (type*9 + tier), attack
- * +0x198, the weapon's level +0x19C (from the level nibbles at +0x1C0) and
- * progress +0x196, and the weapon animation set +0x068/+0x07F/+0x066/
- * +0x02B/+0x065/+0x06B. Values per weapon as recorded (tier 0): */
-typedef struct { uint8_t attack,f07F,f066,f02B,f065,f06B; } SomWeaponLook;
-static const SomWeaponLook som_weapon_look[8] __attribute__((unused))={
-    {23,0x10,0x30,0x20,0x40,0x30},   /* glove */
-    {24,0x11,0x31,0x22,0x30,0x31},   /* sword */
-    {25,0x12,0x32,0x24,0x20,0x33},   /* axe */
-    {25,0x13,0x33,0x26,0x10,0x35},   /* spear */
-    {23,0x14,0x34,0x28,0x00,0x37},   /* whip */
-    {24,0x15,0x34,0x2A,0xF0,0x39},   /* bow */
-    {23,0x16,0x35,0x2C,0xE0,0x3B},   /* boomerang */
-    {23,0x17,0x36,0x2E,0xD0,0x3D},   /* javelin */
-};
-static uint8_t weapon_progress[8] __attribute__((unused));      /* +0x196 per weapon, kept while away */
-/* The game decompresses only the equipped weapon's sprite tiles. Directly
- * changing the object fields without running that loader leaves the old
- * weapon in VRAM and produces garbled sprites. Learn a bank only after the
- * game has held a weapon steadily in field play (map entry or a real ring
- * equip), then restore those exact tiles for subsequent instant switches. */
-static SomFamiliarCarry weapon_graphics[8];
-static unsigned weapon_cache_candidate=8u,weapon_cache_stable;
-/* Never serialize save-game state. Persist only verified weapon sprite tiles
- * captured from the game's own loader, bound to the exact Turbo ROM bytes. */
-#define SOM_WEAPON_CACHE_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_graphics.bin"
-static const char *weapon_cache_file=SOM_WEAPON_CACHE_FILE;
-static uint32_t weapon_rom_hash;
-typedef struct {
-    uint32_t magic,version,rom_hash,entry_size,checksum;
-    SomFamiliarCarry entries[8];
-} SomWeaponCacheFile;
-static uint32_t som_cache_hash(const void *data,size_t size){
-    const uint8_t *p=data;
-    uint32_t h=2166136261u;
-    for(size_t i=0;i<size;i++)h=(h^p[i])*16777619u;
-    return h;
+/* Switching weapons without the ring.
+ *
+ * Why the earlier direct switch garbled the weapon: the game's equip refresh
+ * ($C0:EA19 -> $C0:EA41, cidwel/som-decomp) does more than set the hero's
+ * weapon type. It also points the hero at that weapon's frame/script tables
+ * and expands the weapon's 64 effect tiles from ROM bank $D4 into the hero's
+ * WRAM buffer 7E:2000 (boy). The game then streams that buffer into OBJ
+ * tiles 0x144+ every frame. Switching without refilling the buffer drew the
+ * new weapon's frames with the old weapon's tiles.
+ *
+ * Everything below is computed from the loaded ROM exactly as $C0:EA41 does
+ * (unchanged in Turbo), with Turbo's own converter: Turbo re-encodes bank
+ * $D4 as 16 bytes of (a,b) row pairs followed by 8 bytes of c per tile, and
+ * its masked converter ($C1:C5D1) writes planes a/b/c & ~(b&c), plane 3 = 0.
+ * Verified 2026-11-14 against the live trace: the computed sword buffer
+ * equals 7E:2000 byte for byte. At runtime the model must reproduce the
+ * game's own buffer and table pointers for the held weapon before any
+ * direct switch is allowed (fail closed). */
+static const uint8_t *som_rom;
+static size_t som_rom_size;
+static int weapon_gfx_verified;
+static unsigned long weapon_gfx_last_check;
+#define SOM_WEAPON_TILES 0x40u
+#define SOM_WEAPON_BUF 0x2000u          /* boy's effect-tile buffer */
+#define SOM_HERO_EFFECT_BYTES (SOM_WEAPON_TILES*32u)
+static const uint8_t *som_rom_at(uint32_t snes,size_t length){
+    if(!som_rom||snes<0xC00000u||snes>0xFFFFFFu)return NULL;
+    const size_t header=som_rom_size%0x8000u==512u?512u:0u;
+    const size_t offset=header+(size_t)(snes-0xC00000u);
+    if(offset>som_rom_size||length>som_rom_size-offset)return NULL;
+    return som_rom+offset;
 }
-static void __attribute__((unused)) som_weapon_cache_save(void){
-    /* Disabled: prior data was captured with monster-sprite assumptions. */
-    if(!weapon_rom_hash)return;
-    SomWeaponCacheFile *c=calloc(1,sizeof(*c));
-    if(!c)return;
-    c->magic=0x534f4d57u;c->version=1u;c->rom_hash=weapon_rom_hash;
-    c->entry_size=(uint32_t)sizeof(SomFamiliarCarry);
-    memcpy(c->entries,weapon_graphics,sizeof(c->entries));
-    c->checksum=som_cache_hash(c->entries,sizeof(c->entries));
-    char path[512];snprintf(path,sizeof(path),"%s.tmp",weapon_cache_file);
-    FILE *file=fopen(path,"wb");
-    if(file){
-        int ok=fwrite(c,sizeof(*c),1,file)==1;
-        if(fclose(file)!=0)ok=0;
-        if(ok)rename(path,weapon_cache_file);else unlink(path);
-    }
-    free(c);
-}
-static unsigned __attribute__((unused)) som_weapon_cache_load(void){
-    if(!weapon_rom_hash)return 0;
-    FILE *file=fopen(weapon_cache_file,"rb");
-    if(!file)return 0;
-    SomWeaponCacheFile *c=malloc(sizeof(*c));
-    if(!c){fclose(file);return 0;}
-    int ok=fread(c,sizeof(*c),1,file)==1&&fgetc(file)==EOF;
-    fclose(file);
-    ok=ok&&c->magic==0x534f4d57u&&c->version==1u&&
-        c->entry_size==sizeof(SomFamiliarCarry)&&c->rom_hash==weapon_rom_hash&&
-        c->checksum==som_cache_hash(c->entries,sizeof(c->entries));
-    unsigned loaded=0;
-    if(ok){
-        for(unsigned n=0;n<8;n++){
-            SomFamiliarCarry *e=&c->entries[n];
-            if(!e->valid||!e->has_vram||!e->tile_count||
-               e->tile_count>SOM_FAMILIAR_MAX_TILES)continue;
-            int valid=1;
-            for(unsigned t=0;t<e->tile_count;t++)
-                if(e->tile_id[t]>=512u)valid=0;
-            if(valid){weapon_graphics[n]=*e;loaded++;}
+/* Turbo's masked plane converter for hero 0 (the boy). */
+static int som_expand_effect_tiles(uint32_t source,unsigned tiles,uint8_t *out){
+    const uint8_t *src=som_rom_at(source,(size_t)tiles*24u);
+    if(!src||((source&0xFFFFu)+tiles*24u)>0x10000u)return 0;
+    for(unsigned t=0;t<tiles;t++){
+        const uint8_t *s=src+t*24u;
+        uint8_t *o=out+t*32u;
+        for(unsigned y=0;y<8u;y++){
+            const uint8_t a=s[2u*y],b=s[2u*y+1u],c=s[16u+y];
+            const uint8_t keep=(uint8_t)~(b&c);
+            o[2u*y]=(uint8_t)(a&keep);o[2u*y+1u]=(uint8_t)(b&keep);
+            o[16u+2u*y]=(uint8_t)(c&keep);o[17u+2u*y]=0;
         }
     }
-    free(c);
-    if(loaded)fprintf(stderr,"[som-ai] WEAPON graphics cache restored: %u/8\\n",loaded);
-    return loaded;
+    return 1;
 }
-static void som_weapon_cache_reset(void){
-    memset(weapon_graphics,0,sizeof(weapon_graphics));
-    weapon_cache_candidate=8u;weapon_cache_stable=0;
+typedef struct {
+    const uint8_t *row;                 /* 12-byte weapon row, D0:1000+12*row */
+    uint8_t type,graphics;              /* +0x068, D030 (row byte 3) */
+    uint16_t f065,f06a,f07e,f02a;
+    uint8_t tiles[SOM_HERO_EFFECT_BYTES];
+} SomWeaponModel;
+/* $C0:EA41 for the boy (actor offset 0). */
+static int som_weapon_model(const uint8_t *hero,unsigned row,SomWeaponModel *m){
+    if(!hero||!m||row>=72u)return 0;
+    const uint8_t *r=som_rom_at(0xD01000u+12u*row,12u);
+    if(!r||r[0]>=8u||r[0]!=row/9u)return 0;
+    const unsigned graphics=r[3];
+    if(graphics>=0xEEu)return 0;        /* Turbo $E4:FE7C: alternate bank E4 */
+    const unsigned g=graphics<4u?r[0]:graphics+0x12u;
+    const uint8_t *table=som_rom_at(0xD4C000u+4u*g,4u);
+    const uint8_t *frames=som_rom_at(0xD0FFD0u+2u*g,2u);
+    if(!table||!frames)return 0;
+    m->row=r;m->type=r[0];m->graphics=(uint8_t)graphics;
+    const uint16_t e077=(uint16_t)(hero[0x077]|hero[0x078]<<8);
+    m->f065=(uint16_t)(e077+240u*m->type);
+    m->f06a=(uint16_t)(table[2]|table[3]<<8);
+    m->f07e=(uint16_t)(0x1040u+(g<8u?g<<8:0u));
+    m->f02a=(uint16_t)(frames[0]|frames[1]<<8);
+    const uint16_t source=(uint16_t)(24u*(unsigned)(table[0]|table[1]<<8));
+    return som_expand_effect_tiles(0xD40000u+source,SOM_WEAPON_TILES,m->tiles);
 }
-static void __attribute__((unused)) som_weapon_cache_frame(void){
-    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
-    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-    uint8_t *vram=som_vram();
-    if(!ram||!vram||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1||
-       ram[0xE000]!=1){weapon_cache_candidate=8u;weapon_cache_stable=0;return;}
+static uint16_t som_word(const uint8_t *p){return (uint16_t)(p[0]|p[1]<<8);}
+static void som_put_word(uint8_t *p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
+/* Does our model reproduce what the game itself loaded for the held weapon? */
+static int som_weapon_gfx_matches(const uint8_t *ram){
+    const uint8_t *hero=ram+0xE000u;
+    static SomWeaponModel m;
+    if(!som_weapon_model(hero,hero[0x1E3],&m)||hero[0x1E4]!=m.type)return 0;
+    return hero[0x068]==m.type&&ram[0xD030]==m.graphics&&
+        som_word(hero+0x065)==m.f065&&som_word(hero+0x06A)==m.f06a&&
+        som_word(hero+0x07E)==m.f07e&&som_word(hero+0x02A)==m.f02a&&
+        memcmp(ram+SOM_WEAPON_BUF,m.tiles,sizeof(m.tiles))==0;
+}
+static int som_field_idle(const uint8_t *ram){
+    return ram&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&
+        ram[0x7D]!=1&&!(ram[0xF1]&0x80)&&ram[0xE01C]==0&&ram[0xE060]==0&&
+        ram[0xE19B]==0;
+}
+/* Once per session, while the hero stands in the field. */
+static void som_weapon_gfx_verify_frame(const uint8_t *ram){
+    if(weapon_gfx_verified||!som_rom||!som_field_idle(ram))return;
+    if(weapon_gfx_last_check&&frame_number-weapon_gfx_last_check<30ul)return;
+    weapon_gfx_last_check=frame_number;
+    if(som_weapon_gfx_matches(ram)){
+        weapon_gfx_verified=1;
+        fprintf(stderr,"[som-ai] WEAPON art model verified against held %s\n",
+                som_weapon_types[ram[0xE1E4]&7u]);
+    }
+}
+/* A row with Str/Agi/Con/Int/Wis bonuses needs the full stat rebuild
+ * ($C0:4530); refuse those rather than leave stats half-updated. */
+static int som_weapon_row_plain(const uint8_t *r){return r[1]==0&&(r[2]&3u)==0;}
+static int som_equip_weapon_direct(uint8_t *ram,unsigned type){
+    if(!ram||type>=8u)return SOM_EQUIP_REFUSED;
     uint8_t *hero=ram+0xE000u;
-    const unsigned type=hero[0x1E4];
-    if(type>=8u){weapon_cache_candidate=8u;weapon_cache_stable=0;return;}
-    if(weapon_cache_candidate!=type){weapon_cache_candidate=type;weapon_cache_stable=1;return;}
-    if(weapon_cache_stable<12u){weapon_cache_stable++;return;}
-    if(weapon_graphics[type].has_vram)return; /* exact native sprite captured */
-    SomFamiliarCarry learned;memset(&learned,0,sizeof(learned));
-    memcpy(learned.object,hero,sizeof(learned.object));
-    som_familiar_capture_vram(&learned,ram,vram,hero,
-        (unsigned)(ram[0xDC]|ram[0xDD]<<8));
-    if(!learned.has_vram)return;
-    /* Retain only sprite address fields, not the hero's live combat stats. */
-    uint8_t tile_fields[sizeof(som_familiar_tile_fields)*2u];
-    for(unsigned f=0;f<sizeof(som_familiar_tile_fields);f++){
-        unsigned offset=som_familiar_tile_fields[f];
-        tile_fields[f*2u]=learned.object[offset];
-        tile_fields[f*2u+1u]=learned.object[offset+1u];
-    }
-    memset(learned.object,0,sizeof(learned.object));
-    for(unsigned f=0;f<sizeof(som_familiar_tile_fields);f++){
-        unsigned offset=som_familiar_tile_fields[f];
-        learned.object[offset]=tile_fields[f*2u];
-        learned.object[offset+1u]=tile_fields[f*2u+1u];
-    }
-    learned.valid=1;weapon_graphics[type]=learned;
-    som_weapon_cache_save();
-    fprintf(stderr,"[som-ai] WEAPON graphics cached: %s (%u tiles)\n",
-        som_weapon_types[type],learned.tile_count);
+    if(hero[0x1E4]==type)return SOM_EQUIP_OK;
+    if(!som_field_idle(ram))return SOM_EQUIP_BUSY;
+    uint8_t *owned=ram+0xCC54u;
+    const unsigned current=hero[0x1E4];
+    if(current>=8u||owned[type]==0xFF||!weapon_gfx_verified)return SOM_EQUIP_REFUSED;
+    const unsigned tier=owned[type]&0x0Fu;
+    if(tier>8u)return SOM_EQUIP_REFUSED;
+    const unsigned row=type*9u+tier;
+    const uint8_t *old_row=som_rom_at(0xD01000u+12u*hero[0x1E3],12u);
+    static SomWeaponModel m;
+    if(!old_row||hero[0x1E3]>=72u||!som_weapon_model(hero,row,&m)||
+       !som_weapon_row_plain(old_row)||!som_weapon_row_plain(m.row))
+        return SOM_EQUIP_REFUSED;
+    const uint8_t *r=m.row;
+    /* Stats ($C0:4530 for a plain row): power and hit change by the row
+     * difference; crit = 3*level + row crit, halved for bow/boomerang/javelin. */
+    const uint8_t levels=hero[0x1C0u+type/2u];
+    const unsigned level=type%2u?(levels&0x0Fu):(levels>>4);
+    int attack=(int)hero[0x198]-(int)old_row[8]+(int)r[8];
+    int hit=(int)hero[0x197]-(int)old_row[7]+(int)r[7];
+    unsigned crit=3u*level+r[6];
+    if(type>4u)crit/=2u;
+    hero[0x1E4]=(uint8_t)type;
+    hero[0x1E3]=hero[0x1E8]=(uint8_t)row;
+    hero[0x198]=(uint8_t)(attack<0?0:attack>255?255:attack);
+    hero[0x197]=(uint8_t)(hit<0?0:hit>99?99:hit);
+    hero[0x196]=(uint8_t)crit;
+    hero[0x19C]=(uint8_t)level;
+    hero[0x194]=r[5];hero[0x199]=r[9];hero[0x19A]=r[10];hero[0x1F7]=r[11];
+    /* $C0:EA19 / $C0:EA41 */
+    hero[0x084]=0;hero[0x00C]=0;
+    if(!hero[0x069])hero[0x069]=r[4];   /* weapon palette id: only if unset */
+    hero[0x068]=m.type;ram[0xD030]=m.graphics;
+    som_put_word(hero+0x065,m.f065);som_put_word(hero+0x06A,m.f06a);
+    som_put_word(hero+0x07E,m.f07e);som_put_word(hero+0x02A,m.f02a);
+    memcpy(ram+SOM_WEAPON_BUF,m.tiles,sizeof(m.tiles));
+    if(owned[current]!=0xFF)owned[current]&=(uint8_t)~0x40u;  /* no longer held */
+    owned[type]|=0x40u;                                        /* held by the boy */
+    fprintf(stderr,"[som-ai] WEAPON equipped without the ring: %s (row %u)\n",
+            som_weapon_types[type],row);
+    return SOM_EQUIP_OK;
 }
-/* SAFE MODE: The familiar capture used for weapons was not a weapon sprite
- * capture. It copies hero OBJ references as though they were monster sprites,
- * and the resulting VRAM writes scramble weapon graphics. Native weapon-ring
- * equipment is the only verified method of loading a different weapon's art.
- * Keep class grants and mappings, but fail closed on instant equipment until
- * the native loader and its DMA/VRAM sequence have been traced. */
+static unsigned long equip_notice_frame;
 static int som_equip_weapon(uint8_t *ram,unsigned type){
-    if(!ram||type>=8u||ram[0xE000]!=1||
-       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
-    if(ram[0xE1E4]==type)return 1; /* already equipped by the game */
-    char message[96];
-    snprintf(message,sizeof(message),"^Select %s from weapon ring|Native graphics only",
-             som_weapon_types[type]);
-    som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
-    fprintf(stderr,"[som-ai] SAFE EQUIP: %s requires native ring to load graphics\\n",
-            som_weapon_types[type]);
-    return 0;
+    const int result=som_equip_weapon_direct(ram,type);
+    if(result==SOM_EQUIP_REFUSED&&type<8u&&
+       (!equip_notice_frame||frame_number-equip_notice_frame>=SOM_MESSAGE_FRAMES)){
+        equip_notice_frame=frame_number;
+        char message[96];
+        snprintf(message,sizeof(message),weapon_gfx_verified?
+                 "^%s: select it in the ring|direct switch unsupported":
+                 "^%s: weapon art check pending|stand still a moment",som_weapon_types[type]);
+        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] WEAPON switch to %s refused (%s)\n",som_weapon_types[type],
+                weapon_gfx_verified?"row needs native rebuild":"art model not verified");
+    }
+    return result;
+}
+/* Casting without the ring (EXPERIMENTAL; X/Triangle). Reproduces what the
+ * ring menu does when a spell is confirmed (cidwel/som-decomp
+ * docs/summon-cast.md section 2, the same steps its validated Sim.cast
+ * uses): $C0:731F writes the request into the caster, $C0:001B clears the
+ * hit list and stores the magic level, and $C1:88C7 (unchanged in Turbo)
+ * starts the cast pose; the game's own animation and effect scripts do the
+ * rest, take the MP on the first hit and restore the weapon art ($C0:E9F4)
+ * when the hero is released. Not reproduced: the "<spell> Lv." banner, and
+ * the spark palette for frames 0-59 (the game loads the cast palette itself
+ * at frame 60). */
+static const char *som_spell_name(unsigned spell){return som_spell_label(spell);}
+/* 0 Gnome .. 5 Dryad: six spells each; 6 Shade, 7 Lumina: three each. */
+static unsigned som_spell_element(unsigned spell){
+    return spell<0x24u?spell/6u:spell<0x27u?6u:7u;
+}
+/* Hostile hero spells target the monster slots 3-5 that are present, on
+ * screen and alive ($D0:DA60). Take the nearest one. */
+static int som_cast_target(const uint8_t *ram){
+    const uint8_t *hero=ram+0xE000u;
+    const int hx=(int)som_word(hero+0x20),hy=(int)som_word(hero+0x22);
+    int best=-1,best_distance=0;
+    for(unsigned slot=3;slot<6u;slot++){
+        const uint8_t *e=ram+0xE000u+0x200u*slot;
+        const int x=(int)som_word(e+0x20),y=(int)som_word(e+0x22);
+        if(e[0]!=1||(e[0x191]&0x80u)||x<8||x>=0xF8||y>=0xD8)continue;
+        const int distance=abs(x-hx)+abs(y-hy);
+        if(best<0||distance<best_distance){best=(int)slot;best_distance=distance;}
+    }
+    return best;
+}
+static int som_cast_spell(uint8_t *ram,unsigned spell){
+    if(!ram||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
+    if(!som_field_idle(ram))return 0;                 /* busy: no cast */
+    uint8_t *hero=ram+0xE000u;
+    const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
+    /* 0x81 hostile: monster slots; 0x01 ally and 0x00 self: the boy
+     * himself (hero slot 0, target 1, as the ring's single-ally choice). */
+    if(!row||(row[8]!=0x81u&&row[8]!=0x01u&&row[8]!=0x00u)){
+        fprintf(stderr,"[som-ai] CAST refused: spell %#04x has unsupported targets\n",spell);
+        return 0;
+    }
+    const int hostile=row[8]==0x81u;
+    char message[64];
+    const unsigned cost=row[15];
+    if(hero[0x186]<cost){
+        snprintf(message,sizeof(message),"^%s: not enough MP|%u/%u",
+                 som_spell_name(spell),(unsigned)hero[0x186],cost);
+        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] CAST refused: MP %u < %u\n",(unsigned)hero[0x186],cost);
+        return 0;
+    }
+    const int target=hostile?som_cast_target(ram):0;
+    if(target<0){
+        snprintf(message,sizeof(message),"^%s: no target",som_spell_name(spell));
+        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+        return 0;
+    }
+    static uint8_t spark[SOM_HERO_EFFECT_BYTES];
+    if(!som_expand_effect_tiles(0xD4BA00u,SOM_WEAPON_TILES,spark))return 0;
+    const unsigned element=som_spell_element(spell);
+    const uint8_t nibbles=hero[0x1C4u+element/2u];
+    unsigned level=element%2u?(nibbles&0x0Fu):(nibbles>>4);
+    if(level>7u)level=7u;      /* level 8 needs the game's RNG ($D0:4EAC) */
+    /* $C0:731F + $C0:001B */
+    hero[0x170]=(uint8_t)spell;hero[0x177]=(uint8_t)element;
+    hero[0x176]=1;hero[0x178]=(uint8_t)(target+1);hero[0x179]=hero[0x17A]=0;
+    hero[0x172]=hero[0x173]=hero[0x174]=0xFF;
+    hero[0x171]=(uint8_t)level;
+    /* $C1:88C7 for the boy */
+    hero[0x111]=(uint8_t)level;hero[0x108]=0;
+    hero[0x04F]=0xCE;hero[0x01C]=0x40;hero[0x030]=0xFF;hero[0x011]=0x94;
+    hero[0x006]=hero[0x007]=hero[0x008]=0;
+    hero[0x060]=0x20;
+    memcpy(ram+SOM_WEAPON_BUF+0x800u,spark,sizeof(spark));   /* $C1:8634 */
+    fprintf(stderr,"[som-ai] CAST %s Lv.%u at %s slot %d (MP %u, cost %u)\n",
+            som_spell_name(spell),level,hostile?"monster":"own",target,
+            (unsigned)hero[0x186],cost);
+    return 1;
+}
+/* Kage Bunshin: two copies of the boy's pieces, SOM_CLONE_SPACING px to
+ * each side, in OAM entries the game left off screen (y >= 0xE0). */
+static void som_bunshin_frame(uint8_t *ram){
+    if(!bunshin_until||!ram)return;
+    if(frame_number>bunshin_until||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F){
+        bunshin_until=frame_number>bunshin_until?0:bunshin_until;return;
+    }
+    uint8_t *oam=ram+0x0800u,*high=ram+0x0A00u;
+    unsigned hero_ids[16],heroes=0,free_ids[128],frees=0;
+    for(unsigned i=0;i<128u;i++){
+        const uint8_t *e=oam+4u*i;
+        const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
+        if(e[1]>=0xE0u){free_ids[frees++]=i;continue;}
+        if(((tile>=0x1C0u&&tile<=0x1C7u)||(tile>=0x1D0u&&tile<=0x1D7u))&&
+           ((e[3]>>1)&7u)==1u&&heroes<16u)hero_ids[heroes++]=i;
+    }
+    static const int offsets[2]={-SOM_CLONE_SPACING,SOM_CLONE_SPACING};
+    unsigned used=0;
+    for(unsigned c=0;c<2u;c++)
+        for(unsigned h=0;h<heroes&&used<frees;h++){
+            const unsigned src=hero_ids[h],dst=free_ids[used++];
+            const uint8_t *e=oam+4u*src;uint8_t *d=oam+4u*dst;
+            const unsigned hb=(high[src/4u]>>(2u*(src%4u)))&3u;
+            const int x=(int)(e[0]|((hb&1u)<<8))+offsets[c];
+            const unsigned nx=(unsigned)x&0x1FFu;
+            d[0]=(uint8_t)nx;d[1]=e[1];d[2]=e[2];d[3]=e[3];
+            const unsigned shift=2u*(dst%4u);
+            high[dst/4u]=(uint8_t)((high[dst/4u]&~(3u<<shift))|
+                (((nx>>8)&1u)|(hb&2u))<<shift);
+        }
+}
+static int som_evade_start(uint8_t *ram){
+    if(!ram||evade_active)return 0;
+    if(disciplines.selected>=SOM_DISCIPLINE_COUNT||!som_disc_has_dodge(disciplines.selected)){
+        som_overlay_set(&overlay,"^No evade|this class cannot dodge",SOM_MESSAGE_FRAMES);
+        return 0;
+    }
+    uint8_t *hero=ram+0xE000u;
+    /* Field play, no event, not casting, not in a pose or power attack,
+     * not knocked out or held by a status that stops movement. */
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||
+       hero[0x060]||hero[0x01C]==0x40||hero[0x01C]==0x80||
+       (som_word(hero+0x190)&0xC160u))return 0;
+    /* Ninjutsu jutsu by the weapon in hand: sword = Shunshin (forward
+     * leap), chakram/boomerang = Kage Bunshin (roll + shadow clones). */
+    const int ninja=disciplines.selected==2u;
+    const int shunshin=ninja&&hero[0x1E4]==1u,bunshin=ninja&&hero[0x1E4]==6u;
+    evade_pose=shunshin?SOM_SHUNSHIN_POSE:SOM_EVADE_POSE;
+    hero[0x01C]=0x40;hero[0x011]=(uint8_t)evade_pose;hero[0x042]=1;
+    hero[0x006]=hero[0x007]=0;
+    evade_set_guard=!(hero[0x191]&0x04u);
+    hero[0x191]|=0x04u;
+    evade_active=1;evade_started=frame_number;
+    if(bunshin)bunshin_until=frame_number+SOM_CLONE_FRAMES;
+    som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":bunshin?"^Kage Bunshin no Jutsu":
+                    "^Evade",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] EVADE %s as %s\n",shunshin?"Shunshin":bunshin?"Kage Bunshin":
+            "back roll",som_discipline_names[disciplines.selected]);
+    return 1;
+}
+/* Ends the guard when the pose is over (the script clears +0x1C/+0x11). */
+static void som_evade_tick(void){
+    if(!evade_active||!backend_retro_get_memory_data)return;
+    uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram)return;
+    uint8_t *hero=ram+0xE000u;
+    if(hero[0x011]==evade_pose&&hero[0x01C]==0x40&&
+       frame_number-evade_started<=SOM_EVADE_FRAMES)return;
+    if(evade_set_guard)hero[0x191]&=(uint8_t)~0x04u;
+    evade_active=0;evade_set_guard=0;
 }
 /* Charge the game's actual weapon stage through its normal B input. */
 static int som_special_start(unsigned which,unsigned stage){
-    if(which>1||stage<1||stage>2||special_stage||combo_charging||
-       ring_ai_enabled||som_manual_disciplines||
+    if(which>1||stage<1||stage>SOM_SEALS_MAX||special_stage||combo_charging||
+       (ring_ai_enabled&&!special_from_ai)||som_manual_disciplines||
        disciplines.selected>=SOM_DISCIPLINE_COUNT||
        !backend_retro_get_memory_data)return 0;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
        ram[0xD0]!=0||ram[0x7D]==1||ram[0xE1ED]!=0)return 0;
     unsigned weapon=som_disc_weapons[disciplines.selected][which];
-    if(ram[0xE1E4]!=weapon&&!som_equip_weapon(ram,weapon))return 0;
-    if(ram[0xE19C]<stage||ram[0xE19B]!=0){
-        fprintf(stderr,"[som-ai] SPECIAL refused: %s needs charge level %u\\n",
+    if(som_equip_weapon(ram,weapon)!=SOM_EQUIP_OK)return 0;
+    if(!ram[0xE19C]||ram[0xE19B]!=0){
+        fprintf(stderr,"[som-ai] SPECIAL refused: %s needs charge level %u\n",
                 som_weapon_types[weapon],stage);
         return 0;
+    }
+    if(ram[0xE19C]<stage){                    /* only the levels learned */
+        char text[64];
+        snprintf(text,sizeof(text),"^%s level %u|not learned: level %u",
+                 som_weapon_types[weapon],stage,(unsigned)ram[0xE19C]);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        stage=ram[0xE19C];
     }
     special_stage=stage;special_weapon=weapon;special_started=frame_number;
     som_combo_clear();
@@ -909,15 +1272,24 @@ static int som_special_start(unsigned which,unsigned stage){
 }
 static void som_special_tick(void){
     if(!special_stage||!backend_retro_get_memory_data)return;
-    const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
        ram[0xD0]!=0||ram[0xE1E4]!=special_weapon||
        frame_number-special_started>SOM_SPECIAL_TIMEOUT){
         fprintf(stderr,"[som-ai] SPECIAL abort: state changed or charge timeout\\n");
         special_stage=0;return;
     }
+    /* Skip the hold: once the swing is over and the gauge runs ($C0:B330:
+     * E01C, E061, E1ED clear; E01A counting), set the gauge word E01A to
+     * the finished stage (counter parked at 44, stage in E01B = E19B),
+     * as 90 frames per stage of holding would (som-decomp rom-combat.md
+     * 11.3, glove-attacks.md). Releasing B then starts that power attack. */
+    if(ram[0xE19B]<special_stage&&(ram[0xE01A]||ram[0xE01B])&&
+       !ram[0xE01C]&&!ram[0xE061]&&!ram[0xE1ED]){
+        ram[0xE01A]=0x2C;ram[0xE01B]=(uint8_t)special_stage;ram[0xE19B]=(uint8_t)special_stage;
+    }
     if(ram[0xE19B]>=special_stage){
-        fprintf(stderr,"[som-ai] SPECIAL release %s level %u\\n",
+        fprintf(stderr,"[som-ai] SPECIAL release %s level %u\n",
                 som_weapon_types[special_weapon],special_stage);
         special_stage=0; /* B releases on next emulated frame */
     }
@@ -928,7 +1300,7 @@ static int som_cycle_weapon(uint8_t *ram){
     const unsigned current=ram[0xE1E4];
     for(unsigned step=1;step<8u;step++){
         const unsigned type=(current+step)%8u;
-        if(ram[0xCC54u+type]!=0xFF)return som_equip_weapon(ram,type);
+        if(ram[0xCC54u+type]!=0xFF)return som_equip_weapon(ram,type)==SOM_EQUIP_OK;
     }
     return 0;
 }
@@ -982,11 +1354,10 @@ static void som_class_supply_frame(void){
                              frame_number-class_last_equip_attempt>=120ul)){
         class_last_equip_attempt=frame_number;
         unsigned primary=som_disc_weapons[disciplines.selected][0];
-        if(ram[0xE1E4]==primary||som_equip_weapon(ram,primary))
+        const int result=som_equip_weapon_direct(ram,primary);
+        /* Retry while the hero is busy or the art check is still pending. */
+        if(result==SOM_EQUIP_OK||(result==SOM_EQUIP_REFUSED&&weapon_gfx_verified))
             class_equip_pending=0;
-        else{
-            class_equip_pending=0; /* never retry unsafe instant equipment */
-        }
     }
 }
 static int som_use_candy(uint8_t *ram){
@@ -1452,6 +1823,48 @@ static int som_handle_command(const char *command){
         fprintf(stderr,"[som-ai] WEAPON TRACE armed; equip via native ring\\n");
         return 1;
     }
+    /* The AI picks the discipline that fits (bridge som_class_director). */
+    if(!strncmp(command,"class_",6)){
+        char *end=NULL;
+        const unsigned long n=!strcmp(command+6,"none")?SOM_DISCIPLINE_NONE:
+            strtoul(command+6,&end,10);
+        if(n!=SOM_DISCIPLINE_NONE&&(!end||*end||end==command+6||n>=SOM_DISCIPLINE_COUNT))return 0;
+        if(disciplines.selected!=n){
+            disciplines.selected=(uint8_t)n;
+            som_disc_save();som_class_selected();
+            if(n<SOM_DISCIPLINE_COUNT){
+                char text[64];
+                snprintf(text,sizeof(text),"^%s|AI chose this class",som_discipline_names[n]);
+                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+            }
+            fprintf(stderr,"[som-ai] DISCIPLINE selected=%lu by the AI (saved)\n",n);
+        }
+        return 1;
+    }
+    /* cast_attack / cast_heal / cast_buff: a spell of the chosen class. */
+    if(!strncmp(command,"cast_",5)&&som_rom&&backend_retro_get_memory_data){
+        uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        const unsigned d=disciplines.selected;
+        const int want_attack=!strcmp(command+5,"attack"),want_heal=!strcmp(command+5,"heal");
+        if(!want_attack&&!want_heal&&strcmp(command+5,"buff"))return 0;
+        for(unsigned i=0;i<som_class_spell_count(d);i++){
+            const unsigned spell=som_class_spell(d,i);
+            const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
+            if(!row)continue;
+            const int heal=spell==0x0Bu||spell==0x0Au;    /* Cure Water, Remedy */
+            if(want_attack?row[8]==0x81u:want_heal?heal:(row[8]!=0x81u&&!heal))
+                return som_cast_spell(ram,spell);
+        }
+        return 0;
+    }
+    /* special_<1-8>: the primary weapon's charge level, without holding. */
+    if(!strncmp(command,"special_",8)&&command[8]>='1'&&command[8]<='8'&&!command[9])
+    {
+        special_from_ai=1;
+        const int ok=som_special_start(0,(unsigned)(command[8]-'0'));
+        special_from_ai=0;
+        return ok;
+    }
     if(!strncmp(command,"equip_",6)){
         for(unsigned t=0;t<8u;t++)
             if(!strcmp(command+6,som_weapon_types[t]))
@@ -1691,8 +2104,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
+    evade_active=evade_set_guard=evade_a_hidden=0;seal_mode=0;seal_count=0;x_cycled=0;
+    bunshin_until=0;evade_pose=SOM_EVADE_POSE;
     special_chord=0;special_suppress=0;
-    y_weapon_swap=y_weapon_blocked=0;
+    y_weapon_swap=y_weapon_blocked=b_weapon_blocked=x_spell_blocked=0;
     combo_input_held=0;combo_charge_frame=0;
     memset(combo_hp,0,sizeof(combo_hp));memset(combo_ids,0,sizeof(combo_ids));
     memset(combo_live,0,sizeof(combo_live));
@@ -1707,7 +2122,6 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_disc_load();
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
-    som_weapon_cache_reset();
     weapon_trace_on=0;som_weapon_trace_reset();
     hero_pal_have=0;
     som_gambit_load();
@@ -1730,12 +2144,16 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             patched_game=*game;patched_game.data=patched_rom;load_info=&patched_game;
         }
     }
-    weapon_rom_hash=on_turbo&&game&&game->data&&game->size?
-        som_cache_hash(game->data,game->size):0;
+    som_rom=on_turbo&&patched_rom?patched_rom:NULL;
+    som_rom_size=som_rom?game->size:0;
+    weapon_gfx_verified=0;weapon_gfx_last_check=0;equip_notice_frame=0;
     game_loaded=backend_load_game(load_info);
-    /* Do not restore legacy weapon graphics snapshots. They are unsafe. */
-    if(game_loaded&&on_turbo)
-        fprintf(stderr,"[som-ai] WEAPON graphics cache disabled: use native ring\\n");
+    if(game_loaded&&on_turbo&&net_pad.fd<0){
+        if(som_net_pad_open(&net_pad,SOM_NET_PAD_PORT))
+            fprintf(stderr,"[som-ai] NETPAD player 2 listening on UDP %u (Tailscale only)\n",
+                    SOM_NET_PAD_PORT);
+        else fprintf(stderr,"[som-ai] NETPAD unavailable: UDP %u not bound\n",SOM_NET_PAD_PORT);
+    }
     /* Selecting this experimental core is explicit opt-in. No injection
      * occurs until the separate one-shot trigger is consumed. A
      * launcher-provided environment variable is not reliable across the
@@ -1764,12 +2182,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     return game_loaded;
 }
 RETRO_API void retro_unload_game(void){
+    som_net_pad_close(&net_pad);net_pad_was_active=0;
     armed=0;autonomous_mode=0;game_loaded=0;
     ring_ai_enabled=0;ring_ai_pending=0;
+    weapon_gfx_verified=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     familiar_carry.valid=0;
-    som_weapon_cache_reset();
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
@@ -1911,10 +2330,18 @@ RETRO_API void retro_run(void){
     som_clone_tick();
     som_familiar_frame();
     /* No automatic hero VRAM caching: old monster-style snapshots garbled art. */
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_weapon_gfx_verify_frame((const uint8_t*)
+            backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_class_supply_frame();
+    if(test_enabled&&on_turbo)som_infinite_mp_frame();
     if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_hero_palette_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(pal_trace_on&&backend_retro_get_memory_data)
         som_pal_trace_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)
@@ -1929,6 +2356,7 @@ RETRO_API void retro_run(void){
     backend_run();
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo)som_special_tick();
+    if(test_enabled&&on_turbo)som_evade_tick();
     if(test_enabled&&on_turbo)som_weapon_trace_frame();
     if(test_enabled&&on_turbo)som_ring_ai_tick();
     som_idle_tick();

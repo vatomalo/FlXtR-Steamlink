@@ -8,6 +8,10 @@
  * closes the menu. The last entry, "Exit gambits: you play", closes the
  * menu, turns the AI off and gives the controls back.
  *
+ * "Infinite MP (test)" above Exit is a testing switch, not a gambit: B or
+ * Left/Right toggles it. It is not written to SOM_GAMBIT_FILE (the bridge
+ * reads that) and the proxy resets it on every game load.
+ *
  * The SkyLoft bridge reads the weights from SOM_GAMBIT_FILE (one digit per
  * gambit, this order) and weighs the activities against each other.
  * Pure model and drawing, no I/O. */
@@ -20,7 +24,9 @@
 #include "som_overlay.h"
 
 #define SOM_GAMBIT_COUNT 6u
-#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 1u)       /* + exit */
+#define SOM_GAMBIT_INFINITE_MP SOM_GAMBIT_COUNT          /* test switch row */
+#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 1u)
+#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 2u)        /* + test switch, exit */
 #define SOM_GAMBIT_MAX_WEIGHT 5u
 
 /* Activities only; how the AI fights or moves is not a gambit. The order is
@@ -39,10 +45,11 @@ typedef struct {
     int open;
     unsigned cursor;
     uint8_t weight[SOM_GAMBIT_COUNT];
+    int infinite_mp;                                /* test switch, not saved */
 } SomGambits;
 
 enum { SOM_GAMBIT_NONE, SOM_GAMBIT_OPENED, SOM_GAMBIT_CLOSED,
-       SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT };
+       SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT, SOM_GAMBIT_TEST_SWITCH };
 
 static inline void som_gambit_defaults_into(SomGambits *g) {
     memcpy(g->weight, som_gambit_defaults, sizeof(g->weight));
@@ -77,7 +84,13 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
         g->cursor = (g->cursor + SOM_GAMBIT_ITEMS - 1u) % SOM_GAMBIT_ITEMS;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN))
         g->cursor = (g->cursor + 1u) % SOM_GAMBIT_ITEMS;
-    if (g->cursor == SOM_GAMBIT_COUNT) {
+    if (g->cursor == SOM_GAMBIT_INFINITE_MP) {
+        if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_B) | (1u << RETRO_DEVICE_ID_JOYPAD_LEFT) |
+                       (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT))) {
+            g->infinite_mp = !g->infinite_mp;
+            return SOM_GAMBIT_TEST_SWITCH;
+        }
+    } else if (g->cursor == SOM_GAMBIT_EXIT_ITEM) {
         if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_B)) {
             g->open = 0;
             return SOM_GAMBIT_EXIT;
@@ -107,7 +120,11 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
     unsigned item = line - 1u;
     if (item >= SOM_GAMBIT_ITEMS) return 0;
     const char *mark = g->cursor == item ? ">" : " ";
-    if (item == SOM_GAMBIT_COUNT) {
+    if (item == SOM_GAMBIT_INFINITE_MP) {
+        snprintf(out, 33, "%s %-19s %s", mark, "Infinite MP (test)", g->infinite_mp ? "ON" : "off");
+        return 1;
+    }
+    if (item == SOM_GAMBIT_EXIT_ITEM) {
         snprintf(out, 33, "%s Exit gambits: you play", mark);
         return 1;
     }
@@ -135,7 +152,8 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
     const uint32_t dim = som_overlay_color(format, 150, 160, 200);
     char text[33];
     for (unsigned line = 0; line < lines && som_gambit_line(g, line, text); line++) {
-        const int off = line >= 1u && line - 1u < SOM_GAMBIT_COUNT && !g->weight[line - 1u];
+        const int off = line >= 1u && ((line - 1u < SOM_GAMBIT_COUNT && !g->weight[line - 1u]) ||
+                                       (line - 1u == SOM_GAMBIT_INFINITE_MP && !g->infinite_mp));
         for (unsigned i = 0; text[i]; i++) {
             unsigned char c = (unsigned char)text[i];
             if (c < 32u || c > 126u) continue;

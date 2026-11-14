@@ -467,6 +467,19 @@ static SomFamiliarCarry familiar_carry;
 static unsigned long familiar_arrived;
 #define SOM_FAMILIAR_SETTLE_FRAMES 60ul
 static void som_familiar_bind(void);
+/* summon_boss: a saved monster (object, its slot's sprite tiles, palette;
+ * built on SkyLoft from a BossRecorder capture) comes as a familiar. While
+ * SOM_SUMMON_ANYONE_FILE exists anyone may summon (test override for the
+ * summoner rule); delete it to restore the rule. */
+#define SOM_SUMMON_FILE "/home/apps/retroarch/cores/experimental/som_summon.bin"
+#define SOM_SUMMON_ANYONE_FILE "/home/apps/retroarch/cores/experimental/som_ai_summon_anyone"
+static const char *summon_file=SOM_SUMMON_FILE;
+static const char *summon_anyone_file=SOM_SUMMON_ANYONE_FILE;
+static int som_summon_allowed(const uint8_t *ram){
+    if(access(summon_anyone_file,F_OK)==0)return 1;
+    return ram&&som_familiar_summoner(ram+0xE000);
+}
+static int som_summon_boss(void);
 static void som_familiar_dismiss(void);
 static uint8_t *undo_state;
 static size_t undo_size;
@@ -474,6 +487,21 @@ static int undo_ready;
 static int som_monster_live(const uint8_t *object){
     uint16_t status=(uint16_t)(object[0x190]|object[0x191]<<8);
     return object[0]==1&&object[0x180]<0x80&&!(status&0x8000u);
+}
+/* Full emulator snapshot for undo_spawn, taken right before a write. */
+static int som_take_undo(void){
+    if(!backend_retro_serialize_size||!backend_retro_serialize)return 0;
+    size_t size=backend_retro_serialize_size();
+    if(size>undo_size){
+        uint8_t *grown=realloc(undo_state,size);
+        if(!grown){fprintf(stderr,"[som-ai] SPAWN refused: no memory for undo\n");return 0;}
+        undo_state=grown;undo_size=size;
+    }
+    if(!size||!backend_retro_serialize(undo_state,size)){
+        fprintf(stderr,"[som-ai] SPAWN refused: undo snapshot failed\n");return 0;
+    }
+    undo_ready=1;
+    return 1;
 }
 static int som_clone_enemy(void){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
@@ -491,16 +519,7 @@ static int som_clone_enemy(void){
     clone_no_slot=0;
     if(source<0){fprintf(stderr,"[som-ai] SPAWN refused: no live monster to copy\n");return 0;}
     if(target<0){clone_no_slot=1;return 0;}
-    size_t size=backend_retro_serialize_size();
-    if(size>undo_size){
-        uint8_t *grown=realloc(undo_state,size);
-        if(!grown){fprintf(stderr,"[som-ai] SPAWN refused: no memory for undo\n");return 0;}
-        undo_state=grown;undo_size=size;
-    }
-    if(!size||!backend_retro_serialize(undo_state,size)){
-        fprintf(stderr,"[som-ai] SPAWN refused: undo snapshot failed\n");return 0;
-    }
-    undo_ready=1;
+    if(!som_take_undo())return 0;
     uint8_t *from=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
     uint8_t *to=ram+SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE;
     uint8_t keep[sizeof(som_slot_fields)][2];
@@ -655,7 +674,7 @@ static void som_check_trigger(void){
         if(familiar_pending){
             const uint8_t *ram=backend_retro_get_memory_data?
                 (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
-            if(!ram||!som_familiar_summoner(ram+0xE000)){
+            if(!som_summon_allowed(ram)){
                 familiar_pending=0;
                 som_overlay_set(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
                 fprintf(stderr,"[som-ai] FAMILIAR refused: the leader is not a summoner\n");
@@ -670,6 +689,7 @@ static void som_check_trigger(void){
         return;
     }
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return;}
+    if(!strcmp(command,"summon_boss")){som_summon_boss();return;}
     if(!strcmp(command,"undo_spawn")){som_undo_spawn();return;}
     if(!strcmp(command,"auto_off")){
         autonomous_mode=0;armed=0;
@@ -935,6 +955,38 @@ static void som_familiar_bind(void){
     som_familiar_publish();
     som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] FAMILIAR bound to monster slot %d\n",familiar.slot+1);
+}
+static int som_summon_boss(void){
+    if(familiar.slot>=0||familiar_carry.valid){
+        fprintf(stderr,"[som-ai] SUMMON refused: a familiar is already with you\n");return 0;
+    }
+    const uint8_t *ram=backend_retro_get_memory_data?
+        (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+    if(!som_summon_allowed(ram)){
+        som_overlay_set(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] SUMMON refused: the leader is not a summoner\n");return 0;
+    }
+    FILE *in=fopen(summon_file,"rb");
+    if(!in){fprintf(stderr,"[som-ai] SUMMON refused: no %s\n",summon_file);return 0;}
+    static SomFamiliarCarry loaded;
+    size_t got=fread(loaded.object,1,sizeof(loaded.object),in);
+    got+=fread(loaded.tiles,1,sizeof(loaded.tiles),in);
+    got+=fread(loaded.palette,1,sizeof(loaded.palette),in);
+    int extra=fgetc(in)!=EOF;
+    fclose(in);
+    if(got!=sizeof(loaded.object)+sizeof(loaded.tiles)+sizeof(loaded.palette)||extra||
+       loaded.object[0]!=1||loaded.object[0x180]>=0x80){
+        fprintf(stderr,"[som-ai] SUMMON refused: %s is not a monster package\n",summon_file);
+        return 0;
+    }
+    if(!som_take_undo())return 0;
+    som_familiar_tint(loaded.palette);
+    loaded.valid=1;
+    familiar_carry=loaded;familiar_arrived=0;familiar_pending=0;
+    som_overlay_set(&overlay,"^A summon answers your call!",SOM_MESSAGE_FRAMES);
+    fprintf(stderr,"[som-ai] SUMMON monster id %u is coming; undo with undo_spawn\n",
+            (unsigned)loaded.object[0x180]);
+    return 1;
 }
 /* Runs the familiar each field frame; carries it to the next map. */
 static void som_familiar_frame(void){

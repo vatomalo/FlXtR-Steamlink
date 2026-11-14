@@ -622,6 +622,41 @@ int main(void){
         assert(!som_familiar_summoner(boy)&&som_familiar_summoner(girl)&&
                som_familiar_summoner(sprite));
     }
+    /* summon_boss: a saved monster package comes as a tinted familiar after
+     * the map settles; summoners only unless the override marker exists. */
+    {
+        char pkg_path[]="/tmp/flxtr-summon-test-XXXXXX",any_path[]="/tmp/flxtr-anyone-test-XXXXXX";
+        int pfd=mkstemp(pkg_path);assert(pfd>=0);
+        static uint8_t pkg[0x200+0x1000+0x20];
+        memset(pkg,0,sizeof(pkg));
+        pkg[0]=1;pkg[0x180]=0x57;pkg[0x184]=0x2C;pkg[0x185]=0x01;   /* boss, 300 max HP */
+        memset(pkg+0x200,0x55,0x1000);
+        pkg[0x1200+2]=0x1F;                                          /* red in colour 1 */
+        assert(write(pfd,pkg,sizeof(pkg))==(ssize_t)sizeof(pkg));close(pfd);
+        int afd=mkstemp(any_path);assert(afd>=0);close(afd);unlink(any_path);
+        summon_file=pkg_path;summon_anyone_file=any_path;
+        backend_retro_get_memory_data=mocked_memory_data;
+        backend_retro_get_memory_size=mocked_memory_size;
+        memset(mocked_wram,0,sizeof(mocked_wram));
+        mocked_wram[0xE000]=1;mocked_wram[0xE188]=19;mocked_wram[0xE189]=19;   /* the boy */
+        mocked_wram[0xE18A]=18;mocked_wram[0xE18B]=8;mocked_wram[0xE18C]=9;
+        mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;mocked_wram[0xDC]=131;
+        familiar.slot=-1;familiar_carry.valid=0;undo_ready=0;
+        assert(!som_summon_boss()&&!familiar_carry.valid);           /* not a summoner */
+        afd=open(any_path,O_WRONLY|O_CREAT,0600);assert(afd>=0);close(afd);
+        assert(som_summon_boss()&&familiar_carry.valid&&undo_ready); /* override */
+        assert(!som_summon_boss());                                  /* one at a time */
+        frame_number=900000ul;som_familiar_frame();                  /* starts settling */
+        assert(familiar.slot<0);
+        frame_number+=SOM_FAMILIAR_SETTLE_FRAMES;som_familiar_frame();
+        assert(familiar.slot==0&&mocked_wram[0xE600+0x180]==0x57);   /* arrived */
+        assert(mocked_wram[0x5000]==0x55);                            /* its tiles */
+        assert(mocked_wram[0xDFA0+2]!=0x1F||mocked_wram[0xDFA0+3]!=0); /* tinted */
+        som_familiar_dismiss();undo_ready=0;
+        pfd=open(pkg_path,O_WRONLY|O_TRUNC);assert(pfd>=0&&write(pfd,"junk",4)==4);close(pfd);
+        assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
+        unlink(pkg_path);unlink(any_path);
+    }
     /* Bubble anchor: hero screen position under a hero-centred camera that
      * stops at the map edges. */
     backend_retro_get_memory_data=mocked_memory_data;

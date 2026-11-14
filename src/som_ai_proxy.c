@@ -93,6 +93,7 @@ static const char *gambit_file=SOM_GAMBIT_FILE;
 static SomGambits gambits={0,0,{4,3,3,3,4,1}};
 static SomDisciplines disciplines;
 static int som_menu_disciplines;
+static int som_manual_disciplines;
 static void som_gambit_load(void){
     char text[16]={0};
     FILE *in=fopen(gambit_file,"r");
@@ -176,7 +177,8 @@ static void (*backend_run)(void);
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
-    if(ring_ai_enabled&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
+    if((ring_ai_enabled||som_manual_disciplines)&&port==0&&
+       (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
         actual=0;                    /* the player's buttons drive the gambit menu */
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && (id<16||bitmask) && armed && !cancelled && !completed && on_turbo){
@@ -219,6 +221,30 @@ static void som_input_poll(void){
                     combo_count,frame_number);
         }
         const uint16_t pressed=(uint16_t)(current&~last_physical_buttons);
+        /* L2+R2 opens the skill page during manual play. This chord has no
+         * native SNES equivalent and is swallowed while the overlay is open.
+         * Prevent the R2-only AI switch from interpreting the chord. */
+        const uint16_t class_chord=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
+                                              (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+        if(!ring_ai_enabled && !som_manual_disciplines &&
+           (current&class_chord)==class_chord &&
+           (pressed&class_chord)){
+            som_manual_disciplines=1;
+            disciplines.open=1;
+            disciplines.cursor=0;
+            switch_spoiled=1;
+            som_overlay_set(&overlay,"DISCIPLINES|A:close B:select",SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] MANUAL DISCIPLINES opened\n");
+        }else if(som_manual_disciplines && pressed){
+            int result=som_disc_press(&disciplines,pressed);
+            if(result==SOM_DISC_CLOSED){
+                som_manual_disciplines=0;
+                fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
+            }else if(result==SOM_DISC_SELECTED){
+                fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (preview)\n",
+                        (unsigned)disciplines.selected);
+            }
+        }
         if(recording)som_record_presses(pressed);
         last_physical_buttons=current;
         if(current){last_input_frame=frame_number;idle_started=0;}
@@ -279,7 +305,7 @@ static void som_input_poll(void){
             default:break;
             }
         }
-        if(autonomous_mode && current){
+        if(autonomous_mode && current && !som_manual_disciplines){
             autonomous_mode=0;armed=0;cancelled=1;
             fprintf(stderr,"[som-ai] AUTO STOP physical controller takeover\n");
         }
@@ -696,7 +722,8 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */
-    const int menu=ring_ai_enabled&&(gambits.open||disciplines.open);
+    const int menu=som_manual_disciplines||
+        (ring_ai_enabled&&(gambits.open||disciplines.open));
     if((!overlay.frames_left&&!menu)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         frontend_video(data,width,height,pitch);
@@ -716,7 +743,7 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
         overlay.frames_left--;
     }
     if(menu){
-        if(som_menu_disciplines)
+        if(som_manual_disciplines||som_menu_disciplines)
             som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines);
         else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
     }
@@ -832,7 +859,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
-    som_disc_init(&disciplines);som_menu_disciplines=0;
+    som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_gambit_load();
     last_input_frame=frame_number;idle_started=0;
     const char *path=game?game->path:NULL;

@@ -1444,13 +1444,10 @@ def main() -> int:
                 elif args.visit_map == current_map:
                     errand = None
                 decision = planner.decide(observation, previous, directive, errand)
-                # Do not replace a durable return/save commitment with aimless
-                # exploration when its verified inn/save interaction is missing.
-                if (play_loop is not None and goal in ("await_inn_setup", "await_save_setup")
-                        and decision.intention not in ("engage_enemy", "defend_enemy",
-                                                       "kite_enemy", "evade_enemy", "survive")):
-                    decision = PlannerDecision("wait", "committed errand requires taught interaction",
-                                               goal)
+                # Missing a taught inn/save macro must NOT freeze the hero.
+                # The play-loop phase stays committed, but the deterministic
+                # planner may explore, fight or evade while the interaction is
+                # unavailable. The next observation retries the commitment.
                 if (args.visit_map == current_map and decision.intention in
                         ("explore_frontier", "leave_room", "replan", "stuck")):
                     decision = PlannerDecision("wait", "at requested visit map", "visit_map")

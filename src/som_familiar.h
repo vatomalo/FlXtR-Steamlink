@@ -8,7 +8,8 @@
  * SOM_FAMILIAR_STRIKE_FRAMES (the player's 0.6 s swing pacing), and follow
  * a step behind the hero when no monster is near. Strikes go through the
  * game's own damage path (pending damage +0x1F1), so targets flinch, are
- * knocked back and die normally. Pure functions on WRAM; no I/O. */
+ * knocked back and die normally. The hero's own hits cannot kill it.
+ * Pure functions on WRAM; no I/O. */
 #ifndef FLXTR_SOM_FAMILIAR_H
 #define FLXTR_SOM_FAMILIAR_H
 
@@ -48,6 +49,10 @@ static inline int som_familiar_tick(SomFamiliar *f, uint8_t *ram, unsigned long 
         f->slot = f->target = -1;
         return 0;
     }
+    /* Friendly fire cannot kill it: queued damage is cleared before the
+     * game applies it and HP stays full (the player killed the first one). */
+    me[0x1F1] = 0;
+    som_fam_put16(me + 0x182, som_fam_u16(me + 0x184));
     me[0x1AC] = 0xFF;          /* no hero target */
     me[0x1ED] = 0x7F;          /* bite never ready */
     me[0x06] = me[0x07] = 0;   /* no native movement */

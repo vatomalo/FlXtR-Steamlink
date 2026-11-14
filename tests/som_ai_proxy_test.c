@@ -525,6 +525,9 @@ int main(void){
         assert(som_familiar_tick(&f,ram,1000));
         assert(me[0x1AC]==0xFF&&me[0x1ED]==0x7F&&me[6]==0);      /* no aggression */
         assert(f.target==1&&som_fam_u16(me+2)==102);             /* closes in, 2 px */
+        som_fam_put16(me+0x184,40);me[0x182]=12;me[0x1F1]=30;      /* hero hit it */
+        som_familiar_tick(&f,ram,1000);
+        assert(me[0x1F1]==0&&som_fam_u16(me+0x182)==40);           /* immune, healed */
         for(unsigned long t=1001;t<1020;t++)som_familiar_tick(&f,ram,t);
         assert(foe[0x1F1]==SOM_FAMILIAR_DAMAGE);                   /* one paced strike */
         for(unsigned long t=1020;t<1036+1001;t++)som_familiar_tick(&f,ram,t);

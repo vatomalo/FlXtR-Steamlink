@@ -38,6 +38,7 @@ from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
 from som_tactics import TacticLearner
 from som_build import classify as classify_build, profile as build_profile
+from som_class_director import ClassDirector, HEALERS, NAMES as CLASS_NAMES
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -77,7 +78,9 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "give_glove", "give_axe", "give_spear", "give_whip", "give_bow",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
-                    "equip_bow", "equip_boomerang", "equip_javelin"}
+                    "equip_bow", "equip_boomerang", "equip_javelin",
+                    "cast_attack", "cast_heal", "cast_buff", "class_none"} | \
+    {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(
@@ -467,7 +470,7 @@ REMOTE_LOOP = (
     "dd if=/proc/self/fd/3 bs=256 skip=224 count=2 2>/dev/null; exec 3<&-; "
     "else echo NONE; fi;; "
     "act\\ *) a=${cmd#act }; "
-    "case \"$a\" in ''|*[!a-z_]*) echo BAD;; "
+    "case \"$a\" in ''|*[!a-z0-9_]*) echo BAD;; "
     "*) printf '%s\\n' \"$a\" > /tmp/flxtr-som-ai-action && echo OK || echo BAD;; esac;; "
     r'msg\ *) t=${cmd#msg }; '
     r'case "$t" in ""|*[!A-Za-z0-9\ .,!?:/%+=\(\)\|\^-]*) echo BAD;; '
@@ -1212,6 +1215,8 @@ def main() -> int:
     # damage it took with no blocking (13-14 Nov afternoon), but only 0.4-1.6x
     # once it guarded after swings and when hit; guarding costs swings.
     planner.build = None              # log the hero's build once it is read
+    class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
+    spell_ready_at = 0.0
     tactic_learner = attack_predictor = None
     if not args.no_anticipation and history is not None and args.policy in ("hybrid", "memory"):
         attack_predictor = AttackPredictor(history.connection)
@@ -1647,6 +1652,65 @@ def main() -> int:
                         print(f"[inn] map {context['map_id']} looks like the taught inn "
                               f"({score:.0%} of tiles); teach it to use it", flush=True)
                         announce("AI: this looks like an inn|teach it to use it")
+                if (link and wram_now is not None and not args.dry_run and
+                        mode == "field"):
+                    hero0 = (observation.get("party") or [{}])[0] or {}
+                    # Infinite MP (test) refills above the maximum.
+                    max_mp = max(hero0.get("max_mp") or 0, hero0.get("mp") or 0)
+                    try:
+                        levels = wram_now.weapons(0).get("levels") or {}
+                    except (ValueError, KeyError, IndexError):
+                        levels = {}
+                    pick = class_director.choose(
+                        build, levels, max_mp, decision.intention == "cut_grass",
+                        enemy_within(observation, DASH_ENEMY_PX))
+                    if pick is not None:
+                        index, why = pick
+                        try:
+                            link.send_control(f"class_{index}")
+                            class_director.switched(index)
+                            print(f"[class] {CLASS_NAMES[index]}: {why}", flush=True)
+                            announce(f"AI class: {CLASS_NAMES[index]}")
+                            if decision.intention == "cut_grass":
+                                previous = "wait"   # let the sword come out first
+                                continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[class] switch failed: {exc}", flush=True)
+                    hp, max_hp = hero0.get("hp") or 0, hero0.get("max_hp") or 0
+                    now = time.monotonic()
+                    command = None
+                    if class_director.current is not None and now >= spell_ready_at and \
+                            (hero0.get("mp") or 0) >= 2:
+                        if (class_director.current in HEALERS and max_hp and
+                                hp < max_hp * 0.40):
+                            command = "cast_heal"
+                        elif (decision.intention == "engage_enemy" and
+                              enemy_within(observation, DASH_ENEMY_PX)):
+                            command = "cast_attack"
+                    if command:
+                        try:
+                            link.send_control(command)
+                            spell_ready_at = now + 6.0
+                            print(f"[magic] {command} as {CLASS_NAMES[class_director.current]}",
+                                  flush=True)
+                            previous = "wait"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[magic] {command} failed: {exc}", flush=True)
+                            spell_ready_at = now + 30.0
+                # Charged attacks without holding: the proxy's special_<n>
+                # sets the gauge once the swing ends (needs a class).
+                if (link and decision.action == "charge" and class_director.current is not None and
+                        1 <= (decision.charge_stage or 0) <= 8):
+                    try:
+                        link.send_control(f"special_{decision.charge_stage}")
+                        print(f"[charge] stage {decision.charge_stage} without holding",
+                              flush=True)
+                        previous = "attack"
+                        continue
+                    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                        print(f"[charge] instant stage failed: {exc}; holding instead",
+                              flush=True)
                 if link and decision.action == "charge":
                     if learner is not None:
                         learner.cancel("charged attack macro")

@@ -19,8 +19,11 @@ class DirectorTest(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
         self.addCleanup(self.db.close)
-        self.world = lw.LivingWorld(self.db, World(json.loads(DEFAULT_PATH.read_text())),
-                                    WorldClock(self.db, real=0.0))
+        # One villager: the director tests must not depend on how many the
+        # live schedule has (som_npc_discover adds more).
+        data = json.loads(DEFAULT_PATH.read_text())
+        data["npcs"] = [npc for npc in data["npcs"] if npc["id"] == NPC]
+        self.world = lw.LivingWorld(self.db, World(data), WorldClock(self.db, real=0.0))
 
     def make(self, reply):
         calls = []

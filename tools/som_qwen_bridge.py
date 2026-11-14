@@ -35,6 +35,7 @@ from som_game_over import GameOverWatch
 from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
+from som_tactics import TacticLearner
 from som_boss import BossRecorder
 from som_movement import MovementAck
 from som_rom import RomLayoutError, load_tables, scan_exit_tiles
@@ -795,6 +796,9 @@ def main() -> int:
                         help="play loop hunting map (default: best gold per HP from memory)")
     parser.add_argument("--trip-gold", type=int, default=100,
                         help="play loop: GP to earn per hunting trip")
+    parser.add_argument("--no-tactic-learning", action="store_true",
+                        help="fight every enemy type the same way (no per-enemy press/kite/"
+                             "close learning)")
     parser.add_argument("--block-learning", action="store_true",
                         help="guard with R after swings and when hit, learning per enemy "
                              "whether it pays, and counter after guarding (costs swings; "
@@ -961,6 +965,11 @@ def main() -> int:
     # Off by default: on maps 129/130 at level 5-6 the hero dealt ~5x the
     # damage it took with no blocking (13-14 Nov afternoon), but only 0.4-1.6x
     # once it guarded after swings and when hit; guarding costs swings.
+    tactic_learner = None
+    if not args.no_tactic_learning and history is not None and args.policy in ("hybrid", "memory"):
+        tactic_learner = TacticLearner(history.connection,
+                                       log=lambda line: print(line, flush=True))
+        planner.tactic_learner = tactic_learner
     if args.block_learning and history is not None and args.policy in ("hybrid", "memory"):
         block_learner = BlockLearner(history.connection, log=lambda line: print(line, flush=True))
         planner.block_learner = block_learner
@@ -1541,6 +1550,8 @@ def main() -> int:
                     learner.action_sent(sent_action, observation)
                 if block_learner is not None and observation is not None:
                     block_learner.record(observation, sent_action)
+                if tactic_learner is not None and observation is not None:
+                    tactic_learner.record(observation)
             if history is not None and observation is not None:
                 history.record(observation, action if args.dry_run else
                                sent_action if actual is not None else None)

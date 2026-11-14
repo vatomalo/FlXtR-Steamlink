@@ -6,6 +6,8 @@ import itertools
 from collections import deque
 from dataclasses import dataclass, replace
 
+from som_tactics import CLOSE_SWING_PX
+
 from som_memory import detect_cuts
 
 STEP_OFFSETS = {
@@ -156,6 +158,8 @@ class MemoryPlanner:
         self.stay_on_map = False
         self.clock = time.monotonic
         self.last_swing = None
+        # Optional som_tactics.TacticLearner: per enemy type fighting style.
+        self.tactic_learner = None
         self.swing_decided_at = None
         self.just_hit = False
         self.previous_action = "none"
@@ -641,6 +645,8 @@ class MemoryPlanner:
                            abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
                           (0 < abs(dy) <= DEFAULT_STRIKE_AXIAL_PX and
                            abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
+        if attack_aligned and self._tactic(enemy) == "close":
+            attack_aligned = abs(dx) + abs(dy) <= CLOSE_SWING_PX
         if attack_aligned and observation.get("weapons_enabled"):
             # Only a mature learned range can veto a normal swing. Existing
             # attack/charge logic remains the safe fallback for sparse data.
@@ -730,6 +736,11 @@ class MemoryPlanner:
             return 0
         return min(int(weapon["level"]), CHARGE_MAX_STAGE)
 
+    def _tactic(self, enemy):
+        if self.tactic_learner is None:
+            return "press"
+        return self.tactic_learner.tactic(enemy.get("identity"))
+
     def _face_and_strike(self, context, enemy, dx, dy, open_steps, ready, hero=None):
         """Attack only while facing the enemy; otherwise tap toward it first.
 
@@ -750,8 +761,14 @@ class MemoryPlanner:
                 since = (self.clock() - self.last_swing) if self.last_swing is not None else None
                 if since is not None and since < SWING_INTERVAL_S:
                     # A swing before the gauge refills does little damage
-                    # (live: 1.6 vs 3.6 per swing). Hold the guard instead;
-                    # the next swing is the counter.
+                    # (live: 1.6 vs 3.6 per swing). Hold the guard instead,
+                    # or with the kite tactic step out of reach; the next
+                    # swing is the counter.
+                    if self._tactic(enemy) == "kite":
+                        away = OPPOSITE_STEP.get(want)
+                        if away in open_steps:
+                            return PlannerDecision(away, f"step back from enemy {enemy['slot']} "
+                                                   "while the weapon recharges", "kite_enemy")
                     return PlannerDecision("block", f"guard while the weapon recharges "
                                            f"({since:.1f}s since swing)", "defend_enemy")
                 self.swing_decided_at = self.clock()

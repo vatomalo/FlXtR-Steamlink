@@ -563,7 +563,11 @@ class ObservationHistory:
             "(id INTEGER PRIMARY KEY, ts REAL NOT NULL, map_id INTEGER, "
             "enemy_slot INTEGER, action TEXT, distance_px INTEGER, hero_hp INTEGER, "
             "enemy_hp INTEGER, damage_dealt INTEGER NOT NULL, "
-            "damage_taken INTEGER NOT NULL, hero_level INTEGER)")
+            "damage_taken INTEGER NOT NULL, hero_level INTEGER, enemy_id INTEGER)")
+        # Older databases lack enemy_id (the enemy type); old rows stay NULL.
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(combat_samples)")}
+        if "enemy_id" not in columns:
+            self.connection.execute("ALTER TABLE combat_samples ADD COLUMN enemy_id INTEGER")
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS places "
             "(map_id INTEGER NOT NULL, layer INTEGER NOT NULL, x INTEGER NOT NULL, "
@@ -1438,11 +1442,12 @@ class ObservationHistory:
                            abs(enemy["y_px"] - player.get("y_px", enemy["y_px"]))
             self.connection.execute(
                 "INSERT INTO combat_samples(ts,map_id,enemy_slot,action,distance_px,"
-                "hero_hp,enemy_hp,damage_dealt,damage_taken,hero_level) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "hero_hp,enemy_hp,damage_dealt,damage_taken,hero_level,enemy_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (time.time(), state.get("map_id"), slot, previous_action, distance,
                  hero.get("hp"), enemy.get("hp"), damage_dealt, damage_taken,
-                 hero.get("level")))
+                 hero.get("level"),
+                 enemy.get("identity") if isinstance(enemy.get("identity"), int) else None))
             inserted += 1
         snapshot = {"map_id": state.get("map_id"), "hero_hp": hero.get("hp"),
                     "hero_level": hero.get("level"),

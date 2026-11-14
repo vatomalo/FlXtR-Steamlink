@@ -797,12 +797,25 @@ static void som_weapon_cache_frame(void){
     if(type>=8u){weapon_cache_candidate=8u;weapon_cache_stable=0;return;}
     if(weapon_cache_candidate!=type){weapon_cache_candidate=type;weapon_cache_stable=1;return;}
     if(weapon_cache_stable<12u){weapon_cache_stable++;return;}
-    if(weapon_graphics[type].has_vram&&frame_number%120u!=0)return;
+    if(weapon_graphics[type].has_vram)return; /* exact native sprite captured */
     SomFamiliarCarry learned;memset(&learned,0,sizeof(learned));
     memcpy(learned.object,hero,sizeof(learned.object));
     som_familiar_capture_vram(&learned,ram,vram,hero,
         (unsigned)(ram[0xDC]|ram[0xDD]<<8));
     if(!learned.has_vram)return;
+    /* Retain only sprite address fields, not the hero's live combat stats. */
+    uint8_t tile_fields[sizeof(som_familiar_tile_fields)*2u];
+    for(unsigned f=0;f<sizeof(som_familiar_tile_fields);f++){
+        unsigned offset=som_familiar_tile_fields[f];
+        tile_fields[f*2u]=learned.object[offset];
+        tile_fields[f*2u+1u]=learned.object[offset+1u];
+    }
+    memset(learned.object,0,sizeof(learned.object));
+    for(unsigned f=0;f<sizeof(som_familiar_tile_fields);f++){
+        unsigned offset=som_familiar_tile_fields[f];
+        learned.object[offset]=tile_fields[f*2u];
+        learned.object[offset+1u]=tile_fields[f*2u+1u];
+    }
     learned.valid=1;weapon_graphics[type]=learned;
     som_weapon_cache_save();
     fprintf(stderr,"[som-ai] WEAPON graphics cached: %s (%u tiles)\n",

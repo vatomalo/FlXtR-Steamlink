@@ -1081,6 +1081,7 @@ static uint8_t *weapon_trace_before_ram,*weapon_trace_before_vram;
 static uint8_t *weapon_trace_frame_ram,*weapon_trace_frame_vram;
 static int weapon_trace_frame_valid;
 static unsigned weapon_trace_frame_count,weapon_trace_vram_dumps;
+static char weapon_trace_recent_paths[32][128];
 static FILE *weapon_trace_timeline;
 #define SOM_WEAPON_TRACE_MAX_FRAMES 480u
 #define SOM_WEAPON_TRACE_MAX_VRAM_DUMPS 32u
@@ -1090,6 +1091,7 @@ static void som_weapon_trace_timeline_stop(void){
 static void som_weapon_trace_timeline_reset(void){
     som_weapon_trace_timeline_stop();
     weapon_trace_frame_valid=0;weapon_trace_frame_count=0;weapon_trace_vram_dumps=0;
+    memset(weapon_trace_recent_paths,0,sizeof(weapon_trace_recent_paths));
 }
 static void som_weapon_trace_timeline_frame(const uint8_t *ram,const uint8_t *vram){
     if(!weapon_trace_frame_ram||!weapon_trace_frame_vram)return;
@@ -1105,15 +1107,24 @@ static void som_weapon_trace_timeline_frame(const uint8_t *ram,const uint8_t *vr
         for(unsigned i=0;i<0x10000u;i++)vr+=vram[i]!=weapon_trace_frame_vram[i];
     }
     char filename[128]="-";
-    if(weapon_trace_frame_valid&&vr&&
-       weapon_trace_vram_dumps<SOM_WEAPON_TRACE_MAX_VRAM_DUMPS){
+    if(weapon_trace_frame_valid&&vr){
+        /* Retain the most recent 32 VRAM changes, not the first 32.
+         * Weapon graphics may load well before the equipment byte changes. */
+        unsigned slot=weapon_trace_vram_dumps%SOM_WEAPON_TRACE_MAX_VRAM_DUMPS;
         snprintf(filename,sizeof(filename),"/tmp/flxtr-weapon-frame-%03u.vram",
                  weapon_trace_frame_count);
         FILE *out=fopen(filename,"wb");
-        if(out){int ok=fwrite(vram,1,0x10000u,out)==0x10000u;
+        if(out){
+            int ok=fwrite(vram,1,0x10000u,out)==0x10000u;
             if(fclose(out)!=0)ok=0;
             if(!ok){unlink(filename);strcpy(filename,"-");}
-            else weapon_trace_vram_dumps++;
+            else{
+                if(weapon_trace_recent_paths[slot][0])
+                    unlink(weapon_trace_recent_paths[slot]);
+                snprintf(weapon_trace_recent_paths[slot],
+                         sizeof(weapon_trace_recent_paths[slot]),"%s",filename);
+                weapon_trace_vram_dumps++;
+            }
         }else strcpy(filename,"-");
     }
     fprintf(weapon_trace_timeline,"%u %02X %02X %u %u %u %s\n",

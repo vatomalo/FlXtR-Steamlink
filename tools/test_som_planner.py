@@ -194,15 +194,18 @@ class TestMemoryPlanner(unittest.TestCase):
         decision = planner.decide(observation(enemy=enemy, recharge=20, hp=20, max_hp=100))
         self.assertNotIn(decision.intention, ("return_to_inn", "recover_at_inn"))
 
-    def test_provoked_hero_fights_back_at_critical_hp(self):
+    def test_provoked_hero_fights_back_until_hp_is_critical(self):
+        # Changed 14 Nov: fighting back at critical HP (1434e4c) got the hero
+        # killed once Candy ran out; above 25 % it still fights back.
         enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56, "identity": 5}
         planner = MemoryPlanner()
-        calm = planner.decide(observation(enemy=enemy, recharge=20, hp=30, max_hp=100))
-        self.assertIn(calm.intention, ("return_to_inn", "survive"))
-        hit = planner.decide(observation(enemy=enemy, recharge=0, hp=20, max_hp=100))
+        planner.decide(observation(enemy=enemy, recharge=20, hp=45, max_hp=100))
+        hit = planner.decide(observation(enemy=enemy, recharge=0, hp=40, max_hp=100))
         self.assertGreater(planner.provoked, 0)
         self.assertNotIn(hit.intention, ("return_to_inn", "recover_at_inn", "survive",
                                          "evade_enemy"))
+        critical = planner.decide(observation(enemy=enemy, recharge=0, hp=20, max_hp=100))
+        self.assertIn(critical.intention, ("return_to_inn", "recover_at_inn", "survive"))
 
     def test_provocation_needs_a_nearby_enemy_and_wears_off(self):
         far = {"slot": 1, "active": True, "x_px": 400, "y_px": 400, "identity": 5}
@@ -339,6 +342,19 @@ class TestMemoryPlanner(unittest.TestCase):
             neighbours = {(2 + dx, 3 + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))}
             self.assertTrue(neighbours <= set(known))
             history.close()
+
+    def test_critical_hp_escapes_even_after_being_hit(self):
+        # Live: provoked fight-back at critical HP with no Candy left killed the hero.
+        enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}
+        planner = MemoryPlanner()
+        planner.decide(observation(enemy=enemy, hp=30, max_hp=100))
+        hit = planner.decide(observation(enemy=enemy, hp=20, max_hp=100))   # provoked now
+        self.assertTrue(planner.provoked)
+        self.assertIn(hit.intention, ("survive", "recover_at_inn", "return_to_inn"))
+        planner = MemoryPlanner()
+        planner.decide(observation(enemy=enemy, hp=60, max_hp=100))
+        fight = planner.decide(observation(enemy=enemy, hp=55, max_hp=100))  # not critical
+        self.assertIn(fight.intention, ("engage_enemy", "defend_enemy"))
 
     def test_half_health_latches_return_to_inn_until_recovered(self):
         planner = MemoryPlanner()

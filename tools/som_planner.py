@@ -618,7 +618,11 @@ class MemoryPlanner:
                                       hero.get("hp", 0) * 4 <= hero["max_hp"]):
             return split
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-        if not self.provoked and ((max_hp and hp * 4 <= max_hp) or directive == "avoid_enemy"):
+        critical_hp = bool(max_hp and hp * 4 <= max_hp)
+        # Fighting back never outranks escaping at critical HP: provoked
+        # fight-back with no Candy left got the hero killed (14 Nov).
+        if (critical_hp and (not self.provoked or not self.no_retreat)) or \
+                (not self.provoked and directive == "avoid_enemy"):
             retreat = []
             for action in open_steps:
                 sx, sy = STEP_OFFSETS[action]
@@ -1410,7 +1414,7 @@ class MemoryPlanner:
             if not survival.get("abandoned") or critical:
                 survival = {"active": True, "turns": 0, "at_inn": 0}
                 self._set_state("survival", survival)
-        if survival.get("active") and not self.provoked:
+        if survival.get("active") and (not self.provoked or critical):
             # Hysteresis prevents bouncing between fighting and retreating.
             decision = self._survive(observation, context, open_steps, critical=critical)
             survival["turns"] = survival.get("turns", 0) + 1

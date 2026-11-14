@@ -42,6 +42,12 @@ STALL_DECISIONS = 8
 # sent sooner after the last one dealt under half the damage (2026-11-14).
 SWING_INTERVAL_S = 0.6
 TARGET_SWITCH_PX = 24       # another enemy must be this much closer to switch
+# Guard instead of swinging when the learned hit chance for this enemy type,
+# distance and time since its last hit is at least ANTICIPATE_RISK, at most
+# ANTICIPATE_MAX decisions in a row (then swing regardless).
+ANTICIPATE_RISK = 0.35
+ANTICIPATE_MIN_SAMPLES = 12
+ANTICIPATE_MAX = 2
 # A learned crossing this close to a native return door went through that door.
 DOOR_CROSSING_TILES = 4
 STALL_BLOCK_DECISIONS = 200
@@ -161,6 +167,9 @@ class MemoryPlanner:
         self.last_swing = None
         # Optional som_tactics.TacticLearner: per enemy type fighting style.
         self.tactic_learner = None
+        # Optional som_anticipate.AttackPredictor: guard before likely hits.
+        self.attack_predictor = None
+        self.anticipated = 0
         self.swing_decided_at = None
         self.just_hit = False
         self.previous_action = "none"
@@ -785,6 +794,15 @@ class MemoryPlanner:
                                                    "while the weapon recharges", "kite_enemy")
                     return PlannerDecision("block", f"guard while the weapon recharges "
                                            f"({since:.1f}s since swing)", "defend_enemy")
+                if self.attack_predictor is not None and self.anticipated < ANTICIPATE_MAX:
+                    risk, samples = self.attack_predictor.risk(enemy.get("identity"),
+                                                               abs(dx) + abs(dy))
+                    if samples >= ANTICIPATE_MIN_SAMPLES and risk >= ANTICIPATE_RISK:
+                        self.anticipated += 1
+                        return PlannerDecision("block", f"anticipate enemy {enemy['slot']}'s "
+                                               f"attack ({risk:.0%} hit chance now)",
+                                               "defend_enemy")
+                self.anticipated = 0
                 self.swing_decided_at = self.clock()
                 return PlannerDecision("attack", f"enemy {enemy['slot']} in weapon range, "
                                        f"facing it", "engage_enemy")

@@ -3,7 +3,8 @@
  *
  * The playing song id is 7E:1E05 (cidwel/som-decomp audio.md 8: $C3:01A4
  * compares a request with it; live on Turbo, map 130 = 0x0E as the decomp's
- * room list says). 59 ids (song table $C3:3D39). Built-in names are only
+ * room list says). 64 ids / 59 unique sequences (song table $C3:3D39).
+ * Built-in names are only
  * the 13 the decomp matched by audio correlation (audio.md "Ids matched");
  * the rest read "Song 0xNN" until named in SOM_SONG_FILE (lines
  * "<hex id><TAB><name>"). Pure lookup, no I/O except som_song_load. */
@@ -13,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define SOM_SONG_COUNT 0x3Bu
+#define SOM_SONG_COUNT 0x40u
 #define SOM_SONG_NAME_MAX 28u
 
 static const struct { unsigned char id; const char *name; } som_song_known[] = {

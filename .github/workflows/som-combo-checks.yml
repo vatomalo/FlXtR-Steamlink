@@ -16,6 +16,9 @@ jobs:
           make test-som-ai-proxy test-som-ai-player2
           cc -std=c11 -Wall -Wextra -Werror -Isrc tests/som_disciplines_test.c -o /tmp/som-disciplines-test
           /tmp/som-disciplines-test
+      - name: Validate Secret of Mana soundtrack mapping and genre resolver
+        run: |
+          PYTHONPATH=tools python3 -m unittest tools/test_som_music_bridge.py
       - name: Build native Linux diagnostic proxy
         run: |
           mkdir -p build/som-ai

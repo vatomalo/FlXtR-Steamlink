@@ -140,7 +140,14 @@ static int som_write_ring_ai_marker(void);
 static const char *gambit_file=SOM_GAMBIT_FILE;
 #define SOM_COMBAT_FILE "/home/apps/retroarch/cores/experimental/som_ai_combat"
 static const char *combat_file=SOM_COMBAT_FILE;
-static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,{3,2,2,2,3,3,3,3}};
+/* Independent from the six Gambit priority digits, shared with the
+ * external song-id -> yt-dlp playback bridge. */
+#define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
+static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
+static void som_music_genre_load(void);
+static void som_music_genre_save(void);
+static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
+    {3,2,2,2,3,3,3,3},0};
 static SomDisciplines disciplines;
 /* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
@@ -233,6 +240,22 @@ static void som_hero_palette_frame(uint8_t *ram){
 }
 static int som_menu_disciplines;
 static int som_manual_disciplines;
+static void som_music_genre_load(void){
+    FILE *in=fopen(music_genre_file,"r");
+    unsigned genre=0;
+    if(in){
+        if(fscanf(in,"%u",&genre)!=1)genre=0;
+        fclose(in);
+    }
+    gambits.music_genre=genre<SOM_MUSIC_GENRE_COUNT?genre:0;
+}
+static void som_music_genre_save(void){
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",music_genre_file);
+    FILE *out=fopen(temp,"w");if(!out)return;
+    int ok=fprintf(out,"%u\n",gambits.music_genre)>0;
+    if(fclose(out)!=0)ok=0;
+    if(ok)rename(temp,music_genre_file);else unlink(temp);
+}
 static void som_gambit_load(void){
     char text[16]={0};
     FILE *in=fopen(gambit_file,"r");
@@ -794,6 +817,11 @@ static void som_input_poll(void){
                         (unsigned)disciplines.selected);
                 }
             }else switch(som_gambit_press(&gambits,pressed)){
+            case SOM_GAMBIT_GENRE_CHANGED:
+                som_music_genre_save();
+                fprintf(stderr,"[som-ai] MUSIC genre %s (%u)\n",
+                        som_music_genre_names[gambits.music_genre],gambits.music_genre);
+                break;
             case SOM_GAMBIT_CHANGED:
                 som_gambit_save();
                 {char text[SOM_GAMBIT_COUNT+1],combat[SOM_COMBAT_COUNT+1];
@@ -2248,6 +2276,7 @@ static int som_hero_screen(int *x,int *y){
     return 1;
 }
 #define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
+#define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
 static void som_video_refresh(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
@@ -2446,7 +2475,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_class_selected();
     weapon_trace_on=0;som_weapon_trace_reset();
     hero_pal_have=0;
-    som_gambit_load();
+    som_gambit_load();som_music_genre_load();
     last_input_frame=frame_number;idle_started=0;
     const char *direct=getenv("FLXTR_SOM_AI_DIRECT");
     direct_transport=direct&&direct[0]=='1'&&direct[1]=='\0';

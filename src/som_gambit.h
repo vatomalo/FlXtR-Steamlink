@@ -29,9 +29,15 @@
 #include "som_overlay.h"
 
 #define SOM_GAMBIT_COUNT 6u
-#define SOM_GAMBIT_INFINITE_MP SOM_GAMBIT_COUNT          /* test switch row */
-#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 1u)
-#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 2u)        /* + test switch, exit */
+#define SOM_MUSIC_GENRE_COUNT 9u
+static const char *const som_music_genre_names[SOM_MUSIC_GENRE_COUNT] = {
+    "Lo-Fi", "Jazz", "City Pop", "Orchestral", "Piano",
+    "Synthwave", "Rock", "Ambient", "Off"
+};
+#define SOM_GAMBIT_MUSIC_ITEM SOM_GAMBIT_COUNT
+#define SOM_GAMBIT_INFINITE_MP (SOM_GAMBIT_COUNT + 1u) /* test switch row */
+#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 2u)
+#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 3u)       /* + music, test, exit */
 #define SOM_GAMBIT_MAX_WEIGHT 5u
 
 /* Activities only; how the AI fights or moves is not a gambit. The order is
@@ -70,13 +76,16 @@ typedef struct {
     int infinite_mp;                                /* test switch, not saved */
     unsigned page;                                  /* SOM_PAGE_* */
     uint8_t combat[SOM_COMBAT_COUNT];
+    unsigned music_genre; /* stored separately from the six AI priority digits */
 } SomGambits;
 
 enum { SOM_GAMBIT_NONE, SOM_GAMBIT_OPENED, SOM_GAMBIT_CLOSED,
-       SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT, SOM_GAMBIT_TEST_SWITCH };
+       SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT, SOM_GAMBIT_TEST_SWITCH,
+       SOM_GAMBIT_GENRE_CHANGED };
 
 static inline void som_gambit_defaults_into(SomGambits *g) {
     memcpy(g->weight, som_gambit_defaults, sizeof(g->weight));
+    g->music_genre = 0; /* Lo-Fi */
 }
 
 /* "433341\n"-style text; invalid text keeps the defaults. */
@@ -155,7 +164,14 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
         g->cursor = (g->cursor + SOM_GAMBIT_ITEMS - 1u) % SOM_GAMBIT_ITEMS;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN))
         g->cursor = (g->cursor + 1u) % SOM_GAMBIT_ITEMS;
-    if (g->cursor == SOM_GAMBIT_INFINITE_MP) {
+    if (g->cursor == SOM_GAMBIT_MUSIC_ITEM) {
+        unsigned before = g->music_genre;
+        if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT))
+            g->music_genre = (g->music_genre + SOM_MUSIC_GENRE_COUNT - 1u) % SOM_MUSIC_GENRE_COUNT;
+        if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_RIGHT) | (1u << RETRO_DEVICE_ID_JOYPAD_B)))
+            g->music_genre = (g->music_genre + 1u) % SOM_MUSIC_GENRE_COUNT;
+        if (before != g->music_genre) return SOM_GAMBIT_GENRE_CHANGED;
+    } else if (g->cursor == SOM_GAMBIT_INFINITE_MP) {
         if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_B) | (1u << RETRO_DEVICE_ID_JOYPAD_LEFT) |
                        (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT))) {
             g->infinite_mp = !g->infinite_mp;
@@ -210,6 +226,11 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
     unsigned item = line - 1u;
     if (item >= SOM_GAMBIT_ITEMS) return 0;
     const char *mark = g->cursor == item ? ">" : " ";
+    if (item == SOM_GAMBIT_MUSIC_ITEM) {
+        snprintf(out, 33, "%s Music genre: %s", mark,
+                 som_music_genre_names[g->music_genre % SOM_MUSIC_GENRE_COUNT]);
+        return 1;
+    }
     if (item == SOM_GAMBIT_INFINITE_MP) {
         snprintf(out, 33, "%s %-19s %s", mark, "Infinite MP (test)", g->infinite_mp ? "ON" : "off");
         return 1;
@@ -246,6 +267,8 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
         const int off = line >= 1u && (g->page == SOM_PAGE_COMBAT ?
             (line - 1u < SOM_COMBAT_COUNT && !g->combat[line - 1u]) :
             ((line - 1u < SOM_GAMBIT_COUNT && !g->weight[line - 1u]) ||
+             (line - 1u == SOM_GAMBIT_MUSIC_ITEM &&
+              g->music_genre == SOM_MUSIC_GENRE_COUNT - 1u) ||
              (line - 1u == SOM_GAMBIT_INFINITE_MP && !g->infinite_mp)));
         for (unsigned i = 0; text[i]; i++) {
             unsigned char c = (unsigned char)text[i];

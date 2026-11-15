@@ -607,12 +607,18 @@ int main(void){
     assert(!ring_ai_enabled);
     /* Gambit menu text and drawing. */
     {
-        SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,{3,2,2,2,3,3,3,3}};
+        SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
+            {3,2,2,2,3,3,3,3},0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));
         assert(som_gambit_line(&g,2,text)&&text[0]=='>'&&strstr(text,"5 ooooo"));
         assert(strlen(text)<=32);
+        g.cursor=SOM_GAMBIT_COUNT;g.music_genre=0;
+        assert(som_gambit_line(&g,SOM_GAMBIT_COUNT+1u,text)&&strstr(text,"Music genre: Lo-Fi"));
+        assert(som_gambit_press(&g,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_GENRE_CHANGED);
+        assert(g.music_genre==1);
+        assert(som_gambit_line(&g,SOM_GAMBIT_COUNT+1u,text)&&strstr(text,"Jazz"));
         assert(som_gambit_line(&g,SOM_GAMBIT_ITEMS,text)&&strstr(text,"Exit gambits"));
         assert(som_gambit_line(&g,SOM_GAMBIT_INFINITE_MP+1,text)&&strstr(text,"Infinite MP")&&
                strstr(text,"off"));

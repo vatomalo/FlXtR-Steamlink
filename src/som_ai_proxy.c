@@ -26,6 +26,7 @@
 #include "som_progress.h"
 #include "som_perks.h"
 #include "som_music_mix.h"
+#include "som_perf.h"
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -38,6 +39,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 /* Our own build of the same pinned snes9x2005_plus (scripts/build-cores.sh
  * with patches/snes9x2005-flxtr-music-voices.patch) when installed: it adds
@@ -2566,6 +2569,80 @@ static int som_hero_screen(int *x,int *y){
     *x=(int)(hx-cam_x);*y=(int)(hy-cam_y);
     return 1;
 }
+/* Frame timing (src/som_perf.h): off unless FLXTR_SOM_PERF=1 or the marker
+ * exists. PERF_NOW() is 0 while off, and every PERF_* use checks it. */
+#define SOM_PERF_FILE "/tmp/flxtr-som-perf.json"
+#define SOM_PERF_MARKER "/tmp/flxtr-som-perf-enable"
+#ifndef SOM_PERF_DISABLED
+static const char *perf_file=SOM_PERF_FILE,*perf_marker=SOM_PERF_MARKER;
+static int perf_on,perf_env=-1;
+static SomPerfWindow perf;
+static uint64_t perf_last_start,perf_window_start,perf_cb_us;
+static unsigned long perf_seq,perf_check;
+static struct rusage perf_ru;
+#define PERF_NOW() (perf_on?som_perf_now_us():0u)
+#define PERF_ADD(phase,t0) do{if(t0)som_perf_add(&perf,(phase),som_perf_now_us()-(t0));}while(0)
+static void som_perf_reset(uint64_t now){
+    const uint32_t nominal=perf.nominal_us;
+    memset(&perf,0,sizeof(perf));perf.nominal_us=nominal;
+    perf_window_start=now;getrusage(RUSAGE_SELF,&perf_ru);
+}
+static double som_perf_tv(const struct timeval *a,const struct timeval *b){
+    return (double)(a->tv_sec-b->tv_sec)+(double)(a->tv_usec-b->tv_usec)/1e6;
+}
+static void som_perf_flush(uint64_t now){
+    struct rusage ru;getrusage(RUSAGE_SELF,&ru);
+    perf.window_s=(double)(now-perf_window_start)/1e6;
+    static char text[4096];
+    const int n=som_perf_json(&perf,text,sizeof(text),++perf_seq,
+        som_perf_tv(&ru.ru_utime,&perf_ru.ru_utime),som_perf_tv(&ru.ru_stime,&perf_ru.ru_stime),
+        ru.ru_minflt-perf_ru.ru_minflt,ru.ru_majflt-perf_ru.ru_majflt,
+        ru.ru_nvcsw-perf_ru.ru_nvcsw,ru.ru_nivcsw-perf_ru.ru_nivcsw);
+    char temp[300];snprintf(temp,sizeof(temp),"%s.tmp",perf_file);
+    int fd=n>0?open(temp,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0644):-1;
+    if(fd>=0){
+        const int ok=write(fd,text,(size_t)n)==n;
+        if(close(fd)==0&&ok)rename(temp,perf_file);else unlink(temp);
+    }
+    som_perf_reset(now);
+}
+/* Start of retro_run: enable check, frame interval, window flush. */
+static uint64_t som_perf_frame_begin(unsigned long frame){
+    if(perf_env<0){const char *e=getenv("FLXTR_SOM_PERF");perf_env=e&&e[0]=='1';}
+    if(frame>=perf_check){
+        perf_check=frame+SOM_PERF_WINDOW;
+        const int want=perf_env||access(perf_marker,F_OK)==0;
+        if(want&&!perf_on){perf_last_start=0;som_perf_reset(som_perf_now_us());}
+        perf_on=want;
+    }
+    if(!perf_on)return 0;
+    const uint64_t now=som_perf_now_us();
+    if(!perf.nominal_us&&backend_retro_get_system_av_info){
+        struct retro_system_av_info av;memset(&av,0,sizeof(av));
+        backend_retro_get_system_av_info(&av);
+        if(av.timing.fps>1.0)perf.nominal_us=(uint32_t)(1e6/av.timing.fps+0.5);
+    }
+    if(perf_last_start)som_perf_interval(&perf,now-perf_last_start);
+    perf_last_start=now;
+    if(perf.frames>=SOM_PERF_WINDOW)som_perf_flush(now);
+    perf.frames++;
+    perf_cb_us=0;
+    return now;
+}
+static void som_perf_frame_end(uint64_t t0,uint64_t core_us){
+    if(!t0)return;
+    const uint64_t run=som_perf_now_us()-t0;
+    som_perf_add(&perf,SOM_PERF_RUN,run);
+    som_perf_add(&perf,SOM_PERF_CORE,core_us>perf_cb_us?core_us-perf_cb_us:0);
+    som_perf_add(&perf,SOM_PERF_PROXY,run>core_us?run-core_us:0);
+}
+#else
+#define PERF_NOW() 0u
+#define PERF_ADD(phase,t0) ((void)(t0))
+static uint64_t perf_cb_us;
+static uint64_t som_perf_frame_begin(unsigned long frame){(void)frame;return 0;}
+static void som_perf_frame_end(uint64_t t0,uint64_t core_us){(void)t0;(void)core_us;}
+#endif
 /* Soundtrack mixing. The Steam Link has one CPU core that the emulator
  * already fills, so the music is never decoded while it plays: the bridge
  * decodes each arrangement once, at the lowest priority, into a raw stereo
@@ -2586,15 +2663,40 @@ static char music_path[512];
 static unsigned long music_check_frame;
 static size_t som_audio_batch(const int16_t *data,size_t frames){
     if(!frontend_audio_batch)return frames;
-    if(!music_ring.count||!data)return frontend_audio_batch(data,frames);
+    const uint64_t t0=PERF_NOW();
+#ifndef SOM_PERF_DISABLED
+    if(t0){
+        perf.audio_frames+=frames;
+        if(music_fd>=0&&music_ring.count<frames)perf.music_short+=frames-music_ring.count;
+    }
+#endif
+    if(!music_ring.count||!data){
+        const size_t r=frontend_audio_batch(data,frames);
+        if(t0){const uint64_t d=som_perf_now_us()-t0;PERF_ADD(SOM_PERF_AUDIO,t0);perf_cb_us+=d;}
+        return r;
+    }
     static int16_t mixed[4096u*2u];
     size_t done=0;
+    uint64_t mix_us=0,out_us=0;
     while(done<frames){
         const size_t n=frames-done<4096u?frames-done:4096u;
-        som_mix_apply(&music_ring,mixed,data+2u*done,n);
+        const uint64_t m0=PERF_NOW();
+        const size_t used=som_mix_apply(&music_ring,mixed,data+2u*done,n);
+        (void)used;
+        const uint64_t m1=PERF_NOW();
         frontend_audio_batch(mixed,n);
+        if(m0){mix_us+=m1-m0;out_us+=som_perf_now_us()-m1;}
+#ifndef SOM_PERF_DISABLED
+        if(m0)perf.music_frames+=used;
+#endif
         done+=n;
     }
+#ifndef SOM_PERF_DISABLED
+    if(t0){
+        som_perf_add(&perf,SOM_PERF_MIX,mix_us);som_perf_add(&perf,SOM_PERF_AUDIO,out_us);
+        perf_cb_us+=som_perf_now_us()-t0;
+    }
+#endif
     return frames;
 }
 RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb){
@@ -2656,7 +2758,29 @@ static void som_music_publish_rate(void){
 }
 #define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
 #define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
+static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch);
+static uint64_t perf_video_us;
+static void som_frontend_video(const void *data,unsigned width,unsigned height,size_t pitch){
+    const uint64_t t0=PERF_NOW();
+    frontend_video(data,width,height,pitch);
+    if(t0){perf_video_us=som_perf_now_us()-t0;}
+}
 static void som_video_refresh(const void *data,unsigned width,unsigned height,size_t pitch){
+    const uint64_t t0=PERF_NOW();
+    perf_video_us=0;
+    som_video_refresh_inner(data,width,height,pitch);
+#ifndef SOM_PERF_DISABLED
+    if(t0){
+        const uint64_t all=som_perf_now_us()-t0;
+        som_perf_add(&perf,SOM_PERF_VIDEO,perf_video_us);
+        som_perf_add(&perf,SOM_PERF_OVERLAY,all>perf_video_us?all-perf_video_us:0);
+        perf_cb_us+=all;
+    }
+#else
+    (void)t0;
+#endif
+}
+static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */
@@ -2679,13 +2803,13 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
     if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
-        frontend_video(data,width,height,pitch);
+        som_frontend_video(data,width,height,pitch);
         return;
     }
     size_t size=(size_t)height*pitch;
     if(size>overlay_frame_size){
         uint8_t *grown=realloc(overlay_frame,size);
-        if(!grown){frontend_video(data,width,height,pitch);return;}
+        if(!grown){som_frontend_video(data,width,height,pitch);return;}
         overlay_frame=grown;overlay_frame_size=size;
     }
     memcpy(overlay_frame,data,size);
@@ -2713,7 +2837,7 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
             som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines);
         else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
     }
-    frontend_video(overlay_frame,width,height,pitch);
+    som_frontend_video(overlay_frame,width,height,pitch);
 }
 /* Music-free mixing (our core only): Secret of Mana's music is never
  * synthesised, effects keep playing (patches/snes9x2005-flxtr-music-voices). */
@@ -3175,6 +3299,7 @@ static void som_clone_tick(void){
 }
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
+    const uint64_t perf_t0=som_perf_frame_begin(frame_number);
     if(!direct_transport){
         som_check_trigger();
         som_check_npc_command();
@@ -3200,7 +3325,11 @@ RETRO_API void retro_run(void){
         som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_bash_tick();
     if(test_enabled&&on_turbo)som_hop_step();
-    if(test_enabled&&on_turbo)som_music_pump();
+    if(test_enabled&&on_turbo){
+        const uint64_t t=PERF_NOW();
+        som_music_pump();
+        PERF_ADD(SOM_PERF_PUMP,t);
+    }
     som_xp_flush(0);
     if(pal_trace_on&&backend_retro_get_memory_data)
         som_pal_trace_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
@@ -3213,7 +3342,9 @@ RETRO_API void retro_run(void){
         fprintf(stderr,"[som-ai] COMPLETE %s at frame %lu; button sampled %lu times\n",
                 som_action_name(active_action),frame_number,injected_queries);
     }
+    const uint64_t perf_core=PERF_NOW();
     backend_run();
+    const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo&&frame_number%30u==0u)som_prog_frame();
     if(test_enabled&&on_turbo)som_special_tick();
@@ -3222,10 +3353,15 @@ RETRO_API void retro_run(void){
     if(test_enabled&&on_turbo)som_ring_ai_tick();
     som_idle_tick();
     if(!direct_transport&&test_enabled&&on_turbo&&
-       frame_number%(ring_ai_enabled||armed?SOM_WRAM_EXPORT_FRAMES:SOM_WRAM_IDLE_EXPORT_FRAMES)==0u &&
-       !som_export_wram()&&!wram_export_error_logged){
-        wram_export_error_logged=1;
-        fprintf(stderr,"[som-ai] WRAM export unavailable; live observer disabled\n");
+       frame_number%(ring_ai_enabled||armed?SOM_WRAM_EXPORT_FRAMES:SOM_WRAM_IDLE_EXPORT_FRAMES)==0u){
+        const uint64_t t=PERF_NOW();
+        const int exported=som_export_wram();
+        PERF_ADD(SOM_PERF_WRAM,t);
+        if(!exported&&!wram_export_error_logged){
+            wram_export_error_logged=1;
+            fprintf(stderr,"[som-ai] WRAM export unavailable; live observer disabled\n");
+        }
     }
+    som_perf_frame_end(perf_t0,perf_core_us);
     frame_number++;
 }

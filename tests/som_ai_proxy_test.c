@@ -298,6 +298,48 @@ int main(void){
         unlink(control);unlink(pcm);rmdir(dir);music_play_file=SOM_MUSIC_PLAY;
         som_music_stop();frontend_audio_batch=NULL;
     }
+    /* Frame timing: percentiles, late streaks, off means no clock reads,
+     * the same audio either way, and one JSON report per window. */
+    {
+        SomPerfWindow w;memset(&w,0,sizeof(w));w.nominal_us=16639;
+        for(unsigned i=0;i<100;i++)som_perf_add(&w,SOM_PERF_RUN,i<90?1000u:20000u);
+        assert(som_perf_percentile(&w.phase[SOM_PERF_RUN],50)==1250u);
+        assert(som_perf_percentile(&w.phase[SOM_PERF_RUN],95)==20250u);
+        assert(w.phase[SOM_PERF_RUN].max_us==20000u);
+        som_perf_add(&w,SOM_PERF_RUN,900000u);                       /* overflow bucket */
+        assert(som_perf_percentile(&w.phase[SOM_PERF_RUN],100)==900000u);
+        som_perf_interval(&w,16600);som_perf_interval(&w,30000);som_perf_interval(&w,40000);
+        som_perf_interval(&w,16700);som_perf_interval(&w,26000);
+        assert(w.late==3&&w.late_streak_max==2&&w.late_streak==1);
+        char text[4096];
+        assert(som_perf_json(&w,text,sizeof(text),1,0.5,0.1,1,0,2,3)>0);
+        assert(strstr(text,"\"late\":3")&&strstr(text,"\"run\":{\"n\":101")&&
+               strstr(text,"\"nominal_fps\":60.100"));
+        assert(som_perf_json(&w,text,64,1,0,0,0,0,0,0)<0);                 /* never overruns */
+
+        int16_t game[8]={1000,-1000,2000,-2000,0,0,7,7};
+        frontend_audio_batch=capture_audio;
+        perf_env=0;perf_on=0;perf_check=0;
+        assert(PERF_NOW()==0u&&som_perf_frame_begin(70000)==0u);
+        captured_frames=0;assert(som_audio_batch(game,4)==4);
+        int16_t off[8];memcpy(off,captured,sizeof(off));
+        char perf_path[]="/tmp/som-perf-test-XXXXXX";
+        int pfd=mkstemp(perf_path);assert(pfd>=0);close(pfd);unlink(perf_path);
+        perf_file=perf_path;perf_env=1;perf_check=0;
+        uint64_t t0=0;
+        for(unsigned long f=0;f<=SOM_PERF_WINDOW;f++){
+            t0=som_perf_frame_begin(80000+f);assert(t0);
+            captured_frames=0;assert(som_audio_batch(game,4)==4);
+            som_perf_frame_end(t0,0);
+        }
+        assert(!memcmp(off,captured,sizeof(off)));                  /* same samples */
+        FILE *in=fopen(perf_path,"r");assert(in);
+        char report[4096];size_t got=fread(report,1,sizeof(report)-1,in);fclose(in);report[got]=0;
+        assert(strstr(report,"\"frames\":600,")&&strstr(report,"\"audio_frames\":2400,")&&
+               strstr(report,"\"audio\":{\"n\":600")&&strstr(report,"\"interval\":{\"n\":600"));   /* first frame has none; 600th closes */
+        unlink(perf_path);perf_file=SOM_PERF_FILE;perf_env=0;perf_on=0;perf_check=0;
+        frontend_audio_batch=NULL;
+    }
     /* The exit auto-state goes beside the ROM, as RetroArch names it. */
     som_auto_state_path_set("/roms/Snes/Secret of Mana, Turbo.smc");
     assert(!strcmp(som_auto_state_path,"/roms/Snes/Secret of Mana, Turbo.state.auto"));

@@ -52,7 +52,7 @@ title-screen fix.
 | gate | state |
 |---|---|
 | intended branch, committed, pushed | yes |
-| automated tests | all pass (C suites, 437 Python tests, 1 real-ROM test skipped without fixtures) |
+| automated tests | all pass (C suites, 431 Python tests, 1 real-ROM test skipped without fixtures) |
 | production proxy compiled with the Steam Link toolchain | yes, checksum above |
 | documentation matches behaviour | yes (`SOM-DISCIPLINES-CONTROLS.md`, `SOM-MUSIC-BRIDGE.md`, `SOM-AI-HANDOFF.md`) |
 | no experimental memory writes enabled by default | unchanged from the installed build; new code only reads SRAM |

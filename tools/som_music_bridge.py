@@ -292,9 +292,14 @@ def main(argv=None):
     parser.add_argument("--log", type=Path, help="tail actual RetroArch log (else stdin)")
     parser.add_argument("--from-start", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--mix-fifo", type=Path,
-                        help="mix into the game's audio: named pipe the AI proxy reads")
-    parser.add_argument("--rate-file", type=Path, help="game sample rate written by the proxy")
+    # Mixing into the game's audio is the default: on the Steam Link a
+    # separate player cannot open a second audio stream while RetroArch plays.
+    parser.add_argument("--mix-fifo", type=Path, default=Path("/tmp/flxtr-som-music.pcm"),
+                        help="named pipe the AI proxy mixes into the game's audio")
+    parser.add_argument("--rate-file", type=Path, default=Path("/tmp/flxtr-som-audio-rate"),
+                        help="game sample rate written by the proxy")
+    parser.add_argument("--no-mix", action="store_true",
+                        help="play through a separate audio output instead")
     parser.add_argument("--game-pid", type=int,
                         help="stop playback and exit when this process ends")
     parser.add_argument("--som-wait", type=float,
@@ -302,7 +307,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="[som-music] %(message)s")
     bridge = MusicBridge(load_names(args.catalog), args.genre_file, args.cache,
-                         args.player, args.dry_run, args.mix_fifo, args.rate_file)
+                         args.player, args.dry_run,
+                         None if args.no_mix else args.mix_fifo, args.rate_file)
     def finish(*_):
         bridge.stop()
         raise SystemExit(0)

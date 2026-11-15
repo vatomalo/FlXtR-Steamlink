@@ -414,3 +414,29 @@ to the Rabites west of Potos, as Swordsman hit one Rabite three times then hold 
 it lands (expect no HP loss); as Ninja with the chakram press A and let a Rabite walk into a
 clone (expect "Bunshin Daibakuha!"). Then copy `/home/apps/greenlink/game.log` lines
 `[som-ai] XP|COMBO|EVADE|BUNSHIN` into this section as hardware results.
+
+## Progression per save (format v2, 2026-11-15)
+
+`src/som_progress.h` + `som_prog_*` in the proxy. Secret of Mana Turbo keeps four 0x400-byte
+save slots at SRAM 0x0000 (mirror at 0x1000); a slot is a copy of WRAM (slot+0x004 =
+7E:CC01.., slot+0x104 = hero records), measured on the player's save. Right after a load or
+a save, 7E:CC01..CC40 equals exactly one slot.
+
+- Identity: FNV-1a 64 of the whole slot block. When the game writes a slot that matches the
+  game in play, the progression (levels, XP, chosen class, reserved perk bits, ROM hash) is
+  written to `som_progress/<fingerprint>.prog` (text, checksum line; temp + fsync + rename;
+  the previous generation kept as `.prev`; a record of an unknown version is never
+  overwritten; a damaged record falls back to `.prev`).
+- Entering field play from a load restores the record of that exact block; no record (an
+  overwritten or never-recorded slot) or no matching slot on the first field entry (new game)
+  = fresh progression. Nothing is inherited across playthroughs. SRAM is only read.
+- Save states (including the exit auto-state) carry the progression in a 1036-byte trailer
+  (`SOMPROG2`): state size is now core + 1036 (532704). States of the core's exact size
+  (older ones) still load and keep the progression in memory.
+- Legacy: the old device-wide `som_ai_disciplines` levels are copied once to
+  `som_progress/legacy-v1.txt` and applied to the save in play only by the tool command
+  `progress_claim_legacy` (higher levels win), then renamed `.claimed`. The v1 file keeps
+  the session's class choice as before.
+- Headless on the real ROM: slot 1 load detected (fresh: no record yet), 532704-byte state
+  round trip restores it, the older 531668-byte fixture still loads. Hardware: pending; to
+  carry the existing live XP over, run `progress_claim_legacy` once with the save loaded.

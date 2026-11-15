@@ -1,4 +1,5 @@
 # Field play reached from the save; the save state round-trips.
+#! expect-log PROGRESS slot 1 loaded \([0-9a-f]+\): no record, fresh progression
 # Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
 frames 900
 hold B 4

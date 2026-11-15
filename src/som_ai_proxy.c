@@ -23,6 +23,7 @@
 #include "som_bunshin.h"
 #include "som_bunshin_draw.h"
 #include "som_xp.h"
+#include "som_progress.h"
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -34,6 +35,7 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
 /* Our own build of the same pinned snes9x2005_plus (scripts/build-cores.sh
  * with patches/snes9x2005-flxtr-music-voices.patch) when installed: it adds
@@ -328,15 +330,163 @@ FORWARD_VOID(retro_set_audio_sample,(retro_audio_sample_t cb),(cb))
 FORWARD_VOID(retro_set_audio_sample_batch,(retro_audio_sample_batch_t cb),(cb))
 FORWARD_VOID(retro_set_controller_port_device,(unsigned port,unsigned device),(port,device))
 FORWARD_VOID(retro_reset,(void),())
-FORWARD(size_t,retro_serialize_size,(void),())
-FORWARD(bool,retro_serialize,(void *data,size_t size),(data,size))
-FORWARD(bool,retro_unserialize,(const void *data,size_t size),(data,size))
+/* Save states carry the save-owned progression (src/som_progress.h) in a
+ * trailer after the core's own state: retro_serialize* are defined below. */
+static size_t (*backend_retro_serialize_size)(void);
+static bool (*backend_retro_serialize)(void *data,size_t size);
+static bool (*backend_retro_unserialize)(const void *data,size_t size);
 FORWARD_VOID(retro_cheat_reset,(void),())
 FORWARD_VOID(retro_cheat_set,(unsigned index,bool enabled,const char *code),(index,enabled,code))
 FORWARD(bool,retro_load_game_special,(unsigned type,const struct retro_game_info *info,size_t count),(type,info,count))
 FORWARD(unsigned,retro_get_region,(void),())
 FORWARD(void *,retro_get_memory_data,(unsigned id),(id))
 FORWARD(size_t,retro_get_memory_size,(unsigned id),(id))
+/* Save-owned progression (src/som_progress.h). One record per save-block
+ * fingerprint in SOM_PROG_DIR; writes are atomic (temp + fsync + rename) and
+ * keep the previous generation as .prev; a record of an unknown version is
+ * never overwritten. The device-wide v1 file keeps only the session's class
+ * choice as before; its old levels are preserved once as legacy-v1.txt and
+ * are applied only by the explicit `progress_claim_legacy` command. */
+#ifndef SOM_PROG_DIR
+#define SOM_PROG_DIR "/home/apps/retroarch/cores/experimental/som_progress"
+#endif
+static const char *prog_dir=SOM_PROG_DIR;
+static SomProgress prog;
+static uint64_t prog_rom,prog_seen[SOM_PROG_SLOTS];
+static int prog_baseline,prog_was_field,prog_session_first=1;
+static void som_prog_path(uint64_t owner,const char *suffix,char *out,size_t cap){
+    snprintf(out,cap,"%s/%016llx.prog%s",prog_dir,(unsigned long long)owner,suffix);
+}
+static int som_prog_read(uint64_t owner,SomProgress *p){
+    char path[300];
+    for(int gen=0;gen<2;gen++){
+        som_prog_path(owner,gen?".prev":"",path,sizeof(path));
+        FILE *in=fopen(path,"r");
+        if(!in)continue;
+        char text[SOM_PROG_TEXT_MAX+1];
+        const size_t n=fread(text,1,SOM_PROG_TEXT_MAX,in);fclose(in);text[n]=0;
+        const int got=som_prog_parse(text,n,p);
+        if(got==SOM_PROG_OK&&p->owner==owner)return SOM_PROG_OK;
+        fprintf(stderr,"[som-ai] PROGRESS %s %s\n",path,
+                got==SOM_PROG_UNKNOWN_VERSION?"has an unknown version: left alone":"is damaged");
+        if(got==SOM_PROG_UNKNOWN_VERSION)return got;
+    }
+    return SOM_PROG_CORRUPT;
+}
+static int som_prog_write(void){
+    if(!prog.owner)return 0;                 /* a new game before its first save */
+    som_prog_from_disc(&prog,&disciplines);
+    char text[SOM_PROG_TEXT_MAX];
+    const size_t n=som_prog_format(&prog,text,sizeof(text));
+    char path[300],prev[300],temp[300];
+    som_prog_path(prog.owner,"",path,sizeof(path));
+    som_prog_path(prog.owner,".prev",prev,sizeof(prev));
+    som_prog_path(prog.owner,".tmp",temp,sizeof(temp));
+    SomProgress existing;
+    FILE *old=fopen(path,"r");
+    if(old){
+        char buf[SOM_PROG_TEXT_MAX+1];const size_t m=fread(buf,1,SOM_PROG_TEXT_MAX,old);fclose(old);
+        buf[m]=0;
+        if(som_prog_parse(buf,m,&existing)==SOM_PROG_UNKNOWN_VERSION){
+            fprintf(stderr,"[som-ai] PROGRESS %s has an unknown version: not overwritten\n",path);
+            return 0;
+        }
+    }
+    mkdir(prog_dir,0755);
+    FILE *out=n?fopen(temp,"w"):NULL;
+    int ok=out&&fwrite(text,1,n,out)==n;
+    if(out){ok=fflush(out)==0&&ok;if(ok)fsync(fileno(out));ok=fclose(out)==0&&ok;}
+    if(!ok){unlink(temp);fprintf(stderr,"[som-ai] PROGRESS write failed: %s\n",path);return 0;}
+    if(old)rename(path,prev);
+    rename(temp,path);
+    return 1;
+}
+/* Called every 30 frames: notice a save the game just wrote (a slot block
+ * changed and matches the game in play) and the moment a save is loaded or
+ * a new game starts (field play entered). */
+static void som_prog_frame(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    const uint8_t *sram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    const size_t sram_size=backend_retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    if(!ram||!sram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE||
+       sram_size<SOM_PROG_SLOTS*SOM_PROG_SLOT_SIZE)return;
+    const int in_play=som_prog_slot_in_play(ram,sram,sram_size);
+    for(unsigned k=0;k<SOM_PROG_SLOTS;k++){
+        const uint64_t fp=som_prog_slot_fingerprint(sram,k);
+        if(prog_baseline&&fp!=prog_seen[k]&&in_play==(int)k){
+            prog.owner=fp;prog.slot=k;prog.rom=prog_rom;
+            const int ok=som_prog_write();
+            fprintf(stderr,"[som-ai] PROGRESS saved with slot %u (%016llx)%s\n",k+1u,
+                    (unsigned long long)fp,ok?"":": write failed");
+        }
+        prog_seen[k]=fp;
+    }
+    prog_baseline=1;
+    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    if(field&&!prog_was_field){
+        if(in_play>=0&&prog_seen[in_play]!=prog.owner){
+            const uint64_t fp=prog_seen[in_play];
+            SomProgress loaded;
+            const int got=som_prog_read(fp,&loaded);
+            if(got==SOM_PROG_OK){prog=loaded;som_prog_to_disc(&prog,&disciplines);}
+            else{
+                som_prog_fresh(&prog,prog_rom);
+                const uint8_t keep=disciplines.selected;
+                som_prog_to_disc(&prog,&disciplines);disciplines.selected=keep;
+            }
+            prog.owner=fp;prog.slot=(unsigned)in_play;
+            fprintf(stderr,"[som-ai] PROGRESS slot %d loaded (%016llx): %s\n",in_play+1,
+                    (unsigned long long)fp,got==SOM_PROG_OK?"its progression restored":
+                    "no record, fresh progression");
+        }else if(in_play<0&&prog_session_first){
+            const uint8_t keep=disciplines.selected;
+            som_prog_fresh(&prog,prog_rom);som_prog_to_disc(&prog,&disciplines);
+            disciplines.selected=keep;
+            fprintf(stderr,"[som-ai] PROGRESS new game (no matching save): fresh progression\n");
+        }
+        prog_session_first=0;
+    }
+    prog_was_field=field;
+}
+/* Explicit migration: apply the preserved device-wide v1 levels to the save
+ * in play (never automatic). */
+static int som_prog_claim_legacy(void){
+    char path[300],done[300];
+    snprintf(path,sizeof(path),"%s/legacy-v1.txt",prog_dir);
+    snprintf(done,sizeof(done),"%s/legacy-v1.claimed.txt",prog_dir);
+    if(!prog.owner){fprintf(stderr,"[som-ai] PROGRESS claim refused: no save in play\n");return 0;}
+    FILE *in=fopen(path,"r");
+    if(!in){fprintf(stderr,"[som-ai] PROGRESS claim refused: no legacy file\n");return 0;}
+    unsigned selected=0;int ok=fscanf(in,"v1 %u",&selected)==1;
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++){
+        unsigned level=0;unsigned long xp=0;
+        if(fscanf(in," %u %lu",&level,&xp)!=2)break;
+        if(level<1u||level>100u){ok=0;break;}
+        if(level>disciplines.level[i]||(level==disciplines.level[i]&&xp>disciplines.experience[i])){
+            disciplines.level[i]=(uint16_t)level;disciplines.experience[i]=(uint32_t)xp;
+        }
+    }
+    fclose(in);
+    if(!ok){fprintf(stderr,"[som-ai] PROGRESS claim refused: legacy file damaged\n");return 0;}
+    som_prog_write();rename(path,done);
+    fprintf(stderr,"[som-ai] PROGRESS legacy v1 levels applied to slot %u\n",prog.slot+1u);
+    return 1;
+}
+/* Preserve the device-wide v1 levels once, before anything rewrites them. */
+static void som_prog_preserve_legacy(void){
+    char path[300],done[300];
+    snprintf(path,sizeof(path),"%s/legacy-v1.txt",prog_dir);
+    snprintf(done,sizeof(done),"%s/legacy-v1.claimed.txt",prog_dir);
+    if(access(path,F_OK)==0||access(done,F_OK)==0)return;
+    FILE *in=fopen(disc_file,"r");
+    if(!in)return;
+    char text[512];const size_t n=fread(text,1,sizeof(text),in);fclose(in);
+    mkdir(prog_dir,0755);
+    FILE *out=fopen(path,"w");
+    if(out){fwrite(text,1,n,out);fclose(out);
+        fprintf(stderr,"[som-ai] PROGRESS kept the old device-wide levels as %s\n",path);}
+}
 FORWARD(unsigned,retro_api_version,(void),())
 FORWARD_VOID(retro_get_system_info,(struct retro_system_info *info),(info))
 FORWARD_VOID(retro_get_system_av_info,(struct retro_system_av_info *info),(info))
@@ -412,7 +562,7 @@ static void som_xp_give(unsigned discipline,unsigned base,unsigned species,unsig
         snprintf(text,sizeof(text),"^%s|level %u",som_discipline_names[discipline],
                  (unsigned)disciplines.level[discipline]);
         som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
-        som_disc_save();xp_dirty=0;xp_saved_frame=frame_number;
+        som_disc_save();som_prog_write();xp_dirty=0;xp_saved_frame=frame_number;
     }
     fprintf(stderr,"[som-ai] XP %s +%u (%s) -> Lv%u %lu/%u\n",som_discipline_names[discipline],
             amount,why,(unsigned)disciplines.level[discipline],
@@ -421,7 +571,7 @@ static void som_xp_give(unsigned discipline,unsigned base,unsigned species,unsig
 }
 static void som_xp_flush(int now){
     if(xp_dirty&&(now||frame_number-xp_saved_frame>=3600ul)){
-        som_disc_save();xp_dirty=0;xp_saved_frame=frame_number;
+        som_disc_save();som_prog_write();xp_dirty=0;xp_saved_frame=frame_number;
     }
 }
 /* A spell cast at a monster waits for that monster's HP to drop. */
@@ -2264,6 +2414,8 @@ static int som_handle_command(const char *command){
                 return som_equip_weapon(backend_retro_get_memory_data?
                     (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL,t);
     }
+    /* Tool-only: apply the preserved device-wide levels to the save in play. */
+    if(!strcmp(command,"progress_claim_legacy"))return som_prog_claim_legacy();
     if(!strcmp(command,"next_weapon"))
         return som_cycle_weapon(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -2596,6 +2748,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_disc_load();
     memset(&xp_decay,0,sizeof(xp_decay));xp_dirty=0;xp_saved_frame=0;xp_spell_slot=-1;
+    som_prog_preserve_legacy();
+    prog_rom=game&&game->data&&game->size?som_prog_hash((const uint8_t*)game->data,game->size):0;
+    som_prog_fresh(&prog,prog_rom);prog_baseline=0;prog_was_field=0;prog_session_first=1;
+    memset(prog_seen,0,sizeof(prog_seen));
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
     weapon_trace_on=0;som_weapon_trace_reset();
@@ -2673,6 +2829,41 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
  * is the same moment), writes it beside the auto-state and a detached
  * helper renames it into place once RetroArch has exited, after any
  * partial write of its own. FLXTR_SOM_AUTO_STATE=0 turns this off. */
+/* retro_serialize*: the core's state, then the progression trailer. A state
+ * of exactly the core's size (older states) loads as before and keeps the
+ * progression in memory. */
+RETRO_API size_t retro_serialize_size(void){
+    load_backend();
+    const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
+    return core?core+SOM_PROG_TRAILER_SIZE:0;
+}
+RETRO_API bool retro_serialize(void *data,size_t size){
+    load_backend();
+    const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
+    if(!core||!data||size<core)return false;
+    if(!backend_retro_serialize(data,core))return false;
+    if(size>=core+SOM_PROG_TRAILER_SIZE){
+        som_prog_from_disc(&prog,&disciplines);
+        som_prog_trailer_write(&prog,(uint8_t*)data+core);
+    }
+    return true;
+}
+RETRO_API bool retro_unserialize(const void *data,size_t size){
+    load_backend();
+    const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
+    if(core&&data&&size==core+SOM_PROG_TRAILER_SIZE){
+        if(!backend_retro_unserialize(data,core))return false;
+        SomProgress loaded;
+        if(som_prog_trailer_read((const uint8_t*)data+core,&loaded)==SOM_PROG_OK){
+            prog=loaded;som_prog_to_disc(&prog,&disciplines);
+            prog_session_first=0;prog_was_field=1;
+            fprintf(stderr,"[som-ai] PROGRESS restored from the save state (slot %u)\n",
+                    prog.slot<SOM_PROG_SLOTS?prog.slot+1u:0u);
+        }else fprintf(stderr,"[som-ai] PROGRESS trailer of the save state unreadable\n");
+        return true;
+    }
+    return backend_retro_unserialize&&backend_retro_unserialize(data,size);
+}
 static char som_auto_state_path[1024];
 static void som_auto_state_path_set(const char *rom){
     som_auto_state_path[0]=0;
@@ -2687,12 +2878,12 @@ static void som_auto_state_path_set(const char *rom){
 static int som_save_auto_state(void){
     if(!game_loaded||!som_auto_state_path[0]||!backend_retro_serialize_size||
        !backend_retro_serialize)return 0;
-    const size_t size=backend_retro_serialize_size();
+    const size_t size=retro_serialize_size();
     void *data=size?malloc(size):NULL;
     if(!data)return 0;
     char temp[sizeof(som_auto_state_path)+16];
     snprintf(temp,sizeof(temp),"%s.flxtr-full",som_auto_state_path);
-    int ok=backend_retro_serialize(data,size);
+    int ok=retro_serialize(data,size);
     FILE *out=ok?fopen(temp,"wb"):NULL;
     ok=out&&fwrite(data,1,size,out)==size;
     if(out){ok=fflush(out)==0&&ok;if(ok)fsync(fileno(out));ok=fclose(out)==0&&ok;}
@@ -2905,6 +3096,7 @@ RETRO_API void retro_run(void){
     }
     backend_run();
     if(test_enabled&&on_turbo)som_combo_frame();
+    if(test_enabled&&on_turbo&&frame_number%30u==0u)som_prog_frame();
     if(test_enabled&&on_turbo)som_special_tick();
     if(test_enabled&&on_turbo)som_evade_tick();
     if(test_enabled&&on_turbo)som_weapon_trace_frame();

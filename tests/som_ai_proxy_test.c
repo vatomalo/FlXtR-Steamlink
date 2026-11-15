@@ -21,13 +21,38 @@ static int16_t mocked_input_mask(unsigned port,unsigned device,unsigned index,un
 }
 static uint8_t mocked_vram[0x10000];
 static int mocked_has_vram;
+static uint8_t mocked_sram[8192];
 static void *mocked_memory_data(unsigned id){
+    if(id==RETRO_MEMORY_SAVE_RAM)return mocked_sram;
     if(id==RETRO_MEMORY_VIDEO_RAM)return mocked_has_vram?mocked_vram:NULL;
     return id==RETRO_MEMORY_SYSTEM_RAM?mocked_wram:NULL;
 }
 static size_t mocked_memory_size(unsigned id){
+    if(id==RETRO_MEMORY_SAVE_RAM)return sizeof(mocked_sram);
     if(id==RETRO_MEMORY_VIDEO_RAM)return mocked_has_vram?sizeof(mocked_vram):0;
     return id==RETRO_MEMORY_SYSTEM_RAM?sizeof(mocked_wram):0;
+}
+static uint8_t fake_core_state[16];
+static size_t fake_serialize_size(void){return sizeof(fake_core_state);}
+static bool fake_serialize(void *data,size_t size){
+    if(size<sizeof(fake_core_state))return false;
+    memcpy(data,fake_core_state,sizeof(fake_core_state));return true;
+}
+static bool fake_unserialize(const void *data,size_t size){
+    if(size!=sizeof(fake_core_state))return false;
+    memcpy(fake_core_state,data,size);return true;
+}
+static void prog_enter(int slot_pattern){
+    /* leave field play, show the game state of a slot, enter field play */
+    mocked_wram[0xE4]=0;frame_number+=30;som_prog_frame();
+    for(unsigned i=0;i<0x40;i++)mocked_wram[0xCC01+i]=(uint8_t)(slot_pattern+i);
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;mocked_wram[0xD0]=0;
+    frame_number+=30;som_prog_frame();
+}
+static void prog_game_saves(unsigned slot,int slot_pattern,uint8_t salt){
+    for(unsigned i=0;i<0x40;i++)mocked_sram[slot*0x400+4+i]=(uint8_t)(slot_pattern+i);
+    mocked_sram[slot*0x400+0x300]=salt;            /* the rest of the block */
+    frame_number+=30;som_prog_frame();
 }
 static const void *shown_frame;
 static void mocked_video(const void *data,unsigned width,unsigned height,size_t pitch){
@@ -173,6 +198,74 @@ int main(void){
     assert(som_class_supply(mocked_wram,0)==0); /* no changes outside field */
     assert(mocked_wram[0xCC56]==0xFF);
 
+    /* Progression belongs to a save (src/som_progress.h). */
+    {
+        char dir[]="/tmp/som-progress-test-XXXXXX";assert(mkdtemp(dir));
+        prog_dir=dir;
+        char legacy_disc[64];snprintf(legacy_disc,sizeof(legacy_disc),"%s/v1",dir);
+        FILE *v1=fopen(legacy_disc,"w");
+        assert(v1&&fputs("v1 2 1 0 1 0 5 40 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0\n",v1)>=0&&!fclose(v1));
+        disc_file=legacy_disc;
+        backend_retro_get_memory_data=mocked_memory_data;backend_retro_get_memory_size=mocked_memory_size;
+        memset(mocked_wram,0,sizeof(mocked_wram));memset(mocked_sram,0,sizeof(mocked_sram));
+        som_disc_init(&disciplines);som_prog_preserve_legacy();
+        som_prog_fresh(&prog,7);prog_baseline=0;prog_was_field=0;prog_session_first=1;
+        frame_number=10000;som_prog_frame();                 /* title: baseline */
+        /* New game: no save matches, fresh progression; nothing written yet. */
+        prog_enter(0x10);
+        assert(!prog.owner&&disciplines.level[2]==1);
+        disciplines.level[0]=3;disciplines.experience[0]=20;
+        assert(!som_prog_write());
+        /* The game saves to slot 1: a record for that exact block. */
+        prog_game_saves(0,0x10,1);
+        assert(prog.owner==som_prog_slot_fingerprint(mocked_sram,0)&&prog.slot==0);
+        const uint64_t slot1=prog.owner;
+        SomProgress check;assert(som_prog_read(slot1,&check)==SOM_PROG_OK&&check.level[0]==3);
+        /* Another playthrough in slot 2: no inherited XP. */
+        for(unsigned i=4;i<0x400;i++)mocked_sram[0x400+i]=(uint8_t)(0x80+i);
+        frame_number+=30;som_prog_frame();                   /* a slot changed, not ours */
+        assert(prog.owner==slot1);
+        prog_enter(0x80+4);
+        assert(prog.slot==1&&prog.owner!=slot1&&disciplines.level[0]==1);
+        disciplines.level[1]=4;
+        prog_game_saves(1,0x80+4,2);
+        /* Back to slot 1: its own progression, not slot 2's. */
+        prog_enter(0x10);
+        assert(prog.owner==slot1&&disciplines.level[0]==3&&disciplines.level[1]==1);
+        /* A damaged record falls back to the previous generation. */
+        disciplines.level[0]=5;assert(som_prog_write());       /* now .prev holds level 3 */
+        char path[300];som_prog_path(slot1,"",path,sizeof(path));
+        FILE *bad=fopen(path,"w");assert(bad&&fputs("som-progress 2\ngarbage\n",bad)>=0&&!fclose(bad));
+        assert(som_prog_read(slot1,&check)==SOM_PROG_OK&&check.level[0]==3);
+        /* An unknown version is never overwritten. */
+        FILE *future=fopen(path,"w");assert(future&&fputs("som-progress 9\n",future)>=0&&!fclose(future));
+        assert(!som_prog_write());
+        future=fopen(path,"r");char line[32]={0};assert(future&&fgets(line,sizeof(line),future));fclose(future);
+        assert(!strcmp(line,"som-progress 9\n"));
+        unlink(path);
+        /* Save states carry the progression; older states without it load. */
+        backend_retro_serialize_size=fake_serialize_size;backend_retro_serialize=fake_serialize;
+        backend_retro_unserialize=fake_unserialize;backend=(void*)1;
+        assert(retro_serialize_size()==16+SOM_PROG_TRAILER_SIZE);
+        static uint8_t state[16+SOM_PROG_TRAILER_SIZE];
+        disciplines.level[3]=7;fake_core_state[0]=42;
+        assert(retro_serialize(state,sizeof(state)));
+        disciplines.level[3]=1;fake_core_state[0]=0;
+        assert(retro_unserialize(state,sizeof(state))&&fake_core_state[0]==42&&disciplines.level[3]==7);
+        assert(retro_unserialize(state,16)&&disciplines.level[3]==7);        /* old state */
+        state[16+20]^=1;assert(retro_unserialize(state,sizeof(state)));      /* bad trailer */
+        assert(disciplines.level[3]==7);
+        backend_retro_serialize_size=NULL;backend_retro_serialize=NULL;backend_retro_unserialize=NULL;
+        backend=NULL;
+        /* Old device-wide levels: kept, applied only on request. */
+        assert(disciplines.level[2]==1);
+        assert(som_handle_command("progress_claim_legacy")&&disciplines.level[2]==5);
+        assert(!som_handle_command("progress_claim_legacy"));           /* once */
+        char cmd[128];snprintf(cmd,sizeof(cmd),"rm -rf %s",dir);assert(system(cmd)==0);
+        prog_dir=SOM_PROG_DIR;disc_file=SOM_DISC_FILE;
+        memset(mocked_wram,0,sizeof(mocked_wram));memset(mocked_sram,0,sizeof(mocked_sram));
+        som_disc_init(&disciplines);
+    }
     /* The exit auto-state goes beside the ROM, as RetroArch names it. */
     som_auto_state_path_set("/roms/Snes/Secret of Mana, Turbo.smc");
     assert(!strcmp(som_auto_state_path,"/roms/Snes/Secret of Mana, Turbo.state.auto"));

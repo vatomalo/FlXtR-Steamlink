@@ -24,11 +24,15 @@ class SomMusicTests(unittest.TestCase):
 
     def test_avoid_wrong_music_and_wrong_genre(self):
         good = ("video", "abcdefghijk", "Secret of Mana Into the Thick of It Lo-Fi Cover", "Composer")
+        topic = ("video", "abcdefghijk", "Into the Thick of It (Lofi Mix)", "Pokerus Project - Topic")
         other = ("video", "abcdefghijk", "Secret of Mana Danger Lo-Fi Cover", "Composer")
         wrong_style = ("video", "abcdefghijk", "Secret of Mana Into the Thick of It Metal Cover", "Composer")
+        wrong_game = ("video", "abcdefghijk", "Into the Thick of It Remix (chill/lofi)", "MaTTer")
         self.assertGreater(candidate_score(good, "Into the Thick of It", 0), 0)
+        self.assertGreater(candidate_score(topic, "Into the Thick of It", 0), 0)
         self.assertLess(candidate_score(other, "Into the Thick of It", 0), 0)
         self.assertLess(candidate_score(wrong_style, "Into the Thick of It", 0), 0)
+        self.assertLess(candidate_score(wrong_game, "Into the Thick of It", 0), 0)
 
     def test_ignore_jingles_retain_current_track(self):
         with tempfile.TemporaryDirectory() as folder:

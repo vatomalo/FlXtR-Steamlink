@@ -74,11 +74,13 @@ def candidate_score(row, title, genre):
     description = (name + " " + uploader).lower()
     if not target or not all(w in description for w in target):
         return -1
-    if not ("mana" in description or "seiken" in description):
+    game_named = "mana" in description or "seiken" in description
+    topic_release = uploader.lower().endswith(" - topic")
+    if not game_named and not topic_release:
         return -1
     if not any(word in description for word in GENRE_WORDS[genre]):
         return -1
-    return 10 + sum(word in name.lower() for word in target)
+    return (10 if game_named else 5) + sum(word in name.lower() for word in target)
 
 
 class MusicBridge:

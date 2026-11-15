@@ -38,6 +38,7 @@ from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
 from som_tactics import TacticLearner
 from som_build import classify as classify_build, profile as build_profile
+from som_wram_server import apply_block_delta
 from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
                                 ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
                                 CONTACT_PX as CLASS_CONTACT_PX)
@@ -499,6 +500,15 @@ REMOTE_LOOP = (
     r'*) printf "%s\n" "$t" > /tmp/flxtr-som-ai-message && echo OK || echo BAD;; esac;; '
     "*) echo BAD;; esac; done"
 )
+# Preferred device side: tools/som_wram_server.py (same requests, no fork per
+# request, `dlt` deltas). An older device without it answers NOSERVER and the
+# link uses REMOTE_LOOP; SOM_AI_SHELL_LOOP=1 forces the shell loop.
+SERVER_BANNER = "SOMWS 1"
+SERVER_REMOTE = (
+    "f=/home/apps/greenlink/tools/som_wram_server.py; "
+    "if [ -f $f ]; then exec sh /home/apps/greenlink/scripts/music-runtime.sh $f; fi; "
+    "echo NOSERVER"
+)
 # Characters the Steam Link loop and the overlay font both accept.
 MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|^-]")
 WRAM_BYTES = 0x20000
@@ -509,7 +519,7 @@ class RemoteLink:
     """Keep one SSH session open for WRAM reads and actions."""
 
     def __init__(self, host: str, timeout: float = 5.0, remote_loop: str = REMOTE_LOOP,
-                 ssh_command=None, compress=True, partial=True):
+                 ssh_command=None, compress=True, partial=True, server=None):
         self.host, self.timeout = host, timeout
         self.remote_loop = remote_loop
         self.ssh_command = list(ssh_command or SSH_BASE)
@@ -517,9 +527,40 @@ class RemoteLink:
         self.compress = compress
         self.partial = partial and compress
         self.base, self.hot_reads = None, 0
+        # tools/som_wram_server.py on the device (same protocol + `dlt`); only
+        # for the default loop, so tools with their own restricted loop keep it.
+        if server is None:
+            server = SERVER_REMOTE if remote_loop is REMOTE_LOOP else ""
+        self.server = server if os.environ.get("SOM_AI_SHELL_LOOP") != "1" else ""
+        self.serving = False                 # current session runs the server
+        self.server_failures = 0
+        self.delta_base = bytes(WRAM_BYTES)  # last `dlt` image, per session
+        self.stats = {"requests": 0, "bytes": 0, "seconds": 0.0, "sessions": 0}
 
     def _start(self):
         self.close()
+        self.stats["sessions"] += 1
+        if self.server:
+            self.process = subprocess.Popen(
+                [*self.ssh_command, "-o", "ServerAliveInterval=5", self.host, self.server],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                bufsize=0)
+            try:
+                # The bundled Python takes about a second to start on the device.
+                banner = self._read_line(time.monotonic() + max(self.timeout, 15.0))
+            except (OSError, subprocess.SubprocessError):
+                banner = ""
+            if banner == SERVER_BANNER:
+                self.serving, self.server_failures = True, 0
+                self.delta_base = bytes(WRAM_BYTES)
+                return
+            self.close()
+            self.server_failures += 1
+            if banner != "NOSERVER" and self.server_failures < 2:
+                raise OSError("observation server did not start")   # retried once
+            print(f"[ai] observation server unavailable ({banner or 'no reply'}); "
+                  "using the shell loop", flush=True)
+            self.server = ""
         self.process = subprocess.Popen(
             [*self.ssh_command, "-o", "ServerAliveInterval=5", self.host, self.remote_loop],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -527,6 +568,7 @@ class RemoteLink:
 
     def close(self):
         process, self.process = self.process, None
+        self.serving, self.delta_base = False, bytes(WRAM_BYTES)
         if process is not None:
             try:
                 process.stdin.close()
@@ -581,12 +623,27 @@ class RemoteLink:
                 raise OSError(f"unexpected SSH link reply {bytes(data)!r}")
         return data.decode("ascii", "replace").strip()
 
+    def _read_delta(self, status: str, deadline: float) -> bytes:
+        """`WRAMB <n>` + n bytes of zlib(block bitmap + changed 512-byte blocks)."""
+        size = status[6:]
+        if not size.isdigit() or not 0 < int(size) <= 2 * WRAM_BYTES:
+            raise OSError(f"bad delta header {status!r}")
+        try:
+            delta = zlib.decompress(self._read_exact(int(size), deadline))
+            self.delta_base = apply_block_delta(self.delta_base, delta)
+        except (zlib.error, ValueError) as exc:
+            raise OSError(f"bad WRAM delta: {exc}") from exc
+        return self.delta_base
+
     def _request(self, line: str):
         for attempt in (0, 1):
             try:
                 if self.process is None or self.process.poll() is not None:
                     self._start()
-                deadline = time.monotonic() + self.timeout
+                if line in ("dlt", "dltm") and not self.serving:
+                    return "NOSERVER", None
+                started = time.monotonic()
+                deadline = started + self.timeout
                 self.process.stdin.write(line.encode() + b"\n")
                 status = self._read_line(deadline)
                 payload = (self._read_exact(WRAM_BYTES, deadline)
@@ -597,6 +654,12 @@ class RemoteLink:
                     payload = self._read_gzip(deadline, HOT_BYTES)
                 if status == "NAV":
                     payload = self._read_exact(768, deadline)
+                if status.startswith("WRAMB "):
+                    wire = int(status[6:]) if status[6:].isdigit() else 0
+                    payload, status = self._read_delta(status, deadline), "WRAMB"
+                    self.stats["bytes"] += wire
+                self.stats["requests"] += 1
+                self.stats["seconds"] += time.monotonic() - started
                 return status, payload
             except (OSError, subprocess.SubprocessError):
                 # The stream may be mid-frame; restart once, then fail safe.
@@ -607,7 +670,16 @@ class RemoteLink:
     def fetch_wram(self, require_marker=False):
         # The Steam Link link carries ~210 KB/s; gzip -1 shrinks the 128 KiB
         # snapshot ~3x, and hot reads (HOT_RANGES_KB) cut a decision's read
-        # from ~290 ms to ~160 ms.
+        # from ~290 ms to ~160 ms. With the observation server every read is
+        # a complete current image sent as a delta (a few hundred bytes).
+        if self.server:
+            status, image = self._request("dltm" if require_marker else "dlt")
+            if status == "STOP":
+                return None
+            if status == "WRAMB":
+                return image
+            if status != "NOSERVER":
+                raise OSError(f"WRAM snapshot unavailable ({status})")
         if self.partial and self.base is not None and self.hot_reads < FULL_EVERY:
             status, hot = self._request("hotmz" if require_marker else "hotz")
             if status == "STOP":

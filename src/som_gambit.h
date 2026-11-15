@@ -24,7 +24,7 @@
 #define SOM_MUSIC_GENRE_COUNT 9u
 static const char *const som_music_genre_names[SOM_MUSIC_GENRE_COUNT] = {
     "Lo-Fi", "Jazz", "City Pop", "Orchestral", "Piano",
-    "Synthwave", "Rock", "Ambient", "Original"
+    "Synthwave", "Rock", "Ambient", "Off"
 };
 #define SOM_GAMBIT_MAX_WEIGHT 5u
 

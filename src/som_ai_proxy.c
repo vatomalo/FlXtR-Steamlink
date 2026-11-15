@@ -25,6 +25,7 @@
 #include "som_xp.h"
 #include "som_progress.h"
 #include "som_perks.h"
+#include "som_music_mix.h"
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -333,7 +334,9 @@ static int som_rom_is_turbo(const char *path){
     }
 
 FORWARD_VOID(retro_set_audio_sample,(retro_audio_sample_t cb),(cb))
-FORWARD_VOID(retro_set_audio_sample_batch,(retro_audio_sample_batch_t cb),(cb))
+/* Audio batches pass through som_audio_batch, which mixes the soundtrack in
+ * (src/som_music_mix.h); retro_set_audio_sample_batch is defined below. */
+static void (*backend_retro_set_audio_sample_batch)(retro_audio_sample_batch_t cb);
 FORWARD_VOID(retro_set_controller_port_device,(unsigned port,unsigned device),(port,device))
 FORWARD_VOID(retro_reset,(void),())
 /* Save states carry the save-owned progression (src/som_progress.h) in a
@@ -2563,6 +2566,70 @@ static int som_hero_screen(int *x,int *y){
     *x=(int)(hx-cam_x);*y=(int)(hy-cam_y);
     return 1;
 }
+/* Soundtrack mixing. The bridge writes raw stereo s16 at the core's rate
+ * into SOM_MUSIC_FIFO (`greenlink-audio --pcm`); before every frame the
+ * proxy reads what fits into a ~1 s ring without blocking, and every audio
+ * batch of the core leaves with the music added. No pipe, no writer or an
+ * empty ring: the batch passes through untouched. The core's sample rate is
+ * published in SOM_MUSIC_RATE_FILE for the bridge. */
+#define SOM_MUSIC_FIFO "/tmp/flxtr-som-music.pcm"
+#define SOM_MUSIC_RATE_FILE "/tmp/flxtr-som-audio-rate"
+static const char *music_fifo=SOM_MUSIC_FIFO,*music_rate_file=SOM_MUSIC_RATE_FILE;
+static retro_audio_sample_batch_t frontend_audio_batch;
+static SomMusicRing music_ring;
+static int music_fd=-1;
+static unsigned long music_retry_frame;
+static size_t som_audio_batch(const int16_t *data,size_t frames){
+    if(!frontend_audio_batch)return frames;
+    if(!music_ring.count||!data)return frontend_audio_batch(data,frames);
+    static int16_t mixed[4096u*2u];
+    size_t done=0;
+    while(done<frames){
+        const size_t n=frames-done<4096u?frames-done:4096u;
+        som_mix_apply(&music_ring,mixed,data+2u*done,n);
+        frontend_audio_batch(mixed,n);
+        done+=n;
+    }
+    return frames;
+}
+RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb){
+    load_backend();
+    frontend_audio_batch=cb;
+    backend_retro_set_audio_sample_batch(som_audio_batch);
+}
+static void som_music_pump(void){
+    if(music_fd<0){
+        if(frame_number<music_retry_frame)return;
+        music_retry_frame=frame_number+30u;
+        struct stat st;
+        if(lstat(music_fifo,&st)!=0||!S_ISFIFO(st.st_mode))return;
+        music_fd=open(music_fifo,O_RDONLY|O_NONBLOCK);
+        if(music_fd<0)return;
+    }
+    uint8_t chunk[8192];
+    for(int rounds=0;rounds<8;rounds++){
+        const unsigned room=som_mix_free_bytes(&music_ring);
+        if(room<4u)return;
+        const ssize_t got=read(music_fd,chunk,room<sizeof(chunk)?room:sizeof(chunk));
+        if(got>0){som_mix_push_bytes(&music_ring,chunk,(size_t)got);continue;}
+        if(got==0){                       /* no writer (track ended / changed) */
+            close(music_fd);music_fd=-1;music_ring.partial_bytes=0;
+            music_retry_frame=frame_number+30u;
+        }
+        return;                           /* EAGAIN: nothing more this frame */
+    }
+}
+static void som_music_publish_rate(void){
+    if(!backend_retro_get_system_av_info)return;
+    struct retro_system_av_info av;memset(&av,0,sizeof(av));
+    backend_retro_get_system_av_info(&av);
+    if(av.timing.sample_rate<8000.0||av.timing.sample_rate>96000.0)return;
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",music_rate_file);
+    FILE *out=fopen(temp,"w");
+    if(!out)return;
+    fprintf(out,"%ld\n",(long)(av.timing.sample_rate+0.5));
+    if(fclose(out)==0)rename(temp,music_rate_file);else unlink(temp);
+}
 #define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
 #define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
 static void som_video_refresh(const void *data,unsigned width,unsigned height,size_t pitch){
@@ -2772,6 +2839,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_disc_load();
     memset(&xp_decay,0,sizeof(xp_decay));xp_dirty=0;xp_saved_frame=0;xp_spell_slot=-1;
     som_prog_preserve_legacy();
+    som_mix_reset(&music_ring,SOM_MIX_GAIN_DEFAULT);
+    if(music_fd>=0){close(music_fd);music_fd=-1;}
+    music_retry_frame=0;
     {const char *perks=getenv("FLXTR_SOM_PERKS");perks_enabled=!(perks&&!strcmp(perks,"0"));}
     prog_rom=game&&game->data&&game->size?som_prog_hash((const uint8_t*)game->data,game->size):0;
     som_prog_fresh(&prog,prog_rom);prog_baseline=0;prog_was_field=0;prog_session_first=1;
@@ -2805,6 +2875,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_rom_size=som_rom?game->size:0;
     weapon_gfx_verified=0;weapon_gfx_last_check=0;equip_notice_frame=0;
     game_loaded=backend_load_game(load_info);
+    if(game_loaded&&on_turbo)som_music_publish_rate();
     som_song_load(&song_names,song_file);song_last=0x100u;
     if(backend_skip_music){
         backend_skip_music(game_loaded&&on_turbo?SOM_SKIP_MUSIC_MODE:0);
@@ -3106,6 +3177,7 @@ RETRO_API void retro_run(void){
         som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_bash_tick();
     if(test_enabled&&on_turbo)som_hop_step();
+    if(test_enabled&&on_turbo)som_music_pump();
     som_xp_flush(0);
     if(pal_trace_on&&backend_retro_get_memory_data)
         som_pal_trace_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));

@@ -89,10 +89,38 @@ def candidate_score(row, title, genre):
     return (10 if game_named else 5) + sum(word in name.lower() for word in target)
 
 
+DEFAULT_MIX_RATE = 32040
+
+
+def mix_rate(path):
+    """The game's sample rate published by the proxy (Hz), else 32040."""
+    try:
+        rate = int(Path(path).read_text().strip())
+        return rate if 8000 <= rate <= 96000 else DEFAULT_MIX_RATE
+    except (OSError, ValueError, TypeError):
+        return DEFAULT_MIX_RATE
+
+
+def ensure_fifo(path):
+    """Create the named pipe the proxy reads; refuse anything else there."""
+    import stat
+    path = Path(path)
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        os.mkfifo(path, 0o600)
+        return True
+    return stat.S_ISFIFO(mode)
+
+
 class MusicBridge:
-    def __init__(self, names, genre_file, cache, player, dry_run=False):
+    def __init__(self, names, genre_file, cache, player, dry_run=False,
+                 mix_fifo=None, rate_file=None):
         self.names, self.genre_file, self.cache = names, genre_file, cache
         self.player, self.dry_run = player, dry_run
+        # Mixing mode: the music goes into the game's own audio through the
+        # proxy (the Steam Link refuses a second audio output stream).
+        self.mix_fifo, self.rate_file = mix_fifo, rate_file
         self.current, self.child, self.music = None, None, None
         self.started, self.quick_failures, self.gave_up = 0.0, 0, False
         try:
@@ -167,12 +195,19 @@ class MusicBridge:
                 tmp.write_text(json.dumps(self.selections, indent=2) + "\n")
                 tmp.replace(self.cache / "selection.json")
             music.resolve("video", ident)  # Refresh temporary signed audio URL.
-            self.child = subprocess.Popen([self.player, str(self.cache / "stream.txt")],
-                                          start_new_session=True)
+            self.child = subprocess.Popen(self.player_command(), start_new_session=True)
             self.started = time.monotonic()
             LOG.info("PLAY 0x%02X %s [%s] YouTube ID %s", index, title, GENRES[genre], ident)
         except Exception as exc:  # yt-dlp's DownloadError (offline) is a plain Exception
             LOG.warning("music lookup/playback failed for %s: %s", title, type(exc).__name__)
+
+    def player_command(self):
+        stream = str(self.cache / "stream.txt")
+        if not self.mix_fifo:
+            return [self.player, stream]
+        if not ensure_fifo(self.mix_fifo):
+            raise OSError("%s exists and is not a named pipe" % self.mix_fifo)
+        return [self.player, "--pcm", str(mix_rate(self.rate_file)), str(self.mix_fifo), stream]
 
     def check_player(self, now=None):
         """Notice a player that died: an error right after start counts as a
@@ -257,6 +292,9 @@ def main(argv=None):
     parser.add_argument("--log", type=Path, help="tail actual RetroArch log (else stdin)")
     parser.add_argument("--from-start", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--mix-fifo", type=Path,
+                        help="mix into the game's audio: named pipe the AI proxy reads")
+    parser.add_argument("--rate-file", type=Path, help="game sample rate written by the proxy")
     parser.add_argument("--game-pid", type=int,
                         help="stop playback and exit when this process ends")
     parser.add_argument("--som-wait", type=float,
@@ -264,7 +302,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="[som-music] %(message)s")
     bridge = MusicBridge(load_names(args.catalog), args.genre_file, args.cache,
-                         args.player, args.dry_run)
+                         args.player, args.dry_run, args.mix_fifo, args.rate_file)
     def finish(*_):
         bridge.stop()
         raise SystemExit(0)

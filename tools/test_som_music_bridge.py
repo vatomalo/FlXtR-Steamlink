@@ -166,6 +166,27 @@ class SomMusicTests(unittest.TestCase):
             self.assertEqual(live.quick_failures, 0)
             live.stop()
 
+    def test_mixing_mode_feeds_the_proxy_pipe(self):
+        import os, stat
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            rate = directory / "rate"
+            rate.write_text("32040\n")
+            pipe = directory / "music.pcm"
+            live = MusicBridge(self.catalog, directory / "genre", directory / "cache",
+                               "greenlink-audio", mix_fifo=pipe, rate_file=rate)
+            command = live.player_command()
+            self.assertEqual(command[:4], ["greenlink-audio", "--pcm", "32040", str(pipe)])
+            self.assertTrue(stat.S_ISFIFO(os.lstat(pipe).st_mode))
+            rate.write_text("garbage")
+            self.assertEqual(live.player_command()[2], str(bridge.DEFAULT_MIX_RATE))
+            pipe.unlink()
+            pipe.write_text("not a pipe")
+            with self.assertRaises(OSError):
+                live.player_command()
+            plain = MusicBridge(self.catalog, directory / "genre", directory / "cache", "p")
+            self.assertEqual(plain.player_command(), ["p", str(directory / "cache/stream.txt")])
+
     def test_query(self):
         self.assertEqual(search_query("Into the Thick of It", 0),
                          "Secret of Mana Into the Thick of It lofi chill remix")

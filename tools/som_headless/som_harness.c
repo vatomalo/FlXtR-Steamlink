@@ -16,6 +16,8 @@
  *   save FILE                serialize, write FILE, check it reloads
  *   unload                   retro_unload_game (exit-time hooks)
  *   dump NAME                write OUTDIR/NAME.wram (128 KiB) and NAME.sram
+ *   audio NAME               from now on record the audio output (raw stereo
+ *                            s16) to OUTDIR/NAME.raw
  *   expect u8|u16 ADDR OP V  WRAM (7E/7F offset, hex) compared with V
  *                            (OP: == != < <= > >=); a miss fails the run
  *   expect-moved MIN MAX     hero moved MIN..MAX px (Manhattan) since mark
@@ -50,8 +52,15 @@ static void video(const void *data,unsigned w,unsigned h,size_t pitch){
     frame_copy=copy;memcpy(frame_copy,data,h*pitch);
     frame_w=w;frame_h=h;frame_pitch=pitch;
 }
-static void audio(int16_t l,int16_t r){(void)l;(void)r;}
-static size_t audio_batch(const int16_t *d,size_t n){(void)d;return n;}
+static FILE *audio_out;
+static unsigned long audio_frames;
+static void audio(int16_t l,int16_t r){
+    if(audio_out){const int16_t f[2]={l,r};fwrite(f,4,1,audio_out);audio_frames++;}
+}
+static size_t audio_batch(const int16_t *d,size_t n){
+    if(audio_out&&d){fwrite(d,4,n,audio_out);audio_frames+=n;}
+    return n;
+}
 static void poll(void){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id){
     if(port||index||(device&RETRO_DEVICE_MASK)!=RETRO_DEVICE_JOYPAD)return 0;
@@ -209,6 +218,11 @@ int main(int argc,char **argv){
             fprintf(stderr,"[harness] save %s %zu bytes serialize %d reload %d\n",b,z,ok,back);
             if(!ok||!back||!o)failures++;
             free(buf);
+        }else if(sscanf(line,"audio %199s",b)==1){
+            char path[512];snprintf(path,sizeof(path),"%s/%s.raw",outdir,b);
+            if(audio_out)fclose(audio_out);
+            audio_out=fopen(path,"wb");audio_frames=0;
+            fprintf(stderr,"[harness] audio recording to %s\n",path);
         }else if(sscanf(line,"dump %199s",b)==1){
             const unsigned ids[2]={RETRO_MEMORY_SYSTEM_RAM,RETRO_MEMORY_SAVE_RAM};
             const char *ext[2]={"wram","sram"};
@@ -267,6 +281,7 @@ int main(int argc,char **argv){
         }else{fprintf(stderr,"[harness] FAIL line %lu: unknown command: %s\n",line_no,line);return 2;}
     }
     fclose(script);
+    if(audio_out){fclose(audio_out);fprintf(stderr,"[harness] audio %lu frames\n",audio_frames);}
     fprintf(stderr,"[harness] done at frame %lu, %d failure(s)\n",frame,failures);
     return failures?1:0;
 }

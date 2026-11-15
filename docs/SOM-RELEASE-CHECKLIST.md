@@ -47,6 +47,19 @@ Parity with the installed build `8bb510b3...` (`strings` of both): nothing remov
 five log lines that printed a literal `\n`; additions are progression, perks and the
 title-screen fix.
 
+Soundtrack mixing adds a second artifact, `greenlink-audio` with the `--pcm` mode, built
+like `scripts/build-player.sh` does (static ffmpeg 4.4.5, Steam Link SDK):
+
+    $CC -Os -std=c99 -Wall -Wextra -Werror -I"$cache/install/include" $(pkg-config --cflags sdl2) \
+      src/audio_player.c -o build/greenlink-audio-arm -L"$cache/install/lib" \
+      -lavformat -lavcodec -lswresample -lavutil $(pkg-config --libs sdl2 gnutls) -lm -lpthread -ldl -lz
+
+Its normal (SDL) mode is unchanged, so it can replace `/home/apps/greenlink/greenlink-audio`
+for all FlXtR music. Installing the mixing feature = proxy + `greenlink-audio` +
+`greenlink.sh` + `tools/som_music_bridge.py` (snapshot first, game closed, swap by rename as
+in section 6). Checksums of the current candidates are printed by the build; record them at
+install time.
+
 ## 5. Release gates for this candidate
 
 | gate | state |
@@ -104,5 +117,5 @@ resuming matters. Progress records in `som_progress/` are simply ignored by the 
 | progression per save, state trailer, legacy claim | yes | yes (slot detection, trailer round trip, old state) | pending |
 | perks | yes | regression only | pending |
 | exit auto-state full size | yes | yes | yes (531668 bytes after the player's exit) |
-| soundtrack bridge chain | yes | n/a | search/stream yes; **audio blocked** (MV_PE_StreamCreate) |
+| soundtrack bridge chain | yes | mixing verified (rms, pacing) | search/stream yes; separate player blocked (MV_PE_StreamCreate); mixing pending install |
 | AI curiosity, Qwen failure handling | yes | n/a | pending (service restart) |

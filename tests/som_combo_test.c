@@ -7,6 +7,7 @@
 #include "../src/som_bunshin_draw.h"
 #include "../src/som_xp.h"
 #include "../src/som_perks.h"
+#include "../src/som_music_mix.h"
 
 static uint8_t ram[0x20000];
 static uint8_t vram[SOM_BUN_VRAM_SIZE];
@@ -171,6 +172,21 @@ int main(void){
     pc.hits=3;pc.mixes=4;
     assert(som_combo_level_with(&pc,2,0)==3&&som_combo_level_with(&pc,4,1)==6);
     pc.hits=40;assert(som_combo_level_with(&pc,4,2)==SOM_COMBO_LEVEL_MAX);
+    /* Music mix: split frames across reads, saturating sum, silence when
+     * the ring runs dry, bounded ring. */
+    static SomMusicRing ring;som_mix_reset(&ring,128);
+    const uint8_t bytes[10]={0x00,0x10,0x00,0xF0, 0xFF,0x7F,0x00,0x80, 0x10,0x00};
+    som_mix_push_bytes(&ring,bytes,3);som_mix_push_bytes(&ring,bytes+3,7);
+    assert(ring.count==2&&ring.partial_bytes==2);
+    int16_t game[6]={100,-100, 30000,-30000, 5,5},mixed[6];
+    assert(som_mix_apply(&ring,mixed,game,3)==2);
+    assert(mixed[0]==100+0x1000/2&&mixed[1]==-100-0x1000/2);
+    assert(mixed[2]==32767&&mixed[3]==-32768);                 /* clipped */
+    assert(mixed[4]==5&&mixed[5]==5);                           /* dry: game only */
+    som_mix_reset(&ring,999);assert(ring.gain==256);
+    static uint8_t lots[SOM_MIX_RING_FRAMES*4u+400];memset(lots,1,sizeof(lots));
+    som_mix_push_bytes(&ring,lots,sizeof(lots));
+    assert(ring.count==SOM_MIX_RING_FRAMES&&som_mix_free_bytes(&ring)==0);
     puts("PASS: combo ladder and shadow clones");
     return 0;
 }

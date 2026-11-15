@@ -86,12 +86,22 @@ The bridge now notices a player that dies with an error within 10 s; after two i
 stops trying for that session (log: "audio output unavailable") instead of searching and
 relaunching on every song. Offline / yt-dlp errors are logged and the bridge keeps running.
 
-Ways forward (not done): (1) mix the music into RetroArch's own audio: the proxy already
-sits on the core's audio callbacks, so a PCM feed from a decoder (a raw-PCM output mode for
-`greenlink-audio`, which has none today) could be added to the batch; (2) start the
-player before RetroArch with a chosen track and keep it, as `tools/rom_music.py` does
-(no per-area changes); (3) Bluetooth output (`bluealsa`, seen in `rom-music.log`) may not
-share the HDMI limit: untested.
+**Mixing into the game's audio (2026-11-15, built and tested, not yet installed).** The
+bridge now runs `greenlink-audio --pcm <rate> /tmp/flxtr-som-music.pcm <stream>`: the
+same player decodes to raw stereo s16 at the game's sample rate (published by the proxy in
+`/tmp/flxtr-som-audio-rate`, 32040 Hz) into a named pipe. The proxy reads the pipe without
+blocking before each frame into a ~1 s ring (`src/som_music_mix.h`) and adds it to every
+audio batch of the core at 176/256 under the effects, saturating. One audio stream, so the
+Steam Link has nothing to refuse; the pipe paces the decoder to the emulator (it stops
+when RetroArch pauses). No pipe, no writer or an empty ring: game audio passes through
+untouched. Launcher flags: `--mix-fifo /tmp/flxtr-som-music.pcm --rate-file
+/tmp/flxtr-som-audio-rate` (`packaging/greenlink.sh`). With the old installed
+`greenlink-audio` (no `--pcm`) the player exits at once and the bridge gives up for the
+session after two tries: game audio unaffected.
+Verified headless on the Steam Link with the real ROM: game-only output rms 0 on the title;
+with the pipe fed, rms ~2980 throughout, no clipping; the decoder produced only ~417k frames
+for ~321k consumed (paced) and exited when the game closed the pipe.
+Hardware listening test: pending (needs the new `greenlink-audio`, proxy and launcher).
 
 Tests:
 

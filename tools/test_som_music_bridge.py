@@ -3,6 +3,8 @@ import tempfile
 from pathlib import Path
 import unittest
 
+import som_music_bridge as bridge
+
 from som_music_bridge import (MusicBridge, candidate_score, load_names,
                               parse_song, read_genre, search_query)
 
@@ -57,6 +59,23 @@ class SomMusicTests(unittest.TestCase):
             self.assertEqual(read_genre(file), 2)
             file.write_text("99\n")
             self.assertEqual(read_genre(file), 0)
+
+    def test_tail_stops_with_game_and_skips_other_games(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as folder:
+            log = pathlib.Path(folder) / "game.log"
+            log.write_text("[som-ai] READY\n[som-ai] SONG 0x0E Song (map 1)\n")
+            seen = []
+            class Bridge:
+                def line(self, text): seen.append(text)
+                def poll_genre(self): pass
+            calls = iter([True, False])
+            self.assertEqual(bridge.tail(log, Bridge(), True, lambda: next(calls)), "exited")
+            self.assertEqual(len(seen), 2)
+            log.write_text("[INFO] some other core\n")
+            ticks = iter([0.0, 0.0, 99.0])
+            self.assertEqual(bridge.tail(log, Bridge(), True, None, 30, lambda: next(ticks)),
+                             "not-som")
 
     def test_query(self):
         self.assertEqual(search_query("Into the Thick of It", 0),

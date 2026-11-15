@@ -176,19 +176,40 @@ class MusicBridge:
             self.apply(index)
 
 
-def tail(path, bridge, from_start=False):
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def tail(path, bridge, from_start=False, alive=None, som_wait=None, clock=time.monotonic):
+    """Follow `path`. Returns when alive() turns false (the game exited) or,
+    with som_wait seconds, when no [som-ai] line appeared by then (another
+    game: the launcher starts the bridge for every RetroArch session)."""
+    started, seen_som = clock(), False
     with path.open(encoding="utf-8", errors="replace") as stream:
         if not from_start:
             stream.seek(0, 2)
         while True:
             line = stream.readline()
             if line:
+                seen_som = seen_som or "[som-ai]" in line
                 bridge.line(line)
-            else:
-                bridge.poll_genre()
-                time.sleep(.25)
-                if stream.tell() > path.stat().st_size:
-                    stream.seek(0)
+                continue
+            if alive is not None and not alive():
+                LOG.info("game exited: stop")
+                return "exited"
+            if som_wait is not None and not seen_som and clock() - started > som_wait:
+                LOG.info("not Secret of Mana through the AI core: stop")
+                return "not-som"
+            bridge.poll_genre()
+            time.sleep(.25)
+            if stream.tell() > path.stat().st_size:
+                stream.seek(0)
 
 
 def main(argv=None):
@@ -201,6 +222,10 @@ def main(argv=None):
     parser.add_argument("--log", type=Path, help="tail actual RetroArch log (else stdin)")
     parser.add_argument("--from-start", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--game-pid", type=int,
+                        help="stop playback and exit when this process ends")
+    parser.add_argument("--som-wait", type=float,
+                        help="exit if no [som-ai] line within this many seconds")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="[som-music] %(message)s")
     bridge = MusicBridge(load_names(args.catalog), args.genre_file, args.cache,
@@ -212,7 +237,8 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, finish)
     try:
         if args.log:
-            tail(args.log, bridge, args.from_start)
+            alive = (lambda: pid_alive(args.game_pid)) if args.game_pid else None
+            tail(args.log, bridge, args.from_start, alive, args.som_wait)
         else:
             for line in sys.stdin:
                 bridge.poll_genre()

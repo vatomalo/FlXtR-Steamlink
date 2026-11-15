@@ -1,0 +1,27 @@
+# No free XP: swinging and dodging in a room with no monsters awards nothing.
+#! expect-no-log \] XP \w
+# Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+cmd class_0
+frames 30
+hold B 2
+frames 40
+hold B 2
+frames 40
+hold B 2
+frames 40
+hold A 1
+frames 40
+hold B 2
+frames 40

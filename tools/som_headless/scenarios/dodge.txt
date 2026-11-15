@@ -1,0 +1,30 @@
+# Proxy-driven dodge: moves the hero, no Barrel status, ends.
+#! expect-log EVADE Evade as Swordsmanship
+#! expect-no-log \] XP \w
+# Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+cmd class_0
+frames 30
+hold LEFT 30
+frames 5
+mark
+hold A 1
+frames 6
+expect u8 E191 == 0
+shot dodge_mid
+frames 30
+expect-moved 20 56
+expect u8 E191 == 0
+frames 30
+peek

@@ -1,0 +1,17 @@
+# Field play reached from the save; the save state round-trips.
+# Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+peek
+save field.state
+shot field

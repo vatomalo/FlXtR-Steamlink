@@ -1,0 +1,7 @@
+# Start on the title screen reaches the game (regression: it opened Disciplines).
+# Needs --start <SRAM copy>.
+#! expect-no-log MANUAL DISCIPLINES opened
+frames 900
+hold START 4
+frames 200
+shot title_after_start

@@ -1,0 +1,28 @@
+# Kage Bunshin: two clones drawn beside the ninja, A swaps, gone after 10 s.
+#! expect-log Kage Bunshin: 2 clone
+#! expect-log BUNSHIN swap
+# Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+cmd class_2
+frames 30
+hold Y 2
+frames 60
+expect u8 E1E4 == 6
+hold A 1
+frames 20
+shot clones
+hold A,LEFT 2
+frames 20
+frames 700
+shot clones_gone

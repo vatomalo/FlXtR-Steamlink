@@ -305,6 +305,11 @@ static uint8_t *overlay_frame;
 static size_t overlay_frame_size;
 static void load_backend(void); /* RetroArch may query core info before init. */
 static void som_auto_state_path_set(const char *rom);
+/* Every gameplay feature is gated on this: only the Turbo ROM by its file
+ * name (any other game, or no path, gets a pass-through core). */
+static int som_rom_is_turbo(const char *path){
+    return path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
+}
 
 #define FORWARD(ret, name, args, callargs) \
     static ret (*backend_##name) args; \
@@ -2601,7 +2606,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     direct_transport=direct&&direct[0]=='1'&&direct[1]=='\0';
     const char *path=game?game->path:NULL;
     som_auto_state_path_set(path);
-    on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
+    on_turbo=som_rom_is_turbo(path);
     free(patched_rom);patched_rom=NULL;
     struct retro_game_info patched_game;
     const struct retro_game_info *load_info=game;

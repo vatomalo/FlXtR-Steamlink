@@ -233,6 +233,10 @@ int main(void){
     assert(cancelled);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==0);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+    /* Unsupported ROMs get no features: only the Turbo file name enables them. */
+    assert(som_rom_is_turbo("/roms/Snes/Secret of Mana, Turbo.smc"));
+    assert(!som_rom_is_turbo("/roms/Snes/SecretofMana.smc"));
+    assert(!som_rom_is_turbo("/roms/Snes/LegendofZelda.smc")&&!som_rom_is_turbo(NULL));
     reset_proxy();on_turbo=0;
     som_start_action(SOM_ACT_LEFT);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==0);

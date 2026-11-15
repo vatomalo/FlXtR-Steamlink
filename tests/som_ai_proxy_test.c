@@ -98,13 +98,36 @@ int main(void){
     assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
     frame_number=start_frame+action_frames;
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
-    /* Manual-play Class Progress menu via L2+R2. */
+    /* Title screen (no verified field play): Start and L2+R2 go to the game,
+     * no overlay. Same with unreadable memory. */
     reset_proxy();
     som_disc_init(&disciplines);
     som_manual_disciplines=0;
     ring_ai_enabled=0;
     last_physical_buttons=0;
     physical_state=mocked_input_mask;
+    backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines&&!disciplines.open);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==1);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+    som_input_poll();assert(!som_manual_disciplines);
+    mocked_buttons=0;som_input_poll();
+    /* Field play but an event runs, or the ring is open: still native. */
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;mocked_wram[0xD0]=0x82;
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    mocked_wram[0xD0]=0;mocked_wram[0x7D]=1;
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    backend_retro_get_memory_data=NULL;                      /* unreadable */
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    backend_retro_get_memory_data=mocked_memory_data;mocked_wram[0x7D]=0;
+    /* Manual-play Class Progress menu via L2+R2 in verified field play. */
     mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
     som_input_poll();
@@ -131,6 +154,7 @@ int main(void){
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
     som_input_poll();
     assert(!som_manual_disciplines&&!disciplines.open);
+    memset(mocked_wram,0,sizeof(mocked_wram));
     assert(som_disc_weapons[0][0]==1&&som_disc_weapons[0][1]==2);
     assert(som_disc_weapons[1][0]==0&&som_disc_weapons[1][1]==3);
     assert(som_disc_weapons[2][0]==1&&som_disc_weapons[2][1]==6);

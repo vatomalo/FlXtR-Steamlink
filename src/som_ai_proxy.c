@@ -500,6 +500,17 @@ static void som_class_selected(void){
  * L2+Y) held. */
 static int y_weapon_swap, y_weapon_blocked, b_weapon_blocked, x_spell_blocked;
 static int som_cycle_weapon(uint8_t *ram);
+/* Verified field play: hero object active, field mode (7E:00E4 = 1,
+ * 7E:00E6 = 0x0F), no event running (7E:00D0 = 0) and the ring closed
+ * (7E:007D != 1). Overlays the player opens (Start, L2+R2) need it; on the
+ * title screen, in menus, events and transitions, or with unreadable
+ * memory, the press goes to the game unchanged. */
+static int som_overlay_field(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return 0;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    return ram&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
+}
 static int som_y_field_play(void){
     if(!backend_retro_get_memory_data||ring_ai_enabled||som_manual_disciplines||
        disciplines.selected>=SOM_DISCIPLINE_COUNT)return 0;
@@ -794,7 +805,7 @@ static void som_input_poll(void){
         const uint16_t class_chord=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                               (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
         const uint16_t class_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
-        if(!ring_ai_enabled && !som_manual_disciplines &&
+        if(!ring_ai_enabled && !som_manual_disciplines && som_overlay_field() &&
            ((pressed&class_start)||
             ((current&class_chord)==class_chord&&(pressed&class_chord)))){
             som_manual_disciplines=1;

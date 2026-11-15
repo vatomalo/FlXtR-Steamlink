@@ -323,3 +323,10 @@ stack 13 %, state_guard 7 %). Changes:
   (camera, party followers, layer edges).
 
 Tests: `make test-som-combo test-som-ai-proxy`.
+- **Hop dodge for monk, rogue and archer** (A): the game's 20-frame hop pose `0x95`
+  instead of the slow 65-frame back roll (`0x8D`, really the knocked-down pose, kept for
+  swordsman, ninja and samurai). `0x95` does not move the hero by itself (hero-poses.md),
+  so the proxy moves him 18 frames before each emulated frame: monk/rogue 2 px (~36 px),
+  archer 3 px (~54 px), toward the held D-pad direction or straight back from the facing,
+  per axis onto open ground only (same wall test as the clones); a wall ends the travel.
+  Untouchable (status 0x0400) while the pose plays. Not yet checked live.

@@ -27,6 +27,19 @@ static inline int som_disc_has_dodge(unsigned discipline){
     default: return 0;
     }
 }
+/* Quick hop dodge (monk, rogue, archer): the game's 20-frame hop pose 0x95
+ * (som-decomp hero-poses.md: three pictures, no movement of its own), with
+ * the proxy moving the hero `speed` px per frame for SOM_HOP_MOVE_FRAMES
+ * frames, wall-checked. 0 = this class keeps the back roll. */
+#define SOM_HOP_POSE 0x95u
+#define SOM_HOP_MOVE_FRAMES 18u
+static inline unsigned som_disc_hop_speed(unsigned discipline){
+    switch(discipline){
+    case 1: case 9: return 2u;   /* monk, rogue: ~36 px */
+    case 11: return 3u;          /* archer: ~54 px, back into bow range */
+    default: return 0u;
+    }
+}
 typedef struct {
     int open;
     unsigned cursor;

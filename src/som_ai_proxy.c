@@ -402,7 +402,10 @@ static int som_evade_start(uint8_t *ram);
  * the frame (src/som_bunshin_draw.h); touch makes them explode, the hero
  * can swap into them. */
 static SomBunshin bunshin;
-static int evade_dir_x,evade_dir_y;    /* D-pad aim for a manual swap */
+static int evade_dir_x,evade_dir_y;    /* D-pad aim: clone swap or hop */
+static int hop_dx,hop_dy;              /* hop dodge step per frame */
+static unsigned hop_frames_left;
+static void som_hop_step(void);
 static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 static void som_bunshin_frame(uint8_t *ram);
 static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y);
@@ -1426,7 +1429,19 @@ static int som_evade_start(uint8_t *ram){
         fprintf(stderr,"[som-ai] EVADE Kage Bunshin: %u clone(s)\n",made);
         return 1;
     }
-    evade_pose=shunshin?SOM_SHUNSHIN_POSE:SOM_EVADE_POSE;
+    const unsigned hop=shunshin?0u:som_disc_hop_speed(disciplines.selected);
+    evade_pose=shunshin?SOM_SHUNSHIN_POSE:hop?SOM_HOP_POSE:SOM_EVADE_POSE;
+    hop_frames_left=0;hop_dx=hop_dy=0;
+    if(hop){
+        /* The held direction, else straight back from the facing. */
+        int dx=evade_dir_x,dy=evade_dir_y;
+        if(!dx&&!dy){
+            const unsigned facing=hero[0x010];
+            if(facing==0x02u)dx=-1;else if(facing==0x82u)dx=1;
+            else if(facing==0x01u)dy=-1;else dy=1;
+        }
+        hop_dx=dx*(int)hop;hop_dy=dy*(int)hop;hop_frames_left=SOM_HOP_MOVE_FRAMES;
+    }
     evade_set_busy=!hero[0x042];
     hero[0x01C]=0x40;hero[0x011]=(uint8_t)evade_pose;hero[0x042]=1;
     hero[0x006]=hero[0x007]=0;
@@ -1434,9 +1449,27 @@ static int som_evade_start(uint8_t *ram){
     hero[0x191]|=0x04u;
     evade_active=1;evade_started=frame_number;
     som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":"^Evade",SOM_MESSAGE_FRAMES/2u);
-    fprintf(stderr,"[som-ai] EVADE %s as %s\n",shunshin?"Shunshin":"back roll",
+    fprintf(stderr,"[som-ai] EVADE %s as %s\n",shunshin?"Shunshin":hop?"hop":"back roll",
             som_discipline_names[disciplines.selected]);
     return 1;
+}
+/* Before each frame: move the hopping hero one step, per axis, onto open
+ * ground only (src/som_bunshin.h), while the hop pose plays. */
+static void som_hop_step(void){
+    if(!hop_frames_left||!backend_retro_get_memory_data)return;
+    uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||!evade_active){hop_frames_left=0;return;}
+    uint8_t *hero=ram+0xE000u;
+    if(hero[0x011]!=SOM_HOP_POSE||hero[0x01C]!=0x40||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
+        hop_frames_left=0;return;
+    }
+    int x=(int)som_bun_u16(hero+2),y=(int)som_bun_u16(hero+4);
+    const int layer2=som_hero_layer2(hero);
+    int moved=0;
+    if(hop_dx&&som_bun_spot_open(ram,x+hop_dx,y,layer2)){x+=hop_dx;moved=1;}
+    if(hop_dy&&som_bun_spot_open(ram,x,y+hop_dy,layer2)){y+=hop_dy;moved=1;}
+    hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
+    hop_frames_left=moved?hop_frames_left-1u:0u;   /* a wall ends the travel */
 }
 /* Ends the guard when the pose is over (the script clears +0x1C/+0x11). */
 static void som_evade_tick(void){
@@ -2363,6 +2396,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     evade_active=evade_set_guard=evade_a_hidden=evade_set_busy=0;seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);memset(bunshin_booms,0,sizeof(bunshin_booms));
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
+    hop_dx=hop_dy=0;hop_frames_left=0;
     evade_pose=SOM_EVADE_POSE;
     special_chord=0;special_suppress=0;
     y_weapon_swap=y_weapon_blocked=b_weapon_blocked=x_spell_blocked=0;
@@ -2611,6 +2645,7 @@ RETRO_API void retro_run(void){
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_bash_tick();
+    if(test_enabled&&on_turbo)som_hop_step();
     if(pal_trace_on&&backend_retro_get_memory_data)
         som_pal_trace_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)

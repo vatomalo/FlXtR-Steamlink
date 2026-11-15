@@ -1034,6 +1034,30 @@ int main(void){
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0); /* A = evade */
         mocked_buttons=0;som_input_poll();
         hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x191]=0;hero[0x042]=0;
+        /* Monk / rogue / archer: the in-place hop pose, moved back by the
+         * proxy onto open ground; the archer goes farther, any way aimed. */
+        memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);
+        ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;
+        disciplines.selected=1;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;hero[0x042]=0;
+        hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(evade_active&&hero[0x011]==SOM_HOP_POSE&&(hero[0x191]&0x04));
+        for(unsigned f=0;f<30;f++)som_hop_step();
+        assert(som_bun_u16(hero+2)==200-2*SOM_HOP_MOVE_FRAMES&&som_bun_u16(hero+4)==200);
+        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();assert(!evade_active);
+        disciplines.selected=11;hero[0x191]=0;hero[0x042]=0;hero[2]=200;
+        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        ram[0x1B800+4*3]=0x03;
+        for(unsigned c=0;c<128;c++)ram[0x10000+(240u>>4)*128u+c]=3;   /* wall at y 240 */
+        for(unsigned f=0;f<30;f++)som_hop_step();
+        assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)>200&&som_bun_u16(hero+4)+4<240);
+        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x191]=0;hero[0x042]=0;
+        memset(ram+0x10000,0,0x10000);ram[0x1B800+4*3]=0;
+        disciplines.selected=9;hero[4]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(evade_active&&hero[0x011]==SOM_HOP_POSE);           /* rogue hops too */
+        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x191]=0;hero[0x042]=0;
         /* Ninjutsu: sword -> Shunshin leap; chakram -> Kage Bunshin. */
         disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();

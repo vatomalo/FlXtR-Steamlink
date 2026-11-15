@@ -144,7 +144,8 @@ def main(argv=None):
         rom = run_dir + "/" + TURBO_NAME
         setup = ["mkdir -p %s" % shlex.quote(run_dir),
                  "cp %s %s" % (shlex.quote(args.rom), shlex.quote(rom))]
-        if start != "-":
+        upload_start = bool(args.host) and start != "-" and Path(args.start).is_file()
+        if start != "-" and not upload_start:     # a path on the run host
             setup.append("cp %s %s" % (shlex.quote(args.start), shlex.quote(start)))
         for name in DEVICE_DATA:
             live = "/home/apps/retroarch/cores/experimental/" + name
@@ -161,6 +162,10 @@ def main(argv=None):
         try:
             if shell(" && ".join(setup)).returncode:
                 raise SystemExit("could not prepare the run folder (ROM/start path?)")
+            if upload_start:                          # a local fixture, sent over
+                with open(args.start, "rb") as data:
+                    subprocess.run(["ssh", "-o", "BatchMode=yes", args.host,
+                                    "cat > %s" % shlex.quote(start)], stdin=data, check=True)
             for name in ("som-harness", "som_ai_proxy_test.so", "scenario.txt"):
                 if args.host:
                     with open(work / name, "rb") as data:
@@ -177,6 +182,14 @@ def main(argv=None):
                 code, log = 3, (expired.stderr or "") if isinstance(expired.stderr, str) else ""
                 log += "\n[runner] TIMEOUT after %d s\n" % args.timeout
             (out / "run.log").write_text(log)
+            for saved in re.findall(r"\[harness\] save (\S+) \d+ bytes serialize 1", log):
+                remote_path = saved if saved.startswith("/") else run_dir + "/" + saved
+                with open(out / Path(saved).name, "wb") as sink:      # states stay outside Git
+                    if args.host:
+                        subprocess.run(["ssh", "-o", "BatchMode=yes", args.host,
+                                        "cat %s" % shlex.quote(remote_path)], stdout=sink, check=True)
+                    else:
+                        sink.write(Path(remote_path).read_bytes())
             shots = [m.group(1) for m in re.finditer(r"\[harness\] shot (\S+\.ppm)", log)]
             for remote_path in shots:
                 local = out / Path(remote_path).name

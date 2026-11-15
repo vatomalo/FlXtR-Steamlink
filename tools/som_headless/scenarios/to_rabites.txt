@@ -1,0 +1,30 @@
+# Route from the Potos inn save to map 130 (three Rabites); saves rabites.state,
+# fetched into the output folder (outside Git) for the combat scenarios.
+# Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+hold DOWN 60
+frames 120
+hold DOWN 10
+hold LEFT 90
+hold RIGHT 23
+hold UP 80
+hold LEFT 17
+hold UP 62
+hold LEFT 60
+frames 150
+expect u16 00DC == 130
+expect u8 E600 == 1
+peek
+save rabites.state
+shot rabites

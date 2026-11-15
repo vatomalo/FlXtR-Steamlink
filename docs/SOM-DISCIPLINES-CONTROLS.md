@@ -391,3 +391,26 @@ Dark Arts and Support beyond their weapons/spells.
   `E059` and pending damage `E1F1/E1F2` are cleared and any HP lost is put back.
   Verified headless: no barrel; the hit-blocking path is unit-tested only (no monsters
   in the test save).
+
+## Combat verification against real monsters (headless, real ROM, 2026-11-15)
+
+Headless = the real Turbo ROM on the Steam Link, scripted input, a disposable copy of the
+save (`tools/som_headless`). Fixture: `to_rabites.txt` walks from the Potos inn save to map
+130 (three Rabites, 40 HP) and saves `rabites.state` outside Git
+(`~/.local/share/flxtr/som-fixtures/`). Rabites are moved next to the hero with the
+harness `monster` command (test copy only).
+
+| scenario | verified (headless) |
+|---|---|
+| `combat_rabites.txt` | near-miss dodge XP (+15); weapon-hit XP fading 8, 8, 7, 6 on one species; combo 3 -> level 1, 4 hits; holding B fired the finisher through `som_special_start` (sword level 1 charged and released) |
+| `clones_rabites.txt` | 2 clones; a Rabite touching one -> explosion hit 1 monster, Ninjutsu XP; a Rabite on the hero -> substitution; no sprite corruption in the frames |
+| `dodge.txt`, `no_free_xp.txt` | 48 px dodge, no Barrel bit; no XP for swings/dodges with no monster |
+
+Not covered headless: whether a real monster attack lands during a dodge (Rabite timing is
+not scripted; the shield path is unit-tested), camera/followers after a swap, Turbo
+specials above level 1. Hardware procedure (2 minutes, ask the player): load the save, walk
+to the Rabites west of Potos, as Swordsman hit one Rabite three times then hold B (expect
+"N-hit combo / level 1 finisher"); stand still until a Rabite lunges and press A just before
+it lands (expect no HP loss); as Ninja with the chakram press A and let a Rabite walk into a
+clone (expect "Bunshin Daibakuha!"). Then copy `/home/apps/greenlink/game.log` lines
+`[som-ai] XP|COMBO|EVADE|BUNSHIN` into this section as hardware results.

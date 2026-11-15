@@ -684,7 +684,7 @@ static void som_input_poll(void){
         const uint16_t l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
         const uint16_t r2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
         if(special_stage&&current&&(current&~special_chord)){
-            fprintf(stderr,"[som-ai] SPECIAL cancelled by manual input\\n");
+            fprintf(stderr,"[som-ai] SPECIAL cancelled by manual input\n");
             special_stage=0;special_suppress=0;
         }
         if(special_suppress&&!(current&special_chord))special_suppress=0;
@@ -1655,7 +1655,7 @@ static int som_special_start(unsigned which,unsigned stage){
     }
     special_stage=stage;special_weapon=weapon;special_started=frame_number;
     som_combo_clear();
-    fprintf(stderr,"[som-ai] SPECIAL charging %s level %u\\n",
+    fprintf(stderr,"[som-ai] SPECIAL charging %s level %u\n",
             som_weapon_types[weapon],stage);
     return 1;
 }
@@ -1665,7 +1665,7 @@ static void som_special_tick(void){
     if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
        ram[0xD0]!=0||ram[0xE1E4]!=special_weapon||
        frame_number-special_started>SOM_SPECIAL_TIMEOUT){
-        fprintf(stderr,"[som-ai] SPECIAL abort: state changed or charge timeout\\n");
+        fprintf(stderr,"[som-ai] SPECIAL abort: state changed or charge timeout\n");
         special_stage=0;return;
     }
     /* Skip the hold: once the swing is over and the gauge runs ($C0:B330:
@@ -1977,7 +1977,7 @@ static void som_weapon_trace_frame(void){
     if(!ram||!vram)return;
     som_weapon_trace_timeline_frame(ram,vram);
     if(weapon_trace_frame_count>=SOM_WEAPON_TRACE_MAX_FRAMES){
-        fprintf(stderr,"[som-ai] WEAPON TRACE timed out after %u frames\\n",
+        fprintf(stderr,"[som-ai] WEAPON TRACE timed out after %u frames\n",
                 weapon_trace_frame_count);
         weapon_trace_on=0;som_weapon_trace_timeline_stop();return;
     }
@@ -2213,7 +2213,7 @@ static int som_handle_command(const char *command){
         if(!som_weapon_trace_allocate())return 0;
         weapon_trace_on=1;som_weapon_trace_reset();
         som_overlay_set(&overlay,"WEAPON TRACE ON|Equip via native ring",SOM_MESSAGE_FRAMES);
-        fprintf(stderr,"[som-ai] WEAPON TRACE armed; equip via native ring\\n");
+        fprintf(stderr,"[som-ai] WEAPON TRACE armed; equip via native ring\n");
         return 1;
     }
     /* The AI picks the discipline that fits (bridge som_class_director). */

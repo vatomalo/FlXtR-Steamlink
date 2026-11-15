@@ -1,0 +1,41 @@
+# Sword combat on map 130 (start: rabites.state from to_rabites.txt). Rabites have
+# 40 HP and die in two sword hits, so the chain moves from one to the next.
+#! expect-log XP Swordsmanship \+\d+ \(near miss\)
+#! expect-log XP Swordsmanship \+\d+ \(weapon hit\)
+#! expect-log COMBO 3 hits, 0 mixes: level 1 ready
+#! expect-log COMBO finisher: \d hits, level [12], B
+expect u16 00DC == 130
+cmd class_0
+frames 30
+# dodge with a Rabite beside the hero: near miss
+monster 2 12 0
+hold A 1
+frames 40
+peek
+hold RIGHT 2
+monster 0 20 0
+hold B 2
+frames 40
+monster 0 20 0
+hold B 2
+frames 40
+monster 0 20 0
+hold B 2
+frames 40
+monster 1 20 0
+hold B 2
+frames 40
+monster 1 20 0
+hold B 2
+frames 40
+monster 1 20 0
+hold B 2
+frames 40
+peek
+shot sword_combo
+# hold B: the finisher charges to the chain level and fires
+monster 2 22 0
+hold B 150
+frames 60
+peek
+shot finisher

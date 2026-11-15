@@ -22,6 +22,7 @@
 #include "som_combo.h"
 #include "som_bunshin.h"
 #include "som_bunshin_draw.h"
+#include "som_xp.h"
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -387,6 +388,42 @@ static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {1,5},   /* Bushido: katana (sword), yumi (bow) */
     {5,7},   /* Archery: bow, javelin */
 };
+/* Discipline experience (src/som_xp.h): only verified events reach here.
+ * The file is written on every level-up and at most once a minute. */
+static SomXpDecay xp_decay;
+static int xp_dirty;
+static unsigned long xp_saved_frame;
+enum {SOM_XPK_HIT=1,SOM_XPK_FLOW,SOM_XPK_DODGE,SOM_XPK_SPELL,SOM_XPK_CLONE,SOM_XPK_FAMILIAR};
+static void som_xp_give(unsigned discipline,unsigned base,unsigned species,unsigned kind,
+                        const char *why){
+    if(discipline>=SOM_DISCIPLINE_COUNT)return;
+    const unsigned amount=som_xp_scaled(&xp_decay,species,base,frame_number);
+    const unsigned before=disciplines.level[discipline];
+    if(!amount||!som_disc_award(&disciplines,discipline,amount,
+                                som_xp_event(frame_number,kind),1))return;
+    xp_dirty=1;
+    if(disciplines.level[discipline]!=before){
+        char text[64];
+        snprintf(text,sizeof(text),"^%s|level %u",som_discipline_names[discipline],
+                 (unsigned)disciplines.level[discipline]);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        som_disc_save();xp_dirty=0;xp_saved_frame=frame_number;
+    }
+    fprintf(stderr,"[som-ai] XP %s +%u (%s) -> Lv%u %lu/%u\n",som_discipline_names[discipline],
+            amount,why,(unsigned)disciplines.level[discipline],
+            (unsigned long)disciplines.experience[discipline],
+            som_disc_next_xp(disciplines.level[discipline]));
+}
+static void som_xp_flush(int now){
+    if(xp_dirty&&(now||frame_number-xp_saved_frame>=3600ul)){
+        som_disc_save();xp_dirty=0;xp_saved_frame=frame_number;
+    }
+}
+/* A spell cast at a monster waits for that monster's HP to drop. */
+static int xp_spell_slot=-1;
+static uint16_t xp_spell_hp;
+static uint8_t xp_spell_species;
+static unsigned long xp_spell_frame;
 static int som_equip_weapon(uint8_t *ram,unsigned type);
 static int som_equip_weapon_direct(uint8_t *ram,unsigned type);
 #define SOM_EQUIP_OK 1
@@ -418,7 +455,7 @@ static int special_from_ai;           /* special_<n> command while the AI plays 
  * untouchable meanwhile: status 0x0400 (+0x191 bit 2), "no hit is
  * resolved on the actor" ($C0:4F7B, rom-combat.md 12). Only the
  * disciplines with a dodge (som_disc_has_dodge). */
-static int evade_active,evade_set_guard,evade_a_hidden;
+static int evade_active,evade_set_guard,evade_a_hidden,evade_xp_given;
 static unsigned evade_frames;
 static unsigned long evade_started;
 #define SOM_TRAIL_LENGTH 16u
@@ -481,15 +518,28 @@ static void som_combo_frame(void){
         const uint8_t *e=ram+0xE600u+0x200u*i;
         const unsigned hp=(unsigned)e[0x182]|((unsigned)e[0x183]<<8);
         const int live=e[0]==1&&e[0x180]<0x80;
+        const unsigned mixes_before=combo.mixes;
         if(combo.pending&&live&&combo_live[i]&&(int)i!=familiar.slot&&
            combo_ids[i]==e[0x180]&&hp<combo_hp[i]&&som_combo_on_hit(&combo,frame_number)){
             last_attack_frame=frame_number;
+            const unsigned weapon=ram[0xE1E4],sel=disciplines.selected;
+            som_xp_give(som_xp_weapon_discipline(weapon,sel,
+                            sel<SOM_DISCIPLINE_COUNT?som_disc_weapons[sel]:NULL),
+                        SOM_XP_HIT,e[0x180],SOM_XPK_HIT,"weapon hit");
+            if(combo.mixes!=mixes_before)
+                som_xp_give(SOM_DISC_FLOW,SOM_XP_FLOW,e[0x180],SOM_XPK_FLOW,"weapon switch hit");
             if(som_combo_level(&combo))
                 fprintf(stderr,"[som-ai] COMBO %u hits, %u mixes: level %u ready\n",
                         combo.hits,combo.mixes,som_combo_level(&combo));
         }
+        if(xp_spell_slot==(int)i&&live&&e[0x180]==xp_spell_species&&hp<xp_spell_hp){
+            som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
+                        e[0x180],SOM_XPK_SPELL,"spell hit");
+            xp_spell_slot=-1;
+        }
         combo_hp[i]=(uint16_t)hp;combo_ids[i]=e[0x180];combo_live[i]=(uint8_t)live;
     }
+    if(xp_spell_slot>=0&&frame_number-xp_spell_frame>SOM_XP_SPELL_WINDOW)xp_spell_slot=-1;
     som_combo_tick(&combo,frame_number,combo_input_held);
 }
 /* Network player 2 (src/som_net_pad.h): pad 2 from a Tailscale device. */
@@ -1286,6 +1336,11 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
     hero[0x006]=hero[0x007]=hero[0x008]=0;
     hero[0x060]=0x20;
     memcpy(ram+SOM_WEAPON_BUF+0x800u,spark,sizeof(spark));   /* $C1:8634 */
+    if(hostile&&target>=0){
+        const uint8_t *m=ram+0xE600u+0x200u*(unsigned)target;
+        xp_spell_slot=target;xp_spell_hp=(uint16_t)(m[0x182]|m[0x183]<<8);
+        xp_spell_species=m[0x180];xp_spell_frame=frame_number;
+    }
     fprintf(stderr,"[som-ai] CAST %s Lv.%u at %s slot %d (MP %u, cost %u)\n",
             som_spell_name(spell),level,hostile?"monster":"own",target,
             (unsigned)hero[0x186],cost);
@@ -1298,6 +1353,7 @@ static unsigned som_hero_place(const uint8_t *hero){return hero[0x00B];}
 static void som_bunshin_explode(uint8_t *ram,int x,int y){
     som_bun_boom(bunshin_booms,x,y,0,frame_number);
     const unsigned hit=som_bun_blast(ram,x,y,som_bunshin_damage(),familiar.slot);
+    if(hit)som_xp_give(SOM_DISC_NINJUTSU,SOM_XP_CLONE,0xF0u,SOM_XPK_CLONE,"clone explosion");
     fprintf(stderr,"[som-ai] BUNSHIN explosion at %d,%d: %u monster(s), %u damage\n",
             x,y,hit,som_bunshin_damage());
 }
@@ -1478,7 +1534,7 @@ static int som_evade_start(uint8_t *ram){
     hero[0x006]=hero[0x007]=0;
     evade_set_guard=!(hero[0x191]&0x04u);
     hero[0x191]|=0x04u;
-    evade_active=1;evade_started=frame_number;
+    evade_active=1;evade_started=frame_number;evade_xp_given=0;
     som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":"^Evade",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
             dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,dodge.frames);
@@ -1496,6 +1552,14 @@ static void som_hop_step(void){
     int x=(int)som_bun_u16(hero+2),y=(int)som_bun_u16(hero+4);
     const unsigned slot=(unsigned)(frame_number%SOM_TRAIL_LENGTH);
     trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;
+    if(!evade_xp_given&&disciplines.selected<SOM_DISCIPLINE_COUNT){
+        const int near=som_bun_toucher(ram,x,y,SOM_XP_NEAR_MISS_PX,SOM_XP_NEAR_MISS_PX,familiar.slot);
+        if(near>=0){
+            evade_xp_given=1;
+            som_xp_give(disciplines.selected,SOM_XP_DODGE,
+                        ram[0xE600u+0x200u*(unsigned)near+0x180u],SOM_XPK_DODGE,"near miss");
+        }
+    }
     if(!hop_frames_left)return;
     const unsigned place=som_hero_place(hero);
     int moved=0;
@@ -2489,6 +2553,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_disc_load();
+    memset(&xp_decay,0,sizeof(xp_decay));xp_dirty=0;xp_saved_frame=0;xp_spell_slot=-1;
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
     weapon_trace_on=0;som_weapon_trace_reset();
@@ -2613,6 +2678,7 @@ static int som_save_auto_state(void){
 }
 RETRO_API void retro_unload_game(void){
     som_save_auto_state();
+    som_xp_flush(1);
     som_net_pad_close(&net_pad);net_pad_was_active=0;
     armed=0;autonomous_mode=0;game_loaded=0;
     ring_ai_enabled=0;ring_ai_pending=0;
@@ -2712,7 +2778,12 @@ static void som_familiar_frame(void){
         fprintf(stderr,"[som-ai] FAMILIAR followed to map %u (slot %d)\n",familiar.map,slot+1);
         return;
     }
+    const unsigned long strike_before=familiar.last_strike;
     int state=som_familiar_tick(&familiar,ram,frame_number);
+    if(state==SOM_FAMILIAR_HERE&&familiar.last_strike!=strike_before&&familiar.target>=0)
+        som_xp_give(SOM_DISC_SUMMONING,SOM_XP_FAMILIAR,
+                    ram[0xE600u+0x200u*(unsigned)familiar.target+0x180u],SOM_XPK_FAMILIAR,
+                    "familiar strike");
     if(state==SOM_FAMILIAR_HERE&&familiar.map!=familiar_carry.home_map)
         som_familiar_reapply(&familiar_carry,ram,som_vram());      /* keep it drawn */
     if(state==SOM_FAMILIAR_HERE){
@@ -2778,6 +2849,7 @@ RETRO_API void retro_run(void){
         som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_bash_tick();
     if(test_enabled&&on_turbo)som_hop_step();
+    som_xp_flush(0);
     if(pal_trace_on&&backend_retro_get_memory_data)
         som_pal_trace_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)

@@ -357,3 +357,25 @@ rogue 2 x 18 (36 px), archer 3 x 18 (54 px), ninja with sword = Shunshin 6 x 12 
 forward, other ninja weapons 3 x 16. A held direction aims any of them.
 Verified headless on the Steam Link: 48 px roll with status 0400 set then cleared,
 Shunshin stopped by a wall, trail drawn.
+
+## Learning by doing: discipline XP (Phase B, 2026-11-15)
+
+Until now `som_disc_award` had no caller: no discipline ever gained XP. `src/som_xp.h` and
+`som_xp_give` in the proxy now award XP only for events confirmed in WRAM:
+
+| event (verified how) | trains | base XP |
+|---|---|---|
+| weapon hit: a live monster lost HP within 75 frames of the swing | the class if it uses that weapon, else the weapon's home (glove/spear Martial Arts, sword/axe Swordsmanship, whip Support & Dance, bow/javelin Archery, boomerang/chakram Ninjutsu) | 10 |
+| that hit switched weapons mid-chain | Weapon Flow | 8 |
+| dodge with a monster within 24 px (near miss), once per dodge | the dodging class | 15 |
+| hostile spell whose target lost HP within 240 frames | the casting class, else Magic | 15 |
+| shadow clone explosion that caught a monster | Ninjutsu | 20 |
+| familiar strike | Summoning | 4 |
+
+Diminishing returns: all awards against one monster species shrink as 8 / (8 + recent
+count) and stop at 64; a minute without that species resets it. Empty swings, invulnerable
+targets and button mashing give nothing. Level-ups show a bubble and save
+`som_ai_disciplines` at once; other progress is saved at most once a minute and on exit.
+Levels are per device, not per save slot (unchanged file format v1). Not yet trained:
+blocking (no verified "intercepted hit" signal yet), stealth (no detection model), Divine/
+Dark Arts and Support beyond their weapons/spells.

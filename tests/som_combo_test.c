@@ -5,6 +5,7 @@
 #include "../src/som_combo.h"
 #include "../src/som_bunshin.h"
 #include "../src/som_bunshin_draw.h"
+#include "../src/som_xp.h"
 
 static uint8_t ram[0x20000];
 static uint8_t vram[SOM_BUN_VRAM_SIZE];
@@ -124,6 +125,29 @@ int main(void){
     som_bun_draw_boom((uint8_t*)frame,256,224,512,0,128,100,3,0);
     assert(frame[100][128]==som_overlay_color(0,255,250,220));
     som_bun_draw_boom((uint8_t*)frame,256,224,512,0,2,2,27,1);  /* clipped corner */
+    /* XP: weapons train the class that uses them, else their home. */
+    const uint8_t ninja_weapons[2]={1,6},none[2]={0xFF,0xFF};
+    assert(som_xp_weapon_discipline(1,2,ninja_weapons)==2);          /* ninja sword */
+    assert(som_xp_weapon_discipline(1,SOM_DISCIPLINE_NONE,none)==SOM_DISC_SWORD);
+    assert(som_xp_weapon_discipline(5,3,none)==SOM_DISC_ARCHERY);
+    assert(som_xp_spell_discipline(SOM_DISCIPLINE_NONE)==SOM_DISC_MAGIC);
+    /* Diminishing returns per species; another species is fresh; a
+     * minute away resets; farming stops at SOM_XP_STOP_COUNT. */
+    SomXpDecay d;memset(&d,0,sizeof(d));
+    assert(som_xp_scaled(&d,7,10,100)==10);
+    assert(som_xp_scaled(&d,7,10,101)==8);                 /* 10*8/9 */
+    assert(som_xp_scaled(&d,9,10,102)==10);
+    unsigned last=0;
+    for(unsigned i=0;i<80;i++)last=som_xp_scaled(&d,7,10,200+i);
+    assert(last==0);
+    assert(som_xp_scaled(&d,7,10,300+SOM_XP_RESET_FRAMES)==10);
+    for(unsigned sp=20;sp<40;sp++)som_xp_scaled(&d,sp,10,5000+sp);  /* table recycles */
+    assert(som_xp_event(0,0)!=0&&som_xp_event(5,1)!=som_xp_event(5,2)&&
+           som_xp_event(5,1)!=som_xp_event(6,1));
+    /* Level-ups through the existing model: 100 XP for level 2. */
+    SomDisciplines disc;som_disc_init(&disc);
+    for(unsigned long ev=1;ev<=10;ev++)assert(som_disc_award(&disc,0,10,som_xp_event(ev,1),1));
+    assert(disc.level[0]==2&&disc.experience[0]==0);
     puts("PASS: combo ladder and shadow clones");
     return 0;
 }

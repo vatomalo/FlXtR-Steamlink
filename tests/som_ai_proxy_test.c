@@ -175,6 +175,15 @@ int main(void){
         assert(combo.hits==h+1);
     }
     assert(combo.mixes==1&&som_combo_level(&combo)==3);  /* 5 hits = 2, +1 mix */
+    /* Each confirmed hit trained the weapon's discipline (sword, no class:
+     * Swordsmanship, with diminishing returns on the same species); the
+     * switch hit trained Weapon Flow too. */
+    {   const unsigned sel=disciplines.selected;
+        const unsigned trained=som_xp_weapon_discipline(1,sel,
+            sel<SOM_DISCIPLINE_COUNT?som_disc_weapons[sel]:NULL);
+        assert(disciplines.experience[trained]>=10u+8u);
+        assert(disciplines.experience[8]>0u&&disciplines.experience[8]<SOM_XP_FLOW);
+    }
     {   char text[24];som_combo_text(&combo,text);assert(!strcmp(text,"5 HIT MIX LV3"));}
     frame_number+=20;som_combo_swing(0);som_combo_frame();   /* no HP lost yet */
     assert(combo.hits==5&&combo.pending);

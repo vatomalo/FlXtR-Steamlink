@@ -18,7 +18,7 @@ import time
 
 SONG = re.compile(r"\[som-ai\]\s+SONG\s+0x([0-9a-fA-F]{1,2})\b")
 GENRES = ("Lo-Fi", "Jazz", "City Pop", "Orchestral", "Piano",
-          "Synthwave", "Rock", "Ambient", "Original")
+          "Synthwave", "Rock", "Ambient", "Off")
 SEARCH_HINTS = ("lofi chill remix", "jazz cover", "city pop remix",
                 "orchestral arrangement", "piano cover", "synthwave remix",
                 "rock cover", "ambient remix", "")

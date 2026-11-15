@@ -2566,19 +2566,24 @@ static int som_hero_screen(int *x,int *y){
     *x=(int)(hx-cam_x);*y=(int)(hy-cam_y);
     return 1;
 }
-/* Soundtrack mixing. The bridge writes raw stereo s16 at the core's rate
- * into SOM_MUSIC_FIFO (`greenlink-audio --pcm`); before every frame the
- * proxy reads what fits into a ~1 s ring without blocking, and every audio
- * batch of the core leaves with the music added. No pipe, no writer or an
- * empty ring: the batch passes through untouched. The core's sample rate is
- * published in SOM_MUSIC_RATE_FILE for the bridge. */
-#define SOM_MUSIC_FIFO "/tmp/flxtr-som-music.pcm"
+/* Soundtrack mixing. The Steam Link has one CPU core that the emulator
+ * already fills, so the music is never decoded while it plays: the bridge
+ * decodes each arrangement once, at the lowest priority, into a raw stereo
+ * s16 file at the core's rate (`greenlink-audio --pcm`), then names that file
+ * in SOM_MUSIC_PLAY. Every 30 frames the proxy checks that control file;
+ * before each frame it reads what fits into a ~1 s ring (at most 16 KiB, a
+ * page-cache read) and loops the file at its end. Every audio batch of the
+ * core leaves with the music added. No control file, or an empty ring: the
+ * batch passes through untouched. The core's sample rate is published in
+ * SOM_MUSIC_RATE_FILE for the bridge. */
+#define SOM_MUSIC_PLAY "/tmp/flxtr-som-music.play"
 #define SOM_MUSIC_RATE_FILE "/tmp/flxtr-som-audio-rate"
-static const char *music_fifo=SOM_MUSIC_FIFO,*music_rate_file=SOM_MUSIC_RATE_FILE;
+static const char *music_play_file=SOM_MUSIC_PLAY,*music_rate_file=SOM_MUSIC_RATE_FILE;
 static retro_audio_sample_batch_t frontend_audio_batch;
 static SomMusicRing music_ring;
 static int music_fd=-1;
-static unsigned long music_retry_frame;
+static char music_path[512];
+static unsigned long music_check_frame;
 static size_t som_audio_batch(const int16_t *data,size_t frames){
     if(!frontend_audio_batch)return frames;
     if(!music_ring.count||!data)return frontend_audio_batch(data,frames);
@@ -2597,27 +2602,46 @@ RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb){
     frontend_audio_batch=cb;
     backend_retro_set_audio_sample_batch(som_audio_batch);
 }
+static void som_music_stop(void){
+    if(music_fd>=0){close(music_fd);music_fd=-1;}
+    music_path[0]=0;
+    som_mix_reset(&music_ring,music_ring.gain?music_ring.gain:SOM_MIX_GAIN_DEFAULT);
+}
+/* Follow the control file: a new path switches tracks at once, no file
+ * stops the music. */
+static void som_music_follow(void){
+    char want[512]={0};
+    FILE *in=fopen(music_play_file,"r");
+    if(in){if(!fgets(want,sizeof(want),in))want[0]=0;fclose(in);}
+    want[strcspn(want,"\r\n")]=0;
+    if(!want[0]){if(music_path[0]){som_music_stop();fprintf(stderr,"[som-ai] MUSIC mix stopped\n");}return;}
+    if(!strcmp(want,music_path)&&music_fd>=0)return;
+    struct stat st;
+    if(stat(want,&st)!=0||!S_ISREG(st.st_mode)||st.st_size<4){
+        fprintf(stderr,"[som-ai] MUSIC mix: %s is not a ready PCM file\n",want);
+        som_music_stop();snprintf(music_path,sizeof(music_path),"%s",want);
+        return;
+    }
+    som_music_stop();
+    music_fd=open(want,O_RDONLY);
+    if(music_fd<0)return;
+    snprintf(music_path,sizeof(music_path),"%s",want);
+    fprintf(stderr,"[som-ai] MUSIC mixing %s (%ld s)\n",want,
+            (long)(st.st_size/4/(32040)));
+}
 static void som_music_pump(void){
-    if(music_fd<0){
-        if(frame_number<music_retry_frame)return;
-        music_retry_frame=frame_number+30u;
-        struct stat st;
-        if(lstat(music_fifo,&st)!=0||!S_ISFIFO(st.st_mode))return;
-        music_fd=open(music_fifo,O_RDONLY|O_NONBLOCK);
-        if(music_fd<0)return;
+    if(frame_number>=music_check_frame){music_check_frame=frame_number+30u;som_music_follow();}
+    if(music_fd<0)return;
+    uint8_t chunk[16384];
+    const unsigned room=som_mix_free_bytes(&music_ring);
+    if(room<4096u)return;                        /* keep reads few and large */
+    ssize_t got=read(music_fd,chunk,room<sizeof(chunk)?room:sizeof(chunk));
+    if(got==0){                                  /* end of the arrangement: loop */
+        lseek(music_fd,0,SEEK_SET);music_ring.partial_bytes=0;
+        got=read(music_fd,chunk,room<sizeof(chunk)?room:sizeof(chunk));
     }
-    uint8_t chunk[8192];
-    for(int rounds=0;rounds<8;rounds++){
-        const unsigned room=som_mix_free_bytes(&music_ring);
-        if(room<4u)return;
-        const ssize_t got=read(music_fd,chunk,room<sizeof(chunk)?room:sizeof(chunk));
-        if(got>0){som_mix_push_bytes(&music_ring,chunk,(size_t)got);continue;}
-        if(got==0){                       /* no writer (track ended / changed) */
-            close(music_fd);music_fd=-1;music_ring.partial_bytes=0;
-            music_retry_frame=frame_number+30u;
-        }
-        return;                           /* EAGAIN: nothing more this frame */
-    }
+    if(got>0)som_mix_push_bytes(&music_ring,chunk,(size_t)got);
+    else if(got<0){close(music_fd);music_fd=-1;}
 }
 static void som_music_publish_rate(void){
     if(!backend_retro_get_system_av_info)return;
@@ -2840,8 +2864,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     memset(&xp_decay,0,sizeof(xp_decay));xp_dirty=0;xp_saved_frame=0;xp_spell_slot=-1;
     som_prog_preserve_legacy();
     som_mix_reset(&music_ring,SOM_MIX_GAIN_DEFAULT);
-    if(music_fd>=0){close(music_fd);music_fd=-1;}
-    music_retry_frame=0;
+    som_music_stop();music_check_frame=0;
     {const char *perks=getenv("FLXTR_SOM_PERKS");perks_enabled=!(perks&&!strcmp(perks,"0"));}
     prog_rom=game&&game->data&&game->size?som_prog_hash((const uint8_t*)game->data,game->size):0;
     som_prog_fresh(&prog,prog_rom);prog_baseline=0;prog_was_field=0;prog_session_first=1;

@@ -72,7 +72,7 @@ def search_query(title, genre):
             SEARCH_HINTS[genre]).strip()[:220]
 
 
-def candidate_score(row, title, genre):
+def candidate_score(row, title, genre, require_genre=True):
     kind, ident, name, uploader = row
     if kind != "video" or not VIDEO.fullmatch(ident):
         return -1
@@ -84,7 +84,7 @@ def candidate_score(row, title, genre):
     topic_release = uploader.lower().endswith(" - topic")
     if not game_named and not topic_release:
         return -1
-    if not any(word in description for word in GENRE_WORDS[genre]):
+    if require_genre and not any(word in description for word in GENRE_WORDS[genre]):
         return -1
     return (10 if game_named else 5) + sum(word in name.lower() for word in target)
 
@@ -101,26 +101,23 @@ def mix_rate(path):
         return DEFAULT_MIX_RATE
 
 
-def ensure_fifo(path):
-    """Create the named pipe the proxy reads; refuse anything else there."""
-    import stat
-    path = Path(path)
-    try:
-        mode = path.lstat().st_mode
-    except FileNotFoundError:
-        os.mkfifo(path, 0o600)
-        return True
-    return stat.S_ISFIFO(mode)
+PCM_CACHE_BUDGET = 1500 * 1024 * 1024   # decoded arrangements kept on disk
+MIN_PCM_SECONDS = 5
 
 
 class MusicBridge:
     def __init__(self, names, genre_file, cache, player, dry_run=False,
-                 mix_fifo=None, rate_file=None):
+                 mix_control=None, rate_file=None):
         self.names, self.genre_file, self.cache = names, genre_file, cache
         self.player, self.dry_run = player, dry_run
-        # Mixing mode: the music goes into the game's own audio through the
-        # proxy (the Steam Link refuses a second audio output stream).
-        self.mix_fifo, self.rate_file = mix_fifo, rate_file
+        # Mixing mode: the proxy mixes a decoded file into the game's own
+        # audio (one stream; the Steam Link refuses a second one). The single
+        # CPU core is busy emulating, so each arrangement is decoded once,
+        # at the lowest priority, into a cache file and only complete files
+        # are played (looped by the proxy); the current track keeps playing
+        # while the next one decodes.
+        self.mix_control, self.rate_file = mix_control, rate_file
+        self.pending = None   # (index, genre, ident, final path, part path)
         self.current, self.child, self.music = None, None, None
         self.started, self.quick_failures, self.gave_up = 0.0, 0, False
         try:
@@ -142,6 +139,7 @@ class MusicBridge:
         return self.music
 
     def stop(self):
+        pending, self.pending = getattr(self, "pending", None), None
         child, self.child = self.child, None
         if child and child.poll() is None:
             os.killpg(child.pid, signal.SIGTERM)
@@ -150,6 +148,8 @@ class MusicBridge:
             except subprocess.TimeoutExpired:
                 os.killpg(child.pid, signal.SIGKILL)
                 child.wait()
+        if pending:
+            pending[4].unlink(missing_ok=True)       # an unfinished decode
 
     def apply(self, index):
         if index in CUES:
@@ -167,8 +167,11 @@ class MusicBridge:
             return
         self.current = selected
         title = self.names[index]
-        self.stop()
         if genre == len(GENRES) - 1:
+            self.stop()
+            self.pending = None
+            if self.mix_control:
+                self.set_control(None)
             LOG.info("Original mode: stop external backing music")
             return
         query = search_query(title, genre)
@@ -181,33 +184,112 @@ class MusicBridge:
             music = self.get_music()
             ident = self.selections.get(cache_key)
             if not ident or not VIDEO.fullmatch(ident):
-                results = music.search(query)
-                ranked = sorted(((candidate_score(r, title, genre), r)
-                                 for r in results if len(r) == 4),
-                                key=lambda item: item[0], reverse=True)
-                if not ranked or ranked[0][0] < 0:
-                    LOG.warning("no matching %s version for %s", GENRES[genre], title)
+                ident = self.find(music, query, title, genre, True)
+                if ident is None:
+                    # No cover in this genre: any Secret of Mana arrangement
+                    # of the piece is better than silence.
+                    ident = self.find(music, search_query(title, len(GENRES) - 1),
+                                      title, genre, False)
+                    if ident is not None:
+                        LOG.info("no %s version of %s: using another arrangement",
+                                 GENRES[genre], title)
+                if ident is None:
+                    LOG.warning("no version of %s found; %s", title,
+                                "keeping the current track" if self.child else "silence")
                     return
-                ident = ranked[0][1][1]
                 self.selections[cache_key] = ident
                 self.cache.mkdir(parents=True, exist_ok=True)
                 tmp = self.cache / "selection.next"
                 tmp.write_text(json.dumps(self.selections, indent=2) + "\n")
                 tmp.replace(self.cache / "selection.json")
+            if self.mix_control:
+                self.mix(index, genre, title, ident, music)
+                return
             music.resolve("video", ident)  # Refresh temporary signed audio URL.
+            self.stop()                    # only now: a replacement is ready
             self.child = subprocess.Popen(self.player_command(), start_new_session=True)
             self.started = time.monotonic()
             LOG.info("PLAY 0x%02X %s [%s] YouTube ID %s", index, title, GENRES[genre], ident)
         except Exception as exc:  # yt-dlp's DownloadError (offline) is a plain Exception
             LOG.warning("music lookup/playback failed for %s: %s", title, type(exc).__name__)
 
+    @staticmethod
+    def find(music, query, title, genre, require_genre):
+        results = music.search(query)
+        ranked = sorted(((candidate_score(r, title, genre, require_genre), r)
+                         for r in results if len(r) == 4),
+                        key=lambda item: item[0], reverse=True)
+        return ranked[0][1][1] if ranked and ranked[0][0] >= 0 else None
+
     def player_command(self):
-        stream = str(self.cache / "stream.txt")
-        if not self.mix_fifo:
-            return [self.player, stream]
-        if not ensure_fifo(self.mix_fifo):
-            raise OSError("%s exists and is not a named pipe" % self.mix_fifo)
-        return [self.player, "--pcm", str(mix_rate(self.rate_file)), str(self.mix_fifo), stream]
+        return [self.player, str(self.cache / "stream.txt")]
+
+    # Mixing mode ---------------------------------------------------------
+    def pcm_path(self, ident):
+        return self.cache / "pcm" / ("%s-%d.raw" % (ident, mix_rate(self.rate_file)))
+
+    def set_control(self, path):
+        """Name the file the proxy mixes; None stops the mixed music."""
+        if path is None:
+            try:
+                Path(self.mix_control).unlink()
+            except FileNotFoundError:
+                pass
+            return
+        tmp = Path(str(self.mix_control) + ".next")
+        tmp.write_text(str(Path(path).resolve()) + "\n")
+        tmp.replace(self.mix_control)
+
+    def mix(self, index, genre, title, ident, music):
+        final = self.pcm_path(ident)
+        if final.is_file():
+            self.stop()                                   # a decode for another track
+            os.utime(final)                               # most recently used
+            self.set_control(final)
+            LOG.info("PLAY 0x%02X %s [%s] YouTube ID %s (cached)", index, title,
+                     GENRES[genre], ident)
+            return
+        if self.pending and self.pending[2] == ident and self.child:
+            return                                        # already decoding it
+        music.resolve("video", ident)
+        self.stop()
+        final.parent.mkdir(parents=True, exist_ok=True)
+        part = final.with_suffix(".part")
+        self.pending = (index, genre, ident, final, part)
+        self.child = subprocess.Popen(
+            [self.player, "--pcm", str(mix_rate(self.rate_file)), str(part),
+             str(self.cache / "stream.txt")],
+            start_new_session=True, preexec_fn=lambda: os.nice(19))
+        self.started = time.monotonic()
+        LOG.info("DECODE 0x%02X %s [%s] YouTube ID %s at low priority; the current "
+                 "track plays meanwhile", index, title, GENRES[genre], ident)
+
+    def finish_decode(self, code):
+        pending, self.pending = self.pending, None
+        if not pending:
+            return
+        index, genre, ident, final, part = pending
+        size = part.stat().st_size if part.exists() else 0
+        if code != 0 or size < MIN_PCM_SECONDS * 4 * mix_rate(self.rate_file):
+            part.unlink(missing_ok=True)
+            LOG.warning("decode of %s failed (exit %d, %d bytes)", ident, code, size)
+            return
+        part.replace(final)
+        self.prune_cache(keep=final)
+        if self.current == (index, genre):
+            self.set_control(final)
+            LOG.info("PLAY 0x%02X %s [%s] YouTube ID %s (decoded, %d s)", index,
+                     self.names.get(index, "?"), GENRES[genre], ident,
+                     size // 4 // mix_rate(self.rate_file))
+
+    def prune_cache(self, keep=None):
+        files = sorted((p for p in (self.cache / "pcm").glob("*.raw") if p != keep),
+                       key=lambda p: p.stat().st_mtime)
+        total = sum(p.stat().st_size for p in files) + (keep.stat().st_size if keep else 0)
+        while files and total > PCM_CACHE_BUDGET:
+            oldest = files.pop(0)
+            total -= oldest.stat().st_size
+            oldest.unlink()
 
     def check_player(self, now=None):
         """Notice a player that died: an error right after start counts as a
@@ -228,6 +310,8 @@ class MusicBridge:
         else:
             self.quick_failures = 0
             LOG.info("player finished (exit %d)", child.returncode)
+        if self.mix_control:
+            self.finish_decode(child.returncode)
         return child.returncode
 
     def line(self, text):
@@ -236,7 +320,9 @@ class MusicBridge:
             self.apply(index)
 
     def poll_genre(self):
-        if self.check_player() is not None and not self.gave_up and self.current is not None:
+        ended = self.check_player()
+        if (ended is not None and not self.mix_control and not self.gave_up and
+                self.current is not None):
             index, self.current = self.current[0], None
             self.apply(index)          # retry once (a track that ended, or one quick failure)
             return
@@ -294,8 +380,9 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true")
     # Mixing into the game's audio is the default: on the Steam Link a
     # separate player cannot open a second audio stream while RetroArch plays.
-    parser.add_argument("--mix-fifo", type=Path, default=Path("/tmp/flxtr-som-music.pcm"),
-                        help="named pipe the AI proxy mixes into the game's audio")
+    parser.add_argument("--mix-control", type=Path, default=Path("/tmp/flxtr-som-music.play"),
+                        help="file naming the decoded track the AI proxy mixes into the game")
+    parser.add_argument("--mix-fifo", type=Path, help=argparse.SUPPRESS)   # older launchers
     parser.add_argument("--rate-file", type=Path, default=Path("/tmp/flxtr-som-audio-rate"),
                         help="game sample rate written by the proxy")
     parser.add_argument("--no-mix", action="store_true",
@@ -308,7 +395,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="[som-music] %(message)s")
     bridge = MusicBridge(load_names(args.catalog), args.genre_file, args.cache,
                          args.player, args.dry_run,
-                         None if args.no_mix else args.mix_fifo, args.rate_file)
+                         None if args.no_mix else args.mix_control, args.rate_file)
     def finish(*_):
         bridge.stop()
         raise SystemExit(0)
@@ -324,6 +411,8 @@ def main(argv=None):
                 bridge.line(line)
     finally:
         bridge.stop()
+        if bridge.mix_control:
+            bridge.set_control(None)       # the game is gone: no music on the next one
 
 
 if __name__ == "__main__":

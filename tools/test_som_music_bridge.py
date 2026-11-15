@@ -166,26 +166,61 @@ class SomMusicTests(unittest.TestCase):
             self.assertEqual(live.quick_failures, 0)
             live.stop()
 
-    def test_mixing_mode_feeds_the_proxy_pipe(self):
-        import os, stat
+    def mix_bridge(self, folder, player_body):
+        directory = Path(folder)
+        (directory / "rate").write_text("8000\n")
+        (directory / "genre").write_text("0\n")
+        player = directory / "player.sh"
+        player.write_text("#!/bin/sh\n" + player_body + "\n")
+        player.chmod(0o755)
+        live = MusicBridge(self.catalog, directory / "genre", directory / "cache", str(player),
+                           mix_control=directory / "play", rate_file=directory / "rate")
+
+        class FakeMusic:
+            def search(self, query):
+                title = "Secret of Mana %s Lofi Cover" % query.split("Mana ", 1)[1]
+                return [("video", ("x%010d" % (abs(hash(query)) % 10**10))[:11], title, "C")]
+
+            def resolve(self, kind, ident):
+                return None
+        live.music = FakeMusic()
+        return live, directory
+
+    def test_mix_mode_decodes_once_then_plays_from_the_cache(self):
+        # The fake decoder writes 6 s of 8 kHz stereo into its output file.
         with tempfile.TemporaryDirectory() as folder:
-            directory = Path(folder)
-            rate = directory / "rate"
-            rate.write_text("32040\n")
-            pipe = directory / "music.pcm"
-            live = MusicBridge(self.catalog, directory / "genre", directory / "cache",
-                               "greenlink-audio", mix_fifo=pipe, rate_file=rate)
-            command = live.player_command()
-            self.assertEqual(command[:4], ["greenlink-audio", "--pcm", "32040", str(pipe)])
-            self.assertTrue(stat.S_ISFIFO(os.lstat(pipe).st_mode))
-            rate.write_text("garbage")
-            self.assertEqual(live.player_command()[2], str(bridge.DEFAULT_MIX_RATE))
-            pipe.unlink()
-            pipe.write_text("not a pipe")
-            with self.assertRaises(OSError):
-                live.player_command()
-            plain = MusicBridge(self.catalog, directory / "genre", directory / "cache", "p")
-            self.assertEqual(plain.player_command(), ["p", str(directory / "cache/stream.txt")])
+            live, directory = self.mix_bridge(folder, 'head -c 192000 /dev/zero > "$3"')
+            live.line("[som-ai] SONG 0x0E x (map 1)")
+            self.assertIsNotNone(live.child)                     # decoding
+            self.assertEqual(live.child.args[1:3], ["--pcm", "8000"])
+            self.assertFalse((directory / "play").exists())       # nothing ready yet
+            live.child.wait()
+            live.poll_genre()
+            played = Path((directory / "play").read_text().strip())
+            self.assertTrue(played.is_file() and played.suffix == ".raw")
+            self.assertFalse(list((directory / "cache/pcm").glob("*.part")))
+            live.line("[som-ai] SONG 0x10 x (map 2)")            # next track decodes...
+            self.assertIsNotNone(live.child)
+            self.assertEqual(Path((directory / "play").read_text().strip()), played)  # ...old plays
+            live.child.wait(); live.poll_genre()
+            second = Path((directory / "play").read_text().strip())
+            self.assertNotEqual(second, played)
+            live.line("[som-ai] SONG 0x0E x (map 1)")            # cached: instant, no decoder
+            self.assertIsNone(live.child)
+            self.assertEqual(Path((directory / "play").read_text().strip()), played)
+            (directory / "genre").write_text("8\n")              # Off
+            live.poll_genre()
+            self.assertFalse((directory / "play").exists())
+
+    def test_mix_mode_failed_decode_leaves_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            live, directory = self.mix_bridge(folder, 'head -c 100 /dev/zero > "$3"; exit 1')
+            live.line("[som-ai] SONG 0x0E x (map 1)")
+            live.child.wait()
+            live.started -= 60                                    # not a quick failure
+            live.poll_genre()
+            self.assertFalse((directory / "play").exists())
+            self.assertFalse(list((directory / "cache/pcm").glob("*")))
 
     def test_query(self):
         self.assertEqual(search_query("Into the Thick of It", 0),

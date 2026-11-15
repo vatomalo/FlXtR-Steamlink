@@ -166,7 +166,7 @@ while :; do
            [ -f scripts/music-runtime.sh ] && [ -r "$som_catalog" ]; then
             sh scripts/music-runtime.sh tools/som_music_bridge.py --log game.log --from-start \
                 --game-pid "$game_pid" --som-wait 60 --catalog "$som_catalog" \
-                --mix-fifo /tmp/flxtr-som-music.pcm --rate-file /tmp/flxtr-som-audio-rate \
+                --mix-control /tmp/flxtr-som-music.play --rate-file /tmp/flxtr-som-audio-rate \
                 >som-music.log 2>&1 &
             som_music_pid=$!
         fi

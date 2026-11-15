@@ -86,22 +86,24 @@ The bridge now notices a player that dies with an error within 10 s; after two i
 stops trying for that session (log: "audio output unavailable") instead of searching and
 relaunching on every song. Offline / yt-dlp errors are logged and the bridge keeps running.
 
-**Mixing into the game's audio (2026-11-15, built and tested, not yet installed).** The
-bridge now runs `greenlink-audio --pcm <rate> /tmp/flxtr-som-music.pcm <stream>`: the
-same player decodes to raw stereo s16 at the game's sample rate (published by the proxy in
-`/tmp/flxtr-som-audio-rate`, 32040 Hz) into a named pipe. The proxy reads the pipe without
-blocking before each frame into a ~1 s ring (`src/som_music_mix.h`) and adds it to every
-audio batch of the core at 176/256 under the effects, saturating. One audio stream, so the
-Steam Link has nothing to refuse; the pipe paces the decoder to the emulator (it stops
-when RetroArch pauses). No pipe, no writer or an empty ring: game audio passes through
-untouched. Launcher flags: `--mix-fifo /tmp/flxtr-som-music.pcm --rate-file
-/tmp/flxtr-som-audio-rate` (`packaging/greenlink.sh`). With the old installed
-`greenlink-audio` (no `--pcm`) the player exits at once and the bridge gives up for the
-session after two tries: game audio unaffected.
-Verified headless on the Steam Link with the real ROM: game-only output rms 0 on the title;
-with the pipe fed, rms ~2980 throughout, no clipping; the decoder produced only ~417k frames
-for ~321k consumed (paced) and exited when the game closed the pipe.
-Hardware listening test: pending (needs the new `greenlink-audio`, proxy and launcher).
+**Mixing into the game's audio, from a decoded cache (2026-11-15).** First hardware test
+of live pipe mixing: the music stuttered ("lags horribly") because the Steam Link has ONE
+CPU core and the game leaves ~7 % idle, while live streaming + AAC decoding needs about
+that much. Now nothing is decoded while it plays:
+- the bridge decodes each chosen arrangement once with `greenlink-audio --pcm <rate>
+  <file>` at nice 19 (the game always wins the CPU) into
+  `som-music-cache/pcm/<YouTube id>-<rate>.raw`, keeping the current track playing meanwhile;
+- only a complete file is played: the bridge names it in `/tmp/flxtr-som-music.play`, the
+  proxy reads it (16 KiB page-cache reads into a ~1 s ring, `src/som_music_mix.h`), loops it
+  and adds it to every audio batch at 176/256 under the effects;
+- a cached arrangement starts at once in later sessions; the cache keeps at most 1.5 GB
+  (oldest first); Off or the end of the game removes the control file;
+- a genre with no cover of a piece falls back to any Secret of Mana arrangement of it, and
+  nothing found keeps the current track instead of silence.
+Quality: the music is mixed at the game's 32040 Hz and resampled by RetroArch (sinc) like
+the game, so very high frequencies are lost. Native SNES music is still filtered by the
+core's voice mask (mode 2), which leaks briefly when an effect takes a low voice or a
+released effect voice is re-keyed by the music.
 
 Tests:
 

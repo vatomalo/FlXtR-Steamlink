@@ -272,30 +272,31 @@ int main(void){
         memset(mocked_wram,0,sizeof(mocked_wram));memset(mocked_sram,0,sizeof(mocked_sram));
         som_disc_init(&disciplines);
     }
-    /* Soundtrack mixing through the named pipe. */
+    /* Soundtrack mixing from a decoded file named in the control file. */
     {
         char dir[]="/tmp/som-music-test-XXXXXX";assert(mkdtemp(dir));
-        static char fifo[80];snprintf(fifo,sizeof(fifo),"%s/music.pcm",dir);
-        assert(mkfifo(fifo,0600)==0);
-        music_fifo=fifo;som_mix_reset(&music_ring,SOM_MIX_GAIN_DEFAULT);
-        if(music_fd>=0){close(music_fd);music_fd=-1;}
+        static char control[80],pcm[80];
+        snprintf(control,sizeof(control),"%s/play",dir);snprintf(pcm,sizeof(pcm),"%s/a.raw",dir);
+        music_play_file=control;som_music_stop();music_check_frame=0;
         captured_frames=0;frontend_audio_batch=capture_audio;
         int16_t game[8]={1000,-1000,2000,-2000,0,0,7,7};
-        assert(som_audio_batch(game,4)==4&&captured_frames==4&&captured[0]==1000);  /* no music */
-        music_retry_frame=0;frame_number=50000;som_music_pump();
-        assert(music_fd<0);                                       /* no writer: retry later */
-        int holder=open(fifo,O_RDONLY|O_NONBLOCK);assert(holder>=0); /* lets the writer open */
-        int writer=open(fifo,O_WRONLY|O_NONBLOCK);assert(writer>=0);
+        frame_number=50000;som_music_pump();assert(music_fd<0);   /* no control file */
+        assert(som_audio_batch(game,4)==4&&captured_frames==4&&captured[0]==1000);
         int16_t music[6]={256,-256,512,-512,1024,0};
-        assert(write(writer,music,sizeof(music))==(ssize_t)sizeof(music));
-        som_music_pump();assert(music_fd<0);                      /* too soon: 30-frame wait */
-        frame_number+=30;close(holder);som_music_pump();
+        FILE *f=fopen(pcm,"wb");assert(f&&fwrite(music,1,sizeof(music),f)==sizeof(music)&&!fclose(f));
+        f=fopen(control,"w");assert(f&&fprintf(f,"%s\n",pcm)>0&&!fclose(f));
+        frame_number+=30;som_music_pump();
         assert(music_fd>=0&&music_ring.count==3);
+        som_music_pump();assert(music_ring.count==6);                 /* looped */
         captured_frames=0;assert(som_audio_batch(game,4)==4&&captured_frames==4);
         assert(captured[0]==1000+256*(int)SOM_MIX_GAIN_DEFAULT/256&&captured[1]==-1000-256*(int)SOM_MIX_GAIN_DEFAULT/256);
-        assert(captured[6]==7&&music_ring.count==0);              /* ran dry: game only */
-        close(writer);som_music_pump();assert(music_fd<0);       /* writer left */
-        unlink(fifo);rmdir(dir);music_fifo=SOM_MUSIC_FIFO;frontend_audio_batch=NULL;
+        assert(captured[6]==7+256*(int)SOM_MIX_GAIN_DEFAULT/256);  /* looped: frame 4 = frame 1 */
+        unlink(control);frame_number+=30;som_music_pump();
+        assert(music_fd<0&&!music_ring.count);                    /* no control file: stop */
+        f=fopen(control,"w");assert(f&&fprintf(f,"%s/missing.raw\n",dir)>0&&!fclose(f));
+        frame_number+=30;som_music_pump();assert(music_fd<0);    /* not a file: nothing */
+        unlink(control);unlink(pcm);rmdir(dir);music_play_file=SOM_MUSIC_PLAY;
+        som_music_stop();frontend_audio_batch=NULL;
     }
     /* The exit auto-state goes beside the ROM, as RetroArch names it. */
     som_auto_state_path_set("/roms/Snes/Secret of Mana, Turbo.smc");

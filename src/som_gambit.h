@@ -20,7 +20,12 @@
 #include "som_overlay.h"
 
 #define SOM_GAMBIT_COUNT 6u
-#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 1u)       /* + exit */
+#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 2u)       /* + music genre and exit */
+#define SOM_MUSIC_GENRE_COUNT 9u
+static const char *const som_music_genre_names[SOM_MUSIC_GENRE_COUNT] = {
+    "Lo-Fi", "Jazz", "City Pop", "Orchestral", "Piano",
+    "Synthwave", "Rock", "Ambient", "Original"
+};
 #define SOM_GAMBIT_MAX_WEIGHT 5u
 
 /* Activities only; how the AI fights or moves is not a gambit. The order is
@@ -39,13 +44,15 @@ typedef struct {
     int open;
     unsigned cursor;
     uint8_t weight[SOM_GAMBIT_COUNT];
+    unsigned music_genre; /* stored separately from the six AI priority digits */
 } SomGambits;
 
 enum { SOM_GAMBIT_NONE, SOM_GAMBIT_OPENED, SOM_GAMBIT_CLOSED,
-       SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT };
+       SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT, SOM_GAMBIT_GENRE_CHANGED };
 
 static inline void som_gambit_defaults_into(SomGambits *g) {
     memcpy(g->weight, som_gambit_defaults, sizeof(g->weight));
+    g->music_genre = 0; /* Lo-Fi */
 }
 
 /* "433341\n"-style text; invalid text keeps the defaults. */
@@ -77,11 +84,18 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
         g->cursor = (g->cursor + SOM_GAMBIT_ITEMS - 1u) % SOM_GAMBIT_ITEMS;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN))
         g->cursor = (g->cursor + 1u) % SOM_GAMBIT_ITEMS;
-    if (g->cursor == SOM_GAMBIT_COUNT) {
+    if (g->cursor == SOM_GAMBIT_COUNT + 1u) {
         if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_B)) {
             g->open = 0;
             return SOM_GAMBIT_EXIT;
         }
+    } else if (g->cursor == SOM_GAMBIT_COUNT) {
+        unsigned before = g->music_genre;
+        if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT))
+            g->music_genre = (g->music_genre + SOM_MUSIC_GENRE_COUNT - 1u) % SOM_MUSIC_GENRE_COUNT;
+        if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_RIGHT) | (1u << RETRO_DEVICE_ID_JOYPAD_B)))
+            g->music_genre = (g->music_genre + 1u) % SOM_MUSIC_GENRE_COUNT;
+        if (before != g->music_genre) return SOM_GAMBIT_GENRE_CHANGED;
     } else {
         uint8_t *w = &g->weight[g->cursor];
         const uint8_t before = *w;
@@ -108,6 +122,11 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
     if (item >= SOM_GAMBIT_ITEMS) return 0;
     const char *mark = g->cursor == item ? ">" : " ";
     if (item == SOM_GAMBIT_COUNT) {
+        snprintf(out, 33, "%s Music genre: %s", mark,
+                 som_music_genre_names[g->music_genre % SOM_MUSIC_GENRE_COUNT]);
+        return 1;
+    }
+    if (item == SOM_GAMBIT_COUNT + 1u) {
         snprintf(out, 33, "%s Exit gambits: you play", mark);
         return 1;
     }

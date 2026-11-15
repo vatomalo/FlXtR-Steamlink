@@ -64,6 +64,9 @@ CANDY_MAX_RETRIES = 6
 # Gambits: activity priorities 0..5 (0 = never) the player sets from the
 # gamepad menu drawn by the proxy (src/som_gambit.h, same order and defaults).
 GAMBIT_FIGHT, GAMBIT_INN, GAMBIT_SHOP, GAMBIT_SAVE, GAMBIT_CANDY, GAMBIT_TALK = range(6)
+# Planner intentions that need a particular weapon in hand for a moment:
+# grass is cut with the sword, whip posts are swung across with the whip.
+TOOL_WEAPONS = {"cut_grass": "sword", "whip_cross": "whip"}
 GAMBIT_DEFAULTS = "433341"
 GAMBIT_NAMES = ("fight", "inn", "shop", "save", "candy", "talk")
 GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
@@ -74,7 +77,7 @@ COMBAT_NAMES = ("press", "distance", "guard", "evade", "charge", "magic", "class
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
 # Intentions the personality comments on (som_personality.LINES events).
 SPOKEN_INTENTIONS = {"explore_frontier", "engage_enemy", "defend_enemy", "kite_enemy",
-                     "evade_enemy", "cut_grass", "survive", "return_to_inn", "go_to_inn",
+                     "evade_enemy", "cut_grass", "whip_cross", "survive", "return_to_inn", "go_to_inn",
                      "go_to_shop", "go_to_map", "leave_room", "stuck"}
 GUARD_REFRESHES = 2     # extra block presses per guard decision
 GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
@@ -926,6 +929,7 @@ INTENT_MESSAGES = {
     "evade_enemy": "AI: body flicker|afterimage",
     "go_to_shop": "AI: plenty of GP|going to buy Candy",
     "cut_grass": "AI: cutting grass",
+    "whip_cross": "AI: whip post|swinging across",
 }
 
 
@@ -1329,6 +1333,7 @@ def main() -> int:
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
     spell_ready_at = 0.0
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
+    tool_out = "sword"                           # tool weapon taken out (sword/whip)
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
     combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
     style = dict(zip(COMBAT_NAMES, combat))
@@ -1808,28 +1813,33 @@ def main() -> int:
                         held = wram_now.weapons(0).get("type")
                     except (ValueError, KeyError, IndexError):
                         held = None
-                    if decision.intention == "cut_grass":
+                    # Whip posts: the same with the whip (planner whip_cross).
+                    tool = TOOL_WEAPONS.get(decision.intention)
+                    if tool is not None:
                         grass_clear_steps = 0
-                        if held is not None and held != "sword":
+                        label = "grass" if tool == "sword" else "whip"
+                        if held is not None and held != tool:
                             try:
-                                link.send_control("equip_sword")
+                                link.send_control(f"equip_{tool}")
                                 if grass_restore is None:
                                     grass_restore = held
-                                print(f"[grass] sword out to cut (was {held})", flush=True)
+                                tool_out = tool
+                                print(f"[{label}] {tool} out (was {held}): "
+                                      f"{decision.reason}", flush=True)
                                 previous = "wait"
                                 continue
                             except (OSError, subprocess.SubprocessError, ValueError) as exc:
-                                print(f"[grass] sword switch failed: {exc}", flush=True)
+                                print(f"[{label}] {tool} switch failed: {exc}", flush=True)
                     elif grass_restore is not None:
                         grass_clear_steps += 1
-                        if grass_clear_steps >= 10 and held == "sword":
+                        if grass_clear_steps >= 10 and held == tool_out:
                             try:
                                 link.send_control(f"equip_{grass_restore}")
                                 print(f"[grass] back to the {grass_restore}", flush=True)
                             except (OSError, subprocess.SubprocessError, ValueError) as exc:
                                 print(f"[grass] weapon restore failed: {exc}", flush=True)
                             grass_restore = None
-                        elif held != "sword":
+                        elif held != tool_out:
                             grass_restore = None
                     actor_now = context.get("actor") or {}
                     foes = [e for e in observation.get("enemy_slots", [])
@@ -1850,8 +1860,8 @@ def main() -> int:
                             class_director.switched(index)
                             print(f"[class] {CLASS_NAMES[index]}: {why}", flush=True)
                             announce(f"{CLASS_LINES[index]}|{CLASS_NAMES[index]}: {why[:28]}")
-                            if decision.intention == "cut_grass":
-                                previous = "wait"   # let the sword come out first
+                            if decision.intention in TOOL_WEAPONS:
+                                previous = "wait"   # let the tool weapon come out first
                                 continue
                         except (OSError, subprocess.SubprocessError, ValueError) as exc:
                             print(f"[class] switch failed: {exc}", flush=True)

@@ -34,6 +34,9 @@ LINES = {
         "cut_grass": (
             "Snip snip!", "Out of my way, grass!", "A little gardening.",
             "This grass is in the way.", "Trimming the path!", "Who planted this here?"),
+        "whip_cross": (
+            "Hang on... whip time!", "Over the ledge we go!", "Catch that post!",
+            "Swinging across!", "Who needs stairs?", "Hold on tight!"),
         "survive": (
             "This looks dangerous...", "Time to regroup!", "Ouch. Retreat for now!",
             "I need a breather!", "Not my best moment.", "Back off, back off!"),
@@ -73,6 +76,7 @@ LINES = {
                         "You are lucky today."),
         "cut_grass": ("Grass, meet sword.", "Clearing the way!", "Nothing blocks me!",
                       "Hack and slash!"),
+        "whip_cross": ("No ledge stops me!", "Across in one swing!", "Whip, do your thing!"),
         "survive": ("Tactical retreat!", "Not done yet!", "I will be back!",
                     "Just catching my breath!", "Regroup, then revenge!"),
         "return_to_inn": ("I will be back stronger.", "Rest, then revenge!",
@@ -106,6 +110,8 @@ LINES = {
                         "Avoidance is a skill."),
         "cut_grass": ("Gardening. My calling.", "The grass had it coming.",
                       "Lawn care, adventurer style."),
+        "whip_cross": ("Walking is overrated.", "Gravity, meet whip.",
+                       "Tarzan would be proud."),
         "survive": ("This is going swimmingly.", "I prefer being alive.",
                     "Retreating. With dignity.", "Well, that went poorly."),
         "return_to_inn": ("A bed. Finally.", "Naptime is non-negotiable.",

@@ -383,6 +383,9 @@ class WRAM:
             "player_position": tile_context["actor"] if tile_context["runtime_verified"] else None,
             "tile_context": tile_context,
             "weapons_enabled": bool(self.u8(0x7E00ED) & 0x80),
+            # $CC54 + type: 0xFF = not owned (som_ai_proxy som_equip_weapon_direct).
+            "owned_weapons": [name for index, name in enumerate(WEAPON_TYPES)
+                              if self.u8(0x7ECC54 + index) != 0xFF],
             "party": [self.character(i) for i in range(3)],
             "pad_bindings": [self.u8(0x7E00D9 + i) for i in range(3)],
             "enemy_slots": [self.enemy(i) for i in range(3)],
@@ -536,6 +539,129 @@ def detect_cuts(previous, current):
     return found
 
 
+# Whip crossings (whip posts over ledges, gaps, water). The whip's box
+# reaches 26-86 px ahead (som-decomp weapons-ranged.md 2), so a pull covers
+# at most about five tiles; six allows for where the hero lands.
+WHIP_MAX_TILES = 6
+# An anchor older than this is not compared (map lag, menus, cut scenes).
+WHIP_ANCHOR_S = 5.0
+# Documented cuttable codes (maps.md 7): a tile with these is grass, not a post.
+CUT_GROUND_CODES = (0xC1, 0xC2, 0xC8)
+_WHIP_STEPS = {"step_right": (1, 0), "step_left": (-1, 0),
+               "step_up": (0, -1), "step_down": (0, 1)}
+
+
+def hero_airborne(state):
+    """True when the hero's own tile is a wall: mid-flight over a ledge."""
+    context = state.get("tile_context") if isinstance(state, dict) else None
+    for cell in (context or {}).get("special_cells") or []:
+        if cell.get("offset") == [0, 0] and cell.get("classification") == "blocked":
+            return True
+    return False
+
+
+def held_weapon(state):
+    party = state.get("party") if isinstance(state, dict) else None
+    hero = (party or [{}])[0] or {}
+    return (hero.get("weapon") or {}).get("type")
+
+
+def whip_post_signature(attributes):
+    """Could a tile with these attribute bytes be a whip post?
+
+    Ordinary walls, ledges and floors carry no ground-effect code (b2 0);
+    diagonal halves, ramps and currents use 0x10-0x3F. Special tiles the
+    game reacts to (cuttables 0xC1/0xC2/0xC8, maps.md 7) sit at 0x40 and up,
+    so only those are kept as post candidates, grass excluded.
+    """
+    try:
+        values = bytes.fromhex(attributes)
+    except (TypeError, ValueError):
+        return False
+    return len(values) == 4 and values[2] >= 0x40 and values[2] not in CUT_GROUND_CODES
+
+
+def _walk_length(cells, start, goal, size, limit):
+    """Steps of the shortest walk over open markers, or None within limit."""
+    frontier, seen = deque([(start, 0)]), {start}
+    while frontier:
+        position, distance = frontier.popleft()
+        if position == goal:
+            return distance
+        if distance >= limit:
+            continue
+        for ox, oy in _WHIP_STEPS.values():
+            nxt = ((position[0] + ox) % size[0], (position[1] + oy) % size[1])
+            if nxt in seen or (cells.get(nxt) or ("?",))[0] not in ".@":
+                continue
+            seen.add(nxt)
+            frontier.append((nxt, distance + 1))
+    return None
+
+
+def detect_whip_crossing(previous, current):
+    """A whip pull between two grounded samples, or None.
+
+    What a whip crossing looks like in WRAM: the hero held the whip, then
+    stands two to six tiles further along one axis, and the tiles between
+    hold a wall or ledge with no short walk around it in either sample's
+    grid. Returns {map_id, layer, from, action, to, to_layer, to_height,
+    posts}; posts are attribute strings of special tiles at either end or
+    on the line (whip_post_signature), used to recognise other posts.
+    """
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return None
+    before_context = previous.get("tile_context") or {}
+    after_context = current.get("tile_context") or {}
+    if (not before_context.get("runtime_verified") or not after_context.get("runtime_verified")
+            or before_context.get("map_id") != after_context.get("map_id")):
+        return None
+    if held_weapon(previous) != "whip" or hero_airborne(previous) or hero_airborne(current):
+        return None
+    size = after_context.get("map_size_tiles")
+    start, landing = before_context.get("actor_tile"), after_context.get("actor_tile")
+    if not (isinstance(size, list) and isinstance(start, list) and isinstance(landing, list)):
+        return None
+    width, height = size
+
+    def wrapped(delta, extent):
+        delta %= extent
+        return delta - extent if delta > extent // 2 else delta
+
+    dx, dy = wrapped(landing[0] - start[0], width), wrapped(landing[1] - start[1], height)
+    span = abs(dx) + abs(dy)
+    if (dx and dy) or not 2 <= span <= WHIP_MAX_TILES:
+        return None
+    ox, oy = (dx // span, dy // span)
+    action = next(name for name, offset in _WHIP_STEPS.items() if offset == (ox, oy))
+    before, after = grid_cells(previous), grid_cells(current)
+    if not before or not after:
+        return None
+    cells = dict(after)
+    cells.update(before)   # markers seen from the start height decide
+    start, landing = tuple(start), tuple(landing)
+
+    def at(k, side=0):
+        return ((start[0] + ox * k + oy * side) % width,
+                (start[1] + oy * k + ox * side) % height)
+
+    line = [at(k) for k in range(1, span)]
+    if not any((cells.get(p) or ("?",))[0] in "#?" for p in line):
+        return None
+    if _walk_length(cells, start, landing, (width, height), span + 2) is not None:
+        return None
+    nearby = line + [landing, at(span + 1), at(-1)]
+    nearby += [at(k, side) for k in (0, span) for side in (-1, 1)]
+    posts = sorted({cells[p][2] for p in nearby
+                    if p in cells and whip_post_signature(cells[p][2])})
+    actor = after_context.get("actor") or {}
+    return {"map_id": after_context["map_id"],
+            "layer": (before_context.get("actor") or {}).get("layer"),
+            "from": list(start), "action": action, "to": list(landing),
+            "to_layer": actor.get("layer"), "to_height": actor.get("floor_height"),
+            "posts": posts}
+
+
 class ObservationHistory:
     """SQLite observations plus persistent, map-scoped tile visitation memory."""
 
@@ -596,6 +722,19 @@ class ObservationHistory:
         # hero (grass cut with a weapon). Same attributes = also cuttable.
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS cuttable_signatures "
+            "(attributes TEXT PRIMARY KEY, seen INTEGER NOT NULL, last_ts REAL NOT NULL)")
+        # Whip crossings seen (som_memory.detect_whip_crossing): from this
+        # tile, facing `action`, a whip swing lands the hero at (to_x, to_y).
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS whip_crossings "
+            "(map_id INTEGER NOT NULL, layer INTEGER NOT NULL, from_x INTEGER NOT NULL, "
+            "from_y INTEGER NOT NULL, action TEXT NOT NULL, to_x INTEGER NOT NULL, "
+            "to_y INTEGER NOT NULL, to_layer INTEGER, to_height INTEGER, "
+            "seen INTEGER NOT NULL, last_ts REAL NOT NULL, "
+            "PRIMARY KEY(map_id,layer,from_x,from_y,action))")
+        # Attributes of special tiles at the ends of a whip crossing (posts).
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS whip_post_signatures "
             "(attributes TEXT PRIMARY KEY, seen INTEGER NOT NULL, last_ts REAL NOT NULL)")
         # 7x7 tile-ID patterns around taught inns, to recognise lookalikes.
         self.connection.execute(
@@ -930,6 +1069,55 @@ class ObservationHistory:
         if learned:
             self.connection.commit()
         return learned
+
+    def learn_whip_crossings(self, state, clock=time.monotonic):
+        """Compare with the last grounded sample; store a whip crossing seen.
+
+        Mid-flight samples (hero over a wall) are skipped so the comparison
+        spans the whole pull, from the tile swung from to the landing tile.
+        """
+        context = state.get("tile_context") if isinstance(state, dict) else None
+        if (not isinstance(context, dict) or not context.get("runtime_verified") or
+                hero_airborne(state)):
+            return None
+        now = clock()
+        anchor = getattr(self, "_whip_anchor", None)
+        self._whip_anchor = (state, now)
+        if anchor is None or now - anchor[1] > WHIP_ANCHOR_S:
+            return None
+        crossing = detect_whip_crossing(anchor[0], state)
+        if crossing is not None:
+            self.remember_whip_crossing(crossing)
+        return crossing
+
+    def remember_whip_crossing(self, crossing):
+        stamp = time.time()
+        self.connection.execute(
+            "INSERT INTO whip_crossings(map_id,layer,from_x,from_y,action,to_x,to_y,"
+            "to_layer,to_height,seen,last_ts) VALUES(?,?,?,?,?,?,?,?,?,1,?) "
+            "ON CONFLICT(map_id,layer,from_x,from_y,action) DO UPDATE SET "
+            "to_x=excluded.to_x,to_y=excluded.to_y,to_layer=excluded.to_layer,"
+            "to_height=excluded.to_height,seen=seen+1,last_ts=excluded.last_ts",
+            (crossing["map_id"], crossing["layer"], *crossing["from"], crossing["action"],
+             *crossing["to"], crossing.get("to_layer"), crossing.get("to_height"), stamp))
+        for attributes in crossing.get("posts") or ():
+            self.connection.execute(
+                "INSERT INTO whip_post_signatures(attributes,seen,last_ts) VALUES(?,1,?) "
+                "ON CONFLICT(attributes) DO UPDATE SET seen=seen+1,last_ts=excluded.last_ts",
+                (attributes, stamp))
+        self.connection.commit()
+
+    def whip_crossings(self, map_id, layer):
+        """[{from, action, to, to_layer, to_height}] learned on this map and layer."""
+        return [{"from": (fx, fy), "action": action, "to": (tx, ty),
+                 "to_layer": to_layer, "to_height": to_height}
+                for fx, fy, action, tx, ty, to_layer, to_height in self.connection.execute(
+                    "SELECT from_x,from_y,action,to_x,to_y,to_layer,to_height "
+                    "FROM whip_crossings WHERE map_id=? AND layer=?", (map_id, layer))]
+
+    def whip_post_signatures(self):
+        return {row[0] for row in self.connection.execute(
+            "SELECT attributes FROM whip_post_signatures")}
 
     def cuttable_signatures(self):
         return {row[0] for row in self.connection.execute(

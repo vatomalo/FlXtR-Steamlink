@@ -1264,7 +1264,7 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
 /* Kage Bunshin clones (src/som_bunshin.h). Explosion damage grows with
  * the Ninjutsu discipline level. */
 static unsigned som_bunshin_damage(void){return 10u+disciplines.level[2]/2u;}
-static int som_hero_layer2(const uint8_t *hero){return (hero[0x00B]&0x80u)!=0;}
+static unsigned som_hero_place(const uint8_t *hero){return hero[0x00B];}
 static void som_bunshin_explode(uint8_t *ram,int x,int y){
     som_bun_boom(bunshin_booms,x,y,0,frame_number);
     const unsigned hit=som_bun_blast(ram,x,y,som_bunshin_damage(),familiar.slot);
@@ -1311,7 +1311,7 @@ static void som_bunshin_frame(uint8_t *ram){
         som_bun_clear(&bunshin);return;
     }
     const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
-    som_bun_follow(&bunshin,ram,hx,hy,som_hero_layer2(hero));
+    som_bun_follow(&bunshin,ram,hx,hy,som_hero_place(hero));
     for(unsigned i=0;i<SOM_BUN_COUNT;i++){
         if(!bunshin.alive[i]||som_bun_toucher(ram,bunshin.x[i],bunshin.y[i],SOM_BUN_TOUCH_X,
                                               SOM_BUN_TOUCH_Y,familiar.slot)<0)continue;
@@ -1422,7 +1422,7 @@ static int som_evade_start(uint8_t *ram){
     const int shunshin=ninja&&hero[0x1E4]==1u;
     if(ninja&&hero[0x1E4]==6u){
         const unsigned made=som_bun_spawn(&bunshin,ram,(int)som_bun_u16(hero+2),
-            (int)som_bun_u16(hero+4),hero[0x010],som_hero_layer2(hero),frame_number);
+            (int)som_bun_u16(hero+4),hero[0x010],som_hero_place(hero),frame_number);
         if(!made){
             som_overlay_set(&overlay,"^No room|for shadow clones",SOM_MESSAGE_FRAMES/2u);
             return 0;
@@ -1468,10 +1468,10 @@ static void som_hop_step(void){
         hop_frames_left=0;return;
     }
     int x=(int)som_bun_u16(hero+2),y=(int)som_bun_u16(hero+4);
-    const int layer2=som_hero_layer2(hero);
+    const unsigned place=som_hero_place(hero);
     int moved=0;
-    if(hop_dx&&som_bun_spot_open(ram,x+hop_dx,y,layer2)){x+=hop_dx;moved=1;}
-    if(hop_dy&&som_bun_spot_open(ram,x,y+hop_dy,layer2)){y+=hop_dy;moved=1;}
+    if(hop_dx&&som_bun_spot_open(ram,x+hop_dx,y,place)){x+=hop_dx;moved=1;}
+    if(hop_dy&&som_bun_spot_open(ram,x,y+hop_dy,place)){y+=hop_dy;moved=1;}
     hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
     hop_frames_left=moved?hop_frames_left-1u:0u;   /* a wall ends the travel */
 }
@@ -2201,9 +2201,16 @@ RETRO_API unsigned flxtr_som_ai_familiar(void){
 RETRO_API void flxtr_som_ai_gambits(char output[SOM_GAMBIT_COUNT+1]){
     if(output)som_gambit_format(&gambits,output);
 }
-/* The hero's position on the base 256x224 screen, from read-only WRAM:
- * world position (7E:E002/E004) minus a camera that centres on the hero and
- * stops at the map edges (map size 7E:00C0/00C2). Field mode only. */
+/* The hero's position on the base 256x224 screen (feet), from read-only
+ * WRAM. Best source: his own sprite pieces in the OAM shadow (centre x =
+ * pieces' middle, feet 3 lines above their bottom; measured against
+ * E002/E004 on the Steam Link), which stays right when the camera stops at
+ * a room or map edge. The camera offset this implies is remembered for the
+ * frames he blinks (no pieces); without one, the old guess: a camera
+ * centred on him, clamped to the map size (7E:00C0/00C2). Field mode only. */
+static int som_cam_valid;
+static long som_cam_x,som_cam_y;
+static unsigned som_cam_map;
 static int som_hero_screen(int *x,int *y){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return 0;
     const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
@@ -2212,6 +2219,25 @@ static int som_hero_screen(int *x,int *y){
     long w=ram[0xC0]|ram[0xC1]<<8,h=ram[0xC2]|ram[0xC3]<<8;
     long hx=ram[0xE002]|ram[0xE003]<<8,hy=ram[0xE004]|ram[0xE005]<<8;
     if(w<256||h<224||w>4096||h>4096)return 0;
+    const unsigned map=som_bun_u16(ram+0xDC);
+    if(som_cam_valid&&som_cam_map!=map)som_cam_valid=0;
+    int min_x=1000,max_x=-1000,max_y=-1000;
+    for(unsigned i=0;i<128u;i++){
+        const uint8_t *e=ram+0x0800u+4u*i;
+        if(!som_bun_boy_piece(e))continue;
+        int px=(int)(e[0]|(((ram[0x0A00u+i/4u]>>(2u*(i%4u)))&1u)<<8));
+        if(px>=256)px-=512;
+        if(px<min_x)min_x=px;
+        if(px>max_x)max_x=px;
+        if((int)e[1]>max_y)max_y=e[1];
+    }
+    if(max_y>=0){
+        const long sx=(min_x+max_x+16)/2,sy=max_y+16-3;
+        som_cam_x=hx-sx;som_cam_y=hy-sy;som_cam_valid=1;som_cam_map=map;
+        *x=(int)sx;*y=(int)sy;
+        return 1;
+    }
+    if(som_cam_valid){*x=(int)(hx-som_cam_x);*y=(int)(hy-som_cam_y);return 1;}
     hx%=w;hy%=h;
     long cam_x=hx-128,cam_y=hy-112;
     if(cam_x<0)cam_x=0;
@@ -2392,7 +2418,7 @@ static size_t som_apply_rom_patches(uint8_t *rom,size_t size){
 }
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
-    frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;
+    frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();

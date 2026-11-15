@@ -29,6 +29,7 @@
 #define SOM_BUN_BLAST_X 40
 #define SOM_BUN_BLAST_Y 32
 #define SOM_BUN_SWAP_COOLDOWN 30ul
+#define SOM_BUN_SWAP_MIN 12            /* px: closer clones are not swap targets */
 #define SOM_BUN_MONSTER_BASE 0xE600u
 #define SOM_BUN_OBJECT 0x200u
 #define SOM_BUN_BOOMS 6u
@@ -49,26 +50,31 @@ typedef struct {                    /* explosion or smoke puff, world px */
 
 static inline unsigned som_bun_u16(const uint8_t *p){return (unsigned)(p[0]|p[1]<<8);}
 
-/* One map tile the hero can surely stand on (layer2: second tile layer). */
-static inline int som_bun_tile_open(const uint8_t *ram,int x,int y,int layer2){
+/* One map tile the hero can surely stand on. `place` is the hero's +0x0B
+ * byte: bit 7 = second tile layer, bits 0-1 = floor height. */
+static inline int som_bun_tile_open(const uint8_t *ram,int x,int y,unsigned place){
     if(x<0||y<0)return 0;
+    const int layer2=(place&0x80u)!=0;
+    const unsigned floor=place&3u;
     const unsigned index=(((unsigned)y>>4)&0x7Fu)*128u+(((unsigned)x>>4)&0x7Fu);
     const unsigned id=ram[(layer2?0x14000u:0x10000u)+index];
     const uint8_t *a=ram+(layer2?0x1BC00u:0x1B800u)+id*4u;
     const unsigned terrain=a[0]&7u,ground=a[2];
     if(a[0]&8u)return 0;                         /* layer switch */
-    if(terrain>=1u&&terrain<=3u)return 0;        /* wall or raised floor */
+    if(terrain==3u)return 0;                     /* wall */
+    if((terrain==1u||terrain==2u)&&(floor==1u||floor==2u)&&terrain!=floor)
+        return 0;                                /* another floor height */
     if((ground&0xF0u)==0x10u&&(ground&7u)>=4u)return 0;   /* half tile */
     if((ground>=0x30u&&ground<=0x3Fu&&ground!=0x31u&&ground!=0x32u)||
        (ground>=0xD0u&&ground<=0xD2u))return 0;  /* moving / special ground */
     return 1;
 }
 /* The hero's 13x9 box at (x, y) is on open tiles inside the map. */
-static inline int som_bun_spot_open(const uint8_t *ram,int x,int y,int layer2){
+static inline int som_bun_spot_open(const uint8_t *ram,int x,int y,unsigned place){
     const int w=(int)som_bun_u16(ram+0xC0),h=(int)som_bun_u16(ram+0xC2);
     if(x<8||y<8||x>w-8||y>h-8)return 0;
-    return som_bun_tile_open(ram,x-6,y-4,layer2)&&som_bun_tile_open(ram,x+6,y-4,layer2)&&
-           som_bun_tile_open(ram,x-6,y+4,layer2)&&som_bun_tile_open(ram,x+6,y+4,layer2);
+    return som_bun_tile_open(ram,x-6,y-4,place)&&som_bun_tile_open(ram,x+6,y-4,place)&&
+           som_bun_tile_open(ram,x-6,y+4,place)&&som_bun_tile_open(ram,x+6,y+4,place);
 }
 static inline unsigned som_bun_alive(const SomBunshin *b){
     unsigned n=0;
@@ -79,14 +85,14 @@ static inline void som_bun_clear(SomBunshin *b){memset(b,0,sizeof(*b));}
 /* Two clones either side of the hero, across his facing (a hero facing
  * right gets them above and below). Returns how many found open ground. */
 static inline unsigned som_bun_spawn(SomBunshin *b,const uint8_t *ram,int hx,int hy,
-                                     unsigned facing,int layer2,unsigned long frame){
+                                     unsigned facing,unsigned place,unsigned long frame){
     som_bun_clear(b);
     const int across=(facing&0x7Fu)==0x02u;     /* facing left/right */
     for(unsigned i=0;i<SOM_BUN_COUNT;i++){
         const int sign=i?1:-1;
         for(int spacing=SOM_BUN_SPACING;spacing>=16;spacing-=8){
             const int x=across?hx:hx+sign*spacing,y=across?hy+sign*spacing:hy;
-            if(som_bun_spot_open(ram,x,y,layer2)){
+            if(som_bun_spot_open(ram,x,y,place)){
                 b->x[i]=x;b->y[i]=y;b->alive[i]=1;break;
             }
         }
@@ -97,14 +103,14 @@ static inline unsigned som_bun_spawn(SomBunshin *b,const uint8_t *ram,int hx,int
 }
 /* Copy the hero's step onto every clone, per axis, stopped by walls. A jump
  * of more than 16 px (a swap, a warp) is not copied. */
-static inline void som_bun_follow(SomBunshin *b,const uint8_t *ram,int hx,int hy,int layer2){
+static inline void som_bun_follow(SomBunshin *b,const uint8_t *ram,int hx,int hy,unsigned place){
     const int dx=hx-b->hero_x,dy=hy-b->hero_y;
     b->hero_x=hx;b->hero_y=hy;
     if((!dx&&!dy)||abs(dx)>16||abs(dy)>16)return;
     for(unsigned i=0;i<SOM_BUN_COUNT;i++){
         if(!b->alive[i])continue;
-        if(dx&&som_bun_spot_open(ram,b->x[i]+dx,b->y[i],layer2))b->x[i]+=dx;
-        if(dy&&som_bun_spot_open(ram,b->x[i],b->y[i]+dy,layer2))b->y[i]+=dy;
+        if(dx&&som_bun_spot_open(ram,b->x[i]+dx,b->y[i],place))b->x[i]+=dx;
+        if(dy&&som_bun_spot_open(ram,b->x[i],b->y[i]+dy,place))b->y[i]+=dy;
     }
 }
 static inline int som_bun_near(int ax,int ay,int bx,int by,int rx,int ry){
@@ -138,7 +144,8 @@ static inline unsigned som_bun_blast(uint8_t *ram,int x,int y,unsigned damage,in
     }
     return hit;
 }
-/* The clone to swap into: the one farthest from (fx, fy) when fleeing
+/* The clone to swap into (one at least SOM_BUN_SWAP_MIN px from the hero):
+ * the one farthest from (fx, fy) when fleeing
  * (flee = 1), else the one lying most in direction (dir_x, dir_y) from the
  * hero, else the first alive. -1 with none. */
 static inline int som_bun_pick(const SomBunshin *b,int hx,int hy,int flee,int fx,int fy,
@@ -146,6 +153,8 @@ static inline int som_bun_pick(const SomBunshin *b,int hx,int hy,int flee,int fx
     int best=-1;long best_score=0;
     for(unsigned i=0;i<SOM_BUN_COUNT;i++){
         if(!b->alive[i])continue;
+        if(som_bun_near(b->x[i],b->y[i],hx,hy,SOM_BUN_SWAP_MIN-1,SOM_BUN_SWAP_MIN-1))
+            continue;                        /* standing on him: no swap */
         long score;
         if(flee)score=labs((long)b->x[i]-fx)+labs((long)b->y[i]-fy);
         else if(dir_x||dir_y)score=(long)(b->x[i]-hx)*dir_x+(long)(b->y[i]-hy)*dir_y;

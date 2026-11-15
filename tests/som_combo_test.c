@@ -55,7 +55,10 @@ int main(void){
     ram[0x10000+(100/16)*128+(60/16)]=4;
     ram[0x10000+(100/16)*128+(40/16)]=5;
     assert(!som_bun_tile_open(ram,60,100,0)&&!som_bun_tile_open(ram,40,100,0));
-    assert(som_bun_tile_open(ram,60,100,1));               /* layer 2 is other data */
+    assert(som_bun_tile_open(ram,60,100,0x80));            /* layer 2 is other data */
+    ram[0x1B800+4*6]=0x01;ram[0x10000+(100/16)*128+(80/16)]=6;    /* floor-1 tile */
+    assert(som_bun_tile_open(ram,80,100,0)&&som_bun_tile_open(ram,80,100,1));
+    assert(!som_bun_tile_open(ram,80,100,2));              /* hero on floor 2 */
     memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);
 
     SomBunshin b;
@@ -85,6 +88,8 @@ int main(void){
     assert(som_bun_pick(&b,200,200,0,0,0,1,0)==1);         /* aim right */
     assert(som_bun_pick(&b,200,200,0,0,0,-1,0)==0);
     b.alive[0]=0;assert(som_bun_pick(&b,200,200,0,0,0,-1,0)==1);
+    b.x[1]=205;assert(som_bun_pick(&b,200,200,0,0,0,1,0)==-1);   /* on top of him */
+    b.x[1]=300;
     b.alive[1]=0;assert(som_bun_pick(&b,200,200,0,0,0,0,0)==-1);
 
     SomBoom booms[SOM_BUN_BOOMS];memset(booms,0,sizeof(booms));

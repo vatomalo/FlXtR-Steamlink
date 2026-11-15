@@ -330,3 +330,15 @@ Tests: `make test-som-combo test-som-ai-proxy`.
   archer 3 px (~54 px), toward the held D-pad direction or straight back from the facing,
   per axis onto open ground only (same wall test as the clones); a wall ends the travel.
   Untouchable (status 0x0400) while the pose plays. Not yet checked live.
+
+## Auto save state on exit (2026-11-15)
+
+Every `.state.auto` on the Steam Link (all SNES games) was exactly 4096 bytes and never
+loaded. RetroArch 1.7.6 writes savestates as a task, 4096 bytes per task tick
+(`tasks/task_save.c`, `SAVE_STATE_CHUNK`), and quits right after queueing the exit
+auto-save, so only the first chunk lands. The cores serialize fine (531668 bytes,
+round trip verified headless on the Steam Link). Fix for games run through the proxy: in
+`retro_unload_game` the proxy serializes the whole state, writes
+`<rom>.state.auto.flxtr-full`, and a detached helper renames it over `<rom>.state.auto`
+once RetroArch has exited (at most 30 s wait). `FLXTR_SOM_AUTO_STATE=0` disables it.
+Other games/cores still get the truncated file (needs a RetroArch-side fix).

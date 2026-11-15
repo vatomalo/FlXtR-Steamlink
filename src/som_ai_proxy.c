@@ -30,6 +30,9 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 /* Our own build of the same pinned snes9x2005_plus (scripts/build-cores.sh
  * with patches/snes9x2005-flxtr-music-voices.patch) when installed: it adds
@@ -277,6 +280,7 @@ static int recording;
 static uint8_t *overlay_frame;
 static size_t overlay_frame_size;
 static void load_backend(void); /* RetroArch may query core info before init. */
+static void som_auto_state_path_set(const char *rom);
 
 #define FORWARD(ret, name, args, callargs) \
     static ret (*backend_##name) args; \
@@ -2421,6 +2425,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     const char *direct=getenv("FLXTR_SOM_AI_DIRECT");
     direct_transport=direct&&direct[0]=='1'&&direct[1]=='\0';
     const char *path=game?game->path:NULL;
+    som_auto_state_path_set(path);
     on_turbo=path&&strstr(path,"Secret of Mana, Turbo.smc")!=NULL;
     free(patched_rom);patched_rom=NULL;
     struct retro_game_info patched_game;
@@ -2480,7 +2485,61 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     }else fprintf(stderr,"[som-ai] disabled (Turbo filename missing or game failed to load)\n");
     return game_loaded;
 }
+/* Full auto-state on exit. RetroArch 1.7.6 writes savestates as a task,
+ * 4096 bytes per task tick (tasks/task_save.c SAVE_STATE_CHUNK), and quits
+ * right after queueing the exit auto-save: every .state.auto on the Steam
+ * Link was its first 4096 bytes and never loaded. The proxy serializes the
+ * whole state when the game is unloaded (no frame runs in between, so it
+ * is the same moment), writes it beside the auto-state and a detached
+ * helper renames it into place once RetroArch has exited, after any
+ * partial write of its own. FLXTR_SOM_AUTO_STATE=0 turns this off. */
+static char som_auto_state_path[1024];
+static void som_auto_state_path_set(const char *rom){
+    som_auto_state_path[0]=0;
+    const char *off=getenv("FLXTR_SOM_AUTO_STATE");
+    if(!rom||!*rom||(off&&!strcmp(off,"0")))return;
+    const char *slash=strrchr(rom,'/'),*dot=strrchr(rom,'.');
+    size_t stem=dot&&(!slash||dot>slash)?(size_t)(dot-rom):strlen(rom);
+    if(stem+12u>=sizeof(som_auto_state_path))return;
+    memcpy(som_auto_state_path,rom,stem);
+    memcpy(som_auto_state_path+stem,".state.auto",12u);
+}
+static int som_save_auto_state(void){
+    if(!game_loaded||!som_auto_state_path[0]||!backend_retro_serialize_size||
+       !backend_retro_serialize)return 0;
+    const size_t size=backend_retro_serialize_size();
+    void *data=size?malloc(size):NULL;
+    if(!data)return 0;
+    char temp[sizeof(som_auto_state_path)+16];
+    snprintf(temp,sizeof(temp),"%s.flxtr-full",som_auto_state_path);
+    int ok=backend_retro_serialize(data,size);
+    FILE *out=ok?fopen(temp,"wb"):NULL;
+    ok=out&&fwrite(data,1,size,out)==size;
+    if(out){ok=fflush(out)==0&&ok;if(ok)fsync(fileno(out));ok=fclose(out)==0&&ok;}
+    free(data);
+    if(!ok){
+        unlink(temp);
+        fprintf(stderr,"[som-ai] AUTO-STATE not written: %s\n",temp);
+        return 0;
+    }
+    const pid_t parent=getpid();
+    const pid_t child=fork();
+    if(child==0){
+        if(fork()!=0)_exit(0);              /* the grandchild is reparented */
+        setsid();
+        const struct timespec tenth={0,100000000L};
+        for(unsigned i=0;i<300u&&kill(parent,0)==0;i++)nanosleep(&tenth,NULL);   /* <= 30 s */
+        rename(temp,som_auto_state_path);
+        _exit(0);
+    }
+    if(child>0)waitpid(child,NULL,0);
+    else rename(temp,som_auto_state_path);  /* no fork: install now */
+    fprintf(stderr,"[som-ai] AUTO-STATE %lu bytes -> %s (after RetroArch exits)\n",
+            (unsigned long)size,som_auto_state_path);
+    return 1;
+}
 RETRO_API void retro_unload_game(void){
+    som_save_auto_state();
     som_net_pad_close(&net_pad);net_pad_was_active=0;
     armed=0;autonomous_mode=0;game_loaded=0;
     ring_ai_enabled=0;ring_ai_pending=0;

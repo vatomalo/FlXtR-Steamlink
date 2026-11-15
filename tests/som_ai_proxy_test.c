@@ -149,6 +149,13 @@ int main(void){
     assert(som_class_supply(mocked_wram,0)==0); /* no changes outside field */
     assert(mocked_wram[0xCC56]==0xFF);
 
+    /* The exit auto-state goes beside the ROM, as RetroArch names it. */
+    som_auto_state_path_set("/roms/Snes/Secret of Mana, Turbo.smc");
+    assert(!strcmp(som_auto_state_path,"/roms/Snes/Secret of Mana, Turbo.state.auto"));
+    som_auto_state_path_set("/roms/v1.2/game");
+    assert(!strcmp(som_auto_state_path,"/roms/v1.2/game.state.auto"));
+    setenv("FLXTR_SOM_AUTO_STATE","0",1);som_auto_state_path_set("/a/b.smc");
+    assert(!som_auto_state_path[0]);unsetenv("FLXTR_SOM_AUTO_STATE");
     /* Combo ladder: swings with observed HP loss climb the level; taps
      * without damage do not count, and a whiff drops the chain. */
     backend_retro_get_memory_data=mocked_memory_data;

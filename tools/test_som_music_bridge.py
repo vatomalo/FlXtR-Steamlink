@@ -77,6 +77,95 @@ class SomMusicTests(unittest.TestCase):
             self.assertEqual(bridge.tail(log, Bridge(), True, None, 30, lambda: next(ticks)),
                              "not-som")
 
+    def make_live_bridge(self, folder, player_body, search=None):
+        """A bridge with a fake yt-dlp module and a real fake player process."""
+        directory = Path(folder)
+        genre = directory / "genre"
+        genre.write_text("0\n")
+        player = directory / "player.sh"
+        player.write_text("#!/bin/sh\n" + player_body + "\n")
+        player.chmod(0o755)
+        live = MusicBridge(self.catalog, genre, directory / "cache", str(player))
+
+        class FakeMusic:
+            searches = []
+
+            def search(self, query):
+                FakeMusic.searches.append(query)
+                if search:
+                    return search(query)
+                title = "Secret of Mana %s Lofi Cover" % query.split("Mana ", 1)[1]
+                return [("video", "abcdefghij%d" % len(FakeMusic.searches), title, "Composer")]
+
+            def resolve(self, kind, ident):
+                return None
+        live.music = FakeMusic()
+        return live, genre, FakeMusic
+
+    def test_player_lifecycle(self):
+        with tempfile.TemporaryDirectory() as folder:
+            live, genre, fake = self.make_live_bridge(folder, "exec sleep 30")
+            try:
+                live.line("[som-ai] SONG 0x0E x (map 1)")
+                first = live.child
+                self.assertIsNotNone(first)
+                live.line("[som-ai] SONG 0x0E x (map 2)")         # same song: same player
+                live.line("[som-ai] SONG 0x2D x (map 2)")         # jingle: keeps playing
+                self.assertIs(live.child, first)
+                self.assertEqual(len(fake.searches), 1)
+                live.line("[som-ai] SONG 0x10 x (map 3)")         # new track replaces it
+                self.assertIsNotNone(first.poll())
+                second = live.child
+                self.assertIsNot(second, first)
+                genre.write_text("8\n")                            # Off
+                live.poll_genre()
+                self.assertIsNotNone(second.poll())
+                self.assertIsNone(live.child)
+                genre.write_text("0\n")
+                live.poll_genre()
+                live.line("[som-ai] SONG 0x0E x (map 1)")         # cached: no new search
+                self.assertEqual(len(fake.searches), 2)
+            finally:
+                child = live.child
+                live.stop()
+                self.assertTrue(child is None or child.poll() is not None)   # no zombie
+
+    def test_offline_search_does_not_stop_the_bridge(self):
+        def offline(_query):
+            raise Exception("DownloadError: unable to download webpage")
+        with tempfile.TemporaryDirectory() as folder:
+            live, _, _ = self.make_live_bridge(folder, "exec sleep 30", offline)
+            live.line("[som-ai] SONG 0x0E x (map 1)")
+            self.assertIsNone(live.child)
+            live.line("[som-ai] SONG 0x10 x (map 1)")             # still running
+            self.assertIsNone(live.child)
+
+    def test_audio_device_refused_gives_up_after_two_quick_failures(self):
+        with tempfile.TemporaryDirectory() as folder:
+            live, _, fake = self.make_live_bridge(folder, "exit 1")
+            live.line("[som-ai] SONG 0x0E x (map 1)")
+            live.child.wait()
+            live.poll_genre()                                     # 1st quick failure: retry
+            self.assertFalse(live.gave_up)
+            live.child.wait()
+            live.poll_genre()                                     # 2nd: give up
+            self.assertTrue(live.gave_up)
+            self.assertIsNone(live.child)
+            live.line("[som-ai] SONG 0x10 x (map 2)")
+            self.assertIsNone(live.child)
+            self.assertEqual(len(fake.searches), 1)
+
+    def test_a_finished_track_restarts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            live, _, _ = self.make_live_bridge(folder, "exit 0")
+            live.line("[som-ai] SONG 0x0E x (map 1)")
+            live.child.wait()
+            live.started -= 60                                    # it played a while
+            live.poll_genre()
+            self.assertIsNotNone(live.child)
+            self.assertEqual(live.quick_failures, 0)
+            live.stop()
+
     def test_query(self):
         self.assertEqual(search_query("Into the Thick of It", 0),
                          "Secret of Mana Into the Thick of It lofi chill remix")

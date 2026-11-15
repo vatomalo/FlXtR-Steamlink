@@ -29,6 +29,12 @@ CUES = {0x17, 0x18, 0x19, 0x1A, 0x1E, 0x21, 0x22, 0x23,
         0x28, 0x2D, 0x2E, 0x2F, 0x30, 0x35}
 ALIASES = {i: 0x38 for i in range(0x3B, 0x40)}
 VIDEO = re.compile(r"[A-Za-z0-9_-]{11}\Z")
+# A player that exits with an error this soon after starting could not open
+# the audio output (on the Steam Link: MV_PE_StreamCreate() failed while
+# RetroArch holds the HDMI stream). After this many in a row the bridge
+# stops trying for the session instead of relaunching on every song.
+QUICK_FAILURE_SECONDS = 10.0
+QUICK_FAILURES_TO_GIVE_UP = 2
 LOG = logging.getLogger("som-music")
 
 
@@ -88,6 +94,7 @@ class MusicBridge:
         self.names, self.genre_file, self.cache = names, genre_file, cache
         self.player, self.dry_run = player, dry_run
         self.current, self.child, self.music = None, None, None
+        self.started, self.quick_failures, self.gave_up = 0.0, 0, False
         try:
             stored = json.loads((cache / "selection.json").read_text())
             self.selections = stored if isinstance(stored, dict) else {}
@@ -126,6 +133,8 @@ class MusicBridge:
             return
         genre = read_genre(self.genre_file)
         selected = index, genre
+        if self.gave_up:
+            return
         if self.current == selected and (self.dry_run or (self.child and self.child.poll() is None)):
             return
         self.current = selected
@@ -160,9 +169,31 @@ class MusicBridge:
             music.resolve("video", ident)  # Refresh temporary signed audio URL.
             self.child = subprocess.Popen([self.player, str(self.cache / "stream.txt")],
                                           start_new_session=True)
+            self.started = time.monotonic()
             LOG.info("PLAY 0x%02X %s [%s] YouTube ID %s", index, title, GENRES[genre], ident)
-        except (OSError, ValueError, RuntimeError, KeyError) as exc:
+        except Exception as exc:  # yt-dlp's DownloadError (offline) is a plain Exception
             LOG.warning("music lookup/playback failed for %s: %s", title, type(exc).__name__)
+
+    def check_player(self, now=None):
+        """Notice a player that died: an error right after start counts as a
+        quick failure; enough of them in a row end external music for this
+        session. Returns the player's exit code once, else None."""
+        child = self.child
+        if child is None or child.poll() is None:
+            return None
+        self.child = None
+        now = time.monotonic() if now is None else now
+        if child.returncode != 0 and now - self.started < QUICK_FAILURE_SECONDS:
+            self.quick_failures += 1
+            LOG.warning("player exited with %d after %.1f s (%d quick failure(s))",
+                        child.returncode, now - self.started, self.quick_failures)
+            if self.quick_failures >= QUICK_FAILURES_TO_GIVE_UP and not self.gave_up:
+                self.gave_up = True
+                LOG.warning("audio output unavailable: external music off for this session")
+        else:
+            self.quick_failures = 0
+            LOG.info("player finished (exit %d)", child.returncode)
+        return child.returncode
 
     def line(self, text):
         index = parse_song(text)
@@ -170,6 +201,10 @@ class MusicBridge:
             self.apply(index)
 
     def poll_genre(self):
+        if self.check_player() is not None and not self.gave_up and self.current is not None:
+            index, self.current = self.current[0], None
+            self.apply(index)          # retry once (a track that ended, or one quick failure)
+            return
         if self.current is not None and read_genre(self.genre_file) != self.current[1]:
             index = self.current[0]
             self.current = None

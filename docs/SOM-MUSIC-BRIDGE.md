@@ -67,14 +67,31 @@ binary's TSV input grammar:
     install -m 644 data/som_song_names.tsv \
       /home/apps/retroarch/cores/experimental/som_song_names.tsv
 
-## Critical deployment warning
+## Status on hardware (2026-11-15)
 
-The GitHub branch's src/som_ai_proxy.c source, as retrieved for this
-change, did not contain the song logging or retro_flxtr_skip_music_voices
-extension observed in the actual installed 2026-11-15 proxy binary.
-Do not replace that live proxy with a build of this branch until the
-installed music-specific changes are merged back into the source.
-The new in-game Gambits music row requires building this updated proxy.
+Source parity: the song logging (`[som-ai] SONG`), `retro_flxtr_skip_music_voices` and the
+genre row are in this branch; the installed proxy is a build of it (see
+`docs/SOM-DEVICE-INVENTORY.md`). The old warning about a source tree without them is
+obsolete.
+
+`packaging/greenlink.sh` starts the bridge with every game (it exits for other games and
+with the game). On the Steam Link the chain works up to the player: song event -> title ->
+genre -> yt-dlp search -> stream URL -> `greenlink-audio` started (verified twice, once with
+a stand-in player). **The real player then fails:** `MV_PE_StreamCreate() failed:
+0x80007065` (`som-music.log`): RetroArch already holds the Steam Link's audio stream and the
+Marvell pipeline refuses a second one. FlXtR's per-ROM music avoids this only because its
+player is started before RetroArch. So "soundtrack + native effects together" is
+**not achieved on HDMI**; native effects are unaffected (RetroArch keeps its stream).
+The bridge now notices a player that dies with an error within 10 s; after two in a row it
+stops trying for that session (log: "audio output unavailable") instead of searching and
+relaunching on every song. Offline / yt-dlp errors are logged and the bridge keeps running.
+
+Ways forward (not done): (1) mix the music into RetroArch's own audio: the proxy already
+sits on the core's audio callbacks, so a PCM feed from a decoder (a raw-PCM output mode for
+`greenlink-audio`, which has none today) could be added to the batch; (2) start the
+player before RetroArch with a chosen track and keep it, as `tools/rom_music.py` does
+(no per-area changes); (3) Bluetooth output (`bluealsa`, seen in `rom-music.log`) may not
+share the HDMI limit: untested.
 
 Tests:
 

@@ -21,7 +21,7 @@ music cues so the background track continues uninterrupted.
 - data/som_song_names.tsv: 64-entry hex song-index -> English title catalog.
 - src/som_gambit.h: Music genre row before Exit, using Left/Right/B.
   Options: Lo-Fi, Jazz, City Pop, Orchestral, Piano, Synthwave, Rock,
-  Ambient and Original. The six existing AI priority weights are unchanged.
+  Ambient and Off. The six existing AI priority weights are unchanged.
 - src/som_ai_proxy.c: saves the genre number independently to
   /home/apps/retroarch/cores/experimental/som_music_genre.
 - tools/som_music_bridge.py: reads existing [som-ai] SONG 0xNN log events,

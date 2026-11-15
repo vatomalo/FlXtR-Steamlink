@@ -155,3 +155,14 @@ Stop the service before running a teach or probe tool, and start it again after.
    HP/MP, gold, inventory, explored fraction) and a small allowlist of goals
    (explore direction, hunt in map N, go to inn/shop, return to Potos);
    the planner executes them. Keep it asynchronous and optional.
+
+## Curiosity: reward new places, penalise lingering (2026-11-15)
+
+`tools/som_curiosity.py`, used by `MemoryPlanner.decide` on every verified field decision.
+New map +50 (once per map id ever), new 8x8-tile area +5 (once per area); staying within
+2 tiles of one spot for 60 decisions with no enemy on screen, no errand, no fight or
+recovery: -20, then the frontier targets within 4 tiles are banned for 200 frontier ticks
+and the heading flips for 40 decisions (east <-> west, north <-> south). Frontier choice
+ranks never-visited areas before revisits. The score, seen maps and areas persist in the
+agent state (`curiosity`). Decision reasons show `curiosity new_map +50 ... (score N)`.
+The live service runs from this checkout, so it uses this after its next restart.

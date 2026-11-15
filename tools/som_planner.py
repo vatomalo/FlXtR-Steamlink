@@ -6,6 +6,7 @@ import itertools
 from collections import deque
 from dataclasses import dataclass, replace
 
+from som_curiosity import Curiosity, LINGER_RADIUS
 from som_build import profile as build_profile
 from som_tactics import CLOSE_SWING_PX
 
@@ -197,6 +198,11 @@ class MemoryPlanner:
         self.route_threats = []
         self.frontier_clock = 0
         self.frontier_rejected = {}
+        # Curiosity (som_curiosity): rewards new maps/areas, penalises
+        # lingering; loaded from agent state on the first field decision.
+        self.curiosity = None
+        self.escape_directive = None
+        self.escape_left = 0
 
     @staticmethod
     def _open_steps(context):
@@ -497,14 +503,16 @@ class MemoryPlanner:
                 direction, (True, distance, 0))
             # A Qwen-selected heading is the first priority. Within that
             # heading, prefer unseen and distant frontier cells.
-            candidates.append((not aligned, visits, -progress, straightness,
+            # Curiosity: areas never stood in come before revisits.
+            seen = bool(self.curiosity and self.curiosity.area_seen(map_id, layer, position))
+            candidates.append((not aligned, seen, visits, -progress, straightness,
                                -distance, -unknown_edges, position))
         if not candidates:
             for position, (first, distance) in routes.items():
                 if (distance and (open_steps is None or first in open_steps) and
                         self.frontier_rejected.get((map_id, layer, position), 0)
                         <= self.frontier_clock):
-                    candidates.append((False, self._visits(map_id, layer, *position),
+                    candidates.append((False, False, self._visits(map_id, layer, *position),
                                        -distance, 0, -distance, 0, position))
         return min(candidates)[-1] if candidates else None
 
@@ -1288,8 +1296,49 @@ class MemoryPlanner:
             # When that swing was decided (sent right after), else now.
             self.last_swing = self.swing_decided_at or self.clock()
         self.swing_decided_at = None
+        if self.escape_left and errand is None and directive.startswith("explore_"):
+            self.escape_left -= 1
+            directive = self.escape_directive
         decision = self._decide(observation, previous, directive, errand)
+        decision = self._observe_curiosity(observation, decision, directive, errand)
         return self._check_stall(observation, decision)
+
+    BUSY_INTENTIONS = ("engage_enemy", "survive", "recover_at_inn", "return_to_inn",
+                       "at_inn", "errand", "arrive")
+
+    def _observe_curiosity(self, observation, decision, directive, errand):
+        """Reward new places, penalise lingering (som_curiosity)."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        if (not isinstance(context, dict) or not context.get("runtime_verified") or
+                context.get("game_mode") != "field" or not context.get("actor_tile")):
+            return decision
+        if self.curiosity is None:
+            self.curiosity = Curiosity(self._get_state("curiosity"))
+        map_id, layer = context.get("map_id"), (context.get("actor") or {}).get("layer")
+        tile = tuple(context["actor_tile"])
+        enemies = any(e.get("active") for e in observation.get("enemy_slots", []) or [])
+        busy = (errand is not None or enemies or self.provoked > 0 or
+                decision.intention in self.BUSY_INTENTIONS)
+        events = self.curiosity.observe(map_id, layer, tile, busy)
+        if not events:
+            return decision
+        notes = []
+        for kind, points, note in events:
+            notes.append("%s %+d: %s" % (kind, points, note))
+            if kind == "linger":
+                # Ban frontier targets around the spot and head elsewhere.
+                radius = LINGER_RADIUS + 2
+                for dx in range(-radius, radius + 1):
+                    for dy in range(-radius, radius + 1):
+                        cell = (tile[0] + dx, tile[1] + dy)
+                        self.frontier_rejected[(map_id, layer, cell)] = (
+                            self.frontier_clock + FRONTIER_COOLDOWN)
+                self._set_intention(None)
+                self.escape_directive = Curiosity.escape_heading(directive)
+                self.escape_left = 40
+        self._set_state("curiosity", self.curiosity.to_state())
+        return replace(decision, reason="%s; curiosity %s (score %d)" % (
+            decision.reason, "; ".join(notes), self.curiosity.score))
 
     def _cuttable(self):
         if self.history is not None:

@@ -149,8 +149,8 @@ int main(void){
     assert(som_class_supply(mocked_wram,0)==0); /* no changes outside field */
     assert(mocked_wram[0xCC56]==0xFF);
 
-    /* Four distinct sword swings with observed HP loss queue the finisher.
-     * Button presses without damage must not count. */
+    /* Combo ladder: swings with observed HP loss climb the level; taps
+     * without damage do not count, and a whiff drops the chain. */
     backend_retro_get_memory_data=mocked_memory_data;
     backend_retro_get_memory_size=mocked_memory_size;
     memset(mocked_wram,0,sizeof(mocked_wram));
@@ -159,24 +159,22 @@ int main(void){
     mocked_wram[0xE19C]=1;
     mocked_wram[0xE600]=1;mocked_wram[0xE780]=7;
     mocked_wram[0xE782]=100;mocked_wram[0xE783]=0;
-    som_combo_clear();frame_number=500;
+    som_combo_clear();frame_number=500;combo_input_held=0;
     som_combo_frame();
-    for(unsigned h=0;h<4;h++){
-        frame_number+=20;som_combo_swing();
+    for(unsigned h=0;h<5;h++){
+        frame_number+=20;som_combo_swing(h==4?1u:0u);   /* the 5th hit mixes in Y */
         mocked_wram[0xE782]--;
         som_combo_frame();
-        assert(combo_count==(h==3?0:h+1));
+        assert(combo.hits==h+1);
     }
-    assert(combo_queued);
-    combo_input_held=0;armed=0;som_combo_frame();
-    assert(combo_charging);
-    mocked_wram[0xE19B]=1;frame_number++;som_combo_frame();
-    assert(!combo_charging&&!combo_queued);
-    som_combo_clear();mocked_wram[0xE19B]=0;
-    frame_number+=20;som_combo_swing();som_combo_frame();
-    assert(!combo_count);
-    frame_number+=SOM_COMBO_HIT_WINDOW+1;som_combo_frame();
-    assert(!combo_pending&&!combo_count);
+    assert(combo.mixes==1&&som_combo_level(&combo)==3);  /* 5 hits = 2, +1 mix */
+    {   char text[24];som_combo_text(&combo,text);assert(!strcmp(text,"5 HIT MIX LV3"));}
+    frame_number+=20;som_combo_swing(0);som_combo_frame();   /* no HP lost yet */
+    assert(combo.hits==5&&combo.pending);
+    combo_input_held=1;frame_number+=SOM_COMBO_HIT_WINDOW+1;som_combo_frame();
+    assert(combo.hits==5);                                   /* holding: kept */
+    combo_input_held=0;som_combo_frame();
+    assert(!combo.pending&&!combo.hits);                     /* whiff: dropped */
     memset(mocked_wram,0,sizeof(mocked_wram));
     physical_state=mocked_input;
     /* snes9x2005 queries the whole pad with one bitmask when supported. */
@@ -997,6 +995,19 @@ int main(void){
         hero[0x19C]=2;
         assert(som_special_start(0,6)&&special_stage==2);
         special_stage=0;special_suppress=0;hero[0x19C]=1;
+        /* Combo finisher: a level-3 chain, then hold Y: the secondary
+         * weapon charges to level 3, or the level it learned. */
+        mocked_buttons=0;som_input_poll();
+        som_combo_clear();combo.hits=5;combo.mixes=1;combo.hit_frame=frame_number;hero[0x19C]=2;
+        hero[0x1ED]=0;hero[0x19B]=0;hero[0x01C]=0;
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+        assert(!special_stage);                               /* not held long enough */
+        frame_number+=SOM_COMBO_HOLD_FRAMES;som_input_poll();
+        assert(special_weapon==som_disc_weapons[disciplines.selected][1]&&
+               special_stage==(hero[0x19C]<3u?hero[0x19C]:3u));
+        assert(!combo.hits&&special_suppress);                /* chain spent */
+        mocked_buttons=0;som_input_poll();
+        special_stage=0;special_suppress=0;hero[0x19C]=1;
         /* A: back-roll pose, untouchable until it ends; A hidden from the
          * game for dodge classes. Magic has no dodge: native A (dash). */
         disciplines.selected=3;
@@ -1026,31 +1037,67 @@ int main(void){
         /* Ninjutsu: sword -> Shunshin leap; chakram -> Kage Bunshin. */
         disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        assert(evade_active&&hero[0x011]==SOM_SHUNSHIN_POSE&&!bunshin_until);
+        assert(evade_active&&hero[0x011]==SOM_SHUNSHIN_POSE&&!som_bun_alive(&bunshin));
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);som_input_poll();
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==0);
         mocked_buttons=0;som_input_poll();
         hero[0x01C]=0;hero[0x011]=0x03;som_evade_tick();      /* walking took over */
         assert(!evade_active&&hero[0x042]==0);                /* busy flag cleared */
-        memset(ram+0x0800,0,544);
-        for(unsigned i=0;i<128u;i++)ram[0x0800+4*i+1]=0xF0;    /* all off screen */
-        ram[0x0800]=120;ram[0x0801]=100;ram[0x0802]=0xC0;ram[0x0803]=0x03; /* boy 0x1C0 pal 1 */
-        ram[0x0804]=10;ram[0x0805]=50;ram[0x0806]=0x40;ram[0x0807]=0x05;   /* not the boy */
-        hero[0x1E4]=6;hero[0x191]=0;
+        /* Kage Bunshin (chakram): two clones across the facing, on open
+         * ground; a monster touching one makes it explode; A swaps. */
+        memset(ram+0x10000,0,0x10000);                       /* all tile 0: open */
+        ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */
+        hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;  /* facing right */
+        hero[0x1E4]=6;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
+        for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        assert(evade_active&&hero[0x011]==SOM_EVADE_POSE&&bunshin_until);
-        frame_number|=2u;som_bunshin_frame(ram);
-        assert(ram[0x0809]==0xF0);                             /* off frames: hidden */
-        frame_number=(frame_number|3u)+1u;som_bunshin_frame(ram);
-        assert(ram[0x0808]==96&&ram[0x0809]==100&&ram[0x080A]==0xC0&&ram[0x080B]==0x03);
-        assert(ram[0x080C]==144&&ram[0x080D]==100);           /* right clone */
-        assert(ram[0x0804]==10&&ram[0x0810+1]==0xF0);          /* others untouched */
-        ram[0x0800]=10;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
-        frame_number+=4;som_bunshin_frame(ram);                /* left of x 0: wraps */
-        assert(ram[0x0808]==(uint8_t)(10-24)&&(ram[0x0A00]&(1u<<4)));   /* x bit 8 */
-        frame_number+=SOM_CLONE_FRAMES+4;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
-        som_bunshin_frame(ram);assert(!bunshin_until&&ram[0x0809]==0xF0);  /* gone */
+        assert(!evade_active&&som_bun_alive(&bunshin)==2);
+        assert(bunshin.x[0]==200&&bunshin.y[0]==176&&bunshin.x[1]==200&&bunshin.y[1]==224);
+        hero[2]=202;som_bunshin_frame(ram);                  /* clones copy the step */
+        assert(bunshin.x[0]==202&&bunshin.x[1]==202);
+        uint8_t *m0=ram+0xE600;
+        m0[0]=1;m0[0x180]=7;m0[0x190]=m0[0x191]=0;m0[0x1F1]=0;
+        m0[2]=210;m0[3]=0;m0[4]=230;m0[5]=0;                  /* touches clone 1 */
+        som_bunshin_frame(ram);
+        assert(!bunshin.alive[1]&&bunshin.alive[0]&&m0[0x1F1]==som_bunshin_damage());
+        m0[0]=0;
+        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_UP));som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(som_bun_u16(hero+4)==176&&bunshin.y[0]==200);   /* swapped places */
+        m0[0]=1;m0[0x1F1]=0;m0[2]=202;m0[3]=0;m0[4]=186;m0[5]=0;   /* at the hero */
+        frame_number+=SOM_BUN_SWAP_COOLDOWN+1;bunshin.until=frame_number+100;
+        som_bunshin_frame(ram);
+        assert(som_bun_u16(hero+4)==200&&!som_bun_alive(&bunshin)&&m0[0x1F1]); /* substitution */
+        m0[0]=0;
+        /* No clone ends up in a wall. */
+        ram[0x1B800+4*9]=0x03;                                 /* tile 9 solid */
+        for(unsigned c=0;c<128;c++)ram[0x10000+((176u>>4)*128u)+c]=9;  /* wall above */
+        hero[2]=200;hero[4]=200;
+        assert(som_bun_spawn(&bunshin,ram,200,200,0x02,0,frame_number)==1);
+        assert(!bunshin.alive[0]&&bunshin.alive[1]);
+        som_bun_clear(&bunshin);memset(ram+0x10000,0,0x10000);ram[0x1B800+4*9]=0;
         hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x1E4]=1;hero[0x191]=0;
+        /* Swordsman R1+A: bash = native run (A), release, native swing (B). */
+        disciplines.selected=0;hero[0x1ED]=0;hero[0x060]=0;hero[0x00A]=0;
+        hero[0x01A]=hero[0x01B]=0;hero[0x190]=hero[0x191]=0;
+        const uint16_t r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        mocked_buttons=(uint16_t)(r1|r1a);som_input_poll();
+        assert(bash_stage==SOM_BASH_LUNGE&&!evade_active);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
+        hero[0x006]=3;
+        for(unsigned f=0;f<SOM_BASH_LUNGE_FRAMES;f++){frame_number++;som_bash_tick();}
+        assert(bash_stage==SOM_BASH_RELEASE);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+        hero[0x1ED]=75;frame_number++;som_bash_tick();         /* the run's gauge */
+        assert(bash_stage==SOM_BASH_STRIKE&&hero[0x1ED]==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        frame_number+=SOM_BASH_STRIKE_FRAMES;som_bash_tick();
+        assert(bash_stage==SOM_BASH_NONE);
+        mocked_buttons=0;som_input_poll();
+        hero[0x1ED]=10;mocked_buttons=(uint16_t)(r1|r1a);som_input_poll();
+        assert(bash_stage==SOM_BASH_NONE);                     /* out of breath */
+        mocked_buttons=0;som_input_poll();hero[0x1ED]=0;hero[0x006]=0;
         /* AI commands: class choice and casts within the class. */
         assert(som_handle_command("class_3")&&disciplines.selected==3);
         assert(!som_handle_command("class_12")&&!som_handle_command("class_x"));

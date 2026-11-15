@@ -294,3 +294,32 @@ stack 13 %, state_guard 7 %). Changes:
   Each switch shows a class line ("Shadows, hide me!") and the reason.
 - Exact music skip: the core reads the SPC700 driver's effect-owned voice mask `$AE` and
   synthesises only those voices (5-7), with a 1/6 s release tail; x86 1.48 s -> 1.15 s.
+
+## Combo ladder, swordsman bash, real shadow clones (2026-11-15)
+
+- **Combo ladder** (`src/som_combo.h`): only confirmed hits count (a monster's HP drops
+  within 75 frames of the swing). 3 hits = level 1, then +1 level every 2 hits; each
+  weapon switch that lands (B primary <-> Y secondary) adds +1 (at most +2); max 8. A whiff
+  or a 3 s pause drops the chain (not while B/Y is held). A counter ("5 HIT MIX LV3") shows
+  above the hero. **Hold B or Y for 12 frames** with a level ready: that button's weapon
+  charges straight to the level (capped at what it learned, via `som_special_start`) and
+  fires as the game's own power attack. Manual play only. Replaces the old fixed
+  4-hit level-1 finisher.
+- **Swordsman R1+A bash**: the game's own run (A held, 3 px/frame, stops at walls) for up
+  to 14 frames (~42 px) or until a monster is within 22 px, one frame of release, then
+  the game's own sword swing (B) with the run gauge `E1ED` cleared so it hits at full.
+  R1/D-pad/Y/X are hidden from the game meanwhile. Refused while `E1ED` is still loading.
+- **Kage Bunshin** (ninja + chakram, A; `src/som_bunshin.h`, `src/som_bunshin_draw.h`):
+  the old clones were written into the OAM shadow before the frame and the game rebuilt
+  OAM over them, so they never showed. Clones are now positions the proxy keeps (two,
+  across the facing, open ground only, 10 s), copying each hero step per axis and stopped
+  by walls (tile attributes as `tools/som_memory.py`, anything uncertain = wall). They are
+  drawn on the frame copy from the boy's OAM pieces decoded from VRAM with palette
+  7E:0720, so they copy his pose and class colours. A monster touching a clone makes it
+  explode (`10 + Ninjutsu level / 2` damage via `+0x1F1` to every monster within 40x32 px).
+  A monster touching the hero swaps him into the clone farthest from it (Kawarimi) and the
+  spot he left explodes. A with clones out swaps into the clone the D-pad points at
+  (the clone takes his old spot). Swaps write `E002/E004` directly: **not yet checked live**
+  (camera, party followers, layer edges).
+
+Tests: `make test-som-combo test-som-ai-proxy`.

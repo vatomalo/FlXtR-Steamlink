@@ -19,6 +19,9 @@
 #include "som_npc_walk.h"
 #include "som_net_pad.h"
 #include "som_songs.h"
+#include "som_combo.h"
+#include "som_bunshin.h"
+#include "som_bunshin_draw.h"
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -65,11 +68,15 @@ static unsigned auto_step;
 static unsigned long auto_deadline;
 static uint16_t last_physical_buttons;
 static unsigned long last_attack_frame;
-static unsigned combo_count;
+/* Combo ladder (src/som_combo.h): confirmed hits climb the level, holding
+ * B or Y unleashes it. combo_hp/ids/live watch the monsters' HP. */
+static SomCombo combo;
+static SomFamiliar familiar={-1,-1,0,0};
 static uint16_t combo_hp[3];
 static uint8_t combo_ids[3],combo_live[3];
-static int combo_pending,combo_hit,combo_queued,combo_charging,combo_input_held;
-static unsigned long combo_charge_frame;
+static int combo_input_held;
+static unsigned long combo_hold_start;
+static int combo_hold_tried;
 /* R2+B: native level-1 charged primary attack.
  * R2+Y: native level-2 charged secondary attack.
  * These are existing weapon animations, not new ROM routines. */
@@ -80,16 +87,10 @@ static int special_suppress;
 #define SOM_SPECIAL_TIMEOUT 360ul
 static int som_special_start(unsigned which,unsigned stage);
 static void som_special_tick(void);
-#define SOM_COMBO_HIT_WINDOW 75ul
-#define SOM_COMBO_GAP 180ul
-#define SOM_COMBO_CHARGE_TIMEOUT 300ul
-static void som_combo_clear(void){
-    combo_count=combo_pending=combo_hit=combo_queued=combo_charging=0;
-}
-static void som_combo_swing(void){
-    if(combo_queued||combo_charging)return;
-    if(combo_count&&frame_number-last_attack_frame>SOM_COMBO_GAP)combo_count=0;
-    combo_pending=1;combo_hit=0;last_attack_frame=frame_number;
+static void som_combo_clear(void){som_combo_reset(&combo);}
+/* which: 0 = B (primary weapon), 1 = Y (secondary). */
+static void som_combo_swing(unsigned which){
+    som_combo_on_swing(&combo,which,frame_number);last_attack_frame=frame_number;
 }
 
 static const char *trigger_file;
@@ -397,16 +398,27 @@ static int evade_active,evade_set_guard,evade_a_hidden,evade_set_busy;
 static unsigned evade_pose;
 static unsigned long evade_started;
 static int som_evade_start(uint8_t *ram);
-/* Kage Bunshin (cosmetic): extra copies of the boy's body sprites, beside
- * him, written into free entries of the OAM shadow 7E:0800 (512 + 32 bytes,
- * sent by the NMI; som-decomp graphics.md: boy pieces use tiles
- * 0x1C0-0x1C7/0x1D0-0x1D7, palette 1, all 16x16 small). Written before the
- * frame like the palette, so the NMI sends them; the game rebuilds OAM
- * every frame, so nothing stays behind. No objects, no hits. */
-#define SOM_CLONE_FRAMES 360ul
-#define SOM_CLONE_SPACING 24
-static unsigned long bunshin_until;
+/* Kage Bunshin (src/som_bunshin.h): clones the proxy keeps and draws over
+ * the frame (src/som_bunshin_draw.h); touch makes them explode, the hero
+ * can swap into them. */
+static SomBunshin bunshin;
+static int evade_dir_x,evade_dir_y;    /* D-pad aim for a manual swap */
+static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 static void som_bunshin_frame(uint8_t *ram);
+static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y);
+/* R1+A bash (swordsman): the game's own run for up to SOM_BASH_LUNGE_FRAMES
+ * (A held: 3 px per frame, stopped by walls, hero-movement.md 4.1), then one
+ * frame with nothing pressed (A released), then the game's own sword swing
+ * (B) at a full gauge. Only the pad the game sees is changed; R1 (block),
+ * the D-pad, Y and X are hidden while it plays. */
+#define SOM_BASH_LUNGE_FRAMES 14ul      /* ~42 px */
+#define SOM_BASH_STRIKE_FRAMES 3ul
+#define SOM_BASH_REACH 22               /* px: stop the lunge when this close */
+enum {SOM_BASH_NONE,SOM_BASH_LUNGE,SOM_BASH_RELEASE,SOM_BASH_STRIKE};
+static int bash_stage;
+static unsigned long bash_started;
+static int som_bash_start(uint8_t *ram);
+static void som_bash_tick(void);
 static void som_class_supply_frame(void);
 static int class_supply_pending, class_equip_pending;
 static unsigned long class_last_equip_attempt;
@@ -425,46 +437,30 @@ static int som_y_field_play(void){
     const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     return ram&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
 }
-/* Observe HP changes following sword swings, not button-tap counts. */
+/* Observe HP changes following swings, not button-tap counts. */
 static void som_combo_frame(void){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
     const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram)return;
     const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
-    if(!field||ram[0xE1E4]!=1||som_manual_disciplines||disciplines.open){
+    if(!field||som_manual_disciplines||disciplines.open){
         som_combo_clear();return;
     }
-    if(combo_pending&&frame_number-last_attack_frame>SOM_COMBO_HIT_WINDOW){
-        combo_pending=0;combo_count=0; /* a missed swing breaks the chain */
-    }
-    if(combo_count&&frame_number-last_attack_frame>SOM_COMBO_GAP)combo_count=0;
     for(unsigned i=0;i<3;i++){
         const uint8_t *e=ram+0xE600u+0x200u*i;
         const unsigned hp=(unsigned)e[0x182]|((unsigned)e[0x183]<<8);
         const int live=e[0]==1&&e[0x180]<0x80;
-        if(combo_pending&&!combo_hit&&live&&combo_live[i]&&
-           combo_ids[i]==e[0x180]&&hp<combo_hp[i]){
-            combo_pending=0;combo_hit=1;last_attack_frame=frame_number;
-            if(++combo_count>=4){
-                combo_count=0;combo_queued=1;
-                fprintf(stderr,"[som-ai] COMBO four sword hits confirmed, charging finisher next\\n");
-            }
+        if(combo.pending&&live&&combo_live[i]&&(int)i!=familiar.slot&&
+           combo_ids[i]==e[0x180]&&hp<combo_hp[i]&&som_combo_on_hit(&combo,frame_number)){
+            last_attack_frame=frame_number;
+            if(som_combo_level(&combo))
+                fprintf(stderr,"[som-ai] COMBO %u hits, %u mixes: level %u ready\n",
+                        combo.hits,combo.mixes,som_combo_level(&combo));
         }
         combo_hp[i]=(uint16_t)hp;combo_ids[i]=e[0x180];combo_live[i]=(uint8_t)live;
     }
-    if(combo_charging){
-        if(combo_input_held||frame_number-combo_charge_frame>SOM_COMBO_CHARGE_TIMEOUT){
-            som_combo_clear();return;
-        }
-        if(ram[0xE19B]>=1){ /* hero charge stage +0x19B */
-            combo_charging=combo_queued=0;
-            fprintf(stderr,"[som-ai] COMBO level-1 charge released\\n");
-        }
-    }else if(combo_queued&&!combo_input_held&&!armed&&
-             ram[0xE19C]>=1){ /* verified weapon charge level */
-        combo_charging=1;combo_charge_frame=frame_number;
-    }
+    som_combo_tick(&combo,frame_number,combo_input_held);
 }
 /* Network player 2 (src/som_net_pad.h): pad 2 from a Tailscale device. */
 static SomNetPad net_pad={-1,0,0,0,0,0,0};
@@ -502,6 +498,13 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     if((ring_ai_enabled||som_manual_disciplines)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
         actual=0;                    /* the player's buttons drive the gambit menu */
+    /* Bash: the game sees only A (the run), then nothing, then B (swing). */
+    if(bash_stage&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        const uint16_t want=(uint16_t)(bash_stage==SOM_BASH_LUNGE?1u<<RETRO_DEVICE_ID_JOYPAD_A:
+                                       bash_stage==SOM_BASH_STRIKE?1u<<RETRO_DEVICE_ID_JOYPAD_B:0u);
+        if(bitmask)return (int16_t)want;
+        return id<16u&&(want&(1u<<id))?1:0;
+    }
     /* With a discipline, Y attacks with its second weapon: the game sees B
      * (so holding Y charges) and never Y; L2+Y still opens the ring. */
     if((special_stage||special_suppress)&&port==0&&
@@ -511,11 +514,6 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
             return id==RETRO_DEVICE_ID_JOYPAD_B?1:0;
         }
         return 0; /* consume held combo after automatic release */
-    }
-    if(combo_charging&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
-        if(actual){som_combo_clear();return actual;}
-        if(bitmask)return (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
-        if(id==RETRO_DEVICE_ID_JOYPAD_B)return 1;
     }
     if((evade_a_hidden||evade_active)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
@@ -590,13 +588,13 @@ static void som_input_poll(void){
             special_stage=0;special_suppress=0;
         }
         if(special_suppress&&!(current&special_chord))special_suppress=0;
-        combo_input_held=current!=0;
-        if(combo_charging&&current)som_combo_clear(); /* player takes over */
+        combo_input_held=(current&(attack|secondary))!=0;
         if(((current&attack)&&!(last_physical_buttons&attack))||
            ((current&secondary)&&!(last_physical_buttons&secondary)&&!(current&l2))){
-            /* Modifier specials have their own charge, not basic sword hits. */
-            if(!(current&r2)&&!som_manual_disciplines&&!ring_ai_enabled)
-                som_combo_swing();
+            /* Modifier specials have their own charge, not basic hits. */
+            if(!(current&r2)&&!som_manual_disciplines&&!ring_ai_enabled&&!bash_stage)
+                som_combo_swing((current&secondary)&&!(last_physical_buttons&secondary)?1u:0u);
+            combo_hold_start=frame_number;combo_hold_tried=0;
         }
         const uint16_t pressed=(uint16_t)(current&~last_physical_buttons);
         const uint16_t y_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
@@ -660,7 +658,38 @@ static void som_input_poll(void){
         const uint16_t a_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
         evade_a_hidden=wram&&!ring_ai_enabled&&!som_manual_disciplines&&
             disciplines.selected<SOM_DISCIPLINE_COUNT&&som_disc_has_dodge(disciplines.selected);
-        if(evade_a_hidden&&(pressed&a_bit))som_evade_start(wram);
+        if(evade_a_hidden&&(pressed&a_bit)){
+            const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+            if(disciplines.selected==0u&&(current&r1_bit))som_bash_start(wram);
+            else{
+                evade_dir_x=(current&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:
+                            (current&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
+                evade_dir_y=(current&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))?1:
+                            (current&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?-1:0;
+                som_evade_start(wram);
+                evade_dir_x=evade_dir_y=0;
+            }
+        }
+        /* Combo finisher: hold B or Y with a chain level ready. That button's
+         * weapon charges straight to the level (capped at what it learned)
+         * once the gauge is back, then fires as the game's own power attack. */
+        if(wram&&combo_input_held&&!(current&(l2_bit|r2))&&!special_stage&&!special_suppress&&
+           !ring_ai_enabled&&!som_manual_disciplines&&!bash_stage&&!combo_hold_tried&&
+           disciplines.selected<SOM_DISCIPLINE_COUNT&&som_combo_level(&combo)&&
+           frame_number-combo_hold_start>=SOM_COMBO_HOLD_FRAMES&&
+           !wram[0xE1ED]&&!wram[0xE19B]&&!wram[0xE01C]){
+            const unsigned which=(current&y_bit)?1u:0u;
+            const unsigned level=som_combo_level(&combo),hits=combo.hits;
+            combo_hold_tried=1;
+            if(som_special_start(which,level)){
+                special_chord=which?y_bit:b_bit;special_suppress=1;
+                char text[64];
+                snprintf(text,sizeof(text),"^%u-hit combo|level %u finisher",hits,level);
+                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+                fprintf(stderr,"[som-ai] COMBO finisher: %u hits, level %u, %s\n",
+                        hits,level,which?"Y":"B");
+            }
+        }
         /* Tap X: cast on release. Hold X: next spell every 0.5 s. */
         if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
             x_spell_blocked=1;
@@ -943,7 +972,6 @@ static int clone_no_slot,last_clone_target=-1;
  * attack it. */
 #define SOM_FAMILIAR_FILE "/tmp/flxtr-som-familiar"
 static const char *familiar_file=SOM_FAMILIAR_FILE;
-static SomFamiliar familiar={-1,-1,0,0};
 static int familiar_pending;
 /* Carried between maps: saved every second while it is with the hero and
  * restored into an empty slot once the new map has settled. */
@@ -1226,40 +1254,145 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
             (unsigned)hero[0x186],cost);
     return 1;
 }
-/* Kage Bunshin: two copies of the boy's pieces, SOM_CLONE_SPACING px to
- * each side, in OAM entries the game left off screen (y >= 0xE0). */
+/* Kage Bunshin clones (src/som_bunshin.h). Explosion damage grows with
+ * the Ninjutsu discipline level. */
+static unsigned som_bunshin_damage(void){return 10u+disciplines.level[2]/2u;}
+static int som_hero_layer2(const uint8_t *hero){return (hero[0x00B]&0x80u)!=0;}
+static void som_bunshin_explode(uint8_t *ram,int x,int y){
+    som_bun_boom(bunshin_booms,x,y,0,frame_number);
+    const unsigned hit=som_bun_blast(ram,x,y,som_bunshin_damage(),familiar.slot);
+    fprintf(stderr,"[som-ai] BUNSHIN explosion at %d,%d: %u monster(s), %u damage\n",
+            x,y,hit,som_bunshin_damage());
+}
+/* Swap the hero into a clone. flee: substitution away from a monster at
+ * (fx, fy): the clone is used up and the spot he left explodes. Otherwise
+ * the clone takes his old spot. */
+static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y){
+    if(!ram)return 0;
+    uint8_t *hero=ram+0xE000u;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    const int i=som_bun_pick(&bunshin,hx,hy,flee,fx,fy,dir_x,dir_y);
+    if(i<0)return 0;
+    const int nx=bunshin.x[i],ny=bunshin.y[i];
+    hero[2]=(uint8_t)nx;hero[3]=(uint8_t)(nx>>8);
+    hero[4]=(uint8_t)ny;hero[5]=(uint8_t)(ny>>8);
+    hero[0x006]=hero[0x007]=0;
+    bunshin.hero_x=nx;bunshin.hero_y=ny;
+    bunshin.swap_ready=frame_number+SOM_BUN_SWAP_COOLDOWN;
+    som_bun_boom(bunshin_booms,nx,ny,1,frame_number);
+    if(flee){
+        bunshin.alive[i]=0;
+        som_bunshin_explode(ram,hx,hy);
+        som_overlay_set(&overlay,"^Kawarimi no Jutsu!",SOM_MESSAGE_FRAMES/2u);
+    }else{
+        bunshin.x[i]=hx;bunshin.y[i]=hy;
+        som_bun_boom(bunshin_booms,hx,hy,1,frame_number);
+    }
+    fprintf(stderr,"[som-ai] BUNSHIN %s: hero %d,%d -> clone %d at %d,%d\n",
+            flee?"substitution":"swap",hx,hy,i,nx,ny);
+    return 1;
+}
 static void som_bunshin_frame(uint8_t *ram){
-    if(!bunshin_until||!ram)return;
-    if(frame_number>bunshin_until||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F){
-        bunshin_until=frame_number>bunshin_until?0:bunshin_until;return;
+    if(!ram||!som_bun_alive(&bunshin))return;
+    uint8_t *hero=ram+0xE000u;
+    const int field=hero[0]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    const int same_map=som_bun_u16(ram+0xDC)==bunshin.map;
+    if(!field||!same_map||frame_number>bunshin.until){
+        if(same_map)
+            for(unsigned i=0;i<SOM_BUN_COUNT;i++)
+                if(bunshin.alive[i])som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
+        som_bun_clear(&bunshin);return;
     }
-    /* Half the time only: the boy's palette 1 cannot use colour math
-     * (only OBJ palettes 4-7 can), so a flicker gives the ghostly
-     * half-transparent look instead. */
-    if(frame_number&2u)return;     /* 2 frames on, 2 off: SoM may send OAM every 2nd frame */
-    uint8_t *oam=ram+0x0800u,*high=ram+0x0A00u;
-    unsigned hero_ids[16],heroes=0,free_ids[128],frees=0;
-    for(unsigned i=0;i<128u;i++){
-        const uint8_t *e=oam+4u*i;
-        const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-        if(e[1]>=0xE0u){free_ids[frees++]=i;continue;}
-        if(((tile>=0x1C0u&&tile<=0x1C7u)||(tile>=0x1D0u&&tile<=0x1D7u))&&
-           ((e[3]>>1)&7u)==1u&&heroes<16u)hero_ids[heroes++]=i;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    som_bun_follow(&bunshin,ram,hx,hy,som_hero_layer2(hero));
+    for(unsigned i=0;i<SOM_BUN_COUNT;i++){
+        if(!bunshin.alive[i]||som_bun_toucher(ram,bunshin.x[i],bunshin.y[i],SOM_BUN_TOUCH_X,
+                                              SOM_BUN_TOUCH_Y,familiar.slot)<0)continue;
+        bunshin.alive[i]=0;
+        som_bunshin_explode(ram,bunshin.x[i],bunshin.y[i]);
+        som_overlay_set(&overlay,"^Bunshin Daibakuha!",SOM_MESSAGE_FRAMES/2u);
     }
-    static const int offsets[2]={-SOM_CLONE_SPACING,SOM_CLONE_SPACING};
-    unsigned used=0;
-    for(unsigned c=0;c<2u;c++)
-        for(unsigned h=0;h<heroes&&used<frees;h++){
-            const unsigned src=hero_ids[h],dst=free_ids[used++];
-            const uint8_t *e=oam+4u*src;uint8_t *d=oam+4u*dst;
-            const unsigned hb=(high[src/4u]>>(2u*(src%4u)))&3u;
-            const int x=(int)(e[0]|((hb&1u)<<8))+offsets[c];
-            const unsigned nx=(unsigned)x&0x1FFu;
-            d[0]=(uint8_t)nx;d[1]=e[1];d[2]=e[2];d[3]=e[3];
-            const unsigned shift=2u*(dst%4u);
-            high[dst/4u]=(uint8_t)((high[dst/4u]&~(3u<<shift))|
-                (((nx>>8)&1u)|(hb&2u))<<shift);
+    if(!som_bun_alive(&bunshin)||frame_number<bunshin.swap_ready)return;
+    const int toucher=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X,SOM_BUN_HERO_TOUCH_Y,
+                                      familiar.slot);
+    if(toucher>=0){
+        const uint8_t *o=ram+SOM_BUN_MONSTER_BASE+(unsigned)toucher*SOM_BUN_OBJECT;
+        som_bunshin_swap(ram,1,(int)som_bun_u16(o+2),(int)som_bun_u16(o+4),0,0);
+    }
+}
+static int som_bunshin_booming(void){
+    for(unsigned i=0;i<SOM_BUN_BOOMS;i++)
+        if(bunshin_booms[i].start&&frame_number-bunshin_booms[i].start<SOM_BUN_BOOM_FRAMES)return 1;
+    return 0;
+}
+/* Clones and explosions on the frame copy; (hero_x, hero_y) = the hero on
+ * the base screen. */
+static void som_bunshin_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,
+                             int hero_x,int hero_y){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return;
+    const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    const int hx=(int)som_bun_u16(ram+0xE002),hy=(int)som_bun_u16(ram+0xE004);
+    const uint8_t *vram=backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=SOM_BUN_VRAM_SIZE?
+        backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM):NULL;
+    if(vram)
+        for(unsigned i=0;i<SOM_BUN_COUNT;i++)
+            if(bunshin.alive[i])
+                som_bun_draw_copy(pixels,width,height,pitch,pixel_format,ram,vram,
+                                  bunshin.x[i]-hx,bunshin.y[i]-hy);
+    for(unsigned i=0;i<SOM_BUN_BOOMS;i++){
+        SomBoom *b=&bunshin_booms[i];
+        if(!b->start)continue;
+        const unsigned long age=frame_number-b->start;
+        if(age>=SOM_BUN_BOOM_FRAMES){b->start=0;continue;}
+        som_bun_draw_boom(pixels,width,height,pitch,pixel_format,
+                          hero_x+(b->x-hx),hero_y+(b->y-hy)-8,(unsigned)age,b->smoke);
+    }
+}
+/* Swordsman bash: see SOM_BASH_LUNGE_FRAMES. */
+static int som_bash_start(uint8_t *ram){
+    if(!ram||bash_stage||evade_active||special_stage)return 0;
+    uint8_t *hero=ram+0xE000u;
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    /* The run's own start conditions ($02:B6CD). */
+    if(hero[0x060]||hero[0x01C]||hero[0x00A]||hero[0x01A]||hero[0x01B]||
+       (som_word(hero+0x190)&0xC160u))return 0;
+    if(hero[0x1ED]){
+        som_overlay_set(&overlay,"^Bash|catch your breath",SOM_MESSAGE_FRAMES/2u);
+        return 0;
+    }
+    if(som_equip_weapon(ram,1u)!=SOM_EQUIP_OK)return 0;
+    bash_stage=SOM_BASH_LUNGE;bash_started=frame_number;
+    som_overlay_set(&overlay,"^Bash!",SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] BASH lunge\n");
+    return 1;
+}
+/* Before each emulated frame: advance the bash. */
+static void som_bash_tick(void){
+    if(!bash_stage||!backend_retro_get_memory_data)return;
+    uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram){bash_stage=SOM_BASH_NONE;return;}
+    uint8_t *hero=ram+0xE000u;
+    const unsigned long t=frame_number-bash_started;
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||t>60ul){
+        bash_stage=SOM_BASH_NONE;return;
+    }
+    if(bash_stage==SOM_BASH_LUNGE){
+        const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+        const int close=som_bun_toucher(ram,hx,hy,SOM_BASH_REACH,SOM_BASH_REACH,familiar.slot)>=0;
+        const int stopped=t>=3ul&&!hero[0x006]&&!hero[0x007];   /* a wall */
+        if(t>=SOM_BASH_LUNGE_FRAMES||(t>=2ul&&close)||stopped){
+            bash_stage=SOM_BASH_RELEASE;bash_started=frame_number;
         }
+    }else if(bash_stage==SOM_BASH_RELEASE){
+        /* Releasing A loaded the run gauge E1ED; the swing hits at full. */
+        hero[0x1ED]=0;
+        bash_stage=SOM_BASH_STRIKE;bash_started=frame_number;
+        som_combo_swing(0);
+    }else if(t>=SOM_BASH_STRIKE_FRAMES){
+        bash_stage=SOM_BASH_NONE;
+        fprintf(stderr,"[som-ai] BASH strike\n");
+    }
 }
 static int som_evade_start(uint8_t *ram){
     if(!ram||evade_active)return 0;
@@ -1274,9 +1407,25 @@ static int som_evade_start(uint8_t *ram){
        hero[0x060]||hero[0x01C]==0x40||hero[0x01C]==0x80||
        (som_word(hero+0x190)&0xC160u))return 0;
     /* Ninjutsu jutsu by the weapon in hand: sword = Shunshin (forward
-     * leap), chakram/boomerang = Kage Bunshin (roll + shadow clones). */
+     * leap), chakram/boomerang = Kage Bunshin (two shadow clones). With
+     * clones out, A swaps the ninja into one instead. */
     const int ninja=disciplines.selected==2u;
-    const int shunshin=ninja&&hero[0x1E4]==1u,bunshin=ninja&&hero[0x1E4]==6u;
+    if(ninja&&som_bun_alive(&bunshin))
+        return som_bunshin_swap(ram,0,0,0,evade_dir_x,evade_dir_y);
+    const int shunshin=ninja&&hero[0x1E4]==1u;
+    if(ninja&&hero[0x1E4]==6u){
+        const unsigned made=som_bun_spawn(&bunshin,ram,(int)som_bun_u16(hero+2),
+            (int)som_bun_u16(hero+4),hero[0x010],som_hero_layer2(hero),frame_number);
+        if(!made){
+            som_overlay_set(&overlay,"^No room|for shadow clones",SOM_MESSAGE_FRAMES/2u);
+            return 0;
+        }
+        for(unsigned i=0;i<SOM_BUN_COUNT;i++)
+            if(bunshin.alive[i])som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
+        som_overlay_set(&overlay,"^Kage Bunshin no Jutsu",SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] EVADE Kage Bunshin: %u clone(s)\n",made);
+        return 1;
+    }
     evade_pose=shunshin?SOM_SHUNSHIN_POSE:SOM_EVADE_POSE;
     evade_set_busy=!hero[0x042];
     hero[0x01C]=0x40;hero[0x011]=(uint8_t)evade_pose;hero[0x042]=1;
@@ -1284,11 +1433,9 @@ static int som_evade_start(uint8_t *ram){
     evade_set_guard=!(hero[0x191]&0x04u);
     hero[0x191]|=0x04u;
     evade_active=1;evade_started=frame_number;
-    if(bunshin)bunshin_until=frame_number+SOM_CLONE_FRAMES;
-    som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":bunshin?"^Kage Bunshin no Jutsu":
-                    "^Evade",SOM_MESSAGE_FRAMES/2u);
-    fprintf(stderr,"[som-ai] EVADE %s as %s\n",shunshin?"Shunshin":bunshin?"Kage Bunshin":
-            "back roll",som_discipline_names[disciplines.selected]);
+    som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":"^Evade",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] EVADE %s as %s\n",shunshin?"Shunshin":"back roll",
+            som_discipline_names[disciplines.selected]);
     return 1;
 }
 /* Ends the guard when the pose is over (the script clears +0x1C/+0x11). */
@@ -1307,7 +1454,7 @@ static void som_evade_tick(void){
 }
 /* Charge the game's actual weapon stage through its normal B input. */
 static int som_special_start(unsigned which,unsigned stage){
-    if(which>1||stage<1||stage>SOM_SEALS_MAX||special_stage||combo_charging||
+    if(which>1||stage<1||stage>SOM_SEALS_MAX||special_stage||bash_stage||
        (ring_ai_enabled&&!special_from_ai)||som_manual_disciplines||
        disciplines.selected>=SOM_DISCIPLINE_COUNT||
        !backend_retro_get_memory_data)return 0;
@@ -1805,7 +1952,7 @@ static int som_undo_spawn(void){
 }
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
-    if(action==SOM_ACT_ATTACK)som_combo_swing();
+    if(action==SOM_ACT_ATTACK)som_combo_swing(0);
     active_action=action;
     action_frames=som_action_frames(action);
     armed=1;cancelled=0;completed=0;
@@ -2037,17 +2184,22 @@ static int som_hero_screen(int *x,int *y){
     *x=(int)(hx-cam_x);*y=(int)(hy-cam_y);
     return 1;
 }
+#define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
 static void som_video_refresh(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */
     const int menu=som_manual_disciplines||
         (ring_ai_enabled&&(gambits.open||disciplines.open));
-    /* Class title under the hero; field mode only (som_hero_screen). */
+    /* Around the hero, field mode only (som_hero_screen): class title,
+     * combo counter, shadow clones and their explosions. */
     const char *class_title=menu?NULL:som_disc_title(&disciplines);
+    char combo_text[24];som_combo_text(&combo,combo_text);
+    if(menu)combo_text[0]=0;
+    const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming());
     int hero_x=-1,hero_y=-1;
-    if(class_title&&!som_hero_screen(&hero_x,&hero_y))class_title=NULL;
-    if((!overlay.frames_left&&!menu&&!class_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    const int hero_drawn=(class_title||combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
+    if((!overlay.frames_left&&!menu&&!hero_drawn)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         frontend_video(data,width,height,pitch);
         return;
@@ -2059,10 +2211,17 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
         overlay_frame=grown;overlay_frame_size=size;
     }
     memcpy(overlay_frame,data,size);
-    if(overlay.speech_bubble&&!class_title)som_hero_screen(&hero_x,&hero_y);
-    if(class_title)
-        som_disc_draw_label(overlay_frame,width,height,pitch,pixel_format,
-                            class_title,hero_x,hero_y);
+    if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
+    if(hero_drawn){
+        if(clones)som_bunshin_draw(overlay_frame,width,height,pitch,hero_x,hero_y);
+        if(class_title)
+            som_disc_draw_label(overlay_frame,width,height,pitch,pixel_format,
+                                class_title,hero_x,hero_y);
+        if(combo_text[0])
+            som_overlay_label(overlay_frame,width,height,pitch,pixel_format,combo_text,
+                              hero_x,hero_y-SOM_COMBO_LABEL_RISE_PX,1,
+                              som_overlay_color(pixel_format,255,208,64));
+    }
     if(overlay.frames_left){
         som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
         overlay.frames_left--;
@@ -2202,10 +2361,12 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_set_guard=evade_a_hidden=evade_set_busy=0;seal_mode=0;seal_count=0;x_cycled=0;
-    bunshin_until=0;evade_pose=SOM_EVADE_POSE;
+    som_bun_clear(&bunshin);memset(bunshin_booms,0,sizeof(bunshin_booms));
+    evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
+    evade_pose=SOM_EVADE_POSE;
     special_chord=0;special_suppress=0;
     y_weapon_swap=y_weapon_blocked=b_weapon_blocked=x_spell_blocked=0;
-    combo_input_held=0;combo_charge_frame=0;
+    combo_input_held=0;combo_hold_start=0;combo_hold_tried=0;
     memset(combo_hp,0,sizeof(combo_hp));memset(combo_ids,0,sizeof(combo_ids));
     memset(combo_live,0,sizeof(combo_live));
     test_enabled=0;trigger_file=NULL;start_frame=0;injected_queries=0;
@@ -2449,6 +2610,7 @@ RETRO_API void retro_run(void){
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    if(test_enabled&&on_turbo)som_bash_tick();
     if(pal_trace_on&&backend_retro_get_memory_data)
         som_pal_trace_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%SOM_MESSAGE_POLL_FRAMES==0u)

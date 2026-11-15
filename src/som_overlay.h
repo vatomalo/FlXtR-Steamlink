@@ -127,4 +127,36 @@ static inline void som_overlay_draw(uint8_t *pixels,unsigned width,unsigned heig
         }
     }
 }
+/* One line of outlined text (ink on a dark 1 px edge) at base screen
+ * position (x, y) = top-left, or top-centre when `centred`; scaled like the
+ * boxes and kept inside the frame. Returns 1 when drawn. */
+static inline int som_overlay_label(uint8_t *pixels,unsigned width,unsigned height,
+                                    size_t pitch,int format,const char *text,
+                                    int x,int y,int centred,uint32_t ink){
+    if(!pixels||!text||!text[0])return 0;
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    const unsigned length=(unsigned)strlen(text);
+    const long text_w=(long)(length*6u-1u)*(long)sx,text_h=7L*(long)sy;
+    long left=(long)x*(long)sx-(centred?text_w/2:0);
+    long top=(long)y*(long)sy;
+    if(left<(long)sx)left=(long)sx;
+    if(left+text_w+(long)sx>(long)width)left=(long)width-text_w-(long)sx;
+    if(top<(long)sy)top=(long)sy;
+    if(top+text_h+(long)sy>(long)height)top=(long)height-text_h-(long)sy;
+    if(left<(long)sx||top<(long)sy)return 0;
+    const uint32_t edge=som_overlay_color(format,16,16,40);
+    for(int pass=0;pass<2;pass++)
+        for(unsigned i=0;i<length;i++){
+            const unsigned char c=(unsigned char)text[i];
+            if(c<32u||c>126u)continue;
+            const uint8_t *glyph=som_overlay_font[c-32u];
+            for(unsigned row=0;row<7u;row++)for(unsigned col=0;col<5u;col++){
+                if(!(glyph[row]&(0x10u>>col)))continue;
+                const unsigned px=(unsigned)left+(i*6u+col)*sx,py=(unsigned)top+row*sy;
+                if(pass==0)som_overlay_fill(pixels,pitch,format,px-sx,py-sy,3u*sx,3u*sy,edge);
+                else som_overlay_fill(pixels,pitch,format,px,py,sx,sy,ink);
+            }
+        }
+    return 1;
+}
 #endif

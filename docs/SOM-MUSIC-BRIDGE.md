@@ -30,7 +30,7 @@ music cues so the background track continues uninterrupted.
   caches YouTube video IDs per (song, genre), refreshes expiring stream URLs,
   and launches the existing greenlink-audio binary.
 - Cache directory: som-music-cache, isolated from normal FlXtR music queues.
-- Original mode stops external playback; it does NOT restore SPC music that
+- Off mode stops external playback; it does NOT restore SPC music that
   your custom underlying core already suppresses.
 
 ## Safely testing without a Steam Link rebuild

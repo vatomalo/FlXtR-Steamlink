@@ -27,18 +27,29 @@ static inline int som_disc_has_dodge(unsigned discipline){
     default: return 0;
     }
 }
-/* Quick hop dodge (monk, rogue, archer): the game's 20-frame hop pose 0x95
- * (som-decomp hero-poses.md: three pictures, no movement of its own), with
- * the proxy moving the hero `speed` px per frame for SOM_HOP_MOVE_FRAMES
- * frames, wall-checked. 0 = this class keeps the back roll. */
-#define SOM_HOP_POSE 0x95u
-#define SOM_HOP_MOVE_FRAMES 18u
-static inline unsigned som_disc_hop_speed(unsigned discipline){
+/* Dodges, driven by the proxy. The game's own poses (back roll 0x8D, leap
+ * 0x9E, hop 0x95) do not play in field play: written as +0x1C/+0x11 they
+ * end within 6 frames without moving (headless Steam Link test,
+ * 2026-11-15; their scripts run under the event VM). So the proxy carries
+ * the hero `speed` px per frame for `frames` frames onto open ground,
+ * keeps him untouchable a little longer, and draws an after-image trail.
+ * forward: toward the facing (else away from it) when no direction is
+ * held. speed 0: this class has no dodge. */
+typedef struct { unsigned speed, frames; int forward; const char *name; } SomDodge;
+#define SOM_DODGE_GRACE 8u                 /* untouchable frames after the move */
+static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
+    SomDodge d={0u,0u,0,""};
     switch(discipline){
-    case 1: case 9: return 2u;   /* monk, rogue: ~36 px */
-    case 11: return 3u;          /* archer: ~54 px, back into bow range */
-    default: return 0u;
+    case 0: case 10: d.speed=3u;d.frames=16u;d.name="Evade";break;        /* 48 px roll */
+    case 1: case 9: d.speed=2u;d.frames=18u;d.name="Evade";break;         /* 36 px hop */
+    case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
+    case 2:
+        if(weapon==1u){d.speed=6u;d.frames=12u;d.forward=1;d.name="Shunshin no Jutsu";}
+        else{d.speed=3u;d.frames=16u;d.name="Evade";}
+        break;
+    default:break;
     }
+    return d;
 }
 typedef struct {
     int open;

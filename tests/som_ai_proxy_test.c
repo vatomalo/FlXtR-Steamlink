@@ -1021,65 +1021,66 @@ int main(void){
         assert(!combo.hits&&special_suppress);                /* chain spent */
         mocked_buttons=0;som_input_poll();
         special_stage=0;special_suppress=0;hero[0x19C]=1;
-        /* A: back-roll pose, untouchable until it ends; A hidden from the
-         * game for dodge classes. Magic has no dodge: native A (dash). */
+        /* A: a proxy-driven dodge (the game's poses do not play in field
+         * play). Magic has no dodge: native A (dash). */
         disciplines.selected=3;
         const uint16_t r1a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
         mocked_buttons=r1a;som_input_poll();
-        assert(!evade_active&&hero[0x011]!=SOM_EVADE_POSE);
+        assert(!evade_active);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
         mocked_buttons=0;som_input_poll();
-        disciplines.selected=0;                              /* Swordsmanship */
-        hero[0x191]=0;hero[0x01C]=0;
+        memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);   /* open floor */
+        ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */
+        /* Swordsman: 3 px x 16 frames away from the facing, untouchable for
+         * the move plus the grace frames; A, D-pad and attacks hidden. */
+        disciplines.selected=0;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
+        hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
         mocked_buttons=r1a;som_input_poll();
-        assert(evade_active&&hero[0x01C]==0x40&&hero[0x011]==SOM_EVADE_POSE&&hero[0x042]==1);
-        assert(hero[0x191]&0x04);
-        som_evade_tick();assert(evade_active&&(hero[0x191]&0x04)); /* still rolling */
+        assert(evade_active&&(hero[0x191]&0x04)&&hero[0x01C]==0&&hero[0x011]==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
         mocked_buttons=0;som_input_poll();
-        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();         /* pose over */
-        assert(!evade_active&&!(hero[0x191]&0x04));
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)|(1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        mocked_buttons=0;som_input_poll();
+        const unsigned long dodge_start=frame_number;
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;
+            if(frame_number-dodge_start==20u)assert(evade_active&&(hero[0x191]&0x04));}
+        assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(hero+4)==200);
+        assert(!evade_active&&!(hero[0x191]&0x04));           /* guard ended */
+        assert(trail_until>=dodge_start+16u);                  /* after-images */
         hero[0x191]=0x04;                                     /* already guarded */
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        frame_number+=SOM_EVADE_FRAMES+1;som_evade_tick();
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(!evade_active&&(hero[0x191]&0x04));            /* not ours to clear */
-        hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;hero[0x042]=0;
-        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0); /* A = evade */
-        mocked_buttons=0;som_input_poll();
-        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x191]=0;hero[0x042]=0;
-        /* Monk / rogue / archer: the in-place hop pose, moved back by the
-         * proxy onto open ground; the archer goes farther, any way aimed. */
-        memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);
-        ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;
-        disciplines.selected=1;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;hero[0x042]=0;
-        hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
+        hero[0x191]=0;
+        /* Monk: 2 px x 18; archer 3 px x 18 the way held, stopped by a wall
+         * (the guard keeps running); rogue dodges too. */
+        disciplines.selected=1;hero[2]=200;hero[4]=200;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        assert(evade_active&&hero[0x011]==SOM_HOP_POSE&&(hero[0x191]&0x04));
-        for(unsigned f=0;f<30;f++)som_hop_step();
-        assert(som_bun_u16(hero+2)==200-2*SOM_HOP_MOVE_FRAMES&&som_bun_u16(hero+4)==200);
-        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();assert(!evade_active);
-        disciplines.selected=11;hero[0x191]=0;hero[0x042]=0;hero[2]=200;
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200-36);
+        disciplines.selected=11;hero[2]=200;
         mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));som_input_poll();
         mocked_buttons=0;som_input_poll();
         ram[0x1B800+4*3]=0x03;
         for(unsigned c=0;c<128;c++)ram[0x10000+(240u>>4)*128u+c]=3;   /* wall at y 240 */
-        for(unsigned f=0;f<30;f++)som_hop_step();
+        for(unsigned f=0;f<6;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(evade_active);
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)>200&&som_bun_u16(hero+4)+4<240);
-        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x191]=0;hero[0x042]=0;
+        assert(!evade_active);
         memset(ram+0x10000,0,0x10000);ram[0x1B800+4*3]=0;
         disciplines.selected=9;hero[4]=200;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        assert(evade_active&&hero[0x011]==SOM_HOP_POSE);           /* rogue hops too */
-        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x191]=0;hero[0x042]=0;
-        /* Ninjutsu: sword -> Shunshin leap; chakram -> Kage Bunshin. */
-        disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;
+        assert(evade_active);
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        /* Ninja with the sword: Shunshin, 6 px x 12 forward. */
+        disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;hero[2]=200;hero[4]=200;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        assert(evade_active&&hero[0x011]==SOM_SHUNSHIN_POSE&&!som_bun_alive(&bunshin));
-        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);som_input_poll();
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==0);
-        mocked_buttons=0;som_input_poll();
-        hero[0x01C]=0;hero[0x011]=0x03;som_evade_tick();      /* walking took over */
-        assert(!evade_active&&hero[0x042]==0);                /* busy flag cleared */
+        assert(evade_active&&!som_bun_alive(&bunshin));
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200+72&&!evade_active);
         /* Kage Bunshin (chakram): two clones across the facing, on open
          * ground; a monster touching one makes it explode; A swaps. */
         memset(ram+0x10000,0,0x10000);                       /* all tile 0: open */

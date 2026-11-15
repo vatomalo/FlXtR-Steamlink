@@ -342,3 +342,18 @@ round trip verified headless on the Steam Link). Fix for games run through the p
 `<rom>.state.auto.flxtr-full`, and a detached helper renames it over `<rom>.state.auto`
 once RetroArch has exited (at most 30 s wait). `FLXTR_SOM_AUTO_STATE=0` disables it.
 Other games/cores still get the truncated file (needs a RetroArch-side fix).
+
+## Dodges are proxy-driven (2026-11-15, replaces the pose-based evade)
+
+A headless run of the real ROM on the Steam Link showed that the game's poses written as
+`+0x1C=0x40 / +0x11=code / +0x42=1` do not play in field play: back roll `0x8D`, leap
+`0x9E` and hop `0x95` ended within 6 frames without moving (their scripts run under the
+event VM, `$D0 != 0`). The old evade, Shunshin and hop were therefore no-ops live.
+Now (`som_disc_dodge`): the proxy carries the hero per frame onto open ground (wall test
+of the clones), keeps status 0x0400 (untouchable) for the move plus 8 frames, hides
+A/D-pad/B/Y/X from the game meanwhile and draws an after-image trail (his own sprite, 4
+and 8 frames behind, every other frame). Swordsman/samurai 3 px x 16 (48 px) back, monk/
+rogue 2 x 18 (36 px), archer 3 x 18 (54 px), ninja with sword = Shunshin 6 x 12 (72 px)
+forward, other ninja weapons 3 x 16. A held direction aims any of them.
+Verified headless on the Steam Link: 48 px roll with status 0400 set then cleared,
+Shunshin stopped by a wall, trail drawn.

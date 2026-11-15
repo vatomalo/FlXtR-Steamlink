@@ -418,12 +418,12 @@ static int special_from_ai;           /* special_<n> command while the AI plays 
  * untouchable meanwhile: status 0x0400 (+0x191 bit 2), "no hit is
  * resolved on the actor" ($C0:4F7B, rom-combat.md 12). Only the
  * disciplines with a dodge (som_disc_has_dodge). */
-#define SOM_EVADE_POSE 0x8Du
-#define SOM_SHUNSHIN_POSE 0x9Eu         /* 55-frame forward leap, 85 px */
-#define SOM_EVADE_FRAMES 75ul
-static int evade_active,evade_set_guard,evade_a_hidden,evade_set_busy;
-static unsigned evade_pose;
+static int evade_active,evade_set_guard,evade_a_hidden;
+static unsigned evade_frames;
 static unsigned long evade_started;
+#define SOM_TRAIL_LENGTH 16u
+static int trail_x[SOM_TRAIL_LENGTH],trail_y[SOM_TRAIL_LENGTH];
+static unsigned long trail_frame[SOM_TRAIL_LENGTH],trail_until;
 static int som_evade_start(uint8_t *ram);
 /* Kage Bunshin (src/som_bunshin.h): clones the proxy keeps and draws over
  * the frame (src/som_bunshin_draw.h); touch makes them explode, the hero
@@ -551,7 +551,9 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
          * game replace the pose with walking (live, 2026-11-14). */
         const uint16_t a=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(evade_active?
             (1u<<RETRO_DEVICE_ID_JOYPAD_UP)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|
-            (1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT):0u));
+            (1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_B)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_X):0u));
         if(bitmask)actual=(int16_t)(actual&~a);
         else if(id<16u&&(a&(1u<<id)))actual=0;
     }
@@ -1461,61 +1463,73 @@ static int som_evade_start(uint8_t *ram){
         fprintf(stderr,"[som-ai] EVADE Kage Bunshin: %u clone(s)\n",made);
         return 1;
     }
-    const unsigned hop=shunshin?0u:som_disc_hop_speed(disciplines.selected);
-    evade_pose=shunshin?SOM_SHUNSHIN_POSE:hop?SOM_HOP_POSE:SOM_EVADE_POSE;
-    hop_frames_left=0;hop_dx=hop_dy=0;
-    if(hop){
-        /* The held direction, else straight back from the facing. */
-        int dx=evade_dir_x,dy=evade_dir_y;
-        if(!dx&&!dy){
-            const unsigned facing=hero[0x010];
-            if(facing==0x02u)dx=-1;else if(facing==0x82u)dx=1;
-            else if(facing==0x01u)dy=-1;else dy=1;
-        }
-        hop_dx=dx*(int)hop;hop_dy=dy*(int)hop;hop_frames_left=SOM_HOP_MOVE_FRAMES;
+    const SomDodge dodge=som_disc_dodge(disciplines.selected,hero[0x1E4]);
+    if(!dodge.speed)return 0;
+    /* The held direction, else back from (or, forward: toward) the facing. */
+    int dx=evade_dir_x,dy=evade_dir_y;
+    if(!dx&&!dy){
+        const unsigned facing=hero[0x010];
+        if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;
+        else if(facing==0x01u)dy=1;else dy=-1;
+        if(!dodge.forward){dx=-dx;dy=-dy;}
     }
-    evade_set_busy=!hero[0x042];
-    hero[0x01C]=0x40;hero[0x011]=(uint8_t)evade_pose;hero[0x042]=1;
+    hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=dodge.frames;
+    evade_frames=dodge.frames+SOM_DODGE_GRACE;
     hero[0x006]=hero[0x007]=0;
     evade_set_guard=!(hero[0x191]&0x04u);
     hero[0x191]|=0x04u;
     evade_active=1;evade_started=frame_number;
     som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":"^Evade",SOM_MESSAGE_FRAMES/2u);
-    fprintf(stderr,"[som-ai] EVADE %s as %s\n",shunshin?"Shunshin":hop?"hop":"back roll",
-            som_discipline_names[disciplines.selected]);
+    fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
+            dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,dodge.frames);
     return 1;
 }
-/* Before each frame: move the hopping hero one step, per axis, onto open
- * ground only (src/som_bunshin.h), while the hop pose plays. */
+/* Before each frame: carry the dodging hero one step, per axis, onto open
+ * ground only (src/som_bunshin.h); a wall ends the travel, not the guard.
+ * Records the after-image trail. */
 static void som_hop_step(void){
-    if(!hop_frames_left||!backend_retro_get_memory_data)return;
+    if(!evade_active||!backend_retro_get_memory_data)return;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-    if(!ram||!evade_active){hop_frames_left=0;return;}
+    if(!ram)return;
     uint8_t *hero=ram+0xE000u;
-    if(hero[0x011]!=SOM_HOP_POSE||hero[0x01C]!=0x40||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
-        hop_frames_left=0;return;
-    }
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){hop_frames_left=0;return;}
     int x=(int)som_bun_u16(hero+2),y=(int)som_bun_u16(hero+4);
+    const unsigned slot=(unsigned)(frame_number%SOM_TRAIL_LENGTH);
+    trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;
+    if(!hop_frames_left)return;
     const unsigned place=som_hero_place(hero);
     int moved=0;
     if(hop_dx&&som_bun_spot_open(ram,x+hop_dx,y,place)){x+=hop_dx;moved=1;}
     if(hop_dy&&som_bun_spot_open(ram,x,y+hop_dy,place)){y+=hop_dy;moved=1;}
     hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
-    hop_frames_left=moved?hop_frames_left-1u:0u;   /* a wall ends the travel */
+    hero[0x006]=hero[0x007]=0;
+    hop_frames_left=moved?hop_frames_left-1u:0u;
 }
-/* Ends the guard when the pose is over (the script clears +0x1C/+0x11). */
+/* Ends the guard by frame count (the move plus SOM_DODGE_GRACE). */
 static void som_evade_tick(void){
     if(!evade_active||!backend_retro_get_memory_data)return;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram)return;
-    uint8_t *hero=ram+0xE000u;
-    if(hero[0x011]==evade_pose&&hero[0x01C]==0x40&&
-       frame_number-evade_started<=SOM_EVADE_FRAMES)return;
-    if(evade_set_guard)hero[0x191]&=(uint8_t)~0x04u;
-    /* The pose script clears the busy flag at its end; a pose the game
-     * replaced early (live: walking took over Shunshin) leaves it set. */
-    if(evade_set_busy)hero[0x042]=0;
-    evade_active=0;evade_set_guard=0;evade_set_busy=0;
+    if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
+        return;
+    if(evade_set_guard)ram[0xE191]&=(uint8_t)~0x04u;
+    evade_active=0;evade_set_guard=0;hop_frames_left=0;
+}
+/* After-images of the dodge, 4 and 8 frames behind, on even frames only
+ * (a flicker reads as translucent; the boy's palette has no colour math). */
+static void som_trail_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch){
+    if(frame_number>trail_until||(frame_number&1u)||!backend_retro_get_memory_data)return;
+    const uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram||backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)<SOM_BUN_VRAM_SIZE)return;
+    const uint8_t *vram=backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
+    const int hx=(int)som_bun_u16(ram+0xE002),hy=(int)som_bun_u16(ram+0xE004);
+    for(unsigned back=8u;back>=4u;back-=4u){
+        if(frame_number<back)continue;
+        const unsigned slot=(unsigned)((frame_number-back)%SOM_TRAIL_LENGTH);
+        if(trail_frame[slot]!=frame_number-back)continue;
+        const int dx=trail_x[slot]-hx,dy=trail_y[slot]-hy;
+        if(dx||dy)som_bun_draw_copy(pixels,width,height,pitch,pixel_format,ram,vram,dx,dy);
+    }
 }
 /* Charge the game's actual weapon stage through its normal B input. */
 static int som_special_start(unsigned which,unsigned stage){
@@ -2288,7 +2302,8 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     const char *class_title=menu?NULL:som_disc_title(&disciplines);
     char combo_text[24];som_combo_text(&combo,combo_text);
     if(menu)combo_text[0]=0;
-    const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming());
+    const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||
+                             frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(class_title||combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
     if((!overlay.frames_left&&!menu&&!hero_drawn)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
@@ -2305,7 +2320,10 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     memcpy(overlay_frame,data,size);
     if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
     if(hero_drawn){
-        if(clones)som_bunshin_draw(overlay_frame,width,height,pitch,hero_x,hero_y);
+        if(clones){
+            som_trail_draw(overlay_frame,width,height,pitch);
+            som_bunshin_draw(overlay_frame,width,height,pitch,hero_x,hero_y);
+        }
         if(class_title)
             som_disc_draw_label(overlay_frame,width,height,pitch,pixel_format,
                                 class_title,hero_x,hero_y);
@@ -2452,11 +2470,11 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
-    evade_active=evade_set_guard=evade_a_hidden=evade_set_busy=0;seal_mode=0;seal_count=0;x_cycled=0;
+    evade_active=evade_set_guard=evade_a_hidden=0;evade_frames=0;trail_until=0;
+    memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);memset(bunshin_booms,0,sizeof(bunshin_booms));
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
     hop_dx=hop_dy=0;hop_frames_left=0;
-    evade_pose=SOM_EVADE_POSE;
     special_chord=0;special_suppress=0;
     y_weapon_swap=y_weapon_blocked=b_weapon_blocked=x_spell_blocked=0;
     combo_input_held=0;combo_hold_start=0;combo_hold_tried=0;

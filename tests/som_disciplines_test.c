@@ -7,6 +7,17 @@ int main(void){
     SomDisciplines d;som_disc_init(&d);
     assert(d.selected==SOM_DISCIPLINE_NONE);
     assert(som_disc_title(&d)==NULL);
+    {   /* HUD portrait: palette 1, tile 0x1E8.., low on screen. */
+        static uint8_t ram[0x20000];
+        for(unsigned i=0;i<128;i++)ram[0x0800+4*i+1]=0xF0;
+        int x=-1,y=-1;assert(!som_hud_portrait(ram,&x,&y));
+        ram[0x0804]=50;ram[0x0805]=100;ram[0x0806]=0xE8;ram[0x0807]=0x33;   /* too high */
+        ram[0x0808]=88;ram[0x0809]=199;ram[0x080A]=0xC0;ram[0x080B]=0x33;   /* body tile */
+        ram[0x080C]=88;ram[0x080D]=199;ram[0x080E]=0xE8;ram[0x080F]=0x35;   /* palette 2 */
+        assert(!som_hud_portrait(ram,&x,&y));
+        ram[0x0810]=88;ram[0x0811]=199;ram[0x0812]=0xE8;ram[0x0813]=0x33;
+        assert(som_hud_portrait(ram,&x,&y)&&x==88&&y==199);
+    }
     {   /* Class label: centred under the hero, clipped, outlined. */
         uint16_t frame[224][256];memset(frame,0,sizeof(frame));
         assert(!som_disc_draw_label((uint8_t*)frame,256,224,512,0,NULL,128,100));

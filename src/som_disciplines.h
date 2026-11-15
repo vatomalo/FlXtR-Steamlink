@@ -86,6 +86,27 @@ static const char *const som_discipline_titles[SOM_DISCIPLINE_COUNT]={
 static inline const char *som_disc_title(const SomDisciplines *d){
     return d&&d->selected<SOM_DISCIPLINE_COUNT?som_discipline_titles[d->selected]:NULL;
 }
+/* The boy's HUD portrait: a 16x16 OBJ in the bottom HUD, palette 1 (his
+ * colours), tile 0x1E8-0x1EF (seen at x 88, y 199 alone in the party).
+ * Returns 1 with its top-left in *x, *y. No portrait (HUD hidden, menus,
+ * events): 0, and no class label. */
+static inline int som_hud_portrait(const uint8_t *ram,int *x,int *y){
+    if(!ram)return 0;
+    for(unsigned i=0;i<128u;i++){
+        const uint8_t *e=ram+0x0800u+4u*i;
+        const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
+        if(e[1]<160u||e[1]>=0xE0u||((e[3]>>1)&7u)!=1u||tile<0x1E8u||tile>0x1EFu)continue;
+        const unsigned hb=(ram[0x0A00u+i/4u]>>(2u*(i%4u)))&3u;
+        if(hb&2u)continue;
+        int px=(int)(e[0]|((hb&1u)<<8));if(px>=256)px-=512;
+        *x=px;*y=(int)e[1];
+        return 1;
+    }
+    return 0;
+}
+/* The class title sits right of the portrait, under the HP numbers. */
+#define SOM_HUD_LABEL_DX 18
+#define SOM_HUD_LABEL_DY 9
 /* Pixels below the hero's position (base SNES pixels) for the label top. */
 #define SOM_CLASS_LABEL_DROP_PX 3
 /* The class title, centred under the hero at base screen position

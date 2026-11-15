@@ -379,3 +379,15 @@ targets and button mashing give nothing. Level-ups show a bubble and save
 Levels are per device, not per save slot (unchanged file format v1). Not yet trained:
 blocking (no verified "intercepted hit" signal yet), stealth (no detection model), Divine/
 Dark Arts and Support beyond their weapons/spells.
+
+## HUD class label and barrel-free dodge (2026-11-15)
+
+- The class name is drawn right of the boy's HUD portrait, under the HP numbers
+  (`som_hud_portrait`: OBJ palette 1, tile 0x1E8-0x1EF, low on screen; seen at x 88, y 199
+  with the boy alone). No portrait on screen (HUD hidden, menus, events): no label.
+  Party layouts with the girl/sprite are not yet checked.
+- Dodges no longer use status 0x0400: that is the Barrel status (item 10 toggles it) and
+  drew the hero as a barrel. Instead, before and after every frame of the dodge the hit mask
+  `E059` and pending damage `E1F1/E1F2` are cleared and any HP lost is put back.
+  Verified headless: no barrel; the hit-blocking path is unit-tested only (no monsters
+  in the test save).

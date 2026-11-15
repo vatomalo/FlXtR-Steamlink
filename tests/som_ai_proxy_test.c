@@ -1045,7 +1045,7 @@ int main(void){
         disciplines.selected=0;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
         hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
         mocked_buttons=r1a;som_input_poll();
-        assert(evade_active&&(hero[0x191]&0x04)&&hero[0x01C]==0&&hero[0x011]==0);
+        assert(evade_active&&!(hero[0x191]&0x04)&&hero[0x01C]==0&&hero[0x011]==0); /* no barrel */
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
         mocked_buttons=0;som_input_poll();
         mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)|(1u<<RETRO_DEVICE_ID_JOYPAD_B));
@@ -1053,16 +1053,23 @@ int main(void){
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
         mocked_buttons=0;som_input_poll();
         const unsigned long dodge_start=frame_number;
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;
-            if(frame_number-dodge_start==20u)assert(evade_active&&(hero[0x191]&0x04));}
+        hero[0x182]=100;hero[0x183]=0;
+        for(unsigned f=0;f<40;f++){
+            if(frame_number-dodge_start==10u){                /* a monster hits */
+                hero[0x059]=1;hero[0x1F1]=25;som_hop_step();
+                assert(!hero[0x059]&&!hero[0x1F1]);           /* hit dropped */
+                hero[0x182]=80;som_evade_tick();             /* got through anyway */
+                assert(hero[0x182]==100);                     /* HP put back */
+            }else{som_hop_step();som_evade_tick();}
+            frame_number++;
+            if(frame_number-dodge_start==20u)assert(evade_active);
+        }
         assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(hero+4)==200);
-        assert(!evade_active&&!(hero[0x191]&0x04));           /* guard ended */
+        assert(!evade_active);                                /* guard ended */
+        hero[0x1F1]=7;som_hop_step();som_evade_tick();
+        assert(hero[0x1F1]==7);                               /* not after the dodge */
+        hero[0x1F1]=0;
         assert(trail_until>=dodge_start+16u);                  /* after-images */
-        hero[0x191]=0x04;                                     /* already guarded */
-        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(!evade_active&&(hero[0x191]&0x04));            /* not ours to clear */
-        hero[0x191]=0;
         /* Monk: 2 px x 18; archer 3 px x 18 the way held, stopped by a wall
          * (the guard keeps running); rogue dodges too. */
         disciplines.selected=1;hero[2]=200;hero[4]=200;

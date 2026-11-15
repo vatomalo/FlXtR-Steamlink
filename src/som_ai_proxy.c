@@ -455,7 +455,8 @@ static int special_from_ai;           /* special_<n> command while the AI plays 
  * untouchable meanwhile: status 0x0400 (+0x191 bit 2), "no hit is
  * resolved on the actor" ($C0:4F7B, rom-combat.md 12). Only the
  * disciplines with a dodge (som_disc_has_dodge). */
-static int evade_active,evade_set_guard,evade_a_hidden,evade_xp_given;
+static int evade_active,evade_a_hidden,evade_xp_given;
+static unsigned evade_hp;
 static unsigned evade_frames;
 static unsigned long evade_started;
 #define SOM_TRAIL_LENGTH 16u
@@ -470,6 +471,7 @@ static int evade_dir_x,evade_dir_y;    /* D-pad aim: clone swap or hop */
 static int hop_dx,hop_dy;              /* hop dodge step per frame */
 static unsigned hop_frames_left;
 static void som_hop_step(void);
+static void som_evade_shield(uint8_t *ram);
 static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 static void som_bunshin_frame(uint8_t *ram);
 static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y);
@@ -1532,8 +1534,7 @@ static int som_evade_start(uint8_t *ram){
     hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=dodge.frames;
     evade_frames=dodge.frames+SOM_DODGE_GRACE;
     hero[0x006]=hero[0x007]=0;
-    evade_set_guard=!(hero[0x191]&0x04u);
-    hero[0x191]|=0x04u;
+    evade_hp=som_word(hero+0x182);
     evade_active=1;evade_started=frame_number;evade_xp_given=0;
     som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":"^Evade",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
@@ -1549,6 +1550,7 @@ static void som_hop_step(void){
     if(!ram)return;
     uint8_t *hero=ram+0xE000u;
     if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){hop_frames_left=0;return;}
+    som_evade_shield(ram);
     int x=(int)som_bun_u16(hero+2),y=(int)som_bun_u16(hero+4);
     const unsigned slot=(unsigned)(frame_number%SOM_TRAIL_LENGTH);
     trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;
@@ -1569,15 +1571,32 @@ static void som_hop_step(void){
     hero[0x006]=hero[0x007]=0;
     hop_frames_left=moved?hop_frames_left-1u:0u;
 }
-/* Ends the guard by frame count (the move plus SOM_DODGE_GRACE). */
+/* Untouchable without the Barrel status (0x0400 is what item 10, the
+ * Barrel, toggles: it shows the hero as a barrel). Before and after every
+ * emulated frame of the dodge the hit mask E059 (bit per attacking monster)
+ * and the pending damage E1F1/E1F2 are cleared before the combat tick can
+ * apply them (som-decomp hit-reactions.md 1-2, rom-combat.md 4.1), and any
+ * HP lost anyway is put back. */
+static void som_evade_shield(uint8_t *ram){
+    uint8_t *hero=ram+0xE000u;
+    hero[0x059]=0;hero[0x1F1]=hero[0x1F2]=0;
+    const unsigned hp=som_word(hero+0x182);
+    if(hp>evade_hp)evade_hp=hp;                       /* healed meanwhile */
+    else if(hp<evade_hp&&hp){
+        hero[0x182]=(uint8_t)evade_hp;hero[0x183]=(uint8_t)(evade_hp>>8);
+        fprintf(stderr,"[som-ai] EVADE blocked %u damage\n",evade_hp-hp);
+    }
+}
+/* After each frame: shield, and end the dodge by frame count (the move
+ * plus SOM_DODGE_GRACE). */
 static void som_evade_tick(void){
     if(!evade_active||!backend_retro_get_memory_data)return;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram)return;
+    som_evade_shield(ram);
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
-    if(evade_set_guard)ram[0xE191]&=(uint8_t)~0x04u;
-    evade_active=0;evade_set_guard=0;hop_frames_left=0;
+    evade_active=0;hop_frames_left=0;
 }
 /* After-images of the dodge, 4 and 8 frames behind, on even frames only
  * (a flicker reads as translucent; the boy's palette has no colour math). */
@@ -2361,16 +2380,22 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
      * hardware-rendered frame that has no CPU pixels to draw on. */
     const int menu=som_manual_disciplines||
         (ring_ai_enabled&&(gambits.open||disciplines.open));
-    /* Around the hero, field mode only (som_hero_screen): class title,
-     * combo counter, shadow clones and their explosions. */
+    /* Class title next to the HUD portrait, under the HP numbers. Around the
+     * hero, field mode only (som_hero_screen): combo counter, shadow clones,
+     * explosions and dodge after-images. */
     const char *class_title=menu?NULL:som_disc_title(&disciplines);
+    int hud_x=-1,hud_y=-1;
+    if(class_title&&!(backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE&&
+       som_hud_portrait((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),
+                        &hud_x,&hud_y)))class_title=NULL;
     char combo_text[24];som_combo_text(&combo,combo_text);
     if(menu)combo_text[0]=0;
     const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||
                              frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
-    const int hero_drawn=(class_title||combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    if((!overlay.frames_left&&!menu&&!hero_drawn)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
+    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         frontend_video(data,width,height,pitch);
         return;
@@ -2388,14 +2413,15 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
             som_trail_draw(overlay_frame,width,height,pitch);
             som_bunshin_draw(overlay_frame,width,height,pitch,hero_x,hero_y);
         }
-        if(class_title)
-            som_disc_draw_label(overlay_frame,width,height,pitch,pixel_format,
-                                class_title,hero_x,hero_y);
         if(combo_text[0])
             som_overlay_label(overlay_frame,width,height,pitch,pixel_format,combo_text,
                               hero_x,hero_y-SOM_COMBO_LABEL_RISE_PX,1,
                               som_overlay_color(pixel_format,255,208,64));
     }
+    if(class_title)
+        som_overlay_label(overlay_frame,width,height,pitch,pixel_format,class_title,
+                          hud_x+SOM_HUD_LABEL_DX,hud_y+SOM_HUD_LABEL_DY,0,
+                          som_overlay_color(pixel_format,255,255,255));
     if(overlay.frames_left){
         som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
         overlay.frames_left--;
@@ -2534,7 +2560,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
-    evade_active=evade_set_guard=evade_a_hidden=0;evade_frames=0;trail_until=0;
+    evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);memset(bunshin_booms,0,sizeof(bunshin_booms));
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;

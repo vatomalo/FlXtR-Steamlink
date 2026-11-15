@@ -37,6 +37,10 @@ GAMBIT_DEFAULTS = "433341"
 COMBAT_DEFAULTS = "32223333"
 ACTION_TEXT = re.compile(r"[a-z0-9_]+\Z")
 MESSAGE_TEXT = re.compile(r"[A-Za-z0-9 .,!?:/%+=()|^-]+\Z")
+# --profile living: what tools/som_living_world.REMOTE_LOOP allowed, no more.
+LIVING_COMMANDS = {"obs", "obsz", "dlt"}
+LIVING_MESSAGE = re.compile(r"[A-Za-z0-9 .,!?:/%+=()|-]+\Z")
+NPC_WALK = re.compile(r"npc_walk [0-9 ]+\Z")
 
 
 def block_delta(base, image):
@@ -73,12 +77,15 @@ def apply_block_delta(base, delta):
 
 
 class Server:
-    def __init__(self, tmp="/tmp", config="/home/apps/retroarch/cores/experimental"):
+    def __init__(self, tmp="/tmp", config="/home/apps/retroarch/cores/experimental",
+                 profile="ai"):
+        self.living = profile == "living"
         self.wram = os.path.join(tmp, "flxtr-som-wram.bin")
         self.hot = os.path.join(tmp, "flxtr-som-hot.bin")
         self.marker = os.path.join(tmp, "flxtr-som-ai-enabled")
         self.action = os.path.join(tmp, "flxtr-som-ai-action")
         self.message = os.path.join(tmp, "flxtr-som-ai-message")
+        self.npc = os.path.join(tmp, "flxtr-som-npc-command")
         self.familiar = os.path.join(tmp, "flxtr-som-familiar")
         self.gambits = os.path.join(config, "som_ai_gambits")
         self.combat = os.path.join(config, "som_ai_combat")
@@ -115,6 +122,16 @@ class Server:
 
     def handle(self, cmd):
         """Reply bytes for one request line (without its newline)."""
+        if self.living:
+            if cmd.startswith("npc "):
+                text = cmd[4:]
+                return self._write_line(self.npc, text) if NPC_WALK.match(text) else b"BAD\n"
+            if cmd.startswith("msg "):
+                text = cmd[4:]
+                return (self._write_line(self.message, text) if LIVING_MESSAGE.match(text)
+                        else b"BAD\n")
+            if cmd not in LIVING_COMMANDS:
+                return b"BAD\n"
         marked = cmd in ("obsm", "hotmz", "obsmz", "dltm", "nav")
         if marked and not os.path.exists(self.marker):
             return b"STOP\n"
@@ -167,8 +184,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--tmp", default="/tmp")
     parser.add_argument("--config", default="/home/apps/retroarch/cores/experimental")
+    parser.add_argument("--profile", choices=("ai", "living"), default="ai")
     args = parser.parse_args(argv)
-    server = Server(args.tmp, args.config)
+    server = Server(args.tmp, args.config, args.profile)
     out = sys.stdout.buffer
     out.write(BANNER)
     out.flush()

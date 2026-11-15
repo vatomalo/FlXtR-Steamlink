@@ -86,6 +86,29 @@ class TestServerMatchesShellLoop(Fixture):
             self.assertEqual(server.handle(line), b"NONE\n")
 
 
+class TestLivingProfile(Fixture):
+    def test_living_profile_matches_its_restricted_loop(self):
+        import som_living_world as lw
+        loop = lw.REMOTE_LOOP.replace("/tmp/", str(self.root) + "/")
+        server = Server(str(self.root), str(self.root), profile="living")
+        (self.root / "flxtr-som-ai-enabled").write_text("enabled\n")
+        for line in ("obs", "npc npc_walk 131 8 24 30", "npc npc_walk 1;reboot", "npc npc_walk ",
+                     "npc other 1", "msg Good morning, Potos!", "msg ^caret", "act up",
+                     "obsm", "nav", "gmb", "hotz", "dltm", "fam"):
+            with self.subTest(line=line):
+                self.assertEqual(server.handle(line), shell_reply(loop, self.root, line))
+        self.assertEqual((self.root / "flxtr-som-npc-command").read_text(),
+                         "npc_walk 131 8 24 30\n")
+        self.assertFalse((self.root / "flxtr-som-ai-action").exists())
+        ours, theirs = server.handle("obsz"), shell_reply(loop, self.root, "obsz")
+        self.assertEqual(gzip.decompress(ours[6:]), gzip.decompress(theirs[6:]))
+        self.assertTrue(server.handle("dlt").startswith(b"WRAMB "))
+
+    def test_living_world_links_ask_for_the_living_profile(self):
+        self.assertTrue(bridge.server_remote("living").count("--profile living"))
+        self.assertNotIn("--profile", bridge.SERVER_REMOTE)
+
+
 class TestDeltaLink(Fixture):
     def test_every_read_is_the_complete_current_image(self):
         link = self.link()

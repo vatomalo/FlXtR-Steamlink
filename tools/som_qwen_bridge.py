@@ -504,11 +504,13 @@ REMOTE_LOOP = (
 # request, `dlt` deltas). An older device without it answers NOSERVER and the
 # link uses REMOTE_LOOP; SOM_AI_SHELL_LOOP=1 forces the shell loop.
 SERVER_BANNER = "SOMWS 1"
-SERVER_REMOTE = (
-    "f=/home/apps/greenlink/tools/som_wram_server.py; "
-    "if [ -f $f ]; then exec sh /home/apps/greenlink/scripts/music-runtime.sh $f; fi; "
-    "echo NOSERVER"
-)
+def server_remote(profile="ai"):
+    return ("f=/home/apps/greenlink/tools/som_wram_server.py; "
+            "if [ -f $f ]; then exec sh /home/apps/greenlink/scripts/music-runtime.sh $f"
+            + ("" if profile == "ai" else " --profile " + profile) + "; fi; echo NOSERVER")
+
+
+SERVER_REMOTE = server_remote()
 # Characters the Steam Link loop and the overlay font both accept.
 MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|^-]")
 WRAM_BYTES = 0x20000

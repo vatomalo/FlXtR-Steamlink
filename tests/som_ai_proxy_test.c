@@ -247,7 +247,7 @@ int main(void){
     assert(ring_ai_enabled&&!gambits.open);                               /* A: close */
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;som_input_poll();
     pressed=RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();pressed=100;som_input_poll();
-    assert(gambits.cursor==SOM_GAMBIT_COUNT);                             /* wraps to Exit */
+    assert(gambits.cursor==SOM_GAMBIT_COUNT+1u);                          /* wraps to Exit */
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
     assert(!ring_ai_enabled&&!gambits.open&&access(ring_ai_path,F_OK)!=0);
     assert(strstr(overlay.lines[0],"You play"));
@@ -593,6 +593,11 @@ int main(void){
         assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));
         assert(som_gambit_line(&g,2,text)&&text[0]=='>'&&strstr(text,"5 ooooo"));
         assert(strlen(text)<=32);
+        g.cursor=SOM_GAMBIT_COUNT;g.music_genre=0;
+        assert(som_gambit_line(&g,SOM_GAMBIT_COUNT+1u,text)&&strstr(text,"Music genre: Lo-Fi"));
+        assert(som_gambit_press(&g,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_GENRE_CHANGED);
+        assert(g.music_genre==1);
+        assert(som_gambit_line(&g,SOM_GAMBIT_COUNT+1u,text)&&strstr(text,"Jazz"));
         assert(som_gambit_line(&g,SOM_GAMBIT_ITEMS,text)&&strstr(text,"Exit gambits"));
         assert(!som_gambit_line(&g,SOM_GAMBIT_ITEMS+1,text));
         static uint16_t frame[224][256];

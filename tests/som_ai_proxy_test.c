@@ -1190,6 +1190,16 @@ int main(void){
         hero[0x1F1]=7;som_hop_step();som_evade_tick();
         assert(hero[0x1F1]==7);                               /* not after the dodge */
         hero[0x1F1]=0;
+        /* Dodge Mastery (Swordsmanship 10: rank 2, +4 frames): 60 px; off: 48. */
+        disciplines.level[0]=10;hero[2]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200-60);
+        perks_enabled=0;hero[2]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200-48);
+        perks_enabled=1;disciplines.level[0]=1;
         assert(trail_until>=dodge_start+16u);                  /* after-images */
         /* Monk: 2 px x 18; archer 3 px x 18 the way held, stopped by a wall
          * (the guard keeps running); rogue dodges too. */

@@ -440,3 +440,21 @@ a save, 7E:CC01..CC40 equals exactly one slot.
 - Headless on the real ROM: slot 1 load detected (fresh: no record yet), 532704-byte state
   round trip restores it, the older 531668-byte fixture still loads. Hardware: pending; to
   carry the existing live XP over, run `progress_claim_legacy` once with the save loaded.
+
+## Perks (2026-11-15)
+
+`src/som_perks.h`: a table of perks (stable id, discipline or "the chosen class", minimum
+level, levels per rank, max rank, effect, per-rank amount, cap, optional second discipline +
+level as prerequisite for future synergies). Ranks derive from verified levels only, so
+they follow the save (progression v2 stores the unlocked bits too) and cannot stack from
+duplicate events. `FLXTR_SOM_PERKS=0` (read at game load) turns every effect off.
+
+| perk | trains from | effect (per rank, cap) |
+|---|---|---|
+| Dodge Mastery | the class, from level 5, every 5 | +2 movement frames (cap +6); not the untouchable grace |
+| Clone Mastery | Ninjutsu, from 5, every 5 | +4 clone explosion damage (cap +12); clone count unchanged (no new buffers) |
+| Finisher Mastery | the class, from 3, every 5 | +1 finisher level (cap +2), only on an existing chain; the game still caps it at the weapon's learned level |
+| Weapon Flow | Weapon Flow, from 5, every 5 | +1 weapon-switch level counted (cap +2); switches only count when both hits land within the chain window |
+
+Unlocks log `[som-ai] PERK unlocked: <name>`. The Shunshin follow-up synergy is not built
+(the table supports it; see the test `Shadow Strike` row).

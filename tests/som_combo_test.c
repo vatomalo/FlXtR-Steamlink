@@ -6,6 +6,7 @@
 #include "../src/som_bunshin.h"
 #include "../src/som_bunshin_draw.h"
 #include "../src/som_xp.h"
+#include "../src/som_perks.h"
 
 static uint8_t ram[0x20000];
 static uint8_t vram[SOM_BUN_VRAM_SIZE];
@@ -148,6 +149,28 @@ int main(void){
     SomDisciplines disc;som_disc_init(&disc);
     for(unsigned long ev=1;ev<=10;ev++)assert(som_disc_award(&disc,0,10,som_xp_event(ev,1),1));
     assert(disc.level[0]==2&&disc.experience[0]==0);
+    /* Perks: ranks from verified levels only, capped, prerequisites. */
+    SomDisciplines pd;som_disc_init(&pd);pd.selected=0;
+    assert(!som_perk_find(0)&&!som_perk_find(200)&&som_perk_find(1));
+    assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==0);          /* level 1: locked */
+    pd.level[0]=5;assert(som_perk_rank(som_perk_find(1),&pd)==1&&som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==2);
+    pd.level[0]=14;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==4);
+    pd.level[0]=100;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==6);   /* max rank / cap */
+    assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,0)==0);          /* perks off */
+    pd.selected=SOM_DISCIPLINE_NONE;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==0);
+    pd.level[2]=10;assert(som_perk_value(SOM_EFFECT_CLONE_DAMAGE,&pd,1)==8);
+    pd.level[8]=5;assert(som_perk_value(SOM_EFFECT_FLOW_MIX,&pd,1)==1);
+    assert(som_perk_bits(&pd)==((1u<<2)|(1u<<4)));
+    {   SomPerk synergy={9,"Shadow Strike",2,10,5,1,SOM_EFFECT_FINISHER_LEVEL,1,1,0,10};
+        pd.level[2]=10;pd.level[0]=9;assert(som_perk_rank(&synergy,&pd)==0);   /* needs Sword 10 */
+        pd.level[0]=10;assert(som_perk_rank(&synergy,&pd)==1);
+    }
+    /* Combo with perks: bonus levels only on top of a real chain. */
+    SomCombo pc;som_combo_reset(&pc);pc.hits=2;
+    assert(som_combo_level_with(&pc,2,2)==0);
+    pc.hits=3;pc.mixes=4;
+    assert(som_combo_level_with(&pc,2,0)==3&&som_combo_level_with(&pc,4,1)==6);
+    pc.hits=40;assert(som_combo_level_with(&pc,4,2)==SOM_COMBO_LEVEL_MAX);
     puts("PASS: combo ladder and shadow clones");
     return 0;
 }

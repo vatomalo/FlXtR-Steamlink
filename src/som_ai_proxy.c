@@ -24,6 +24,7 @@
 #include "som_bunshin_draw.h"
 #include "som_xp.h"
 #include "som_progress.h"
+#include "som_perks.h"
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -77,6 +78,11 @@ static unsigned long last_attack_frame;
 /* Combo ladder (src/som_combo.h): confirmed hits climb the level, holding
  * B or Y unleashes it. combo_hp/ids/live watch the monsters' HP. */
 static SomCombo combo;
+/* Perks (src/som_perks.h): on unless FLXTR_SOM_PERKS=0 at game load. */
+static int perks_enabled=1;
+static int som_perk(unsigned effect);
+/* The chain level with the Finisher Mastery and Weapon Flow perks. */
+static unsigned som_combo_effective_level(void);
 static SomFamiliar familiar={-1,-1,0,0};
 static uint16_t combo_hp[3];
 static uint8_t combo_ids[3],combo_live[3];
@@ -376,6 +382,7 @@ static int som_prog_read(uint64_t owner,SomProgress *p){
 static int som_prog_write(void){
     if(!prog.owner)return 0;                 /* a new game before its first save */
     som_prog_from_disc(&prog,&disciplines);
+    prog.perks[0]=som_perk_bits(&disciplines);
     char text[SOM_PROG_TEXT_MAX];
     const size_t n=som_prog_format(&prog,text,sizeof(text));
     char path[300],prev[300],temp[300];
@@ -554,9 +561,14 @@ static void som_xp_give(unsigned discipline,unsigned base,unsigned species,unsig
     if(discipline>=SOM_DISCIPLINE_COUNT)return;
     const unsigned amount=som_xp_scaled(&xp_decay,species,base,frame_number);
     const unsigned before=disciplines.level[discipline];
+    const uint32_t perks_before=som_perk_bits(&disciplines);
     if(!amount||!som_disc_award(&disciplines,discipline,amount,
                                 som_xp_event(frame_number,kind),1))return;
     xp_dirty=1;
+    const uint32_t gained=som_perk_bits(&disciplines)&~perks_before;
+    for(size_t i=0;i<SOM_PERK_COUNT&&perks_enabled;i++)
+        if(som_perks[i].id<32u&&(gained&(1u<<som_perks[i].id)))
+            fprintf(stderr,"[som-ai] PERK unlocked: %s\n",som_perks[i].name);
     if(disciplines.level[discipline]!=before){
         char text[64];
         snprintf(text,sizeof(text),"^%s|level %u",som_discipline_names[discipline],
@@ -696,9 +708,9 @@ static void som_combo_frame(void){
                         SOM_XP_HIT,e[0x180],SOM_XPK_HIT,"weapon hit");
             if(combo.mixes!=mixes_before)
                 som_xp_give(SOM_DISC_FLOW,SOM_XP_FLOW,e[0x180],SOM_XPK_FLOW,"weapon switch hit");
-            if(som_combo_level(&combo))
+            if(som_combo_effective_level())
                 fprintf(stderr,"[som-ai] COMBO %u hits, %u mixes: level %u ready\n",
-                        combo.hits,combo.mixes,som_combo_level(&combo));
+                        combo.hits,combo.mixes,som_combo_effective_level());
         }
         if(xp_spell_slot==(int)i&&live&&e[0x180]==xp_spell_species&&hp<xp_spell_hp){
             som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
@@ -709,6 +721,13 @@ static void som_combo_frame(void){
     }
     if(xp_spell_slot>=0&&frame_number-xp_spell_frame>SOM_XP_SPELL_WINDOW)xp_spell_slot=-1;
     som_combo_tick(&combo,frame_number,combo_input_held);
+}
+static int som_perk(unsigned effect){return som_perk_value(effect,&disciplines,perks_enabled);}
+static unsigned som_combo_effective_level(void){
+    const unsigned base=som_combo_level(&combo);
+    if(!base)return 0;                          /* perks never start a chain */
+    return som_combo_level_with(&combo,SOM_COMBO_MIX_MAX+(unsigned)som_perk(SOM_EFFECT_FLOW_MIX),
+                                (unsigned)som_perk(SOM_EFFECT_FINISHER_LEVEL));
 }
 /* Network player 2 (src/som_net_pad.h): pad 2 from a Tailscale device. */
 static SomNetPad net_pad={-1,0,0,0,0,0,0};
@@ -925,11 +944,11 @@ static void som_input_poll(void){
          * once the gauge is back, then fires as the game's own power attack. */
         if(wram&&combo_input_held&&!(current&(l2_bit|r2))&&!special_stage&&!special_suppress&&
            !ring_ai_enabled&&!som_manual_disciplines&&!bash_stage&&!combo_hold_tried&&
-           disciplines.selected<SOM_DISCIPLINE_COUNT&&som_combo_level(&combo)&&
+           disciplines.selected<SOM_DISCIPLINE_COUNT&&som_combo_effective_level()&&
            frame_number-combo_hold_start>=SOM_COMBO_HOLD_FRAMES&&
            !wram[0xE1ED]&&!wram[0xE19B]&&!wram[0xE01C]){
             const unsigned which=(current&y_bit)?1u:0u;
-            const unsigned level=som_combo_level(&combo),hits=combo.hits;
+            const unsigned level=som_combo_effective_level(),hits=combo.hits;
             combo_hold_tried=1;
             if(som_special_start(which,level)){
                 special_chord=which?y_bit:b_bit;special_suppress=1;
@@ -1516,7 +1535,9 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
 }
 /* Kage Bunshin clones (src/som_bunshin.h). Explosion damage grows with
  * the Ninjutsu discipline level. */
-static unsigned som_bunshin_damage(void){return 10u+disciplines.level[2]/2u;}
+static unsigned som_bunshin_damage(void){
+    return 10u+disciplines.level[2]/2u+(unsigned)som_perk(SOM_EFFECT_CLONE_DAMAGE);
+}
 static unsigned som_hero_place(const uint8_t *hero){return hero[0x00B];}
 static void som_bunshin_explode(uint8_t *ram,int x,int y){
     som_bun_boom(bunshin_booms,x,y,0,frame_number);
@@ -1697,14 +1718,16 @@ static int som_evade_start(uint8_t *ram){
         else if(facing==0x01u)dy=1;else dy=-1;
         if(!dodge.forward){dx=-dx;dy=-dy;}
     }
-    hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=dodge.frames;
-    evade_frames=dodge.frames+SOM_DODGE_GRACE;
+    /* Dodge Mastery lengthens the move, not the grace (no longer i-frames). */
+    const unsigned move=dodge.frames+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
+    hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
+    evade_frames=move+SOM_DODGE_GRACE;
     hero[0x006]=hero[0x007]=0;
     evade_hp=som_word(hero+0x182);
     evade_active=1;evade_started=frame_number;evade_xp_given=0;
     som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":"^Evade",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
-            dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,dodge.frames);
+            dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,move);
     return 1;
 }
 /* Before each frame: carry the dodging hero one step, per axis, onto open
@@ -2557,7 +2580,7 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE&&
        som_hud_portrait((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),
                         &hud_x,&hud_y)))class_title=NULL;
-    char combo_text[24];som_combo_text(&combo,combo_text);
+    char combo_text[24];som_combo_text_at(&combo,som_combo_effective_level(),combo_text);
     if(menu)combo_text[0]=0;
     const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||
                              frame_number<=trail_until);
@@ -2749,6 +2772,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_disc_load();
     memset(&xp_decay,0,sizeof(xp_decay));xp_dirty=0;xp_saved_frame=0;xp_spell_slot=-1;
     som_prog_preserve_legacy();
+    {const char *perks=getenv("FLXTR_SOM_PERKS");perks_enabled=!(perks&&!strcmp(perks,"0"));}
     prog_rom=game&&game->data&&game->size?som_prog_hash((const uint8_t*)game->data,game->size):0;
     som_prog_fresh(&prog,prog_rom);prog_baseline=0;prog_was_field=0;prog_session_first=1;
     memset(prog_seen,0,sizeof(prog_seen));

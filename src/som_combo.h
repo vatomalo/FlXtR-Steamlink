@@ -39,11 +39,16 @@ static inline void som_combo_reset(SomCombo *c){
     c->last_weapon=c->pending_weapon=SOM_COMBO_NO_WEAPON;
     c->swing_frame=c->hit_frame=0;
 }
-static inline unsigned som_combo_level(const SomCombo *c){
+/* bonus: extra finisher levels (perks), mix_max: how many weapon switches
+ * count (SOM_COMBO_MIX_MAX, raised by the Weapon Flow perk). */
+static inline unsigned som_combo_level_with(const SomCombo *c,unsigned mix_max,unsigned bonus){
     if(c->hits<SOM_COMBO_FIRST_LEVEL_HITS)return 0;
     unsigned level=1u+(c->hits-SOM_COMBO_FIRST_LEVEL_HITS)/SOM_COMBO_HITS_PER_LEVEL;
-    level+=c->mixes>SOM_COMBO_MIX_MAX?SOM_COMBO_MIX_MAX:c->mixes;
+    level+=(c->mixes>mix_max?mix_max:c->mixes)+bonus;
     return level>SOM_COMBO_LEVEL_MAX?SOM_COMBO_LEVEL_MAX:level;
+}
+static inline unsigned som_combo_level(const SomCombo *c){
+    return som_combo_level_with(c,SOM_COMBO_MIX_MAX,0u);
 }
 /* A swing started with weapon `which` (0 = B, 1 = Y). */
 static inline void som_combo_on_swing(SomCombo *c,unsigned which,unsigned long frame){
@@ -71,11 +76,13 @@ static inline int som_combo_tick(SomCombo *c,unsigned long frame,int held){
     return 0;
 }
 /* "5 HIT MIX LV3"; empty with no hits. */
-static inline void som_combo_text(const SomCombo *c,char out[24]){
+static inline void som_combo_text_at(const SomCombo *c,unsigned level,char out[24]){
     out[0]=0;
     if(!c->hits)return;
-    const unsigned level=som_combo_level(c);
     if(level)snprintf(out,24,"%u HIT%s LV%u",c->hits,c->mixes?" MIX":"",level);
     else snprintf(out,24,"%u HIT",c->hits);
+}
+static inline void som_combo_text(const SomCombo *c,char out[24]){
+    som_combo_text_at(c,som_combo_level(c),out);
 }
 #endif

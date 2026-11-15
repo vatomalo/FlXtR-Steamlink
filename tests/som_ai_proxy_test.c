@@ -211,6 +211,21 @@ int main(void){
     assert(first[0]==0&&first[1]==1&&first[2]==2);
     assert(fseek(wram,0,SEEK_END)==0&&ftell(wram)==(long)SOM_WRAM_SIZE);
     assert(fclose(wram)==0);
+    /* While the AI plays the hot ranges are also written ready-made. */
+    {
+        char hot_path[]="/tmp/flxtr-som-hot-test-XXXXXX";
+        int hfd=mkstemp(hot_path);assert(hfd>=0);close(hfd);unlink(hot_path);
+        char hot_tmp[64];snprintf(hot_tmp,sizeof(hot_tmp),"%s.tmp",hot_path);
+        hot_file=hot_path;hot_temp_file=hot_tmp;
+        assert(som_export_wram()&&access(hot_path,F_OK)!=0);     /* AI off: none */
+        ring_ai_enabled=1;assert(som_export_wram());ring_ai_enabled=0;
+        FILE *hot=fopen(hot_path,"rb");assert(hot);
+        static uint8_t got[24*1024];assert(fread(got,1,sizeof(got),hot)==sizeof(got));
+        assert(fgetc(hot)==EOF);fclose(hot);
+        assert(got[0]==0&&got[8*1024]==(uint8_t)((39*1024)&0xff)&&
+               got[10*1024+5]==(uint8_t)((50*1024+5)&0xff)&&got[20*1024+7]==(uint8_t)((96*1024+7)&0xff));
+        assert(som_export_wram()&&access(hot_path,F_OK)!=0);     /* AI off again: removed */
+    }
     on_turbo=1;
     ring_ai_file=ring_ai_path;
     ring_ai_selector_open=ring_ai_pending=ring_ai_enabled=0;
@@ -587,7 +602,7 @@ int main(void){
     assert(!ring_ai_enabled);
     /* Gambit menu text and drawing. */
     {
-        SomGambits g={1,1,{0,5,3,3,4,1},0};
+        SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,{3,2,2,2,3,3,3,3}};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));
@@ -598,7 +613,8 @@ int main(void){
                strstr(text,"off"));
         /* Infinite MP test switch: B toggles; weights and file text unchanged. */
         {
-            SomGambits m;som_gambit_parse(&m,"433341");m.open=1;m.cursor=SOM_GAMBIT_INFINITE_MP;
+            SomGambits m;memset(&m,0,sizeof(m));som_gambit_parse(&m,"433341");
+            m.open=1;m.cursor=SOM_GAMBIT_INFINITE_MP;
             m.infinite_mp=0;
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_TEST_SWITCH);
             assert(m.infinite_mp&&m.open);
@@ -610,6 +626,36 @@ int main(void){
             assert(m.cursor==SOM_GAMBIT_EXIT_ITEM);
         }
         assert(!som_gambit_line(&g,SOM_GAMBIT_ITEMS+1,text));
+        /* Combat page: its own weights, digits and exit row. */
+        {
+            SomGambits c;memset(&c,0,sizeof(c));som_gambit_parse(&c,"433341");
+            som_combat_parse(&c,"x");                              /* invalid: defaults */
+            char f[SOM_COMBAT_COUNT+1];som_combat_format(&c,f);assert(!strcmp(f,"32223333"));
+            som_combat_parse(&c,"50123450");som_combat_format(&c,f);assert(!strcmp(f,"50123450"));
+            c.open=1;som_gambit_turn_page(&c,1);
+            assert(c.page==SOM_PAGE_COMBAT&&c.cursor==0);
+            assert(som_gambit_line(&c,0,text)&&strstr(text,"COMBAT"));
+            assert(som_gambit_line(&c,1,text)&&strstr(text,"Press the attack")&&strstr(text,"5 ooooo"));
+            assert(som_gambit_press(&c,1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)==SOM_GAMBIT_CHANGED);
+            assert(c.combat[0]==4&&c.weight[0]==4);                /* actions untouched */
+            assert(som_gambit_press(&c,1u<<RETRO_DEVICE_ID_JOYPAD_UP)==SOM_GAMBIT_NONE);
+            assert(c.cursor==SOM_COMBAT_EXIT_ITEM);
+            assert(som_gambit_line(&c,SOM_COMBAT_ITEMS,text)&&strstr(text,"Exit gambits"));
+            assert(!som_gambit_line(&c,SOM_COMBAT_ITEMS+1,text));
+            assert(som_gambit_press(&c,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_EXIT&&!c.open);
+            som_gambit_turn_page(&c,1);assert(c.page==SOM_PAGE_ACTIONS);
+            som_gambit_turn_page(&c,0);assert(c.page==SOM_PAGE_COMBAT);
+            /* Saved to its own file, loaded back. */
+            char path[]="/tmp/flxtr-combat-XXXXXX";int cfd=mkstemp(path);assert(cfd>=0);close(cfd);
+            const char *saved_combat=combat_file,*saved_gambit=gambit_file;
+            char gpath[]="/tmp/flxtr-gambit-XXXXXX";int gfd=mkstemp(gpath);assert(gfd>=0);close(gfd);
+            combat_file=path;gambit_file=gpath;
+            SomGambits keep=gambits;gambits=c;som_gambit_save();
+            memset(&gambits,0,sizeof(gambits));som_gambit_load();
+            assert(gambits.combat[0]==4&&gambits.combat[1]==0&&gambits.weight[0]==4);
+            assert(gambits.page==SOM_PAGE_ACTIONS);
+            gambits=keep;combat_file=saved_combat;gambit_file=saved_gambit;unlink(path);unlink(gpath);
+        }
         static uint16_t frame[224][256];
         memset(frame,0,sizeof(frame));
         som_gambit_draw((uint8_t*)frame,256,224,512,2,&g);
@@ -951,12 +997,13 @@ int main(void){
         hero[0x19C]=2;
         assert(som_special_start(0,6)&&special_stage==2);
         special_stage=0;special_suppress=0;hero[0x19C]=1;
-        /* R1+A: back-roll pose, untouchable until it ends; A hidden. */
-        disciplines.selected=3;                              /* Magic: no dodge */
-        const uint16_t r1a=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R)|(1u<<RETRO_DEVICE_ID_JOYPAD_A));
+        /* A: back-roll pose, untouchable until it ends; A hidden from the
+         * game for dodge classes. Magic has no dodge: native A (dash). */
+        disciplines.selected=3;
+        const uint16_t r1a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
         mocked_buttons=r1a;som_input_poll();
         assert(!evade_active&&hero[0x011]!=SOM_EVADE_POSE);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
         mocked_buttons=0;som_input_poll();
         disciplines.selected=0;                              /* Swordsmanship */
         hero[0x191]=0;hero[0x01C]=0;
@@ -973,13 +1020,18 @@ int main(void){
         assert(!evade_active&&(hero[0x191]&0x04));            /* not ours to clear */
         hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;hero[0x042]=0;
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1); /* plain A */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0); /* A = evade */
         mocked_buttons=0;som_input_poll();
+        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x191]=0;hero[0x042]=0;
         /* Ninjutsu: sword -> Shunshin leap; chakram -> Kage Bunshin. */
         disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         assert(evade_active&&hero[0x011]==SOM_SHUNSHIN_POSE&&!bunshin_until);
-        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();assert(!evade_active);
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==0);
+        mocked_buttons=0;som_input_poll();
+        hero[0x01C]=0;hero[0x011]=0x03;som_evade_tick();      /* walking took over */
+        assert(!evade_active&&hero[0x042]==0);                /* busy flag cleared */
         memset(ram+0x0800,0,544);
         for(unsigned i=0;i<128u;i++)ram[0x0800+4*i+1]=0xF0;    /* all off screen */
         ram[0x0800]=120;ram[0x0801]=100;ram[0x0802]=0xC0;ram[0x0803]=0x03; /* boy 0x1C0 pal 1 */
@@ -987,16 +1039,16 @@ int main(void){
         hero[0x1E4]=6;hero[0x191]=0;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         assert(evade_active&&hero[0x011]==SOM_EVADE_POSE&&bunshin_until);
-        frame_number|=1u;som_bunshin_frame(ram);
-        assert(ram[0x0809]==0xF0);                             /* odd frame: hidden */
-        frame_number++;som_bunshin_frame(ram);
+        frame_number|=2u;som_bunshin_frame(ram);
+        assert(ram[0x0809]==0xF0);                             /* off frames: hidden */
+        frame_number=(frame_number|3u)+1u;som_bunshin_frame(ram);
         assert(ram[0x0808]==96&&ram[0x0809]==100&&ram[0x080A]==0xC0&&ram[0x080B]==0x03);
         assert(ram[0x080C]==144&&ram[0x080D]==100);           /* right clone */
         assert(ram[0x0804]==10&&ram[0x0810+1]==0xF0);          /* others untouched */
         ram[0x0800]=10;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
-        frame_number+=2;som_bunshin_frame(ram);                /* left of x 0: wraps */
+        frame_number+=4;som_bunshin_frame(ram);                /* left of x 0: wraps */
         assert(ram[0x0808]==(uint8_t)(10-24)&&(ram[0x0A00]&(1u<<4)));   /* x bit 8 */
-        frame_number+=SOM_CLONE_FRAMES+2;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
+        frame_number+=SOM_CLONE_FRAMES+4;memset(ram+0x0808,0,8);ram[0x0809]=ram[0x080D]=0xF0;
         som_bunshin_frame(ram);assert(!bunshin_until&&ram[0x0809]==0xF0);  /* gone */
         hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x1E4]=1;hero[0x191]=0;
         /* AI commands: class choice and casts within the class. */
@@ -1200,6 +1252,15 @@ int main(void){
             assert(som_disc_visual_profile(&disciplines)!=SOM_PAL_ORIGINAL);
         }
         som_disc_init(&disciplines);hero_pal_have=0;
+    }
+    /* The playing song (7E:1E05) is announced once per change. */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));
+        som_song_load(&song_names,"/nonexistent/flxtr-songs");song_last=0x100u;
+        ram[0x1E05]=0x04;som_song_frame(ram);assert(song_last==0x04);
+        ram[0x1E05]=0x40;som_song_frame(ram);assert(song_last==0x04);   /* not a song id */
+        ram[0x1E05]=0x0E;som_song_frame(ram);assert(song_last==0x0E);
     }
     /* Disciplines survive restarts; a damaged file starts fresh. */
     {

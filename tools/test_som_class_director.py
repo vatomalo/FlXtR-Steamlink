@@ -38,6 +38,24 @@ class ClassDirectorTest(unittest.TestCase):
         self.director.switched(index)                # already a sword: stay
         self.assertIsNone(self.director.choose("brawler", {"glove": 5}, 0, need_cut=True))
 
+    def test_situation_advantages(self):
+        index, why = self.director.choose("balanced", {}, 20, hp_fraction=0.3)
+        self.assertEqual(index, 4)                    # Divine Arts heals
+        self.assertIn("Cure Water", why)
+        index, why = ClassDirector(self.clock).choose("balanced", {}, 0, enemies=1, nearest=90)
+        self.assertEqual(index, 11)                   # Archery for range
+        index, _ = ClassDirector(self.clock).choose("balanced", {}, 0, enemies=1, nearest=30,
+                                                    toughest=400)
+        self.assertEqual(index, 10)                   # Bushido vs a tough enemy
+
+    def test_gambit_cooldown(self):
+        self.director.switched(0)
+        self.director.cooldown = None                 # "Switch classes" 0
+        self.clock.now = 1000
+        self.assertIsNone(self.director.choose("skirmisher", {}, 0))
+        self.director.cooldown = 30
+        self.assertIsNotNone(self.director.choose("skirmisher", {}, 0))
+
     def test_no_flip_flopping(self):
         self.director.switched(0)
         self.assertIsNone(self.director.choose("skirmisher", {}, 0))  # cooldown
@@ -45,8 +63,9 @@ class ClassDirectorTest(unittest.TestCase):
         self.assertIsNone(self.director.choose("skirmisher", {}, 0, in_combat=True))
         self.assertIsNotNone(self.director.choose("skirmisher", {}, 0))
         self.director.switched(2)
-        self.clock.now = 400                         # small gain is not enough
-        self.assertIsNone(self.director.choose("skirmisher", {"bow": 1}, 0))
+        self.clock.now = 400                         # a tie is not enough
+        self.assertIsNone(self.director.choose("skirmisher", {}, 0))
+        self.assertEqual(self.director.choose("skirmisher", {"bow": 1}, 0)[0], 9)  # +1 is
 
 
 if __name__ == "__main__":

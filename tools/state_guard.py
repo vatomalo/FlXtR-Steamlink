@@ -308,6 +308,9 @@ def session():
     return data
 
 
+STATE_RESCAN_S = 10.0
+
+
 def alive(pid):
     try: os.kill(pid, 0);return True
     except ProcessLookupError: return False
@@ -319,13 +322,21 @@ def watch(pid):
         if not alive(pid) or time.monotonic() - began > 30: return
         time.sleep(0.1)
     rom = session()['rom']
-    observed = {}
+    observed, captured, sources, rescan = {}, {}, [], 0.0
     while alive(pid):
-        for path in sources_for(rom):
+        # The Steam Link has one slow core shared with the game: walk the state
+        # folders every 10 s, not every second, and snapshot each stable
+        # version once instead of re-capturing unchanged files every second.
+        now = time.monotonic()
+        if now >= rescan:
+            sources, rescan = list(sources_for(rom)), now + STATE_RESCAN_S
+        for path in sources:
             try:
                 current = stamp(path)
-                if observed.get(str(path)) == current: snapshot([path])
-                observed[str(path)] = current
+                key = str(path)
+                if observed.get(key) == current and captured.get(key) != current:
+                    snapshot([path]); captured[key] = current
+                observed[key] = current
             except OSError: pass
         time.sleep(1)
     # Finish after RetroArch has exited; never rely on its in-flight buffers.

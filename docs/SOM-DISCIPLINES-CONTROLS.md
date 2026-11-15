@@ -208,20 +208,23 @@ be added as disciplines first. Every other discipline has no dodge roll.
   (`+0x19C`). No seals keeps R2+B = 1, R2+Y = 2. Once the swing ends the proxy sets the
   gauge word `+0x01A` = stage<<8 | 44 and `+0x19B` (som-decomp rom-combat.md 11.3),
   then releases B.
-- **Evade**: **R1+A** plays the native back-roll pose 0x8D (55 px away from the facing,
+- **Evade**: **A** (R1+A too) plays the native back-roll pose 0x8D (55 px away from the facing,
   65 frames; hero-poses.md) with status 0x0400 (no hit resolved) for its length. Only
-  disciplines with a dodge. A does not reach the game while R1 is held. Not yet checked
-  live: whether the roll respects walls.
+  disciplines with a dodge; for them A no longer dashes (dash to be re-added), other classes
+  keep the native A. The D-pad is hidden from the game while the pose plays (a held
+  direction made the game replace Shunshin with walking, live) and the pose's busy flag
+  `+0x42` is cleared if the game cut the pose short. Not yet checked live: walls.
 - **AI**: `tools/som_class_director.py` picks the class from weapon levels, build and MP
   (`class_<n>`); for grass it keeps the class, pulls the sword (`equip_sword`) to slash and
   puts the class weapon back 10 decisions later; it casts `cast_heal` /
   `cast_attack` from the class list, and uses `special_<n>` instead of holding for
   charged attacks.
-- **Ninjutsu jutsu on R1+A**, by the weapon in hand: sword = **Shunshin** (native forward
+- **Ninjutsu jutsu on A**, by the weapon in hand: sword = **Shunshin** (native forward
   leap pose 0x9E, 85 px, untouchable while it plays); chakram/boomerang = **Kage Bunshin**
   (the back roll, then two cosmetic shadow clones 24 px either side for 6 s: copies of the
   boy's OAM entries, tiles 0x1C0-0x1D7 palette 1, written into free entries of the OAM
-  shadow 7E:0800 before each frame; no objects, no hits).
+  shadow 7E:0800 before each frame, two frames on and two off for a ghostly look, since
+  palette 1 cannot blend; no objects, no hits).
 
 ## Network player 2 (2026-11-14)
 
@@ -237,3 +240,57 @@ be added as disciplines first. Every other discipline has no dodge roll.
 - **Colours for every class** (2026-11-14): Magic arcane violet, Divine Arts white/gold, Dark
   Arts black/crimson, Support & Dance rose, Weapon Flow teal/silver. With no class the shown
   palette is still held to the plain colours in field play.
+
+## AI weapon alternation (2026-11-15)
+
+`tools/som_weapon_tactics.py` picks between the class's two weapons and prints why
+(`[weapon] sword -> bow: enemy 60 px away: the bow reaches 70 px, the sword only 28`):
+whip blind spot under ~18 px, low HP (<40 %) fights from the longer reach, an enemy beyond
+melee reach but inside the other weapon's, the higher-level weapon at close range, and
+training the weaker weapon when it lags two levels behind and no enemy is near. 4 s
+cooldown, never mid-swing. The planner strikes from each weapon's reach
+(`WEAPON_REACH_PX`, from som-decomp weapons-ranged.md 2.4) instead of sword distance.
+
+## Steam Link CPU (2026-11-15)
+
+Single core, 93 % busy while playing (RetroArch 55 %, kernel/network 37 %, Steam Link
+stack 13 %, state_guard 7 %). Changes:
+- **Music not synthesised**: our own snes9x2005_plus build (`scripts/build-cores.sh
+  snes-plus` applies `patches/snes9x2005-flxtr-music-voices.patch`) installed as
+  `cores/experimental/snes9x2005_plus_flxtr_libretro.so`; the proxy prefers it and calls
+  `retro_flxtr_skip_music_voices(2)`: voices 0-5 never mixed, voices 6-7 (all effects,
+  som-decomp audio.md) only for 2.5 s after an effect request (APU port 0 = 2). Headless
+  x86 benchmark, 3600 intro frames: 1.46 s -> 1.11 s (-24 %); mode 0 is identical to the
+  stock core; all sound off would be 1.01 s. Music overlapping an effect window can still
+  be heard faintly.
+- RetroArch resampler: **keep `sinc`**. The Steam Link's RetroArch 1.6.7 has only `sinc`
+  and `nearest`; setting `cc` made every launch die right after startup (2026-11-15).
+- Measured on the Steam Link (600 intro frames, headless): stock core 4.08 s, our core
+  mode 0 4.04 s, mode 2 3.14 s (-23 %).
+- Song names: the proxy shows "Now playing" when 7E:1E05 changes (`src/som_songs.h`; 13
+  decomp-verified names, others "Song 0xNN" until named in
+  `cores/experimental/som_song_names.tsv`, lines `<hex id><TAB><name>`).
+- state_guard rescans state folders every 10 s and snapshots each stable version once.
+- Proxy exports WRAM at 2 Hz unless the AI plays (10 Hz) and writes the bridge's hot ranges
+  ready-made (`/tmp/flxtr-som-hot.bin`): one gzip per decision instead of four dd.
+
+## Gambit pages and situational classes (2026-11-15)
+
+- The AI overlay now has three pages cycled with **L1/R1**: **Gambits: Actions** (the six
+  activities, file `som_ai_gambits`, unchanged format), **Gambits: Combat** (file
+  `som_ai_combat`, 8 digits: press the attack, keep distance, guard and counter, evade,
+  charged attacks, cast magic, switch classes, switch weapons; default `32223333`) and
+  Disciplines.
+- The bridge reads the combat page (`gmc`) every 5 decisions: press vs distance sets the
+  planner's preferred tactic, guard 0 drops planned blocks, evade > guard turns a planned
+  block into the class's evade/jutsu (`evade` command), charge 0 disables charged attacks,
+  magic sets the cast interval (14 s / weight; attack spells only for classes that have
+  one), classes sets the class cooldown (150 s / weight, 0 = never), weapons the weapon
+  cooldown (12 s / weight).
+- `som_class_director` now scores advantages for the moment: hurt -> Divine Arts / Support
+  (with MP), crowd -> Magic / Ninjutsu / Support, far enemy -> Archery / Magic, tough enemy
+  (max HP >= 200) -> Bushido / Swordsmanship / Dark Arts / Roguecraft, one close enemy ->
+  Martial Arts, calm -> Weapon Flow. Margin 1, no switching with an enemy within 40 px.
+  Each switch shows a class line ("Shadows, hide me!") and the reason.
+- Exact music skip: the core reads the SPC700 driver's effect-owned voice mask `$AE` and
+  synthesises only those voices (5-7), with a 1/6 s release tail; x86 1.48 s -> 1.15 s.

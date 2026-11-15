@@ -53,6 +53,13 @@ test-som-net-pad:
 
 .PHONY: test-som-net-pad
 
+test-som-songs:
+	@mkdir -p build
+	$(CC) $(CFLAGS) -D_DEFAULT_SOURCE tests/som_songs_test.c -o build/som-songs-test
+	./build/som-songs-test
+
+.PHONY: test-som-songs
+
 test-rom-core-category:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/rom_core_category_test.c -o build/rom-core-category-test

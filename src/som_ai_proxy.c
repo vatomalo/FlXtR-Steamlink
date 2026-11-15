@@ -18,6 +18,7 @@
 #include "som_familiar.h"
 #include "som_npc_walk.h"
 #include "som_net_pad.h"
+#include "som_songs.h"
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -27,6 +28,12 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+/* Our own build of the same pinned snes9x2005_plus (scripts/build-cores.sh
+ * with patches/snes9x2005-flxtr-music-voices.patch) when installed: it adds
+ * the music-free mixing switch. Otherwise the stock core. */
+#ifndef SOM_PROXY_FLXTR_CORE
+#define SOM_PROXY_FLXTR_CORE "/home/apps/retroarch/cores/experimental/snes9x2005_plus_flxtr_libretro.so"
+#endif
 #ifndef SOM_PROXY_BASE_CORE
 #define SOM_PROXY_BASE_CORE "/home/apps/retroarch/cores/snes9x2005_plus_libretro.so"
 #endif
@@ -35,7 +42,8 @@
 #define SOM_HOLD_FRAMES 30u
 #define SOM_WRAM_SIZE 0x20000u
 /* Ten snapshots per second keep the SkyLoft planner on fresh positions. */
-#define SOM_WRAM_EXPORT_FRAMES 6u
+#define SOM_WRAM_EXPORT_FRAMES 6u        /* while the AI plays */
+#define SOM_WRAM_IDLE_EXPORT_FRAMES 30u  /* otherwise: living world reads every 2 s */
 /* Modern cores (including the pinned snes9x2005) read the whole pad with one
  * bitmask query when the frontend reports RETRO_ENVIRONMENT_GET_INPUT_BITMASKS.
  * The vendored libretro.h predates these constants. */
@@ -88,6 +96,12 @@ static const char *trigger_file;
 static const char *action_file="/tmp/flxtr-som-ai-action";
 static const char *wram_file="/tmp/flxtr-som-wram.bin";
 static const char *wram_temp_file="/tmp/flxtr-som-wram.bin.tmp";
+/* The bridge's per-decision ranges (som_qwen_bridge.py HOT_RANGES_KB, KiB
+ * start/count), written ready-made while the AI plays so the Steam Link
+ * serves them with one gzip instead of four dd processes. */
+static const char *hot_file="/tmp/flxtr-som-hot.bin";
+static const char *hot_temp_file="/tmp/flxtr-som-hot.bin.tmp";
+static const unsigned som_hot_ranges[4][2]={{0,8},{39,2},{50,10},{96,4}};
 static const char *ring_ai_file="/tmp/flxtr-som-ai-enabled";
 static int wram_export_error_logged;
 static int ring_ai_selector_open,ring_ai_pending,ring_ai_enabled;
@@ -120,7 +134,9 @@ static int som_write_ring_ai_marker(void);
  * instead of taking control. The enabled mask persists for the bridge. */
 #define SOM_GAMBIT_FILE "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 static const char *gambit_file=SOM_GAMBIT_FILE;
-static SomGambits gambits={0,0,{4,3,3,3,4,1},0};
+#define SOM_COMBAT_FILE "/home/apps/retroarch/cores/experimental/som_ai_combat"
+static const char *combat_file=SOM_COMBAT_FILE;
+static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,{3,2,2,2,3,3,3,3}};
 static SomDisciplines disciplines;
 /* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
@@ -219,17 +235,26 @@ static void som_gambit_load(void){
     if(in){if(!fgets(text,sizeof(text),in))text[0]=0;fclose(in);}
     som_gambit_parse(&gambits,text[0]?text:NULL);gambits.open=0;gambits.cursor=0;
     gambits.infinite_mp=0;                 /* test switch never carries over */
+    gambits.page=SOM_PAGE_ACTIONS;
+    char combat[16]={0};
+    in=fopen(combat_file,"r");
+    if(in){if(!fgets(combat,sizeof(combat),in))combat[0]=0;fclose(in);}
+    som_combat_parse(&gambits,combat[0]?combat:NULL);
 }
-static void som_gambit_save(void){
+static void som_gambit_write(const char *path,const char *text){
     char temp[256];
-    snprintf(temp,sizeof(temp),"%s.tmp",gambit_file);
+    snprintf(temp,sizeof(temp),"%s.tmp",path);
     FILE *out=fopen(temp,"w");
     if(!out)return;
-    char text[SOM_GAMBIT_COUNT+1];
-    som_gambit_format(&gambits,text);
     int ok=fprintf(out,"%s\n",text)>0;
     if(fclose(out)!=0)ok=0;
-    if(ok)rename(temp,gambit_file);else unlink(temp);
+    if(ok)rename(temp,path);else unlink(temp);
+}
+static void som_gambit_save(void){
+    char text[SOM_GAMBIT_COUNT+1],combat[SOM_COMBAT_COUNT+1];
+    som_gambit_format(&gambits,text);som_combat_format(&gambits,combat);
+    som_gambit_write(gambit_file,text);
+    som_gambit_write(combat_file,combat);
 }
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
@@ -368,7 +393,7 @@ static int special_from_ai;           /* special_<n> command while the AI plays 
 #define SOM_EVADE_POSE 0x8Du
 #define SOM_SHUNSHIN_POSE 0x9Eu         /* 55-frame forward leap, 85 px */
 #define SOM_EVADE_FRAMES 75ul
-static int evade_active,evade_set_guard,evade_a_hidden;
+static int evade_active,evade_set_guard,evade_a_hidden,evade_set_busy;
 static unsigned evade_pose;
 static unsigned long evade_started;
 static int som_evade_start(uint8_t *ram);
@@ -494,9 +519,13 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     }
     if((evade_a_hidden||evade_active)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
-        const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+        /* While it plays the D-pad is hidden too: a held direction made the
+         * game replace the pose with walking (live, 2026-11-14). */
+        const uint16_t a=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(evade_active?
+            (1u<<RETRO_DEVICE_ID_JOYPAD_UP)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT):0u));
         if(bitmask)actual=(int16_t)(actual&~a);
-        else if(id==RETRO_DEVICE_ID_JOYPAD_A)actual=0;
+        else if(id<16u&&(a&(1u<<id)))actual=0;
     }
     if(seal_mode&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
@@ -625,10 +654,12 @@ static void som_input_poll(void){
         }
         /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
         const uint16_t x_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
-        /* R1+A: evade (A never reaches the game while R1 is held). */
-        const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        /* A: evade / jutsu for the disciplines with a dodge; the game's A
+         * dash is gone for them until dash is re-added. Other classes keep
+         * the native A. Field play only (menus keep A as cancel). */
         const uint16_t a_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
-        evade_a_hidden=wram&&(current&r1_bit)&&!ring_ai_enabled&&!som_manual_disciplines;
+        evade_a_hidden=wram&&!ring_ai_enabled&&!som_manual_disciplines&&
+            disciplines.selected<SOM_DISCIPLINE_COUNT&&som_disc_has_dodge(disciplines.selected);
         if(evade_a_hidden&&(pressed&a_bit))som_evade_start(wram);
         /* Tap X: cast on release. Hold X: next spell every 0.5 s. */
         if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
@@ -707,7 +738,15 @@ static void som_input_poll(void){
             const uint16_t tabs=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L)|
                                            (1u<<RETRO_DEVICE_ID_JOYPAD_R));
             if(pressed&tabs){
-                som_menu_disciplines=!som_menu_disciplines;
+                /* L1/R1 cycle Actions -> Combat -> Disciplines. */
+                const int forward=(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R))!=0;
+                if(som_menu_disciplines){
+                    som_menu_disciplines=0;
+                    gambits.page=forward?SOM_PAGE_ACTIONS:SOM_PAGE_COMBAT;gambits.cursor=0;
+                }else if((forward&&gambits.page==SOM_PAGE_COMBAT)||
+                         (!forward&&gambits.page==SOM_PAGE_ACTIONS)){
+                    som_menu_disciplines=1;
+                }else som_gambit_turn_page(&gambits,forward);
                 gambits.open=!som_menu_disciplines;
                 disciplines.open=som_menu_disciplines;
             }else if(som_menu_disciplines){
@@ -721,8 +760,9 @@ static void som_input_poll(void){
             }else switch(som_gambit_press(&gambits,pressed)){
             case SOM_GAMBIT_CHANGED:
                 som_gambit_save();
-                {char text[SOM_GAMBIT_COUNT+1];som_gambit_format(&gambits,text);
-                 fprintf(stderr,"[som-ai] GAMBITS %s\n",text);}
+                {char text[SOM_GAMBIT_COUNT+1],combat[SOM_COMBAT_COUNT+1];
+                 som_gambit_format(&gambits,text);som_combat_format(&gambits,combat);
+                 fprintf(stderr,"[som-ai] GAMBITS %s COMBAT %s\n",text,combat);}
                 break;
             case SOM_GAMBIT_TEST_SWITCH:
                 som_infinite_mp_changed();
@@ -805,6 +845,18 @@ static int som_export_wram(void){
     if(fclose(output)!=0)ok=0;
     if(ok)ok=rename(wram_temp_file,wram_file)==0;
     if(!ok)unlink(wram_temp_file);
+    if(ok&&ring_ai_enabled){
+        int hot_fd=open(hot_temp_file,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
+        FILE *hot=hot_fd>=0?fdopen(hot_fd,"wb"):NULL;
+        int hot_ok=hot!=NULL;
+        if(!hot&&hot_fd>=0)close(hot_fd);
+        for(unsigned i=0;i<4u&&hot_ok;i++)
+            hot_ok=fwrite(ram+som_hot_ranges[i][0]*1024u,1,som_hot_ranges[i][1]*1024u,hot)==
+                   som_hot_ranges[i][1]*1024u;
+        if(hot&&fclose(hot)!=0)hot_ok=0;
+        if(hot_ok)hot_ok=rename(hot_temp_file,hot_file)==0;
+        if(!hot_ok)unlink(hot_temp_file);
+    }else if(ok)unlink(hot_file);   /* AI off: never serve stale ranges */
     return ok;
 }
 
@@ -1181,10 +1233,10 @@ static void som_bunshin_frame(uint8_t *ram){
     if(frame_number>bunshin_until||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F){
         bunshin_until=frame_number>bunshin_until?0:bunshin_until;return;
     }
-    /* Every other frame only: the boy's palette 1 cannot use colour math
-     * (only OBJ palettes 4-7 can), so a 30 Hz flicker gives the ghostly
+    /* Half the time only: the boy's palette 1 cannot use colour math
+     * (only OBJ palettes 4-7 can), so a flicker gives the ghostly
      * half-transparent look instead. */
-    if(frame_number&1u)return;
+    if(frame_number&2u)return;     /* 2 frames on, 2 off: SoM may send OAM every 2nd frame */
     uint8_t *oam=ram+0x0800u,*high=ram+0x0A00u;
     unsigned hero_ids[16],heroes=0,free_ids[128],frees=0;
     for(unsigned i=0;i<128u;i++){
@@ -1226,6 +1278,7 @@ static int som_evade_start(uint8_t *ram){
     const int ninja=disciplines.selected==2u;
     const int shunshin=ninja&&hero[0x1E4]==1u,bunshin=ninja&&hero[0x1E4]==6u;
     evade_pose=shunshin?SOM_SHUNSHIN_POSE:SOM_EVADE_POSE;
+    evade_set_busy=!hero[0x042];
     hero[0x01C]=0x40;hero[0x011]=(uint8_t)evade_pose;hero[0x042]=1;
     hero[0x006]=hero[0x007]=0;
     evade_set_guard=!(hero[0x191]&0x04u);
@@ -1247,7 +1300,10 @@ static void som_evade_tick(void){
     if(hero[0x011]==evade_pose&&hero[0x01C]==0x40&&
        frame_number-evade_started<=SOM_EVADE_FRAMES)return;
     if(evade_set_guard)hero[0x191]&=(uint8_t)~0x04u;
-    evade_active=0;evade_set_guard=0;
+    /* The pose script clears the busy flag at its end; a pose the game
+     * replaced early (live: walking took over Shunshin) leaves it set. */
+    if(evade_set_busy)hero[0x042]=0;
+    evade_active=0;evade_set_guard=0;evade_set_busy=0;
 }
 /* Charge the game's actual weapon stage through its normal B input. */
 static int som_special_start(unsigned which,unsigned stage){
@@ -1822,6 +1878,10 @@ static int som_handle_command(const char *command){
         return clone_no_slot;
     }
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
+    /* The AI's dodge: the same evade/jutsu as the player's A. */
+    if(!strcmp(command,"evade"))
+        return som_evade_start(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strcmp(command,"summon_boss"))return som_summon_boss();
     if(!strcmp(command,"vram_dump")){som_vram_dump();return 1;}
     if(!strcmp(command,"weapon_trace")){
@@ -2014,6 +2074,27 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     }
     frontend_video(overlay_frame,width,height,pitch);
 }
+/* Music-free mixing (our core only): Secret of Mana's music is never
+ * synthesised, effects keep playing (patches/snes9x2005-flxtr-music-voices). */
+static void (*backend_skip_music)(int);
+#define SOM_SKIP_MUSIC_MODE 2   /* voices 0-5 off; 6-7 only after effect requests */
+/* Song names (src/som_songs.h): shown when the game starts a song. */
+#define SOM_SONG_FILE "/home/apps/retroarch/cores/experimental/som_song_names.tsv"
+static const char *song_file=SOM_SONG_FILE;
+static SomSongNames song_names;
+static unsigned song_last=0x100u;
+static void som_song_frame(const uint8_t *ram){
+    if(!ram)return;
+    const unsigned id=ram[0x1E05];
+    if(id==song_last||id>=SOM_SONG_COUNT)return;
+    song_last=id;
+    char fallback[16],text[64];
+    const char *name=som_song_name(&song_names,id,fallback);
+    snprintf(text,sizeof(text),"Now playing|%s",name);
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] SONG 0x%02X %s (map %u)\n",id,name,
+            (unsigned)((ram[0xDC]|ram[0xDD]<<8)&0x1FFu));
+}
 static bool som_environment(unsigned cmd,void *data){
     bool handled=environment_callback?environment_callback(cmd,data):false;
     if(handled&&cmd==RETRO_ENVIRONMENT_SET_PIXEL_FORMAT&&data)
@@ -2024,11 +2105,13 @@ static bool som_environment(unsigned cmd,void *data){
 static void load_backend(void){
     if(backend)return;
     const char *path=getenv("FLXTR_AI_BASE_CORE");
-    if(!path||!*path)path=SOM_PROXY_BASE_CORE;
+    if(!path||!*path)path=access(SOM_PROXY_FLXTR_CORE,R_OK)==0?SOM_PROXY_FLXTR_CORE:SOM_PROXY_BASE_CORE;
+    fprintf(stderr,"[som-ai] SNES core %s\n",path);
     /* Never allow loading this proxy into itself. */
     if(strstr(path,"som_ai_proxy")){fputs("[som-ai] recursive core path refused\n",stderr);abort();}
     backend=dlopen(path,RTLD_NOW|RTLD_LOCAL);
     if(!backend){fprintf(stderr,"[som-ai] dlopen failed: %s\n",dlerror());abort();}
+    *(void**)(&backend_skip_music)=dlsym(backend,"retro_flxtr_skip_music_voices");
 #define LOAD_VIDEO() do { \
     *(void**)(&backend_set_video_refresh)=dlsym(backend,"retro_set_video_refresh"); \
     if(!backend_set_video_refresh){fputs("[som-ai] backend lacks retro_set_video_refresh\n",stderr);abort();} \
@@ -2074,7 +2157,7 @@ RETRO_API void retro_deinit(void){
     /* RetroArch may call get_system_info again; do not unload an active
      * backend out from under its borrowed system-info string pointers. */
     game_loaded=0;armed=0;
-    unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
+    unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);
     (void)environment_callback;
 }
 /* EXPERIMENTAL map-record patches, applied to the proxy's in-memory copy of
@@ -2118,7 +2201,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
-    evade_active=evade_set_guard=evade_a_hidden=0;seal_mode=0;seal_count=0;x_cycled=0;
+    evade_active=evade_set_guard=evade_a_hidden=evade_set_busy=0;seal_mode=0;seal_count=0;x_cycled=0;
     bunshin_until=0;evade_pose=SOM_EVADE_POSE;
     special_chord=0;special_suppress=0;
     y_weapon_swap=y_weapon_blocked=b_weapon_blocked=x_spell_blocked=0;
@@ -2162,6 +2245,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_rom_size=som_rom?game->size:0;
     weapon_gfx_verified=0;weapon_gfx_last_check=0;equip_notice_frame=0;
     game_loaded=backend_load_game(load_info);
+    som_song_load(&song_names,song_file);song_last=0x100u;
+    if(backend_skip_music){
+        backend_skip_music(game_loaded&&on_turbo?SOM_SKIP_MUSIC_MODE:0);
+        if(game_loaded&&on_turbo)
+            fprintf(stderr,"[som-ai] MUSIC not synthesised (effects only) to save CPU\n");
+    }else if(game_loaded&&on_turbo)
+        fprintf(stderr,"[som-ai] MUSIC skip unavailable: stock SNES core\n");
     if(game_loaded&&on_turbo&&net_pad.fd<0){
         if(som_net_pad_open(&net_pad,SOM_NET_PAD_PORT))
             fprintf(stderr,"[som-ai] NETPAD player 2 listening on UDP %u (Tailscale only)\n",
@@ -2188,7 +2278,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
             unlink(action_file);unlink(message_file);unlink(record_marker);
             unlink(npc_command_file);
             recording=0;
-            unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);
+            unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);
             fprintf(stderr,"[som-ai] READY: legacy %s; actions via %s; read-only WRAM via %s\n",
                 trigger_file,action_file,wram_file);
         }else if(test_enabled)fprintf(stderr,"[som-ai] READY: Android in-process transport\n");
@@ -2200,7 +2290,7 @@ RETRO_API void retro_unload_game(void){
     armed=0;autonomous_mode=0;game_loaded=0;
     ring_ai_enabled=0;ring_ai_pending=0;
     weapon_gfx_verified=0;
-    unlink(wram_file);unlink(wram_temp_file);unlink(ring_ai_file);unlink(message_file);
+    unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     familiar_carry.valid=0;
     weapon_trace_on=0;som_weapon_trace_reset();
@@ -2350,6 +2440,9 @@ RETRO_API void retro_run(void){
             backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_class_supply_frame();
     if(test_enabled&&on_turbo)som_infinite_mp_frame();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_song_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_hero_palette_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
@@ -2374,7 +2467,8 @@ RETRO_API void retro_run(void){
     if(test_enabled&&on_turbo)som_weapon_trace_frame();
     if(test_enabled&&on_turbo)som_ring_ai_tick();
     som_idle_tick();
-    if(!direct_transport&&test_enabled&&on_turbo&&frame_number%SOM_WRAM_EXPORT_FRAMES==0u &&
+    if(!direct_transport&&test_enabled&&on_turbo&&
+       frame_number%(ring_ai_enabled||armed?SOM_WRAM_EXPORT_FRAMES:SOM_WRAM_IDLE_EXPORT_FRAMES)==0u &&
        !som_export_wram()&&!wram_export_error_logged){
         wram_export_error_logged=1;
         fprintf(stderr,"[som-ai] WRAM export unavailable; live observer disabled\n");

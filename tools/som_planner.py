@@ -29,6 +29,13 @@ CLOSE_QUARTERS_PX = 48
 # establish actual per-weapon reach. Do not swing at 48x48 diagonally.
 DEFAULT_STRIKE_AXIAL_PX = 28
 DEFAULT_STRIKE_SIDE_PX = 14
+# Forward reach of a normal attack per weapon (som-decomp weapons-ranged.md
+# 2.4 and the projectile tables: whip box 26-86 px ahead and nothing under
+# ~16 px; bow, javelin and boomerang stage 0 hit 14-70 px; spear a little
+# longer than the sword). Kept inside the measured hits.
+WEAPON_REACH_PX = {"glove": 24, "sword": 28, "axe": 28, "spear": 34,
+                   "whip": 80, "bow": 70, "javelin": 70, "boomerang": 64}
+WEAPON_MIN_PX = {"whip": 18}
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -707,9 +714,12 @@ class MemoryPlanner:
         # Actual melee reach is much shorter than the old 48x48 test.
         # Require a forward axial distance and narrow lateral alignment.
         # The range learner may refine approach choices after valid hits.
-        attack_aligned = ((0 < abs(dx) <= DEFAULT_STRIKE_AXIAL_PX and
+        held = (hero.get("weapon") or {}).get("type")
+        reach = WEAPON_REACH_PX.get(held, DEFAULT_STRIKE_AXIAL_PX)
+        nearest = WEAPON_MIN_PX.get(held, 0)
+        attack_aligned = ((nearest < abs(dx) <= reach and
                            abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
-                          (0 < abs(dy) <= DEFAULT_STRIKE_AXIAL_PX and
+                          (nearest < abs(dy) <= reach and
                            abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
         if attack_aligned and self._tactic(enemy) == "close":
             attack_aligned = abs(dx) + abs(dy) <= CLOSE_SWING_PX

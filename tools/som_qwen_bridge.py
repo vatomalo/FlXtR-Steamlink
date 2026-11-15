@@ -38,7 +38,10 @@ from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
 from som_tactics import TacticLearner
 from som_build import classify as classify_build, profile as build_profile
-from som_class_director import ClassDirector, HEALERS, NAMES as CLASS_NAMES
+from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
+                                ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
+                                CONTACT_PX as CLASS_CONTACT_PX)
+from som_weapon_tactics import WeaponTactics
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -63,6 +66,10 @@ GAMBIT_FIGHT, GAMBIT_INN, GAMBIT_SHOP, GAMBIT_SAVE, GAMBIT_CANDY, GAMBIT_TALK = 
 GAMBIT_DEFAULTS = "433341"
 GAMBIT_NAMES = ("fight", "inn", "shop", "save", "candy", "talk")
 GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
+# Second gambit page (src/som_gambit.h som_combat_names): how the AI fights.
+COMBAT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_combat"
+COMBAT_DEFAULTS = "32223333"
+COMBAT_NAMES = ("press", "distance", "guard", "evade", "charge", "magic", "classes", "weapons")
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
 # Intentions the personality comments on (som_personality.LINES events).
 SPOKEN_INTENTIONS = {"explore_frontier", "engage_enemy", "defend_enemy", "kite_enemy",
@@ -79,7 +86,7 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
-                    "cast_attack", "cast_heal", "cast_buff", "class_none"} | \
+                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade"} | \
     {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
@@ -451,10 +458,17 @@ REMOTE_LOOP = (
     "else echo NONE; fi;; "
     "hotz|hotmz) "
     "if [ \"$cmd\" = hotmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
+    # The proxy writes the hot ranges ready-made (one gzip, no dd: the
+    # Steam Link has a single core shared with the game); older cores fall
+    # back to cutting them out of the snapshot.
+    "elif command exec 4< /tmp/flxtr-som-hot.bin 2>/dev/null; then echo WRAMH; gzip -1 -c <&4; exec 4<&-; "
     "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMH; "
     "{ " + "; ".join(f"dd if=/proc/self/fd/3 bs=1024 skip={start} count={count} 2>/dev/null"
                      for start, count in HOT_RANGES_KB) + "; } | gzip -1 -c; exec 3<&-; "
     "else echo NONE; fi;; "
+    "gmc) m=; [ -f " + COMBAT_FILE + " ] && read -r m < " + COMBAT_FILE + "; "
+    "case \"$m\" in " + "[0-5]" * len(COMBAT_DEFAULTS) + ") ;; *) m=" + COMBAT_DEFAULTS + ";; esac; "
+    "echo \"GMC $m\";; "
     "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
     "case \"$m\" in [0-5][0-5][0-5][0-5][0-5][0-5]) ;; *) m=" + GAMBIT_DEFAULTS + ";; esac; "
     "echo \"GMB $m\";; "
@@ -617,6 +631,14 @@ class RemoteLink:
             raise OSError(f"gambits unavailable ({status})")
         return tuple(int(c) for c in digits)
 
+    def fetch_combat(self):
+        """The combat gambits (tuple of 0..5, COMBAT_NAMES order)."""
+        status, _ = self._request("gmc")
+        digits = status[4:] if status.startswith("GMC ") else ""
+        if len(digits) != len(COMBAT_NAMES) or any(c not in "012345" for c in digits):
+            raise OSError(f"combat gambits unavailable ({status})")
+        return tuple(int(c) for c in digits)
+
     def fetch_familiar(self):
         """Monster slot (1..3) of the hero's familiar, or 0 for none."""
         status, _ = self._request("fam")
@@ -748,6 +770,13 @@ class AndroidRelayLink:
         text = pending[1].get("gambits", "") if pending else ""
         if len(text) != len(GAMBIT_NAMES) or any(c not in "012345" for c in text):
             raise OSError("Android gambits unavailable")
+        return tuple(int(c) for c in text)
+
+    def fetch_combat(self):
+        pending = self._wait_pending()
+        text = pending[1].get("combat", COMBAT_DEFAULTS) if pending else COMBAT_DEFAULTS
+        if len(text) != len(COMBAT_NAMES) or any(c not in "012345" for c in text):
+            text = COMBAT_DEFAULTS
         return tuple(int(c) for c in text)
 
     def fetch_familiar(self):
@@ -1218,6 +1247,10 @@ def main() -> int:
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
     spell_ready_at = 0.0
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
+    weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
+    combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
+    style = dict(zip(COMBAT_NAMES, combat))
+    charge_failed = False
     tactic_learner = attack_predictor = None
     if not args.no_anticipation and history is not None and args.policy in ("hybrid", "memory"):
         attack_predictor = AttackPredictor(history.connection)
@@ -1516,6 +1549,28 @@ def main() -> int:
                               flush=True)
                     gambits = weights
                     apply_gambits(planner, play_loop, gambits)
+                    try:
+                        fighting = link.fetch_combat()
+                    except (OSError, subprocess.SubprocessError, AttributeError):
+                        fighting = combat
+                    if fighting != combat:
+                        print("[combat] " + ", ".join(
+                            f"{name} {weight}" for name, weight in zip(COMBAT_NAMES, fighting)),
+                              flush=True)
+                    combat = fighting
+                    style = dict(zip(COMBAT_NAMES, combat))
+                    # Press vs keep distance overrides the build's preference.
+                    profile = dict(build_profile(build))
+                    if style["distance"] > style["press"]:
+                        profile["preferred"] = "kite"
+                    elif style["press"] > style["distance"]:
+                        profile["preferred"] = "press"
+                    planner.build_profile = profile
+                    planner.charge_disabled = charge_failed or style["charge"] == 0
+                    class_director.cooldown = (None if style["classes"] == 0 else
+                                               150.0 / style["classes"])
+                    weapon_tactics.cooldown = (None if style["weapons"] == 0 else
+                                               12.0 / style["weapons"])
                 shop_offer = (shop_errand(wram_now, observation, shop, gold, 0,
                                           gambits[GAMBIT_SHOP])
                               if wram_now is not None and not shop_disabled and
@@ -1691,36 +1746,69 @@ def main() -> int:
                             grass_restore = None
                         elif held != "sword":
                             grass_restore = None
+                    actor_now = context.get("actor") or {}
+                    foes = [e for e in observation.get("enemy_slots", [])
+                            if e.get("active") and not e.get("familiar")]
+                    gaps = [max(abs(e["x_px"] - actor_now.get("x_px", 0)),
+                                abs(e["y_px"] - actor_now.get("y_px", 0))) for e in foes]
                     pick = class_director.choose(
                         build, levels, max_mp, False,
-                        enemy_within(observation, DASH_ENEMY_PX) or grass_restore is not None)
+                        enemy_within(observation, CLASS_CONTACT_PX) or grass_restore is not None,
+                        hp_fraction=(hero0.get("hp") or 0) / max(1, hero0.get("max_hp") or 1),
+                        enemies=len(foes), nearest=min(gaps) if gaps else None,
+                        toughest=max((e.get("max_hp") or 0 for e in foes
+                                      if e.get("hp_plausible")), default=0))
                     if pick is not None:
                         index, why = pick
                         try:
                             link.send_control(f"class_{index}")
                             class_director.switched(index)
                             print(f"[class] {CLASS_NAMES[index]}: {why}", flush=True)
-                            announce(f"AI class: {CLASS_NAMES[index]}")
+                            announce(f"{CLASS_LINES[index]}|{CLASS_NAMES[index]}: {why[:28]}")
                             if decision.intention == "cut_grass":
                                 previous = "wait"   # let the sword come out first
                                 continue
                         except (OSError, subprocess.SubprocessError, ValueError) as exc:
                             print(f"[class] switch failed: {exc}", flush=True)
                     hp, max_hp = hero0.get("hp") or 0, hero0.get("max_hp") or 0
+                    # Alternate the class's two weapons (som_weapon_tactics):
+                    # reach against the nearest enemy, low HP, training.
+                    if (class_director.current is not None and grass_restore is None and
+                            held is not None and decision.action not in ("attack", "charge")):
+                        actor = context.get("actor") or {}
+                        gaps = [max(abs(e["x_px"] - actor.get("x_px", 0)),
+                                    abs(e["y_px"] - actor.get("y_px", 0)))
+                                for e in observation.get("enemy_slots", [])
+                                if e.get("active") and not e.get("familiar")]
+                        primary, secondary = CLASS_WEAPONS[class_director.current]
+                        swap = weapon_tactics.decide(primary, secondary, held,
+                                                     min(gaps) if gaps else None,
+                                                     hp / max_hp if max_hp else 1.0, levels)
+                        if swap is not None:
+                            weapon, why = swap
+                            try:
+                                link.send_control(f"equip_{weapon}")
+                                print(f"[weapon] {held} -> {weapon}: {why}", flush=True)
+                                announce(f"AI: {weapon}|{why[:30]}")
+                                previous = "wait"
+                                continue
+                            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                print(f"[weapon] switch failed: {exc}", flush=True)
                     now = time.monotonic()
                     command = None
-                    if class_director.current is not None and now >= spell_ready_at and \
-                            (hero0.get("mp") or 0) >= 2:
+                    if (class_director.current is not None and now >= spell_ready_at and
+                            style["magic"] > 0 and (hero0.get("mp") or 0) >= 2):
                         if (class_director.current in HEALERS and max_hp and
                                 hp < max_hp * 0.40):
                             command = "cast_heal"
-                        elif (decision.intention == "engage_enemy" and
+                        elif (class_director.current in ATTACK_MAGIC and
+                              decision.intention == "engage_enemy" and
                               enemy_within(observation, DASH_ENEMY_PX)):
                             command = "cast_attack"
                     if command:
                         try:
                             link.send_control(command)
-                            spell_ready_at = now + 6.0
+                            spell_ready_at = now + 14.0 / style["magic"]
                             print(f"[magic] {command} as {CLASS_NAMES[class_director.current]}",
                                   flush=True)
                             previous = "wait"
@@ -1728,6 +1816,23 @@ def main() -> int:
                         except (OSError, subprocess.SubprocessError, ValueError) as exc:
                             print(f"[magic] {command} failed: {exc}", flush=True)
                             spell_ready_at = now + 30.0
+                # Guard vs evade (combat gambits): a planned block becomes the
+                # class's evade/jutsu when evading is weighted higher, and is
+                # dropped when guarding is 0.
+                if link and decision.action == "block":
+                    if (style["evade"] > style["guard"] and
+                            class_director.current in DODGE_CLASSES):
+                        try:
+                            link.send_control("evade")
+                            print(f"[combat] evade instead of guarding ({decision.reason})",
+                                  flush=True)
+                            previous = "wait"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[combat] evade failed: {exc}", flush=True)
+                    if style["guard"] == 0:
+                        decision = PlannerDecision("wait", "guarding is off (combat gambit 0)",
+                                                   decision.intention)
                 # Charged attacks without holding: the proxy's special_<n>
                 # sets the gauge once the swing ends (needs a class).
                 if (link and decision.action == "charge" and class_director.current is not None and
@@ -1760,7 +1865,7 @@ def main() -> int:
                         print(f"[charge] failed ({charge_failures}/{MAX_CHARGE_FAILURES}): "
                               f"{exc}", flush=True)
                         if charge_failures >= MAX_CHARGE_FAILURES:
-                            planner.charge_disabled = True
+                            planner.charge_disabled = charge_failed = True
                             print("[charge] disabled for this run; plain swings only",
                                   flush=True)
                     previous = "attack"

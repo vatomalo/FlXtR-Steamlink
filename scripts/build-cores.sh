@@ -26,6 +26,12 @@ if [ "$target" != mame ]; then
     rev=a79dfe9047e7fec58808aefe48ad2bf499c7af11
     checkout snes9x2005 https://github.com/libretro/snes9x2005.git "$rev"
     cd "$cache/snes9x2005"
+    # FlXtR patches (music-free mixing switch for Secret of Mana); the source
+    # tree is restored after the build so the next checkout stays clean.
+    for patch in "$project"/patches/snes9x2005-*.patch; do
+        [ -f "$patch" ] && git apply "$patch"
+    done
+    trap 'git -C "$cache/snes9x2005" checkout -- . 2>/dev/null || true' EXIT
     apus=0
     if [ "$target" = snes-plus ]; then apus=1;fi
     if [ "$target" = all ]; then apus='0 1';fi
@@ -41,8 +47,9 @@ if [ "$target" != mame ]; then
     "$STRIP" "${name}_libretro.so"
     cp "${name}_libretro.so" "$project/build/cores/${name}_flxtr_libretro.so"
     cp copyright "$project/build/cores/SNES9X-LICENSE.txt"
-    printf 'source=https://github.com/libretro/snes9x2005\ncommit=%s\nUSE_BLARGG_APU=%s\nflags=%s\n' "$rev" "$apu" "$compile_flags" > "$project/build/cores/${name}-build.txt"
+    printf 'source=https://github.com/libretro/snes9x2005\ncommit=%s\nUSE_BLARGG_APU=%s\nflags=%s\npatches=%s\n' "$rev" "$apu" "$compile_flags" "$(cd "$project" && ls patches/snes9x2005-*.patch 2>/dev/null | tr '\n' ' ')" > "$project/build/cores/${name}-build.txt"
     done
+    git checkout -- .
 fi
 if [ "$target" = all ] || [ "$target" = mame ]; then
     rev=0353570ddd2e6d9d32bffc89278e1b37f5d61f8e

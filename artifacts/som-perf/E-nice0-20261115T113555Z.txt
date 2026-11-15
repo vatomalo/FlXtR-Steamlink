@@ -1,0 +1,34 @@
+SoM ARM Performance Report - scenario E-nice0
+20261115T113555Z  host root@100.124.74.13  git 97d7c9b
+note: old proxy; server transport; RetroArch threads nice 0 (as shipped)
+
+Run 1 (62.3 s)
+  Target game FPS (core):  not measured
+  Game FPS (WRAM tick):    48.56
+  Emulated FPS (proxy):    not measured (worst 10 s window not measured)
+  Frame interval P50/P95/P99: not measured / not measured / not measured ms
+  retro_run mean / P99:    not measured / not measured ms
+  core / video / audio mean: not measured / not measured / not measured ms
+  Audio callback P99:      not measured ms
+  Proxy overhead mean:     not measured
+  Late frames / streak:    not measured / not measured
+  Music ring shortfall:    not measured frames
+  CPU busy / idle:         88.6 % / 11.4 %
+  Context switches / forks: 3606.6 / 9.32 per s
+  Top processes: retroarch.exec 56.2%, PE_Single_CPU 13.4%, tailscaled 5.5%, ld-musl-armhf.s 2.6%, ksdioirqd/mmc0 1.0%, ld-musl-armhf.s 0.8%
+
+Run 2 (62.2 s)
+  Target game FPS (core):  not measured
+  Game FPS (WRAM tick):    48.81
+  Emulated FPS (proxy):    not measured (worst 10 s window not measured)
+  Frame interval P50/P95/P99: not measured / not measured / not measured ms
+  retro_run mean / P99:    not measured / not measured ms
+  core / video / audio mean: not measured / not measured / not measured ms
+  Audio callback P99:      not measured ms
+  Proxy overhead mean:     not measured
+  Late frames / streak:    not measured / not measured
+  Music ring shortfall:    not measured frames
+  CPU busy / idle:         90.3 % / 9.7 %
+  Context switches / forks: 3599.8 / 9.47 per s
+  Top processes: retroarch.exec 56.2%, PE_Single_CPU 13.6%, tailscaled 5.3%, ld-musl-armhf.s 2.6%, ksdioirqd/mmc0 1.0%, ld-musl-armhf.s 0.8%
+

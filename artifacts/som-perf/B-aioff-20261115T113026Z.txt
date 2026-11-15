@@ -1,0 +1,49 @@
+SoM ARM Performance Report - scenario B-aioff
+20261115T113026Z  host root@100.124.74.13  git 97d7c9b
+note: old proxy 6b0ddb2; AI bridge stopped; music on; living world on
+
+Run 1 (93.1 s)
+  Target game FPS (core):  not measured
+  Game FPS (WRAM tick):    53.52
+  Emulated FPS (proxy):    not measured (worst 10 s window not measured)
+  Frame interval P50/P95/P99: not measured / not measured / not measured ms
+  retro_run mean / P99:    not measured / not measured ms
+  core / video / audio mean: not measured / not measured / not measured ms
+  Audio callback P99:      not measured ms
+  Proxy overhead mean:     not measured
+  Late frames / streak:    not measured / not measured
+  Music ring shortfall:    not measured frames
+  CPU busy / idle:         89.8 % / 10.2 %
+  Context switches / forks: 3365.3 / 8.38 per s
+  Top processes: retroarch.exec 61.6%, PE_Single_CPU 14.0%, tailscaled 2.2%, galcore daemon  0.8%, ld-musl-armhf.s 0.8%, ld-musl-armhf.s 0.5%
+
+Run 2 (93.2 s)
+  Target game FPS (core):  not measured
+  Game FPS (WRAM tick):    53.43
+  Emulated FPS (proxy):    not measured (worst 10 s window not measured)
+  Frame interval P50/P95/P99: not measured / not measured / not measured ms
+  retro_run mean / P99:    not measured / not measured ms
+  core / video / audio mean: not measured / not measured / not measured ms
+  Audio callback P99:      not measured ms
+  Proxy overhead mean:     not measured
+  Late frames / streak:    not measured / not measured
+  Music ring shortfall:    not measured frames
+  CPU busy / idle:         88.5 % / 11.5 %
+  Context switches / forks: 3366.3 / 8.35 per s
+  Top processes: retroarch.exec 61.7%, PE_Single_CPU 13.9%, tailscaled 2.3%, ld-musl-armhf.s 0.9%, galcore daemon  0.8%, ld-musl-armhf.s 0.5%
+
+Run 3 (93.3 s)
+  Target game FPS (core):  not measured
+  Game FPS (WRAM tick):    53.51
+  Emulated FPS (proxy):    not measured (worst 10 s window not measured)
+  Frame interval P50/P95/P99: not measured / not measured / not measured ms
+  retro_run mean / P99:    not measured / not measured ms
+  core / video / audio mean: not measured / not measured / not measured ms
+  Audio callback P99:      not measured ms
+  Proxy overhead mean:     not measured
+  Late frames / streak:    not measured / not measured
+  Music ring shortfall:    not measured frames
+  CPU busy / idle:         87.7 % / 12.3 %
+  Context switches / forks: 3383.4 / 8.33 per s
+  Top processes: retroarch.exec 61.7%, PE_Single_CPU 13.7%, tailscaled 2.1%, ld-musl-armhf.s 0.9%, galcore daemon  0.8%, ld-musl-armhf.s 0.5%
+

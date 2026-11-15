@@ -587,7 +587,7 @@ int main(void){
     assert(!ring_ai_enabled);
     /* Gambit menu text and drawing. */
     {
-        SomGambits g={1,1,{0,5,3,3,4,1}};
+        SomGambits g={1,1,{0,5,3,3,4,1},0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));

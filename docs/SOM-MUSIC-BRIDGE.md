@@ -53,8 +53,13 @@ Provide the actual current RetroArch log, not an old /tmp/pt3.log from a
 one-shot test. The watcher uses the existing song logger and does not
 guess a Turbo RAM music address.
 
-With the installed yt-dlp-enabled FlXtR music runtime and greenlink-audio
-available, omit --dry-run to attempt playback. Stop with Ctrl+C.
+For live playback on Steam Link, use FlXtR's bundled music runtime so yt-dlp
+and its dependencies are available, and run from the FlXtR directory:
+
+    sh scripts/music-runtime.sh tools/som_music_bridge.py --log /path/to/live-retroarch.log
+
+The log must receive live song events while RetroArch runs. Stop with Ctrl+C.
+The original SPC suppression is intentionally untouched.
 
 Copy the catalog to the proxy path only after checking the running
 binary's TSV input grammar:

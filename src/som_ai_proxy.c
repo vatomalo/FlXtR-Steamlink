@@ -123,7 +123,7 @@ static const char *gambit_file=SOM_GAMBIT_FILE;
 static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
-static SomGambits gambits={0,0,{4,3,3,3,4,1}};
+static SomGambits gambits={0,0,{4,3,3,3,4,1},0};
 static SomDisciplines disciplines;
 /* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.

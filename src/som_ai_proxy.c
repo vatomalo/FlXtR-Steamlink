@@ -41,6 +41,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <dirent.h>
+#include <errno.h>
 
 /* Our own build of the same pinned snes9x2005_plus (scripts/build-cores.sh
  * with patches/snes9x2005-flxtr-music-voices.patch) when installed: it adds
@@ -2643,6 +2645,57 @@ static uint64_t perf_cb_us;
 static uint64_t som_perf_frame_begin(unsigned long frame){(void)frame;return 0;}
 static void som_perf_frame_end(uint64_t t0,uint64_t core_us){(void)t0;(void)core_us;}
 #endif
+/* Opt-in scheduling priority. Measured live on the Steam Link (2026-11-15,
+ * 2 x 60 s each): RetroArch's own threads at nice -5 instead of 0 ran the game
+ * at 50.1 instead of 48.7 frames/s with the AI decision rate unchanged
+ * (3.10 vs 2.97/s). Off unless SOM_PRIORITY_FILE holds -10..-1. Applied at
+ * frames 1 and 600 (RetroArch starts its video thread after load_game) to
+ * threads named retroarch.exec that are still at nice 0; the SCHED_RR audio
+ * thread and helper threads keep theirs. Removing the file takes effect at
+ * the next launch. */
+#define SOM_PRIORITY_FILE "/home/apps/retroarch/cores/experimental/som_ai_priority"
+static const char *priority_file=SOM_PRIORITY_FILE;
+static const char *priority_tasks="/proc/self/task";
+static int som_priority_wanted(void){
+    FILE *in=fopen(priority_file,"r");
+    if(!in)return 0;
+    int value=0;
+    if(fscanf(in,"%d",&value)!=1)value=0;
+    fclose(in);
+    return value>=-10&&value<=-1?value:0;
+}
+/* Returns how many threads were changed. */
+static int som_priority_apply(int value){
+    if(!value)return 0;
+    DIR *dir=opendir(priority_tasks);
+    if(!dir)return 0;
+    int changed=0;
+    struct dirent *entry;
+    while((entry=readdir(dir))!=NULL){
+        char *end=NULL;long tid=strtol(entry->d_name,&end,10);
+        if(tid<=0||!end||*end)continue;
+        char path[300],name[32]={0};
+        snprintf(path,sizeof(path),"%s/%ld/comm",priority_tasks,tid);
+        FILE *in=fopen(path,"r");
+        if(!in)continue;
+        if(!fgets(name,sizeof(name),in))name[0]=0;
+        fclose(in);
+        name[strcspn(name,"\n")]=0;
+        if(strcmp(name,"retroarch.exec"))continue;
+        errno=0;
+        const int now=getpriority(PRIO_PROCESS,(id_t)tid);
+        if(errno||now!=0)continue;
+        if(setpriority(PRIO_PROCESS,(id_t)tid,value)==0)changed++;
+    }
+    closedir(dir);
+    return changed;
+}
+static void som_priority_frame(unsigned long frame){
+    if(frame!=1u&&frame!=600u)return;
+    const int value=som_priority_wanted();
+    const int changed=som_priority_apply(value);
+    if(changed)fprintf(stderr,"[som-ai] PRIORITY nice %d on %d RetroArch thread(s)\n",value,changed);
+}
 /* Soundtrack mixing. The Steam Link has one CPU core that the emulator
  * already fills, so the music is never decoded while it plays: the bridge
  * decodes each arrangement once, at the lowest priority, into a raw stereo
@@ -3309,6 +3362,7 @@ static void som_clone_tick(void){
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     const uint64_t perf_t0=som_perf_frame_begin(frame_number);
+    som_priority_frame(frame_number);
     if(!direct_transport){
         som_check_trigger();
         som_check_npc_command();

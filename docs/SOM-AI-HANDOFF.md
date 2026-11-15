@@ -27,7 +27,11 @@ Branch `feature/som-ai-memory-agent-20261112`. Read `docs/SOM-WRAM-AGENT.md`
   `clone_enemy`/`undo_spawn` experiment (copies draw and fight since
   2026-11-14, see Summoning below).
 - `tools/som_qwen_bridge.py`: main loop. One persistent SSH link
-  (`RemoteLink`: `obs`/`obsm`/`act`/`msg`), goal selection (Candy/inn when
+  (`RemoteLink`: `obs`/`obsm`/`act`/`msg`; since 2026-11-15 the device end is
+  `tools/som_wram_server.py`, which answers the same requests without forking
+  and sends each observation as `dlt` block deltas of the full snapshot;
+  shell-loop fallback on `NOSERVER`, forced with `SOM_AI_SHELL_LOOP=1`; see
+  `docs/SOM-ARM-PERFORMANCE-RESULTS.md`), goal selection (Candy/inn when
   HP < 50 %, shop when rich, else hunt `SOM_AI_HUNT_DIRECTION`), tile guard,
   holds only on straight route runs, eagle-eye 33x33/65x65 map scans, async
   Qwen director (directive every 12 decisions; heading is locked by hunt mode).
@@ -134,6 +138,15 @@ Stop the service before running a teach or probe tool, and start it again after.
 - Commit to this branch and push; never force-push.
 
 ## Open problems (latest first)
+
+0. Steam Link speed (2026-11-15, `docs/SOM-ARM-PERFORMANCE-*.md`): the game ran
+   at ~44 of 60.1 frames/s with the AI on; music stutters with it because it is
+   mixed into the game's only audio stream. The AI transport now costs far less
+   (observation server); the PC <-> Steam Link Tailscale path is relayed via
+   DERP Helsinki (36-47 ms, "direct connection not established"), which costs
+   tailscaled CPU on the single core. Proxy timing: `touch
+   /tmp/flxtr-som-perf-enable` on the device, read `/tmp/flxtr-som-perf.json`,
+   or run `tools/som_perf_benchmark.py`.
 
 1. Bridge decks: verification fixed in `c13f10d` (pass-through tiles keep
    height/priority); confirm on hardware that the hero leaves the bridge.

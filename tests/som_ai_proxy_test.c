@@ -299,6 +299,34 @@ int main(void){
         unlink(control);unlink(pcm);rmdir(dir);music_play_file=SOM_MUSIC_PLAY;
         som_music_stop();frontend_audio_batch=NULL;
     }
+    /* Opt-in priority: off without the file, bad values ignored, and only
+     * threads named retroarch.exec at nice 0 are touched (a fake task tree;
+     * setpriority on our own tid with a positive-only check). */
+    {
+        char dir[]="/tmp/som-prio-test-XXXXXX";assert(mkdtemp(dir));
+        static char file[96];snprintf(file,sizeof(file),"%s/prio",dir);
+        priority_file=file;
+        assert(som_priority_wanted()==0);
+        const char *bad[]={"5\n","-11\n","x\n","0\n"};
+        for(unsigned i=0;i<4;i++){
+            FILE *f=fopen(file,"w");assert(f&&fputs(bad[i],f)>=0&&!fclose(f));
+            assert(som_priority_wanted()==0);
+        }
+        FILE *f=fopen(file,"w");assert(f&&fputs("-5\n",f)>=0&&!fclose(f));
+        assert(som_priority_wanted()==-5);
+        assert(som_priority_apply(0)==0);
+        /* fake /proc/self/task: one thread of another name, one missing comm */
+        static char tasks[96],sub[140],comm[160];
+        snprintf(tasks,sizeof(tasks),"%s/task",dir);assert(!mkdir(tasks,0700));
+        snprintf(sub,sizeof(sub),"%s/%d",tasks,(int)getpid());assert(!mkdir(sub,0700));
+        snprintf(comm,sizeof(comm),"%s/comm",sub);
+        f=fopen(comm,"w");assert(f&&fputs("SDLAudioP1\n",f)>=0&&!fclose(f));
+        priority_tasks=tasks;
+        assert(som_priority_apply(-5)==0);                        /* wrong name */
+        assert(getpriority(PRIO_PROCESS,0)==0||getpriority(PRIO_PROCESS,0)>0);
+        unlink(comm);rmdir(sub);rmdir(tasks);unlink(file);rmdir(dir);
+        priority_tasks="/proc/self/task";priority_file=SOM_PRIORITY_FILE;
+    }
     /* Frame timing: percentiles, late streaks, off means no clock reads,
      * the same audio either way, and one JSON report per window. */
     {

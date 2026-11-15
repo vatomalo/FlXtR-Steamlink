@@ -239,11 +239,17 @@ def choose_directive(url, model, objective, observation, current,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=DIRECTOR_TIMEOUT) as response:
         result = json.load(response)
+    if not isinstance(result, dict):
+        raise ValueError("Ollama reply is not a JSON object")
     raw = result.get("response") or ""
     directive = parse_directive(raw)
     if directive not in choices:
         raise ValueError(f"Qwen director returned {raw.strip()[:80]!r}; allowed={choices}")
     return directive
+
+# A goal Qwen chose more than this many seconds ago is not used: the game
+# state it was chosen for is gone.
+DIRECTOR_MAX_AGE = 90.0
 
 def choose_goal(url, model, objective, summary, offered, current):
     """Ask Qwen for one goal from `offered`; ValueError on anything else."""
@@ -255,6 +261,8 @@ def choose_goal(url, model, objective, summary, offered, current):
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=DIRECTOR_TIMEOUT) as response:
         result = json.load(response)
+    if not isinstance(result, dict):
+        raise ValueError("Ollama reply is not a JSON object")
     raw = result.get("response") or ""
     goal = parse_goal(raw, offered)
     if goal is None:
@@ -1583,14 +1591,16 @@ def main() -> int:
                 offered = offered_goals(summary, args.hunt_direction, reachable)
                 if args.policy == "hybrid":
                     try:
-                        requested_map, selected, director_error = director_results.get_nowait()
+                        requested_map, selected, director_error, asked = \
+                            director_results.get_nowait()
                         director_running = False
                         if director_error is not None:
                             directive_turns = 3
                             directive_map = current_map
                             print(f"[qwen-director] unavailable; keeping goal {goal}: "
                                   f"{director_error}", flush=True)
-                        elif requested_map != current_map or selected not in offered:
+                        elif (requested_map != current_map or selected not in offered or
+                              time.monotonic() - asked > DIRECTOR_MAX_AGE):
                             print(f"[qwen-director] ignored stale goal {selected}", flush=True)
                         else:
                             if selected != goal:
@@ -1614,15 +1624,16 @@ def main() -> int:
                     request = (current_map, dict(summary), list(offered), goal)
                     def direct_in_background(request_data=request):
                         requested_map, facts, choices, current = request_data
+                        started = time.monotonic()
                         try:
-                            started = time.monotonic()
                             selected = choose_goal(args.ollama_url, args.model,
                                                    args.objective, facts, choices, current)
                             print(f"[qwen-director] answered in "
                                   f"{time.monotonic() - started:.1f}s", flush=True)
-                            director_results.put((requested_map, selected, None))
-                        except (OSError, ValueError) as exc:
-                            director_results.put((requested_map, None, str(exc)))
+                            director_results.put((requested_map, selected, None, started))
+                        except Exception as exc:  # any failure must free the director
+                            director_results.put((requested_map, None,
+                                                  f"{type(exc).__name__}: {exc}", started))
                     threading.Thread(target=direct_in_background, daemon=True,
                                      name="som-qwen-director").start()
                     director_running = True

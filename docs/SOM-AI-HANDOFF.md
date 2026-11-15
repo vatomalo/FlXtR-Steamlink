@@ -166,3 +166,20 @@ and the heading flips for 40 decisions (east <-> west, north <-> south). Frontie
 ranks never-visited areas before revisits. The score, seen maps and areas persist in the
 agent state (`curiosity`). Decision reasons show `curiosity new_map +50 ... (score N)`.
 The live service runs from this checkout, so it uses this after its next restart.
+
+## Stall and menu audit (2026-11-15 stabilization sprint)
+
+Already in place and covered by tests (re-checked, unchanged): closed-loop Candy, inn, save
+and shop macros that verify each press against WRAM and cancel out (`tools/som_menu.py`,
+`test_som_menu.py`: purchase verified by +1 Candy and less gold, too little gold, purchase
+not seen, extra Buy confirmations, save prompt never answered without a taught slot);
+dialogue escape (confirm on text pages, only cancel on yes/no; `test_som_event_escape.py`);
+stall detection per step (`STALL_DECISIONS`) and frontier rejection (`test_som_planner.py`);
+`await_inn_setup` / `await_save_setup` explore instead of waiting (`test_som_play_loop.py`);
+physical takeover (`test_som_qwen_bridge.py`, proxy tests).
+Fixed now: an Ollama reply that is not a JSON object raised AttributeError inside the
+director thread, which then never reported back and left the director "thinking" for the
+rest of the run; any failure is now reported and the goal kept. Goals older than 90 s
+(`DIRECTOR_MAX_AGE`) are ignored like goals for another map. Tests:
+`tools/test_som_qwen_failures.py` (fake Ollama: good, off-allowlist, malformed, non-object,
+timeout). Not re-verified live this sprint.

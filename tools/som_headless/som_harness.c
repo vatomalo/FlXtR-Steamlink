@@ -16,6 +16,7 @@
  *   save FILE                serialize, write FILE, check it reloads
  *   unload                   retro_unload_game (exit-time hooks)
  *   dump NAME                write OUTDIR/NAME.wram (128 KiB) and NAME.sram
+ *   bench N                  run N frames and print the time per frame
  *   audio NAME               from now on record the audio output (raw stereo
  *                            s16) to OUTDIR/NAME.raw
  *   expect u8|u16 ADDR OP V  WRAM (7E/7F offset, hex) compared with V
@@ -34,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "../../src/vendor/libretro.h"
 #ifndef RETRO_DEVICE_ID_JOYPAD_MASK
 #define RETRO_DEVICE_ID_JOYPAD_MASK 256
@@ -199,6 +201,14 @@ int main(int argc,char **argv){
         uint8_t *ram=(uint8_t*)mem(RETRO_MEMORY_SYSTEM_RAM);
         char a[64]={0},b[200]={0},op[4]={0};unsigned long k=0,v=0,addr=0;
         if(sscanf(line,"frames %lu",&k)==1){for(unsigned long i=0;i<k;i++){run();frame++;}}
+        else if(sscanf(line,"bench %lu",&k)==1&&k){
+            struct timespec t0,t1;clock_gettime(CLOCK_MONOTONIC,&t0);
+            for(unsigned long i=0;i<k;i++){run();frame++;}
+            clock_gettime(CLOCK_MONOTONIC,&t1);
+            const double ms=(t1.tv_sec-t0.tv_sec)*1e3+(t1.tv_nsec-t0.tv_nsec)/1e6;
+            fprintf(stderr,"[harness] bench %lu frames %.1f ms: %.3f ms/frame (%.1f fps)\n",
+                    k,ms,ms/(double)k,1000.0*(double)k/ms);
+        }
         else if(sscanf(line,"hold %63s %lu",a,&k)==2){
             const unsigned m=button_mask(a);
             if(m==0xFFFFFFFFu)return 2;

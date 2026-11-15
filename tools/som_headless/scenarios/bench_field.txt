@@ -1,0 +1,17 @@
+# CPU benchmark: field play from the save, class chosen (label drawn), 1200 frames.
+# Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+cmd class_0
+frames 60
+bench 1200

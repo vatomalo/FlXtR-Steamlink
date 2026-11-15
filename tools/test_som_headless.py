@@ -18,7 +18,7 @@ spec = importlib.util.spec_from_file_location("som_headless_run", ROOT / "tools/
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 SCENARIOS = sorted((ROOT / "tools/som_headless/scenarios").glob("*.txt"))
-COMMANDS = re.compile(r"^(frames \d+|hold [A-Z0-9,]+ \d+|cmd \S.*|shot \S+|peek|oam|save \S+|"
+COMMANDS = re.compile(r"^(frames \d+|bench \d+|hold [A-Z0-9,]+ \d+|cmd \S.*|shot \S+|peek|oam|save \S+|"
                       r"unload|dump \S+|audio \S+|mark|expect-moved \d+ \d+|expect u(8|16) [0-9A-Fa-f]+ "
                       r"(==|!=|<|<=|>|>=) (0x[0-9A-Fa-f]+|\d+)|monster [0-2] -?\d+ -?\d+)$")
 

@@ -15,6 +15,7 @@
  *   oam                      print OAM entries in the bottom HUD band
  *   save FILE                serialize, write FILE, check it reloads
  *   unload                   retro_unload_game (exit-time hooks)
+ *   dump NAME                write OUTDIR/NAME.wram (128 KiB) and NAME.sram
  *   expect u8|u16 ADDR OP V  WRAM (7E/7F offset, hex) compared with V
  *                            (OP: == != < <= > >=); a miss fails the run
  *   expect-moved MIN MAX     hero moved MIN..MAX px (Manhattan) since mark
@@ -208,6 +209,16 @@ int main(int argc,char **argv){
             fprintf(stderr,"[harness] save %s %zu bytes serialize %d reload %d\n",b,z,ok,back);
             if(!ok||!back||!o)failures++;
             free(buf);
+        }else if(sscanf(line,"dump %199s",b)==1){
+            const unsigned ids[2]={RETRO_MEMORY_SYSTEM_RAM,RETRO_MEMORY_SAVE_RAM};
+            const char *ext[2]={"wram","sram"};
+            for(unsigned i=0;i<2u;i++){
+                char path[512];snprintf(path,sizeof(path),"%s/%s.%s",outdir,b,ext[i]);
+                FILE *o=fopen(path,"wb");
+                if(o&&mem(ids[i]))fwrite(mem(ids[i]),1,mem_size(ids[i]),o);
+                if(o)fclose(o);
+                fprintf(stderr,"[harness] dump %s %zu bytes\n",path,mem_size(ids[i]));
+            }
         }else if(!strcmp(line,"unload")){unload_game();fputs("[harness] unloaded\n",stderr);break;}
         else if(!strcmp(line,"mark")){mark_x=(int)u16(ram+0xE002);mark_y=(int)u16(ram+0xE004);}
         else if(sscanf(line,"expect-moved %lu %lu",&k,&v)==2){

@@ -182,7 +182,9 @@ def main(argv=None):
                 code, log = 3, (expired.stderr or "") if isinstance(expired.stderr, str) else ""
                 log += "\n[runner] TIMEOUT after %d s\n" % args.timeout
             (out / "run.log").write_text(log)
-            for saved in re.findall(r"\[harness\] save (\S+) \d+ bytes serialize 1", log):
+            saves = re.findall(r"\[harness\] save (\S+) \d+ bytes serialize 1", log)
+            saves += re.findall(r"\[harness\] dump (\S+) \d+ bytes", log)
+            for saved in saves:
                 remote_path = saved if saved.startswith("/") else run_dir + "/" + saved
                 with open(out / Path(saved).name, "wb") as sink:      # states stay outside Git
                     if args.host:

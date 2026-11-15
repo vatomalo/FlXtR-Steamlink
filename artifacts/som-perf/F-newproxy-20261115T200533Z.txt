@@ -1,0 +1,49 @@
+SoM ARM Performance Report - scenario F-newproxy
+20261115T200533Z  host root@100.124.74.13  git e1dd207
+note: proxy fdf2814 (timing on, packed overlay copy), nice -5 file, AI + living world via som_wram_server, music on; fresh boot
+
+Run 1 (96.4 s)
+  Target game FPS (core):  59.923
+  Game FPS (WRAM tick):    43.54
+  Emulated FPS (proxy):    43.73 (worst 10 s window 39.27)
+  Frame interval P50/P95/P99: 21.50 / 32.75 / 42.25 ms
+  retro_run mean / P99:    22.26 / 41.25 ms
+  core / video / audio mean: 14.19 / 6.21 / 0.46 ms
+  Audio callback P99:      3.50 ms
+  Proxy overhead mean:     0.740 ms
+  Late frames / streak:    961 / 24
+  Music ring shortfall:    0 frames
+  CPU busy / idle:         93.9 % / 6.1 %
+  Context switches / forks: 5047.2 / 8.63 per s
+  Top processes: retroarch.exec 58.6%, PE_Single_CPU 13.4%, tailscaled 4.4%, ksdioirqd/mmc0 2.3%, bt_main_service 1.1%, khidpd_054c05c4 1.0%
+
+Run 2 (97.0 s)
+  Target game FPS (core):  59.923
+  Game FPS (WRAM tick):    40.81
+  Emulated FPS (proxy):    42.40 (worst 10 s window 41.14)
+  Frame interval P50/P95/P99: 22.00 / 33.75 / 43.25 ms
+  retro_run mean / P99:    22.92 / 42.50 ms
+  core / video / audio mean: 14.74 / 6.21 / 0.49 ms
+  Audio callback P99:      5.00 ms
+  Proxy overhead mean:     0.769 ms
+  Late frames / streak:    1246 / 21
+  Music ring shortfall:    0 frames
+  CPU busy / idle:         94.0 % / 6.0 %
+  Context switches / forks: 5049.1 / 8.81 per s
+  Top processes: retroarch.exec 57.8%, PE_Single_CPU 13.3%, tailscaled 4.8%, ld-musl-armhf.s 2.9%, ksdioirqd/mmc0 2.4%, ld-musl-armhf.s 1.9%
+
+Run 3 (97.7 s)
+  Target game FPS (core):  59.923
+  Game FPS (WRAM tick):    0.00
+  Emulated FPS (proxy):    52.61 (worst 10 s window 42.62)
+  Frame interval P50/P95/P99: 17.50 / 26.88 / 40.25 ms
+  retro_run mean / P99:    18.49 / 40.00 ms
+  core / video / audio mean: 8.84 / 7.18 / 0.47 ms
+  Audio callback P99:      4.25 ms
+  Proxy overhead mean:     0.728 ms
+  Late frames / streak:    468 / 15
+  Music ring shortfall:    0 frames
+  CPU busy / idle:         93.2 % / 6.8 %
+  Context switches / forks: 5165.2 / 9.07 per s
+  Top processes: retroarch.exec 51.1%, PE_Single_CPU 14.0%, ld-musl-armhf.s 7.0%, tailscaled 4.8%, ld-musl-armhf.s 2.7%, ksdioirqd/mmc0 2.5%
+

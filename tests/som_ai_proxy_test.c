@@ -61,8 +61,9 @@ static size_t capture_audio(const int16_t *data,size_t frames){
     captured_frames+=frames;return frames;
 }
 static const void *shown_frame;
+static size_t shown_pitch;
 static void mocked_video(const void *data,unsigned width,unsigned height,size_t pitch){
-    (void)width;(void)height;(void)pitch;shown_frame=data;
+    (void)width;(void)height;shown_frame=data;shown_pitch=pitch;
 }
 static uint8_t saved_wram[SOM_WRAM_SIZE];
 static int unserialized;
@@ -536,6 +537,25 @@ int main(void){
     overlay.frames_left=0;
     som_video_refresh(core_frame,256,224,512);
     assert(shown_frame==core_frame);
+    /* Snes9x 2005's real pitch is 1024 bytes for 256 pixels: the decorated
+     * copy is tightly packed (512-byte rows) and keeps every visible pixel. */
+    {
+        static uint16_t wide[224][512];
+        for(unsigned y=0;y<224;y++)for(unsigned x=0;x<512;x++)
+            wide[y][x]=x<256?(uint16_t)(y*256+x+1):0u;
+        som_overlay_set(&overlay,"AI: padded pitch",30);
+        som_video_refresh(wide,256,224,1024);
+        assert(shown_frame==overlay_frame&&shown_pitch==512);
+        const uint16_t *out=(const uint16_t*)shown_frame;
+        size_t same=0;
+        for(unsigned y=0;y<224;y++)for(unsigned x=0;x<256;x++)same+=out[y*256u+x]==wide[y][x];
+        assert(same>256u*224u-6000u);                      /* only the message box differs */
+        for(unsigned y=0;y<224;y+=37)assert(out[y*256u]==wide[y][0]);   /* 512-byte rows */
+        assert(out[223u*256u+255u]==wide[223][255]);
+        som_video_refresh(wide,256,224,200);              /* pitch < row: untouched */
+        assert(shown_frame==wide&&shown_pitch==200);
+        overlay.frames_left=0;
+    }
     unlink(message_path);
     /* Teaching records physical press edges as replayable action names. */
     reset_proxy();

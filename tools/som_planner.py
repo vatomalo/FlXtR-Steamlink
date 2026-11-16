@@ -6,10 +6,11 @@ import itertools
 from collections import deque
 from dataclasses import dataclass, replace
 
+from som_curiosity import Curiosity, LINGER_RADIUS
 from som_build import profile as build_profile
 from som_tactics import CLOSE_SWING_PX
 
-from som_memory import detect_cuts
+from som_memory import detect_cuts, detect_whip_crossing, held_weapon, hero_airborne
 
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
@@ -29,6 +30,13 @@ CLOSE_QUARTERS_PX = 48
 # establish actual per-weapon reach. Do not swing at 48x48 diagonally.
 DEFAULT_STRIKE_AXIAL_PX = 28
 DEFAULT_STRIKE_SIDE_PX = 14
+# Forward reach of a normal attack per weapon (som-decomp weapons-ranged.md
+# 2.4 and the projectile tables: whip box 26-86 px ahead and nothing under
+# ~16 px; bow, javelin and boomerang stage 0 hit 14-70 px; spear a little
+# longer than the sword). Kept inside the measured hits.
+WEAPON_REACH_PX = {"glove": 24, "sword": 28, "axe": 28, "spear": 34,
+                   "whip": 80, "bow": 70, "javelin": 70, "boomerang": 64}
+WEAPON_MIN_PX = {"whip": 18}
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -37,6 +45,14 @@ INN_WAIT_DECISIONS = 30
 SURVIVAL_GIVE_UP_DECISIONS = 900
 # Attacks on one grass tile before the planner stops trying to cut it.
 CUT_ATTEMPTS = 3
+# Whip crossings: swings from one tile and facing before giving it up for
+# WHIP_BLOCK_DECISIONS: a learned crossing or a recognised post gets
+# WHIP_ATTEMPTS, an untried ledge with floor beyond it one probe per run.
+WHIP_ATTEMPTS = 3
+WHIP_PROBE_ATTEMPTS = 1
+WHIP_BLOCK_DECISIONS = 300
+WHIP_REACH_TILES = 5        # the whip box ends 86 px ahead (weapons-ranged.md 2)
+WHIP_ROUTE_COST = 4         # weighted routes: a crossing costs a weapon switch
 # A step chosen this many times without the hero moving is blocked for a while.
 STALL_DECISIONS = 8
 # Minimum time between swings. Turbo's recharge byte is unreliable; swings
@@ -190,6 +206,21 @@ class MemoryPlanner:
         self.route_threats = []
         self.frontier_clock = 0
         self.frontier_rejected = {}
+        # Curiosity (som_curiosity): rewards new maps/areas, penalises
+        # lingering; loaded from agent state on the first field decision.
+        self.curiosity = None
+        self.escape_directive = None
+        self.escape_left = 0
+        # Whip crossings (whip posts over ledges): learned crossings without a
+        # database, swings per (map, layer, x, y, step), spots given up for a
+        # while, ledges already probed this run, and whether a whip is owned.
+        self.local_whip = {}
+        self.local_posts = set()
+        self.whip_anchor = None
+        self.whip_attempts = {}
+        self.whip_blocked = {}
+        self.whip_probed = set()
+        self.whip_ready = False
 
     @staticmethod
     def _open_steps(context):
@@ -315,6 +346,7 @@ class MemoryPlanner:
                     diagonal.add(position)
                 else:
                     diagonal.discard(position)
+        self._learn_whip(observation)
         if self.history is None:
             self.local_cuttable.update(detect_cuts(self.previous_observation, observation))
             self.previous_observation = observation
@@ -401,11 +433,13 @@ class MemoryPlanner:
         return None if kind != "walked" else height
 
     @staticmethod
-    def _routes(start, cells, size, height=None, weights=None):
+    def _routes(start, cells, size, height=None, weights=None, jumps=None):
         """Shortest known paths as {position: (first action, distance)}.
 
         Searches (position, height) states so a bridge reached up a ramp is
         usable even though, seen from the river bank, its ends look like walls.
+        jumps {position: [(step, landing, landing height)]} adds learned whip
+        crossings; a route that starts with one has first action "whip:<step>".
         """
         if weights:
             routes = RouteMap(start)
@@ -419,15 +453,9 @@ class MemoryPlanner:
                 if position not in routes:
                     routes[position] = (first, distance)
                     routes.parents[position] = parent
-                for action, offset in STEP_OFFSETS.items():
-                    neighbor = MemoryPlanner._neighbor(position, offset, size)
-                    kind = cells.get(neighbor)
-                    if kind not in ("open", "pass", "cuttable", "h1", "h2"):
-                        continue
-                    after = MemoryPlanner._enter(kind, level)
-                    if after is None and kind in ("h1", "h2"):
-                        continue
-                    total = cost + max(1, weights.get(neighbor, 1))
+                for action, neighbor, after, extra in MemoryPlanner._moves(
+                        position, level, cells, size, jumps):
+                    total = cost + max(1, weights.get(neighbor, 1)) + extra
                     state = (neighbor, after)
                     if total >= costs.get(state, float("inf")):
                         continue
@@ -440,14 +468,8 @@ class MemoryPlanner:
         queue = deque([(start, height, None, 0)])
         while queue:
             position, level, first, distance = queue.popleft()
-            for action, offset in STEP_OFFSETS.items():
-                neighbor = MemoryPlanner._neighbor(position, offset, size)
-                kind = cells.get(neighbor)
-                if kind not in ("open", "pass", "cuttable", "h1", "h2"):
-                    continue
-                after = MemoryPlanner._enter(kind, level)
-                if after is None and kind in ("h1", "h2"):
-                    continue
+            for action, neighbor, after, _ in MemoryPlanner._moves(
+                    position, level, cells, size, jumps):
                 if (neighbor, after) in seen:
                     continue
                 seen.add((neighbor, after))
@@ -457,6 +479,22 @@ class MemoryPlanner:
                     routes.parents[neighbor] = (position, action)
                 queue.append((neighbor, after, step, distance + 1))
         return routes
+
+    @staticmethod
+    def _moves(position, level, cells, size, jumps=None):
+        """(action, neighbour, height after, extra cost) of each move from here."""
+        for action, offset in STEP_OFFSETS.items():
+            neighbor = MemoryPlanner._neighbor(position, offset, size)
+            kind = cells.get(neighbor)
+            if kind not in ("open", "pass", "cuttable", "h1", "h2"):
+                continue
+            after = MemoryPlanner._enter(kind, level)
+            if after is None and kind in ("h1", "h2"):
+                continue
+            yield action, neighbor, after, 0
+        for action, landing, height in (jumps or {}).get(position, ()):
+            yield ("whip:" + action, landing, level if height is None else height,
+                   WHIP_ROUTE_COST)
 
     def _choose_frontier(self, context, cells, routes, directive="explore_unknown",
                          open_steps=None):
@@ -468,7 +506,8 @@ class MemoryPlanner:
         for position, (first, distance) in routes.items():
             if first is None:
                 continue
-            if open_steps is not None and first not in open_steps:
+            if (open_steps is not None and first not in open_steps and
+                    not first.startswith("whip:")):
                 continue
             if self.frontier_rejected.get((map_id, layer, position), 0) > self.frontier_clock:
                 continue
@@ -490,14 +529,17 @@ class MemoryPlanner:
                 direction, (True, distance, 0))
             # A Qwen-selected heading is the first priority. Within that
             # heading, prefer unseen and distant frontier cells.
-            candidates.append((not aligned, visits, -progress, straightness,
+            # Curiosity: areas never stood in come before revisits.
+            seen = bool(self.curiosity and self.curiosity.area_seen(map_id, layer, position))
+            candidates.append((not aligned, seen, visits, -progress, straightness,
                                -distance, -unknown_edges, position))
         if not candidates:
             for position, (first, distance) in routes.items():
-                if (distance and (open_steps is None or first in open_steps) and
+                if (distance and (open_steps is None or first in open_steps or
+                                  first.startswith("whip:")) and
                         self.frontier_rejected.get((map_id, layer, position), 0)
                         <= self.frontier_clock):
-                    candidates.append((False, self._visits(map_id, layer, *position),
+                    candidates.append((False, False, self._visits(map_id, layer, *position),
                                        -distance, 0, -distance, 0, position))
         return min(candidates)[-1] if candidates else None
 
@@ -516,7 +558,8 @@ class MemoryPlanner:
                 cells = dict(cells)
                 cells.update({tile: "exit" for tile in exits})
         routes = self._routes(position, cells, size,
-                              context["actor"].get("floor_height"))
+                              context["actor"].get("floor_height"),
+                              jumps=self._whip_jumps(context))
         intention = self._get_intention()
         valid = (isinstance(intention, dict) and intention.get("kind") == "explore" and
                  intention.get("map_id") == map_id and intention.get("layer") == layer and
@@ -531,6 +574,11 @@ class MemoryPlanner:
                                            open_steps)
             if target is None:
                 self._set_intention(None)
+                # Nothing left to explore on foot: a whip post may lead on.
+                options = self._whip_options(context)
+                if options:
+                    action = min(options)
+                    return self._whip_cross(context, action, options[action])
                 return None
             intention = {"kind": "explore", "map_id": map_id, "layer": layer,
                          "directive": directive,
@@ -555,6 +603,10 @@ class MemoryPlanner:
                 self._set_intention(None)
                 return None
         action, distance = routes[target]
+        if action.startswith("whip:"):
+            self._set_intention(intention)
+            return self._whip_cross(context, action[5:], f"learned crossing toward "
+                                    f"frontier {target[0]},{target[1]}")
         if action not in open_steps:
             if action in self._cut_steps(context):
                 self._set_intention(intention)
@@ -707,9 +759,12 @@ class MemoryPlanner:
         # Actual melee reach is much shorter than the old 48x48 test.
         # Require a forward axial distance and narrow lateral alignment.
         # The range learner may refine approach choices after valid hits.
-        attack_aligned = ((0 < abs(dx) <= DEFAULT_STRIKE_AXIAL_PX and
+        held = (hero.get("weapon") or {}).get("type")
+        reach = WEAPON_REACH_PX.get(held, DEFAULT_STRIKE_AXIAL_PX)
+        nearest = WEAPON_MIN_PX.get(held, 0)
+        attack_aligned = ((nearest < abs(dx) <= reach and
                            abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
-                          (0 < abs(dy) <= DEFAULT_STRIKE_AXIAL_PX and
+                          (nearest < abs(dy) <= reach and
                            abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
         if attack_aligned and self._tactic(enemy) == "close":
             attack_aligned = abs(dx) + abs(dy) <= CLOSE_SWING_PX
@@ -1004,7 +1059,8 @@ class MemoryPlanner:
                     half = pos in self.route_diagonals.get((context["map_id"], actor["layer"]), ())
                     weights[pos] = 1 + risk + (3 if kind == "cuttable" else 0) + (20 if half else 0)
             routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
-                                  actor.get("floor_height"), weights)
+                                  actor.get("floor_height"), weights,
+                                  jumps=self._whip_jumps(context))
             via = destination.get("path")
             hop = (f" via maps {'>'.join(str(m) for m in via)}"
                    if isinstance(via, list) and len(via) > 2 else "")
@@ -1030,6 +1086,9 @@ class MemoryPlanner:
                                            f"by {exit_action}; rerouting", "replan")
             if target in routes and target != position:
                 action, distance = routes[target]
+                if action.startswith("whip:"):
+                    return self._whip_cross(context, action[5:],
+                                            f"learned crossing toward {place}")
                 if action in open_steps:
                     kind = ("exit to map %s%s" % (destination.get("next_map"), hop)
                             if crossing else "")
@@ -1270,6 +1329,8 @@ class MemoryPlanner:
         """errand: optional {"place": "shop", "anchor": {...}} to travel to."""
         self.blocked_moves = {key: turns - 1 for key, turns in self.blocked_moves.items()
                               if turns > 1}
+        self.whip_blocked = {key: turns - 1 for key, turns in self.whip_blocked.items()
+                             if turns > 1}
         self.previous_action = previous
         self.block_cooldown = max(0, self.block_cooldown - 1)
         if previous in STEP_OFFSETS:
@@ -1278,8 +1339,49 @@ class MemoryPlanner:
             # When that swing was decided (sent right after), else now.
             self.last_swing = self.swing_decided_at or self.clock()
         self.swing_decided_at = None
+        if self.escape_left and errand is None and directive.startswith("explore_"):
+            self.escape_left -= 1
+            directive = self.escape_directive
         decision = self._decide(observation, previous, directive, errand)
+        decision = self._observe_curiosity(observation, decision, directive, errand)
         return self._check_stall(observation, decision)
+
+    BUSY_INTENTIONS = ("engage_enemy", "survive", "recover_at_inn", "return_to_inn",
+                       "at_inn", "errand", "arrive")
+
+    def _observe_curiosity(self, observation, decision, directive, errand):
+        """Reward new places, penalise lingering (som_curiosity)."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        if (not isinstance(context, dict) or not context.get("runtime_verified") or
+                context.get("game_mode") != "field" or not context.get("actor_tile")):
+            return decision
+        if self.curiosity is None:
+            self.curiosity = Curiosity(self._get_state("curiosity"))
+        map_id, layer = context.get("map_id"), (context.get("actor") or {}).get("layer")
+        tile = tuple(context["actor_tile"])
+        enemies = any(e.get("active") for e in observation.get("enemy_slots", []) or [])
+        busy = (errand is not None or enemies or self.provoked > 0 or
+                decision.intention in self.BUSY_INTENTIONS)
+        events = self.curiosity.observe(map_id, layer, tile, busy)
+        if not events:
+            return decision
+        notes = []
+        for kind, points, note in events:
+            notes.append("%s %+d: %s" % (kind, points, note))
+            if kind == "linger":
+                # Ban frontier targets around the spot and head elsewhere.
+                radius = LINGER_RADIUS + 2
+                for dx in range(-radius, radius + 1):
+                    for dy in range(-radius, radius + 1):
+                        cell = (tile[0] + dx, tile[1] + dy)
+                        self.frontier_rejected[(map_id, layer, cell)] = (
+                            self.frontier_clock + FRONTIER_COOLDOWN)
+                self._set_intention(None)
+                self.escape_directive = Curiosity.escape_heading(directive)
+                self.escape_left = 40
+        self._set_state("curiosity", self.curiosity.to_state())
+        return replace(decision, reason="%s; curiosity %s (score %d)" % (
+            decision.reason, "; ".join(notes), self.curiosity.score))
 
     def _cuttable(self):
         if self.history is not None:
@@ -1361,6 +1463,140 @@ class MemoryPlanner:
         return PlannerDecision("attack", f"cut grass at {key[1]},{key[2]} "
                                f"(attack {attempts}/{CUT_ATTEMPTS})", "cut_grass")
 
+    # ---- whip crossings -------------------------------------------------
+    def _learn_whip(self, observation):
+        """Learn a whip crossing that just happened (history or local)."""
+        if self.history is not None and hasattr(self.history, "learn_whip_crossings"):
+            crossing = self.history.learn_whip_crossings(observation, self.clock)
+        else:
+            crossing = None
+            context = observation.get("tile_context") or {}
+            if context.get("runtime_verified") and not hero_airborne(observation):
+                now = self.clock()
+                anchor, self.whip_anchor = self.whip_anchor, (observation, now)
+                if anchor is not None and now - anchor[1] <= 5.0:
+                    crossing = detect_whip_crossing(anchor[0], observation)
+                if crossing is not None:
+                    links = self.local_whip.setdefault(
+                        (crossing["map_id"], crossing["layer"]), {})
+                    links[(tuple(crossing["from"]), crossing["action"])] = crossing
+                    self.local_posts.update(crossing["posts"])
+        if crossing is not None:
+            key = (crossing["map_id"], crossing["layer"], *crossing["from"], crossing["action"])
+            self.whip_attempts.pop(key, None)
+            self.whip_blocked.pop(key, None)
+            print(f"[whip] learned crossing on map {crossing['map_id']}: "
+                  f"{tuple(crossing['from'])} {crossing['action']} -> {tuple(crossing['to'])}"
+                  + (f", posts {crossing['posts']}" if crossing["posts"] else ""), flush=True)
+        return crossing
+
+    def _learned_crossings(self, map_id, layer):
+        if self.history is not None and hasattr(self.history, "whip_crossings"):
+            return self.history.whip_crossings(map_id, layer)
+        return list(self.local_whip.get((map_id, layer), {}).values())
+
+    def _post_signatures(self):
+        if self.history is not None and hasattr(self.history, "whip_post_signatures"):
+            return self.history.whip_post_signatures()
+        return self.local_posts
+
+    def _whip_key(self, context, action):
+        tile = context.get("actor_tile") or [None, None]
+        return (context.get("map_id"), (context.get("actor") or {}).get("layer"),
+                tile[0], tile[1], action)
+
+    def _whip_jumps(self, context):
+        """Learned crossings usable for routes: {from: [(step, to, height)]}."""
+        if not self.whip_ready:
+            return None
+        map_id, layer = context.get("map_id"), (context.get("actor") or {}).get("layer")
+        jumps = {}
+        for crossing in self._learned_crossings(map_id, layer):
+            start, action = tuple(crossing["from"]), crossing["action"]
+            if (map_id, layer, *start, action) in self.whip_blocked:
+                continue
+            if crossing.get("to_layer") not in (None, layer):
+                continue
+            jumps.setdefault(start, []).append(
+                (action, tuple(crossing["to"]), crossing.get("to_height")))
+        return jumps
+
+    def _whip_options(self, context):
+        """{step: reason} for whip swings worth trying from this tile.
+
+        A learned crossing from here; else a recognised post (learned post
+        attributes) within reach with floor beyond the wall; else, once per
+        run, any wall or ledge with floor two to five tiles beyond it.
+        """
+        if not self.whip_ready:
+            return {}
+        tile = tuple(context.get("actor_tile") or ())
+        map_id, layer = context.get("map_id"), (context.get("actor") or {}).get("layer")
+        options = {}
+        for crossing in self._learned_crossings(map_id, layer):
+            if tuple(crossing["from"]) == tile:
+                to = tuple(crossing["to"])
+                options[crossing["action"]] = f"learned crossing to {to[0]},{to[1]}"
+        rows, terrain, attrs, radius = (context.get("passability_rows"),
+                                        context.get("terrain_rows"),
+                                        context.get("attribute_rows"), context.get("radius"))
+        if not (isinstance(rows, list) and isinstance(terrain, list) and
+                isinstance(attrs, list) and isinstance(radius, int)):
+            return {a: w for a, w in options.items()
+                    if self._whip_key(context, a) not in self.whip_blocked}
+        posts = self._post_signatures()
+        for action, (dx, dy) in STEP_OFFSETS.items():
+            if action in options:
+                continue
+            barrier, landing, post = False, None, False
+            for distance in range(1, min(WHIP_REACH_TILES, radius) + 1):
+                row, column = radius + dy * distance, radius + dx * distance
+                if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
+                    break
+                cells = attrs[row].split()
+                if column < len(cells) and cells[column] in posts:
+                    post = True
+                # Terrain codes are height-independent: the floor below a
+                # ledge is "#" in the hero-relative markers but "1"/"2" here.
+                code = terrain[row][column] if column < len(terrain[row]) else "#"
+                if barrier and distance >= 2 and code in ".12=":
+                    landing = distance
+                    break
+                if rows[row][column] in "#?":
+                    barrier = True
+                elif not barrier:
+                    break     # open ground first: just walk
+            if landing is None:
+                continue
+            if post:
+                options[action] = f"whip post within {landing} tiles"
+            elif self._whip_key(context, action) not in self.whip_probed:
+                options[action] = f"probe: floor {landing} tiles beyond the ledge"
+        return {a: w for a, w in options.items()
+                if self._whip_key(context, a) not in self.whip_blocked}
+
+    def _whip_cross(self, context, action, why):
+        """Face across the gap with a tap, then swing the whip (the bridge
+        equips it first for intention whip_cross)."""
+        key = self._whip_key(context, action)
+        if self.previous_action != action:
+            return PlannerDecision(action, f"face {action[5:]} to swing the whip ({why})",
+                                   "whip_cross", turn_only=True)
+        probe = why.startswith("probe")
+        limit = WHIP_PROBE_ATTEMPTS if probe else WHIP_ATTEMPTS
+        attempts = self.whip_attempts.get(key, 0) + 1
+        self.whip_attempts[key] = attempts
+        if probe:
+            self.whip_probed.add(key)
+        if attempts > limit:
+            self.whip_attempts.pop(key, None)
+            self.whip_blocked[key] = WHIP_BLOCK_DECISIONS
+            self._set_intention(None)
+            return PlannerDecision("wait", f"whip {action[5:]} from {key[2]},{key[3]} did not "
+                                   f"cross after {limit} swing(s); trying other ways", "replan")
+        return PlannerDecision("attack", f"whip across: {why} (swing {attempts}/{limit})",
+                               "whip_cross")
+
     @staticmethod
     def _stall_key(context, action):
         tile = context.get("actor_tile") or [None, None]
@@ -1392,6 +1628,10 @@ class MemoryPlanner:
         for action, distance in self._cut_targets(context, reach=2):
             if action == decision.action:
                 return self._cut(context, action, distance)
+        # A ledge or gap with floor beyond it: try the whip (posts).
+        why = self._whip_options(context).get(decision.action)
+        if why is not None:
+            return self._whip_cross(context, decision.action, why)
         return PlannerDecision(
             "wait", f"no progress with {decision.action} from tile "
             f"{context.get('actor_tile')}; blocking that step for "
@@ -1420,6 +1660,8 @@ class MemoryPlanner:
                                    f"{', '.join(status.get('effects') or ['?'])}", "observe")
         open_steps = self._passable_steps(context)
         self._learn_facing(context)
+        self.whip_ready = ("whip" in (observation.get("owned_weapons") or ()) or
+                           held_weapon(observation) == "whip")
         self._remember(observation, context)
         hero = (observation.get("party") or [{}])[0]
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
@@ -1479,7 +1721,13 @@ class MemoryPlanner:
             if travel is not None:
                 return travel
         if context.get("return_doors"):
-            return self._return_door(context, open_steps)
+            # Rooms sharing a map id carry each other's door tiles (map 258,
+            # 2026-11-14: every door was in another room, the ROM exit 10
+            # steps away). An unreachable door must not freeze the hero:
+            # fall through to exploring instead of waiting on it forever.
+            decision = self._return_door(context, open_steps)
+            if decision.intention != "observe":
+                return decision
         if not open_steps:
             targets = dict(self._cut_targets(context))
             if not targets:

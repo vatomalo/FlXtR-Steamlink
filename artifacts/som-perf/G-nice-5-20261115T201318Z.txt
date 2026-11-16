@@ -1,0 +1,19 @@
+SoM ARM Performance Report - scenario G-nice-5
+20261115T201318Z  host root@100.124.74.13  git e1dd207
+note: proxy fdf2814, same session, nice -5, round 1
+
+Run 1 (64.8 s)
+  Target game FPS (core):  59.923
+  Game FPS (WRAM tick):    0.00
+  Emulated FPS (proxy):    51.73 (worst 10 s window 49.64)
+  Frame interval P50/P95/P99: 18.62 / 28.12 / 35.50 ms
+  retro_run mean / P99:    18.73 / 34.25 ms
+  core / video / audio mean: 9.71 / 6.67 / 0.45 ms
+  Audio callback P99:      3.25 ms
+  Proxy overhead mean:     0.696 ms
+  Late frames / streak:    361 / 8
+  Music ring shortfall:    0 frames
+  CPU busy / idle:         90.8 % / 9.2 %
+  Context switches / forks: 5091.8 / 8.63 per s
+  Top processes: retroarch.exec 54.5%, PE_Single_CPU 14.2%, tailscaled 4.9%, ld-musl-armhf.s 2.9%, ksdioirqd/mmc0 2.3%, bt_main_service 1.1%
+

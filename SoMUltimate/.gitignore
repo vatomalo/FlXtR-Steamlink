@@ -1,0 +1,14 @@
+/roms/*
+!/roms/.gitkeep
+/build/*
+!/build/.gitkeep
+/traces/*
+!/traces/.gitkeep
+*.sfc
+*.smc
+*.rom
+*.srm
+*.sav
+*.bps
+*.ips
+__pycache__/

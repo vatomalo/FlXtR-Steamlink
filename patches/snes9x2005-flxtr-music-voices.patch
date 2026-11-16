@@ -1,0 +1,1206 @@
+diff --git a/libretro.c b/libretro.c
+index f64b71c..2c7c3a5 100644
+--- a/libretro.c
++++ b/libretro.c
+@@ -1175,3 +1175,14 @@ size_t retro_get_memory_size(unsigned type)
+ 
+    return size;
+ }
++
++#ifdef USE_BLARGG_APU
++/* FlXtR: skip synthesising Secret of Mana's music (see apu_blargg.c
++   dsp_run_fx0). 0 = full mixing, 1 = voices 0-5 off, 2 = only the voices
++   sound effects own (SPC700 $AE). */
++extern int flxtr_skip_music_voices;
++RETRO_API void retro_flxtr_skip_music_voices(int mode)
++{
++   flxtr_skip_music_voices = mode >= 0 && mode <= 2 ? mode : 0;
++}
++#endif
+diff --git a/source/apu_blargg.c b/source/apu_blargg.c
+index cfa7aae..40b3f9e 100644
+--- a/source/apu_blargg.c
++++ b/source/apu_blargg.c
+@@ -758,11 +758,1170 @@ V(V9_V6_V3,2) -> V(V9,2) V(V6,3) V(V3,4) */
+ /* Runs DSP for specified number of clocks (~1024000 per second). Every 32 clocks
+    a pair of samples is be generated. */
+ 
++/* FlXtR: music-free mixing for Secret of Mana. Its SPC700 driver keeps the
++   voices owned by sound effects in the direct-page byte $AE: effects claim
++   voices from 6 downward ($0E4C: TSET1 !$00AE), the music keys only
++   ~$AE voices ($07DA, $0812, $084B) and an ending effect releases its voice
++   ($09C9: TCLR1 !$00AE). Read from the driver uploaded by the Turbo ROM;
++   measured in the intro: $AE = 00, 60, 80, C0, E0 (effects on voices 5-7).
++   Mode 1: voices 0-5 are never synthesised, 6-7 always.
++   Mode 2: only the voices an effect owns now (plus FLXTR_RELEASE_CLOCKS of
++   release tail) are synthesised, so the music is skipped on every voice;
++   an effect below voice 5 falls back to full mixing.
++   Copies of dsp_run keep the chosen voices' steps (combined helpers split
++   into their parts) and every shared step (misc, echo, output), so the
++   SPC700 keeps running the driver and effects play normally.
++   Set by the frontend through retro_flxtr_skip_music_voices(). */
++#define FLXTR_RELEASE_CLOCKS (1024000 / 6)
++int flxtr_skip_music_voices = 0;
++static int32_t flxtr_hold[3];
++static uint8_t flxtr_effect_voices(void);
++static void dsp_run_fx0( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++static void dsp_run_fx1( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      dsp_voice_V1( &dsp_m.voices [5] );
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      dsp_voice_V2( &dsp_m.voices [5] );
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      dsp_voice_V3( &dsp_m.voices [5] );
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      dsp_voice_V4( &dsp_m.voices [5] );
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      dsp_voice_V5( &dsp_m.voices [5] );
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      dsp_voice_V6( &dsp_m.voices [5] );
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      dsp_voice_V7( &dsp_m.voices [5] );
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      dsp_voice_V8( &dsp_m.voices [5] );
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      dsp_voice_V9( &dsp_m.voices [5] );
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++static void dsp_run_fx2( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      dsp_voice_V1( &dsp_m.voices [6] );
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      dsp_voice_V2( &dsp_m.voices [6] );
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      dsp_voice_V3( &dsp_m.voices [6] );
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      dsp_voice_V4( &dsp_m.voices [6] );
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      dsp_voice_V5( &dsp_m.voices [6] );
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      dsp_voice_V6( &dsp_m.voices [6] );
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      dsp_voice_V7( &dsp_m.voices [6] );
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      dsp_voice_V8( &dsp_m.voices [6] );
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_voice_V9( &dsp_m.voices [6] );
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++static void dsp_run_fx3( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      dsp_voice_V1( &dsp_m.voices [5] );
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      dsp_voice_V1( &dsp_m.voices [6] );
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      dsp_voice_V2( &dsp_m.voices [5] );
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      dsp_voice_V3( &dsp_m.voices [5] );
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      dsp_voice_V4( &dsp_m.voices [5] );
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      dsp_voice_V5( &dsp_m.voices [5] );
++      dsp_voice_V2( &dsp_m.voices [6] );
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      dsp_voice_V6( &dsp_m.voices [5] );
++      dsp_voice_V3( &dsp_m.voices [6] );
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      dsp_voice_V7( &dsp_m.voices [5] );
++      dsp_voice_V4( &dsp_m.voices [6] );
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      dsp_voice_V8( &dsp_m.voices [5] );
++      dsp_voice_V5( &dsp_m.voices [6] );
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      dsp_voice_V9( &dsp_m.voices [5] );
++      dsp_voice_V6( &dsp_m.voices [6] );
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      dsp_voice_V7( &dsp_m.voices [6] );
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      dsp_voice_V8( &dsp_m.voices [6] );
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_voice_V9( &dsp_m.voices [6] );
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++static void dsp_run_fx4( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      dsp_voice_V1( &dsp_m.voices [7] );
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      dsp_voice_V2( &dsp_m.voices [7] );
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      dsp_voice_V3( &dsp_m.voices [7] );
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      dsp_voice_V4( &dsp_m.voices [7] );
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      dsp_voice_V5( &dsp_m.voices [7] );
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_voice_V6( &dsp_m.voices [7] );
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_voice_V7( &dsp_m.voices [7] );
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_voice_V8( &dsp_m.voices [7] );
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_voice_V9( &dsp_m.voices [7] );
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++static void dsp_run_fx5( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      dsp_voice_V1( &dsp_m.voices [5] );
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      dsp_voice_V2( &dsp_m.voices [5] );
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      dsp_voice_V3( &dsp_m.voices [5] );
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      dsp_voice_V1( &dsp_m.voices [7] );
++      dsp_voice_V4( &dsp_m.voices [5] );
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      dsp_voice_V5( &dsp_m.voices [5] );
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      dsp_voice_V6( &dsp_m.voices [5] );
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      dsp_voice_V7( &dsp_m.voices [5] );
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      dsp_voice_V8( &dsp_m.voices [5] );
++      dsp_voice_V2( &dsp_m.voices [7] );
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      dsp_voice_V9( &dsp_m.voices [5] );
++      dsp_voice_V3( &dsp_m.voices [7] );
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      dsp_voice_V4( &dsp_m.voices [7] );
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      dsp_voice_V5( &dsp_m.voices [7] );
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_voice_V6( &dsp_m.voices [7] );
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_voice_V7( &dsp_m.voices [7] );
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_voice_V8( &dsp_m.voices [7] );
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_voice_V9( &dsp_m.voices [7] );
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++static void dsp_run_fx6( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      dsp_voice_V1( &dsp_m.voices [6] );
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      dsp_voice_V1( &dsp_m.voices [7] );
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      dsp_voice_V2( &dsp_m.voices [6] );
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      dsp_voice_V3( &dsp_m.voices [6] );
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      dsp_voice_V4( &dsp_m.voices [6] );
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      dsp_voice_V5( &dsp_m.voices [6] );
++      dsp_voice_V2( &dsp_m.voices [7] );
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      dsp_voice_V6( &dsp_m.voices [6] );
++      dsp_voice_V3( &dsp_m.voices [7] );
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      dsp_voice_V7( &dsp_m.voices [6] );
++      dsp_voice_V4( &dsp_m.voices [7] );
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      dsp_voice_V8( &dsp_m.voices [6] );
++      dsp_voice_V5( &dsp_m.voices [7] );
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_voice_V9( &dsp_m.voices [6] );
++      dsp_voice_V6( &dsp_m.voices [7] );
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_voice_V7( &dsp_m.voices [7] );
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_voice_V8( &dsp_m.voices [7] );
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_voice_V9( &dsp_m.voices [7] );
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++static void dsp_run_fx7( int32_t clocks_remain )
++{
++   int32_t phase;
++   phase = dsp_m.phase;
++   dsp_m.phase = (phase + clocks_remain) & 31;
++
++   switch ( phase )
++   {
++loop:
++      if ( 0 && !--clocks_remain )
++         break;
++      case 0:
++      if ( 1 && !--clocks_remain )
++         break;
++      case 1:
++      if ( 2 && !--clocks_remain )
++         break;
++      case 2:
++      if ( 3 && !--clocks_remain )
++         break;
++      case 3:
++      if ( 4 && !--clocks_remain )
++         break;
++      case 4:
++      if ( 5 && !--clocks_remain )
++         break;
++      case 5:
++      if ( 6 && !--clocks_remain )
++         break;
++      case 6:
++      if ( 7 && !--clocks_remain )
++         break;
++      case 7:
++      if ( 8 && !--clocks_remain )
++         break;
++      case 8:
++      dsp_voice_V1( &dsp_m.voices [5] );
++      if ( 9 && !--clocks_remain )
++         break;
++      case 9:
++      if ( 10 && !--clocks_remain )
++         break;
++      case 10:
++      if ( 11 && !--clocks_remain )
++         break;
++      case 11:
++      dsp_voice_V1( &dsp_m.voices [6] );
++      if ( 12 && !--clocks_remain )
++         break;
++      case 12:
++      dsp_voice_V2( &dsp_m.voices [5] );
++      if ( 13 && !--clocks_remain )
++         break;
++      case 13:
++      dsp_voice_V3( &dsp_m.voices [5] );
++      if ( 14 && !--clocks_remain )
++         break;
++      case 14:
++      dsp_voice_V1( &dsp_m.voices [7] );
++      dsp_voice_V4( &dsp_m.voices [5] );
++      if ( 15 && !--clocks_remain )
++         break;
++      case 15:
++      dsp_voice_V5( &dsp_m.voices [5] );
++      dsp_voice_V2( &dsp_m.voices [6] );
++      if ( 16 && !--clocks_remain )
++         break;
++      case 16:
++      dsp_voice_V6( &dsp_m.voices [5] );
++      dsp_voice_V3( &dsp_m.voices [6] );
++      if ( 17 && !--clocks_remain )
++         break;
++      case 17:
++      dsp_voice_V7( &dsp_m.voices [5] );
++      dsp_voice_V4( &dsp_m.voices [6] );
++      if ( 18 && !--clocks_remain )
++         break;
++      case 18:
++      dsp_voice_V8( &dsp_m.voices [5] );
++      dsp_voice_V5( &dsp_m.voices [6] );
++      dsp_voice_V2( &dsp_m.voices [7] );
++      if ( 19 && !--clocks_remain )
++         break;
++      case 19:
++      dsp_voice_V9( &dsp_m.voices [5] );
++      dsp_voice_V6( &dsp_m.voices [6] );
++      dsp_voice_V3( &dsp_m.voices [7] );
++      if ( 20 && !--clocks_remain )
++         break;
++      case 20:
++      dsp_voice_V7( &dsp_m.voices [6] );
++      dsp_voice_V4( &dsp_m.voices [7] );
++      if ( 21 && !--clocks_remain )
++         break;
++      case 21:
++      dsp_voice_V8( &dsp_m.voices [6] );
++      dsp_voice_V5( &dsp_m.voices [7] );
++      if ( 22 && !--clocks_remain )
++         break;
++      case 22:
++      dsp_voice_V9( &dsp_m.voices [6] );
++      dsp_voice_V6( &dsp_m.voices [7] );
++      dsp_echo_22();
++      if ( 23 && !--clocks_remain )
++         break;
++      case 23:
++      dsp_voice_V7( &dsp_m.voices [7] );
++      dsp_echo_23();
++      if ( 24 && !--clocks_remain )
++         break;
++      case 24:
++      dsp_voice_V8( &dsp_m.voices [7] );
++      dsp_echo_24();
++      if ( 25 && !--clocks_remain )
++         break;
++      case 25:
++      dsp_voice_V9( &dsp_m.voices [7] );
++      dsp_echo_25();
++      if ( 26 && !--clocks_remain )
++         break;
++      case 26:
++      dsp_echo_26();
++      if ( 27 && !--clocks_remain )
++         break;
++      case 27:
++      MISC_27();
++      dsp_echo_27();
++      if ( 28 && !--clocks_remain )
++         break;
++      case 28:
++      MISC_28();
++      ECHO_28();
++      if ( 29 && !--clocks_remain )
++         break;
++      case 29:
++      MISC_29();
++      dsp_echo_29();
++      if ( 30 && !--clocks_remain )
++         break;
++      case 30:
++      dsp_misc_30();
++      ECHO_WRITE(1);
++      if ( 31 && !--clocks_remain )
++         break;
++      case 31:
++
++      if ( --clocks_remain )
++         goto loop;
++   }
++}
++
++
++typedef void (*flxtr_dsp_run_t)( int32_t );
++static const flxtr_dsp_run_t flxtr_fx_runs[8] = { dsp_run_fx0, dsp_run_fx1, dsp_run_fx2, dsp_run_fx3, dsp_run_fx4, dsp_run_fx5, dsp_run_fx6, dsp_run_fx7 };
++
+ static void dsp_run( int32_t clocks_remain )
+ {
+    int32_t phase;
+    if (Settings.HardDisableAudio)
+ 	   return;
++   if (flxtr_skip_music_voices == 1)
++   {
++      dsp_run_fx6( clocks_remain );           /* voices 6-7 */
++      return;
++   }
++   if (flxtr_skip_music_voices == 2)
++   {
++      uint8_t owned = flxtr_effect_voices();
++      if (!(owned & 0x1F))
++      {
++         uint32_t run = 0;
++         int32_t i;
++         for (i = 0; i < 3; i++)
++         {
++            if (owned & (0x20 << i))
++            {
++               flxtr_hold[i] = FLXTR_RELEASE_CLOCKS;
++               run |= 1u << i;
++            }
++            else if (flxtr_hold[i] > 0)
++            {
++               flxtr_hold[i] -= clocks_remain;
++               run |= 1u << i;
++            }
++         }
++         flxtr_fx_runs[run]( clocks_remain );
++         return;
++      }
++      /* an effect below voice 5: mix everything */
++   }
+    phase = dsp_m.phase;
+    dsp_m.phase = (phase + clocks_remain) & 31;
+ 
+@@ -1169,6 +2328,11 @@ static void dsp_copy_state( uint8_t ** io, dsp_copy_func_t copy )
+ ***********************************************************************************/
+ 
+ static spc_state_t m;
++/* FlXtR: SPC700 direct page $AE, the effect-owned voice mask (see dsp_run_fx0). */
++static uint8_t flxtr_effect_voices(void)
++{
++   return m.ram.ram[0xAE];
++}
+ static int8_t reg_times [256];
+ static bool allow_time_overflow;
+ 

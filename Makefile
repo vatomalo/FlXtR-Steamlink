@@ -46,6 +46,27 @@ test-som-ai-player2:
 
 .PHONY: test-som-ai-player2
 
+test-som-net-pad:
+	@mkdir -p build
+	$(CC) $(CFLAGS) -D_DEFAULT_SOURCE tests/som_net_pad_test.c -o build/som-net-pad-test
+	./build/som-net-pad-test
+
+.PHONY: test-som-net-pad
+
+test-som-songs:
+	@mkdir -p build
+	$(CC) $(CFLAGS) -D_DEFAULT_SOURCE tests/som_songs_test.c -o build/som-songs-test
+	./build/som-songs-test
+
+.PHONY: test-som-songs
+
+test-som-combo:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_combo_test.c -o build/som-combo-test
+	./build/som-combo-test
+
+.PHONY: test-som-combo
+
 test-rom-core-category:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/rom_core_category_test.c -o build/rom-core-category-test

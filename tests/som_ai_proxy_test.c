@@ -21,17 +21,49 @@ static int16_t mocked_input_mask(unsigned port,unsigned device,unsigned index,un
 }
 static uint8_t mocked_vram[0x10000];
 static int mocked_has_vram;
+static uint8_t mocked_sram[8192];
 static void *mocked_memory_data(unsigned id){
+    if(id==RETRO_MEMORY_SAVE_RAM)return mocked_sram;
     if(id==RETRO_MEMORY_VIDEO_RAM)return mocked_has_vram?mocked_vram:NULL;
     return id==RETRO_MEMORY_SYSTEM_RAM?mocked_wram:NULL;
 }
 static size_t mocked_memory_size(unsigned id){
+    if(id==RETRO_MEMORY_SAVE_RAM)return sizeof(mocked_sram);
     if(id==RETRO_MEMORY_VIDEO_RAM)return mocked_has_vram?sizeof(mocked_vram):0;
     return id==RETRO_MEMORY_SYSTEM_RAM?sizeof(mocked_wram):0;
 }
+static uint8_t fake_core_state[16];
+static size_t fake_serialize_size(void){return sizeof(fake_core_state);}
+static bool fake_serialize(void *data,size_t size){
+    if(size<sizeof(fake_core_state))return false;
+    memcpy(data,fake_core_state,sizeof(fake_core_state));return true;
+}
+static bool fake_unserialize(const void *data,size_t size){
+    if(size!=sizeof(fake_core_state))return false;
+    memcpy(fake_core_state,data,size);return true;
+}
+static void prog_enter(int slot_pattern){
+    /* leave field play, show the game state of a slot, enter field play */
+    mocked_wram[0xE4]=0;frame_number+=30;som_prog_frame();
+    for(unsigned i=0;i<0x40;i++)mocked_wram[0xCC01+i]=(uint8_t)(slot_pattern+i);
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;mocked_wram[0xD0]=0;
+    frame_number+=30;som_prog_frame();
+}
+static void prog_game_saves(unsigned slot,int slot_pattern,uint8_t salt){
+    for(unsigned i=0;i<0x40;i++)mocked_sram[slot*0x400+4+i]=(uint8_t)(slot_pattern+i);
+    mocked_sram[slot*0x400+0x300]=salt;            /* the rest of the block */
+    frame_number+=30;som_prog_frame();
+}
+static int16_t captured[64];
+static size_t captured_frames;
+static size_t capture_audio(const int16_t *data,size_t frames){
+    for(size_t i=0;i<frames*2&&captured_frames*2+i<64;i++)captured[captured_frames*2+i]=data[i];
+    captured_frames+=frames;return frames;
+}
 static const void *shown_frame;
+static size_t shown_pitch;
 static void mocked_video(const void *data,unsigned width,unsigned height,size_t pitch){
-    (void)width;(void)height;(void)pitch;shown_frame=data;
+    (void)width;(void)height;shown_frame=data;shown_pitch=pitch;
 }
 static uint8_t saved_wram[SOM_WRAM_SIZE];
 static int unserialized;
@@ -98,13 +130,36 @@ int main(void){
     assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
     frame_number=start_frame+action_frames;
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
-    /* Manual-play Class Progress menu via L2+R2. */
+    /* Title screen (no verified field play): Start and L2+R2 go to the game,
+     * no overlay. Same with unreadable memory. */
     reset_proxy();
     som_disc_init(&disciplines);
     som_manual_disciplines=0;
     ring_ai_enabled=0;
     last_physical_buttons=0;
     physical_state=mocked_input_mask;
+    backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines&&!disciplines.open);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==1);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+    som_input_poll();assert(!som_manual_disciplines);
+    mocked_buttons=0;som_input_poll();
+    /* Field play but an event runs, or the ring is open: still native. */
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;mocked_wram[0xD0]=0x82;
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    mocked_wram[0xD0]=0;mocked_wram[0x7D]=1;
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    backend_retro_get_memory_data=NULL;                      /* unreadable */
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
+    assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    backend_retro_get_memory_data=mocked_memory_data;mocked_wram[0x7D]=0;
+    /* Manual-play Class Progress menu via L2+R2 in verified field play. */
     mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
     som_input_poll();
@@ -121,6 +176,242 @@ int main(void){
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
     assert(!som_manual_disciplines&&!disciplines.open);
     mocked_buttons=0;
+    /* Start is the new manual Class Progress shortcut. */
+    som_manual_disciplines=0;disciplines.open=0;last_physical_buttons=0;
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+    som_input_poll();
+    assert(som_manual_disciplines&&disciplines.open);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+    som_input_poll();
+    assert(!som_manual_disciplines&&!disciplines.open);
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    assert(som_disc_weapons[0][0]==1&&som_disc_weapons[0][1]==2);
+    assert(som_disc_weapons[1][0]==0&&som_disc_weapons[1][1]==3);
+    assert(som_disc_weapons[2][0]==1&&som_disc_weapons[2][1]==6);
+    assert(som_disc_weapons[10][0]==1&&som_disc_weapons[10][1]==5);
+    /* Grant only missing weapons on selection, retaining tiers/ownership. */
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
+    for(unsigned i=0;i<8;i++)mocked_wram[0xCC54+i]=0xFF;
+    mocked_wram[0xCC55]=0x43; /* already-owned tier-3 sword */
+    assert(som_class_supply(mocked_wram,2)==1); /* Ninja gains chakram */
+    assert(mocked_wram[0xCC55]==0x43&&mocked_wram[0xCC5A]==0);
+    assert(som_class_supply(mocked_wram,2)==0); /* idempotent */
+    assert(som_class_supply(mocked_wram,10)==1); /* Samurai gains yumi */
+    assert(mocked_wram[0xCC59]==0&&mocked_wram[0xCC55]==0x43);
+    mocked_wram[0xE4]=0;mocked_wram[0xCC56]=0xFF;
+    assert(som_class_supply(mocked_wram,0)==0); /* no changes outside field */
+    assert(mocked_wram[0xCC56]==0xFF);
+
+    /* Progression belongs to a save (src/som_progress.h). */
+    {
+        char dir[]="/tmp/som-progress-test-XXXXXX";assert(mkdtemp(dir));
+        prog_dir=dir;
+        char legacy_disc[64];snprintf(legacy_disc,sizeof(legacy_disc),"%s/v1",dir);
+        FILE *v1=fopen(legacy_disc,"w");
+        assert(v1&&fputs("v1 2 1 0 1 0 5 40 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0\n",v1)>=0&&!fclose(v1));
+        disc_file=legacy_disc;
+        backend_retro_get_memory_data=mocked_memory_data;backend_retro_get_memory_size=mocked_memory_size;
+        memset(mocked_wram,0,sizeof(mocked_wram));memset(mocked_sram,0,sizeof(mocked_sram));
+        som_disc_init(&disciplines);som_prog_preserve_legacy();
+        som_prog_fresh(&prog,7);prog_baseline=0;prog_was_field=0;prog_session_first=1;
+        frame_number=10000;som_prog_frame();                 /* title: baseline */
+        /* New game: no save matches, fresh progression; nothing written yet. */
+        prog_enter(0x10);
+        assert(!prog.owner&&disciplines.level[2]==1);
+        disciplines.level[0]=3;disciplines.experience[0]=20;
+        assert(!som_prog_write());
+        /* The game saves to slot 1: a record for that exact block. */
+        prog_game_saves(0,0x10,1);
+        assert(prog.owner==som_prog_slot_fingerprint(mocked_sram,0)&&prog.slot==0);
+        const uint64_t slot1=prog.owner;
+        SomProgress check;assert(som_prog_read(slot1,&check)==SOM_PROG_OK&&check.level[0]==3);
+        /* Another playthrough in slot 2: no inherited XP. */
+        for(unsigned i=4;i<0x400;i++)mocked_sram[0x400+i]=(uint8_t)(0x80+i);
+        frame_number+=30;som_prog_frame();                   /* a slot changed, not ours */
+        assert(prog.owner==slot1);
+        prog_enter(0x80+4);
+        assert(prog.slot==1&&prog.owner!=slot1&&disciplines.level[0]==1);
+        disciplines.level[1]=4;
+        prog_game_saves(1,0x80+4,2);
+        /* Back to slot 1: its own progression, not slot 2's. */
+        prog_enter(0x10);
+        assert(prog.owner==slot1&&disciplines.level[0]==3&&disciplines.level[1]==1);
+        /* A damaged record falls back to the previous generation. */
+        disciplines.level[0]=5;assert(som_prog_write());       /* now .prev holds level 3 */
+        char path[300];som_prog_path(slot1,"",path,sizeof(path));
+        FILE *bad=fopen(path,"w");assert(bad&&fputs("som-progress 2\ngarbage\n",bad)>=0&&!fclose(bad));
+        assert(som_prog_read(slot1,&check)==SOM_PROG_OK&&check.level[0]==3);
+        /* An unknown version is never overwritten. */
+        FILE *future=fopen(path,"w");assert(future&&fputs("som-progress 9\n",future)>=0&&!fclose(future));
+        assert(!som_prog_write());
+        future=fopen(path,"r");char line[32]={0};assert(future&&fgets(line,sizeof(line),future));fclose(future);
+        assert(!strcmp(line,"som-progress 9\n"));
+        unlink(path);
+        /* Save states carry the progression; older states without it load. */
+        backend_retro_serialize_size=fake_serialize_size;backend_retro_serialize=fake_serialize;
+        backend_retro_unserialize=fake_unserialize;backend=(void*)1;
+        assert(retro_serialize_size()==16+SOM_PROG_TRAILER_SIZE);
+        static uint8_t state[16+SOM_PROG_TRAILER_SIZE];
+        disciplines.level[3]=7;fake_core_state[0]=42;
+        assert(retro_serialize(state,sizeof(state)));
+        disciplines.level[3]=1;fake_core_state[0]=0;
+        assert(retro_unserialize(state,sizeof(state))&&fake_core_state[0]==42&&disciplines.level[3]==7);
+        assert(retro_unserialize(state,16)&&disciplines.level[3]==7);        /* old state */
+        state[16+20]^=1;assert(retro_unserialize(state,sizeof(state)));      /* bad trailer */
+        assert(disciplines.level[3]==7);
+        backend_retro_serialize_size=NULL;backend_retro_serialize=NULL;backend_retro_unserialize=NULL;
+        backend=NULL;
+        /* Old device-wide levels: kept, applied only on request. */
+        assert(disciplines.level[2]==1);
+        assert(som_handle_command("progress_claim_legacy")&&disciplines.level[2]==5);
+        assert(!som_handle_command("progress_claim_legacy"));           /* once */
+        char cmd[128];snprintf(cmd,sizeof(cmd),"rm -rf %s",dir);assert(system(cmd)==0);
+        prog_dir=SOM_PROG_DIR;disc_file=SOM_DISC_FILE;
+        memset(mocked_wram,0,sizeof(mocked_wram));memset(mocked_sram,0,sizeof(mocked_sram));
+        som_disc_init(&disciplines);
+    }
+    /* Soundtrack mixing from a decoded file named in the control file. */
+    {
+        char dir[]="/tmp/som-music-test-XXXXXX";assert(mkdtemp(dir));
+        static char control[80],pcm[80];
+        snprintf(control,sizeof(control),"%s/play",dir);snprintf(pcm,sizeof(pcm),"%s/a.raw",dir);
+        music_play_file=control;som_music_stop();music_check_frame=0;
+        captured_frames=0;frontend_audio_batch=capture_audio;
+        int16_t game[8]={1000,-1000,2000,-2000,0,0,7,7};
+        frame_number=50000;som_music_pump();assert(music_fd<0);   /* no control file */
+        assert(som_audio_batch(game,4)==4&&captured_frames==4&&captured[0]==1000);
+        int16_t music[6]={256,-256,512,-512,1024,0};
+        FILE *f=fopen(pcm,"wb");assert(f&&fwrite(music,1,sizeof(music),f)==sizeof(music)&&!fclose(f));
+        f=fopen(control,"w");assert(f&&fprintf(f,"%s\n",pcm)>0&&!fclose(f));
+        frame_number+=30;som_music_pump();
+        assert(music_fd>=0&&music_ring.count==3);
+        som_music_pump();assert(music_ring.count==6);                 /* looped */
+        captured_frames=0;assert(som_audio_batch(game,4)==4&&captured_frames==4);
+        assert(captured[0]==1000+256*(int)SOM_MIX_GAIN_DEFAULT/256&&captured[1]==-1000-256*(int)SOM_MIX_GAIN_DEFAULT/256);
+        assert(captured[6]==7+256*(int)SOM_MIX_GAIN_DEFAULT/256);  /* looped: frame 4 = frame 1 */
+        unlink(control);frame_number+=30;som_music_pump();
+        assert(music_fd<0&&!music_ring.count);                    /* no control file: stop */
+        f=fopen(control,"w");assert(f&&fprintf(f,"%s/missing.raw\n",dir)>0&&!fclose(f));
+        frame_number+=30;som_music_pump();assert(music_fd<0);    /* not a file: nothing */
+        unlink(control);unlink(pcm);rmdir(dir);music_play_file=SOM_MUSIC_PLAY;
+        som_music_stop();frontend_audio_batch=NULL;
+    }
+    /* Opt-in priority: off without the file, bad values ignored, and only
+     * threads named retroarch.exec at nice 0 are touched (a fake task tree;
+     * setpriority on our own tid with a positive-only check). */
+    {
+        char dir[]="/tmp/som-prio-test-XXXXXX";assert(mkdtemp(dir));
+        static char file[96];snprintf(file,sizeof(file),"%s/prio",dir);
+        priority_file=file;
+        assert(som_priority_wanted()==0);
+        const char *bad[]={"5\n","-11\n","x\n","0\n"};
+        for(unsigned i=0;i<4;i++){
+            FILE *f=fopen(file,"w");assert(f&&fputs(bad[i],f)>=0&&!fclose(f));
+            assert(som_priority_wanted()==0);
+        }
+        FILE *f=fopen(file,"w");assert(f&&fputs("-5\n",f)>=0&&!fclose(f));
+        assert(som_priority_wanted()==-5);
+        assert(som_priority_apply(0)==0);
+        /* fake /proc/self/task: one thread of another name, one missing comm */
+        static char tasks[96],sub[140],comm[160];
+        snprintf(tasks,sizeof(tasks),"%s/task",dir);assert(!mkdir(tasks,0700));
+        snprintf(sub,sizeof(sub),"%s/%d",tasks,(int)getpid());assert(!mkdir(sub,0700));
+        snprintf(comm,sizeof(comm),"%s/comm",sub);
+        f=fopen(comm,"w");assert(f&&fputs("SDLAudioP1\n",f)>=0&&!fclose(f));
+        priority_tasks=tasks;
+        assert(som_priority_apply(-5)==0);                        /* wrong name */
+        assert(getpriority(PRIO_PROCESS,0)==0||getpriority(PRIO_PROCESS,0)>0);
+        unlink(comm);rmdir(sub);rmdir(tasks);unlink(file);rmdir(dir);
+        priority_tasks="/proc/self/task";priority_file=SOM_PRIORITY_FILE;
+    }
+    /* Frame timing: percentiles, late streaks, off means no clock reads,
+     * the same audio either way, and one JSON report per window. */
+    {
+        SomPerfWindow w;memset(&w,0,sizeof(w));w.nominal_us=16639;
+        for(unsigned i=0;i<100;i++)som_perf_add(&w,SOM_PERF_RUN,i<90?1000u:20000u);
+        assert(som_perf_percentile(&w.phase[SOM_PERF_RUN],50)==1250u);
+        assert(som_perf_percentile(&w.phase[SOM_PERF_RUN],95)==20250u);
+        assert(w.phase[SOM_PERF_RUN].max_us==20000u);
+        som_perf_add(&w,SOM_PERF_RUN,900000u);                       /* overflow bucket */
+        assert(som_perf_percentile(&w.phase[SOM_PERF_RUN],100)==900000u);
+        som_perf_interval(&w,16600);som_perf_interval(&w,30000);som_perf_interval(&w,40000);
+        som_perf_interval(&w,16700);som_perf_interval(&w,26000);
+        assert(w.late==3&&w.late_streak_max==2&&w.late_streak==1);
+        char text[4096];
+        assert(som_perf_json(&w,text,sizeof(text),1,0.5,0.1,1,0,2,3)>0);
+        assert(strstr(text,"\"late\":3")&&strstr(text,"\"run\":{\"n\":101")&&
+               strstr(text,"\"nominal_fps\":60.100"));
+        assert(som_perf_json(&w,text,64,1,0,0,0,0,0,0)<0);                 /* never overruns */
+
+        int16_t game[8]={1000,-1000,2000,-2000,0,0,7,7};
+        frontend_audio_batch=capture_audio;
+        perf_env=0;perf_on=0;perf_check=0;
+        assert(PERF_NOW()==0u&&som_perf_frame_begin(70000)==0u);
+        captured_frames=0;assert(som_audio_batch(game,4)==4);
+        int16_t off[8];memcpy(off,captured,sizeof(off));
+        char perf_path[]="/tmp/som-perf-test-XXXXXX";
+        int pfd=mkstemp(perf_path);assert(pfd>=0);close(pfd);unlink(perf_path);
+        perf_file=perf_path;perf_env=1;perf_check=0;
+        uint64_t t0=0;
+        for(unsigned long f=0;f<=SOM_PERF_WINDOW;f++){
+            t0=som_perf_frame_begin(80000+f);assert(t0);
+            captured_frames=0;assert(som_audio_batch(game,4)==4);
+            som_perf_frame_end(t0,0);
+        }
+        assert(!memcmp(off,captured,sizeof(off)));                  /* same samples */
+        FILE *in=fopen(perf_path,"r");assert(in);
+        char report[4096];size_t got=fread(report,1,sizeof(report)-1,in);fclose(in);report[got]=0;
+        assert(strstr(report,"\"frames\":600,")&&strstr(report,"\"audio_frames\":2400,")&&
+               strstr(report,"\"audio\":{\"n\":600")&&strstr(report,"\"interval\":{\"n\":600"));   /* first frame has none; 600th closes */
+        unlink(perf_path);perf_file=SOM_PERF_FILE;perf_env=0;perf_on=0;perf_check=0;
+        frontend_audio_batch=NULL;
+    }
+    /* The exit auto-state goes beside the ROM, as RetroArch names it. */
+    som_auto_state_path_set("/roms/Snes/Secret of Mana, Turbo.smc");
+    assert(!strcmp(som_auto_state_path,"/roms/Snes/Secret of Mana, Turbo.state.auto"));
+    som_auto_state_path_set("/roms/v1.2/game");
+    assert(!strcmp(som_auto_state_path,"/roms/v1.2/game.state.auto"));
+    setenv("FLXTR_SOM_AUTO_STATE","0",1);som_auto_state_path_set("/a/b.smc");
+    assert(!som_auto_state_path[0]);unsetenv("FLXTR_SOM_AUTO_STATE");
+    /* Combo ladder: swings with observed HP loss climb the level; taps
+     * without damage do not count, and a whiff drops the chain. */
+    backend_retro_get_memory_data=mocked_memory_data;
+    backend_retro_get_memory_size=mocked_memory_size;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;
+    mocked_wram[0xE6]=0x0F;mocked_wram[0xE1E4]=1;
+    mocked_wram[0xE19C]=1;
+    mocked_wram[0xE600]=1;mocked_wram[0xE780]=7;
+    mocked_wram[0xE782]=100;mocked_wram[0xE783]=0;
+    som_combo_clear();frame_number=500;combo_input_held=0;
+    som_combo_frame();
+    for(unsigned h=0;h<5;h++){
+        frame_number+=20;som_combo_swing(h==4?1u:0u);   /* the 5th hit mixes in Y */
+        mocked_wram[0xE782]--;
+        som_combo_frame();
+        assert(combo.hits==h+1);
+    }
+    assert(combo.mixes==1&&som_combo_level(&combo)==3);  /* 5 hits = 2, +1 mix */
+    /* Each confirmed hit trained the weapon's discipline (sword, no class:
+     * Swordsmanship, with diminishing returns on the same species); the
+     * switch hit trained Weapon Flow too. */
+    {   const unsigned sel=disciplines.selected;
+        const unsigned trained=som_xp_weapon_discipline(1,sel,
+            sel<SOM_DISCIPLINE_COUNT?som_disc_weapons[sel]:NULL);
+        assert(disciplines.experience[trained]>=10u+8u);
+        assert(disciplines.experience[8]>0u&&disciplines.experience[8]<SOM_XP_FLOW);
+    }
+    {   char text[24];som_combo_text(&combo,text);assert(!strcmp(text,"5 HIT MIX LV3"));}
+    frame_number+=20;som_combo_swing(0);som_combo_frame();   /* no HP lost yet */
+    assert(combo.hits==5&&combo.pending);
+    combo_input_held=1;frame_number+=SOM_COMBO_HIT_WINDOW+1;som_combo_frame();
+    assert(combo.hits==5);                                   /* holding: kept */
+    combo_input_held=0;som_combo_frame();
+    assert(!combo.pending&&!combo.hits);                     /* whiff: dropped */
+    memset(mocked_wram,0,sizeof(mocked_wram));
     physical_state=mocked_input;
     /* snes9x2005 queries the whole pad with one bitmask when supported. */
     reset_proxy();som_start_action(SOM_ACT_STEP_DOWN);
@@ -138,6 +429,10 @@ int main(void){
     assert(cancelled);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==0);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+    /* Unsupported ROMs get no features: only the Turbo file name enables them. */
+    assert(som_rom_is_turbo("/roms/Snes/Secret of Mana, Turbo.smc"));
+    assert(!som_rom_is_turbo("/roms/Snes/SecretofMana.smc"));
+    assert(!som_rom_is_turbo("/roms/Snes/LegendofZelda.smc")&&!som_rom_is_turbo(NULL));
     reset_proxy();on_turbo=0;
     som_start_action(SOM_ACT_LEFT);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==0);
@@ -154,6 +449,21 @@ int main(void){
     assert(first[0]==0&&first[1]==1&&first[2]==2);
     assert(fseek(wram,0,SEEK_END)==0&&ftell(wram)==(long)SOM_WRAM_SIZE);
     assert(fclose(wram)==0);
+    /* While the AI plays the hot ranges are also written ready-made. */
+    {
+        char hot_path[]="/tmp/flxtr-som-hot-test-XXXXXX";
+        int hfd=mkstemp(hot_path);assert(hfd>=0);close(hfd);unlink(hot_path);
+        char hot_tmp[64];snprintf(hot_tmp,sizeof(hot_tmp),"%s.tmp",hot_path);
+        hot_file=hot_path;hot_temp_file=hot_tmp;
+        assert(som_export_wram()&&access(hot_path,F_OK)!=0);     /* AI off: none */
+        ring_ai_enabled=1;assert(som_export_wram());ring_ai_enabled=0;
+        FILE *hot=fopen(hot_path,"rb");assert(hot);
+        static uint8_t got[24*1024];assert(fread(got,1,sizeof(got),hot)==sizeof(got));
+        assert(fgetc(hot)==EOF);fclose(hot);
+        assert(got[0]==0&&got[8*1024]==(uint8_t)((39*1024)&0xff)&&
+               got[10*1024+5]==(uint8_t)((50*1024+5)&0xff)&&got[20*1024+7]==(uint8_t)((96*1024+7)&0xff));
+        assert(som_export_wram()&&access(hot_path,F_OK)!=0);     /* AI off again: removed */
+    }
     on_turbo=1;
     ring_ai_file=ring_ai_path;
     ring_ai_selector_open=ring_ai_pending=ring_ai_enabled=0;
@@ -190,7 +500,7 @@ int main(void){
     assert(ring_ai_enabled&&!gambits.open);                               /* A: close */
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();pressed=100;som_input_poll();
     pressed=RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();pressed=100;som_input_poll();
-    assert(gambits.cursor==SOM_GAMBIT_COUNT);                             /* wraps to Exit */
+    assert(gambits.cursor==SOM_GAMBIT_EXIT_ITEM);                         /* wraps to Exit */
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
     assert(!ring_ai_enabled&&!gambits.open&&access(ring_ai_path,F_OK)!=0);
     assert(strstr(overlay.lines[0],"You play"));
@@ -255,6 +565,25 @@ int main(void){
     overlay.frames_left=0;
     som_video_refresh(core_frame,256,224,512);
     assert(shown_frame==core_frame);
+    /* Snes9x 2005's real pitch is 1024 bytes for 256 pixels: the decorated
+     * copy is tightly packed (512-byte rows) and keeps every visible pixel. */
+    {
+        static uint16_t wide[224][512];
+        for(unsigned y=0;y<224;y++)for(unsigned x=0;x<512;x++)
+            wide[y][x]=x<256?(uint16_t)(y*256+x+1):0u;
+        som_overlay_set(&overlay,"AI: padded pitch",30);
+        som_video_refresh(wide,256,224,1024);
+        assert(shown_frame==overlay_frame&&shown_pitch==512);
+        const uint16_t *out=(const uint16_t*)shown_frame;
+        size_t same=0;
+        for(unsigned y=0;y<224;y++)for(unsigned x=0;x<256;x++)same+=out[y*256u+x]==wide[y][x];
+        assert(same>256u*224u-6000u);                      /* only the message box differs */
+        for(unsigned y=0;y<224;y+=37)assert(out[y*256u]==wide[y][0]);   /* 512-byte rows */
+        assert(out[223u*256u+255u]==wide[223][255]);
+        som_video_refresh(wide,256,224,200);              /* pitch < row: untouched */
+        assert(shown_frame==wide&&shown_pitch==200);
+        overlay.frames_left=0;
+    }
     unlink(message_path);
     /* Teaching records physical press edges as replayable action names. */
     reset_proxy();
@@ -530,14 +859,66 @@ int main(void){
     assert(!ring_ai_enabled);
     /* Gambit menu text and drawing. */
     {
-        SomGambits g={1,1,{0,5,3,3,4,1}};
+        SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
+            {3,2,2,2,3,3,3,3},0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));
         assert(som_gambit_line(&g,2,text)&&text[0]=='>'&&strstr(text,"5 ooooo"));
         assert(strlen(text)<=32);
+        g.cursor=SOM_GAMBIT_COUNT;g.music_genre=0;
+        assert(som_gambit_line(&g,SOM_GAMBIT_COUNT+1u,text)&&strstr(text,"Music genre: Lo-Fi"));
+        assert(som_gambit_press(&g,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_GENRE_CHANGED);
+        assert(g.music_genre==1);
+        assert(som_gambit_line(&g,SOM_GAMBIT_COUNT+1u,text)&&strstr(text,"Jazz"));
         assert(som_gambit_line(&g,SOM_GAMBIT_ITEMS,text)&&strstr(text,"Exit gambits"));
+        assert(som_gambit_line(&g,SOM_GAMBIT_INFINITE_MP+1,text)&&strstr(text,"Infinite MP")&&
+               strstr(text,"off"));
+        /* Infinite MP test switch: B toggles; weights and file text unchanged. */
+        {
+            SomGambits m;memset(&m,0,sizeof(m));som_gambit_parse(&m,"433341");
+            m.open=1;m.cursor=SOM_GAMBIT_INFINITE_MP;
+            m.infinite_mp=0;
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_TEST_SWITCH);
+            assert(m.infinite_mp&&m.open);
+            char f[SOM_GAMBIT_COUNT+1];som_gambit_format(&m,f);assert(strcmp(f,"433341")==0);
+            assert(som_gambit_line(&m,SOM_GAMBIT_INFINITE_MP+1,text)&&strstr(text,"ON"));
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_TEST_SWITCH);
+            assert(!m.infinite_mp);
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
+            assert(m.cursor==SOM_GAMBIT_EXIT_ITEM);
+        }
         assert(!som_gambit_line(&g,SOM_GAMBIT_ITEMS+1,text));
+        /* Combat page: its own weights, digits and exit row. */
+        {
+            SomGambits c;memset(&c,0,sizeof(c));som_gambit_parse(&c,"433341");
+            som_combat_parse(&c,"x");                              /* invalid: defaults */
+            char f[SOM_COMBAT_COUNT+1];som_combat_format(&c,f);assert(!strcmp(f,"32223333"));
+            som_combat_parse(&c,"50123450");som_combat_format(&c,f);assert(!strcmp(f,"50123450"));
+            c.open=1;som_gambit_turn_page(&c,1);
+            assert(c.page==SOM_PAGE_COMBAT&&c.cursor==0);
+            assert(som_gambit_line(&c,0,text)&&strstr(text,"COMBAT"));
+            assert(som_gambit_line(&c,1,text)&&strstr(text,"Press the attack")&&strstr(text,"5 ooooo"));
+            assert(som_gambit_press(&c,1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)==SOM_GAMBIT_CHANGED);
+            assert(c.combat[0]==4&&c.weight[0]==4);                /* actions untouched */
+            assert(som_gambit_press(&c,1u<<RETRO_DEVICE_ID_JOYPAD_UP)==SOM_GAMBIT_NONE);
+            assert(c.cursor==SOM_COMBAT_EXIT_ITEM);
+            assert(som_gambit_line(&c,SOM_COMBAT_ITEMS,text)&&strstr(text,"Exit gambits"));
+            assert(!som_gambit_line(&c,SOM_COMBAT_ITEMS+1,text));
+            assert(som_gambit_press(&c,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_EXIT&&!c.open);
+            som_gambit_turn_page(&c,1);assert(c.page==SOM_PAGE_ACTIONS);
+            som_gambit_turn_page(&c,0);assert(c.page==SOM_PAGE_COMBAT);
+            /* Saved to its own file, loaded back. */
+            char path[]="/tmp/flxtr-combat-XXXXXX";int cfd=mkstemp(path);assert(cfd>=0);close(cfd);
+            const char *saved_combat=combat_file,*saved_gambit=gambit_file;
+            char gpath[]="/tmp/flxtr-gambit-XXXXXX";int gfd=mkstemp(gpath);assert(gfd>=0);close(gfd);
+            combat_file=path;gambit_file=gpath;
+            SomGambits keep=gambits;gambits=c;som_gambit_save();
+            memset(&gambits,0,sizeof(gambits));som_gambit_load();
+            assert(gambits.combat[0]==4&&gambits.combat[1]==0&&gambits.weight[0]==4);
+            assert(gambits.page==SOM_PAGE_ACTIONS);
+            gambits=keep;combat_file=saved_combat;gambit_file=saved_gambit;unlink(path);unlink(gpath);
+        }
         static uint16_t frame[224][256];
         memset(frame,0,sizeof(frame));
         som_gambit_draw((uint8_t*)frame,256,224,512,2,&g);
@@ -688,49 +1069,435 @@ int main(void){
         assert(!som_summon_boss()&&!familiar_carry.valid);           /* bad package */
         unlink(pkg_path);unlink(any_path);
     }
-    /* Weapon switch without the ring: the fields a live ring switch wrote. */
+    /* Direct weapon switching reproduces the game's equip refresh ($C0:EA41)
+     * from the ROM: table pointers plus the 64 effect tiles in 7E:2000 (the
+     * missing tiles were the garbled weapons). Synthetic Turbo-layout ROM. */
     {
+        static uint8_t rom[0x200000];
+        memset(rom,0,sizeof(rom));
+        som_rom=rom;som_rom_size=sizeof(rom);
+        static const uint8_t power[8]={2,3,4,4,2,3,2,2};
+        for(unsigned row=0;row<72;row++){
+            uint8_t *r=rom+0x101000+row*12;
+            r[0]=(uint8_t)(row/9);r[2]=0xC0;r[4]=(uint8_t)(0x10+row/9);
+            r[7]=0x4B;r[8]=power[row/9];r[11]=0x21;
+        }
+        rom[0x101000+10*12+1]=0x40;              /* tier-1 sword: Agi bonus */
+        rom[0x101000+54*12+3]=3;                 /* boomerang graphics set 3 */
+        rom[0x101000+45*12+3]=0xF0;              /* bow: Turbo alternate bank */
+        for(unsigned g=0;g<8;g++){
+            uint8_t *t=rom+0x14C000+4*g;
+            const unsigned w=0x30u*g+1u;          /* tile index into bank D4 */
+            t[0]=(uint8_t)w;t[1]=(uint8_t)(w>>8);t[2]=0xE2;t[3]=(uint8_t)(0x30+2*g);
+            rom[0x10FFD0+2*g]=0x40;rom[0x10FFD0+2*g+1]=(uint8_t)(0x20+2*g);
+            for(unsigned i=0;i<64*24;i++)
+                rom[0x140000+24*w+i]=(uint8_t)(i*7u+g*31u+(i>>4));
+        }
+        for(unsigned i=0;i<64*24;i++)rom[0x14BA00+i]=(uint8_t)(0xA5^i);
+        rom[0x102AD0+0x0C*64+8]=0x81;rom[0x102AD0+0x0C*64+15]=2; /* Fire Ball */
+        rom[0x102AD0+0x07*64+8]=0x01;            /* an ally spell */
+        /* Independent reference for Turbo's converter: per tile 8 (a,b)
+         * row pairs then 8 c bytes; colour = a|b<<1|c<<2 unless b&c. */
+        static uint8_t expect[0x800];
+        #define EXPECT_TILES(src) do{ \
+            for(unsigned t_=0;t_<64;t_++)for(unsigned y_=0;y_<8;y_++){ \
+                const uint8_t *s_=rom+(src)+t_*24; \
+                uint8_t a_=s_[2*y_],b_=s_[2*y_+1],c_=s_[16+y_],k_=(uint8_t)~(b_&c_); \
+                expect[t_*32+2*y_]=a_&k_;expect[t_*32+2*y_+1]=b_&k_; \
+                expect[t_*32+16+2*y_]=c_&k_;expect[t_*32+17+2*y_]=0;}}while(0)
+
         backend_retro_get_memory_data=mocked_memory_data;
         backend_retro_get_memory_size=mocked_memory_size;
+        mocked_has_vram=1;
         memset(mocked_wram,0,sizeof(mocked_wram));
+        memset(mocked_vram,0x5A,sizeof(mocked_vram));
         uint8_t *ram=mocked_wram,*hero=ram+0xE000;
         ram[0xE4]=1;ram[0xE6]=0x0F;hero[0]=1;
-        memset(ram+0xCC54,0xFF,8);ram[0xCC55]=0x40;ram[0xCC56]=0x00;ram[0xCC59]=0x00;
-        hero[0x1C0]=0x01;                                   /* sword level 1 */
-        hero[0x1E4]=1;hero[0x1E3]=hero[0x1E8]=9;hero[0x198]=24;hero[0x19C]=1;hero[0x196]=3;
-        assert(!som_equip_weapon(ram,3));                    /* spear not owned */
-        assert(som_equip_weapon(ram,2));                     /* axe, as recorded */
-        assert(hero[0x1E4]==2&&hero[0x1E3]==0x12&&hero[0x1E8]==0x12&&hero[0x198]==25);
-        assert(hero[0x19C]==0&&hero[0x196]==0&&hero[0x068]==2&&hero[0x07F]==0x12);
-        assert(hero[0x066]==0x32&&hero[0x02B]==0x24&&hero[0x065]==0x20&&hero[0x06B]==0x33);
-        assert(ram[0xCC55]==0x00&&ram[0xCC56]==0x40);         /* held bit moved */
-        assert(som_cycle_weapon(ram)&&hero[0x1E4]==5);       /* next owned: bow */
-        assert(som_cycle_weapon(ram)&&hero[0x1E4]==1&&hero[0x196]==3&&hero[0x19C]==1);
-        assert(hero[0x198]==24);                              /* attack back */
-        /* Swordsmanship: B = sword, Y = axe; the game sees Y as B. */
-        on_turbo=1;physical_state=mocked_input;ring_ai_enabled=0;som_manual_disciplines=0;
+        memset(ram+0xCC54,0xFF,8);
+        ram[0xCC55]=0x40;ram[0xCC56]=0;ram[0xCC59]=0;ram[0xCC5A]=0;
+        hero[0x1C0]=0x12;                 /* glove level 1, sword level 2 */
+        hero[0x1C1]=0x30;                 /* axe 3, spear 0 */
+        hero[0x077]=0x40;hero[0x078]=0x30;
+        hero[0x188]=22;hero[0x197]=80;hero[0x198]=25;hero[0x069]=0x18;
+        /* The game holds the sword: its refresh loaded these. */
+        hero[0x1E4]=1;hero[0x1E3]=hero[0x1E8]=9;hero[0x19C]=2;
+        hero[0x068]=1;hero[0x065]=0x30;hero[0x066]=0x31;
+        hero[0x06A]=0xE2;hero[0x06B]=0x32;hero[0x07E]=0x40;hero[0x07F]=0x11;
+        hero[0x02A]=0x40;hero[0x02B]=0x22;
+        frame_number=1000;weapon_gfx_verified=0;weapon_gfx_last_check=0;
+        /* Fail closed: the model is not trusted until it reproduces the
+         * tiles the game itself loaded. */
+        som_weapon_gfx_verify_frame(ram);
+        assert(!weapon_gfx_verified);
+        uint8_t hero_before[0x200];memcpy(hero_before,hero,sizeof(hero_before));
+        assert(som_equip_weapon_direct(ram,2)==SOM_EQUIP_REFUSED);
+        assert(memcmp(hero,hero_before,sizeof(hero_before))==0);
+        EXPECT_TILES(0x140000+24*(0x30u*1+1));
+        memcpy(ram+0x2000,expect,sizeof(expect));
+        frame_number+=30;som_weapon_gfx_verify_frame(ram);
+        assert(weapon_gfx_verified);
+        /* Busy hero (mid-swing): retry later, change nothing. */
+        hero[0x01C]=0x20;
+        assert(som_equip_weapon_direct(ram,2)==SOM_EQUIP_BUSY&&hero[0x1E4]==1);
+        hero[0x01C]=0;
+        /* Sword -> axe. */
+        assert(som_equip_weapon_direct(ram,2)==SOM_EQUIP_OK);
+        assert(hero[0x1E4]==2&&hero[0x1E3]==18&&hero[0x1E8]==18&&hero[0x068]==2);
+        assert(hero[0x198]==26&&hero[0x197]==80&&hero[0x19C]==3&&hero[0x196]==9);
+        assert(hero[0x065]==(uint8_t)(0x3040+240*2)&&hero[0x066]==(0x3040+240*2)>>8);
+        assert(hero[0x06A]==0xE2&&hero[0x06B]==0x34&&hero[0x07E]==0x40&&hero[0x07F]==0x12);
+        assert(hero[0x02A]==0x40&&hero[0x02B]==0x24&&ram[0xD030]==0);
+        assert(hero[0x069]==0x18);                 /* palette id kept when set */
+        EXPECT_TILES(0x140000+24*(0x30u*2+1));
+        assert(memcmp(ram+0x2000,expect,sizeof(expect))==0);
+        assert(ram[0xCC55]==0x00&&ram[0xCC56]==0x40);
+        assert(mocked_vram[0xC000]==0x5A&&mocked_vram[0xFFFF]==0x5A); /* no VRAM writes */
+        /* Back to the sword restores its stats and tiles exactly. */
+        assert(som_equip_weapon_direct(ram,1)==SOM_EQUIP_OK);
+        assert(hero[0x198]==25&&hero[0x19C]==2&&hero[0x196]==6&&ram[0xCC55]==0x40);
+        EXPECT_TILES(0x140000+24*(0x30u*1+1));
+        assert(memcmp(ram+0x2000,expect,sizeof(expect))==0);
+        assert(som_weapon_gfx_matches(ram));
+        /* Boomerang: graphics set 3, crit halved for types above 4. */
+        hero[0x1C3]=0x50;                           /* boomerang level 5 */
+        assert(som_equip_weapon_direct(ram,6)==SOM_EQUIP_OK);
+        assert(hero[0x196]==7&&ram[0xD030]==3&&hero[0x07F]==0x16);
+        assert(som_equip_weapon_direct(ram,1)==SOM_EQUIP_OK);
+        /* Refused, unchanged: unowned, Turbo alternate bank, stat-bonus row. */
+        memcpy(hero_before,hero,sizeof(hero_before));
+        assert(som_equip_weapon_direct(ram,3)==SOM_EQUIP_REFUSED);   /* unowned */
+        ram[0xCC59]=0;
+        assert(som_equip_weapon_direct(ram,5)==SOM_EQUIP_REFUSED);   /* bow F0 */
+        ram[0xCC55]=0x41;hero[0x1E3]=hero[0x1E8]=10;                 /* tier-1 sword */
+        memcpy(hero_before,hero,sizeof(hero_before));
+        assert(som_equip_weapon_direct(ram,2)==SOM_EQUIP_REFUSED);
+        assert(memcmp(hero,hero_before,sizeof(hero_before))==0);
+        ram[0xCC55]=0x40;hero[0x1E3]=hero[0x1E8]=9;
+        assert(som_cycle_weapon(ram)&&hero[0x1E4]==2);               /* next owned */
+        assert(som_equip_weapon_direct(ram,1)==SOM_EQUIP_OK);
+
+        /* Buttons: Swordsmanship = sword on B, axe on Y. */
         som_disc_init(&disciplines);disciplines.selected=0;
-        pressed=100;pressed_too=100;som_input_poll();
-        pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
-        assert(hero[0x1E4]==2);                               /* second weapon: axe */
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+        ring_ai_enabled=0;som_manual_disciplines=0;
+        on_turbo=1;special_stage=special_suppress=0;
+        physical_state=mocked_input_mask;mocked_buttons=0;last_physical_buttons=0;
+        som_input_poll();
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+        som_input_poll();                           /* Y: axe now, swing as B */
+        assert(hero[0x1E4]==2&&y_weapon_swap&&!y_weapon_blocked);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
-        pressed=100;som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+        mocked_buttons=0;som_input_poll();
+        hero[0x01C]=0x20;                           /* axe swing still playing */
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+        som_input_poll();                           /* B waits: no axe swing */
+        assert(hero[0x1E4]==2&&b_weapon_blocked);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
-        pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
-        assert(hero[0x1E4]==1);                               /* B: back to the sword */
-        pressed=100;som_input_poll();
-        pressed=RETRO_DEVICE_ID_JOYPAD_Y;pressed_too=RETRO_DEVICE_ID_JOYPAD_L2;som_input_poll();
-        assert(hero[0x1E4]==1);                               /* L2+Y: the ring */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        hero[0x01C]=0;som_input_poll();             /* still held, hero free */
+        assert(hero[0x1E4]==1&&!b_weapon_blocked);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        mocked_buttons=0;som_input_poll();
+        /* Y never attacks with the wrong weapon when the switch is refused. */
+        ram[0xCC56]=0xFF;
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+        som_input_poll();
+        assert(y_weapon_blocked&&hero[0x1E4]==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+        mocked_buttons=0;som_input_poll();
+        ram[0xCC56]=0;
+        /* L2+Y still reaches the game (native ring). */
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
+        som_input_poll();
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        pressed=100;pressed_too=100;som_input_poll();
-        ram[0xD0]=0x81;pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
-        assert(hero[0x1E4]==1&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        pressed=100;som_input_poll();ram[0xD0]=0;
-        disciplines.selected=SOM_DISCIPLINE_NONE;                /* no discipline: native Y */
-        pressed=RETRO_DEVICE_ID_JOYPAD_Y;som_input_poll();
-        assert(hero[0x1E4]==1&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        pressed=100;som_input_poll();som_disc_init(&disciplines);
+        mocked_buttons=0;som_input_poll();
+
+        /* Level-2 secondary special switches to the axe, then charges. */
+        hero[0x19B]=0;hero[0x1ED]=0;
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+                                   (1u<<RETRO_DEVICE_ID_JOYPAD_Y));
+        som_input_poll();
+        assert(special_stage==2&&special_weapon==2&&hero[0x1E4]==2);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
+               (1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        mocked_buttons=0;som_input_poll();
+        hero[0x19B]=2;som_special_tick();
+        assert(!special_stage);
+        hero[0x19B]=0;som_input_poll();
+        /* Level-1 primary special switches back to the sword. */
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+                                   (1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        som_input_poll();
+        assert(special_stage==1&&special_weapon==1&&hero[0x1E4]==1);
+        mocked_buttons=0;som_input_poll();
+        hero[0x19B]=1;som_special_tick();
+        assert(!special_stage);
+        hero[0x19B]=0;mocked_buttons=0;som_input_poll();
+        /* Seals: R2 + three D-pad presses + B = level 3 without holding. */
+        hero[0x19C]=5;
+        const uint16_t r2b=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
+        mocked_buttons=r2b;som_input_poll();
+        const unsigned seals[3]={RETRO_DEVICE_ID_JOYPAD_UP,RETRO_DEVICE_ID_JOYPAD_LEFT,
+                                 RETRO_DEVICE_ID_JOYPAD_DOWN};
+        for(unsigned i=0;i<3u;i++){
+            mocked_buttons=(uint16_t)(r2b|(1u<<seals[i]));som_input_poll();
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,seals[i])==0);  /* hidden */
+            mocked_buttons=r2b;som_input_poll();
+        }
+        assert(seal_count==3);
+        mocked_buttons=(uint16_t)(r2b|(1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        som_input_poll();
+        assert(special_stage==3&&seal_count==0);
+        mocked_buttons=0;som_input_poll();
+        ram[0xE01A]=1;hero[0x01C]=0x20;som_special_tick();    /* swing still on */
+        assert(hero[0x19B]==0&&special_stage==3);
+        hero[0x01C]=0;som_special_tick();                     /* gauge started */
+        assert(ram[0xE01A]==0x2C&&ram[0xE01B]==3&&hero[0x19B]==3);
+        assert(special_stage==0);                             /* released */
+        ram[0xE01A]=ram[0xE01B]=0;hero[0x19B]=0;som_input_poll();
+        /* More seals than learned: capped at the weapon level. */
+        hero[0x19C]=2;
+        assert(som_special_start(0,6)&&special_stage==2);
+        special_stage=0;special_suppress=0;hero[0x19C]=1;
+        /* Combo finisher: a level-3 chain, then hold Y: the secondary
+         * weapon charges to level 3, or the level it learned. */
+        mocked_buttons=0;som_input_poll();
+        som_combo_clear();combo.hits=5;combo.mixes=1;combo.hit_frame=frame_number;hero[0x19C]=2;
+        hero[0x1ED]=0;hero[0x19B]=0;hero[0x01C]=0;
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+        assert(!special_stage);                               /* not held long enough */
+        frame_number+=SOM_COMBO_HOLD_FRAMES;som_input_poll();
+        assert(special_weapon==som_disc_weapons[disciplines.selected][1]&&
+               special_stage==(hero[0x19C]<3u?hero[0x19C]:3u));
+        assert(!combo.hits&&special_suppress);                /* chain spent */
+        mocked_buttons=0;som_input_poll();
+        special_stage=0;special_suppress=0;hero[0x19C]=1;
+        /* A: a proxy-driven dodge (the game's poses do not play in field
+         * play). Magic has no dodge: native A (dash). */
+        disciplines.selected=3;
+        const uint16_t r1a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+        mocked_buttons=r1a;som_input_poll();
+        assert(!evade_active);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+        mocked_buttons=0;som_input_poll();
+        memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);   /* open floor */
+        ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */
+        /* Swordsman: 3 px x 16 frames away from the facing, untouchable for
+         * the move plus the grace frames; A, D-pad and attacks hidden. */
+        disciplines.selected=0;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
+        hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
+        mocked_buttons=r1a;som_input_poll();
+        assert(evade_active&&!(hero[0x191]&0x04)&&hero[0x01C]==0&&hero[0x011]==0); /* no barrel */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+        mocked_buttons=0;som_input_poll();
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)|(1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        mocked_buttons=0;som_input_poll();
+        const unsigned long dodge_start=frame_number;
+        hero[0x182]=100;hero[0x183]=0;
+        for(unsigned f=0;f<40;f++){
+            if(frame_number-dodge_start==10u){                /* a monster hits */
+                hero[0x059]=1;hero[0x1F1]=25;som_hop_step();
+                assert(!hero[0x059]&&!hero[0x1F1]);           /* hit dropped */
+                hero[0x182]=80;som_evade_tick();             /* got through anyway */
+                assert(hero[0x182]==100);                     /* HP put back */
+            }else{som_hop_step();som_evade_tick();}
+            frame_number++;
+            if(frame_number-dodge_start==20u)assert(evade_active);
+        }
+        assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(hero+4)==200);
+        assert(!evade_active);                                /* guard ended */
+        hero[0x1F1]=7;som_hop_step();som_evade_tick();
+        assert(hero[0x1F1]==7);                               /* not after the dodge */
+        hero[0x1F1]=0;
+        /* Dodge Mastery (Swordsmanship 10: rank 2, +4 frames): 60 px; off: 48. */
+        disciplines.level[0]=10;hero[2]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200-60);
+        perks_enabled=0;hero[2]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200-48);
+        perks_enabled=1;disciplines.level[0]=1;
+        assert(trail_until>=dodge_start+16u);                  /* after-images */
+        /* Monk: 2 px x 18; archer 3 px x 18 the way held, stopped by a wall
+         * (the guard keeps running); rogue dodges too. */
+        disciplines.selected=1;hero[2]=200;hero[4]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200-36);
+        disciplines.selected=11;hero[2]=200;
+        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        ram[0x1B800+4*3]=0x03;
+        for(unsigned c=0;c<128;c++)ram[0x10000+(240u>>4)*128u+c]=3;   /* wall at y 240 */
+        for(unsigned f=0;f<6;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(evade_active);
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)>200&&som_bun_u16(hero+4)+4<240);
+        assert(!evade_active);
+        memset(ram+0x10000,0,0x10000);ram[0x1B800+4*3]=0;
+        disciplines.selected=9;hero[4]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(evade_active);
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        /* Ninja with the sword: Shunshin, 6 px x 12 forward. */
+        disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;hero[2]=200;hero[4]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(evade_active&&!som_bun_alive(&bunshin));
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200+72&&!evade_active);
+        /* Kage Bunshin (chakram): two clones across the facing, on open
+         * ground; a monster touching one makes it explode; A swaps. */
+        memset(ram+0x10000,0,0x10000);                       /* all tile 0: open */
+        ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */
+        hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;  /* facing right */
+        hero[0x1E4]=6;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
+        for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(!evade_active&&som_bun_alive(&bunshin)==2);
+        assert(bunshin.x[0]==200&&bunshin.y[0]==176&&bunshin.x[1]==200&&bunshin.y[1]==224);
+        hero[2]=202;som_bunshin_frame(ram);                  /* clones copy the step */
+        assert(bunshin.x[0]==202&&bunshin.x[1]==202);
+        uint8_t *m0=ram+0xE600;
+        m0[0]=1;m0[0x180]=7;m0[0x190]=m0[0x191]=0;m0[0x1F1]=0;
+        m0[2]=210;m0[3]=0;m0[4]=230;m0[5]=0;                  /* touches clone 1 */
+        som_bunshin_frame(ram);
+        assert(!bunshin.alive[1]&&bunshin.alive[0]&&m0[0x1F1]==som_bunshin_damage());
+        m0[0]=0;
+        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_UP));som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(som_bun_u16(hero+4)==176&&bunshin.y[0]==200);   /* swapped places */
+        m0[0]=1;m0[0x1F1]=0;m0[2]=202;m0[3]=0;m0[4]=186;m0[5]=0;   /* at the hero */
+        frame_number+=SOM_BUN_SWAP_COOLDOWN+1;bunshin.until=frame_number+100;
+        som_bunshin_frame(ram);
+        assert(som_bun_u16(hero+4)==200&&!som_bun_alive(&bunshin)&&m0[0x1F1]); /* substitution */
+        m0[0]=0;
+        /* No clone ends up in a wall. */
+        ram[0x1B800+4*9]=0x03;                                 /* tile 9 solid */
+        for(unsigned c=0;c<128;c++)ram[0x10000+((176u>>4)*128u)+c]=9;  /* wall above */
+        hero[2]=200;hero[4]=200;
+        assert(som_bun_spawn(&bunshin,ram,200,200,0x02,0,frame_number)==1);
+        assert(!bunshin.alive[0]&&bunshin.alive[1]);
+        som_bun_clear(&bunshin);memset(ram+0x10000,0,0x10000);ram[0x1B800+4*9]=0;
+        hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x1E4]=1;hero[0x191]=0;
+        /* Swordsman R1+A: bash = native run (A), release, native swing (B). */
+        disciplines.selected=0;hero[0x1ED]=0;hero[0x060]=0;hero[0x00A]=0;
+        hero[0x01A]=hero[0x01B]=0;hero[0x190]=hero[0x191]=0;
+        const uint16_t r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        mocked_buttons=(uint16_t)(r1|r1a);som_input_poll();
+        assert(bash_stage==SOM_BASH_LUNGE&&!evade_active);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
+        hero[0x006]=3;
+        for(unsigned f=0;f<SOM_BASH_LUNGE_FRAMES;f++){frame_number++;som_bash_tick();}
+        assert(bash_stage==SOM_BASH_RELEASE);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+        hero[0x1ED]=75;frame_number++;som_bash_tick();         /* the run's gauge */
+        assert(bash_stage==SOM_BASH_STRIKE&&hero[0x1ED]==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        frame_number+=SOM_BASH_STRIKE_FRAMES;som_bash_tick();
+        assert(bash_stage==SOM_BASH_NONE);
+        mocked_buttons=0;som_input_poll();
+        hero[0x1ED]=10;mocked_buttons=(uint16_t)(r1|r1a);som_input_poll();
+        assert(bash_stage==SOM_BASH_NONE);                     /* out of breath */
+        mocked_buttons=0;som_input_poll();hero[0x1ED]=0;hero[0x006]=0;
+        /* AI commands: class choice and casts within the class. */
+        assert(som_handle_command("class_3")&&disciplines.selected==3);
+        assert(!som_handle_command("class_12")&&!som_handle_command("class_x"));
+        assert(som_handle_command("class_0")&&disciplines.selected==0);
+
+        /* X/Triangle: Fire Ball at the nearest live, on-screen monster. */
+        hero[0x020]=100;hero[0x022]=100;
+        uint8_t *far=ram+0xE600,*near=ram+0xE800,*off=ram+0xEA00;
+        far[0]=1;far[0x20]=200;far[0x22]=100;
+        near[0]=1;near[0x20]=110;near[0x22]=90;
+        off[0]=1;off[0x20]=0xF8;off[0x22]=100;   /* off screen */
+        hero[0x1C5]=0x30;                        /* Salamando level 3 */
+        hero[0x186]=1;
+        disciplines.selected=2;                  /* Ninjutsu: Fire Ball first */
+        assert(som_current_spell()==SOM_SPELL_FIRE_BALL);
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        som_input_poll();                        /* press: nothing cast yet */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+        mocked_buttons=0;som_input_poll();       /* release: not enough MP */
+        assert(hero[0x01C]==0&&hero[0x060]==0&&hero[0x170]==0);
+        hero[0x186]=5;near[0x191]=0x80;          /* nearest one is dead */
+        hero[0x179]=4;hero[0x17A]=5;             /* stale list from an old cast */
+        memcpy(hero_before,hero,sizeof(hero_before));
+        uint8_t buffer_before[0x800];memcpy(buffer_before,ram+0x2000,sizeof(buffer_before));
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+        mocked_buttons=0;som_input_poll();       /* tap released: cast */
+        assert(hero[0x170]==0x0C&&hero[0x177]==2&&hero[0x176]==1);
+        assert(hero[0x178]==4&&hero[0x179]==0&&hero[0x17A]==0);     /* slot 3 */
+        assert(hero[0x172]==0xFF&&hero[0x173]==0xFF&&hero[0x174]==0xFF);
+        assert(hero[0x171]==3&&hero[0x111]==3&&hero[0x108]==0);
+        assert(hero[0x01C]==0x40&&hero[0x011]==0x94&&hero[0x060]==0x20);
+        assert(hero[0x04F]==0xCE&&hero[0x030]==0xFF);
+        assert(hero[0x186]==5);                  /* the game takes MP on the hit */
+        EXPECT_TILES(0x14BA00);
+        assert(memcmp(ram+0x2800,expect,sizeof(expect))==0);          /* spark */
+        assert(memcmp(ram+0x2000,buffer_before,sizeof(buffer_before))==0);
+        /* Mid-cast: no second cast, no weapon switch. */
+        hero[0x170]=0;
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(hero[0x170]==0);
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+        som_input_poll();
+        assert(hero[0x1E4]==1&&y_weapon_blocked);
+        mocked_buttons=0;som_input_poll();
+        hero[0x01C]=0;hero[0x060]=0;
+        /* No live target on screen: nothing is written. */
+        far[0x191]=0x80;
+        assert(!som_cast_spell(ram,SOM_SPELL_FIRE_BALL)&&hero[0x170]==0);
+        far[0x191]=0;
+        /* Ally spells target the boy himself (hero slot 0 -> 1). */
+        hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
+        assert(som_cast_spell(ram,0x07)&&hero[0x170]==0x07&&hero[0x178]==1);
+        assert(hero[0x177]==1&&hero[0x01C]==0x40);
+        hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
+        rom[0x102AD0+0x08*64+8]=0x40;           /* undecoded target kind */
+        assert(!som_cast_spell(ram,0x08)&&hero[0x170]==0);
+        /* Holding X steps to the next Ninjutsu spell instead of casting. */
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        som_input_poll();
+        frame_number+=SOM_X_HOLD_FRAMES;som_input_poll();
+        assert(som_current_spell()==0x06);       /* Freeze */
+        mocked_buttons=0;som_input_poll();
+        assert(hero[0x170]==0);                  /* release after a cycle: no cast */
+        for(unsigned i=0;i<som_class_spell_count(2)-1u;i++)som_next_spell();
+        assert(som_current_spell()==SOM_SPELL_FIRE_BALL);  /* wraps */
+        /* L2+X keeps the game's own X. */
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
+        som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==1);
+        mocked_buttons=0;som_input_poll();
+        /* Infinite MP (gambit test switch) keeps casting possible at 0 MP. */
+        hero[0x186]=0;hero[0x187]=0;hero[0x01C]=0;hero[0x060]=0;
+        gambits.infinite_mp=1;som_infinite_mp_frame();
+        assert(hero[0x186]==SOM_TEST_MP);
+        assert(som_cast_spell(ram,SOM_SPELL_FIRE_BALL)&&hero[0x060]==0x20);
+        hero[0x186]=97;som_infinite_mp_frame();assert(hero[0x186]==SOM_TEST_MP);
+        ram[0xE4]=0;hero[0x186]=3;som_infinite_mp_frame();
+        assert(hero[0x186]==3);                  /* outside field play: untouched */
+        ram[0xE4]=1;
+        gambits.infinite_mp=0;som_infinite_mp_changed();
+        assert(hero[0x186]==0);                  /* back to the real maximum */
+        som_infinite_mp_frame();assert(hero[0x186]==0);
+        gambit_file="/nonexistent/flxtr-gambits";gambits.infinite_mp=1;som_gambit_load();
+        assert(!gambits.infinite_mp);            /* never carries over a load */
+        hero[0x01C]=0;hero[0x060]=0;
+        #undef EXPECT_TILES
+        physical_state=mocked_input;mocked_has_vram=0;
+        pressed=100;pressed_too=100;
+        som_disc_init(&disciplines);
+        som_rom=NULL;som_rom_size=0;weapon_gfx_verified=0;
     }
     /* give_<weapon>: only an unowned weapon, tier 0, with an undo snapshot. */
     {
@@ -809,9 +1576,17 @@ int main(void){
         assert(!memcmp(once,original,16)&&!memcmp(once+30,original+30,2)); /* 0-7, 15 kept */
         assert(memcmp(once+16,original+16,14));                    /* clothes 8-14 tinted */
         assert(!memcmp(ram+0x0720,once,32));                       /* working buffer too */
-        memset(ram+0x0720,0x77,32);                                /* a flash is running */
+        memset(ram+0x0720,0x77,32);                                /* an event fade */
         som_hero_palette_frame(ram);
         assert(ram[0x0720+2]==0x77);                               /* left alone */
+        ram[0xE4]=1;ram[0xE6]=0x0F;                                /* field play */
+        som_hero_palette_frame(ram);                               /* block/dash glow */
+        assert(!memcmp(ram+0x0720,once,32));                       /* held at the tint */
+        memcpy(ram+0x0720,original,32);                            /* ROM reload ($C1:CA04) */
+        ram[0x0720+20]^=0x11;                                      /* ... then flashed */
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0x0720,once,32));                       /* old palette never shows */
+        ram[0xE4]=0;ram[0xE6]=0;
         memcpy(ram+0x0720,once,32);
         assert(memcmp(once,original,32)&&once[0]==original[0]&&once[1]==original[1]);
         som_hero_palette_frame(ram);
@@ -822,7 +1597,24 @@ int main(void){
         disciplines.selected=SOM_DISCIPLINE_NONE;
         som_hero_palette_frame(ram);
         assert(!memcmp(ram+0xDF20,original,32));               /* colours restored */
+        ram[0xE4]=1;ram[0xE6]=0x0F;memset(ram+0x0720,0x55,32);  /* no class, block glow */
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0x0720,original,32));               /* glow held off */
+        ram[0xE4]=0;ram[0xE6]=0;
+        for(unsigned d=0;d<SOM_DISCIPLINE_COUNT;d++){           /* every class has colours */
+            disciplines.selected=(uint8_t)d;
+            assert(som_disc_visual_profile(&disciplines)!=SOM_PAL_ORIGINAL);
+        }
         som_disc_init(&disciplines);hero_pal_have=0;
+    }
+    /* The playing song (7E:1E05) is announced once per change. */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));
+        som_song_load(&song_names,"/nonexistent/flxtr-songs");song_last=0x100u;
+        ram[0x1E05]=0x04;som_song_frame(ram);assert(song_last==0x04);
+        ram[0x1E05]=0x40;som_song_frame(ram);assert(song_last==0x04);   /* not a song id */
+        ram[0x1E05]=0x0E;som_song_frame(ram);assert(song_last==0x0E);
     }
     /* Disciplines survive restarts; a damaged file starts fresh. */
     {
@@ -864,6 +1656,67 @@ int main(void){
     mocked_wram[0xE004]=0xF0;mocked_wram[0xE005]=0x02;          /* y 752 */
     assert(som_hero_screen(&sx_,&sy_)&&sx_==1000-768&&sy_==752-544); /* far edge */
     mocked_wram[0x00D0]=0x81;assert(!som_hero_screen(&sx_,&sy_)); /* dialogue */
+    /* Native-ring transition trace must remember the pre-menu graphics and
+     * record the actual native WRAM and VRAM differences without changing RAM. */
+    {
+        mocked_has_vram=1;
+        memset(mocked_wram,0,sizeof(mocked_wram));
+        memset(mocked_vram,0,sizeof(mocked_vram));
+        mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
+        mocked_wram[0xE1E4]=1;
+        assert(som_weapon_trace_allocate());
+        weapon_trace_on=1;som_weapon_trace_reset();
+        som_weapon_trace_frame();
+        assert(weapon_trace_has_prev&&!weapon_trace_busy);
+        mocked_wram[0xE4]=2; /* native ring opened */
+        mocked_wram[0xE1E4]=2; /* native ring changed equipped weapon */
+        mocked_vram[0xC020]=0x77;
+        som_weapon_trace_frame();
+        assert(!weapon_trace_busy); /* preserve pre-ring frame */
+        mocked_wram[0xE4]=1;
+        som_weapon_trace_frame();
+        assert(weapon_trace_busy&&weapon_trace_from==1&&weapon_trace_to==2);
+        for(unsigned t=0;t<SOM_WEAPON_TRACE_FRAMES;t++)som_weapon_trace_frame();
+        assert(!weapon_trace_on&&!weapon_trace_busy);
+        FILE *report=fopen("/tmp/flxtr-weapon-trace.txt","r");
+        assert(report);
+        char header[160]={0};
+        assert(fgets(header,sizeof(header),report));
+        assert(strstr(header,"sword")&&strstr(header,"axe"));
+        fclose(report);
+        const char *const artifacts[]={
+            "/tmp/flxtr-weapon-trace.txt",
+            "/tmp/flxtr-weapon-ram-before.bin","/tmp/flxtr-weapon-ram-after.bin",
+            "/tmp/flxtr-weapon-vram-before.bin","/tmp/flxtr-weapon-vram-after.bin"
+        };
+        for(unsigned t=0;t<sizeof(artifacts)/sizeof(artifacts[0]);t++)unlink(artifacts[t]);
+        weapon_trace_on=0;som_weapon_trace_reset();mocked_has_vram=0;
+    }
+    /* A long ring interaction retains the LAST 32 VRAM-changing frames,
+     * including the critical sprite upload just before equipment changes. */
+    {
+        mocked_has_vram=1;memset(mocked_wram,0,sizeof(mocked_wram));
+        memset(mocked_vram,0,sizeof(mocked_vram));
+        mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;
+        mocked_wram[0xE6]=0x0F;mocked_wram[0xE1E4]=1;
+        weapon_trace_on=1;som_weapon_trace_reset();
+        som_weapon_trace_frame();
+        for(unsigned t=1;t<=40;t++){
+            mocked_vram[0xC100]=(uint8_t)t;
+            som_weapon_trace_frame();
+        }
+        assert(weapon_trace_vram_dumps==40);
+        assert(access("/tmp/flxtr-weapon-frame-001.vram",F_OK)!=0);
+        assert(access("/tmp/flxtr-weapon-frame-009.vram",F_OK)==0);
+        assert(access("/tmp/flxtr-weapon-frame-040.vram",F_OK)==0);
+        weapon_trace_on=0;som_weapon_trace_reset();mocked_has_vram=0;
+        for(unsigned t=1;t<=40;t++){
+            char filename[128];
+            snprintf(filename,sizeof(filename),"/tmp/flxtr-weapon-frame-%03u.vram",t);
+            unlink(filename);
+        }
+        unlink("/tmp/flxtr-weapon-timeline.txt");
+    }
     reset_proxy();direct_transport=1;ring_ai_enabled=0;
     assert(flxtr_som_ai_command("ai_on")&&flxtr_som_ai_enabled());
     assert(flxtr_som_ai_command("step_right")&&armed&&active_action==SOM_ACT_STEP_RIGHT);

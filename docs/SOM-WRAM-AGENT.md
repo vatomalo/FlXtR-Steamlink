@@ -478,6 +478,37 @@ tiles that way, the AI swings at it instead of blocking the step; a boxed-in
 hero also looks two tiles out for grass. Pots or other
 breakable tiles that behave the same way are learned the same way.
 
+## Whip posts (crossing ledges)
+
+Some ledges, gaps and rivers are crossed by swinging the whip at a post. The
+decomp documents the whip's attack (26-86 px reach) but not the post itself,
+so the AI learns crossings by watching, like grass:
+
+- **Detection** (`som_memory.detect_whip_crossing`): the hero held the whip,
+  then stands 2-6 tiles further along one axis, the tiles between include a
+  wall or ledge, and no walk of at most span + 2 steps connects the two tiles
+  in either grid. Samples taken mid-flight (the hero's own tile is a wall)
+  are skipped, so the pull is measured from the tile swung from to the
+  landing tile. Stored in `whip_crossings` (map, layer, tile, step -> landing
+  tile and height). Special tiles at either end or on the line (`b2` 0x40 or
+  higher, cut codes 0xC1/0xC2/0xC8 excluded) are stored as post candidates
+  in `whip_post_signatures`.
+- **Use** (only while the whip is owned, `$CC54 + 4` != 0xFF): learned
+  crossings are route edges for exploring and travel, so the far side of a
+  ledge counts as reachable. The planner taps toward the gap to face it, then
+  attacks (`intent=whip_cross`); the bridge takes the whip out first
+  (`[whip] whip out (was sword)`) and puts the class weapon back about ten
+  decisions later, as it does for grass.
+- **Untaught ledges**: when a step is refused eight times (stall) and the grid
+  shows floor 2-5 tiles beyond a wall or ledge that way, the AI swings the whip
+  once (`probe`), at most once per tile and direction per run. If a learned
+  post tile is in reach it gets three swings. A spot that does not cross is
+  left alone for 300 decisions. The same happens when no frontier is left.
+
+Teach a crossing yourself with `tools/som_teach_path.py`: equip the whip,
+face the post, swing across, press Enter. Log: `[whip] learned crossing on
+map 30: (36, 20) step_down -> (36, 23)`.
+
 ## Spawn a real Rabite (native map spawn)
 
 The game creates monsters from each map's 8-byte object records while the map

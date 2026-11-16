@@ -1,0 +1,3486 @@
+{
+ "scenario": "F-newproxy",
+ "note": "proxy fdf2814 (timing on, packed overlay copy), nice -5 file, AI + living world via som_wram_server, music on; fresh boot",
+ "host": "root@100.124.74.13",
+ "git": "e1dd207",
+ "started_utc": "20261115T200533Z",
+ "seconds": 90,
+ "warmup": 30,
+ "ai": "keep",
+ "runs": [
+  {
+   "raw": {
+    "ticks": [
+     [
+      297.7,
+      167
+     ],
+     [
+      299.82,
+      31
+     ],
+     [
+      301.93,
+      121
+     ],
+     [
+      304.07,
+      241
+     ],
+     [
+      306.19,
+      75
+     ],
+     [
+      308.34,
+      189
+     ],
+     [
+      310.47,
+      29
+     ],
+     [
+      312.61,
+      125
+     ],
+     [
+      314.71,
+      215
+     ],
+     [
+      316.83,
+      61
+     ],
+     [
+      318.97,
+      163
+     ],
+     [
+      321.1,
+      3
+     ],
+     [
+      323.24,
+      99
+     ],
+     [
+      325.36,
+      177
+     ],
+     [
+      327.5,
+      4
+     ],
+     [
+      329.66,
+      83
+     ],
+     [
+      331.8,
+      160
+     ],
+     [
+      333.96,
+      236
+     ],
+     [
+      336.1,
+      52
+     ],
+     [
+      338.24,
+      133
+     ],
+     [
+      340.36,
+      223
+     ],
+     [
+      342.47,
+      63
+     ],
+     [
+      344.66,
+      165
+     ],
+     [
+      346.79,
+      255
+     ],
+     [
+      348.91,
+      95
+     ],
+     [
+      351.03,
+      185
+     ],
+     [
+      353.15,
+      31
+     ],
+     [
+      355.29,
+      133
+     ],
+     [
+      357.43,
+      223
+     ],
+     [
+      359.6,
+      63
+     ],
+     [
+      361.73,
+      159
+     ],
+     [
+      363.84,
+      237
+     ],
+     [
+      365.97,
+      79
+     ],
+     [
+      368.1,
+      162
+     ],
+     [
+      370.25,
+      7
+     ],
+     [
+      372.38,
+      97
+     ],
+     [
+      374.53,
+      193
+     ],
+     [
+      376.68,
+      27
+     ],
+     [
+      378.8,
+      117
+     ],
+     [
+      380.9,
+      207
+     ],
+     [
+      383.03,
+      47
+     ],
+     [
+      385.17,
+      137
+     ],
+     [
+      387.3,
+      233
+     ],
+     [
+      389.42,
+      67
+     ],
+     [
+      391.55,
+      157
+     ]
+    ],
+    "windows": [
+     {
+      "seq": 1,
+      "frames": 600,
+      "window_s": 12.773,
+      "fps": 46.975,
+      "nominal_fps": 59.923,
+      "late": 87,
+      "late_streak_max": 10,
+      "audio_frames": 320813,
+      "audio_rate": 25116.8,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 6.538,
+      "cpu_sys_s": 1.072,
+      "minflt": 82,
+      "majflt": 0,
+      "nvcsw": 3209,
+      "nivcsw": 10005,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 21.288,
+        "p50_ms": 20.25,
+        "p95_ms": 29.0,
+        "p99_ms": 34.75,
+        "max_ms": 40.256,
+        "total_ms": 12772.6
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 20.647,
+        "p50_ms": 19.75,
+        "p95_ms": 28.5,
+        "p99_ms": 33.5,
+        "max_ms": 39.783,
+        "total_ms": 12388.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 12.937,
+        "p50_ms": 12.25,
+        "p95_ms": 19.0,
+        "p99_ms": 24.25,
+        "max_ms": 28.968,
+        "total_ms": 7761.9
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.116,
+        "p50_ms": 5.75,
+        "p95_ms": 9.0,
+        "p99_ms": 12.25,
+        "max_ms": 17.417,
+        "total_ms": 3669.7
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.439,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 2.5,
+        "max_ms": 3.212,
+        "total_ms": 263.7
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.603,
+        "p50_ms": 0.5,
+        "p95_ms": 2.25,
+        "p99_ms": 4.5,
+        "max_ms": 8.51,
+        "total_ms": 362.0
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.049,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.75,
+        "max_ms": 2.02,
+        "total_ms": 29.2
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.113,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.75,
+        "max_ms": 6.946,
+        "total_ms": 67.7
+       },
+       "wram": {
+        "n": 56,
+        "mean_ms": 2.436,
+        "p50_ms": 2.25,
+        "p95_ms": 4.75,
+        "p99_ms": 7.25,
+        "max_ms": 7.199,
+        "total_ms": 136.4
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.494,
+        "p50_ms": 0.25,
+        "p95_ms": 3.0,
+        "p99_ms": 4.75,
+        "max_ms": 9.219,
+        "total_ms": 296.6
+       }
+      }
+     },
+     {
+      "seq": 2,
+      "frames": 600,
+      "window_s": 13.803,
+      "fps": 43.47,
+      "nominal_fps": 59.923,
+      "late": 165,
+      "late_streak_max": 24,
+      "audio_frames": 320813,
+      "audio_rate": 23243.0,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 6.8,
+      "cpu_sys_s": 1.236,
+      "minflt": 171,
+      "majflt": 0,
+      "nvcsw": 3344,
+      "nivcsw": 10685,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.004,
+        "p50_ms": 21.75,
+        "p95_ms": 34.0,
+        "p99_ms": 38.75,
+        "max_ms": 45.429,
+        "total_ms": 13802.6
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.281,
+        "p50_ms": 21.0,
+        "p95_ms": 33.0,
+        "p99_ms": 38.25,
+        "max_ms": 45.058,
+        "total_ms": 13368.5
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.234,
+        "p50_ms": 13.0,
+        "p95_ms": 23.0,
+        "p99_ms": 26.75,
+        "max_ms": 32.07,
+        "total_ms": 8540.2
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.151,
+        "p50_ms": 5.5,
+        "p95_ms": 10.25,
+        "p99_ms": 13.0,
+        "max_ms": 17.235,
+        "total_ms": 3690.6
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.453,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 2.5,
+        "max_ms": 8.712,
+        "total_ms": 271.5
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.597,
+        "p50_ms": 0.5,
+        "p95_ms": 2.0,
+        "p99_ms": 3.75,
+        "max_ms": 10.026,
+        "total_ms": 358.0
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.041,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 1.597,
+        "total_ms": 24.5
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.142,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 2.25,
+        "max_ms": 10.858,
+        "total_ms": 85.2
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.359,
+        "p50_ms": 2.25,
+        "p95_ms": 4.25,
+        "p99_ms": 4.75,
+        "max_ms": 5.0,
+        "total_ms": 235.9
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.792,
+        "p50_ms": 0.25,
+        "p95_ms": 4.0,
+        "p99_ms": 7.0,
+        "max_ms": 12.758,
+        "total_ms": 475.2
+       }
+      }
+     },
+     {
+      "seq": 3,
+      "frames": 600,
+      "window_s": 15.28,
+      "fps": 39.267,
+      "nominal_fps": 59.923,
+      "late": 264,
+      "late_streak_max": 19,
+      "audio_frames": 320813,
+      "audio_rate": 20995.4,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.678,
+      "cpu_sys_s": 1.194,
+      "minflt": 199,
+      "majflt": 0,
+      "nvcsw": 3489,
+      "nivcsw": 12211,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 25.467,
+        "p50_ms": 24.25,
+        "p95_ms": 37.25,
+        "p99_ms": 42.25,
+        "max_ms": 55.269,
+        "total_ms": 15280.1
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 24.763,
+        "p50_ms": 23.5,
+        "p95_ms": 36.75,
+        "p99_ms": 41.25,
+        "max_ms": 52.663,
+        "total_ms": 14857.9
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 16.535,
+        "p50_ms": 15.25,
+        "p95_ms": 26.5,
+        "p99_ms": 30.75,
+        "max_ms": 34.545,
+        "total_ms": 9921.0
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.194,
+        "p50_ms": 5.75,
+        "p95_ms": 10.0,
+        "p99_ms": 13.5,
+        "max_ms": 19.96,
+        "total_ms": 3716.6
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.428,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 2.25,
+        "max_ms": 6.068,
+        "total_ms": 256.7
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.672,
+        "p50_ms": 0.5,
+        "p95_ms": 2.0,
+        "p99_ms": 5.25,
+        "max_ms": 8.096,
+        "total_ms": 403.5
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.045,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 1.554,
+        "total_ms": 26.8
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.095,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.25,
+        "max_ms": 2.499,
+        "total_ms": 57.1
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.803,
+        "p50_ms": 2.25,
+        "p95_ms": 6.5,
+        "p99_ms": 13.25,
+        "max_ms": 19.745,
+        "total_ms": 280.3
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.876,
+        "p50_ms": 0.25,
+        "p95_ms": 3.5,
+        "p99_ms": 11.5,
+        "max_ms": 19.948,
+        "total_ms": 525.6
+       }
+      }
+     },
+     {
+      "seq": 4,
+      "frames": 600,
+      "window_s": 13.411,
+      "fps": 44.738,
+      "nominal_fps": 59.923,
+      "late": 140,
+      "late_streak_max": 12,
+      "audio_frames": 320813,
+      "audio_rate": 23921.1,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 6.62,
+      "cpu_sys_s": 1.118,
+      "minflt": 157,
+      "majflt": 0,
+      "nvcsw": 3323,
+      "nivcsw": 10663,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 22.352,
+        "p50_ms": 21.0,
+        "p95_ms": 33.0,
+        "p99_ms": 39.5,
+        "max_ms": 42.837,
+        "total_ms": 13411.3
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 21.701,
+        "p50_ms": 20.25,
+        "p95_ms": 32.0,
+        "p99_ms": 38.75,
+        "max_ms": 42.432,
+        "total_ms": 13020.8
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 13.699,
+        "p50_ms": 12.5,
+        "p95_ms": 22.0,
+        "p99_ms": 27.25,
+        "max_ms": 31.385,
+        "total_ms": 8219.7
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.203,
+        "p50_ms": 5.5,
+        "p95_ms": 10.0,
+        "p99_ms": 15.5,
+        "max_ms": 18.198,
+        "total_ms": 3721.7
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.452,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 2.5,
+        "max_ms": 6.413,
+        "total_ms": 271.1
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.529,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 3.5,
+        "max_ms": 12.657,
+        "total_ms": 317.4
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.045,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 1.647,
+        "total_ms": 26.9
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.117,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.5,
+        "max_ms": 8.281,
+        "total_ms": 70.1
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.525,
+        "p50_ms": 2.25,
+        "p95_ms": 5.0,
+        "p99_ms": 9.0,
+        "max_ms": 9.013,
+        "total_ms": 252.5
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.764,
+        "p50_ms": 0.25,
+        "p95_ms": 3.5,
+        "p99_ms": 6.5,
+        "max_ms": 9.582,
+        "total_ms": 458.1
+       }
+      }
+     },
+     {
+      "seq": 5,
+      "frames": 600,
+      "window_s": 13.475,
+      "fps": 44.528,
+      "nominal_fps": 59.923,
+      "late": 144,
+      "late_streak_max": 8,
+      "audio_frames": 320813,
+      "audio_rate": 23808.6,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 6.704,
+      "cpu_sys_s": 1.15,
+      "minflt": 162,
+      "majflt": 1,
+      "nvcsw": 3281,
+      "nivcsw": 10560,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 22.458,
+        "p50_ms": 21.25,
+        "p95_ms": 32.5,
+        "p99_ms": 39.0,
+        "max_ms": 43.846,
+        "total_ms": 13474.7
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 21.794,
+        "p50_ms": 20.75,
+        "p95_ms": 31.75,
+        "p99_ms": 37.75,
+        "max_ms": 43.352,
+        "total_ms": 13076.3
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 13.571,
+        "p50_ms": 12.75,
+        "p95_ms": 21.5,
+        "p99_ms": 26.75,
+        "max_ms": 30.043,
+        "total_ms": 8142.8
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.293,
+        "p50_ms": 5.75,
+        "p95_ms": 10.5,
+        "p99_ms": 13.25,
+        "max_ms": 20.012,
+        "total_ms": 3775.7
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.497,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 3.5,
+        "max_ms": 10.372,
+        "total_ms": 298.2
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.601,
+        "p50_ms": 0.5,
+        "p95_ms": 1.75,
+        "p99_ms": 3.75,
+        "max_ms": 8.875,
+        "total_ms": 360.6
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.04,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.25,
+        "max_ms": 1.349,
+        "total_ms": 23.8
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.105,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.0,
+        "max_ms": 7.677,
+        "total_ms": 62.7
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.797,
+        "p50_ms": 2.25,
+        "p95_ms": 6.75,
+        "p99_ms": 12.5,
+        "max_ms": 13.267,
+        "total_ms": 279.7
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.78,
+        "p50_ms": 0.25,
+        "p95_ms": 3.5,
+        "p99_ms": 7.5,
+        "max_ms": 13.809,
+        "total_ms": 467.9
+       }
+      }
+     },
+     {
+      "seq": 6,
+      "frames": 600,
+      "window_s": 13.82,
+      "fps": 43.417,
+      "nominal_fps": 59.923,
+      "late": 161,
+      "late_streak_max": 10,
+      "audio_frames": 320813,
+      "audio_rate": 23214.3,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 6.88,
+      "cpu_sys_s": 1.27,
+      "minflt": 162,
+      "majflt": 0,
+      "nvcsw": 3337,
+      "nivcsw": 10645,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.033,
+        "p50_ms": 22.0,
+        "p95_ms": 32.25,
+        "p99_ms": 38.75,
+        "max_ms": 44.546,
+        "total_ms": 13819.6
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.349,
+        "p50_ms": 21.5,
+        "p95_ms": 31.0,
+        "p99_ms": 37.0,
+        "max_ms": 44.145,
+        "total_ms": 13409.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.151,
+        "p50_ms": 13.0,
+        "p95_ms": 21.5,
+        "p99_ms": 27.0,
+        "max_ms": 33.12,
+        "total_ms": 8490.4
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.292,
+        "p50_ms": 5.75,
+        "p95_ms": 10.25,
+        "p99_ms": 13.5,
+        "max_ms": 14.275,
+        "total_ms": 3775.3
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.481,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 2.75,
+        "max_ms": 10.83,
+        "total_ms": 288.9
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.631,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 4.25,
+        "max_ms": 9.247,
+        "total_ms": 378.7
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.047,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 2.007,
+        "total_ms": 28.2
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.094,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.5,
+        "max_ms": 2.39,
+        "total_ms": 56.6
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.331,
+        "p50_ms": 2.25,
+        "p95_ms": 4.0,
+        "p99_ms": 5.75,
+        "max_ms": 6.049,
+        "total_ms": 233.1
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.734,
+        "p50_ms": 0.25,
+        "p95_ms": 3.75,
+        "p99_ms": 6.5,
+        "max_ms": 14.429,
+        "total_ms": 440.3
+       }
+      }
+     }
+    ],
+    "cpu_begin": [
+     14322,
+     2,
+     7125,
+     3650,
+     3645,
+     0,
+     764,
+     0,
+     0,
+     0
+    ],
+    "cpu_end": [
+     20857,
+     2,
+     9442,
+     4237,
+     3650,
+     0,
+     964,
+     0,
+     0,
+     0
+    ]
+   },
+   "derived": {
+    "seconds": 96.44,
+    "cpu": {
+     "user": 67.76,
+     "nice": 0.0,
+     "system": 24.03,
+     "idle": 6.09,
+     "iowait": 0.05,
+     "irq": 0.0,
+     "softirq": 2.07,
+     "ctxt_per_s": 5047.2,
+     "forks_per_s": 8.63
+    },
+    "processes": [
+     {
+      "pid": 593,
+      "name": "retroarch.exec",
+      "cpu_pct": 58.59
+     },
+     {
+      "pid": 1698,
+      "name": "PE_Single_CPU",
+      "cpu_pct": 13.45
+     },
+     {
+      "pid": 311,
+      "name": "tailscaled",
+      "cpu_pct": 4.37
+     },
+     {
+      "pid": 1036,
+      "name": "ksdioirqd/mmc0",
+      "cpu_pct": 2.3
+     },
+     {
+      "pid": 1170,
+      "name": "bt_main_service",
+      "cpu_pct": 1.05
+     },
+     {
+      "pid": 1681,
+      "name": "khidpd_054c05c4",
+      "cpu_pct": 0.99
+     },
+     {
+      "pid": 600,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 0.87
+     },
+     {
+      "pid": 1669,
+      "name": "galcore daemon ",
+      "cpu_pct": 0.65
+     },
+     {
+      "pid": 615,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 0.51
+     },
+     {
+      "pid": 1723,
+      "name": "kworker/u:2H",
+      "cpu_pct": 0.39
+     },
+     {
+      "pid": 445,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 0.39
+     },
+     {
+      "pid": 1835,
+      "name": "sshd",
+      "cpu_pct": 0.34
+     },
+     {
+      "pid": 1889,
+      "name": "sh",
+      "cpu_pct": 0.25
+     }
+    ],
+    "tick_fps": 43.537559936068185,
+    "proxy": {
+     "windows": 6,
+     "fps_mean": 43.733,
+     "fps_min_window": 39.267,
+     "nominal_fps": 59.923,
+     "late_frames": 961,
+     "late_streak_max": 24,
+     "audio_rate": 23383.2,
+     "music_short_frames": 0,
+     "phases": {
+      "interval": {
+       "mean_ms": 22.934,
+       "p50_ms_median": 21.5,
+       "p95_ms_median": 32.75,
+       "p99_ms_worst": 42.25,
+       "max_ms": 55.269
+      },
+      "run": {
+       "mean_ms": 22.256,
+       "p50_ms_median": 20.875,
+       "p95_ms_median": 31.875,
+       "p99_ms_worst": 41.25,
+       "max_ms": 52.663
+      },
+      "core": {
+       "mean_ms": 14.188,
+       "p50_ms_median": 12.875,
+       "p95_ms_median": 21.75,
+       "p99_ms_worst": 30.75,
+       "max_ms": 34.545
+      },
+      "video": {
+       "mean_ms": 6.208,
+       "p50_ms_median": 5.75,
+       "p95_ms_median": 10.125,
+       "p99_ms_worst": 15.5,
+       "max_ms": 20.012
+      },
+      "audio": {
+       "mean_ms": 0.458,
+       "p50_ms_median": 0.5,
+       "p95_ms_median": 1.5,
+       "p99_ms_worst": 3.5,
+       "max_ms": 10.83
+      },
+      "overlay": {
+       "mean_ms": 0.606,
+       "p50_ms_median": 0.5,
+       "p95_ms_median": 1.875,
+       "p99_ms_worst": 5.25,
+       "max_ms": 12.657
+      },
+      "mix": {
+       "mean_ms": 0.044,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 0.25,
+       "p99_ms_worst": 0.75,
+       "max_ms": 2.02
+      },
+      "pump": {
+       "mean_ms": 0.111,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 0.5,
+       "p99_ms_worst": 2.25,
+       "max_ms": 10.858
+      },
+      "wram": {
+       "mean_ms": 2.542,
+       "p50_ms_median": 2.25,
+       "p95_ms_median": 4.875,
+       "p99_ms_worst": 13.25,
+       "max_ms": 19.745
+      },
+      "proxy": {
+       "mean_ms": 0.74,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 3.5,
+       "p99_ms_worst": 11.5,
+       "max_ms": 19.948
+      }
+     }
+    }
+   }
+  },
+  {
+   "raw": {
+    "ticks": [
+     [
+      426.42,
+      121
+     ],
+     [
+      428.56,
+      217
+     ],
+     [
+      430.69,
+      51
+     ],
+     [
+      432.86,
+      147
+     ],
+     [
+      435.01,
+      237
+     ],
+     [
+      437.17,
+      71
+     ],
+     [
+      439.29,
+      167
+     ],
+     [
+      441.46,
+      1
+     ],
+     [
+      443.63,
+      91
+     ],
+     [
+      445.83,
+      187
+     ],
+     [
+      447.98,
+      27
+     ],
+     [
+      450.12,
+      123
+     ],
+     [
+      452.27,
+      213
+     ],
+     [
+      454.41,
+      45
+     ],
+     [
+      456.54,
+      141
+     ],
+     [
+      458.69,
+      231
+     ],
+     [
+      460.83,
+      59
+     ],
+     [
+      463.02,
+      155
+     ],
+     [
+      465.17,
+      237
+     ],
+     [
+      467.31,
+      77
+     ],
+     [
+      469.41,
+      166
+     ],
+     [
+      471.56,
+      250
+     ],
+     [
+      473.69,
+      78
+     ],
+     [
+      475.85,
+      156
+     ],
+     [
+      477.97,
+      252
+     ],
+     [
+      480.11,
+      86
+     ],
+     [
+      482.24,
+      176
+     ],
+     [
+      484.39,
+      1
+     ],
+     [
+      486.51,
+      85
+     ],
+     [
+      488.63,
+      167
+     ],
+     [
+      490.75,
+      1
+     ],
+     [
+      492.9,
+      97
+     ],
+     [
+      495.06,
+      193
+     ],
+     [
+      497.21,
+      27
+     ],
+     [
+      499.32,
+      115
+     ],
+     [
+      501.45,
+      208
+     ],
+     [
+      503.56,
+      36
+     ],
+     [
+      505.66,
+      124
+     ],
+     [
+      507.79,
+      217
+     ],
+     [
+      509.94,
+      45
+     ],
+     [
+      512.06,
+      135
+     ],
+     [
+      514.21,
+      205
+     ],
+     [
+      516.36,
+      45
+     ],
+     [
+      518.53,
+      129
+     ],
+     [
+      520.72,
+      129
+     ]
+    ],
+    "windows": [
+     {
+      "seq": 6,
+      "frames": 600,
+      "window_s": 13.82,
+      "fps": 43.417,
+      "nominal_fps": 59.923,
+      "late": 161,
+      "late_streak_max": 10,
+      "audio_frames": 320813,
+      "audio_rate": 23214.3,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 6.88,
+      "cpu_sys_s": 1.27,
+      "minflt": 162,
+      "majflt": 0,
+      "nvcsw": 3337,
+      "nivcsw": 10645,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.033,
+        "p50_ms": 22.0,
+        "p95_ms": 32.25,
+        "p99_ms": 38.75,
+        "max_ms": 44.546,
+        "total_ms": 13819.6
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.349,
+        "p50_ms": 21.5,
+        "p95_ms": 31.0,
+        "p99_ms": 37.0,
+        "max_ms": 44.145,
+        "total_ms": 13409.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.151,
+        "p50_ms": 13.0,
+        "p95_ms": 21.5,
+        "p99_ms": 27.0,
+        "max_ms": 33.12,
+        "total_ms": 8490.4
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.292,
+        "p50_ms": 5.75,
+        "p95_ms": 10.25,
+        "p99_ms": 13.5,
+        "max_ms": 14.275,
+        "total_ms": 3775.3
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.481,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 2.75,
+        "max_ms": 10.83,
+        "total_ms": 288.9
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.631,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 4.25,
+        "max_ms": 9.247,
+        "total_ms": 378.7
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.047,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 2.007,
+        "total_ms": 28.2
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.094,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.5,
+        "max_ms": 2.39,
+        "total_ms": 56.6
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.331,
+        "p50_ms": 2.25,
+        "p95_ms": 4.0,
+        "p99_ms": 5.75,
+        "max_ms": 6.049,
+        "total_ms": 233.1
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.734,
+        "p50_ms": 0.25,
+        "p95_ms": 3.75,
+        "p99_ms": 6.5,
+        "max_ms": 14.429,
+        "total_ms": 440.3
+       }
+      }
+     },
+     {
+      "seq": 7,
+      "frames": 600,
+      "window_s": 13.892,
+      "fps": 43.191,
+      "nominal_fps": 59.923,
+      "late": 161,
+      "late_streak_max": 13,
+      "audio_frames": 320813,
+      "audio_rate": 23093.6,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.022,
+      "cpu_sys_s": 1.162,
+      "minflt": 163,
+      "majflt": 0,
+      "nvcsw": 3329,
+      "nivcsw": 10890,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.153,
+        "p50_ms": 21.75,
+        "p95_ms": 33.75,
+        "p99_ms": 37.75,
+        "max_ms": 43.886,
+        "total_ms": 13891.8
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.454,
+        "p50_ms": 21.0,
+        "p95_ms": 33.0,
+        "p99_ms": 37.25,
+        "max_ms": 43.484,
+        "total_ms": 13472.5
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.333,
+        "p50_ms": 13.5,
+        "p95_ms": 22.0,
+        "p99_ms": 26.5,
+        "max_ms": 33.678,
+        "total_ms": 8599.8
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.151,
+        "p50_ms": 5.5,
+        "p95_ms": 10.0,
+        "p99_ms": 13.25,
+        "max_ms": 15.281,
+        "total_ms": 3690.8
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.501,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 3.75,
+        "max_ms": 7.124,
+        "total_ms": 300.8
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.573,
+        "p50_ms": 0.5,
+        "p95_ms": 1.75,
+        "p99_ms": 3.5,
+        "max_ms": 6.096,
+        "total_ms": 343.7
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.059,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 7.047,
+        "total_ms": 35.6
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.105,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.75,
+        "max_ms": 4.365,
+        "total_ms": 62.7
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.631,
+        "p50_ms": 2.25,
+        "p95_ms": 4.75,
+        "p99_ms": 8.75,
+        "max_ms": 11.212,
+        "total_ms": 263.1
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.818,
+        "p50_ms": 0.25,
+        "p95_ms": 4.0,
+        "p99_ms": 7.5,
+        "max_ms": 11.854,
+        "total_ms": 490.8
+       }
+      }
+     },
+     {
+      "seq": 8,
+      "frames": 600,
+      "window_s": 13.976,
+      "fps": 42.929,
+      "nominal_fps": 59.923,
+      "late": 167,
+      "late_streak_max": 8,
+      "audio_frames": 320813,
+      "audio_rate": 22953.9,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.034,
+      "cpu_sys_s": 1.124,
+      "minflt": 160,
+      "majflt": 0,
+      "nvcsw": 3353,
+      "nivcsw": 10949,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.294,
+        "p50_ms": 22.0,
+        "p95_ms": 34.0,
+        "p99_ms": 40.5,
+        "max_ms": 52.92,
+        "total_ms": 13976.4
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.626,
+        "p50_ms": 21.5,
+        "p95_ms": 32.75,
+        "p99_ms": 39.75,
+        "max_ms": 50.897,
+        "total_ms": 13575.9
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.455,
+        "p50_ms": 13.5,
+        "p95_ms": 22.75,
+        "p99_ms": 28.5,
+        "max_ms": 32.254,
+        "total_ms": 8673.2
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.284,
+        "p50_ms": 5.5,
+        "p95_ms": 10.5,
+        "p99_ms": 13.75,
+        "max_ms": 17.31,
+        "total_ms": 3770.2
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.521,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 4.75,
+        "max_ms": 9.149,
+        "total_ms": 312.6
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.601,
+        "p50_ms": 0.5,
+        "p95_ms": 1.75,
+        "p99_ms": 4.5,
+        "max_ms": 8.928,
+        "total_ms": 360.4
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.048,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 6.252,
+        "total_ms": 28.7
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.077,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.75,
+        "max_ms": 3.444,
+        "total_ms": 46.2
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.416,
+        "p50_ms": 2.25,
+        "p95_ms": 5.0,
+        "p99_ms": 7.0,
+        "max_ms": 7.435,
+        "total_ms": 241.6
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.706,
+        "p50_ms": 0.25,
+        "p95_ms": 3.25,
+        "p99_ms": 5.75,
+        "max_ms": 13.928,
+        "total_ms": 423.5
+       }
+      }
+     },
+     {
+      "seq": 9,
+      "frames": 600,
+      "window_s": 14.201,
+      "fps": 42.25,
+      "nominal_fps": 59.923,
+      "late": 178,
+      "late_streak_max": 21,
+      "audio_frames": 320813,
+      "audio_rate": 22590.7,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.248,
+      "cpu_sys_s": 1.11,
+      "minflt": 166,
+      "majflt": 0,
+      "nvcsw": 3374,
+      "nivcsw": 11551,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.669,
+        "p50_ms": 22.25,
+        "p95_ms": 33.75,
+        "p99_ms": 43.25,
+        "max_ms": 54.818,
+        "total_ms": 14201.1
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.967,
+        "p50_ms": 21.5,
+        "p95_ms": 33.0,
+        "p99_ms": 39.25,
+        "max_ms": 54.418,
+        "total_ms": 13780.3
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.913,
+        "p50_ms": 13.75,
+        "p95_ms": 22.5,
+        "p99_ms": 28.5,
+        "max_ms": 31.043,
+        "total_ms": 8948.1
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.143,
+        "p50_ms": 5.5,
+        "p95_ms": 10.0,
+        "p99_ms": 13.25,
+        "max_ms": 18.281,
+        "total_ms": 3685.7
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.424,
+        "p50_ms": 0.5,
+        "p95_ms": 1.0,
+        "p99_ms": 2.5,
+        "max_ms": 8.459,
+        "total_ms": 254.6
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.626,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 4.5,
+        "max_ms": 8.246,
+        "total_ms": 375.6
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.049,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 2.887,
+        "total_ms": 29.2
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.101,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.5,
+        "max_ms": 3.405,
+        "total_ms": 60.4
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.617,
+        "p50_ms": 2.25,
+        "p95_ms": 5.5,
+        "p99_ms": 9.0,
+        "max_ms": 13.195,
+        "total_ms": 261.7
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.803,
+        "p50_ms": 0.25,
+        "p95_ms": 3.5,
+        "p99_ms": 6.75,
+        "max_ms": 24.279,
+        "total_ms": 481.6
+       }
+      }
+     },
+     {
+      "seq": 10,
+      "frames": 600,
+      "window_s": 14.585,
+      "fps": 41.138,
+      "nominal_fps": 59.923,
+      "late": 218,
+      "late_streak_max": 19,
+      "audio_frames": 320813,
+      "audio_rate": 21995.9,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.394,
+      "cpu_sys_s": 1.06,
+      "minflt": 185,
+      "majflt": 0,
+      "nvcsw": 3419,
+      "nivcsw": 11814,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 24.309,
+        "p50_ms": 23.0,
+        "p95_ms": 34.0,
+        "p99_ms": 43.25,
+        "max_ms": 49.492,
+        "total_ms": 14585.2
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 23.594,
+        "p50_ms": 22.25,
+        "p95_ms": 33.25,
+        "p99_ms": 42.5,
+        "max_ms": 47.854,
+        "total_ms": 14156.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 15.209,
+        "p50_ms": 14.0,
+        "p95_ms": 23.25,
+        "p99_ms": 29.0,
+        "max_ms": 35.234,
+        "total_ms": 9125.4
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.307,
+        "p50_ms": 5.5,
+        "p95_ms": 11.25,
+        "p99_ms": 13.75,
+        "max_ms": 16.621,
+        "total_ms": 3784.4
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.572,
+        "p50_ms": 0.5,
+        "p95_ms": 2.0,
+        "p99_ms": 5.0,
+        "max_ms": 11.905,
+        "total_ms": 343.2
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.639,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 4.75,
+        "max_ms": 11.853,
+        "total_ms": 383.7
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.049,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 1.663,
+        "total_ms": 29.3
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.093,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.25,
+        "max_ms": 3.158,
+        "total_ms": 55.7
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.657,
+        "p50_ms": 2.25,
+        "p95_ms": 5.5,
+        "p99_ms": 8.25,
+        "max_ms": 9.241,
+        "total_ms": 265.7
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.806,
+        "p50_ms": 0.25,
+        "p95_ms": 4.0,
+        "p99_ms": 7.5,
+        "max_ms": 11.435,
+        "total_ms": 483.4
+       }
+      }
+     },
+     {
+      "seq": 11,
+      "frames": 600,
+      "window_s": 14.558,
+      "fps": 41.214,
+      "nominal_fps": 59.923,
+      "late": 198,
+      "late_streak_max": 7,
+      "audio_frames": 320813,
+      "audio_rate": 22036.7,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.44,
+      "cpu_sys_s": 1.124,
+      "minflt": 162,
+      "majflt": 0,
+      "nvcsw": 3409,
+      "nivcsw": 11872,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 24.264,
+        "p50_ms": 23.0,
+        "p95_ms": 34.5,
+        "p99_ms": 41.5,
+        "max_ms": 45.627,
+        "total_ms": 14558.1
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 23.618,
+        "p50_ms": 22.25,
+        "p95_ms": 33.75,
+        "p99_ms": 40.75,
+        "max_ms": 45.19,
+        "total_ms": 14170.8
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 15.452,
+        "p50_ms": 14.5,
+        "p95_ms": 24.25,
+        "p99_ms": 29.0,
+        "max_ms": 32.879,
+        "total_ms": 9271.2
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.229,
+        "p50_ms": 5.75,
+        "p95_ms": 10.25,
+        "p99_ms": 13.0,
+        "max_ms": 17.442,
+        "total_ms": 3737.3
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.467,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 3.5,
+        "max_ms": 7.726,
+        "total_ms": 280.4
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.661,
+        "p50_ms": 0.5,
+        "p95_ms": 1.75,
+        "p99_ms": 4.25,
+        "max_ms": 7.629,
+        "total_ms": 396.7
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.049,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 2.053,
+        "total_ms": 29.2
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.068,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.75,
+        "max_ms": 1.932,
+        "total_ms": 41.0
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.637,
+        "p50_ms": 2.25,
+        "p95_ms": 6.25,
+        "p99_ms": 10.0,
+        "max_ms": 11.17,
+        "total_ms": 263.7
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.751,
+        "p50_ms": 0.25,
+        "p95_ms": 3.5,
+        "p99_ms": 8.0,
+        "max_ms": 12.645,
+        "total_ms": 450.5
+       }
+      }
+     },
+     {
+      "seq": 12,
+      "frames": 600,
+      "window_s": 14.076,
+      "fps": 42.624,
+      "nominal_fps": 59.923,
+      "late": 163,
+      "late_streak_max": 15,
+      "audio_frames": 320813,
+      "audio_rate": 22790.7,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.43,
+      "cpu_sys_s": 1.1,
+      "minflt": 156,
+      "majflt": 0,
+      "nvcsw": 3324,
+      "nivcsw": 11882,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.461,
+        "p50_ms": 22.0,
+        "p95_ms": 33.75,
+        "p99_ms": 40.25,
+        "max_ms": 47.455,
+        "total_ms": 14076.5
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.81,
+        "p50_ms": 21.25,
+        "p95_ms": 33.25,
+        "p99_ms": 40.0,
+        "max_ms": 47.172,
+        "total_ms": 13686.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.658,
+        "p50_ms": 13.5,
+        "p95_ms": 22.75,
+        "p99_ms": 29.25,
+        "max_ms": 37.19,
+        "total_ms": 8794.6
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.035,
+        "p50_ms": 5.5,
+        "p95_ms": 9.75,
+        "p99_ms": 12.5,
+        "max_ms": 15.31,
+        "total_ms": 3620.9
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.443,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 2.25,
+        "max_ms": 8.677,
+        "total_ms": 265.8
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.854,
+        "p50_ms": 0.75,
+        "p95_ms": 2.75,
+        "p99_ms": 4.75,
+        "max_ms": 6.408,
+        "total_ms": 512.2
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.045,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 3.922,
+        "total_ms": 26.9
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.099,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.0,
+        "max_ms": 9.243,
+        "total_ms": 59.1
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.614,
+        "p50_ms": 2.25,
+        "p95_ms": 6.25,
+        "p99_ms": 8.0,
+        "max_ms": 7.871,
+        "total_ms": 261.4
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.768,
+        "p50_ms": 0.25,
+        "p95_ms": 4.0,
+        "p99_ms": 7.5,
+        "max_ms": 14.626,
+        "total_ms": 460.6
+       }
+      }
+     }
+    ],
+    "cpu_begin": [
+     23062,
+     2,
+     10185,
+     4465,
+     3652,
+     0,
+     1015,
+     0,
+     0,
+     0
+    ],
+    "cpu_end": [
+     29835,
+     2,
+     12378,
+     5045,
+     3659,
+     0,
+     1157,
+     0,
+     0,
+     0
+    ]
+   },
+   "derived": {
+    "seconds": 96.95,
+    "cpu": {
+     "user": 69.86,
+     "nice": 0.0,
+     "system": 22.62,
+     "idle": 5.98,
+     "iowait": 0.07,
+     "irq": 0.0,
+     "softirq": 1.46,
+     "ctxt_per_s": 5049.1,
+     "forks_per_s": 8.81
+    },
+    "processes": [
+     {
+      "pid": 593,
+      "name": "retroarch.exec",
+      "cpu_pct": 57.8
+     },
+     {
+      "pid": 1698,
+      "name": "PE_Single_CPU",
+      "cpu_pct": 13.26
+     },
+     {
+      "pid": 311,
+      "name": "tailscaled",
+      "cpu_pct": 4.81
+     },
+     {
+      "pid": 2013,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 2.9
+     },
+     {
+      "pid": 1036,
+      "name": "ksdioirqd/mmc0",
+      "cpu_pct": 2.36
+     },
+     {
+      "pid": 615,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 1.93
+     },
+     {
+      "pid": 1170,
+      "name": "bt_main_service",
+      "cpu_pct": 1.03
+     },
+     {
+      "pid": 1681,
+      "name": "khidpd_054c05c4",
+      "cpu_pct": 0.98
+     },
+     {
+      "pid": 600,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 0.88
+     },
+     {
+      "pid": 2314,
+      "name": "kworker/u:1H",
+      "cpu_pct": 0.87
+     },
+     {
+      "pid": 1669,
+      "name": "galcore daemon ",
+      "cpu_pct": 0.63
+     },
+     {
+      "pid": 445,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 0.41
+     },
+     {
+      "pid": 1835,
+      "name": "sshd",
+      "cpu_pct": 0.38
+     },
+     {
+      "pid": 2936,
+      "name": "sh",
+      "cpu_pct": 0.27
+     }
+    ],
+    "tick_fps": 40.80593849416755,
+    "proxy": {
+     "windows": 7,
+     "fps_mean": 42.395,
+     "fps_min_window": 41.138,
+     "nominal_fps": 59.923,
+     "late_frames": 1246,
+     "late_streak_max": 21,
+     "audio_rate": 22668.0,
+     "music_short_frames": 0,
+     "phases": {
+      "interval": {
+       "mean_ms": 23.598,
+       "p50_ms_median": 22.0,
+       "p95_ms_median": 33.75,
+       "p99_ms_worst": 43.25,
+       "max_ms": 54.818
+      },
+      "run": {
+       "mean_ms": 22.917,
+       "p50_ms_median": 21.5,
+       "p95_ms_median": 33.0,
+       "p99_ms_worst": 42.5,
+       "max_ms": 54.418
+      },
+      "core": {
+       "mean_ms": 14.739,
+       "p50_ms_median": 13.5,
+       "p95_ms_median": 22.75,
+       "p99_ms_worst": 29.25,
+       "max_ms": 37.19
+      },
+      "video": {
+       "mean_ms": 6.206,
+       "p50_ms_median": 5.5,
+       "p95_ms_median": 10.25,
+       "p99_ms_worst": 13.75,
+       "max_ms": 18.281
+      },
+      "audio": {
+       "mean_ms": 0.487,
+       "p50_ms_median": 0.5,
+       "p95_ms_median": 1.5,
+       "p99_ms_worst": 5.0,
+       "max_ms": 11.905
+      },
+      "overlay": {
+       "mean_ms": 0.655,
+       "p50_ms_median": 0.5,
+       "p95_ms_median": 1.75,
+       "p99_ms_worst": 4.75,
+       "max_ms": 11.853
+      },
+      "mix": {
+       "mean_ms": 0.049,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 0.25,
+       "p99_ms_worst": 0.5,
+       "max_ms": 7.047
+      },
+      "pump": {
+       "mean_ms": 0.091,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 0.5,
+       "p99_ms_worst": 1.75,
+       "max_ms": 9.243
+      },
+      "wram": {
+       "mean_ms": 2.558,
+       "p50_ms_median": 2.25,
+       "p95_ms_median": 5.5,
+       "p99_ms_worst": 10.0,
+       "max_ms": 13.195
+      },
+      "proxy": {
+       "mean_ms": 0.769,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 3.75,
+       "p99_ms_worst": 8.0,
+       "max_ms": 24.279
+      }
+     }
+    }
+   }
+  },
+  {
+   "raw": {
+    "ticks": [
+     [
+      555.66,
+      0
+     ],
+     [
+      557.84,
+      0
+     ],
+     [
+      560.03,
+      0
+     ],
+     [
+      562.2,
+      0
+     ],
+     [
+      564.36,
+      0
+     ],
+     [
+      566.55,
+      0
+     ],
+     [
+      568.74,
+      0
+     ],
+     [
+      570.96,
+      0
+     ],
+     [
+      573.16,
+      0
+     ],
+     [
+      575.36,
+      0
+     ],
+     [
+      577.55,
+      0
+     ],
+     [
+      579.74,
+      0
+     ],
+     [
+      581.92,
+      0
+     ],
+     [
+      584.11,
+      0
+     ],
+     [
+      586.27,
+      0
+     ],
+     [
+      588.45,
+      0
+     ],
+     [
+      590.65,
+      0
+     ],
+     [
+      592.82,
+      0
+     ],
+     [
+      594.96,
+      0
+     ],
+     [
+      597.13,
+      0
+     ],
+     [
+      599.28,
+      0
+     ],
+     [
+      601.43,
+      0
+     ],
+     [
+      603.56,
+      0
+     ],
+     [
+      605.72,
+      0
+     ],
+     [
+      607.88,
+      0
+     ],
+     [
+      610.07,
+      0
+     ],
+     [
+      612.22,
+      0
+     ],
+     [
+      614.38,
+      0
+     ],
+     [
+      616.51,
+      0
+     ],
+     [
+      618.66,
+      0
+     ],
+     [
+      620.81,
+      0
+     ],
+     [
+      622.93,
+      0
+     ],
+     [
+      625.06,
+      0
+     ],
+     [
+      627.2,
+      0
+     ],
+     [
+      629.33,
+      0
+     ],
+     [
+      631.47,
+      0
+     ],
+     [
+      633.61,
+      0
+     ],
+     [
+      635.74,
+      0
+     ],
+     [
+      637.88,
+      0
+     ],
+     [
+      640.03,
+      0
+     ],
+     [
+      642.17,
+      0
+     ],
+     [
+      644.31,
+      0
+     ],
+     [
+      646.46,
+      0
+     ],
+     [
+      648.59,
+      0
+     ],
+     [
+      650.74,
+      0
+     ]
+    ],
+    "windows": [
+     {
+      "seq": 12,
+      "frames": 600,
+      "window_s": 14.076,
+      "fps": 42.624,
+      "nominal_fps": 59.923,
+      "late": 163,
+      "late_streak_max": 15,
+      "audio_frames": 320813,
+      "audio_rate": 22790.7,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 7.43,
+      "cpu_sys_s": 1.1,
+      "minflt": 156,
+      "majflt": 0,
+      "nvcsw": 3324,
+      "nivcsw": 11882,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 23.461,
+        "p50_ms": 22.0,
+        "p95_ms": 33.75,
+        "p99_ms": 40.25,
+        "max_ms": 47.455,
+        "total_ms": 14076.5
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 22.81,
+        "p50_ms": 21.25,
+        "p95_ms": 33.25,
+        "p99_ms": 40.0,
+        "max_ms": 47.172,
+        "total_ms": 13686.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 14.658,
+        "p50_ms": 13.5,
+        "p95_ms": 22.75,
+        "p99_ms": 29.25,
+        "max_ms": 37.19,
+        "total_ms": 8794.6
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.035,
+        "p50_ms": 5.5,
+        "p95_ms": 9.75,
+        "p99_ms": 12.5,
+        "max_ms": 15.31,
+        "total_ms": 3620.9
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.443,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 2.25,
+        "max_ms": 8.677,
+        "total_ms": 265.8
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 0.854,
+        "p50_ms": 0.75,
+        "p95_ms": 2.75,
+        "p99_ms": 4.75,
+        "max_ms": 6.408,
+        "total_ms": 512.2
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.045,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 3.922,
+        "total_ms": 26.9
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.099,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.0,
+        "max_ms": 9.243,
+        "total_ms": 59.1
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.614,
+        "p50_ms": 2.25,
+        "p95_ms": 6.25,
+        "p99_ms": 8.0,
+        "max_ms": 7.871,
+        "total_ms": 261.4
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.768,
+        "p50_ms": 0.25,
+        "p95_ms": 4.0,
+        "p99_ms": 7.5,
+        "max_ms": 14.626,
+        "total_ms": 460.6
+       }
+      }
+     },
+     {
+      "seq": 13,
+      "frames": 600,
+      "window_s": 11.208,
+      "fps": 53.535,
+      "nominal_fps": 59.923,
+      "late": 50,
+      "late_streak_max": 7,
+      "audio_frames": 320813,
+      "audio_rate": 28624.7,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 4.008,
+      "cpu_sys_s": 1.146,
+      "minflt": 152,
+      "majflt": 0,
+      "nvcsw": 3255,
+      "nivcsw": 7258,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 18.679,
+        "p50_ms": 17.5,
+        "p95_ms": 27.25,
+        "p99_ms": 33.75,
+        "max_ms": 40.3,
+        "total_ms": 11207.5
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 17.999,
+        "p50_ms": 17.0,
+        "p95_ms": 26.5,
+        "p99_ms": 32.0,
+        "max_ms": 39.817,
+        "total_ms": 10799.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 7.083,
+        "p50_ms": 6.25,
+        "p95_ms": 12.75,
+        "p99_ms": 18.25,
+        "max_ms": 23.404,
+        "total_ms": 4249.9
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 7.97,
+        "p50_ms": 7.75,
+        "p95_ms": 12.25,
+        "p99_ms": 15.5,
+        "max_ms": 19.253,
+        "total_ms": 4781.7
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.556,
+        "p50_ms": 0.5,
+        "p95_ms": 2.0,
+        "p99_ms": 4.25,
+        "max_ms": 7.821,
+        "total_ms": 333.3
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 1.623,
+        "p50_ms": 1.0,
+        "p95_ms": 5.0,
+        "p99_ms": 7.5,
+        "max_ms": 13.951,
+        "total_ms": 973.5
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.05,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 2.013,
+        "total_ms": 30.1
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.075,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 0.75,
+        "max_ms": 3.116,
+        "total_ms": 45.1
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.482,
+        "p50_ms": 2.0,
+        "p95_ms": 5.0,
+        "p99_ms": 5.75,
+        "max_ms": 6.396,
+        "total_ms": 248.2
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.706,
+        "p50_ms": 0.25,
+        "p95_ms": 3.75,
+        "p99_ms": 5.75,
+        "max_ms": 14.613,
+        "total_ms": 423.4
+       }
+      }
+     },
+     {
+      "seq": 14,
+      "frames": 600,
+      "window_s": 10.936,
+      "fps": 54.864,
+      "nominal_fps": 59.923,
+      "late": 35,
+      "late_streak_max": 3,
+      "audio_frames": 320813,
+      "audio_rate": 29335.3,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 3.86,
+      "cpu_sys_s": 1.186,
+      "minflt": 147,
+      "majflt": 0,
+      "nvcsw": 3255,
+      "nivcsw": 7238,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 18.227,
+        "p50_ms": 17.25,
+        "p95_ms": 25.75,
+        "p99_ms": 30.5,
+        "max_ms": 40.362,
+        "total_ms": 10936.1
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 17.601,
+        "p50_ms": 16.75,
+        "p95_ms": 24.75,
+        "p99_ms": 29.0,
+        "max_ms": 38.087,
+        "total_ms": 10560.4
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 6.94,
+        "p50_ms": 6.5,
+        "p95_ms": 12.0,
+        "p99_ms": 16.25,
+        "max_ms": 27.37,
+        "total_ms": 4164.3
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 8.0,
+        "p50_ms": 8.0,
+        "p95_ms": 11.25,
+        "p99_ms": 14.75,
+        "max_ms": 19.879,
+        "total_ms": 4799.8
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.482,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 3.75,
+        "max_ms": 8.639,
+        "total_ms": 289.0
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 1.371,
+        "p50_ms": 1.0,
+        "p95_ms": 3.75,
+        "p99_ms": 7.25,
+        "max_ms": 12.906,
+        "total_ms": 822.7
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.039,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 0.938,
+        "total_ms": 23.5
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.127,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.75,
+        "max_ms": 10.136,
+        "total_ms": 76.3
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.476,
+        "p50_ms": 2.0,
+        "p95_ms": 5.25,
+        "p99_ms": 7.25,
+        "max_ms": 7.616,
+        "total_ms": 247.6
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.76,
+        "p50_ms": 0.25,
+        "p95_ms": 3.75,
+        "p99_ms": 7.75,
+        "max_ms": 15.207,
+        "total_ms": 455.8
+       }
+      }
+     },
+     {
+      "seq": 15,
+      "frames": 600,
+      "window_s": 10.68,
+      "fps": 56.177,
+      "nominal_fps": 59.923,
+      "late": 31,
+      "late_streak_max": 2,
+      "audio_frames": 320813,
+      "audio_rate": 30037.4,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 3.84,
+      "cpu_sys_s": 1.13,
+      "minflt": 150,
+      "majflt": 0,
+      "nvcsw": 3156,
+      "nivcsw": 6938,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 17.801,
+        "p50_ms": 17.0,
+        "p95_ms": 25.25,
+        "p99_ms": 30.75,
+        "max_ms": 43.265,
+        "total_ms": 10680.4
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 17.179,
+        "p50_ms": 16.5,
+        "p95_ms": 24.5,
+        "p99_ms": 29.5,
+        "max_ms": 42.901,
+        "total_ms": 10307.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 6.609,
+        "p50_ms": 6.0,
+        "p95_ms": 12.0,
+        "p99_ms": 15.75,
+        "max_ms": 21.272,
+        "total_ms": 3965.4
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 8.038,
+        "p50_ms": 8.0,
+        "p95_ms": 12.25,
+        "p99_ms": 16.0,
+        "max_ms": 22.32,
+        "total_ms": 4822.9
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.468,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 3.0,
+        "max_ms": 13.107,
+        "total_ms": 280.9
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 1.257,
+        "p50_ms": 1.0,
+        "p95_ms": 3.25,
+        "p99_ms": 5.5,
+        "max_ms": 8.446,
+        "total_ms": 754.2
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.044,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 1.628,
+        "total_ms": 26.3
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.085,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 0.75,
+        "max_ms": 3.463,
+        "total_ms": 50.9
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.787,
+        "p50_ms": 2.25,
+        "p95_ms": 6.5,
+        "p99_ms": 7.5,
+        "max_ms": 8.265,
+        "total_ms": 278.7
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.754,
+        "p50_ms": 0.25,
+        "p95_ms": 3.75,
+        "p99_ms": 7.5,
+        "max_ms": 31.539,
+        "total_ms": 452.3
+       }
+      }
+     },
+     {
+      "seq": 16,
+      "frames": 600,
+      "window_s": 10.625,
+      "fps": 56.471,
+      "nominal_fps": 59.923,
+      "late": 23,
+      "late_streak_max": 2,
+      "audio_frames": 320813,
+      "audio_rate": 30194.6,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 4.322,
+      "cpu_sys_s": 1.102,
+      "minflt": 157,
+      "majflt": 0,
+      "nvcsw": 3063,
+      "nivcsw": 7425,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 17.708,
+        "p50_ms": 17.0,
+        "p95_ms": 24.75,
+        "p99_ms": 28.0,
+        "max_ms": 32.009,
+        "total_ms": 10624.8
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 17.044,
+        "p50_ms": 16.5,
+        "p95_ms": 23.75,
+        "p99_ms": 26.75,
+        "max_ms": 31.197,
+        "total_ms": 10226.5
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 7.266,
+        "p50_ms": 7.0,
+        "p95_ms": 12.75,
+        "p99_ms": 17.5,
+        "max_ms": 22.698,
+        "total_ms": 4359.5
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 7.427,
+        "p50_ms": 7.25,
+        "p95_ms": 11.75,
+        "p99_ms": 14.25,
+        "max_ms": 19.496,
+        "total_ms": 4456.0
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.47,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 3.0,
+        "max_ms": 11.002,
+        "total_ms": 282.0
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 1.127,
+        "p50_ms": 1.0,
+        "p95_ms": 2.5,
+        "p99_ms": 6.0,
+        "max_ms": 10.176,
+        "total_ms": 676.3
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.047,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 1.846,
+        "total_ms": 28.4
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.094,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.5,
+        "max_ms": 2.522,
+        "total_ms": 56.3
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.432,
+        "p50_ms": 2.0,
+        "p95_ms": 5.5,
+        "p99_ms": 10.25,
+        "max_ms": 10.475,
+        "total_ms": 243.2
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.686,
+        "p50_ms": 0.25,
+        "p95_ms": 3.25,
+        "p99_ms": 5.75,
+        "max_ms": 10.802,
+        "total_ms": 411.5
+       }
+      }
+     },
+     {
+      "seq": 17,
+      "frames": 600,
+      "window_s": 11.229,
+      "fps": 53.431,
+      "nominal_fps": 59.923,
+      "late": 50,
+      "late_streak_max": 5,
+      "audio_frames": 320813,
+      "audio_rate": 28569.0,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 4.854,
+      "cpu_sys_s": 1.11,
+      "minflt": 162,
+      "majflt": 0,
+      "nvcsw": 3096,
+      "nivcsw": 8157,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 18.716,
+        "p50_ms": 17.75,
+        "p95_ms": 27.5,
+        "p99_ms": 32.0,
+        "max_ms": 42.349,
+        "total_ms": 11229.4
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 18.023,
+        "p50_ms": 17.0,
+        "p95_ms": 26.25,
+        "p99_ms": 31.5,
+        "max_ms": 41.887,
+        "total_ms": 10813.7
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 8.705,
+        "p50_ms": 8.0,
+        "p95_ms": 15.0,
+        "p99_ms": 19.0,
+        "max_ms": 22.272,
+        "total_ms": 5223.0
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.93,
+        "p50_ms": 6.25,
+        "p95_ms": 11.75,
+        "p99_ms": 14.75,
+        "max_ms": 19.415,
+        "total_ms": 4158.1
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.48,
+        "p50_ms": 0.5,
+        "p95_ms": 1.5,
+        "p99_ms": 3.5,
+        "max_ms": 8.048,
+        "total_ms": 287.7
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 1.129,
+        "p50_ms": 1.0,
+        "p95_ms": 3.0,
+        "p99_ms": 6.0,
+        "max_ms": 8.87,
+        "total_ms": 677.5
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.041,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.25,
+        "max_ms": 2.425,
+        "total_ms": 24.8
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.081,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.0,
+        "max_ms": 2.214,
+        "total_ms": 48.6
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.442,
+        "p50_ms": 2.0,
+        "p95_ms": 5.25,
+        "p99_ms": 8.75,
+        "max_ms": 12.475,
+        "total_ms": 244.2
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.728,
+        "p50_ms": 0.25,
+        "p95_ms": 3.25,
+        "p99_ms": 7.5,
+        "max_ms": 19.397,
+        "total_ms": 436.7
+       }
+      }
+     },
+     {
+      "seq": 18,
+      "frames": 600,
+      "window_s": 11.146,
+      "fps": 53.831,
+      "nominal_fps": 59.923,
+      "late": 46,
+      "late_streak_max": 5,
+      "audio_frames": 320813,
+      "audio_rate": 28783.1,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 4.974,
+      "cpu_sys_s": 1.174,
+      "minflt": 161,
+      "majflt": 0,
+      "nvcsw": 3091,
+      "nivcsw": 8350,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 18.576,
+        "p50_ms": 17.5,
+        "p95_ms": 26.5,
+        "p99_ms": 33.0,
+        "max_ms": 36.816,
+        "total_ms": 11145.9
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 17.969,
+        "p50_ms": 17.0,
+        "p95_ms": 25.75,
+        "p99_ms": 30.5,
+        "max_ms": 36.434,
+        "total_ms": 10781.2
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 8.959,
+        "p50_ms": 8.25,
+        "p95_ms": 14.75,
+        "p99_ms": 18.25,
+        "max_ms": 20.909,
+        "total_ms": 5375.3
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.597,
+        "p50_ms": 6.0,
+        "p95_ms": 11.25,
+        "p99_ms": 14.75,
+        "max_ms": 17.876,
+        "total_ms": 3958.4
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.434,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 2.5,
+        "max_ms": 9.324,
+        "total_ms": 260.5
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 1.163,
+        "p50_ms": 1.0,
+        "p95_ms": 3.0,
+        "p99_ms": 7.0,
+        "max_ms": 12.699,
+        "total_ms": 697.7
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.05,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.75,
+        "max_ms": 2.371,
+        "total_ms": 29.8
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.111,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.75,
+        "max_ms": 7.741,
+        "total_ms": 66.5
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.816,
+        "p50_ms": 2.25,
+        "p95_ms": 7.25,
+        "p99_ms": 10.75,
+        "max_ms": 13.242,
+        "total_ms": 281.6
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.756,
+        "p50_ms": 0.25,
+        "p95_ms": 3.5,
+        "p99_ms": 7.5,
+        "max_ms": 16.323,
+        "total_ms": 453.9
+       }
+      }
+     },
+     {
+      "seq": 19,
+      "frames": 600,
+      "window_s": 12.006,
+      "fps": 49.975,
+      "nominal_fps": 59.923,
+      "late": 70,
+      "late_streak_max": 8,
+      "audio_frames": 320813,
+      "audio_rate": 26721.2,
+      "music_frames": 320813,
+      "music_short": 0,
+      "cpu_user_s": 5.744,
+      "cpu_sys_s": 1.062,
+      "minflt": 156,
+      "majflt": 0,
+      "nvcsw": 3185,
+      "nivcsw": 9261,
+      "phases": {
+       "interval": {
+        "n": 600,
+        "mean_ms": 20.01,
+        "p50_ms": 19.0,
+        "p95_ms": 27.75,
+        "p99_ms": 33.5,
+        "max_ms": 38.342,
+        "total_ms": 12005.9
+       },
+       "run": {
+        "n": 600,
+        "mean_ms": 19.327,
+        "p50_ms": 18.25,
+        "p95_ms": 26.75,
+        "p99_ms": 32.75,
+        "max_ms": 37.933,
+        "total_ms": 11596.4
+       },
+       "core": {
+        "n": 600,
+        "mean_ms": 10.508,
+        "p50_ms": 9.75,
+        "p95_ms": 16.25,
+        "p99_ms": 21.75,
+        "max_ms": 27.854,
+        "total_ms": 6304.9
+       },
+       "video": {
+        "n": 600,
+        "mean_ms": 6.445,
+        "p50_ms": 5.75,
+        "p95_ms": 11.0,
+        "p99_ms": 13.75,
+        "max_ms": 15.958,
+        "total_ms": 3866.9
+       },
+       "audio": {
+        "n": 600,
+        "mean_ms": 0.465,
+        "p50_ms": 0.5,
+        "p95_ms": 1.25,
+        "p99_ms": 2.75,
+        "max_ms": 12.015,
+        "total_ms": 279.0
+       },
+       "overlay": {
+        "n": 600,
+        "mean_ms": 1.189,
+        "p50_ms": 1.0,
+        "p95_ms": 3.0,
+        "p99_ms": 6.5,
+        "max_ms": 14.664,
+        "total_ms": 713.4
+       },
+       "mix": {
+        "n": 600,
+        "mean_ms": 0.041,
+        "p50_ms": 0.25,
+        "p95_ms": 0.25,
+        "p99_ms": 0.5,
+        "max_ms": 1.624,
+        "total_ms": 24.7
+       },
+       "pump": {
+        "n": 600,
+        "mean_ms": 0.093,
+        "p50_ms": 0.25,
+        "p95_ms": 0.5,
+        "p99_ms": 1.75,
+        "max_ms": 4.059,
+        "total_ms": 55.5
+       },
+       "wram": {
+        "n": 100,
+        "mean_ms": 2.282,
+        "p50_ms": 2.0,
+        "p95_ms": 4.0,
+        "p99_ms": 5.25,
+        "max_ms": 5.99,
+        "total_ms": 228.2
+       },
+       "proxy": {
+        "n": 600,
+        "mean_ms": 0.669,
+        "p50_ms": 0.25,
+        "p95_ms": 3.5,
+        "p99_ms": 4.25,
+        "max_ms": 13.192,
+        "total_ms": 401.5
+       }
+      }
+     }
+    ],
+    "cpu_begin": [
+     32256,
+     2,
+     13125,
+     5053,
+     3659,
+     0,
+     1204,
+     0,
+     0,
+     0
+    ],
+    "cpu_end": [
+     38735,
+     14,
+     15609,
+     5721,
+     3664,
+     0,
+     1329,
+     0,
+     0,
+     0
+    ]
+   },
+   "derived": {
+    "seconds": 97.73,
+    "cpu": {
+     "user": 66.29,
+     "nice": 0.12,
+     "system": 25.42,
+     "idle": 6.84,
+     "iowait": 0.05,
+     "irq": 0.0,
+     "softirq": 1.28,
+     "ctxt_per_s": 5165.2,
+     "forks_per_s": 9.07
+    },
+    "processes": [
+     {
+      "pid": 593,
+      "name": "retroarch.exec",
+      "cpu_pct": 51.15
+     },
+     {
+      "pid": 1698,
+      "name": "PE_Single_CPU",
+      "cpu_pct": 13.99
+     },
+     {
+      "pid": 615,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 7.02
+     },
+     {
+      "pid": 311,
+      "name": "tailscaled",
+      "cpu_pct": 4.8
+     },
+     {
+      "pid": 2013,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 2.73
+     },
+     {
+      "pid": 1036,
+      "name": "ksdioirqd/mmc0",
+      "cpu_pct": 2.51
+     },
+     {
+      "pid": 1170,
+      "name": "bt_main_service",
+      "cpu_pct": 1.08
+     },
+     {
+      "pid": 1681,
+      "name": "khidpd_054c05c4",
+      "cpu_pct": 1.01
+     },
+     {
+      "pid": 600,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 0.9
+     },
+     {
+      "pid": 1669,
+      "name": "galcore daemon ",
+      "cpu_pct": 0.86
+     },
+     {
+      "pid": 7,
+      "name": "kworker/u:0H",
+      "cpu_pct": 0.51
+     },
+     {
+      "pid": 445,
+      "name": "ld-musl-armhf.s",
+      "cpu_pct": 0.38
+     },
+     {
+      "pid": 1835,
+      "name": "sshd",
+      "cpu_pct": 0.36
+     },
+     {
+      "pid": 2314,
+      "name": "kworker/u:1H",
+      "cpu_pct": 0.34
+     },
+     {
+      "pid": 4071,
+      "name": "sh",
+      "cpu_pct": 0.27
+     }
+    ],
+    "tick_fps": 0.0,
+    "proxy": {
+     "windows": 8,
+     "fps_mean": 52.614,
+     "fps_min_window": 42.624,
+     "nominal_fps": 59.923,
+     "late_frames": 468,
+     "late_streak_max": 15,
+     "audio_rate": 28132.0,
+     "music_short_frames": 0,
+     "phases": {
+      "interval": {
+       "mean_ms": 19.147,
+       "p50_ms_median": 17.5,
+       "p95_ms_median": 26.875,
+       "p99_ms_worst": 40.25,
+       "max_ms": 47.455
+      },
+      "run": {
+       "mean_ms": 18.494,
+       "p50_ms_median": 17.0,
+       "p95_ms_median": 26.0,
+       "p99_ms_worst": 40.0,
+       "max_ms": 47.172
+      },
+      "core": {
+       "mean_ms": 8.841,
+       "p50_ms_median": 7.5,
+       "p95_ms_median": 13.75,
+       "p99_ms_worst": 29.25,
+       "max_ms": 37.19
+      },
+      "video": {
+       "mean_ms": 7.18,
+       "p50_ms_median": 6.75,
+       "p95_ms_median": 11.5,
+       "p99_ms_worst": 16.0,
+       "max_ms": 22.32
+      },
+      "audio": {
+       "mean_ms": 0.475,
+       "p50_ms_median": 0.5,
+       "p95_ms_median": 1.375,
+       "p99_ms_worst": 4.25,
+       "max_ms": 13.107
+      },
+      "overlay": {
+       "mean_ms": 1.214,
+       "p50_ms_median": 1.0,
+       "p95_ms_median": 3.0,
+       "p99_ms_worst": 7.5,
+       "max_ms": 14.664
+      },
+      "mix": {
+       "mean_ms": 0.045,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 0.25,
+       "p99_ms_worst": 0.75,
+       "max_ms": 3.922
+      },
+      "pump": {
+       "mean_ms": 0.096,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 0.5,
+       "p99_ms_worst": 1.75,
+       "max_ms": 10.136
+      },
+      "wram": {
+       "mean_ms": 2.541,
+       "p50_ms_median": 2.0,
+       "p95_ms_median": 5.375,
+       "p99_ms_worst": 10.75,
+       "max_ms": 13.242
+      },
+      "proxy": {
+       "mean_ms": 0.728,
+       "p50_ms_median": 0.25,
+       "p95_ms_median": 3.625,
+       "p99_ms_worst": 7.75,
+       "max_ms": 31.539
+      }
+     }
+    }
+   }
+  }
+ ]
+}

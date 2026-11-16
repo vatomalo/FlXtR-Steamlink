@@ -157,6 +157,19 @@ while :; do
             sh scripts/music-runtime.sh tools/state_guard.py watch "$game_pid" >state-guard.log 2>&1 &
             state_guard_pid=$!
         fi
+        # Secret of Mana soundtrack bridge (docs/SOM-MUSIC-BRIDGE.md): follows the
+        # AI core's song events in game.log, exits by itself for other games
+        # and when the game ends. Never alongside a per-ROM background track.
+        som_music_pid=
+        som_catalog=/home/apps/retroarch/cores/experimental/som_song_names.tsv
+        if [ ! -f game-music-request ] && [ -f tools/som_music_bridge.py ] &&
+           [ -f scripts/music-runtime.sh ] && [ -r "$som_catalog" ]; then
+            sh scripts/music-runtime.sh tools/som_music_bridge.py --log game.log --from-start \
+                --game-pid "$game_pid" --som-wait 60 --catalog "$som_catalog" \
+                --mix-control /tmp/flxtr-som-music.play --rate-file /tmp/flxtr-som-audio-rate \
+                >som-music.log 2>&1 &
+            som_music_pid=$!
+        fi
         (
             previous_size=0
             consecutive=0
@@ -208,6 +221,7 @@ while :; do
             rm -f game-music-request
         fi
         if [ -n "$state_guard_pid" ]; then wait "$state_guard_pid" || true; fi
+        if [ -n "$som_music_pid" ]; then wait "$som_music_pid" 2>/dev/null || true; fi
         kill "$watchdog_pid" 2>/dev/null
         wait "$watchdog_pid" 2>/dev/null
         [ "$game_code" -eq 0 ] || cp game.log game-failure.log

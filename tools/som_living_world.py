@@ -47,7 +47,9 @@ MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|-]")
 STORY_FLAGS = (0x10, 0x11, 0x12, 0x0D)
 
 # Same shape as som_qwen_bridge.REMOTE_LOOP; only `obs`, `msg` and a strictly
-# numeric `npc_walk` line are accepted on the Steam Link.
+# numeric `npc_walk` line are accepted on the Steam Link. Preferred: the
+# observation server's `living` profile (tools/som_wram_server.py), which
+# accepts the same requests plus `dlt` deltas; this loop is the fallback.
 GAME_WAIT_S = 5.0   # retry interval while the game is closed
 
 REMOTE_LOOP = (
@@ -397,8 +399,9 @@ def main(argv=None):
         if args.wram_file:
             wram = WRAM.load(args.wram_file)
         else:
-            from som_qwen_bridge import RemoteLink
-            link = RemoteLink(args.host, remote_loop=REMOTE_LOOP, partial=False)
+            from som_qwen_bridge import RemoteLink, server_remote
+            link = RemoteLink(args.host, remote_loop=REMOTE_LOOP, partial=False,
+                      server=server_remote("living"))
             try:
                 wram = WRAM(link.fetch_wram(False))
             finally:
@@ -416,8 +419,9 @@ def main(argv=None):
 
 def run_loop(world, args):
     from som_memory import WRAM
-    from som_qwen_bridge import RemoteLink
-    link = RemoteLink(args.host, remote_loop=REMOTE_LOOP, partial=False)
+    from som_qwen_bridge import RemoteLink, server_remote
+    link = RemoteLink(args.host, remote_loop=REMOTE_LOOP, partial=False,
+                      server=server_remote("living"))
     drivers, last_talk, step = {}, None, 0
     daily = None
     if args.director:

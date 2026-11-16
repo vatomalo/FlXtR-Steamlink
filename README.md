@@ -477,6 +477,8 @@ Start in Games opens the Internet Archive homebrew list. A downloads the chosen 
 
 Steam Link fullscreen requires creating the native Vivante window at the current display size: that backend cannot resize the native surface afterward. The shell retains a 960x540 logical layout and logs actual window/output dimensions on startup.
 
+On Steam Link, Settings > GAME OUTPUT (480p/540p/720p/1080p) sets the native framebuffer through SDL's `SDL_PE_GFX_RESOLUTION`, and the Marvell display plane scales it to the whole TV in hardware. libGAL accepts only 640x480, 960x540, 1280x720 and 1920x1080 here, so 240p uses 640x480. A 640x480 framebuffer is stretched to 16:9 (its pixels show 4/3 wide), so FIT, INTEGER and 1:1 use an aspect-corrected custom viewport from the core's probed geometry (4:3 if the probe fails); STRETCH fills the screen. 540p/720p/1080p have square pixels and keep RetroArch's own scaling.
+
 If a cold boot resets the clock before 2024, the Steam Link launcher makes a bounded ten-second NTP synchronization attempt before checking HTTPS updates. An unsuccessful sync is logged in `clock.log`; TLS verification is never disabled.
 
 TV channel scheduling, marathons and preloading: [TV channel mode](docs/tv-channel.md).

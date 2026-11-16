@@ -51,6 +51,13 @@ def record_walk(link, history, interval):
         # fails (bridges): that is exactly what the AI cannot learn alone.
         for attributes in history.learn_cuts(state):
             print(f"  learned a cuttable tile type ({attributes})", flush=True)
+        crossing = history.learn_whip_crossings(state)
+        if crossing is not None:
+            print(f"  learned a whip crossing on map {crossing['map_id']}: "
+                  f"{tuple(crossing['from'])} {crossing['action']} -> "
+                  f"{tuple(crossing['to'])}"
+                  + (f" (post tiles {crossing['posts']})" if crossing["posts"] else ""),
+                  flush=True)
         if history.remember_walk(state):
             tiles += 1
         if context.get("runtime_verified"):

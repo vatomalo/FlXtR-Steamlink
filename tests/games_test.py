@@ -61,7 +61,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert launch()[-2]==str(fast)
     assert 'video_fullscreen_x = "0"' in (root/'game-runtime.cfg').read_text()
     assert 'video_fullscreen_y = "0"' in (root/'game-runtime.cfg').read_text()
-    for height,width in [(240,320),(720,1280),(1080,1920),(0,0),(480,640)]:
+    for height,width in [(240,320),(540,960),(720,1280),(1080,1920),(0,0),(480,640)]:
         (root/'settings.cfg').write_text(f'game_output={height}\n')
         launch()
         runtime_config=(root/'game-runtime.cfg').read_text()
@@ -97,10 +97,37 @@ with tempfile.TemporaryDirectory() as tmp:
     (root/'settings.cfg').write_text('game_output=0\ngame_view=2\n')
     launch()
     geometry=next(line.split() for line in (root/'game-geometry.txt').read_text().splitlines() if line.startswith('FLXTR_GEOMETRY '))
-    display_w,display_h=map(int,geometry[-2:])
+    display_w,display_h=map(int,geometry[3:5])
+    assert abs(float(geometry[5])-4/3)<1e-4
     native_pixel=(root/'game-runtime.cfg').read_text()
     assert f'custom_viewport_x = "{(display_w-256)//2}"' in native_pixel
     assert f'custom_viewport_y = "{(display_h-224)//2}"' in native_pixel
+    assert 'SDL_PE_GFX_RESOLUTION' not in json.loads((home/'runtime-env.json').read_text())
+    # Steam Link: the display plane stretches the framebuffer to the 16:9 TV,
+    # so 640x480 pixels are 4/3 wide and viewports are aspect-corrected.
+    env['FLXTR_HW_SCALER']='1'
+    for output,view,viewport in [(480,0,(80,0,480,480)),(480,1,(0,0,640,480)),(480,3,(96,16,448,448)),
+                                 (480,2,(224,128,192,224)),(240,0,(80,0,480,480))]:
+        (root/'settings.cfg').write_text(f'game_output={output}\ngame_view={view}\n')
+        launch()
+        hw=(root/'game-runtime.cfg').read_text()
+        assert json.loads((home/'runtime-env.json').read_text())['SDL_PE_GFX_RESOLUTION']=='640x480'
+        assert 'video_fullscreen_x = "640"' in hw and 'video_fullscreen_y = "480"' in hw
+        assert 'aspect_ratio_index = "23"' in hw and 'video_scale_integer = "false"' in hw
+        for key,value in zip(('x','y','width','height'),viewport):
+            assert f'custom_viewport_{key} = "{value}"' in hw,(output,view,key,hw)
+    # Square 16:9 framebuffers keep RetroArch's own scaling.
+    for output,width in [(540,960),(720,1280)]:
+        (root/'settings.cfg').write_text(f'game_output={output}\ngame_view=0\n')
+        launch()
+        hw=(root/'game-runtime.cfg').read_text()
+        assert json.loads((home/'runtime-env.json').read_text())['SDL_PE_GFX_RESOLUTION']==f'{width}x{output}'
+        assert 'aspect_ratio_index = "22"' in hw and f'video_fullscreen_x = "{width}"' in hw
+    # Native output leaves the framebuffer alone.
+    (root/'settings.cfg').write_text('game_output=0\ngame_view=0\n')
+    launch()
+    assert 'SDL_PE_GFX_RESOLUTION' not in json.loads((home/'runtime-env.json').read_text())
+    del env['FLXTR_HW_SCALER']
     (root/'settings.cfg').write_text('game_output=240\ngame_view=2\n')
     (root/'games.json').write_text(json.dumps([{'title':'Large','rom':str(roms/'Large.sfc'),'core':str(stock)}]))
     (roms/'Large.sfc').write_bytes(b'fixture');(root/'game-request').write_text('1 4 6\n')

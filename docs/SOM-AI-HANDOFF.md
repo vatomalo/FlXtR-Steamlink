@@ -27,7 +27,11 @@ Branch `feature/som-ai-memory-agent-20261112`. Read `docs/SOM-WRAM-AGENT.md`
   `clone_enemy`/`undo_spawn` experiment (copies draw and fight since
   2026-11-14, see Summoning below).
 - `tools/som_qwen_bridge.py`: main loop. One persistent SSH link
-  (`RemoteLink`: `obs`/`obsm`/`act`/`msg`), goal selection (Candy/inn when
+  (`RemoteLink`: `obs`/`obsm`/`act`/`msg`; since 2026-11-15 the device end is
+  `tools/som_wram_server.py`, which answers the same requests without forking
+  and sends each observation as `dlt` block deltas of the full snapshot;
+  shell-loop fallback on `NOSERVER`, forced with `SOM_AI_SHELL_LOOP=1`; see
+  `docs/SOM-ARM-PERFORMANCE-RESULTS.md`), goal selection (Candy/inn when
   HP < 50 %, shop when rich, else hunt `SOM_AI_HUNT_DIRECTION`), tile guard,
   holds only on straight route runs, eagle-eye 33x33/65x65 map scans, async
   Qwen director (directive every 12 decisions; heading is locked by hunt mode).
@@ -135,6 +139,15 @@ Stop the service before running a teach or probe tool, and start it again after.
 
 ## Open problems (latest first)
 
+0. Steam Link speed (2026-11-15, `docs/SOM-ARM-PERFORMANCE-*.md`): the game ran
+   at ~44 of 60.1 frames/s with the AI on; music stutters with it because it is
+   mixed into the game's only audio stream. The AI transport now costs far less
+   (observation server); the PC <-> Steam Link Tailscale path is relayed via
+   DERP Helsinki (36-47 ms, "direct connection not established"), which costs
+   tailscaled CPU on the single core. Proxy timing: `touch
+   /tmp/flxtr-som-perf-enable` on the device, read `/tmp/flxtr-som-perf.json`,
+   or run `tools/som_perf_benchmark.py`.
+
 1. Bridge decks: verification fixed in `c13f10d` (pass-through tiles keep
    height/priority); confirm on hardware that the hero leaves the bridge.
 2. Hold overshoot fixed in `65d4412`; confirm left/right swinging is gone.
@@ -155,3 +168,31 @@ Stop the service before running a teach or probe tool, and start it again after.
    HP/MP, gold, inventory, explored fraction) and a small allowlist of goals
    (explore direction, hunt in map N, go to inn/shop, return to Potos);
    the planner executes them. Keep it asynchronous and optional.
+
+## Curiosity: reward new places, penalise lingering (2026-11-15)
+
+`tools/som_curiosity.py`, used by `MemoryPlanner.decide` on every verified field decision.
+New map +50 (once per map id ever), new 8x8-tile area +5 (once per area); staying within
+2 tiles of one spot for 60 decisions with no enemy on screen, no errand, no fight or
+recovery: -20, then the frontier targets within 4 tiles are banned for 200 frontier ticks
+and the heading flips for 40 decisions (east <-> west, north <-> south). Frontier choice
+ranks never-visited areas before revisits. The score, seen maps and areas persist in the
+agent state (`curiosity`). Decision reasons show `curiosity new_map +50 ... (score N)`.
+The live service runs from this checkout, so it uses this after its next restart.
+
+## Stall and menu audit (2026-11-15 stabilization sprint)
+
+Already in place and covered by tests (re-checked, unchanged): closed-loop Candy, inn, save
+and shop macros that verify each press against WRAM and cancel out (`tools/som_menu.py`,
+`test_som_menu.py`: purchase verified by +1 Candy and less gold, too little gold, purchase
+not seen, extra Buy confirmations, save prompt never answered without a taught slot);
+dialogue escape (confirm on text pages, only cancel on yes/no; `test_som_event_escape.py`);
+stall detection per step (`STALL_DECISIONS`) and frontier rejection (`test_som_planner.py`);
+`await_inn_setup` / `await_save_setup` explore instead of waiting (`test_som_play_loop.py`);
+physical takeover (`test_som_qwen_bridge.py`, proxy tests).
+Fixed now: an Ollama reply that is not a JSON object raised AttributeError inside the
+director thread, which then never reported back and left the director "thinking" for the
+rest of the run; any failure is now reported and the goal kept. Goals older than 90 s
+(`DIRECTOR_MAX_AGE`) are ignored like goals for another map. Tests:
+`tools/test_som_qwen_failures.py` (fake Ollama: good, off-allowlist, malformed, non-object,
+timeout). Not re-verified live this sprint.

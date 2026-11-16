@@ -27,6 +27,30 @@ static inline int som_disc_has_dodge(unsigned discipline){
     default: return 0;
     }
 }
+/* Dodges, driven by the proxy. The game's own poses (back roll 0x8D, leap
+ * 0x9E, hop 0x95) do not play in field play: written as +0x1C/+0x11 they
+ * end within 6 frames without moving (headless Steam Link test,
+ * 2026-11-15; their scripts run under the event VM). So the proxy carries
+ * the hero `speed` px per frame for `frames` frames onto open ground,
+ * keeps him untouchable a little longer, and draws an after-image trail.
+ * forward: toward the facing (else away from it) when no direction is
+ * held. speed 0: this class has no dodge. */
+typedef struct { unsigned speed, frames; int forward; const char *name; } SomDodge;
+#define SOM_DODGE_GRACE 8u                 /* untouchable frames after the move */
+static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
+    SomDodge d={0u,0u,0,""};
+    switch(discipline){
+    case 0: case 10: d.speed=3u;d.frames=16u;d.name="Evade";break;        /* 48 px roll */
+    case 1: case 9: d.speed=2u;d.frames=18u;d.name="Evade";break;         /* 36 px hop */
+    case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
+    case 2:
+        if(weapon==1u){d.speed=6u;d.frames=12u;d.forward=1;d.name="Shunshin no Jutsu";}
+        else{d.speed=3u;d.frames=16u;d.name="Evade";}
+        break;
+    default:break;
+    }
+    return d;
+}
 typedef struct {
     int open;
     unsigned cursor;
@@ -42,12 +66,58 @@ static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
     case 0: return SOM_PAL_SWORDMASTER_FROST;
     case 1: return SOM_PAL_MONK_CRIMSON_GOLD;
     case 2: return SOM_PAL_NINJA_MIDNIGHT;
+    case 3: return SOM_PAL_MAGE_ARCANE;
+    case 4: return SOM_PAL_DIVINE_GOLD;
+    case 5: return SOM_PAL_DARK_CRIMSON;
     case 6: return SOM_PAL_SUMMONER_WHITE;
+    case 7: return SOM_PAL_DANCER_ROSE;
+    case 8: return SOM_PAL_FLOW_TEAL;
     case 9: return SOM_PAL_ROGUE_SHADOW;
     case 10: return SOM_PAL_SAMURAI_INDIGO;
     case 11: return SOM_PAL_ARCHER_FOREST;
     default:return SOM_PAL_ORIGINAL;
     }
+}
+/* Short class title shown under the hero on the field; NULL with no class. */
+static const char *const som_discipline_titles[SOM_DISCIPLINE_COUNT]={
+    "Swordsman","Monk","Ninja","Mage","Cleric","Warlock",
+    "Summoner","Dancer","Weaponmaster","Rogue","Samurai","Archer"
+};
+static inline const char *som_disc_title(const SomDisciplines *d){
+    return d&&d->selected<SOM_DISCIPLINE_COUNT?som_discipline_titles[d->selected]:NULL;
+}
+/* The boy's HUD portrait: a 16x16 OBJ in the bottom HUD, palette 1 (his
+ * colours), tile 0x1E8-0x1EF (seen at x 88, y 199 alone in the party).
+ * Returns 1 with its top-left in *x, *y. No portrait (HUD hidden, menus,
+ * events): 0, and no class label. */
+static inline int som_hud_portrait(const uint8_t *ram,int *x,int *y){
+    if(!ram)return 0;
+    for(unsigned i=0;i<128u;i++){
+        const uint8_t *e=ram+0x0800u+4u*i;
+        const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
+        if(e[1]<160u||e[1]>=0xE0u||((e[3]>>1)&7u)!=1u||tile<0x1E8u||tile>0x1EFu)continue;
+        const unsigned hb=(ram[0x0A00u+i/4u]>>(2u*(i%4u)))&3u;
+        if(hb&2u)continue;
+        int px=(int)(e[0]|((hb&1u)<<8));if(px>=256)px-=512;
+        *x=px;*y=(int)e[1];
+        return 1;
+    }
+    return 0;
+}
+/* The class title sits right of the portrait, under the HP numbers. */
+#define SOM_HUD_LABEL_DX 18
+#define SOM_HUD_LABEL_DY 9
+/* Pixels below the hero's position (base SNES pixels) for the label top. */
+#define SOM_CLASS_LABEL_DROP_PX 3
+/* The class title, centred under the hero at base screen position
+ * (hero_x, hero_y). Returns 1 when drawn. */
+static inline int som_disc_draw_label(uint8_t *pixels,unsigned width,unsigned height,
+                                      size_t pitch,int format,const char *text,
+                                      int hero_x,int hero_y){
+    if(hero_x<0||hero_y<0)return 0;
+    return som_overlay_label(pixels,width,height,pitch,format,text,
+                             hero_x,hero_y+SOM_CLASS_LABEL_DROP_PX,1,
+                             som_overlay_color(format,255,255,255));
 }
 static inline void som_disc_init(SomDisciplines *d){
     memset(d,0,sizeof(*d));

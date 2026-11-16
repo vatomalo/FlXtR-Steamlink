@@ -38,6 +38,11 @@ from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
 from som_tactics import TacticLearner
 from som_build import classify as classify_build, profile as build_profile
+from som_wram_server import apply_block_delta
+from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
+                                ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
+                                CONTACT_PX as CLASS_CONTACT_PX)
+from som_weapon_tactics import WeaponTactics
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -59,13 +64,20 @@ CANDY_MAX_RETRIES = 6
 # Gambits: activity priorities 0..5 (0 = never) the player sets from the
 # gamepad menu drawn by the proxy (src/som_gambit.h, same order and defaults).
 GAMBIT_FIGHT, GAMBIT_INN, GAMBIT_SHOP, GAMBIT_SAVE, GAMBIT_CANDY, GAMBIT_TALK = range(6)
+# Planner intentions that need a particular weapon in hand for a moment:
+# grass is cut with the sword, whip posts are swung across with the whip.
+TOOL_WEAPONS = {"cut_grass": "sword", "whip_cross": "whip"}
 GAMBIT_DEFAULTS = "433341"
 GAMBIT_NAMES = ("fight", "inn", "shop", "save", "candy", "talk")
 GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
+# Second gambit page (src/som_gambit.h som_combat_names): how the AI fights.
+COMBAT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_combat"
+COMBAT_DEFAULTS = "32223333"
+COMBAT_NAMES = ("press", "distance", "guard", "evade", "charge", "magic", "classes", "weapons")
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
 # Intentions the personality comments on (som_personality.LINES events).
 SPOKEN_INTENTIONS = {"explore_frontier", "engage_enemy", "defend_enemy", "kite_enemy",
-                     "evade_enemy", "cut_grass", "survive", "return_to_inn", "go_to_inn",
+                     "evade_enemy", "cut_grass", "whip_cross", "survive", "return_to_inn", "go_to_inn",
                      "go_to_shop", "go_to_map", "leave_room", "stuck"}
 GUARD_REFRESHES = 2     # extra block presses per guard decision
 GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
@@ -77,7 +89,9 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "give_glove", "give_axe", "give_spear", "give_whip", "give_bow",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
-                    "equip_bow", "equip_boomerang", "equip_javelin"}
+                    "equip_bow", "equip_boomerang", "equip_javelin",
+                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade"} | \
+    {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(
@@ -229,11 +243,17 @@ def choose_directive(url, model, objective, observation, current,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=DIRECTOR_TIMEOUT) as response:
         result = json.load(response)
+    if not isinstance(result, dict):
+        raise ValueError("Ollama reply is not a JSON object")
     raw = result.get("response") or ""
     directive = parse_directive(raw)
     if directive not in choices:
         raise ValueError(f"Qwen director returned {raw.strip()[:80]!r}; allowed={choices}")
     return directive
+
+# A goal Qwen chose more than this many seconds ago is not used: the game
+# state it was chosen for is gone.
+DIRECTOR_MAX_AGE = 90.0
 
 def choose_goal(url, model, objective, summary, offered, current):
     """Ask Qwen for one goal from `offered`; ValueError on anything else."""
@@ -245,6 +265,8 @@ def choose_goal(url, model, objective, summary, offered, current):
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=DIRECTOR_TIMEOUT) as response:
         result = json.load(response)
+    if not isinstance(result, dict):
+        raise ValueError("Ollama reply is not a JSON object")
     raw = result.get("response") or ""
     goal = parse_goal(raw, offered)
     if goal is None:
@@ -448,10 +470,17 @@ REMOTE_LOOP = (
     "else echo NONE; fi;; "
     "hotz|hotmz) "
     "if [ \"$cmd\" = hotmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
+    # The proxy writes the hot ranges ready-made (one gzip, no dd: the
+    # Steam Link has a single core shared with the game); older cores fall
+    # back to cutting them out of the snapshot.
+    "elif command exec 4< /tmp/flxtr-som-hot.bin 2>/dev/null; then echo WRAMH; gzip -1 -c <&4; exec 4<&-; "
     "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMH; "
     "{ " + "; ".join(f"dd if=/proc/self/fd/3 bs=1024 skip={start} count={count} 2>/dev/null"
                      for start, count in HOT_RANGES_KB) + "; } | gzip -1 -c; exec 3<&-; "
     "else echo NONE; fi;; "
+    "gmc) m=; [ -f " + COMBAT_FILE + " ] && read -r m < " + COMBAT_FILE + "; "
+    "case \"$m\" in " + "[0-5]" * len(COMBAT_DEFAULTS) + ") ;; *) m=" + COMBAT_DEFAULTS + ";; esac; "
+    "echo \"GMC $m\";; "
     "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
     "case \"$m\" in [0-5][0-5][0-5][0-5][0-5][0-5]) ;; *) m=" + GAMBIT_DEFAULTS + ";; esac; "
     "echo \"GMB $m\";; "
@@ -467,13 +496,24 @@ REMOTE_LOOP = (
     "dd if=/proc/self/fd/3 bs=256 skip=224 count=2 2>/dev/null; exec 3<&-; "
     "else echo NONE; fi;; "
     "act\\ *) a=${cmd#act }; "
-    "case \"$a\" in ''|*[!a-z_]*) echo BAD;; "
+    "case \"$a\" in ''|*[!a-z0-9_]*) echo BAD;; "
     "*) printf '%s\\n' \"$a\" > /tmp/flxtr-som-ai-action && echo OK || echo BAD;; esac;; "
     r'msg\ *) t=${cmd#msg }; '
     r'case "$t" in ""|*[!A-Za-z0-9\ .,!?:/%+=\(\)\|\^-]*) echo BAD;; '
     r'*) printf "%s\n" "$t" > /tmp/flxtr-som-ai-message && echo OK || echo BAD;; esac;; '
     "*) echo BAD;; esac; done"
 )
+# Preferred device side: tools/som_wram_server.py (same requests, no fork per
+# request, `dlt` deltas). An older device without it answers NOSERVER and the
+# link uses REMOTE_LOOP; SOM_AI_SHELL_LOOP=1 forces the shell loop.
+SERVER_BANNER = "SOMWS 1"
+def server_remote(profile="ai"):
+    return ("f=/home/apps/greenlink/tools/som_wram_server.py; "
+            "if [ -f $f ]; then exec sh /home/apps/greenlink/scripts/music-runtime.sh $f"
+            + ("" if profile == "ai" else " --profile " + profile) + "; fi; echo NOSERVER")
+
+
+SERVER_REMOTE = server_remote()
 # Characters the Steam Link loop and the overlay font both accept.
 MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|^-]")
 WRAM_BYTES = 0x20000
@@ -484,7 +524,7 @@ class RemoteLink:
     """Keep one SSH session open for WRAM reads and actions."""
 
     def __init__(self, host: str, timeout: float = 5.0, remote_loop: str = REMOTE_LOOP,
-                 ssh_command=None, compress=True, partial=True):
+                 ssh_command=None, compress=True, partial=True, server=None):
         self.host, self.timeout = host, timeout
         self.remote_loop = remote_loop
         self.ssh_command = list(ssh_command or SSH_BASE)
@@ -492,9 +532,40 @@ class RemoteLink:
         self.compress = compress
         self.partial = partial and compress
         self.base, self.hot_reads = None, 0
+        # tools/som_wram_server.py on the device (same protocol + `dlt`); only
+        # for the default loop, so tools with their own restricted loop keep it.
+        if server is None:
+            server = SERVER_REMOTE if remote_loop is REMOTE_LOOP else ""
+        self.server = server if os.environ.get("SOM_AI_SHELL_LOOP") != "1" else ""
+        self.serving = False                 # current session runs the server
+        self.server_failures = 0
+        self.delta_base = bytes(WRAM_BYTES)  # last `dlt` image, per session
+        self.stats = {"requests": 0, "bytes": 0, "seconds": 0.0, "sessions": 0}
 
     def _start(self):
         self.close()
+        self.stats["sessions"] += 1
+        if self.server:
+            self.process = subprocess.Popen(
+                [*self.ssh_command, "-o", "ServerAliveInterval=5", self.host, self.server],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                bufsize=0)
+            try:
+                # The bundled Python takes about a second to start on the device.
+                banner = self._read_line(time.monotonic() + max(self.timeout, 15.0))
+            except (OSError, subprocess.SubprocessError):
+                banner = ""
+            if banner == SERVER_BANNER:
+                self.serving, self.server_failures = True, 0
+                self.delta_base = bytes(WRAM_BYTES)
+                return
+            self.close()
+            self.server_failures += 1
+            if banner != "NOSERVER" and self.server_failures < 2:
+                raise OSError("observation server did not start")   # retried once
+            print(f"[ai] observation server unavailable ({banner or 'no reply'}); "
+                  "using the shell loop", flush=True)
+            self.server = ""
         self.process = subprocess.Popen(
             [*self.ssh_command, "-o", "ServerAliveInterval=5", self.host, self.remote_loop],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -502,6 +573,7 @@ class RemoteLink:
 
     def close(self):
         process, self.process = self.process, None
+        self.serving, self.delta_base = False, bytes(WRAM_BYTES)
         if process is not None:
             try:
                 process.stdin.close()
@@ -556,12 +628,27 @@ class RemoteLink:
                 raise OSError(f"unexpected SSH link reply {bytes(data)!r}")
         return data.decode("ascii", "replace").strip()
 
+    def _read_delta(self, status: str, deadline: float) -> bytes:
+        """`WRAMB <n>` + n bytes of zlib(block bitmap + changed 512-byte blocks)."""
+        size = status[6:]
+        if not size.isdigit() or not 0 < int(size) <= 2 * WRAM_BYTES:
+            raise OSError(f"bad delta header {status!r}")
+        try:
+            delta = zlib.decompress(self._read_exact(int(size), deadline))
+            self.delta_base = apply_block_delta(self.delta_base, delta)
+        except (zlib.error, ValueError) as exc:
+            raise OSError(f"bad WRAM delta: {exc}") from exc
+        return self.delta_base
+
     def _request(self, line: str):
         for attempt in (0, 1):
             try:
                 if self.process is None or self.process.poll() is not None:
                     self._start()
-                deadline = time.monotonic() + self.timeout
+                if line in ("dlt", "dltm") and not self.serving:
+                    return "NOSERVER", None
+                started = time.monotonic()
+                deadline = started + self.timeout
                 self.process.stdin.write(line.encode() + b"\n")
                 status = self._read_line(deadline)
                 payload = (self._read_exact(WRAM_BYTES, deadline)
@@ -572,6 +659,12 @@ class RemoteLink:
                     payload = self._read_gzip(deadline, HOT_BYTES)
                 if status == "NAV":
                     payload = self._read_exact(768, deadline)
+                if status.startswith("WRAMB "):
+                    wire = int(status[6:]) if status[6:].isdigit() else 0
+                    payload, status = self._read_delta(status, deadline), "WRAMB"
+                    self.stats["bytes"] += wire
+                self.stats["requests"] += 1
+                self.stats["seconds"] += time.monotonic() - started
                 return status, payload
             except (OSError, subprocess.SubprocessError):
                 # The stream may be mid-frame; restart once, then fail safe.
@@ -582,7 +675,16 @@ class RemoteLink:
     def fetch_wram(self, require_marker=False):
         # The Steam Link link carries ~210 KB/s; gzip -1 shrinks the 128 KiB
         # snapshot ~3x, and hot reads (HOT_RANGES_KB) cut a decision's read
-        # from ~290 ms to ~160 ms.
+        # from ~290 ms to ~160 ms. With the observation server every read is
+        # a complete current image sent as a delta (a few hundred bytes).
+        if self.server:
+            status, image = self._request("dltm" if require_marker else "dlt")
+            if status == "STOP":
+                return None
+            if status == "WRAMB":
+                return image
+            if status != "NOSERVER":
+                raise OSError(f"WRAM snapshot unavailable ({status})")
         if self.partial and self.base is not None and self.hot_reads < FULL_EVERY:
             status, hot = self._request("hotmz" if require_marker else "hotz")
             if status == "STOP":
@@ -612,6 +714,14 @@ class RemoteLink:
         digits = status[4:] if status.startswith("GMB ") else ""
         if len(digits) != len(GAMBIT_NAMES) or any(c not in "012345" for c in digits):
             raise OSError(f"gambits unavailable ({status})")
+        return tuple(int(c) for c in digits)
+
+    def fetch_combat(self):
+        """The combat gambits (tuple of 0..5, COMBAT_NAMES order)."""
+        status, _ = self._request("gmc")
+        digits = status[4:] if status.startswith("GMC ") else ""
+        if len(digits) != len(COMBAT_NAMES) or any(c not in "012345" for c in digits):
+            raise OSError(f"combat gambits unavailable ({status})")
         return tuple(int(c) for c in digits)
 
     def fetch_familiar(self):
@@ -747,6 +857,13 @@ class AndroidRelayLink:
             raise OSError("Android gambits unavailable")
         return tuple(int(c) for c in text)
 
+    def fetch_combat(self):
+        pending = self._wait_pending()
+        text = pending[1].get("combat", COMBAT_DEFAULTS) if pending else COMBAT_DEFAULTS
+        if len(text) != len(COMBAT_NAMES) or any(c not in "012345" for c in text):
+            text = COMBAT_DEFAULTS
+        return tuple(int(c) for c in text)
+
     def fetch_familiar(self):
         pending = self._wait_pending()
         value = pending[1].get("familiar", 0) if pending else 0
@@ -812,6 +929,7 @@ INTENT_MESSAGES = {
     "evade_enemy": "AI: body flicker|afterimage",
     "go_to_shop": "AI: plenty of GP|going to buy Candy",
     "cut_grass": "AI: cutting grass",
+    "whip_cross": "AI: whip post|swinging across",
 }
 
 
@@ -1212,6 +1330,14 @@ def main() -> int:
     # damage it took with no blocking (13-14 Nov afternoon), but only 0.4-1.6x
     # once it guarded after swings and when hit; guarding costs swings.
     planner.build = None              # log the hero's build once it is read
+    class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
+    spell_ready_at = 0.0
+    grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
+    tool_out = "sword"                           # tool weapon taken out (sword/whip)
+    weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
+    combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
+    style = dict(zip(COMBAT_NAMES, combat))
+    charge_failed = False
     tactic_learner = attack_predictor = None
     if not args.no_anticipation and history is not None and args.policy in ("hybrid", "memory"):
         attack_predictor = AttackPredictor(history.connection)
@@ -1510,6 +1636,28 @@ def main() -> int:
                               flush=True)
                     gambits = weights
                     apply_gambits(planner, play_loop, gambits)
+                    try:
+                        fighting = link.fetch_combat()
+                    except (OSError, subprocess.SubprocessError, AttributeError):
+                        fighting = combat
+                    if fighting != combat:
+                        print("[combat] " + ", ".join(
+                            f"{name} {weight}" for name, weight in zip(COMBAT_NAMES, fighting)),
+                              flush=True)
+                    combat = fighting
+                    style = dict(zip(COMBAT_NAMES, combat))
+                    # Press vs keep distance overrides the build's preference.
+                    profile = dict(build_profile(build))
+                    if style["distance"] > style["press"]:
+                        profile["preferred"] = "kite"
+                    elif style["press"] > style["distance"]:
+                        profile["preferred"] = "press"
+                    planner.build_profile = profile
+                    planner.charge_disabled = charge_failed or style["charge"] == 0
+                    class_director.cooldown = (None if style["classes"] == 0 else
+                                               150.0 / style["classes"])
+                    weapon_tactics.cooldown = (None if style["weapons"] == 0 else
+                                               12.0 / style["weapons"])
                 shop_offer = (shop_errand(wram_now, observation, shop, gold, 0,
                                           gambits[GAMBIT_SHOP])
                               if wram_now is not None and not shop_disabled and
@@ -1522,14 +1670,16 @@ def main() -> int:
                 offered = offered_goals(summary, args.hunt_direction, reachable)
                 if args.policy == "hybrid":
                     try:
-                        requested_map, selected, director_error = director_results.get_nowait()
+                        requested_map, selected, director_error, asked = \
+                            director_results.get_nowait()
                         director_running = False
                         if director_error is not None:
                             directive_turns = 3
                             directive_map = current_map
                             print(f"[qwen-director] unavailable; keeping goal {goal}: "
                                   f"{director_error}", flush=True)
-                        elif requested_map != current_map or selected not in offered:
+                        elif (requested_map != current_map or selected not in offered or
+                              time.monotonic() - asked > DIRECTOR_MAX_AGE):
                             print(f"[qwen-director] ignored stale goal {selected}", flush=True)
                         else:
                             if selected != goal:
@@ -1553,15 +1703,16 @@ def main() -> int:
                     request = (current_map, dict(summary), list(offered), goal)
                     def direct_in_background(request_data=request):
                         requested_map, facts, choices, current = request_data
+                        started = time.monotonic()
                         try:
-                            started = time.monotonic()
                             selected = choose_goal(args.ollama_url, args.model,
                                                    args.objective, facts, choices, current)
                             print(f"[qwen-director] answered in "
                                   f"{time.monotonic() - started:.1f}s", flush=True)
-                            director_results.put((requested_map, selected, None))
-                        except (OSError, ValueError) as exc:
-                            director_results.put((requested_map, None, str(exc)))
+                            director_results.put((requested_map, selected, None, started))
+                        except Exception as exc:  # any failure must free the director
+                            director_results.put((requested_map, None,
+                                                  f"{type(exc).__name__}: {exc}", started))
                     threading.Thread(target=direct_in_background, daemon=True,
                                      name="som-qwen-director").start()
                     director_running = True
@@ -1647,6 +1798,149 @@ def main() -> int:
                         print(f"[inn] map {context['map_id']} looks like the taught inn "
                               f"({score:.0%} of tiles); teach it to use it", flush=True)
                         announce("AI: this looks like an inn|teach it to use it")
+                if (link and wram_now is not None and not args.dry_run and
+                        mode == "field"):
+                    hero0 = (observation.get("party") or [{}])[0] or {}
+                    # Infinite MP (test) refills above the maximum.
+                    max_mp = max(hero0.get("max_mp") or 0, hero0.get("mp") or 0)
+                    try:
+                        levels = wram_now.weapons(0).get("levels") or {}
+                    except (ValueError, KeyError, IndexError):
+                        levels = {}
+                    # Grass: keep the class, just slash with the sword and
+                    # put the class weapon back afterwards.
+                    try:
+                        held = wram_now.weapons(0).get("type")
+                    except (ValueError, KeyError, IndexError):
+                        held = None
+                    # Whip posts: the same with the whip (planner whip_cross).
+                    tool = TOOL_WEAPONS.get(decision.intention)
+                    if tool is not None:
+                        grass_clear_steps = 0
+                        label = "grass" if tool == "sword" else "whip"
+                        if held is not None and held != tool:
+                            try:
+                                link.send_control(f"equip_{tool}")
+                                if grass_restore is None:
+                                    grass_restore = held
+                                tool_out = tool
+                                print(f"[{label}] {tool} out (was {held}): "
+                                      f"{decision.reason}", flush=True)
+                                previous = "wait"
+                                continue
+                            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                print(f"[{label}] {tool} switch failed: {exc}", flush=True)
+                    elif grass_restore is not None:
+                        grass_clear_steps += 1
+                        if grass_clear_steps >= 10 and held == tool_out:
+                            try:
+                                link.send_control(f"equip_{grass_restore}")
+                                print(f"[grass] back to the {grass_restore}", flush=True)
+                            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                print(f"[grass] weapon restore failed: {exc}", flush=True)
+                            grass_restore = None
+                        elif held != tool_out:
+                            grass_restore = None
+                    actor_now = context.get("actor") or {}
+                    foes = [e for e in observation.get("enemy_slots", [])
+                            if e.get("active") and not e.get("familiar")]
+                    gaps = [max(abs(e["x_px"] - actor_now.get("x_px", 0)),
+                                abs(e["y_px"] - actor_now.get("y_px", 0))) for e in foes]
+                    pick = class_director.choose(
+                        build, levels, max_mp, False,
+                        enemy_within(observation, CLASS_CONTACT_PX) or grass_restore is not None,
+                        hp_fraction=(hero0.get("hp") or 0) / max(1, hero0.get("max_hp") or 1),
+                        enemies=len(foes), nearest=min(gaps) if gaps else None,
+                        toughest=max((e.get("max_hp") or 0 for e in foes
+                                      if e.get("hp_plausible")), default=0))
+                    if pick is not None:
+                        index, why = pick
+                        try:
+                            link.send_control(f"class_{index}")
+                            class_director.switched(index)
+                            print(f"[class] {CLASS_NAMES[index]}: {why}", flush=True)
+                            announce(f"{CLASS_LINES[index]}|{CLASS_NAMES[index]}: {why[:28]}")
+                            if decision.intention in TOOL_WEAPONS:
+                                previous = "wait"   # let the tool weapon come out first
+                                continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[class] switch failed: {exc}", flush=True)
+                    hp, max_hp = hero0.get("hp") or 0, hero0.get("max_hp") or 0
+                    # Alternate the class's two weapons (som_weapon_tactics):
+                    # reach against the nearest enemy, low HP, training.
+                    if (class_director.current is not None and grass_restore is None and
+                            held is not None and decision.action not in ("attack", "charge")):
+                        actor = context.get("actor") or {}
+                        gaps = [max(abs(e["x_px"] - actor.get("x_px", 0)),
+                                    abs(e["y_px"] - actor.get("y_px", 0)))
+                                for e in observation.get("enemy_slots", [])
+                                if e.get("active") and not e.get("familiar")]
+                        primary, secondary = CLASS_WEAPONS[class_director.current]
+                        swap = weapon_tactics.decide(primary, secondary, held,
+                                                     min(gaps) if gaps else None,
+                                                     hp / max_hp if max_hp else 1.0, levels)
+                        if swap is not None:
+                            weapon, why = swap
+                            try:
+                                link.send_control(f"equip_{weapon}")
+                                print(f"[weapon] {held} -> {weapon}: {why}", flush=True)
+                                announce(f"AI: {weapon}|{why[:30]}")
+                                previous = "wait"
+                                continue
+                            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                print(f"[weapon] switch failed: {exc}", flush=True)
+                    now = time.monotonic()
+                    command = None
+                    if (class_director.current is not None and now >= spell_ready_at and
+                            style["magic"] > 0 and (hero0.get("mp") or 0) >= 2):
+                        if (class_director.current in HEALERS and max_hp and
+                                hp < max_hp * 0.40):
+                            command = "cast_heal"
+                        elif (class_director.current in ATTACK_MAGIC and
+                              decision.intention == "engage_enemy" and
+                              enemy_within(observation, DASH_ENEMY_PX)):
+                            command = "cast_attack"
+                    if command:
+                        try:
+                            link.send_control(command)
+                            spell_ready_at = now + 14.0 / style["magic"]
+                            print(f"[magic] {command} as {CLASS_NAMES[class_director.current]}",
+                                  flush=True)
+                            previous = "wait"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[magic] {command} failed: {exc}", flush=True)
+                            spell_ready_at = now + 30.0
+                # Guard vs evade (combat gambits): a planned block becomes the
+                # class's evade/jutsu when evading is weighted higher, and is
+                # dropped when guarding is 0.
+                if link and decision.action == "block":
+                    if (style["evade"] > style["guard"] and
+                            class_director.current in DODGE_CLASSES):
+                        try:
+                            link.send_control("evade")
+                            print(f"[combat] evade instead of guarding ({decision.reason})",
+                                  flush=True)
+                            previous = "wait"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[combat] evade failed: {exc}", flush=True)
+                    if style["guard"] == 0:
+                        decision = PlannerDecision("wait", "guarding is off (combat gambit 0)",
+                                                   decision.intention)
+                # Charged attacks without holding: the proxy's special_<n>
+                # sets the gauge once the swing ends (needs a class).
+                if (link and decision.action == "charge" and class_director.current is not None and
+                        1 <= (decision.charge_stage or 0) <= 8):
+                    try:
+                        link.send_control(f"special_{decision.charge_stage}")
+                        print(f"[charge] stage {decision.charge_stage} without holding",
+                              flush=True)
+                        previous = "attack"
+                        continue
+                    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                        print(f"[charge] instant stage failed: {exc}; holding instead",
+                              flush=True)
                 if link and decision.action == "charge":
                     if learner is not None:
                         learner.cancel("charged attack macro")
@@ -1666,7 +1960,7 @@ def main() -> int:
                         print(f"[charge] failed ({charge_failures}/{MAX_CHARGE_FAILURES}): "
                               f"{exc}", flush=True)
                         if charge_failures >= MAX_CHARGE_FAILURES:
-                            planner.charge_disabled = True
+                            planner.charge_disabled = charge_failed = True
                             print("[charge] disabled for this run; plain swings only",
                                   flush=True)
                     previous = "attack"

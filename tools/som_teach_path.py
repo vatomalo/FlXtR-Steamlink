@@ -7,7 +7,10 @@ across once while this runs; it only reads WRAM. Afterwards:
 
 - every tile you stood on is walkable for the AI, whatever the grid says;
 - the collision signature of each conditional tile you crossed is learned,
-  so other bridges built from the same tiles become walkable on any map.
+  so other bridges built from the same tiles become walkable on any map;
+- a whip post you swing across (whip equipped, face the post, attack) is
+  learned as a crossing the AI will use, and its post tiles are recognised
+  elsewhere.
 
     systemctl --user stop flxtr-som-ai.service
     python3 tools/som_teach_path.py
@@ -35,14 +38,18 @@ def main():
     link = RemoteLink(args.host)
     before = history.passable_signatures()
     before_cuts = history.cuttable_signatures()
+    before_posts = history.whip_post_signatures()
     print("Walk the path (e.g. across the bridge and a few steps beyond).\n"
           "To teach grass cutting, stand next to grass, face it and attack it.\n"
+          "To teach a whip post, equip the whip, face the post and swing across.\n"
           "Press Enter here when done.\n", flush=True)
     try:
         tiles, maps = record_walk(link, history, args.interval)
         learned = history.passable_signatures() - before
         cuts = history.cuttable_signatures() - before_cuts
         print(f"Learned {len(cuts)} new cuttable tile type(s): {sorted(cuts)}")
+        posts = history.whip_post_signatures() - before_posts
+        print(f"Learned {len(posts)} new whip post tile type(s): {sorted(posts)}")
         print(f"Learned {tiles} tile observations on {len(maps)} map(s) and "
               f"{len(learned)} new walkable tile type(s): {sorted(learned)}")
         if not learned:

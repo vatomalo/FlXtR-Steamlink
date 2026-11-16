@@ -91,10 +91,11 @@ done:
     retro_deinit();free(data);SDL_UnloadObject(library);
     if(!result){
         unsigned width=av.geometry.base_width,height=av.geometry.base_height;
-        if(probe_rotation&1){unsigned swap=width;width=height;height=swap;}
+        double aspect=av.geometry.aspect_ratio>0?av.geometry.aspect_ratio:(double)width/height;
+        if(probe_rotation&1){unsigned swap=width;width=height;height=swap;aspect=1.0/aspect;}
         SDL_DisplayMode display={0};
         if(want_display&&!SDL_InitSubSystem(SDL_INIT_VIDEO)){SDL_GetCurrentDisplayMode(0,&display);SDL_QuitSubSystem(SDL_INIT_VIDEO);}
-        printf("FLXTR_GEOMETRY %u %u %d %d\n",width,height,display.w,display.h);
+        printf("FLXTR_GEOMETRY %u %u %d %d %.6f\n",width,height,display.w,display.h,aspect);
     }
     return result;
 }

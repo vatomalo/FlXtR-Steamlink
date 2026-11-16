@@ -21,6 +21,8 @@ hp_penalty=${SOM_AI_HP_PENALTY:-2}
 extra_args=()
 # Guard/counter learning; off by default because it cost swings (see bridge).
 [ "${SOM_AI_BLOCK:-0}" != 0 ] && extra_args+=(--block-learning)
+# The player's wanted build (e.g. "Bushido,Archery,Ninjutsu"); empty = the AI decides.
+[ -n "${SOM_AI_WANTED_CLASSES:-}" ] && extra_args+=(--wanted-classes "$SOM_AI_WANTED_CLASSES")
 loop_args=()
 transport_args=(--wram-remote --ring-control)
 if [ "${SOM_AI_ANDROID:-0}" != 0 ]; then

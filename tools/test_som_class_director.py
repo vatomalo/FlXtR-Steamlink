@@ -80,3 +80,72 @@ class ClassDirectorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WantedBuildTest(unittest.TestCase):
+    """The wanted build: AI plan from stats and record, training rotation."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.director = ClassDirector(self.clock)
+
+    def test_player_names_classes_by_name_prefix_or_number(self):
+        from som_class_director import parse_classes
+        self.assertEqual(parse_classes("Bushido, arch, 2"), [10, 11, 2])
+        with self.assertRaises(ValueError):
+            parse_classes("S")                       # Swordsmanship or Summoning?
+
+    def test_ai_plan_follows_the_record_once_classes_are_tried(self):
+        from som_class_director import plan_classes
+        untried, _ = plan_classes("balanced")
+        self.assertIn(8, untried)                    # stat fit leads at first
+        record = {8: (200, 100, 200), 0: (200, 900, 50), 10: (200, 800, 40)}
+        learned, why = plan_classes("balanced", record)
+        self.assertNotIn(8, learned)                 # Weapon Flow lost HP badly
+        self.assertIn(0, learned)
+        self.assertIn("Swordsmanship", why)
+
+    def test_healers_need_mp_for_the_plan(self):
+        from som_class_director import plan_classes
+        self.assertNotIn(4, plan_classes("guardian", {4: (100, 900, 0)}, max_mp=0)[0])
+
+    def test_calm_rotates_to_the_least_trained_wanted_class(self):
+        self.director.set_plan([8, 10, 11])
+        self.director.switched(8)
+        self.clock.now = 1000
+        levels = {"sword": 3, "spear": 3, "bow": 0, "javelin": 0}
+        index, why = self.director.choose("balanced", levels, 0)
+        self.assertEqual(index, 11)                  # Archery: bow and javelin untrained
+        self.assertIn("training", why)
+        self.director.switched(11)
+        self.clock.now = 2000
+        levels = {"sword": 3, "spear": 3, "bow": 1, "javelin": 1}
+        self.assertIsNone(self.director.choose("balanced", levels, 0))   # keeps training
+
+    def test_calm_does_not_drift_back_to_the_default_class(self):
+        self.director.set_plan([10, 11, 2])
+        self.director.switched(10)
+        self.clock.now = 1000
+        self.assertIsNone(self.director.choose("balanced", {"sword": 2, "bow": 2,
+                                                            "boomerang": 2, "javelin": 2}, 0))
+
+    def test_fights_favour_wanted_classes_but_strong_needs_still_win(self):
+        self.director.set_plan([0, 10, 11])
+        index, _ = self.director.choose("balanced", {}, 0, enemies=1, nearest=30)
+        self.assertIn(index, (0, 10, 11))
+        index, _ = ClassDirector(self.clock).choose("balanced", {}, 20, hp_fraction=0.2,
+                                                    enemies=1, nearest=30)
+        self.assertEqual(index, 4)                   # Cure Water when hurt
+
+    def test_record_counts_damage_per_class(self):
+        import sqlite3
+        from som_class_director import ClassRecord
+        record = ClassRecord(sqlite3.connect(":memory:"))
+        def state(hero_hp, enemy_hp):
+            return {"party": [{"hp": hero_hp, "max_hp": 100}],
+                    "tile_context": {"map_id": 1, "actor": {"x_px": 0, "y_px": 0}},
+                    "enemy_slots": [{"slot": 1, "active": True, "identity": 7,
+                                     "x_px": 20, "y_px": 0, "hp": enemy_hp}]}
+        record.record(state(80, 50), 10)
+        record.record(state(75, 30), 10)
+        self.assertEqual(record.stats(), {10: (1, 20, 5)})

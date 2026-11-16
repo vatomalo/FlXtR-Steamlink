@@ -41,7 +41,8 @@ from som_build import classify as classify_build, profile as build_profile
 from som_wram_server import apply_block_delta
 from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
                                 ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
-                                CONTACT_PX as CLASS_CONTACT_PX)
+                                CONTACT_PX as CLASS_CONTACT_PX, ClassRecord,
+                                parse_classes, plan_classes)
 from som_weapon_tactics import WeaponTactics
 from som_jutsu import JutsuTactics
 from som_class_arts import IaiTactics
@@ -77,6 +78,7 @@ GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 COMBAT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_combat"
 COMBAT_DEFAULTS = "32223333"
 COMBAT_NAMES = ("press", "distance", "guard", "evade", "charge", "magic", "classes", "weapons")
+PLAN_REFRESH_S = 600.0  # seconds between re-plans of the AI's wanted build
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
 # Intentions the personality comments on (som_personality.LINES events).
 SPOKEN_INTENTIONS = {"explore_frontier", "engage_enemy", "defend_enemy", "kite_enemy",
@@ -1151,6 +1153,9 @@ def main() -> int:
                         help="deterministic hunt -> shop -> inn -> save cycle (som_play_loop.py)")
     parser.add_argument("--hunt-map", type=int,
                         help="play loop hunting map (default: best gold per HP from memory)")
+    parser.add_argument("--wanted-classes", default="",
+                        help="the player's wanted build: comma-separated classes the hero "
+                             "trains and favours (names or 0-11); empty = the AI decides")
     parser.add_argument("--trip-gold", type=int, default=100,
                         help="play loop: GP to earn per hunting trip")
     parser.add_argument("--no-anticipation", action="store_true",
@@ -1337,6 +1342,14 @@ def main() -> int:
     # once it guarded after swings and when hit; guarding costs swings.
     planner.build = None              # log the hero's build once it is read
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
+    player_plan = parse_classes(args.wanted_classes)
+    if player_plan:
+        class_director.set_plan(player_plan, fixed=True)
+        print("[plan] player's wanted build: " +
+              ", ".join(CLASS_NAMES[i] for i in player_plan), flush=True)
+    class_record = (ClassRecord(history.connection)
+                    if history is not None and args.policy in ("hybrid", "memory") else None)
+    plan_checked_at = None
     spell_ready_at = 0.0
     buff_ready_at = 0.0                           # sabers / body buffs (BUFF_CLASSES)
     charge_settle_until = 0.0                     # an instant charge still running
@@ -1819,6 +1832,17 @@ def main() -> int:
                         levels = wram_now.weapons(0).get("levels") or {}
                     except (ValueError, KeyError, IndexError):
                         levels = {}
+                    # The AI's wanted build: re-planned now and then from the
+                    # class record, unless the player fixed it.
+                    if (not class_director.wanted_fixed and (plan_checked_at is None or
+                            time.monotonic() - plan_checked_at >= PLAN_REFRESH_S)):
+                        plan_checked_at = time.monotonic()
+                        wanted, plan_why = plan_classes(
+                            build, class_record.stats() if class_record else None, max_mp)
+                        if class_director.set_plan(wanted):
+                            names = ", ".join(CLASS_NAMES[i] for i in wanted)
+                            print(f"[plan] wanted build: {names} ({plan_why})", flush=True)
+                            announce(f"My path: {names[:40]}|AI build plan")
                     # Grass: keep the class, just slash with the sword and
                     # put the class weapon back afterwards.
                     try:
@@ -2227,6 +2251,8 @@ def main() -> int:
                     block_learner.record(observation, sent_action)
                 if tactic_learner is not None and observation is not None:
                     tactic_learner.record(observation)
+                if class_record is not None and observation is not None:
+                    class_record.record(observation, class_director.current)
                 if attack_predictor is not None and observation is not None:
                     attack_predictor.record(observation)
             if history is not None and observation is not None:

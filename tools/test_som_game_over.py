@@ -77,7 +77,7 @@ class FakeScreen:
 
     def __init__(self, mode, d0=0, e4=1, e6=0x0F, cursor=0):
         self.mode, self.bytes = mode, {0x7E00D0: d0, 0x7E00E4: e4, 0x7E00E6: e6,
-                                       0x7EA211: cursor}
+                                       0x7EA211: cursor, 0x7EE000: 1}
 
     def game_mode(self):
         return self.mode
@@ -98,7 +98,7 @@ class GameOverLoadTest(unittest.TestCase):
             end = clock.now + seconds
             while clock.now < end:
                 result = load.observe(load_observation(mode, hp), wram)
-                if result:
+                if result and result[0] != "hold":
                     results.append(result[0])
                 clock.now += 0.25
         return results
@@ -119,14 +119,33 @@ class GameOverLoadTest(unittest.TestCase):
         ])
         self.assertEqual(results, ["confirm"] * 4 + ["loaded"])
 
-    def test_never_presses_without_a_death_in_the_field(self):
+    def test_never_presses_while_the_hero_has_hp(self):
         from som_game_over import GameOverLoad
         clock = Clock()
         load = GameOverLoad(clock)
         self.assertEqual(self.play(load, clock, [
             ("event", 90, FakeScreen("event", 0x83), 5),           # a story dialogue
-            ("event", 0, FakeScreen("event", 0x83), 5),            # HP 0 never seen in field
+            ("transition", 90, FakeScreen("transition", 0, 0, 0), 5),
         ]), [])
+
+    def test_arms_when_hp_reaches_zero_inside_the_death_event(self):
+        # Live 16 Nov: the last field sample had 4 HP; 0 appeared in the event.
+        from som_game_over import GameOverLoad
+        clock = Clock()
+        load = GameOverLoad(clock)
+        results = self.play(load, clock, [
+            ("field", 4, FakeScreen("field"), 1),
+            ("event", 0, FakeScreen("event", 0x83), 1.5),
+            ("transition", 0, FakeScreen("transition", 0, 0, 0, 0x40), 1.5),
+            ("field", 127, FakeScreen("field"), 1)])
+        self.assertEqual(results, ["confirm", "confirm", "loaded"])
+
+    def test_holds_the_controls_between_presses(self):
+        from som_game_over import GameOverLoad
+        clock = Clock()
+        load = GameOverLoad(clock)
+        result = load.observe(load_observation("event", 0), FakeScreen("event", 0x82))
+        self.assertEqual(result[0], "hold")
 
     def test_gives_up_after_the_press_limit(self):
         from som_game_over import GameOverLoad, LOAD_MAX_PRESSES

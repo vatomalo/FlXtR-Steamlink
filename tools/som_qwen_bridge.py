@@ -1532,6 +1532,11 @@ def main() -> int:
             if observation is not None and args.policy in ("hybrid", "memory"):
                 reload = game_over_load.observe(observation,
                                                 WRAM(raw) if raw is not None else None)
+                if reload is not None and reload[0] == "hold":
+                    # The loader owns the controls until the save is back.
+                    previous = "wait"
+                    time.sleep(args.interval)
+                    continue
                 if reload is not None:
                     kind, reason = reload
                     print(f"[death] {reason}", flush=True)

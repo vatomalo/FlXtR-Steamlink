@@ -134,8 +134,11 @@ LOAD_WINDOW_S = 120.0      # a death this long ago no longer authorizes presses
 class GameOverLoad:
     """Press confirm through the game-over screens until the save is loaded.
 
-    Only while the hero is at HP 0 after being seen dying in the field, only
-    on event and transition screens, one press per settled screen, at most
+    Armed by the hero at HP 0 with his object active (field, event or
+    transition: HP often reaches 0 only once the death event has begun, so
+    a field sample at 0 was never seen live). While armed it owns the
+    controls ("hold" between presses) so the dialogue escape cannot press
+    cancel on the death menu. One press per settled screen, at most
     LOAD_MAX_PRESSES. Done when the hero stands in the field with HP again.
     """
 
@@ -169,26 +172,27 @@ class GameOverLoad:
         if hp != 0 or wram is None:
             return None
         if self.died_at is None:
-            if mode != "field":
-                return None             # only a death seen in the field arms it
+            if mode not in ("field", "event", "transition") or wram.u8(0x7EE000) != 1:
+                return None
             self.died_at = now
         if self.gave_up or now - self.died_at > LOAD_WINDOW_S:
             return None
+        hold = ("hold", "game over: waiting for the next screen")
         if mode not in ("event", "transition"):
-            return None
+            return hold
         screen = self._screen(wram)
         if self.screen is None or self.screen[0] != screen:
             self.screen = (screen, now)
-            return None
+            return hold
         passive = ((mode == "event" and screen[1] in PASSIVE_EVENTS) or
                    (mode == "transition" and screen[2] != 0))
         settle = LOAD_PASSIVE_S if passive else LOAD_SETTLE_S
         if self.pressed_screen is not None and self.pressed_screen[0] == screen:
             if now - self.pressed_screen[1] < LOAD_REPEAT_S:
-                return None
+                return hold
         if (now - self.screen[1] < settle or
                 (self.pressed_at is not None and now - self.pressed_at < LOAD_PRESS_GAP_S)):
-            return None
+            return hold
         if self.presses >= LOAD_MAX_PRESSES:
             self.gave_up = True
             return ("stuck", f"still not loaded after {self.presses} presses")

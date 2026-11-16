@@ -1933,6 +1933,10 @@ def main() -> int:
                             except (OSError, subprocess.SubprocessError, ValueError) as exc:
                                 weapon_tactics.refused()
                                 print(f"[weapon] switch failed: {exc}", flush=True)
+                    # One trials sample per decision: settle the last one
+                    # before this decision's knobs are read (jutsu, evade).
+                    if trials is not None:
+                        trials.record(observation)
                     # Kawarimi before an expected hit, Shunshin clones in a
                     # fight (som_jutsu); the evade below stays the plain hop.
                     if class_director.current is not None and grass_restore is None:
@@ -1962,8 +1966,6 @@ def main() -> int:
                                             hp / max_hp if max_hp else 1.0,
                                             decision.action == "block", style["evade"],
                                             **learned)
-                        if trials is not None:
-                            trials.record(observation)
                         if cast is not None:
                             name, why = cast
                             try:
@@ -2008,10 +2010,20 @@ def main() -> int:
                             spell_ready_at = now + 30.0
                 # Guard vs evade (combat gambits): a planned block becomes the
                 # class's evade/jutsu when evading is weighted higher, and is
-                # dropped when guarding is 0.
+                # dropped when guarding is 0. Equal weights (the default 2/2
+                # never evaded once, 16 Nov): som_trials learns per enemy type
+                # which of the two costs less HP.
                 if link and decision.action == "block":
-                    if (style["evade"] > style["guard"] and
-                            class_director.current in DODGE_CLASSES):
+                    evade_now = style["evade"] > style["guard"]
+                    if (style["evade"] == style["guard"] and style["evade"] and
+                            trials is not None and class_director.current in DODGE_CLASSES):
+                        foe = min((e for e in observation.get("enemy_slots", [])
+                                   if e.get("active") and not e.get("familiar") and
+                                   isinstance(e.get("x_px"), int)),
+                                  key=lambda e: abs(e["x_px"] - (context.get("actor") or {})
+                                                    .get("x_px", 0)), default=None)
+                        evade_now = bool(trials.value("evade", (foe or {}).get("identity")))
+                    if evade_now and class_director.current in DODGE_CLASSES:
                         try:
                             link.send_control("evade")
                             print(f"[combat] evade instead of guarding ({decision.reason})",

@@ -28,7 +28,8 @@ MARGIN = 0.5              # the default value stays unless clearly worse
 STALE_S = 2.0             # a sample not settled by then is dropped
 ALL = -1                  # context id of the all-enemy record
 
-# knob: (default, candidates). Defaults are the old hand-set numbers.
+# knob: (default, candidates[, decisions per value before it is trusted]).
+# Defaults are the old hand-set numbers.
 KNOBS = {
     # Kawarimi: arm when an enemy is this close (px) ...
     "kawarimi_px": (40, (24, 40, 64)),
@@ -36,6 +37,9 @@ KNOBS = {
     "kawarimi_hp": (0.5, (0.5, 0.75, 1.01)),
     # Shunshin: cast the clones when an enemy is this close (px).
     "shunshin_px": (80, (48, 80, 120)),
+    # A planned guard: 0 = guard (block), 1 = the class's evade hop. Used
+    # only while the guard and evade combat gambits are equal.
+    "evade": (0, (0, 1), 10),        # rare decisions: judge sooner
 }
 
 
@@ -59,6 +63,10 @@ class TrialLearner:
                 "context INTEGER NOT NULL, value REAL NOT NULL, samples INTEGER NOT NULL, "
                 "total REAL NOT NULL, PRIMARY KEY (knob, context, value))")
 
+    def min_samples(self, knob):
+        spec = self.knobs[knob]
+        return spec[2] if len(spec) > 2 else MIN_SAMPLES
+
     def stats(self, knob, context):
         out = {value: (0, 0.0) for value in self.knobs[knob][1]}
         for value, samples, total in self.db.execute(
@@ -71,21 +79,22 @@ class TrialLearner:
 
     def value(self, knob, context=None):
         """The value of knob in force against this enemy type (None = any)."""
-        default, candidates = self.knobs[knob]
         context = ALL if not isinstance(context, int) else context
         key = (knob, context)
         current = self.current.get(key)
         if current is None or current[1] <= 0:
-            current = self.current[key] = [self._choose(knob, context), COMMIT]
+            current = self.current[key] = [self._choose(knob, context),
+                                           min(COMMIT, self.min_samples(knob))]
         self.in_use[knob] = (context, current[0])
         return current[0]
 
     def _choose(self, knob, context):
-        default, candidates = self.knobs[knob]
+        default, candidates = self.knobs[knob][:2]
+        needed = self.min_samples(knob)
         stats = self.stats(knob, context)
-        if context != ALL and all(stats[v][0] < MIN_SAMPLES for v in candidates):
+        if context != ALL and all(stats[v][0] < needed for v in candidates):
             stats = self.stats(knob, ALL)          # new enemy: borrow experience
-        untried = [v for v in candidates if stats[v][0] < MIN_SAMPLES]
+        untried = [v for v in candidates if stats[v][0] < needed]
         if default in untried:
             return default
         if untried:

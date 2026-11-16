@@ -57,6 +57,17 @@ class TrialLearnerTest(unittest.TestCase):
         self.trials.current.clear()
         self.assertEqual(self.trials.value("px", 7), 40)
 
+    def test_rare_knobs_judge_sooner(self):
+        trials = TrialLearner(sqlite3.connect(":memory:"), log=lambda line: None, seed=1,
+                              knobs={"evade": (0, (0, 1), 10)}, clock=self.clock)
+        seen = []
+        hero = 90
+        for _ in range(25):
+            seen.append(trials.value("evade", 7))
+            trials.record(state(hero, 100))
+            self.clock.now += 0.5
+        self.assertIn(1, seen[:21])                          # evade tried within 20
+
     def test_stale_samples_are_dropped(self):
         self.trials.value("px", 7)
         self.trials.record(state(90, 100))

@@ -44,7 +44,8 @@ from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WE
                                 CONTACT_PX as CLASS_CONTACT_PX, ClassRecord,
                                 parse_classes, plan_classes)
 from som_weapon_tactics import WeaponTactics
-from som_jutsu import JutsuTactics
+from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
+from som_trials import TrialLearner
 from som_class_arts import IaiTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, THIRD_WEAPONS
 from som_anticipate import AttackPredictor
@@ -1357,6 +1358,7 @@ def main() -> int:
     tool_out = "sword"                           # tool weapon taken out (sword/whip)
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
     jutsu = JutsuTactics()                        # Kawarimi / Shunshin (som_jutsu)
+    trials = None                                 # learned thresholds (som_trials)
     iai = IaiTactics()                            # samurai Iaijutsu (som_class_arts)
     combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
     style = dict(zip(COMBAT_NAMES, combat))
@@ -1369,6 +1371,7 @@ def main() -> int:
         tactic_learner = TacticLearner(history.connection,
                                        log=lambda line: print(line, flush=True))
         planner.tactic_learner = tactic_learner
+        trials = TrialLearner(history.connection, log=lambda line: print(line, flush=True))
     if args.block_learning and history is not None and args.policy in ("hybrid", "memory"):
         block_learner = BlockLearner(history.connection, log=lambda line: print(line, flush=True))
         planner.block_learner = block_learner
@@ -1937,10 +1940,28 @@ def main() -> int:
                                 for e in observation.get("enemy_slots", [])
                                 if e.get("active") and not e.get("familiar") and
                                 isinstance(e.get("x_px"), int) and isinstance(e.get("y_px"), int)]
+                        learned = {}
+                        foe = (min((e for e in observation.get("enemy_slots", [])
+                                    if e.get("active") and not e.get("familiar") and
+                                    isinstance(e.get("x_px"), int) and
+                                    isinstance(e.get("y_px"), int)),
+                                   key=lambda e: max(abs(e["x_px"] - actor.get("x_px", 0)),
+                                                     abs(e["y_px"] - actor.get("y_px", 0))),
+                                   default=None) if near else None)
+                        if trials is not None and foe is not None:
+                            identity = foe.get("identity")
+                            if class_director.current in JUTSU_DODGE:
+                                learned["kawarimi_px"] = trials.value("kawarimi_px", identity)
+                                learned["kawarimi_hp"] = trials.value("kawarimi_hp", identity)
+                            if class_director.current == NINJA:
+                                learned["shunshin_px"] = trials.value("shunshin_px", identity)
                         cast = jutsu.decide(class_director.current, held,
                                             min(near) if near else None,
                                             hp / max_hp if max_hp else 1.0,
-                                            decision.action == "block", style["evade"])
+                                            decision.action == "block", style["evade"],
+                                            **learned)
+                        if trials is not None:
+                            trials.record(observation)
                         if cast is not None:
                             name, why = cast
                             try:

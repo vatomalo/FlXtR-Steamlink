@@ -150,7 +150,7 @@ def main(argv=None):
         for name in DEVICE_DATA:
             live = "/home/apps/retroarch/cores/experimental/" + name
             setup.append("[ ! -f %s ] || cp %s %s/" % (live, live, run_dir))
-        run = ("cd %s && FLXTR_SOM_AI_DIRECT=1 FLXTR_SOM_AUTO_STATE=0 ./som-harness "
+        run = ("cd %s && FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 ./som-harness "
                "./som_ai_proxy_test.so %s %s scenario.txt %s") % (
                    shlex.quote(run_dir), shlex.quote(rom), shlex.quote(start), shlex.quote(run_dir))
         cleanup = "rm -rf %s" % shlex.quote(run_dir)

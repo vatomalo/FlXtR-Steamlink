@@ -127,6 +127,22 @@ class TestPlannerUsesTheWhip(unittest.TestCase):
         self.assertIn("whip post", decision.reason)
         self.assertIn("1/3", decision.reason)
 
+    def test_the_recorded_map30_post_is_known_without_learning(self):
+        # Map 30, 2026-11-16: hero on the trigger tile (28,8) facing a
+        # 3-tile gap (BA walls); post A1 (13 07 F8 6F) at (32,8), floor past it.
+        gap, post, floor, trigger = "13060000", "1307f86f", "12060000", "10800000"
+        row = [floor] * 5 + [trigger] + [gap] * 3 + [post] + [floor]
+        attrs = [" ".join([floor] * 11)] * 5 + [" ".join(row[0:11])] + [" ".join([floor] * 11)] * 5
+        rows = ["..........."] * 5 + ["....." + "@###" + "#."] + ["..........."] * 5
+        terrain = ["22222222222"] * 5 + ["22222" + "2###" + "#2"] + ["22222222222"] * 5
+        observation = state((28, 8), rows, terrain, attrs, weapon="sword")
+        observation["tile_context"]["radius"] = 5
+        planner = MemoryPlanner()
+        planner.whip_ready = True
+        options = planner._whip_options(observation["tile_context"])
+        self.assertIn("step_right", options)
+        self.assertIn("whip post", options["step_right"])
+
     def test_route_uses_a_learned_crossing(self):
         cells = {(x, y): "h2" for x in range(8, 13) for y in range(7, 11)}
         cells.update({(x, y): "h1" for x in range(8, 13) for y in range(13, 16)})

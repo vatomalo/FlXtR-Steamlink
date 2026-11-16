@@ -68,52 +68,48 @@ static inline unsigned som_bun_draw_copy(uint8_t *pixels,unsigned width,unsigned
     }
     return drawn;
 }
-/* Kawarimi's log: an upright 12x18 log standing on base pixel (cx, cy)
- * (the hero's feet). Placeholder art until the game's whip-post graphics
- * are captured from VRAM. */
-static const char *const som_bun_log_art[18]={
-    "   oooooo   ",
-    " oo++++++oo ",
-    "o++=++++=++o",
-    "o+=+====+=+o",
-    " oo++++++oo ",
-    "o##b##b###bo",
-    "o#b###b##b#o",
-    "o##b##b###bo",
-    "o#b##b###b#o",
-    "o##b##b#b##o",
-    "o#b###b##b#o",
-    "o##b##b###bo",
-    "o#b##b###b#o",
-    "o##b#b##b##o",
-    "o#b###b##b#o",
-    "ob##b##b##bo",
-    " oo######oo ",
-    "   oooooo   "
+/* Kawarimi's log: the game's whip post (the tree stump the whip catches
+ * to cross a ledge), copied from VRAM on map 30 (2026-11-16: BG1 tile
+ * A1, characters 0x300/0x301/0x310/0x311, BG palette 1). Drawn 16x16 with
+ * its feet on base pixel (cx, cy), the hero's feet. Digits are colours
+ * 1-6 of that palette; '.' (the grass around it) is transparent. */
+static const char *const som_bun_log_art[16]={
+    "......555.......",
+    ".....54445......",
+    "....4333345.....",
+    "....5133326.....",
+    "....4511256.....",
+    "....4434556.....",
+    "....4434546.....",
+    "....4534546.....",
+    "....4545546.....",
+    "....4545546.....",
+    "....4445556.....",
+    "....5444556555..",
+    "...554445566665.",
+    "...5643455666665",
+    "....56334666665.",
+    ".....566666665.."
+};
+static const uint8_t som_bun_log_rgb[7][3]={
+    {0,0,0},{98,115,90},{82,115,82},{74,90,49},{49,90,57},{41,49,24},{16,49,24}
 };
 static inline void som_bun_draw_log(uint8_t *pixels,unsigned width,unsigned height,
                                     size_t pitch,int format,int cx,int cy){
     if(!pixels)return;
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
     const int base_w=(int)(width/sx),base_h=(int)(height/sy);
-    const uint32_t outline=som_overlay_color(format,52,30,16);
-    const uint32_t bark=som_overlay_color(format,128,80,40);
-    const uint32_t groove=som_overlay_color(format,88,52,26);
-    const uint32_t wood=som_overlay_color(format,226,186,120);
-    const uint32_t ring=som_overlay_color(format,176,128,72);
-    for(int row=0;row<18;row++)for(int col=0;col<12;col++){
-        uint32_t colour;
-        switch(som_bun_log_art[row][col]){
-        case 'o':colour=outline;break;
-        case '#':colour=bark;break;
-        case 'b':colour=groove;break;
-        case '+':colour=wood;break;
-        case '=':colour=ring;break;
-        default:continue;
-        }
-        const int x=cx-6+col,y=cy-15+row;
+    uint32_t colours[7];
+    for(unsigned i=1;i<7u;i++)
+        colours[i]=som_overlay_color(format,som_bun_log_rgb[i][0],som_bun_log_rgb[i][1],
+                                     som_bun_log_rgb[i][2]);
+    for(int row=0;row<16;row++)for(int col=0;col<16;col++){
+        const char c=som_bun_log_art[row][col];
+        if(c<'1'||c>'6')continue;
+        const int x=cx-8+col,y=cy-13+row;
         if(x<0||y<0||x>=base_w||y>=base_h)continue;
-        som_overlay_fill(pixels,pitch,format,(unsigned)x*sx,(unsigned)y*sy,sx,sy,colour);
+        som_overlay_fill(pixels,pitch,format,(unsigned)x*sx,(unsigned)y*sy,sx,sy,
+                         colours[c-'0']);
     }
 }
 /* An explosion (or a smoke puff) centred on base pixel (cx, cy), `age`

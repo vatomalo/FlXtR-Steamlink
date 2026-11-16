@@ -10,7 +10,7 @@ from som_curiosity import Curiosity, LINGER_RADIUS
 from som_build import profile as build_profile
 from som_tactics import CLOSE_SWING_PX
 
-from som_memory import detect_cuts, detect_whip_crossing, held_weapon, hero_airborne
+from som_memory import detect_cuts, detect_whip_crossing, held_weapon, hero_airborne, is_whip_post
 
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
@@ -1554,7 +1554,8 @@ class MemoryPlanner:
                 if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
                     break
                 cells = attrs[row].split()
-                if column < len(cells) and cells[column] in posts:
+                if column < len(cells) and (cells[column] in posts or
+                                            is_whip_post(cells[column])):
                     post = True
                 # Terrain codes are height-independent: the floor below a
                 # ledge is "#" in the hero-relative markers but "1"/"2" here.

@@ -566,6 +566,23 @@ def held_weapon(state):
     return (hero.get("weapon") or {}).get("type")
 
 
+# Whip posts, recorded live on map 30 (2026-11-16, the player crossing a
+# 3-tile gap both ways): the post is a solid tile with ground code b2 0xF8
+# (tile A1, attributes 13 07 F8 6F) on the far side, in line with a trigger
+# tile (b1 bit 7) the hero stands on to swing. The hero lands on the floor
+# just past the post.
+WHIP_POST_CODE = 0xF8
+
+
+def is_whip_post(attributes):
+    """A tile with these attribute bytes (hex string) is a known whip post."""
+    try:
+        values = bytes.fromhex(attributes)
+    except (TypeError, ValueError):
+        return False
+    return len(values) == 4 and values[2] == WHIP_POST_CODE
+
+
 def whip_post_signature(attributes):
     """Could a tile with these attribute bytes be a whip post?
 

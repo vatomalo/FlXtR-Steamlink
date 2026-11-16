@@ -165,6 +165,38 @@ class TestPlannerUsesTheWhip(unittest.TestCase):
         swing = planner.decide(state((10, 10), weapon="sword"), "step_down", "explore_south")
         self.assertEqual((swing.action, swing.intention), ("attack", "whip_cross"))
 
+    def test_walks_to_a_visible_post_and_swings_without_stalling(self):
+        # The post (0xF8) is two columns right of the hero, across the cliff:
+        # head for the launch tile above it with the whip out (intention
+        # whip_cross), then face down and swing; no bumping into the ledge.
+        post = "1307f86f"
+        attrs = [" ".join([HIGH] * 7)] * 4 + [
+            " ".join([WALL] * 5 + [post] + [WALL]), " ".join([WALL] * 7),
+            " ".join([LOW] * 7)]
+        planner = MemoryPlanner()
+        walk = planner.decide(state((10, 10), attrs=attrs, weapon="sword"), "wait",
+                              "explore_south")
+        self.assertEqual((walk.action, walk.intention), ("step_right", "whip_cross"),
+                         walk.reason)
+        self.assertIn("launch tile 12,10", walk.reason)
+        here = [" ".join([HIGH] * 7)] * 4 + [
+            " ".join([WALL] * 3 + [post] + [WALL] * 3), " ".join([WALL] * 7),
+            " ".join([LOW] * 7)]
+        face = planner.decide(state((12, 10), attrs=here), "step_right", "explore_south")
+        self.assertEqual((face.action, face.turn_only), ("step_down", True), face.reason)
+        swing = planner.decide(state((12, 10), attrs=here), "step_down", "explore_south")
+        self.assertEqual((swing.action, swing.intention), ("attack", "whip_cross"))
+
+    def test_a_post_whose_landing_was_visited_is_not_chased(self):
+        post = "1307f86f"
+        here = [" ".join([HIGH] * 7)] * 4 + [
+            " ".join([WALL] * 3 + [post] + [WALL] * 3), " ".join([WALL] * 7),
+            " ".join([LOW] * 7)]
+        planner = MemoryPlanner()
+        planner._visits = lambda map_id, layer, x, y: 1 if (x, y) == (10, 13) else 0
+        decision = planner.decide(state((10, 10), attrs=here), "step_down", "explore_south")
+        self.assertNotEqual(decision.intention, "whip_cross", decision.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

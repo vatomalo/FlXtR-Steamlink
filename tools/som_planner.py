@@ -39,6 +39,10 @@ WEAPON_MIN_PX = {w.name: w.min_px for w in RANGES if w.min_px}
 # DEAD_END_COST extra steps on a route.
 VALUE_STEP = 5
 DEAD_END_COST = 6
+# Long-range weapons back away from an enemy closer than this, at most
+# KITE_STEPS steps in a row before shooting anyway.
+KEEP_DISTANCE_PX = 44
+KITE_STEPS = 4
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -198,6 +202,7 @@ class MemoryPlanner:
         self.attack_predictor = None
         self.anticipated = 0
         self.kited_swing = None
+        self.kite_steps = 0                  # long-range back-off steps in a row
         self.swing_decided_at = None
         self.just_hit = False
         self.previous_action = "none"
@@ -589,6 +594,10 @@ class MemoryPlanner:
                               context["actor"].get("floor_height"),
                               self._dead_end_weights(map_id, layer, cells),
                               jumps=self._whip_jumps(context))
+        if self.whip_ready:
+            whip = self._post_approach(context, routes, open_steps)
+            if whip is not None:
+                return whip
         intention = self._get_intention()
         valid = (isinstance(intention, dict) and intention.get("kind") == "explore" and
                  intention.get("map_id") == map_id and intention.get("layer") == layer and
@@ -747,6 +756,18 @@ class MemoryPlanner:
                              "x_px": enemy["x_px"], "y_px": enemy["y_px"],
                              "misses": 0})
         recharge = hero.get("weapon_recharge")
+        # Long range: keep the enemy at arm's length. Shoot when lined up and
+        # ready (handled below); otherwise step away while it is inside
+        # KEEP_DISTANCE_PX, at most KITE_STEPS in a row so a hero cornered
+        # or chased down still fights back.
+        held_now = (hero.get("weapon") or {}).get("type")
+        if is_long(held_now) and observation.get("weapons_enabled"):
+            kite = self._keep_distance(enemy, held_now, dx, dy, distance, recharge,
+                                       open_steps)
+            if kite is not None:
+                return kite
+        else:
+            self.kite_steps = 0
         # Turbo's R guard blocks physical hits. Defend briefly when the
         # weapon is still recharging and an enemy is already in striking
         # distance. Cooldown prevents standing still blocking forever.
@@ -896,6 +917,36 @@ class MemoryPlanner:
                 enemy.get("hp", 0) < CHARGE_MIN_ENEMY_HP):
             return 0
         return min(int(weapon["level"]), CHARGE_MAX_STAGE)
+
+    def _keep_distance(self, enemy, held, dx, dy, distance, recharge, open_steps):
+        """A step away from an enemy too close for a long-range weapon, or
+        None (far enough, a ready shot lined up, or KITE_STEPS used up)."""
+        if distance >= KEEP_DISTANCE_PX:
+            self.kite_steps = 0
+            return None
+        reach, nearest = WEAPON_REACH_PX.get(held, DEFAULT_STRIKE_AXIAL_PX), WEAPON_MIN_PX.get(held, 0)
+        lined = ((nearest < abs(dx) <= reach and abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
+                 (nearest < abs(dy) <= reach and abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
+        ready = recharge in (None, 0) and self.previous_action not in ("attack", "charge")
+        if lined and ready:
+            self.kite_steps = 0              # shoot now; back off again after
+            return None
+        if self.kite_steps >= KITE_STEPS:
+            return None                      # chased down: fight from here
+        # Straight away on the enemy's axis first, then sideways away from it.
+        options = []
+        for action in open_steps:
+            sx, sy = STEP_OFFSETS[action]
+            gain = (dx - sx * 16) ** 2 + (dy - sy * 16) ** 2 - (dx * dx + dy * dy)
+            if gain > 0:
+                options.append((gain, action))
+        if not options:
+            return None                      # cornered: fight
+        self.kite_steps += 1
+        action = max(options)[1]
+        return PlannerDecision(action, f"keep distance from enemy {enemy['slot']} "
+                               f"({distance} px, {held} wants {KEEP_DISTANCE_PX}+)",
+                               "kite_enemy")
 
     @staticmethod
     def _line_up(enemy, held, dx, dy, reach, nearest, open_steps):
@@ -1609,25 +1660,8 @@ class MemoryPlanner:
         for action, (dx, dy) in STEP_OFFSETS.items():
             if action in options:
                 continue
-            barrier, landing, post = False, None, False
-            for distance in range(1, min(WHIP_REACH_TILES, radius) + 1):
-                row, column = radius + dy * distance, radius + dx * distance
-                if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
-                    break
-                cells = attrs[row].split()
-                if column < len(cells) and (cells[column] in posts or
-                                            is_whip_post(cells[column])):
-                    post = True
-                # Terrain codes are height-independent: the floor below a
-                # ledge is "#" in the hero-relative markers but "1"/"2" here.
-                code = terrain[row][column] if column < len(terrain[row]) else "#"
-                if barrier and distance >= 2 and code in ".12=":
-                    landing = distance
-                    break
-                if rows[row][column] in "#?":
-                    barrier = True
-                elif not barrier:
-                    break     # open ground first: just walk
+            landing, post = self._whip_scan(rows, terrain, attrs, radius, radius,
+                                            dx, dy, min(WHIP_REACH_TILES, radius), posts)
             if landing is None:
                 continue
             if post:
@@ -1636,6 +1670,84 @@ class MemoryPlanner:
                 options[action] = f"probe: floor {landing} tiles beyond the ledge"
         return {a: w for a, w in options.items()
                 if self._whip_key(context, a) not in self.whip_blocked}
+
+    @staticmethod
+    def _whip_scan(rows, terrain, attrs, row0, column0, dx, dy, reach, posts):
+        """(landing distance or None, post seen) for a swing from window cell
+        (row0, column0): a wall or ledge first, then floor 2+ tiles out."""
+        barrier, post = False, False
+        for distance in range(1, reach + 1):
+            row, column = row0 + dy * distance, column0 + dx * distance
+            if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
+                break
+            cells = attrs[row].split() if row < len(attrs) else []
+            if column < len(cells) and (cells[column] in posts or
+                                        is_whip_post(cells[column])):
+                post = True
+            # Terrain codes are height-independent: the floor below a
+            # ledge is "#" in the hero-relative markers but "1"/"2" here.
+            line = terrain[row] if row < len(terrain) else ""
+            code = line[column] if column < len(line) else "#"
+            if barrier and distance >= 2 and code in ".12=":
+                return distance, post
+            if rows[row][column] in "#?":
+                barrier = True
+            elif not barrier:
+                break     # open ground first: just walk
+        return None, post
+
+    def _post_approach(self, context, routes, open_steps):
+        """Head straight for a visible whip post instead of waiting to stall
+        at the ledge: every open tile in view that has a post in line across
+        a gap is a launch spot; on one, swing; else route to the nearest.
+        Spots whose landing tile was already stood on are skipped (no
+        crossing back and forth), learned crossings are left to routing."""
+        rows, terrain, attrs, radius = (context.get("passability_rows"),
+                                        context.get("terrain_rows"),
+                                        context.get("attribute_rows"), context.get("radius"))
+        if not (isinstance(rows, list) and isinstance(terrain, list) and
+                isinstance(attrs, list) and isinstance(radius, int)):
+            return None
+        map_id, layer = context.get("map_id"), (context.get("actor") or {}).get("layer")
+        here = tuple(context.get("actor_tile") or ())
+        if len(here) != 2:
+            return None
+        learned = {(tuple(c["from"]), c["action"]) for c in self._learned_crossings(map_id, layer)}
+        posts = self._post_signatures()
+        best = None
+        for row in range(len(rows)):
+            for column in range(len(rows[row])):
+                if rows[row][column] in "#?":
+                    continue
+                tile = (here[0] + column - radius, here[1] + row - radius)
+                distance = 0 if tile == here else (routes.get(tile) or (None, None))[1]
+                if tile != here and (distance is None or tile not in routes):
+                    continue
+                for action, (dx, dy) in STEP_OFFSETS.items():
+                    if (tile, action) in learned or (map_id, layer, *tile, action) in self.whip_blocked:
+                        continue
+                    reach = min(WHIP_REACH_TILES, radius)
+                    landing, post = self._whip_scan(rows, terrain, attrs, row, column,
+                                                    dx, dy, reach, posts)
+                    if landing is None or not post:
+                        continue
+                    far = (tile[0] + dx * landing, tile[1] + dy * landing)
+                    if self._visits(map_id, layer, *far):
+                        continue
+                    if best is None or distance < best[0]:
+                        best = (distance, tile, action, landing)
+        if best is None:
+            return None
+        distance, tile, action, landing = best
+        why = f"whip post within {landing} tiles"
+        if tile == here:
+            return self._whip_cross(context, action, why)
+        step = routes[tile][0]
+        if step not in open_steps:
+            return None
+        return PlannerDecision(step, f"to the whip post launch tile {tile[0]},{tile[1]} "
+                               f"({distance} tiles), then whip {action[5:]}",
+                               "whip_cross", distance, routes.straight(tile))
 
     def _whip_cross(self, context, action, why):
         """Face across the gap with a tap, then swing the whip (the bridge

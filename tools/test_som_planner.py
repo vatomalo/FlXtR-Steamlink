@@ -92,6 +92,39 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertEqual("line up" in decision.reason, held in LONG_RANGE,
                              (held, decision.reason))
 
+    def test_long_range_weapon_keeps_its_distance(self):
+        # Bow, enemy 20 px right and recharging: step away (left), not guard.
+        planner = MemoryPlanner()
+        planner.assumed_facing = "step_right"
+        def near(x, recharge=40):
+            state = observation(enemy={"slot": 1, "active": True, "x_px": x, "y_px": 56},
+                                recharge=recharge)
+            state["party"][0]["weapon"] = {"type": "bow"}
+            return state
+        decision = planner.decide(near(60), previous="step_right")
+        self.assertEqual((decision.action, decision.intention), ("step_left", "kite_enemy"),
+                         decision.reason)
+        # Ready and lined up: shoot even though it is close.
+        decision = planner.decide(near(64, recharge=0), previous="step_right")
+        self.assertEqual(decision.action, "attack", decision.reason)
+        # Far enough: no back-off.
+        decision = planner.decide(near(100), previous="step_right")
+        self.assertNotEqual(decision.intention, "kite_enemy", decision.reason)
+        # A sword never kites this way.
+        state = observation(enemy={"slot": 1, "active": True, "x_px": 60, "y_px": 56},
+                            recharge=40)
+        state["party"][0]["weapon"] = {"type": "sword"}
+        self.assertNotIn("keep distance", MemoryPlanner().decide(state).reason)
+
+    def test_cornered_or_chased_long_range_hero_fights(self):
+        planner = MemoryPlanner()
+        state = observation(rows=("...", "#@.", "..."),
+                            enemy={"slot": 1, "active": True, "x_px": 60, "y_px": 56},
+                            recharge=40)
+        state["party"][0]["weapon"] = {"type": "bow"}
+        planner.kite_steps = 4
+        self.assertNotIn("keep distance", planner.decide(state).reason)
+
     def test_does_not_swing_at_enemy_outside_contact_reach(self):
         planner = MemoryPlanner()
         planner.assumed_facing = "step_right"

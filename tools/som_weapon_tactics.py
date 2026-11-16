@@ -9,8 +9,9 @@ Rules, first match wins:
 1. Too close for the whip (it misses under ~18 px): the other weapon.
 2. Low HP (under 40 %) and an enemy near: the longer reach, to fight from
    outside the enemy's bite.
-3. Enemy beyond melee reach but inside the other weapon's: the longer
-   reach, so the hero hits without walking into it.
+3. Enemy beyond melee reach (also beyond the long weapon's): the longer
+   reach. The hero shoots or lashes as soon as it is in range instead of
+   walking up to the enemy; the planner strikes at the held weapon's reach.
 4. Enemy at melee range: the stronger weapon here, the higher weapon level
    (more charge levels), else the primary.
 5. No enemy near: train the weaker weapon when it lags two levels behind,
@@ -46,7 +47,7 @@ def choose(primary, secondary, held, distance, hp_fraction, levels):
         if hp_fraction < LOW_HP and reach(longer) > reach(shorter):
             return longer, (f"HP {hp_fraction:.0%}: the {longer} hits from "
                             f"{reach(longer)} px, outside the enemy's reach")
-        if reach(shorter) < distance <= reach(longer):
+        if distance > reach(shorter) and reach(longer) > reach(shorter):
             return longer, (f"enemy {distance} px away: the {longer} reaches "
                             f"{reach(longer)} px, the {shorter} only {reach(shorter)}")
         stronger = max(pair, key=lambda w: (levels.get(w, 0), w == primary))

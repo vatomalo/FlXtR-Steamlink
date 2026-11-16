@@ -648,6 +648,16 @@ static unsigned hop_frames_left;
 static void som_hop_step(void);
 static void som_evade_shield(uint8_t *ram);
 static SomBoom bunshin_booms[SOM_BUN_BOOMS];
+/* Kawarimi: the log left standing where the hero was (world px). */
+#define SOM_KAWARIMI_LOG_FRAMES 48ul
+static int kawarimi_log_x,kawarimi_log_y;
+static unsigned long kawarimi_log_start;
+static unsigned kawarimi_log_map;
+/* A arms Kawarimi for SOM_KAWARIMI_ARM_FRAMES; it fires only when a
+ * monster touches (or hits) the hero meanwhile. */
+#define SOM_KAWARIMI_ARM_FRAMES 180ul
+static unsigned long kawarimi_armed_until;
+static int som_kawarimi_check(uint8_t *ram);
 static void som_bunshin_frame(uint8_t *ram);
 static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y);
 /* R1+A bash (swordsman): the game's own run for up to SOM_BASH_LUNGE_FRAMES
@@ -1630,6 +1640,15 @@ static void som_bunshin_draw(uint8_t *pixels,unsigned width,unsigned height,size
             if(bunshin.alive[i])
                 som_bun_draw_copy(pixels,width,height,pitch,pixel_format,ram,vram,
                                   bunshin.x[i]-hx,bunshin.y[i]-hy);
+    if(kawarimi_log_start){
+        const unsigned long age=frame_number-kawarimi_log_start;
+        if(age>=SOM_KAWARIMI_LOG_FRAMES||som_bun_u16(ram+0xDC)!=kawarimi_log_map){
+            if(som_bun_u16(ram+0xDC)==kawarimi_log_map)
+                som_bun_boom(bunshin_booms,kawarimi_log_x,kawarimi_log_y,1,frame_number);
+            kawarimi_log_start=0;
+        }else som_bun_draw_log(pixels,width,height,pitch,pixel_format,
+                               hero_x+(kawarimi_log_x-hx),hero_y+(kawarimi_log_y-hy));
+    }
     for(unsigned i=0;i<SOM_BUN_BOOMS;i++){
         SomBoom *b=&bunshin_booms[i];
         if(!b->start)continue;
@@ -1696,14 +1715,15 @@ static int som_evade_start(uint8_t *ram){
     if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||
        hero[0x060]||hero[0x01C]==0x40||hero[0x01C]==0x80||
        (som_word(hero+0x190)&0xC160u))return 0;
-    /* Ninjutsu jutsu by the weapon in hand: sword = Shunshin (forward
-     * leap), chakram/boomerang = Kage Bunshin (two shadow clones). With
+    /* Ninjutsu jutsu by the weapon in hand: sword = Shunshin no Jutsu,
+     * chakram/boomerang = Kage Bunshin no Jutsu. Both put a shadow clone on
+     * each side of the ninja, across his facing (clone, ninja, clone). With
      * clones out, A swaps the ninja into one instead. */
     const int ninja=disciplines.selected==2u;
     if(ninja&&som_bun_alive(&bunshin))
         return som_bunshin_swap(ram,0,0,0,evade_dir_x,evade_dir_y);
-    const int shunshin=ninja&&hero[0x1E4]==1u;
-    if(ninja&&hero[0x1E4]==6u){
+    if(ninja&&(hero[0x1E4]==1u||hero[0x1E4]==6u)){
+        const char *jutsu=hero[0x1E4]==1u?"Shunshin no Jutsu":"Kage Bunshin no Jutsu";
         const unsigned made=som_bun_spawn(&bunshin,ram,(int)som_bun_u16(hero+2),
             (int)som_bun_u16(hero+4),hero[0x010],som_hero_place(hero),frame_number);
         if(!made){
@@ -1712,37 +1732,91 @@ static int som_evade_start(uint8_t *ram){
         }
         for(unsigned i=0;i<SOM_BUN_COUNT;i++)
             if(bunshin.alive[i])som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
-        som_overlay_set(&overlay,"^Kage Bunshin no Jutsu",SOM_MESSAGE_FRAMES/2u);
-        fprintf(stderr,"[som-ai] EVADE Kage Bunshin: %u clone(s)\n",made);
+        char title[40];snprintf(title,sizeof(title),"^%s",jutsu);
+        som_overlay_set(&overlay,title,SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] EVADE %s: %u clone(s)\n",jutsu,made);
         return 1;
     }
     const SomDodge dodge=som_disc_dodge(disciplines.selected,hero[0x1E4]);
     if(!dodge.speed)return 0;
-    /* The held direction, else back from (or, forward: toward) the facing. */
-    int dx=evade_dir_x,dy=evade_dir_y;
-    if(!dx&&!dy){
-        const unsigned facing=hero[0x010];
-        if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;
-        else if(facing==0x01u)dy=1;else dy=-1;
-        if(!dodge.forward){dx=-dx;dy=-dy;}
+    /* Kawarimi is only armed here; som_kawarimi_check fires it when a
+     * monster touches or hits him before the window closes. */
+    kawarimi_armed_until=frame_number+SOM_KAWARIMI_ARM_FRAMES;
+    som_overlay_set(&overlay,"^" SOM_KAWARIMI_NAME "|ready",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] EVADE %s armed as %s for %lu frames\n",
+            dodge.name,som_discipline_names[disciplines.selected],SOM_KAWARIMI_ARM_FRAMES);
+    return 1;
+}
+/* Before each frame while Kawarimi is armed: a monster touching the hero,
+ * or a hit queued on him (E059 mask / pending damage E1F1), makes him
+ * vanish in smoke and reappear up to speed * frames px away from the
+ * monster (Dodge Mastery lengthens it) on open ground, never through a
+ * wall; the hit is dropped and a log stands where he was. He then stays
+ * untouchable for the move plus SOM_DODGE_GRACE frames. Returns 1 when it
+ * fired. */
+static int som_kawarimi_check(uint8_t *ram){
+    if(!kawarimi_armed_until||!ram)return 0;
+    uint8_t *hero=ram+0xE000u;
+    if(frame_number>kawarimi_armed_until||evade_active||disciplines.selected>=SOM_DISCIPLINE_COUNT){
+        kawarimi_armed_until=0;return 0;
     }
-    /* Dodge Mastery lengthens the move, not the grace (no longer i-frames). */
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return 0;
+    const int x0=(int)som_bun_u16(hero+2),y0=(int)som_bun_u16(hero+4);
+    const int toucher=som_bun_toucher(ram,x0,y0,SOM_BUN_HERO_TOUCH_X,SOM_BUN_HERO_TOUCH_Y,
+                                      familiar.slot);
+    const int hit=hero[0x059]||hero[0x1F1]||hero[0x1F2];
+    if(toucher<0&&!hit)return 0;
+    const SomDodge dodge=som_disc_dodge(disciplines.selected,hero[0x1E4]);
+    if(!dodge.speed){kawarimi_armed_until=0;return 0;}
+    /* Away from the monster on its stronger axis, else back from the facing. */
+    int dx=0,dy=0;
+    if(toucher>=0){
+        const uint8_t *o=ram+SOM_BUN_MONSTER_BASE+(unsigned)toucher*SOM_BUN_OBJECT;
+        const int mx=x0-(int)som_bun_u16(o+2),my=y0-(int)som_bun_u16(o+4);
+        if(abs(mx)>=abs(my))dx=mx>=0?1:-1;else dy=my>=0?1:-1;
+    }else{
+        const unsigned facing=hero[0x010];
+        if(facing==0x02u)dx=-1;else if(facing==0x82u)dx=1;
+        else if(facing==0x01u)dy=-1;else dy=1;
+    }
     const unsigned move=dodge.frames+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
-    hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
-    evade_frames=move+SOM_DODGE_GRACE;
+    const unsigned place=som_hero_place(hero);
+    int x=x0,y=y0;
+    for(unsigned k=0;k<dodge.speed*move;k++){
+        if(!som_bun_spot_open(ram,x+dx,y+dy,place))break;
+        x+=dx;y+=dy;
+    }
+    hero[0x059]=0;hero[0x1F1]=hero[0x1F2]=0;
+    hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
     hero[0x006]=hero[0x007]=0;
+    kawarimi_armed_until=0;
+    hop_dx=hop_dy=0;hop_frames_left=0;
+    evade_frames=move+SOM_DODGE_GRACE;
     evade_hp=som_word(hero+0x182);
-    evade_active=1;evade_started=frame_number;evade_xp_given=0;
-    som_overlay_set(&overlay,shunshin?"^Shunshin no Jutsu":"^Evade",SOM_MESSAGE_FRAMES/2u);
-    fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
-            dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,move);
+    evade_active=1;evade_started=frame_number;evade_xp_given=1;
+    kawarimi_log_x=x0;kawarimi_log_y=y0;kawarimi_log_start=frame_number?frame_number:1u;
+    kawarimi_log_map=som_bun_u16(ram+0xDC);
+    som_bun_boom(bunshin_booms,x0,y0,1,frame_number);
+    if(x!=x0||y!=y0)som_bun_boom(bunshin_booms,x,y,1,frame_number);
+    som_overlay_set(&overlay,"^" SOM_KAWARIMI_NAME "!",SOM_MESSAGE_FRAMES/2u);
+    if(toucher>=0)
+        som_xp_give(disciplines.selected,SOM_XP_DODGE,
+                    ram[SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)toucher+0x180u],
+                    SOM_XPK_DODGE,"kawarimi");
+    fprintf(stderr,"[som-ai] EVADE %s fired (%s): %d,%d -> %d,%d\n",dodge.name,
+            toucher>=0?"touched":"hit",x0,y0,x,y);
     return 1;
 }
 /* Before each frame: carry the dodging hero one step, per axis, onto open
  * ground only (src/som_bunshin.h); a wall ends the travel, not the guard.
  * Records the after-image trail. */
 static void som_hop_step(void){
-    if(!evade_active||!backend_retro_get_memory_data)return;
+    if(!backend_retro_get_memory_data)return;
+    if(kawarimi_armed_until){
+        uint8_t *armed=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(armed)som_kawarimi_check(armed);
+    }
+    if(!evade_active)return;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram)return;
     uint8_t *hero=ram+0xE000u;
@@ -2851,7 +2925,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     char combo_text[24];som_combo_text_at(&combo,som_combo_effective_level(),combo_text);
     if(menu)combo_text[0]=0;
     const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||
-                             frame_number<=trail_until);
+                             kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
     if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
@@ -3030,7 +3104,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
-    som_bun_clear(&bunshin);memset(bunshin_booms,0,sizeof(bunshin_booms));
+    som_bun_clear(&bunshin);memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
     hop_dx=hop_dy=0;hop_frames_left=0;
     special_chord=0;special_suppress=0;

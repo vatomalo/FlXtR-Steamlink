@@ -1,5 +1,5 @@
-# Proxy-driven dodge: moves the hero, no Barrel status, ends.
-#! expect-log EVADE Evade as Swordsmanship
+# Kawarimi: A only arms it (no monster touches the hero here, so he stays put); no Barrel status.
+#! expect-log EVADE Kawarimi no Jutsu armed as Swordsmanship
 #! expect-no-log \] XP \w
 # Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
 frames 900
@@ -24,7 +24,6 @@ frames 6
 expect u8 E191 == 0
 shot dodge_mid
 frames 30
-expect-moved 20 56
 expect u8 E191 == 0
 frames 30
 peek

@@ -1283,73 +1283,98 @@ int main(void){
         mocked_buttons=0;som_input_poll();
         memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);   /* open floor */
         ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */
-        /* Swordsman: 3 px x 16 frames away from the facing, untouchable for
-         * the move plus the grace frames; A, D-pad and attacks hidden. */
+        /* Swordsman: A arms Kawarimi; nothing moves until a monster touches
+         * him. Then he reappears 3 x 16 = 48 px away from it, the hit is
+         * dropped, a log stands on his old spot, and he is untouchable for
+         * the move plus the grace frames. */
+        for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
+        uint8_t *foe=ram+0xE600;
         disciplines.selected=0;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
         hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
         mocked_buttons=r1a;som_input_poll();
-        assert(evade_active&&!(hero[0x191]&0x04)&&hero[0x01C]==0&&hero[0x011]==0); /* no barrel */
+        assert(!evade_active&&kawarimi_armed_until>frame_number&&!(hero[0x191]&0x04));
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
         mocked_buttons=0;som_input_poll();
-        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)|(1u<<RETRO_DEVICE_ID_JOYPAD_B));
-        som_input_poll();
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
-        mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<10;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200&&!evade_active&&kawarimi_armed_until);  /* untouched */
+        foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x1F1]=0;
+        foe[2]=210;foe[3]=0;foe[4]=200;foe[5]=0;              /* touches from the right */
+        hero[0x182]=100;hero[0x183]=0;hero[0x059]=1;hero[0x1F1]=25;
+        som_hop_step();
+        assert(evade_active&&!kawarimi_armed_until&&kawarimi_log_start);
+        assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(hero+4)==200);
+        assert(kawarimi_log_x==200&&kawarimi_log_y==200);
+        assert(!hero[0x059]&&!hero[0x1F1]);                   /* the hit is dropped */
+        foe[0]=0;
         const unsigned long dodge_start=frame_number;
-        hero[0x182]=100;hero[0x183]=0;
         for(unsigned f=0;f<40;f++){
             if(frame_number-dodge_start==10u){                /* a monster hits */
                 hero[0x059]=1;hero[0x1F1]=25;som_hop_step();
-                assert(!hero[0x059]&&!hero[0x1F1]);           /* hit dropped */
-                hero[0x182]=80;som_evade_tick();             /* got through anyway */
+                assert(!hero[0x059]&&!hero[0x1F1]);
+                hero[0x182]=80;som_evade_tick();
                 assert(hero[0x182]==100);                     /* HP put back */
             }else{som_hop_step();som_evade_tick();}
             frame_number++;
             if(frame_number-dodge_start==20u)assert(evade_active);
         }
-        assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(hero+4)==200);
-        assert(!evade_active);                                /* guard ended */
+        assert(!evade_active&&som_bun_u16(hero+2)==200-48);
         hero[0x1F1]=7;som_hop_step();som_evade_tick();
         assert(hero[0x1F1]==7);                               /* not after the dodge */
         hero[0x1F1]=0;
+        /* The window closes: no swap after SOM_KAWARIMI_ARM_FRAMES. */
+        hero[2]=200;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        frame_number+=SOM_KAWARIMI_ARM_FRAMES+1u;
+        foe[0]=1;foe[2]=210;som_hop_step();
+        assert(!evade_active&&!kawarimi_armed_until&&som_bun_u16(hero+2)==200);
+        foe[0]=0;
+        /* A hit with nobody touching fires it too: back from the facing. */
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        hero[0x1F1]=9;som_hop_step();
+        assert(evade_active&&!hero[0x1F1]&&som_bun_u16(hero+2)==200-48);
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         /* Dodge Mastery (Swordsmanship 10: rank 2, +4 frames): 60 px; off: 48. */
         disciplines.level[0]=10;hero[2]=200;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
+        hero[0x1F1]=9;som_hop_step();
         assert(som_bun_u16(hero+2)==200-60);
+        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
         perks_enabled=0;hero[2]=200;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
+        hero[0x1F1]=9;som_hop_step();
         assert(som_bun_u16(hero+2)==200-48);
-        perks_enabled=1;disciplines.level[0]=1;
-        assert(trail_until>=dodge_start+16u);                  /* after-images */
-        /* Monk: 2 px x 18; archer 3 px x 18 the way held, stopped by a wall
-         * (the guard keeps running); rogue dodges too. */
+        for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
+        perks_enabled=1;disciplines.level[0]=1;hero[0x1F1]=0;
+        /* Monk: 2 x 18 = 36 px; archer 3 x 18 away from a monster above,
+         * stopped short of a wall; rogue arms too. */
         disciplines.selected=1;hero[2]=200;hero[4]=200;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        hero[0x1F1]=9;som_hop_step();
         assert(som_bun_u16(hero+2)==200-36);
-        disciplines.selected=11;hero[2]=200;
-        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));som_input_poll();
-        mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        disciplines.selected=11;hero[2]=200;hero[0x1F1]=0;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         ram[0x1B800+4*3]=0x03;
         for(unsigned c=0;c<128;c++)ram[0x10000+(240u>>4)*128u+c]=3;   /* wall at y 240 */
-        for(unsigned f=0;f<6;f++){som_hop_step();som_evade_tick();frame_number++;}
+        foe[0]=1;foe[2]=200;foe[4]=190;som_hop_step();foe[0]=0;
         assert(evade_active);
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)>200&&som_bun_u16(hero+4)+4<240);
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(!evade_active);
         memset(ram+0x10000,0,0x10000);ram[0x1B800+4*3]=0;
         disciplines.selected=9;hero[4]=200;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        assert(evade_active);
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        /* Ninja with the sword: Shunshin, 6 px x 12 forward. */
+        assert(kawarimi_armed_until&&!evade_active);
+        kawarimi_armed_until=0;kawarimi_log_start=0;
+        /* Ninja with the sword: Shunshin no Jutsu, a clone on each side
+         * across the facing (clone, ninja, clone); no dash. */
         disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;hero[2]=200;hero[4]=200;
+        hero[0x010]=0x02;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        assert(evade_active&&!som_bun_alive(&bunshin));
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(som_bun_u16(hero+2)==200+72&&!evade_active);
+        assert(!evade_active&&!kawarimi_armed_until&&som_bun_alive(&bunshin)==2);
+        assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)==200);
+        assert(bunshin.x[0]==200&&bunshin.y[0]==176&&bunshin.x[1]==200&&bunshin.y[1]==224);
+        som_bun_clear(&bunshin);
         /* Kage Bunshin (chakram): two clones across the facing, on open
          * ground; a monster touching one makes it explode; A swaps. */
         memset(ram+0x10000,0,0x10000);                       /* all tile 0: open */

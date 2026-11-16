@@ -11,6 +11,15 @@ class ChooseTest(unittest.TestCase):
         weapon, why = choose("sword", "bow", "sword", 60, 1.0, {})
         self.assertIn("60 px", why)
 
+    def test_far_enemy_takes_the_long_weapon(self):
+        # Beyond the bow's own reach too: ready it rather than walk in with the sword.
+        self.assertEqual(choose("sword", "bow", "sword", 120, 1.0, {"sword": 5})[0], "bow")
+        self.assertEqual(choose("boomerang", "whip", "boomerang", 150, 1.0, {})[0], "whip")
+        # Two melee weapons: the longer one (spear) for a far enemy.
+        self.assertEqual(choose("glove", "spear", "glove", 100, 1.0, {"glove": 4})[0], "spear")
+        # Beyond NEAR_PX nothing changes.
+        self.assertEqual(choose("sword", "bow", "sword", 200, 1.0, {})[0], "sword")
+
     def test_whip_blind_spot_and_low_hp(self):
         self.assertEqual(choose("whip", "glove", "whip", 12, 1.0, {})[0], "glove")
         self.assertEqual(choose("sword", "bow", "sword", 20, 0.3, {})[0], "bow")

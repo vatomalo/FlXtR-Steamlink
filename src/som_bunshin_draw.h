@@ -68,6 +68,54 @@ static inline unsigned som_bun_draw_copy(uint8_t *pixels,unsigned width,unsigned
     }
     return drawn;
 }
+/* Kawarimi's log: an upright 12x18 log standing on base pixel (cx, cy)
+ * (the hero's feet). Placeholder art until the game's whip-post graphics
+ * are captured from VRAM. */
+static const char *const som_bun_log_art[18]={
+    "   oooooo   ",
+    " oo++++++oo ",
+    "o++=++++=++o",
+    "o+=+====+=+o",
+    " oo++++++oo ",
+    "o##b##b###bo",
+    "o#b###b##b#o",
+    "o##b##b###bo",
+    "o#b##b###b#o",
+    "o##b##b#b##o",
+    "o#b###b##b#o",
+    "o##b##b###bo",
+    "o#b##b###b#o",
+    "o##b#b##b##o",
+    "o#b###b##b#o",
+    "ob##b##b##bo",
+    " oo######oo ",
+    "   oooooo   "
+};
+static inline void som_bun_draw_log(uint8_t *pixels,unsigned width,unsigned height,
+                                    size_t pitch,int format,int cx,int cy){
+    if(!pixels)return;
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    const int base_w=(int)(width/sx),base_h=(int)(height/sy);
+    const uint32_t outline=som_overlay_color(format,52,30,16);
+    const uint32_t bark=som_overlay_color(format,128,80,40);
+    const uint32_t groove=som_overlay_color(format,88,52,26);
+    const uint32_t wood=som_overlay_color(format,226,186,120);
+    const uint32_t ring=som_overlay_color(format,176,128,72);
+    for(int row=0;row<18;row++)for(int col=0;col<12;col++){
+        uint32_t colour;
+        switch(som_bun_log_art[row][col]){
+        case 'o':colour=outline;break;
+        case '#':colour=bark;break;
+        case 'b':colour=groove;break;
+        case '+':colour=wood;break;
+        case '=':colour=ring;break;
+        default:continue;
+        }
+        const int x=cx-6+col,y=cy-15+row;
+        if(x<0||y<0||x>=base_w||y>=base_h)continue;
+        som_overlay_fill(pixels,pitch,format,(unsigned)x*sx,(unsigned)y*sy,sx,sy,colour);
+    }
+}
 /* An explosion (or a smoke puff) centred on base pixel (cx, cy), `age`
  * frames old: a hot core that grows, then a thinning ring of smoke. */
 static inline void som_bun_draw_boom(uint8_t *pixels,unsigned width,unsigned height,

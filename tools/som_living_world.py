@@ -36,6 +36,9 @@ from som_npc_schedule import DEFAULT_PATH, World
 from som_world_clock import WorldClock, WorldTime, format_time
 
 DEFAULT_DB = Path.home() / ".local/state/flxtr/som-living-world.sqlite"
+# Villagers planned automatically on maps the hero visits (som_npc_discover),
+# kept out of the repo's hand-made schedule file.
+AUTO_SCHEDULE = Path.home() / ".local/state/flxtr/som-schedules-auto.json"
 STEAM_LINK = "root@100.124.74.13"
 TILE_MINUTES = 0.05        # game minutes per tile walked (1 px/frame at 12x)
 DOOR_MINUTES = 2.0         # game minutes to pass a door or change maps
@@ -307,11 +310,14 @@ def talk_target(wram, world_state, world):
     return None
 
 
-def open_world(db_path=DEFAULT_DB, schedule=DEFAULT_PATH, real=None, rate=None):
+def open_world(db_path=DEFAULT_DB, schedule=DEFAULT_PATH, real=None, rate=None,
+               auto_path=AUTO_SCHEDULE):
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path)
     clock = WorldClock(connection, rate=rate, real=real)
-    return LivingWorld(connection, World.load(schedule), clock)
+    world = World(merged_schedule(schedule, auto_path) if auto_path else
+                  json.loads(Path(schedule).read_text()))
+    return LivingWorld(connection, world, clock)
 
 
 def describe(world, now, map_id=None):
@@ -417,12 +423,69 @@ def main(argv=None):
     return 0
 
 
+def load_auto(path=AUTO_SCHEDULE):
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {"locations": {}, "npcs": []}
+    return {"locations": data.get("locations") or {}, "npcs": data.get("npcs") or []}
+
+
+def merged_schedule(base_path, auto_path=AUTO_SCHEDULE):
+    """The hand-made schedule plus every automatically planned villager."""
+    data = json.loads(Path(base_path).read_text())
+    auto = load_auto(auto_path)
+    data.setdefault("locations", {}).update(auto["locations"])
+    ids = {npc["id"] for npc in data.get("npcs") or ()}
+    data.setdefault("npcs", []).extend(n for n in auto["npcs"] if n["id"] not in ids)
+    return data
+
+
+class AutoDiscovery:
+    """Plan daily lives for the static NPCs of each map the hero stands on."""
+
+    def __init__(self, world, base_path, auto_path=AUTO_SCHEDULE, log=print):
+        self.world, self.base_path, self.auto_path, self.log = world, base_path, auto_path, log
+        self.checked = set()          # maps looked at this run
+
+    def observe(self, wram):
+        """Add villagers for this map once; returns how many were added."""
+        from som_npc_discover import merge, plan_villagers
+        map_id = wram.u16(native.MAP_ID) & 0x1FF
+        context = wram.tile_context()
+        if (map_id in self.checked or wram.game_mode() != "field" or
+                not context.get("runtime_verified")):
+            return 0
+        self.checked.add(map_id)
+        current = merged_schedule(self.base_path, self.auto_path)
+        locations, npcs = plan_villagers(wram, current, map_id)
+        if not npcs:
+            return 0
+        merged = merge(current, locations, npcs)
+        try:
+            new_world = World(merged)
+        except Exception as exc:  # noqa: BLE001 - a bad plan must not stop the world
+            self.log(f"[living-world] map {map_id}: planned villagers rejected: {exc}")
+            return 0
+        auto = load_auto(self.auto_path)
+        auto["locations"].update(locations)
+        auto["npcs"].extend(npcs)
+        Path(self.auto_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.auto_path).write_text(json.dumps({"version": 1, **auto}, indent=1) + "\n")
+        self.world.world = new_world
+        self.log(f"[living-world] map {map_id}: {len(npcs)} villagers get a daily life: "
+                 + ", ".join(npc["id"] for npc in npcs))
+        return len(npcs)
+
+
 def run_loop(world, args):
     from som_memory import WRAM
     from som_qwen_bridge import RemoteLink, server_remote
     link = RemoteLink(args.host, remote_loop=REMOTE_LOOP, partial=False,
                       server=server_remote("living"))
     drivers, last_talk, step = {}, None, 0
+    discovery = AutoDiscovery(world, args.schedule,
+                              log=lambda line: print(line, flush=True))
     daily = None
     if args.director:
         import som_npc_director as director
@@ -448,6 +511,10 @@ def run_loop(world, args):
             real = time.time()
             wram = WRAM(payload)
             world.clock.checkpoint(real)
+            try:
+                discovery.observe(wram)
+            except Exception as exc:  # noqa: BLE001 - keep the world running
+                print(f"[living-world] discovery failed: {exc}", flush=True)
             if daily is not None:
                 for npc_id, choice in daily.tick(world.clock.now(real)):
                     print(f"[living-world] director {npc_id}: {choice}", flush=True)

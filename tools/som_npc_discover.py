@@ -80,10 +80,13 @@ def reachable_spots(grid, start, occupied):
     return spots
 
 
-def plan_villagers(wram, schedule):
-    """(locations, npcs) to add for static Potos NPCs not yet scheduled."""
+def plan_villagers(wram, schedule, map_id=POTOS):
+    """(locations, npcs) to add for the map's static NPCs not yet scheduled.
+
+    Any map works: the living world calls this when the hero first stands
+    on a map with static native NPCs (Potos keeps its old names)."""
     known = {npc.get("native", {}).get("record") for npc in schedule.get("npcs", [])
-             if npc.get("native", {}).get("map") == POTOS}
+             if npc.get("native", {}).get("map") == map_id}
     npcs = [n for n in decode_npcs(wram) if n["static"] and n["record"] is not None]
     occupied = {n["tile"] for n in npcs}
     locations, added = {}, []
@@ -102,24 +105,25 @@ def plan_villagers(wram, schedule):
         meet = max(spots, key=lambda spot: (abs(spot[0][0] - work[0]) +
                                             abs(spot[0][1] - work[1]), spot[0]))[0]
         rec = npc["record"]
-        prefix = f"potos_r{rec}"
-        evidence = (f"live Turbo map 131: object record {rec} (kind {npc['kind']:#04x}, "
+        town = "potos" if map_id == POTOS else f"m{map_id}"
+        prefix = f"{town}_r{rec}"
+        evidence = (f"live Turbo map {map_id}: object record {rec} (kind {npc['kind']:#04x}, "
                     f"static) and reachable floor-{npc['floor']} route on the live work map")
         layer = npc["layer"]
-        locations[f"{prefix}_home"] = {"map": POTOS, "x": x, "y": y, "layer": layer,
+        locations[f"{prefix}_home"] = {"map": map_id, "x": x, "y": y, "layer": layer,
                                        "evidence": f"{evidence}; spawn tile"}
-        locations[f"{prefix}_work"] = {"map": POTOS, "x": work[0], "y": work[1], "layer": layer,
-                                       "evidence": evidence}
-        locations[f"{prefix}_meet"] = {"map": POTOS, "x": meet[0], "y": meet[1], "layer": layer,
-                                       "evidence": evidence}
+        locations[f"{prefix}_work"] = {"map": map_id, "x": work[0], "y": work[1],
+                                       "layer": layer, "evidence": evidence}
+        locations[f"{prefix}_meet"] = {"map": map_id, "x": meet[0], "y": meet[1],
+                                       "layer": layer, "evidence": evidence}
         routine = list(ROUTINES)[index % len(ROUTINES)]
         offset = (rec * 17) % 50               # minutes: the town does not move in step
         alias = {"home": "home", "workplace": "workplace", "meeting": f"{prefix}_meet"}
         added.append({
-            "id": f"potos_villager_r{rec}",
-            "name": f"Potos villager (record {rec})",
+            "id": f"{town}_villager_r{rec}",
+            "name": f"{'Potos' if map_id == POTOS else f'Map {map_id}'} villager (record {rec})",
             "home": f"{prefix}_home", "workplace": f"{prefix}_work",
-            "native": {"map": POTOS, "record": rec, "kind": npc["kind"],
+            "native": {"map": map_id, "record": rec, "kind": npc["kind"],
                        "event": npc["event"], "static": True, "spawn": f"{prefix}_home"},
             "personality": {"sociable": 0.4 + 0.1 * (rec % 5), "diligent": 0.5 + 0.1 * (rec % 4)},
             "schedule": [{"time": shift(time_text, offset), "activity": activity,

@@ -182,3 +182,49 @@ class DriverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutoDiscoveryTest(unittest.TestCase):
+    def test_villagers_of_a_new_map_join_the_world_once_and_are_saved(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        import som_living_world as lw
+        import som_npc_discover
+        from som_npc_schedule import DEFAULT_PATH, World
+
+        class Wram:
+            def u16(self, address):
+                return 139
+            def game_mode(self):
+                return "field"
+            def tile_context(self):
+                return {"runtime_verified": True}
+
+        def plan(wram, schedule, map_id):
+            here = {"map": map_id, "x": 3, "y": 4, "layer": 1, "evidence": "test"}
+            locations = {"m139_r2_home": dict(here), "m139_r2_work": dict(here, x=6),
+                         "m139_r2_meet": dict(here, y=8)}
+            npc = {"id": "m139_villager_r2", "name": "Map 139 villager (record 2)",
+                   "home": "m139_r2_home", "workplace": "m139_r2_work",
+                   "native": {"map": map_id, "record": 2, "kind": 0xC0, "event": 0,
+                              "static": True, "spawn": "m139_r2_home"},
+                   "schedule": [{"time": "06:00", "activity": "work",
+                                 "destination": "workplace"}]}
+            return locations, [npc]
+
+        with tempfile.TemporaryDirectory() as directory:
+            auto = Path(directory) / "auto.json"
+            holder = type("Holder", (), {})()
+            holder.world = World(lw.merged_schedule(DEFAULT_PATH, auto))
+            before = len(holder.world.npcs)
+            discovery = lw.AutoDiscovery(holder, DEFAULT_PATH, auto, log=lambda line: None)
+            with mock.patch.object(som_npc_discover, "plan_villagers", plan):
+                self.assertEqual(discovery.observe(Wram()), 1)
+                self.assertEqual(discovery.observe(Wram()), 0)      # once per map
+            self.assertEqual(len(holder.world.npcs), before + 1)
+            saved = json.loads(auto.read_text())
+            self.assertEqual([n["id"] for n in saved["npcs"]], ["m139_villager_r2"])
+            reloaded = World(lw.merged_schedule(DEFAULT_PATH, auto))
+            self.assertIn("m139_villager_r2", reloaded.npcs)

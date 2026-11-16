@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory() as tmp:
         hw=(root/'game-runtime.cfg').read_text()
         assert json.loads((home/'runtime-env.json').read_text())['SDL_PE_GFX_RESOLUTION']==f'{width}x{output}'
         assert 'aspect_ratio_index = "22"' in hw and f'video_fullscreen_x = "{width}"' in hw
-        assert 'audio_latency = "96"' in hw
+        assert 'audio_latency = "128"' in hw
     # Native output leaves the framebuffer alone.
     (root/'settings.cfg').write_text('game_output=0\ngame_view=0\n')
     launch()

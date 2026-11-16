@@ -642,6 +642,10 @@ static int som_evade_start(uint8_t *ram);
  * the frame (src/som_bunshin_draw.h); touch makes them explode, the hero
  * can swap into them. */
 static SomBunshin bunshin;
+/* The clones out are Shunshin's: explosive, never a substitution (no swap);
+ * a monster reaching the hero or the clones' time running out detonates
+ * them. 0: Kage Bunshin clones (swap on A, substitution on touch). */
+static int bunshin_shunshin;
 static int evade_dir_x,evade_dir_y;    /* D-pad aim: clone swap or hop */
 static int hop_dx,hop_dy;              /* hop dodge step per frame */
 static unsigned hop_frames_left;
@@ -1598,10 +1602,14 @@ static void som_bunshin_frame(uint8_t *ram){
     const int field=hero[0]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
     const int same_map=som_bun_u16(ram+0xDC)==bunshin.map;
     if(!field||!same_map||frame_number>bunshin.until){
+        const int detonate=bunshin_shunshin&&field&&same_map;
         if(same_map)
             for(unsigned i=0;i<SOM_BUN_COUNT;i++)
-                if(bunshin.alive[i])som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
-        som_bun_clear(&bunshin);return;
+                if(bunshin.alive[i]){
+                    if(detonate)som_bunshin_explode(ram,bunshin.x[i],bunshin.y[i]);
+                    else som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
+                }
+        som_bun_clear(&bunshin);bunshin_shunshin=0;return;
     }
     const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
     som_bun_follow(&bunshin,ram,hx,hy,som_hero_place(hero));
@@ -1612,7 +1620,18 @@ static void som_bunshin_frame(uint8_t *ram){
         som_bunshin_explode(ram,bunshin.x[i],bunshin.y[i]);
         som_overlay_set(&overlay,"^Bunshin Daibakuha!",SOM_MESSAGE_FRAMES/2u);
     }
-    if(!som_bun_alive(&bunshin)||frame_number<bunshin.swap_ready)return;
+    if(!som_bun_alive(&bunshin)){bunshin_shunshin=0;return;}
+    if(bunshin_shunshin){
+        /* Shunshin: a monster at the hero sets off every clone at once. */
+        if(som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X,SOM_BUN_HERO_TOUCH_Y,familiar.slot)<0)
+            return;
+        for(unsigned i=0;i<SOM_BUN_COUNT;i++)
+            if(bunshin.alive[i])som_bunshin_explode(ram,bunshin.x[i],bunshin.y[i]);
+        som_bun_clear(&bunshin);bunshin_shunshin=0;
+        som_overlay_set(&overlay,"^Shunshin|Daibakuha!",SOM_MESSAGE_FRAMES/2u);
+        return;
+    }
+    if(frame_number<bunshin.swap_ready)return;
     const int toucher=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X,SOM_BUN_HERO_TOUCH_Y,
                                       familiar.slot);
     if(toucher>=0){
@@ -1713,8 +1732,8 @@ static int som_jutsu_free(const uint8_t *ram){
              (som_word(hero+0x190)&0xC160u));
 }
 /* A shadow clone on each side of the ninja, across his facing (clone,
- * ninja, clone): Kage Bunshin (long-range weapon, on A) and Shunshin
- * (short-range weapon, AI). */
+ * ninja, clone): Kage Bunshin (long-range weapon, on A; swap) and Shunshin
+ * (short-range weapon, AI; explosive, bunshin_shunshin). */
 static int som_clone_jutsu(uint8_t *ram,const char *jutsu){
     uint8_t *hero=ram+0xE000u;
     const unsigned made=som_bun_spawn(&bunshin,ram,(int)som_bun_u16(hero+2),
@@ -1725,6 +1744,7 @@ static int som_clone_jutsu(uint8_t *ram,const char *jutsu){
     }
     for(unsigned i=0;i<SOM_BUN_COUNT;i++)
         if(bunshin.alive[i])som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
+    bunshin_shunshin=!strcmp(jutsu,"Shunshin no Jutsu");
     char title[40];snprintf(title,sizeof(title),"^%s",jutsu);
     som_overlay_set(&overlay,title,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] JUTSU %s: %u clone(s)\n",jutsu,made);
@@ -1743,7 +1763,7 @@ static int som_evade_start(uint8_t *ram){
     uint8_t *hero=ram+0xE000u;
     if(!som_jutsu_free(ram))return 0;
     const int ninja=disciplines.selected==2u;
-    if(ninja&&som_bun_alive(&bunshin))
+    if(ninja&&som_bun_alive(&bunshin)&&!bunshin_shunshin)
         return som_bunshin_swap(ram,0,0,0,evade_dir_x,evade_dir_y);
     if(ninja&&som_weapon_long_range(hero[0x1E4]))return som_clone_jutsu(ram,"Kage Bunshin no Jutsu");
     const SomDodge dodge=som_disc_dodge(disciplines.selected,hero[0x1E4]);
@@ -3154,7 +3174,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
-    som_bun_clear(&bunshin);memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
+    som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
     hop_dx=hop_dy=0;hop_frames_left=0;
     special_chord=0;special_suppress=0;

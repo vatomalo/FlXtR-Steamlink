@@ -1408,6 +1408,23 @@ int main(void){
         assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)==200);
         assert(bunshin.x[0]==200&&bunshin.y[0]==176&&bunshin.x[1]==200&&bunshin.y[1]==224);
         assert(!som_handle_command("shunshin"));                     /* clones already out */
+        assert(bunshin_shunshin);
+        /* Shunshin is not a substitution: a monster at the hero sets off
+         * both clones, the hero stays put. */
+        {
+            uint8_t *sm=ram+0xE600;
+            sm[0]=1;sm[0x180]=7;sm[0x190]=sm[0x191]=0;sm[0x1F1]=0;
+            sm[2]=204;sm[3]=0;sm[4]=200;sm[5]=0;
+            frame_number+=SOM_BUN_SWAP_COOLDOWN+1;
+            som_bunshin_frame(ram);
+            assert(!som_bun_alive(&bunshin)&&!bunshin_shunshin);
+            assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)==200);
+            sm[0]=0;
+            /* Time running out detonates them too. */
+            assert(som_handle_command("shunshin")&&bunshin_shunshin);
+            frame_number=bunshin.until+1;som_bunshin_frame(ram);
+            assert(!som_bun_alive(&bunshin)&&!bunshin_shunshin);
+        }
         som_bun_clear(&bunshin);
         /* Kage Bunshin (chakram): two clones across the facing, on open
          * ground; a monster touching one makes it explode; A swaps. */

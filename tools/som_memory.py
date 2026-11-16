@@ -350,6 +350,9 @@ class WRAM:
             "y_px": self.u16(base + 4),
             "hp": hp, "max_hp": max_hp,
             "hp_plausible": 0 < max_hp <= 9999 and hp <= max_hp,
+            # Object +0x10 as for heroes and NPCs; not yet verified for
+            # monsters (the planner uses their movement for facing).
+            "facing_byte": self.u8(base + 0x010),
             "status": status,
             "alive": alive,
             "active": targetable,

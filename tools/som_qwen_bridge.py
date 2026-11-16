@@ -43,7 +43,7 @@ from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WE
                                 ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
                                 CONTACT_PX as CLASS_CONTACT_PX, ClassRecord,
                                 parse_classes, plan_classes)
-from som_weapon_tactics import WeaponTactics
+from som_weapon_tactics import WeaponTactics, reach as weapon_reach
 from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
 from som_trials import TrialLearner
 from som_class_arts import IaiTactics
@@ -1909,8 +1909,13 @@ def main() -> int:
                     hp, max_hp = hero0.get("hp") or 0, hero0.get("max_hp") or 0
                     # Alternate the class's two weapons (som_weapon_tactics):
                     # reach against the nearest enemy, low HP, training.
+                    # Not mid-charge. A planned swing still lets the hero
+                    # take the shorter weapon when the enemy is inside its
+                    # reach: up close the planner attacks every decision, so
+                    # the bow stayed out point-blank (205 decisions in an
+                    # hour within 28 px, 16 Nov).
                     if (class_director.current is not None and grass_restore is None and
-                            held is not None and decision.action not in ("attack", "charge")):
+                            held is not None and decision.action != "charge"):
                         actor = context.get("actor") or {}
                         gaps = [max(abs(e["x_px"] - actor.get("x_px", 0)),
                                     abs(e["y_px"] - actor.get("y_px", 0)))
@@ -1922,6 +1927,11 @@ def main() -> int:
                                                      hp / max_hp if max_hp else 1.0, levels,
                                                      third=THIRD_WEAPONS.get(
                                                          class_director.current))
+                        if (swap is not None and decision.action == "attack" and
+                                not (weapon_reach(swap[0]) < weapon_reach(held) and
+                                     gaps and min(gaps) <= weapon_reach(swap[0]))):
+                            weapon_tactics.refused()     # swing now; reconsider next look
+                            swap = None
                         if swap is not None:
                             weapon, why = swap
                             try:

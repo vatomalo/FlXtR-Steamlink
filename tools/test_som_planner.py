@@ -103,6 +103,37 @@ class TestMemoryPlanner(unittest.TestCase):
                          300)
         self.assertGreaterEqual(swings, 9)
 
+    def test_head_on_mushboom_is_flanked_not_fought_face_to_face(self):
+        planner = MemoryPlanner()
+        steps = ["step_up", "step_down", "step_left", "step_right"]
+        mush = {"slot": 3, "identity": 0x02, "x_px": 140, "y_px": 100}
+        planner._flank(mush, 40, 2, steps)                  # first sight: no heading
+        mush = dict(mush, x_px=130)                           # walks left, toward us
+        decision = planner._flank(mush, 30, 2, steps)
+        self.assertEqual(decision.intention, "flank_enemy")
+        self.assertEqual(decision.action, "step_up")          # hero 2 px above its line
+        # From its side (24 px off the line) the hero fights normally.
+        self.assertIsNone(planner._flank(dict(mush, x_px=128), 28, 24, steps))
+        # Behind it: no flanking either.
+        self.assertIsNone(planner._flank(dict(mush, x_px=126), -30, 0, steps))
+
+    def test_flanking_gives_up_after_a_few_steps_and_skips_other_monsters(self):
+        from som_planner import FLANK_STEPS
+        planner = MemoryPlanner()
+        steps = ["step_up", "step_down"]
+        x = 140
+        planner._flank({"slot": 3, "identity": 2, "x_px": x, "y_px": 100}, 40, 0, steps)
+        moves = []
+        for _ in range(FLANK_STEPS + 2):
+            x -= 4
+            moves.append(planner._flank({"slot": 3, "identity": 2, "x_px": x, "y_px": 100},
+                                        30, 0, steps))
+        self.assertEqual(sum(m is not None for m in moves), FLANK_STEPS)
+        rabite = MemoryPlanner()
+        rabite._flank({"slot": 3, "identity": 0, "x_px": 140, "y_px": 100}, 40, 0, steps)
+        self.assertIsNone(rabite._flank({"slot": 3, "identity": 0, "x_px": 130, "y_px": 100},
+                                        30, 0, steps))
+
     def test_reaching_the_intended_tile_is_not_a_deflection(self):
         planner = MemoryPlanner()
         first = observation()

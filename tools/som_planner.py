@@ -101,6 +101,14 @@ FACING_MIN_CONFIRMED = 3
 # An enemy this far sideways still counts as in front when it is no farther
 # sideways than ahead.
 FRONT_SIDE_PX = 20
+# Monsters whose attack goes out along their facing (som-decomp
+# monster-commands.md swing chooser): Mushboom 0x02, Mushgloom 0x2A. The
+# hero steps to their side instead of trading blows head-on, at most
+# FLANK_STEPS steps in a row before swinging anyway.
+FLANK_ENEMIES = frozenset((0x02, 0x2A))
+FLANK_STEPS = 4
+FLANK_LINE_PX = 12          # this close to its facing line counts as head-on
+HEADING_MIN_PX = 3          # movement that sets a monster's heading
 # Charged attacks: only against enemies with at least this much HP, and no
 # higher than this stage (each stage takes about 1.5 s of holding).
 CHARGE_MIN_ENEMY_HP = 40
@@ -236,6 +244,8 @@ class MemoryPlanner:
         self.block_cooldown = 0
         self.route_diagonals = {}
         self.route_threats = []
+        self.enemy_tracks = {}       # slot -> (identity, x, y, heading)
+        self.flank_steps = 0
         self.frontier_clock = 0
         self.frontier_rejected = {}
         # Curiosity (som_curiosity): rewards new maps/areas, penalises
@@ -1024,6 +1034,9 @@ class MemoryPlanner:
         on the decision before a swing (like facing grass before cutting).
         """
         want = self._toward(dx, dy)
+        flank = self._flank(enemy, dx, dy, open_steps)
+        if flank is not None:
+            return flank
         facing = ((context.get("actor") or {}).get("facing") if self.facing_trusted()
                   else self.assumed_facing)
         if self._in_front(facing, dx, dy):
@@ -1080,6 +1093,54 @@ class MemoryPlanner:
                                    "on the direct side)", "engage_enemy", turn_only=True)
         # An unverified facing direction is not a reason to swing blindly.
         # Close distance or find a valid turning tile instead.
+        return None
+
+    def _enemy_heading(self, enemy):
+        """The way a monster faces, from how it last moved (monsters face
+        where they walk); None until it has moved."""
+        slot, x, y = enemy.get("slot"), enemy.get("x_px"), enemy.get("y_px")
+        if not isinstance(x, int) or not isinstance(y, int):
+            return None
+        old = self.enemy_tracks.get(slot)
+        heading = None
+        if old is not None and old[0] == enemy.get("identity"):
+            heading = old[3]
+            mx, my = x - old[1], y - old[2]
+            if max(abs(mx), abs(my)) >= HEADING_MIN_PX:
+                heading = (("step_right" if mx > 0 else "step_left") if abs(mx) >= abs(my)
+                           else ("step_down" if my > 0 else "step_up"))
+            elif heading is not None:
+                x, y = old[1], old[2]        # keep measuring from where it was
+        self.enemy_tracks[slot] = (enemy.get("identity"), x, y, heading)
+        return heading
+
+    def _flank(self, enemy, dx, dy, open_steps):
+        """Step out of a head-on monster's line toward its side, or None.
+
+        dx, dy: enemy minus hero. Only FLANK_ENEMIES, only while the hero
+        stands in front of the way it faces, FLANK_STEPS at most in a row.
+        """
+        heading = self._enemy_heading(enemy)
+        if enemy.get("identity") not in FLANK_ENEMIES or heading is None:
+            self.flank_steps = 0
+            return None
+        fx, fy = STEP_OFFSETS[heading]
+        along = -dx * fx - dy * fy               # hero ahead of the monster's face
+        side = -dx if fy else -dy                # hero's offset across its line
+        if along <= 0 or abs(side) > FLANK_LINE_PX or self.flank_steps >= FLANK_STEPS:
+            if along <= 0 or abs(side) > FLANK_LINE_PX:
+                self.flank_steps = 0
+            return None
+        if fx:   # it faces left/right: get above or below its line
+            options = ("step_down", "step_up") if side >= 0 else ("step_up", "step_down")
+        else:
+            options = ("step_right", "step_left") if side >= 0 else ("step_left", "step_right")
+        for step in options:
+            if step in open_steps:
+                self.flank_steps += 1
+                return PlannerDecision(step, f"enemy {enemy['slot']} faces us head-on: "
+                                       f"stepping {step[5:]} to its side "
+                                       f"({self.flank_steps}/{FLANK_STEPS})", "flank_enemy")
         return None
 
     @staticmethod

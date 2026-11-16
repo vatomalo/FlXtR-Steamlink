@@ -26,6 +26,41 @@ def observation(rows=("...", ".@.", "..."), enemy=None, recharge=0, hp=80, max_h
 
 
 class TestMemoryPlanner(unittest.TestCase):
+    def test_step_that_keeps_sliding_sideways_is_blocked_and_routed_around(self):
+        # Live map 136 (16 Nov): down from 44,29 slid to 43,30 and right from
+        # 43,30 slid back to 44,29, the hero moving every pulse forever.
+        planner = MemoryPlanner()
+        def at(tile):
+            state = observation(rows=(".....", ".....", "..@..", ".....", "....."))
+            context = state["tile_context"]
+            context.update(radius=2, actor_tile=list(tile))
+            context["actor"] = {"x_px": tile[0] * 16 + 8, "y_px": tile[1] * 16 + 8,
+                                "layer": 1}
+            return state
+        planner.decide(at((4, 2)), "none")
+        planner.decide(at((3, 3)), "step_down")      # slid once
+        planner.decide(at((4, 2)), "step_right")     # slid once
+        self.assertEqual(planner.blocked_moves, {})
+        planner.decide(at((3, 3)), "step_down")      # second slide: blocked
+        decision = planner.decide(at((4, 2)), "step_right")
+        self.assertIn("131:1:4:2:step_down", planner.blocked_moves)
+        self.assertIn("131:1:3:3:step_right", planner.blocked_moves)
+        self.assertIn("slid to", decision.reason)
+        forbidden = planner._forbidden_steps(at((4, 2))["tile_context"])
+        cells = {(x, y): "open" for x in range(8) for y in range(8)}
+        routes = MemoryPlanner._routes((4, 2), cells, (8, 8), forbidden=forbidden)
+        self.assertNotEqual(routes[(4, 3)][0], "step_down")
+
+    def test_reaching_the_intended_tile_is_not_a_deflection(self):
+        planner = MemoryPlanner()
+        first = observation()
+        second = observation()
+        second["tile_context"]["actor_tile"] = [2, 4]
+        for _ in range(3):
+            planner.decide(first, "step_up")
+            planner.decide(second, "step_down")
+        self.assertEqual(planner.blocked_moves, {})
+
     def test_weighted_visit_route_avoids_a_dangerous_shortcut(self):
         cells = {(x,y):"open" for x in range(1,7) for y in range(1,5)}
         weights = {(x,2):50 for x in range(2,6)}
@@ -412,6 +447,28 @@ class TestMemoryPlanner(unittest.TestCase):
                 decision = planner.decide(observation(), directive="explore_west")
                 self.assertEqual(decision.action == "step_left", expected_west,
                                  (stay, decision))
+            history.close()
+
+    def test_exploring_stops_walking_into_a_dead_end_side_room(self):
+        # Live 2026-11-16: map 109's only exits lead back to 136, yet the
+        # hero walked 136 -> 109 -> 136 57 times chasing the "unknown" door.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "exits.sqlite")
+            def cross(from_map, to_map, tile, action, landing):
+                history._learn_edge(
+                    {"map_id": from_map, "layer": 1, "target": tile, "action": action},
+                    {"map_id": to_map, "layer": 1, "target": landing, "action": None})
+            for visits in range(1, 4):
+                cross(131, 130, [1, 3], "step_left", [6, 3])
+                planner = MemoryPlanner(history)
+                decision = planner.decide(observation(), directive="explore_west")
+                self.assertEqual(decision.action == "step_left", visits < 3,
+                                 (visits, decision))
+            # A side room that leads on somewhere else stays worth exploring.
+            cross(130, 129, [0, 0], "step_up", [0, 7])
+            planner = MemoryPlanner(history)
+            decision = planner.decide(observation(), directive="explore_west")
+            self.assertEqual(decision.action, "step_left")
             history.close()
 
     def test_tiles_next_to_exits_are_not_endless_frontiers(self):

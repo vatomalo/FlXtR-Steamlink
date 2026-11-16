@@ -1486,6 +1486,28 @@ class ObservationHistory:
             "SELECT x,y FROM map_edges WHERE from_map=? AND layer=?", (map_id, layer)))
         return {(int(x), int(y)) for x, y in tiles}
 
+    def exits_by_destination(self, map_id):
+        """{to_map: {(layer, x, y)}} of map_id's known exits: ROM exit triggers
+        (even before their runtime cross-check, so only use this to avoid
+        doors, never to route through them) plus learned crossings that were
+        not rejected."""
+        result = {}
+        rows = self.connection.execute(
+            "SELECT to_map,layer,x,y FROM map_exits WHERE map_id=?", (map_id,)).fetchall()
+        rejected = self.rejected_edges()
+        rows += [row for row in self.connection.execute(
+            "SELECT to_map,layer,x,y FROM map_edges WHERE from_map=?", (map_id,)).fetchall()
+            if f"{map_id}>{row[0]}" not in rejected]
+        for to_map, layer, x, y in rows:
+            result.setdefault(int(to_map), set()).add((layer, int(x), int(y)))
+        return result
+
+    def crossings_into(self, map_id):
+        """How many times the hero has crossed into map_id."""
+        return int(self.connection.execute(
+            "SELECT COALESCE(SUM(seen),0) FROM map_edges WHERE to_map=?",
+            (map_id,)).fetchone()[0])
+
     def rom_check_summary(self):
         return self.connection.execute(
             "SELECT COALESCE(SUM(confirmed),0), COALESCE(SUM(contradicted),0) "

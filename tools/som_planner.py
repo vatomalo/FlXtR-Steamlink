@@ -75,6 +75,13 @@ ANTICIPATE_MAX = 2
 # A learned crossing this close to a native return door went through that door.
 DOOR_CROSSING_TILES = 4
 STALL_BLOCK_DECISIONS = 200
+# A step that lands the hero on some other tile than the one it points at
+# (a diagonal half-tile or slope sliding it sideways) this many times is
+# blocked like a stall: live map 136 tiles 44,29/43,30 (16 Nov) bounced the
+# hero between two tiles for minutes, moving every pulse so no stall fired.
+DEFLECT_LIMIT = 2
+# Crossings into a map whose exits all lead back before its door counts as a wall.
+DEAD_END_VISITS = 3
 FRONTIER_NO_PROGRESS = 24
 FRONTIER_COOLDOWN = 200
 # Keep the current evasion heading unless another step is clearly safer.
@@ -156,6 +163,10 @@ class MemoryPlanner:
         # (wrong layer under a bridge, an NPC, a mislearned tile...).
         self.stall = None
         self.blocked_moves = {}
+        # Step deflections: (map, layer, x, y, step) -> count, and where the
+        # last decision was made (map, layer, tile) to compare against.
+        self.deflections = {}
+        self.last_step_origin = None
         # Grass cutting: learned cuttable attributes (without a database),
         # the previous observation to detect cuts, and attacks per tile.
         self.local_cuttable = set()
@@ -441,13 +452,15 @@ class MemoryPlanner:
         return None if kind != "walked" else height
 
     @staticmethod
-    def _routes(start, cells, size, height=None, weights=None, jumps=None):
+    def _routes(start, cells, size, height=None, weights=None, jumps=None, forbidden=None):
         """Shortest known paths as {position: (first action, distance)}.
 
         Searches (position, height) states so a bridge reached up a ramp is
         usable even though, seen from the river bank, its ends look like walls.
         jumps {position: [(step, landing, landing height)]} adds learned whip
         crossings; a route that starts with one has first action "whip:<step>".
+        forbidden {(position, step)} are steps learned not to work (stalls,
+        deflections), so routes go around them instead of into them.
         """
         if weights:
             routes = RouteMap(start)
@@ -462,7 +475,7 @@ class MemoryPlanner:
                     routes[position] = (first, distance)
                     routes.parents[position] = parent
                 for action, neighbor, after, extra in MemoryPlanner._moves(
-                        position, level, cells, size, jumps):
+                        position, level, cells, size, jumps, forbidden):
                     total = cost + max(1, weights.get(neighbor, 1)) + extra
                     state = (neighbor, after)
                     if total >= costs.get(state, float("inf")):
@@ -477,7 +490,7 @@ class MemoryPlanner:
         while queue:
             position, level, first, distance = queue.popleft()
             for action, neighbor, after, _ in MemoryPlanner._moves(
-                    position, level, cells, size, jumps):
+                    position, level, cells, size, jumps, forbidden):
                 if (neighbor, after) in seen:
                     continue
                 seen.add((neighbor, after))
@@ -489,9 +502,11 @@ class MemoryPlanner:
         return routes
 
     @staticmethod
-    def _moves(position, level, cells, size, jumps=None):
+    def _moves(position, level, cells, size, jumps=None, forbidden=None):
         """(action, neighbour, height after, extra cost) of each move from here."""
         for action, offset in STEP_OFFSETS.items():
+            if forbidden and (position, action) in forbidden:
+                continue
             neighbor = MemoryPlanner._neighbor(position, offset, size)
             kind = cells.get(neighbor)
             if kind not in ("open", "pass", "cuttable", "h1", "h2"):
@@ -583,18 +598,23 @@ class MemoryPlanner:
         position = tuple(context["actor_tile"])
         size = tuple(context["map_size_tiles"])
         cells = self._known_cells(map_id, layer)
+        exits = set()
         if self.stay_on_map and hasattr(self.history, "exit_tiles"):
-            exits = self.history.exit_tiles(map_id, layer) - {position}
-            if exits:
-                # Walls, not unknown: removing them made every tile next to an
-                # exit a frontier forever, and the hero walked between the
-                # exits at both ends of the map (14 Nov).
-                cells = dict(cells)
-                cells.update({tile: "exit" for tile in exits})
+            exits = self.history.exit_tiles(map_id, layer)
+        else:
+            exits = self._dead_end_exits(map_id, layer)
+        exits -= {position}
+        if exits:
+            # Walls, not unknown: removing them made every tile next to an
+            # exit a frontier forever, and the hero walked between the
+            # exits at both ends of the map (14 Nov).
+            cells = dict(cells)
+            cells.update({tile: "exit" for tile in exits})
         routes = self._routes(position, cells, size,
                               context["actor"].get("floor_height"),
                               self._dead_end_weights(map_id, layer, cells),
-                              jumps=self._whip_jumps(context))
+                              jumps=self._whip_jumps(context),
+                              forbidden=self._forbidden_steps(context))
         if self.whip_ready:
             whip = self._post_approach(context, routes, open_steps)
             if whip is not None:
@@ -1112,7 +1132,8 @@ class MemoryPlanner:
         cells = dict(cells)
         cells[origin] = "open"
         routes = self._routes(origin, cells, size,
-                              context["actor"].get("floor_height"))
+                              context["actor"].get("floor_height"),
+                              forbidden=self._forbidden_steps(context))
         goal = (origin[0] + round(dx_px / 16), origin[1] + round(dy_px / 16))
         start_gap = abs(goal[0] - origin[0]) + abs(goal[1] - origin[1])
         best = None
@@ -1179,7 +1200,8 @@ class MemoryPlanner:
                     weights[pos] = 1 + risk + (3 if kind == "cuttable" else 0) + (20 if half else 0)
             routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
                                   actor.get("floor_height"), weights,
-                                  jumps=self._whip_jumps(context))
+                                  jumps=self._whip_jumps(context),
+                                  forbidden=self._forbidden_steps(context))
             via = destination.get("path")
             hop = (f" via maps {'>'.join(str(m) for m in via)}"
                    if isinstance(via, list) and len(via) > 2 else "")
@@ -1294,7 +1316,8 @@ class MemoryPlanner:
         position = tuple(context["actor_tile"])
         cells = self._known_cells(context["map_id"], context["actor"]["layer"])
         routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
-                              context["actor"].get("floor_height"))
+                              context["actor"].get("floor_height"),
+                              forbidden=self._forbidden_steps(context))
         choices = []
         for door in context.get("return_doors") or []:
             target = tuple(door["target"])
@@ -1336,7 +1359,8 @@ class MemoryPlanner:
         for waypoint in usable:
             if waypoint.get("source") == "rom":
                 cells.update(self._exit_cells(context, waypoint, cells))
-        routes = self._routes(position, cells, size, actor.get("floor_height"))
+        routes = self._routes(position, cells, size, actor.get("floor_height"),
+                              forbidden=self._forbidden_steps(context))
         best = None
         for order, waypoint in enumerate(usable):
             target = tuple(waypoint["target"])
@@ -1461,7 +1485,10 @@ class MemoryPlanner:
         if self.escape_left and errand is None and directive.startswith("explore_"):
             self.escape_left -= 1
             directive = self.escape_directive
+        deflected = self._check_deflection(observation, previous)
         decision = self._decide(observation, previous, directive, errand)
+        if deflected:
+            decision = replace(decision, reason=f"{deflected}; {decision.reason}")
         decision = self._observe_curiosity(observation, decision, directive, errand)
         return self._check_stall(observation, decision)
 
@@ -1783,6 +1810,78 @@ class MemoryPlanner:
         tile = context.get("actor_tile") or [None, None]
         actor = context.get("actor") or {}
         return f"{context.get('map_id')}:{actor.get('layer')}:{tile[0]}:{tile[1]}:{action}"
+
+    def _dead_end_exits(self, map_id, layer):
+        """Exit tiles of this map into maps that only lead back here.
+
+        Exploring treats unknown exits as frontiers, so a fully known side
+        room whose every exit returns here pulled the hero through its door
+        and straight back out again: maps 136/109 57 times (16 Nov). Once
+        the hero has entered such a map DEAD_END_VISITS times its door is a
+        wall while exploring (travel and errands still route through it).
+        """
+        if not hasattr(self.history, "exits_by_destination"):
+            return set()
+        walls = set()
+        for to_map, tiles in self.history.exits_by_destination(map_id).items():
+            if to_map == map_id:
+                continue
+            onward = set(self.history.exits_by_destination(to_map))
+            if (onward and onward <= {map_id} and
+                    self.history.crossings_into(to_map) >= DEAD_END_VISITS):
+                walls.update((x, y) for tile_layer, x, y in tiles
+                             if tile_layer in (None, layer))
+        return walls
+
+    def _forbidden_steps(self, context):
+        """{(tile, step)} blocked on this map and layer, for route searches."""
+        actor = context.get("actor") or {}
+        prefix = f"{context.get('map_id')}:{actor.get('layer')}:"
+        forbidden = set()
+        for key in self.blocked_moves:
+            if key.startswith(prefix):
+                x, y, action = key[len(prefix):].split(":")
+                if x.lstrip("-").isdigit() and y.lstrip("-").isdigit():
+                    forbidden.add(((int(x), int(y)), action))
+        return forbidden or None
+
+    def _check_deflection(self, observation, previous):
+        """Block a step that keeps landing the hero beside its target tile."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        origin, self.last_step_origin = self.last_step_origin, None
+        if (not isinstance(context, dict) or not context.get("runtime_verified") or
+                context.get("game_mode") != "field"):
+            return None
+        actor = context.get("actor") or {}
+        tile, size = context.get("actor_tile"), context.get("map_size_tiles")
+        if not (isinstance(tile, list) and len(tile) == 2 and
+                isinstance(size, list) and len(size) == 2):
+            return None
+        here = (context.get("map_id"), actor.get("layer"), tuple(tile))
+        self.last_step_origin = here
+        if (origin is None or previous not in STEP_OFFSETS or self.just_hit or
+                origin[:2] != here[:2] or origin[2] == here[2]):
+            return None
+        start = origin[2]
+        key = (origin[0], origin[1], start[0], start[1], previous)
+        expected = self._neighbor(start, STEP_OFFSETS[previous], tuple(size))
+        if here[2] == expected:
+            self.deflections.pop(key, None)
+            return None
+        dx = self._wrapped_delta(here[2][0], start[0], size[0])
+        dy = self._wrapped_delta(here[2][1], start[1], size[1])
+        if max(abs(dx), abs(dy)) > 1:
+            return None   # knockback or a warp, not a slide
+        self.deflections[key] = self.deflections.get(key, 0) + 1
+        if self.deflections[key] < DEFLECT_LIMIT:
+            return None
+        self.deflections.pop(key, None)
+        stall_key = f"{origin[0]}:{origin[1]}:{start[0]}:{start[1]}:{previous}"
+        self.blocked_moves[stall_key] = STALL_BLOCK_DECISIONS
+        self._set_intention(None)
+        return (f"{previous} from tile {list(start)} slid to {list(here[2])} "
+                f"instead of {list(expected)} {DEFLECT_LIMIT} times; blocking that "
+                f"step for {STALL_BLOCK_DECISIONS} decisions")
 
     def _blocked_here(self, context):
         return {action for action in STEP_OFFSETS

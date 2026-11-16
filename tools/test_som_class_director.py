@@ -149,3 +149,16 @@ class WantedBuildTest(unittest.TestCase):
         record.record(state(80, 50), 10)
         record.record(state(75, 30), 10)
         self.assertEqual(record.stats(), {10: (1, 20, 5)})
+
+
+class PlanTieBreakTest(unittest.TestCase):
+    def test_untried_ties_go_to_classes_fights_already_pick(self):
+        from som_class_director import plan_classes
+        wanted, _ = plan_classes("balanced", {2: (15, 30, 10)})
+        self.assertIn(2, wanted)                     # Ninjutsu, picked by crowds
+        self.assertNotIn(1, wanted)                  # not Martial Arts by list order
+
+    def test_with_no_record_situation_strengths_break_ties(self):
+        from som_class_director import plan_classes
+        wanted, why = plan_classes("balanced")
+        self.assertEqual(wanted, [0, 8, 10])         # Bushido: tough and crowd

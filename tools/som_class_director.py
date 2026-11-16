@@ -133,22 +133,39 @@ def plan_classes(build, record=None, max_mp=0, size=PLAN_SIZE):
     fought (record {class: (samples, dealt, taken)}); classes not yet tried
     enough get PLAN_CURIOSITY so the hero gives them a fair go. Spell-only
     strengths need MP, so without MP the healers drop out.
+
+    Slots are filled one by one; equal values go to the class fights have
+    already picked most (samples), then the one with more situation
+    strengths it can use, then the one bringing weapons the plan lacks
+    (list order decided ties before: Martial Arts won by being second).
     """
     record = record or {}
     bonus = BUILD_BONUS.get(build, BUILD_BONUS["balanced"])
-    values = []
+    magic = (max_mp or 0) >= MIN_SPELL_MP
+    options = {}
     for index in range(len(NAMES)):
-        if index in HEALERS and (max_mp or 0) < MIN_SPELL_MP:
+        if index in HEALERS and not magic:
             continue
+        samples = record.get(index, (0, 0, 0))[0]
         learned = record_score(*record.get(index, (0, 0, 0)))
         value = 2 * bonus.get(index, 0) + (PLAN_CURIOSITY if learned is None else learned)
-        values.append((value, -index, index, learned))
-    values.sort(reverse=True)
-    chosen = sorted(item[2] for item in values[:size])
-    parts = []
-    for value, _, index, learned in values[:size]:
-        parts.append(f"{NAMES[index]} {'untried' if learned is None else f'{learned:+.1f}'}")
-    return chosen, f"{build} build; " + ", ".join(parts)
+        strengths = len({tag for tag, klass, _, needs_mp, _ in ADVANTAGES
+                         if klass == index and (magic or not needs_mp)})
+        options[index] = (value, samples, strengths, learned)
+    chosen, covered = [], set()
+    while options and len(chosen) < size:
+        def rank(index):
+            value, samples, strengths, _ = options[index]
+            weapons = set(WEAPONS[index]) | ({THIRD_WEAPONS[index]} if index in THIRD_WEAPONS
+                                            else set())
+            return (value, samples, strengths, len(weapons - covered), -index)
+        pick = max(options, key=rank)
+        chosen.append((pick, options.pop(pick)[3]))
+        covered |= set(WEAPONS[pick]) | ({THIRD_WEAPONS[pick]} if pick in THIRD_WEAPONS
+                                         else set())
+    parts = [f"{NAMES[index]} {'untried' if learned is None else f'{learned:+.1f}'}"
+             for index, learned in chosen]
+    return sorted(index for index, _ in chosen), f"{build} build; " + ", ".join(parts)
 
 
 def training_need(index, levels):

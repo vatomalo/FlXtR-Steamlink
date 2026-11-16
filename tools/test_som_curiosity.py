@@ -72,5 +72,43 @@ class PlannerCuriosityTests(unittest.TestCase):
         self.assertEqual(planner.curiosity.lingers, 0)
 
 
+class ReinforcementTests(unittest.TestCase):
+    def test_discovery_credits_the_way_there_and_dead_ends_are_blamed(self):
+        c = Curiosity()
+        c.observe(5, 1, (0, 0))                       # new map: area 0,0
+        c.observe(5, 1, (AREA_TILES, 0))              # walked east
+        c.observe(5, 1, (2 * AREA_TILES, 0))          # new area found
+        east, start = c.value(5, 1, (AREA_TILES, 0)), c.value(5, 1, (0, 0))
+        self.assertGreater(east, 0)
+        self.assertGreater(start, 0)
+        # The newest step back earns most of each later discovery.
+        self.assertGreater(c.value(5, 1, (2 * AREA_TILES, 0)), 0)
+        before = c.value(5, 1, (0, 3 * AREA_TILES))
+        c.trail.clear()
+        kind, points, _ = c.punish(5, 1, (0, 3 * AREA_TILES))
+        self.assertEqual(kind, "dead_end")
+        self.assertLess(points, 0)
+        self.assertLess(c.value(5, 1, (0, 3 * AREA_TILES)), before)
+        # Values survive a restart.
+        again = Curiosity(c.to_state())
+        self.assertAlmostEqual(again.value(5, 1, (0, 3 * AREA_TILES)),
+                               c.value(5, 1, (0, 3 * AREA_TILES)), places=1)
+
+    def test_lingering_lowers_the_area(self):
+        c = Curiosity()
+        for _ in range(LINGER_DECISIONS):
+            c.observe(5, 1, (3, 3))
+        self.assertLess(c.value(5, 1, (3, 3)), 50 + NEW_AREA_REWARD)
+
+    def test_planner_makes_dead_end_areas_cost_more(self):
+        planner = MemoryPlanner()
+        planner.curiosity = Curiosity()
+        self.assertIsNone(planner._dead_end_weights(131, 1, {(1, 1): "open"}))
+        planner.curiosity.values["131:1:0:0"] = -30.0
+        weights = planner._dead_end_weights(131, 1, {(1, 1): "open", (9, 1): "open"})
+        self.assertGreater(weights[(1, 1)], 1)
+        self.assertNotIn((9, 1), weights)
+
+
 if __name__ == "__main__":
     unittest.main()

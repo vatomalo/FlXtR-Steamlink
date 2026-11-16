@@ -6,7 +6,7 @@ import itertools
 from collections import deque
 from dataclasses import dataclass, replace
 
-from som_curiosity import Curiosity, LINGER_RADIUS
+from som_curiosity import AREA_TILES, Curiosity, LINGER_RADIUS
 from som_weapon_ranges import DEFAULT_REACH_PX, WEAPONS as RANGES, is_long
 from som_build import profile as build_profile
 from som_tactics import CLOSE_SWING_PX
@@ -34,6 +34,11 @@ DEFAULT_STRIKE_SIDE_PX = 14
 # Per-weapon reach and the short/long grouping live in som_weapon_ranges.
 WEAPON_REACH_PX = {w.name: w.reach_px for w in RANGES}
 WEAPON_MIN_PX = {w.name: w.min_px for w in RANGES if w.min_px}
+# Exploration reinforcement (som_curiosity values): frontier areas are
+# ranked in bands of VALUE_STEP points; a tile in a dead-end area costs up to
+# DEAD_END_COST extra steps on a route.
+VALUE_STEP = 5
+DEAD_END_COST = 6
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -528,7 +533,12 @@ class MemoryPlanner:
             # heading, prefer unseen and distant frontier cells.
             # Curiosity: areas never stood in come before revisits.
             seen = bool(self.curiosity and self.curiosity.area_seen(map_id, layer, position))
-            candidates.append((not aligned, seen, visits, -progress, straightness,
+            # Reinforcement: areas on the way to past discoveries first,
+            # dead-end areas last (som_curiosity values, in VALUE_STEP bands
+            # so distance still decides between similar areas).
+            learned = (round(self.curiosity.value(map_id, layer, position) / VALUE_STEP)
+                       if self.curiosity else 0)
+            candidates.append((not aligned, seen, -learned, visits, -progress, straightness,
                                -distance, -unknown_edges, position))
         if not candidates:
             for position, (first, distance) in routes.items():
@@ -536,9 +546,30 @@ class MemoryPlanner:
                                   first.startswith("whip:")) and
                         self.frontier_rejected.get((map_id, layer, position), 0)
                         <= self.frontier_clock):
-                    candidates.append((False, False, self._visits(map_id, layer, *position),
+                    candidates.append((False, False, 0, self._visits(map_id, layer, *position),
                                        -distance, 0, -distance, 0, position))
         return min(candidates)[-1] if candidates else None
+
+    def _dead_end_weights(self, map_id, layer, cells):
+        """Extra route cost through areas that led nowhere before (negative
+        curiosity value): up to DEAD_END_COST more per tile. None when no
+        area here is negative, so routes stay plain shortest paths."""
+        if self.curiosity is None:
+            return None
+        prefix = "%s:%s:" % (map_id, layer)
+        bad = {}
+        for area, value in self.curiosity.values.items():
+            if value < 0 and area.startswith(prefix):
+                bx, by = area[len(prefix):].split(":")
+                bad[(int(bx), int(by))] = 1 + min(DEAD_END_COST, int(-value // VALUE_STEP) + 1)
+        if not bad:
+            return None
+        weights = {}
+        for cell in cells:
+            cost = bad.get((cell[0] // AREA_TILES, cell[1] // AREA_TILES))
+            if cost:
+                weights[cell] = cost
+        return weights or None
 
     def _explore(self, context, open_steps, directive="explore_unknown"):
         self.frontier_clock += 1
@@ -556,6 +587,7 @@ class MemoryPlanner:
                 cells.update({tile: "exit" for tile in exits})
         routes = self._routes(position, cells, size,
                               context["actor"].get("floor_height"),
+                              self._dead_end_weights(map_id, layer, cells),
                               jumps=self._whip_jumps(context))
         intention = self._get_intention()
         valid = (isinstance(intention, dict) and intention.get("kind") == "explore" and
@@ -597,6 +629,9 @@ class MemoryPlanner:
                     intention["no_progress"] >= FRONTIER_NO_PROGRESS):
                 self.frontier_rejected[(map_id, layer, target)] = (
                     self.frontier_clock + FRONTIER_COOLDOWN)
+                if self.curiosity is not None:
+                    self.curiosity.punish(map_id, layer, target)
+                    self._set_state("curiosity", self.curiosity.to_state())
                 self._set_intention(None)
                 return None
         action, distance = routes[target]

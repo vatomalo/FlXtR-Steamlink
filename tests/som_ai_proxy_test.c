@@ -1260,6 +1260,51 @@ int main(void){
         hero[0x19C]=2;
         assert(som_special_start(0,6)&&special_stage==2);
         special_stage=0;special_suppress=0;hero[0x19C]=1;
+        /* Bushido X: Iaijutsu, katana level 3 on a tap, level 4 held,
+         * never a spell, one per SOM_IAI_COOLDOWN_FRAMES; AI iai_3/iai_4. */
+        {
+            const unsigned keep=disciplines.selected;
+            const uint16_t xb=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+            disciplines.selected=SOM_DISC_BUSHIDO;hero[0x19C]=5;hero[0x170]=0;
+            assert(som_class_spell_count(SOM_DISC_BUSHIDO)==0);
+            som_next_spell();                                 /* no spells: no-op */
+            mocked_buttons=xb;som_input_poll();
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+            mocked_buttons=0;som_input_poll();
+            assert(special_stage==3&&special_weapon==1&&hero[0x170]==0);
+            special_stage=0;special_suppress=0;som_input_poll();
+            mocked_buttons=xb;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(!special_stage);                           /* cooling down */
+            frame_number+=SOM_IAI_COOLDOWN_FRAMES;
+            mocked_buttons=xb;som_input_poll();
+            frame_number+=SOM_X_HOLD_FRAMES;som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(special_stage==4);
+            special_stage=0;special_suppress=0;som_input_poll();
+            assert(!som_handle_command("iai_3"));             /* cooling down */
+            frame_number+=SOM_IAI_COOLDOWN_FRAMES;
+            assert(som_handle_command("iai_3")&&special_stage==3);
+            special_stage=0;special_suppress=0;som_input_poll();
+            disciplines.selected=0;frame_number+=SOM_IAI_COOLDOWN_FRAMES;
+            assert(!som_handle_command("iai_4"));             /* not a samurai */
+            /* Weapon Flow X: the bow (third weapon); the game sees B. */
+            const uint8_t bow_owned=ram[0xCC59];ram[0xCC59]=0;
+            disciplines.selected=SOM_DISC_WEAPON_FLOW;
+            assert(som_class_spell_count(SOM_DISC_WEAPON_FLOW)==0);
+            /* Equipping needs the bow's art rows (not in the fixture ROM): with
+             * the bow already in hand X must attack with it as B. */
+            hero[0x1E4]=5;
+            mocked_buttons=xb;som_input_poll();
+            assert(hero[0x1E4]==5&&x_weapon_swap);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+            mocked_buttons=0;som_input_poll();
+            assert(!x_weapon_swap&&hero[0x170]==0);
+            ram[0xCC59]=bow_owned;disciplines.selected=keep;hero[0x1E4]=1;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            hero[0x19C]=1;hero[0x01C]=0;hero[0x060]=0;
+        }
         /* Combo finisher: a level-3 chain, then hold Y: the secondary
          * weapon charges to level 3, or the level it learned. */
         mocked_buttons=0;som_input_poll();

@@ -26,9 +26,16 @@ WEAPONS = (("sword", "axe"), ("glove", "spear"), ("sword", "boomerang"),
            ("boomerang", "whip"), ("whip", "glove"), ("sword", "spear"),
            ("sword", "bow"), ("sword", "bow"), ("bow", "javelin"))
 
+# Weapon Flow's third weapon (X; som_disc_third_weapon in som_disciplines.h).
+THIRD_WEAPONS = {8: "bow"}
+BUSHIDO = 10                                  # X = Iaijutsu, no spells
 SWORD_CLASSES = tuple(i for i, (b, _) in enumerate(WEAPONS) if b == "sword")
 DODGE_CLASSES = (0, 1, 2, 9, 10, 11)          # som_disc_has_dodge
 ATTACK_MAGIC = (2, 3, 4, 5, 6, 7, 9, 11)      # classes with a hostile spell (som_magic.h)
+# Classes whose X spells are self buffs worth casting as a fight starts:
+# Swordsmanship's sabers, Martial Arts' body buffs, Support & Dance.
+BUFF_CLASSES = (0, 1, 7)
+NO_MAGIC = (8, 10)                            # Weapon Flow, Bushido: X is not a spell
 HEALERS = (4, 7)                              # Cure Water in their spell list
 
 # Build -> class bonus (som_build.classify names).
@@ -55,7 +62,8 @@ ADVANTAGES = (
     ("tough", 5, 3, True, "draining a tough enemy"),
     ("tough", 9, 2, True, "Sleep Flower and Speed Down for a tough enemy"),
     ("duel", 1, 3, False, "fast fists for one close enemy"),
-    ("calm", 8, 1, False, "sabers ready while exploring"),
+    ("far", 8, 1, False, "the bow for range, sword and spear up close"),
+    ("crowd", 10, 2, False, "Iaijutsu cuts through a crowd"),
 )
 TOUGH_HP = 200                       # enemy max HP that counts as tough
 

@@ -44,12 +44,12 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     {0x1A, 0x1D, 0x1E, 0x1F, 0xFF},
     /* Support & Dance: buffs and hexes */
     {0x04, 0x05, 0x0B, 0x02, 0x14, 0x16, 0xFF},
-    /* Weapon Flow: every saber */
-    {0x03, 0x09, 0x0F, 0x15, 0x1B, 0x27, 0xFF},
+    /* Weapon Flow: no magic, X is the third weapon (som_disc_third_weapon) */
+    {0xFF},
     /* Roguecraft: hexes */
     {0x02, 0x1E, 0x07, 0x14, 0xFF},
-    /* Bushido: fire and stone */
-    {0x0F, 0x10, 0x03, 0xFF},
+    /* Bushido: no magic, X is Iaijutsu (charge level 3/4 strikes) */
+    {0xFF},
     /* Archery: wind and stone shots */
     {0x12, 0x13, 0x01, 0xFF},
 };

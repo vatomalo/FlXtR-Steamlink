@@ -27,6 +27,26 @@ static inline int som_disc_has_dodge(unsigned discipline){
     default: return 0;
     }
 }
+/* What X does per class (docs/SOM-CLASS-ASSESSMENT.md). Spells for the
+ * casters and the hybrids; Bushido (samurai) has no magic: X is Iaijutsu,
+ * a straight charge level 3 strike with the katana (hold X: level 4), one
+ * per SOM_IAI_COOLDOWN_FRAMES; Weapon Flow (weaponsmaster) has no magic:
+ * X attacks with a third weapon, som_disc_third_weapon. */
+enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON};
+#define SOM_DISC_WEAPON_FLOW 8u
+#define SOM_DISC_BUSHIDO 10u
+#define SOM_IAI_LEVEL 3u
+#define SOM_IAI_HELD_LEVEL 4u
+#define SOM_IAI_COOLDOWN_FRAMES 180ul        /* 3 s */
+#define SOM_NO_WEAPON 0xFFu
+static inline unsigned som_disc_x_role(unsigned discipline){
+    return discipline==SOM_DISC_BUSHIDO?SOM_X_IAI:
+           discipline==SOM_DISC_WEAPON_FLOW?SOM_X_THIRD_WEAPON:SOM_X_SPELLS;
+}
+/* Weapon Flow: sword (B), spear (Y), bow (X): short, reach, long. */
+static inline unsigned som_disc_third_weapon(unsigned discipline){
+    return discipline==SOM_DISC_WEAPON_FLOW?5u:SOM_NO_WEAPON;
+}
 /* Dodges, driven by the proxy. The game's own poses (back roll 0x8D, leap
  * 0x9E, hop 0x95) do not play in field play: written as +0x1C/+0x11 they
  * end within 6 frames without moving (headless Steam Link test,

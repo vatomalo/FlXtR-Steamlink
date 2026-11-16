@@ -44,6 +44,8 @@ from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WE
                                 CONTACT_PX as CLASS_CONTACT_PX)
 from som_weapon_tactics import WeaponTactics
 from som_jutsu import JutsuTactics
+from som_class_arts import IaiTactics
+from som_class_director import BUFF_CLASSES, BUSHIDO, THIRD_WEAPONS
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -92,7 +94,7 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
                     "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
-                    "kawarimi", "shunshin"} | \
+                    "kawarimi", "shunshin", "iai_3", "iai_4"} | \
     {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
@@ -134,6 +136,7 @@ LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
 DASH_MIN_STRAIGHT = 6   # learned straight route tiles for a dash (live runs: mostly 5-7)
 DASH_MIN_REMAINING = 8  # and the target at least this far away
+BUFF_EVERY_S = 30.0     # sabers and body buffs wear off; renew this often
 DASH_ENEMY_PX = 160     # no dashing with a monster this close
 DASH_MOVES = {"right": "dash_right", "left": "dash_left",
               "up": "dash_up", "down": "dash_down"}
@@ -1334,10 +1337,12 @@ def main() -> int:
     planner.build = None              # log the hero's build once it is read
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
     spell_ready_at = 0.0
+    buff_ready_at = 0.0                           # sabers / body buffs (BUFF_CLASSES)
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
     tool_out = "sword"                           # tool weapon taken out (sword/whip)
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
     jutsu = JutsuTactics()                        # Kawarimi / Shunshin (som_jutsu)
+    iai = IaiTactics()                            # samurai Iaijutsu (som_class_arts)
     combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
     style = dict(zip(COMBAT_NAMES, combat))
     charge_failed = False
@@ -1883,7 +1888,9 @@ def main() -> int:
                         primary, secondary = CLASS_WEAPONS[class_director.current]
                         swap = weapon_tactics.decide(primary, secondary, held,
                                                      min(gaps) if gaps else None,
-                                                     hp / max_hp if max_hp else 1.0, levels)
+                                                     hp / max_hp if max_hp else 1.0, levels,
+                                                     third=THIRD_WEAPONS.get(
+                                                         class_director.current))
                         if swap is not None:
                             weapon, why = swap
                             try:
@@ -1927,6 +1934,14 @@ def main() -> int:
                         if (class_director.current in HEALERS and max_hp and
                                 hp < max_hp * 0.40):
                             command = "cast_heal"
+                        elif (class_director.current in BUFF_CLASSES and
+                              now >= buff_ready_at and
+                              decision.intention in ("engage_enemy", "defend_enemy") and
+                              enemy_within(observation, DASH_ENEMY_PX)):
+                            # Saber / body buff as a fight starts, then
+                            # BUFF_EVERY_S before the next one.
+                            command = "cast_buff"
+                            buff_ready_at = now + BUFF_EVERY_S
                         elif (class_director.current in ATTACK_MAGIC and
                               decision.intention == "engage_enemy" and
                               enemy_within(observation, DASH_ENEMY_PX)):
@@ -1959,6 +1974,28 @@ def main() -> int:
                     if style["guard"] == 0:
                         decision = PlannerDecision("wait", "guarding is off (combat gambit 0)",
                                                    decision.intention)
+                # Samurai: Iaijutsu (charge level 3/4 at once) instead of a
+                # plain swing, one per 3 s (som_class_arts).
+                if (link and decision.action == "attack" and
+                        class_director.current == BUSHIDO and not args.dry_run):
+                    foes = [e for e in observation.get("enemy_slots", [])
+                            if e.get("active") and not e.get("familiar")]
+                    draw = iai.decide("attack",
+                                      max((e.get("max_hp") or 0 for e in foes
+                                           if e.get("hp_plausible")), default=0),
+                                      sum(1 for e in foes if enemy_within(
+                                          {"tile_context": observation.get("tile_context"),
+                                           "enemy_slots": [e]}, 64)))
+                    if draw is not None:
+                        try:
+                            link.send_control(draw)
+                            print(f"[iai] {draw} ({decision.reason})", flush=True)
+                            announce(f"AI: Iaijutsu|level {draw[-1]}")
+                            previous = "attack"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            iai.refused()
+                            print(f"[iai] {draw} failed: {exc}; plain swing", flush=True)
                 # Charged attacks without holding: the proxy's special_<n>
                 # sets the gauge once the swing ends (needs a class).
                 if (link and decision.action == "charge" and class_director.current is not None and

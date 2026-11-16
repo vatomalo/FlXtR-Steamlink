@@ -49,11 +49,22 @@ def reach(weapon):
     return WEAPON_REACH_PX.get(weapon, DEFAULT_STRIKE_AXIAL_PX)
 
 
-def choose(primary, secondary, held, distance, hp_fraction, levels):
-    """(weapon, reason) to hold now; distance None = no enemy near."""
+def _others(pair, weapon, levels):
+    rest = [w for w in pair if w != weapon]
+    if all(levels.get(w, 0) == levels.get(weapon, 0) for w in rest):
+        return ""
+    best = max(rest, key=lambda w: levels.get(w, 0))
+    return f" (the {best} {levels.get(best, 0)})"
+
+
+def choose(primary, secondary, held, distance, hp_fraction, levels, third=None):
+    """(weapon, reason) to hold now; distance None = no enemy near.
+
+    third: a class's third weapon (Weapon Flow's bow on X), chosen by the
+    same rules; with it the longest reach covers far enemies."""
     levels = levels or {}
-    pair = [w for w in (primary, secondary) if w]
-    if len(pair) < 2 or pair[0] == pair[1]:
+    pair = [w for w in dict.fromkeys((primary, secondary, third)) if w]
+    if len(pair) < 2:
         return (pair[0], "only one weapon") if pair else (held, "no class weapons")
     longer = max(pair, key=reach)
     shorter = min(pair, key=reach)
@@ -76,10 +87,9 @@ def choose(primary, secondary, held, distance, hp_fraction, levels):
                 distance <= reach(shorter) - BAND_PX):
             stronger = shorter       # in its face: the short weapon swings faster
         return stronger, (f"close fight: the {stronger} is level {levels.get(stronger, 0)}"
-                          + ("" if levels.get(pair[0], 0) == levels.get(pair[1], 0)
-                             else f" (the other {levels.get(pair[0] if stronger == pair[1] else pair[1], 0)})"))
+                          + _others(pair, stronger, levels))
     weaker = min(pair, key=lambda w: (levels.get(w, 0), w != primary))
-    stronger = pair[0] if weaker == pair[1] else pair[1]
+    stronger = max(pair, key=lambda w: (levels.get(w, 0), w == primary))
     if levels.get(stronger, 0) - levels.get(weaker, 0) >= TRAIN_GAP:
         return weaker, (f"no enemy near: training the {weaker} (level "
                         f"{levels.get(weaker, 0)} vs {levels.get(stronger, 0)})")
@@ -96,7 +106,8 @@ class WeaponTactics:
         self.combat_cooldown = COMBAT_COOLDOWN_S
         self.last_distance = None              # (distance, time) of the last look
 
-    def decide(self, primary, secondary, held, distance, hp_fraction, levels, busy=False):
+    def decide(self, primary, secondary, held, distance, hp_fraction, levels, busy=False,
+               third=None):
         """(weapon, reason) to switch to now, or None to keep the one in hand."""
         now = self.clock()
         knocked = None
@@ -105,7 +116,7 @@ class WeaponTactics:
                 distance - self.last_distance[0] >= KNOCKBACK_PX):
             knocked = distance - self.last_distance[0]
         self.last_distance = (distance, now) if distance is not None else None
-        weapon, reason = choose(primary, secondary, held, distance, hp_fraction, levels)
+        weapon, reason = choose(primary, secondary, held, distance, hp_fraction, levels, third)
         if weapon == held or weapon is None or busy or self.cooldown is None:
             return None
         fight = distance is not None and distance <= NEAR_PX

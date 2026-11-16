@@ -104,6 +104,7 @@ static uint16_t special_chord;
 static int special_suppress;
 #define SOM_SPECIAL_TIMEOUT 360ul
 static int som_special_start(unsigned which,unsigned stage);
+static int som_iai_start(unsigned level);
 static void som_special_tick(void);
 static void som_combo_clear(void){som_combo_reset(&combo);}
 /* which: 0 = B (primary weapon), 1 = Y (secondary). */
@@ -618,7 +619,9 @@ static unsigned som_current_spell(void){
 }
 static void som_next_spell(void){
     const unsigned d=disciplines.selected<SOM_DISCIPLINE_COUNT?disciplines.selected:SOM_DISCIPLINE_COUNT;
-    spell_cursor[d]=(spell_cursor[d]+1u)%som_class_spell_count(disciplines.selected);
+    const unsigned n=som_class_spell_count(disciplines.selected);
+    if(!n)return;                         /* Bushido / Weapon Flow: no spells */
+    spell_cursor[d]=(spell_cursor[d]+1u)%n;
 }
 /* Seals: D-pad presses counted while R2 is held (som_magic.h). */
 static unsigned seal_count;
@@ -688,6 +691,8 @@ static void som_class_selected(void){
 /* Set each poll: the player is in field play with a discipline and Y (not
  * L2+Y) held. */
 static int y_weapon_swap, y_weapon_blocked, b_weapon_blocked, x_spell_blocked;
+static int x_weapon_swap;                 /* Weapon Flow: X attacks as B (third weapon) */
+static unsigned long iai_ready;           /* Bushido: next frame Iaijutsu may start */
 static int som_cycle_weapon(uint8_t *ram);
 /* Verified field play: hero object active, field mode (7E:00E4 = 1,
  * 7E:00E6 = 0x0F), no event running (7E:00D0 = 0) and the ring closed
@@ -832,6 +837,12 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         if(bitmask)actual=(int16_t)(actual&~hidden);
         else if(id<16u&&(hidden&(1u<<id)))actual=0;
     }
+    if(x_weapon_swap&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        if(bitmask)actual=(int16_t)((actual&~(1<<RETRO_DEVICE_ID_JOYPAD_X))|
+                                     (1<<RETRO_DEVICE_ID_JOYPAD_B));
+        else if(id==RETRO_DEVICE_ID_JOYPAD_X)actual=0;
+        else if(id==RETRO_DEVICE_ID_JOYPAD_B)actual=1;
+    }
     if(y_weapon_swap&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         if(bitmask)actual=(int16_t)((actual&~(1<<RETRO_DEVICE_ID_JOYPAD_Y))|
                                      (1<<RETRO_DEVICE_ID_JOYPAD_B));
@@ -925,7 +936,7 @@ static void som_input_poll(void){
                 special_suppress=1;
             }
         }
-        y_weapon_swap=0;y_weapon_blocked=0;b_weapon_blocked=0;x_spell_blocked=0;
+        y_weapon_swap=0;y_weapon_blocked=0;b_weapon_blocked=0;x_spell_blocked=0;x_weapon_swap=0;
         uint8_t *wram=field?(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
         if(wram&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
@@ -981,6 +992,33 @@ static void som_input_poll(void){
                         hits,level,which?"Y":"B");
             }
         }
+        const unsigned x_role=disciplines.selected<SOM_DISCIPLINE_COUNT?
+            som_disc_x_role(disciplines.selected):SOM_X_SPELLS;
+        if(x_role==SOM_X_THIRD_WEAPON){
+            /* Weapon Flow: X equips the third weapon and attacks with it
+             * (the game sees B, so holding X charges it). */
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+                const unsigned want=som_disc_third_weapon(disciplines.selected);
+                const int result=wram[0xE1E4]==want?SOM_EQUIP_OK:
+                    (pressed&x_bit)?som_equip_weapon(wram,want):som_equip_weapon_direct(wram,want);
+                if(result==SOM_EQUIP_OK)x_weapon_swap=1;else x_spell_blocked=1;
+            }
+        }else if(x_role==SOM_X_IAI){
+            /* Bushido: release X for Iaijutsu, katana charge level 3; held
+             * SOM_X_HOLD_FRAMES or longer, level 4. No spells. */
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+                x_spell_blocked=1;
+                if(pressed&x_bit){x_press_frame=frame_number;x_cycled=0;}
+                else if(!x_cycled&&frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
+                    x_cycled=1;
+                    som_overlay_set(&overlay,"^Iaijutsu|level 4: release X",SOM_MESSAGE_FRAMES/2u);
+                }
+            }else if(wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
+                     !(current&(l2_bit|r2))&&!special_suppress){
+                som_iai_start(x_cycled?SOM_IAI_HELD_LEVEL:SOM_IAI_LEVEL);
+                x_cycled=0;
+            }
+        }else
         /* Tap X: cast on release. Hold X: next spell every 0.5 s. */
         if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
             x_spell_blocked=1;
@@ -1977,6 +2015,22 @@ static int som_special_start(unsigned which,unsigned stage){
             som_weapon_types[weapon],stage);
     return 1;
 }
+/* Bushido's X (and the AI's iai_<3|4>): the katana's charge level
+ * straight away, one per SOM_IAI_COOLDOWN_FRAMES. */
+static int som_iai_start(unsigned level){
+    if(disciplines.selected!=SOM_DISC_BUSHIDO)return 0;
+    if(frame_number<iai_ready){
+        som_overlay_set(&overlay,"^Iaijutsu|not ready",SOM_MESSAGE_FRAMES/3u);
+        return 0;
+    }
+    if(!som_special_start(0,level))return 0;
+    iai_ready=frame_number+SOM_IAI_COOLDOWN_FRAMES;
+    special_chord=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);special_suppress=1;
+    char text[40];snprintf(text,sizeof(text),"^Iaijutsu|level %u",special_stage);
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] IAI level %u\n",special_stage);
+    return 1;
+}
 static void som_special_tick(void){
     if(!special_stage||!backend_retro_get_memory_data)return;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
@@ -2574,6 +2628,13 @@ static int som_handle_command(const char *command){
                 return som_cast_spell(ram,spell);
         }
         return 0;
+    }
+    /* iai_3 / iai_4: Bushido's Iaijutsu for the AI (same cooldown). */
+    if(!strcmp(command,"iai_3")||!strcmp(command,"iai_4")){
+        special_from_ai=1;
+        const int ok=som_iai_start(command[4]=='4'?SOM_IAI_HELD_LEVEL:SOM_IAI_LEVEL);
+        special_from_ai=0;
+        return ok;
     }
     /* special_<1-8>: the primary weapon's charge level, without holding. */
     if(!strncmp(command,"special_",8)&&command[8]>='1'&&command[8]<='8'&&!command[9])
@@ -3178,7 +3239,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
     hop_dx=hop_dy=0;hop_frames_left=0;
     special_chord=0;special_suppress=0;
-    y_weapon_swap=y_weapon_blocked=b_weapon_blocked=x_spell_blocked=0;
+    y_weapon_swap=y_weapon_blocked=b_weapon_blocked=x_spell_blocked=0;x_weapon_swap=0;iai_ready=0;
     combo_input_held=0;combo_hold_start=0;combo_hold_tried=0;
     memset(combo_hp,0,sizeof(combo_hp));memset(combo_ids,0,sizeof(combo_ids));
     memset(combo_live,0,sizeof(combo_live));

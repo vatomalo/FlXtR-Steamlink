@@ -51,6 +51,37 @@ class TestMemoryPlanner(unittest.TestCase):
         routes = MemoryPlanner._routes((4, 2), cells, (8, 8), forbidden=forbidden)
         self.assertNotEqual(routes[(4, 3)][0], "step_down")
 
+    def test_slides_are_remembered_with_waits_as_failsafe(self):
+        def at(tile):
+            state = observation(rows=(".....", ".....", "..@..", ".....", "....."))
+            context = state["tile_context"]
+            context.update(radius=2, actor_tile=list(tile))
+            context["actor"] = {"x_px": tile[0] * 16 + 8, "y_px": tile[1] * 16 + 8,
+                                "layer": 1}
+            return state
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "slides.sqlite")
+            planner = MemoryPlanner(history)
+            for tile, step in (((4, 2), "none"), ((3, 3), "step_down"),
+                               ((4, 2), "step_right"), ((3, 3), "step_down")):
+                planner.decide(at(tile), step)
+            # A restarted bridge still avoids the slide.
+            fresh = MemoryPlanner(history)
+            key = ((4, 2), "step_down")
+            self.assertIn(key, fresh._forbidden_steps(at((4, 2))["tile_context"]))
+            # Failsafe: field waits in a row lift remembered slides.
+            idle = PlannerDecision("wait", "nothing to do", "explore_frontier")
+            for _ in range(8):
+                decision = fresh._slide_failsafe_tick(at((4, 2)), idle)
+            self.assertIn("failsafe", decision.reason)
+            self.assertIsNone(fresh._forbidden_steps(at((4, 2))["tile_context"]))
+            # Walking it cleanly forgets it for good.
+            fresh.decide(at((4, 2)), "none")
+            decision = fresh.decide(at((4, 3)), "step_down")
+            self.assertIn("forgetting", decision.reason)
+            self.assertNotIn("131:1:4:2:step_down", MemoryPlanner(history)._slides())
+            history.close()
+
     def test_reaching_the_intended_tile_is_not_a_deflection(self):
         planner = MemoryPlanner()
         first = observation()

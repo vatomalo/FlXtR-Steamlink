@@ -82,6 +82,12 @@ STALL_BLOCK_DECISIONS = 200
 DEFLECT_LIMIT = 2
 # Crossings into a map whose exits all lead back before its door counts as a wall.
 DEAD_END_VISITS = 3
+# Learned slides are remembered across visits and restarts. Failsafe: this
+# many field waits in a row (nothing left to do) and the remembered slides
+# are ignored for SLIDE_FAILSAFE_DECISIONS, so a wrong memory cannot trap
+# the hero; a remembered slide he then walks through cleanly is forgotten.
+SLIDE_FAILSAFE_WAITS = 8
+SLIDE_FAILSAFE_DECISIONS = 150
 FRONTIER_NO_PROGRESS = 24
 FRONTIER_COOLDOWN = 200
 # Keep the current evasion heading unless another step is clearly safer.
@@ -167,6 +173,9 @@ class MemoryPlanner:
         # last decision was made (map, layer, tile) to compare against.
         self.deflections = {}
         self.last_step_origin = None
+        self.slides = None              # remembered slides, loaded lazily
+        self.field_waits = 0
+        self.slide_failsafe = 0
         # Grass cutting: learned cuttable attributes (without a database),
         # the previous observation to detect cuts, and attacks per tile.
         self.local_cuttable = set()
@@ -1490,7 +1499,8 @@ class MemoryPlanner:
         if deflected:
             decision = replace(decision, reason=f"{deflected}; {decision.reason}")
         decision = self._observe_curiosity(observation, decision, directive, errand)
-        return self._check_stall(observation, decision)
+        decision = self._check_stall(observation, decision)
+        return self._slide_failsafe_tick(observation, decision)
 
     BUSY_INTENTIONS = ("engage_enemy", "survive", "recover_at_inn", "return_to_inn",
                        "at_inn", "errand", "arrive")
@@ -1838,7 +1848,8 @@ class MemoryPlanner:
         actor = context.get("actor") or {}
         prefix = f"{context.get('map_id')}:{actor.get('layer')}:"
         forbidden = set()
-        for key in self.blocked_moves:
+        remembered = () if self.slide_failsafe else self._slides()
+        for key in list(self.blocked_moves) + list(remembered):
             if key.startswith(prefix):
                 x, y, action = key[len(prefix):].split(":")
                 if x.lstrip("-").isdigit() and y.lstrip("-").isdigit():
@@ -1865,8 +1876,12 @@ class MemoryPlanner:
         start = origin[2]
         key = (origin[0], origin[1], start[0], start[1], previous)
         expected = self._neighbor(start, STEP_OFFSETS[previous], tuple(size))
+        stall_key = f"{origin[0]}:{origin[1]}:{start[0]}:{start[1]}:{previous}"
         if here[2] == expected:
             self.deflections.pop(key, None)
+            if stall_key in self._slides():
+                self._remember_slide(stall_key, False)
+                return f"{previous} from tile {list(start)} works after all; forgetting that slide"
             return None
         dx = self._wrapped_delta(here[2][0], start[0], size[0])
         dy = self._wrapped_delta(here[2][1], start[1], size[1])
@@ -1876,12 +1891,42 @@ class MemoryPlanner:
         if self.deflections[key] < DEFLECT_LIMIT:
             return None
         self.deflections.pop(key, None)
-        stall_key = f"{origin[0]}:{origin[1]}:{start[0]}:{start[1]}:{previous}"
         self.blocked_moves[stall_key] = STALL_BLOCK_DECISIONS
+        self._remember_slide(stall_key, True)
         self._set_intention(None)
         return (f"{previous} from tile {list(start)} slid to {list(here[2])} "
-                f"instead of {list(expected)} {DEFLECT_LIMIT} times; blocking that "
-                f"step for {STALL_BLOCK_DECISIONS} decisions")
+                f"instead of {list(expected)} {DEFLECT_LIMIT} times; remembering "
+                f"that slide")
+
+    def _slides(self):
+        """Remembered slide steps {"map:layer:x:y:step"} (persistent)."""
+        if self.slides is None:
+            stored = self._get_state("slides")
+            self.slides = set(stored) if isinstance(stored, list) else set()
+        return self.slides
+
+    def _remember_slide(self, key, slides):
+        remembered = self._slides()
+        if slides == (key in remembered):
+            return
+        remembered.add(key) if slides else remembered.discard(key)
+        self._set_state("slides", sorted(remembered))
+
+    def _slide_failsafe_tick(self, observation, decision):
+        """Count field waits; after SLIDE_FAILSAFE_WAITS in a row stop
+        trusting remembered slides for a while."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        self.slide_failsafe = max(0, self.slide_failsafe - 1)
+        idle = (decision.action == "wait" and decision.intention != "observe" and
+                isinstance(context, dict) and context.get("runtime_verified") and
+                context.get("game_mode") == "field")
+        self.field_waits = self.field_waits + 1 if idle else 0
+        if self.field_waits < SLIDE_FAILSAFE_WAITS or not self._slides():
+            return decision
+        self.field_waits = 0
+        self.slide_failsafe = SLIDE_FAILSAFE_DECISIONS
+        return replace(decision, reason=f"{decision.reason}; failsafe: retrying "
+                       f"remembered slides for {SLIDE_FAILSAFE_DECISIONS} decisions")
 
     def _blocked_here(self, context):
         return {action for action in STEP_OFFSETS

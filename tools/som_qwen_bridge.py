@@ -32,7 +32,7 @@ from som_doors import DoorLearner
 from som_dialogue import Commentary, NpcDialogue, qwen_comment
 from som_walk import CurrentWalk, WalkFailed
 from som_respawn import RespawnDialogue
-from som_game_over import GameOverWatch
+from som_game_over import GameOverLoad, GameOverWatch
 from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
@@ -1333,6 +1333,7 @@ def main() -> int:
     orphan_ring_attempted = False
     respawn_dialogue = RespawnDialogue()
     game_over = GameOverWatch(history.connection if history is not None else None)
+    game_over_load = GameOverLoad()   # Turbo's in-game reload after a death
     event_escape = EventEscape(log=lambda line: print(line, flush=True))
     play_loop = None
     save_disabled = False
@@ -1525,6 +1526,28 @@ def main() -> int:
                             print(f"[ai] eagle eye: mapped {learned} tiles of map {here}",
                                   flush=True)
                         surveyed_map, surveys_due = here, SURVEY_EVERY
+            # Game over: the hero stays at HP 0 through the death text, a
+            # menu and the load screens; confirm through them, bounded, so
+            # training goes on from the last save (som_game_over).
+            if observation is not None and args.policy in ("hybrid", "memory"):
+                reload = game_over_load.observe(observation,
+                                                WRAM(raw) if raw is not None else None)
+                if reload is not None:
+                    kind, reason = reload
+                    print(f"[death] {reason}", flush=True)
+                    if kind == "confirm":
+                        if learner is not None:
+                            learner.cancel("game over reload")
+                        if link:
+                            link.send_action("confirm")
+                        elif not args.dry_run:
+                            send_action(args.host, "confirm")
+                        if game_over_load.presses == 1:
+                            announce("AI: died|loading the last save")
+                        previous = "wait"
+                        continue
+                    announce("AI: back from the last save" if kind == "loaded"
+                             else "AI: could not load|please Continue by hand")
             # Ordinary KO in Turbo auto-respawns the hero but can leave an
             # event/dialogue awaiting one or more B presses. Only a witnessed
             # dead -> transition -> alive/event sequence authorizes confirms.

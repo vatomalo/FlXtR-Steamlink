@@ -113,3 +113,87 @@ class GameOverWatch:
         return (f"died on map {last.get('map_id')} ({enemy}, last HP "
                 f"{last.get('hp_before')}/{last.get('max_hp')}, phase {last.get('phase')})"
                 + (f"; {times} death(s) on that map so far" if times else ""))
+
+
+# Turbo's game over never reaches the title screen: with the hero at HP 0
+# the game shows its death text (event, D0 0x83), a menu (D0 1, cursor
+# 7E:A211 0x40) and the load screens (transitions), each taking confirm,
+# and the hero is back in the field with the save's HP (recorded from the
+# player 2026-11-16: six confirms, ~1-5 s apart, slot 1).
+LOAD_SETTLE_S = 1.0        # the screen must be unchanged this long before a press
+LOAD_REPEAT_S = 3.0        # the same screen again only after this (a dropped press)
+LOAD_PASSIVE_S = 6.0       # screens the game advances itself: only if stuck this long
+LOAD_PRESS_GAP_S = 1.2     # at least this long between presses
+LOAD_MAX_PRESSES = 12      # twice what the player needed; then stop and say so
+# Death animation (event D0 0x81/0x82) and map fades (transition with E4 set)
+# advanced without a press in the recording.
+PASSIVE_EVENTS = (0x81, 0x82)
+LOAD_WINDOW_S = 120.0      # a death this long ago no longer authorizes presses
+
+
+class GameOverLoad:
+    """Press confirm through the game-over screens until the save is loaded.
+
+    Only while the hero is at HP 0 after being seen dying in the field, only
+    on event and transition screens, one press per settled screen, at most
+    LOAD_MAX_PRESSES. Done when the hero stands in the field with HP again.
+    """
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.died_at = None
+        self.presses = 0
+        self.screen = None         # (screen key, since)
+        self.pressed_screen = None # (screen key, time) of the last press
+        self.pressed_at = None
+        self.gave_up = False
+
+    @staticmethod
+    def _screen(wram):
+        return (wram.game_mode(), wram.u8(0x7E00D0), wram.u8(0x7E00E4), wram.u8(0x7E00E6),
+                wram.u8(0x7EA211))
+
+    def observe(self, observation, wram):
+        """("confirm", reason), ("loaded", reason), ("stuck", reason) or None."""
+        context = (observation or {}).get("tile_context") or {}
+        mode = context.get("game_mode")
+        hp = _hero(observation).get("hp")
+        now = self.clock()
+        if mode == "field" and isinstance(hp, int) and hp > 0:
+            if self.died_at is not None and self.presses:
+                done = ("loaded", f"save loaded after {self.presses} presses; HP {hp}")
+                self.__init__(self.clock)
+                return done
+            self.__init__(self.clock)
+            return None
+        if hp != 0 or wram is None:
+            return None
+        if self.died_at is None:
+            if mode != "field":
+                return None             # only a death seen in the field arms it
+            self.died_at = now
+        if self.gave_up or now - self.died_at > LOAD_WINDOW_S:
+            return None
+        if mode not in ("event", "transition"):
+            return None
+        screen = self._screen(wram)
+        if self.screen is None or self.screen[0] != screen:
+            self.screen = (screen, now)
+            return None
+        passive = ((mode == "event" and screen[1] in PASSIVE_EVENTS) or
+                   (mode == "transition" and screen[2] != 0))
+        settle = LOAD_PASSIVE_S if passive else LOAD_SETTLE_S
+        if self.pressed_screen is not None and self.pressed_screen[0] == screen:
+            if now - self.pressed_screen[1] < LOAD_REPEAT_S:
+                return None
+        if (now - self.screen[1] < settle or
+                (self.pressed_at is not None and now - self.pressed_at < LOAD_PRESS_GAP_S)):
+            return None
+        if self.presses >= LOAD_MAX_PRESSES:
+            self.gave_up = True
+            return ("stuck", f"still not loaded after {self.presses} presses")
+        self.presses += 1
+        self.pressed_at = now
+        self.pressed_screen = (screen, now)
+        return ("confirm", f"game over: confirm {self.presses}/{LOAD_MAX_PRESSES} "
+                           f"on {screen[0]} screen (D0 {screen[1]:#04x})")

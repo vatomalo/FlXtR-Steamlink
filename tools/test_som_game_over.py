@@ -70,3 +70,68 @@ class GameOverWatchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeScreen:
+    """WRAM stand-in for GameOverLoad: game mode plus the screen bytes."""
+
+    def __init__(self, mode, d0=0, e4=1, e6=0x0F, cursor=0):
+        self.mode, self.bytes = mode, {0x7E00D0: d0, 0x7E00E4: e4, 0x7E00E6: e6,
+                                       0x7EA211: cursor}
+
+    def game_mode(self):
+        return self.mode
+
+    def u8(self, address):
+        return self.bytes.get(address, 0)
+
+
+def load_observation(mode, hp):
+    return {"party": [{"hp": hp, "max_hp": 127}], "tile_context": {"game_mode": mode}}
+
+
+class GameOverLoadTest(unittest.TestCase):
+    def play(self, load, clock, screens):
+        """screens: [(mode, hp, FakeScreen, seconds)] -> results in order."""
+        results = []
+        for mode, hp, wram, seconds in screens:
+            end = clock.now + seconds
+            while clock.now < end:
+                result = load.observe(load_observation(mode, hp), wram)
+                if result:
+                    results.append(result[0])
+                clock.now += 0.25
+        return results
+
+    def test_confirms_through_the_recorded_game_over_then_reports_loaded(self):
+        from som_game_over import GameOverLoad
+        clock = Clock()
+        load = GameOverLoad(clock)
+        results = self.play(load, clock, [
+            ("field", 0, FakeScreen("field"), 1),
+            ("event", 0, FakeScreen("event", 0x82), 3),           # death animation
+            ("transition", 0, FakeScreen("transition", 1, 3, 11), 2),   # map fade
+            ("event", 0, FakeScreen("event", 0x83), 1.5),         # death text
+            ("event", 0, FakeScreen("event", 1, cursor=0x40), 1.5),     # menu
+            ("transition", 0, FakeScreen("transition", 0, 0, 0, 1), 1.5),  # load screen
+            ("transition", 0, FakeScreen("transition", 0, 0, 0, 0), 1.5),
+            ("field", 127, FakeScreen("field"), 1),
+        ])
+        self.assertEqual(results, ["confirm"] * 4 + ["loaded"])
+
+    def test_never_presses_without_a_death_in_the_field(self):
+        from som_game_over import GameOverLoad
+        clock = Clock()
+        load = GameOverLoad(clock)
+        self.assertEqual(self.play(load, clock, [
+            ("event", 90, FakeScreen("event", 0x83), 5),           # a story dialogue
+            ("event", 0, FakeScreen("event", 0x83), 5),            # HP 0 never seen in field
+        ]), [])
+
+    def test_gives_up_after_the_press_limit(self):
+        from som_game_over import GameOverLoad, LOAD_MAX_PRESSES
+        clock = Clock()
+        load = GameOverLoad(clock)
+        results = self.play(load, clock, [("field", 0, FakeScreen("field"), 1),
+                                          ("event", 0, FakeScreen("event", 0x83), 60)])
+        self.assertEqual(results, ["confirm"] * LOAD_MAX_PRESSES + ["stuck"])

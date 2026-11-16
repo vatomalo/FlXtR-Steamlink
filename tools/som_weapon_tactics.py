@@ -43,6 +43,12 @@ TRAIN_GAP = 2
 BAND_PX = 8            # hysteresis around the short weapon's reach
 KNOCKBACK_PX = 16      # the enemy jumped this much further away: it was hit back
 KNOCKBACK_WINDOW_S = 1.0
+# A switch the proxy did not make (busy, art not verified: the weapon in hand
+# stayed the same) is a refusal; after REFUSALS of them the weapon rests for
+# REFUSED_REST_S instead of being asked for every second (2026-11-16).
+VERIFY_AFTER_S = 1.0
+REFUSALS = 2
+REFUSED_REST_S = 20.0
 
 
 def reach(weapon):
@@ -105,6 +111,9 @@ class WeaponTactics:
         self.cooldown = SWITCH_COOLDOWN_S      # the bridge sets it from the gambit; None = never
         self.combat_cooldown = COMBAT_COOLDOWN_S
         self.last_distance = None              # (distance, time) of the last look
+        self.pending = None                    # (weapon, time) asked for, not yet seen
+        self.refusals = {}                     # weapon -> refusals in a row
+        self.resting = {}                      # weapon -> time it may be asked again
 
     def decide(self, primary, secondary, held, distance, hp_fraction, levels, busy=False,
                third=None):
@@ -116,8 +125,18 @@ class WeaponTactics:
                 distance - self.last_distance[0] >= KNOCKBACK_PX):
             knocked = distance - self.last_distance[0]
         self.last_distance = (distance, now) if distance is not None else None
+        if self.pending is not None:
+            asked, at = self.pending
+            if held == asked:
+                self.refusals.pop(asked, None)
+                self.pending = None
+            elif now - at >= VERIFY_AFTER_S:
+                self.pending = None
+                self._refused(asked, now)
         weapon, reason = choose(primary, secondary, held, distance, hp_fraction, levels, third)
         if weapon == held or weapon is None or busy or self.cooldown is None:
+            return None
+        if self.resting.get(weapon, 0) > now or self.pending is not None:
             return None
         fight = distance is not None and distance <= NEAR_PX
         wait = min(self.combat_cooldown, self.cooldown) if fight else self.cooldown
@@ -126,8 +145,18 @@ class WeaponTactics:
         elif self.switched_at is not None and now - self.switched_at < wait:
             return None
         self.switched_at, self.last_reason = now, reason
+        self.pending = (weapon, now)
         return weapon, reason
 
+    def _refused(self, weapon, now):
+        count = self.refusals.get(weapon, 0) + 1
+        self.refusals[weapon] = count
+        self.switched_at = None
+        if count >= REFUSALS:
+            self.refusals[weapon] = 0
+            self.resting[weapon] = now + REFUSED_REST_S
+
     def refused(self):
-        """The proxy refused the switch (mid-swing): try again next look."""
+        """The command could not be sent: try again next look."""
+        self.pending = None
         self.switched_at = None

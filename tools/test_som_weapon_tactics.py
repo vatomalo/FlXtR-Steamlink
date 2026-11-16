@@ -84,5 +84,34 @@ class TacticsTest(unittest.TestCase):
         self.assertEqual(t.decide("sword", "bow", "bow", 15, 1.0, {})[0], "sword")
 
 
+class RefusalTest(unittest.TestCase):
+    def test_a_switch_that_never_happens_rests_the_weapon(self):
+        now = [100.0]
+        t = WeaponTactics(lambda: now[0])
+        t.combat_cooldown = 0.0
+        ask = lambda: t.decide("sword", "boomerang", "sword", 42, 1.0, {})
+        self.assertEqual(ask()[0], "boomerang")
+        now[0] += 0.5
+        self.assertIsNone(ask())                 # still waiting to see it in hand
+        now[0] += 0.6
+        self.assertEqual(ask()[0], "boomerang")  # refused once: one more try
+        now[0] += 1.1
+        self.assertIsNone(ask())                 # refused twice: resting
+        now[0] += 19.0
+        self.assertIsNone(ask())
+        now[0] += 1.5
+        self.assertEqual(ask()[0], "boomerang")
+
+    def test_a_switch_that_happens_clears_the_count(self):
+        now = [100.0]
+        t = WeaponTactics(lambda: now[0])
+        t.combat_cooldown = 0.0
+        self.assertEqual(t.decide("sword", "boomerang", "sword", 42, 1.0, {})[0], "boomerang")
+        now[0] += 0.3
+        t.decide("sword", "boomerang", "boomerang", 42, 1.0, {})
+        self.assertIsNone(t.pending)
+        self.assertEqual(t.refusals, {})
+
+
 if __name__ == "__main__":
     unittest.main()

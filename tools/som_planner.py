@@ -42,6 +42,7 @@ DEAD_END_COST = 6
 # Long-range weapons back away from an enemy closer than this, at most
 # KITE_STEPS steps in a row before shooting anyway.
 KEEP_DISTANCE_PX = 44
+LINE_UP_MAX_PX = 40         # longest sidestep onto the enemy's line
 KITE_STEPS = 4
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
@@ -954,7 +955,8 @@ class MemoryPlanner:
 
         Shooting along x needs the enemy within (nearest, reach] px on x and
         the y offset brought inside DEFAULT_STRIKE_SIDE_PX; the same for y.
-        The axis needing the smaller sideways move wins."""
+        The axis needing the smaller sideways move wins; moves longer than
+        LINE_UP_MAX_PX are left to routing."""
         options = []
         if nearest < abs(dx) <= reach:
             options.append((abs(dy), "step_down" if dy > 0 else "step_up", abs(dx)))
@@ -963,6 +965,11 @@ class MemoryPlanner:
         for side, step, along in sorted(options):
             if side <= DEFAULT_STRIKE_SIDE_PX:
                 return None              # already lined up: strike or turn
+            if side > LINE_UP_MAX_PX:
+                # Far off the line is not a sidestep but a walk; leave it to
+                # routing. Sliding 111 px sideways fought the route around a
+                # wall, left/right for minutes (2026-11-16).
+                continue
             if step in open_steps:
                 return PlannerDecision(step, f"line up the {held} on enemy {enemy['slot']} "
                                        f"({along} px away, {side} px off the line)",

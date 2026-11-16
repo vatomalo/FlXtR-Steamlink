@@ -56,6 +56,15 @@ class ClassDirectorTest(unittest.TestCase):
         self.director.cooldown = 30
         self.assertIsNotNone(self.director.choose("skirmisher", {}, 0))
 
+    def test_a_class_is_kept_at_least_min_hold(self):
+        from som_class_director import MIN_HOLD_S
+        self.director.cooldown = 10
+        self.director.switched(2)
+        self.clock.now += MIN_HOLD_S - 1
+        self.assertIsNone(self.director.choose("skirmisher", {"bow": 9}, 0))
+        self.clock.now += 2
+        self.assertEqual(self.director.choose("skirmisher", {"bow": 9}, 0)[0], 11)
+
     def test_no_flip_flopping(self):
         self.director.switched(0)
         self.assertIsNone(self.director.choose("skirmisher", {}, 0))  # cooldown
@@ -65,7 +74,8 @@ class ClassDirectorTest(unittest.TestCase):
         self.director.switched(2)
         self.clock.now = 400                         # a tie is not enough
         self.assertIsNone(self.director.choose("skirmisher", {}, 0))
-        self.assertEqual(self.director.choose("skirmisher", {"bow": 1}, 0)[0], 9)  # +1 is
+        self.assertIsNone(self.director.choose("skirmisher", {"bow": 1}, 0))  # +1 is not
+        self.assertEqual(self.director.choose("skirmisher", {"bow": 3}, 0)[0], 11)  # +3 is (Archery)
 
 
 if __name__ == "__main__":

@@ -74,7 +74,11 @@ LINES = {
     9: "They won't see me coming.", 10: "One cut, one life.", 11: "Steady... loose!",
 }
 
-SWITCH_MARGIN = 1
+# Hysteresis: situations change every fight, so a new class must beat the
+# current one clearly and the current one is kept at least MIN_HOLD_S
+# (it flipped between five classes every 1-3 minutes on 2026-11-16).
+SWITCH_MARGIN = 3
+MIN_HOLD_S = 90.0
 CONTACT_PX = 40                      # no switching with an enemy this close
 DEFAULT_COOLDOWN_S = 50.0
 
@@ -138,7 +142,7 @@ class ClassDirector:
             sword_needed = need_cut and self.current not in SWORD_CLASSES
             if not sword_needed:
                 if (self.switched_at is not None and
-                        self.clock() - self.switched_at < self.cooldown):
+                        self.clock() - self.switched_at < max(self.cooldown, MIN_HOLD_S)):
                     return None
                 if need_cut:         # already holds a sword: keep it
                     return None

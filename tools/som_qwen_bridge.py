@@ -136,6 +136,7 @@ LONG_MOVES = {"step_right": "right", "step_left": "left",
               "step_up": "up", "step_down": "down"}
 DASH_MIN_STRAIGHT = 6   # learned straight route tiles for a dash (live runs: mostly 5-7)
 DASH_MIN_REMAINING = 8  # and the target at least this far away
+CHARGE_SETTLE_S = 1.5   # one instant charge (swing + release) before the next
 BUFF_EVERY_S = 30.0     # sabers and body buffs wear off; renew this often
 DASH_ENEMY_PX = 160     # no dashing with a monster this close
 DASH_MOVES = {"right": "dash_right", "left": "dash_left",
@@ -1338,6 +1339,7 @@ def main() -> int:
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
     spell_ready_at = 0.0
     buff_ready_at = 0.0                           # sabers / body buffs (BUFF_CLASSES)
+    charge_settle_until = 0.0                     # an instant charge still running
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
     tool_out = "sword"                           # tool weapon taken out (sword/whip)
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
@@ -1998,10 +2000,19 @@ def main() -> int:
                             print(f"[iai] {draw} failed: {exc}; plain swing", flush=True)
                 # Charged attacks without holding: the proxy's special_<n>
                 # sets the gauge once the swing ends (needs a class).
+                # One at a time: the proxy takes commands through a file and
+                # needs the swing plus the release (~1 s) to finish one;
+                # resending every decision (8 a second, 2026-11-16) only
+                # overwrote it. Until then the hero waits.
+                if (decision.action == "charge" and class_director.current is not None and
+                        time.monotonic() < charge_settle_until):
+                    decision = PlannerDecision("wait", "charged attack under way",
+                                               decision.intention)
                 if (link and decision.action == "charge" and class_director.current is not None and
                         1 <= (decision.charge_stage or 0) <= 8):
                     try:
                         link.send_control(f"special_{decision.charge_stage}")
+                        charge_settle_until = time.monotonic() + CHARGE_SETTLE_S
                         print(f"[charge] stage {decision.charge_stage} without holding",
                               flush=True)
                         previous = "attack"
@@ -2100,6 +2111,7 @@ def main() -> int:
                     continue
                 directive_turns -= 1
                 action = decision.action
+                turn_tap = bool(decision.turn_only)
                 print(f"[ai] intent={decision.intention}: {decision.reason}", flush=True)
                 if decision.reason.startswith("survival abandoned"):
                     announce("AI: inn did not heal|back to careful play")
@@ -2113,6 +2125,7 @@ def main() -> int:
                     speak(spoken)
                     last_intention_spoken = spoken
             else:
+                turn_tap = False
                 try:
                     action = choose_action(args.ollama_url, args.model,
                                            args.objective, previous, observation)
@@ -2128,6 +2141,12 @@ def main() -> int:
                     action = "wait"
             trusted = (planner.trusted_steps(observation)
                        if args.policy in ("hybrid", "memory") else ())
+            if turn_tap:
+                # A planner tap that only turns the hero (to face a whip
+                # post across a ledge, or an enemy) moves nowhere: vetoing
+                # it for the closed tile ahead left him facing the wrong
+                # way forever (283 vetoes in one session, 2026-11-16).
+                trusted = set(trusted) | {action}
             guarded_action = guard_tile_action(action, observation, trusted)
             if guarded_action != action:
                 context = (observation or {}).get("tile_context") or {}

@@ -1658,6 +1658,8 @@ def main() -> int:
                                                150.0 / style["classes"])
                     weapon_tactics.cooldown = (None if style["weapons"] == 0 else
                                                12.0 / style["weapons"])
+                    if style["weapons"]:
+                        weapon_tactics.combat_cooldown = 2.4 / style["weapons"]
                 shop_offer = (shop_errand(wram_now, observation, shop, gold, 0,
                                           gambits[GAMBIT_SHOP])
                               if wram_now is not None and not shop_disabled and
@@ -1888,6 +1890,7 @@ def main() -> int:
                                 previous = "wait"
                                 continue
                             except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                weapon_tactics.refused()
                                 print(f"[weapon] switch failed: {exc}", flush=True)
                     now = time.monotonic()
                     command = None

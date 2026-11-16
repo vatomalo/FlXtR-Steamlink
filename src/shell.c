@@ -3307,9 +3307,9 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
                     if(access("samba/.configured",R_OK))samba_password_open();
                     else samba_service(access("samba/.enabled",R_OK)?"enable":"disable");
                 }break;
-                case 19:{const int outputs[]={0,240,480,720,1080};int index=0;
-                    for(int i=0;i<5;i++)if(game_output==outputs[i])index=i;
-                    game_output=outputs[(index+step+5)%5];break;}
+                case 19:{const int outputs[]={0,240,480,540,720,1080};int index=0;
+                    for(int i=0;i<6;i++)if(game_output==outputs[i])index=i;
+                    game_output=outputs[(index+step+6)%6];break;}
                 case 18:if(!set_auto_updates(!auto_updates_enabled()))snprintf(status,sizeof(status),"COULD NOT CHANGE AUTO UPDATE SETTING");break;
                 case 17:series_autoplay=!series_autoplay;break;
                 case 34:accounts_open(4);break;

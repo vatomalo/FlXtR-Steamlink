@@ -519,7 +519,7 @@ static int games_system(int page,int folder,int order,int genre){
     if(folder==11)return gamez_list(page,genre,order);
     return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;
 }
-static int game_pixel_geometry(const char *core,const char *rom,int output,int *width,int *height,int *dw,int *dh){
+static int game_pixel_geometry(const char *core,const char *rom,int output,int *width,int *height,int *dw,int *dh,double *aspect){
     char executable[PATH_MAX],system[PATH_MAX],save[PATH_MAX],cwd[PATH_MAX];
     if(!games_executable||!getcwd(cwd,sizeof(cwd)))return -1;
     if(game_absolute(games_executable))snprintf(executable,sizeof(executable),"%s",games_executable);
@@ -556,9 +556,12 @@ static int game_pixel_geometry(const char *core,const char *rom,int output,int *
     if(result!=1){flxtr_process_stop(&child,1);flxtr_process_wait(&child,2000,NULL);return -1;}
     if(code)return -1;
     FILE *f=fopen("game-geometry.txt","r");if(!f)return -1;
-    char line[256];int found=0,sw=0,sh=0;
-    while(fgets(line,sizeof(line),f))
-        if(sscanf(line,"FLXTR_GEOMETRY %d %d %d %d",width,height,&sw,&sh)==4)found=1;
+    char line[256];int found=0,sw=0,sh=0;double ratio=0;
+    while(fgets(line,sizeof(line),f)){
+        int fields=sscanf(line,"FLXTR_GEOMETRY %d %d %d %d %lf",width,height,&sw,&sh,&ratio);
+        if(fields>=4){found=1;if(fields<5)ratio=0;}
+    }
+    if(aspect)*aspect=ratio>0&&ratio<16?ratio:0;
     fclose(f);
     *dw=output?game_output_width(output):sw;*dh=output?output:sh;
     if(!found||*width<1||*height<1||*dw<1||*dh<1||*width>*dw||*height>*dh)return -1;
@@ -709,13 +712,22 @@ static int games_run(void){
         }
         fclose(display_settings);
     }
+    /* Steam Link: size the native framebuffer itself so the display plane
+     * scales the selected output to the whole TV (see game_hw_framebuffer). */
+    int hw_w=0,hw_h=0,hw=game_hw_scaler()&&output&&!game_hw_framebuffer(output,&hw_w,&hw_h);
+    if(hw){
+        char size[32];snprintf(size,sizeof(size),"%dx%d",hw_w,hw_h);
+        if(hw_h!=output)fprintf(stderr,"Game output: %dp is not a Steam Link framebuffer size; using %s\n",output,size);
+        output=hw_h;setenv("SDL_PE_GFX_RESOLUTION",size,1);
+        fprintf(stderr,"Game output: hardware-scaled framebuffer %s (SDL_PE_GFX_RESOLUTION)\n",size);
+    }
     if(output){
         fprintf(f,"video_windowed_fullscreen = \"false\"\nvideo_fullscreen_x = \"%d\"\nvideo_fullscreen_y = \"%d\"\n",
-            game_output_width(output),output);
+            hw?hw_w:game_output_width(output),output);
         fprintf(stderr,"Game output: request %dx%d; core-native rendering remains unchanged\n",game_output_width(output),output);
     }
     else fputs("video_windowed_fullscreen = \"true\"\nvideo_fullscreen_x = \"0\"\nvideo_fullscreen_y = \"0\"\n",f);
-    int native_w=0,native_h=0,display_w=output?game_output_width(output):0,display_h=output;
+    int native_w=0,native_h=0,display_w=hw?hw_w:output?game_output_width(output):0,display_h=output;
     /* Stretch uses a custom full-screen viewport: discover the physical
      * desktop dimensions when output is native, rather than leaving 0x0. */
     if(view==GAME_STRETCH&&!output){
@@ -731,13 +743,31 @@ static int games_run(void){
 #ifndef FLXTR_DESKTOP
     if(view==GAME_PIXEL)game_native_sdl();
 #endif
-    if(view==GAME_PIXEL&&game_pixel_geometry(core,rom,output,&native_w,&native_h,&display_w,&display_h)){
-        fclose(f);FILE *error=fopen("game-error.txt","w");
-        if(error){fputs("1:1 GEOMETRY UNAVAILABLE OR TOO LARGE / CHOOSE FIT / SEE GAME-PROBE.LOG",error);fclose(error);}
-        fprintf(stderr,"1:1 geometry probe failed or picture does not fit selected output\n");
-        json_object_put(games);return 2;
+    /* Square framebuffer pixels (720p/1080p on a 16:9 TV) keep RetroArch's own
+     * scaling. 640x480 stretched to 16:9 needs aspect-corrected viewports. */
+    double hw_shape=hw?(double)hw_w/hw_h-GAME_HW_PANEL_ASPECT:0;int hw_aspect=hw&&(hw_shape>0.01||hw_shape<-0.01);
+    if(hw_aspect){
+        double aspect=0;int x=0,y=0,w=hw_w,h=hw_h,probe_w=hw_w,probe_h=hw_h;
+        if(view!=GAME_STRETCH&&game_pixel_geometry(core,rom,output,&native_w,&native_h,&probe_w,&probe_h,&aspect)){
+            native_w=native_h=0;aspect=4.0/3.0;
+            fprintf(stderr,"Game scaling: geometry probe failed; assuming a 4:3 picture\n");
+        }
+        if(game_hw_viewport(view,hw_w,hw_h,GAME_HW_PANEL_ASPECT,native_w,native_h,aspect,&x,&y,&w,&h)){
+            fclose(f);FILE *error=fopen("game-error.txt","w");
+            if(error){fputs("1:1 GEOMETRY UNAVAILABLE OR TOO LARGE / CHOOSE FIT / SEE GAME-PROBE.LOG",error);fclose(error);}
+            fprintf(stderr,"1:1 geometry probe failed or picture does not fit selected output\n");
+            json_object_put(games);return 2;
+        }
+        game_hw_scaling_config(f,view,hw_w,hw_h,x,y,w,h);
+    }else{
+        if(view==GAME_PIXEL&&game_pixel_geometry(core,rom,output,&native_w,&native_h,&display_w,&display_h,NULL)){
+            fclose(f);FILE *error=fopen("game-error.txt","w");
+            if(error){fputs("1:1 GEOMETRY UNAVAILABLE OR TOO LARGE / CHOOSE FIT / SEE GAME-PROBE.LOG",error);fclose(error);}
+            fprintf(stderr,"1:1 geometry probe failed or picture does not fit selected output\n");
+            json_object_put(games);return 2;
+        }
+        game_scaling_config(f,view,native_w,native_h,display_w,display_h);
     }
-    game_scaling_config(f,view,native_w,native_h,display_w,display_h);
     /* Profiles affect rendering/synchronization overhead, never the display
      * mode, CPU core implementation, or the emulated game's clock speed. */
     fputs("video_shader_enable = \"false\"\nvideo_filter = \"\"\n"

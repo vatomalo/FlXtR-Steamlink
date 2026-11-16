@@ -58,6 +58,10 @@ CUT_ATTEMPTS = 3
 WHIP_ATTEMPTS = 3
 WHIP_PROBE_ATTEMPTS = 1
 WHIP_BLOCK_DECISIONS = 300
+# After a failed set of swings, shift the stance this many times and swing
+# again before giving the crossing up: map 30 tile 32,9 failed 3 swings
+# from one pixel, gave up, and later failed from the same pixel again.
+WHIP_REPOSITIONS = 2
 WHIP_REACH_TILES = 5        # the whip box ends 86 px ahead (weapons-ranged.md 2)
 WHIP_ROUTE_COST = 4         # weighted routes: a crossing costs a weapon switch
 # A step chosen this many times without the hero moving is blocked for a while.
@@ -246,6 +250,7 @@ class MemoryPlanner:
         self.local_posts = set()
         self.whip_anchor = None
         self.whip_attempts = {}
+        self.whip_repositions = {}
         self.whip_blocked = {}
         self.whip_probed = set()
         self.whip_ready = False
@@ -1806,14 +1811,41 @@ class MemoryPlanner:
         self.whip_attempts[key] = attempts
         if probe:
             self.whip_probed.add(key)
+        if attempts > limit and not probe:
+            moved = self.whip_repositions.get(key, 0)
+            nudge = self._whip_nudge(context, action, moved)
+            if moved < WHIP_REPOSITIONS and nudge is not None:
+                self.whip_repositions[key] = moved + 1
+                self.whip_attempts.pop(key, None)
+                return PlannerDecision(nudge, f"whip {action[5:]} missed {limit} times; "
+                                       f"shifting {nudge[5:]} to try again "
+                                       f"({moved + 1}/{WHIP_REPOSITIONS})", "whip_cross")
         if attempts > limit:
             self.whip_attempts.pop(key, None)
+            self.whip_repositions.pop(key, None)
             self.whip_blocked[key] = WHIP_BLOCK_DECISIONS
             self._set_intention(None)
             return PlannerDecision("wait", f"whip {action[5:]} from {key[2]},{key[3]} did not "
                                    f"cross after {limit} swing(s); trying other ways", "replan")
         return PlannerDecision("attack", f"whip across: {why} (swing {attempts}/{limit})",
                                "whip_cross")
+
+    @staticmethod
+    def _whip_nudge(context, action, moved):
+        """A short step that changes the stance for another whip try: first
+        across the swing line toward the other half of the tile, then back
+        from the edge (a different distance to the post)."""
+        actor = context.get("actor") or {}
+        if action in ("step_left", "step_right"):
+            within = actor.get("y_px")
+            across = ("step_down", "step_up")
+        else:
+            within = actor.get("x_px")
+            across = ("step_right", "step_left")
+        if not isinstance(within, int):
+            return None
+        toward_other_half = across[0] if within % 16 < 8 else across[1]
+        return (toward_other_half, OPPOSITE_STEP[action])[min(moved, 1)]
 
     @staticmethod
     def _stall_key(context, action):

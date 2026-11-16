@@ -82,6 +82,27 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertNotIn("131:1:4:2:step_down", MemoryPlanner(history)._slides())
             history.close()
 
+    def test_missed_whip_shifts_stance_and_tries_again_before_giving_up(self):
+        from som_planner import WHIP_ATTEMPTS, WHIP_REPOSITIONS
+        planner = MemoryPlanner()
+        context = observation()["tile_context"]
+        context["actor"] = {"x_px": 518, "y_px": 148, "layer": 1}     # upper half of 32,9
+        why = "learned crossing toward frontier 18,23"
+        nudges = []
+        for _ in range(60):
+            decision = planner._whip_cross(context, "step_left", why)
+            planner.previous_action = decision.action
+            if decision.intention == "replan":
+                break
+            if "shifting" in decision.reason:
+                nudges.append(decision.action)
+        self.assertEqual(nudges, ["step_down", "step_right"][:WHIP_REPOSITIONS])
+        self.assertIn("did not cross", decision.reason)
+        swings = WHIP_ATTEMPTS * (WHIP_REPOSITIONS + 1)
+        self.assertEqual(planner.whip_blocked.get(planner._whip_key(context, "step_left")),
+                         300)
+        self.assertGreaterEqual(swings, 9)
+
     def test_reaching_the_intended_tile_is_not_a_deflection(self):
         planner = MemoryPlanner()
         first = observation()

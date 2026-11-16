@@ -122,6 +122,24 @@ class DriverTest(unittest.TestCase):
         self.assertIsNone(command)
         self.assertEqual(reason, "yielding to the player")
 
+    def test_at_work_the_villager_works_into_the_wall_beside_it(self):
+        doorstep = self.world.location("potos_c7_doorstep")           # tile (27, 25)
+        wram = WRAM(bytes(synthetic(npc_tile=(27, 25), walls=[(28, 25)])))
+        driver = lw.NativeDriver(self.world, NPC)
+        results = [driver.plan(wram, doorstep, 131, "work") for _ in range(lw.WORK_EVERY * 2)]
+        commands = [command for command, _ in results if command]
+        self.assertEqual(len(commands), 2)                             # one burst per period
+        self.assertTrue(commands[0].endswith(f" 2 {lw.WORK_FRAMES}"), commands[0])  # right
+        self.assertIsNone(driver.pending)                              # not a blocked route
+        # Other activities just stand there; open ground all round: nothing to work at.
+        self.assertEqual(lw.NativeDriver(self.world, NPC).plan(wram, doorstep, 131, "eat"),
+                         (None, "at place"))
+        open_ground = WRAM(bytes(synthetic(npc_tile=(27, 25))))
+        idle = lw.NativeDriver(self.world, NPC)
+        reasons = {idle.plan(open_ground, doorstep, 131, "work")[1]
+                   for _ in range(lw.WORK_EVERY)}
+        self.assertIn("at place (nothing solid to work at)", reasons)
+
     def test_arrived_and_blocked_steps_replan_then_give_up(self):
         doorstep = self.world.location("potos_c7_doorstep")
         arrived = synthetic(npc_tile=(27, 25))

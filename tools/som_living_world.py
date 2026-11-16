@@ -45,6 +45,13 @@ DOOR_MINUTES = 2.0         # game minutes to pass a door or change maps
 TALK_MINUTES = 5           # a conversation holds the NPC this long
 MAX_BLOCKS = 3             # refused steps from one tile before giving up there
 GIVE_UP_CYCLES = 40        # driver pause after giving up
+# Working at the workplace: villager sprites only have standing and walking
+# (som-decomp docs/npcs.md 4), so a worker walks into the solid tile next to
+# its spot (a tree, a wall, a bench) for WORK_FRAMES every WORK_EVERY cycles:
+# the game's collision holds it in place while the walk animation plays.
+WORK_ACTIVITIES = ("work",)
+WORK_FRAMES = 12
+WORK_EVERY = 6
 HERO_SLOTS = (0, 1, 2)
 MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|-]")
 STORY_FLAGS = (0x10, 0x11, 0x12, 0x0D)
@@ -229,6 +236,7 @@ class NativeDriver:
         self.blocks = {}
         self.pending = None          # (tile, direction) of the last command
         self.pause = 0
+        self.work_cycle = 0
 
     def observe_result(self, live):
         """Learn whether the previous walk moved the NPC."""
@@ -242,7 +250,7 @@ class NativeDriver:
             if self.blocks[tile] >= MAX_BLOCKS:
                 self.pause = GIVE_UP_CYCLES
 
-    def plan(self, wram, place, map_id):
+    def plan(self, wram, place, map_id, activity=None):
         """(command line or None, reason). Never writes anything."""
         if self.pause:
             self.pause -= 1
@@ -263,6 +271,8 @@ class NativeDriver:
         if place is None:
             return None, "no on-map place now"
         if live["tile"] == place.tile:
+            if activity in WORK_ACTIVITIES:
+                return self._work(wram, live, map_id)
             return None, "at place"
         heroes = set()
         for slot in HERO_SLOTS:
@@ -291,6 +301,32 @@ class NativeDriver:
         frames = native.frames_for_tiles(tiles)
         self.pending = ((live["tile"], live["x"], live["y"]), direction)
         return native.walk_command(map_id, live, direction, frames), f"walk {direction} {tiles}"
+
+
+    def _work(self, wram, live, map_id):
+        """A short walk into the solid tile beside the workplace, or None."""
+        self.work_cycle += 1
+        if self.work_cycle % WORK_EVERY:
+            return None, "working"
+        x, y = live["tile"]
+        grid = native.walkable_grid(wram, live["layer"], live["floor"],
+                                    (x - 1, y - 1, x + 1, y + 1))
+        facing = {0x00: "up", 0x01: "down", 0x02: "right", 0x82: "left"}.get(
+            wram.u8(native.object_base(live["slot"]) + 0x10))
+        options = [facing] + [d for d in native.DIRECTIONS if d != facing]
+        for direction in options:
+            if direction not in native.DIRECTIONS:
+                continue
+            dx, dy = native.DIRECTIONS[direction][1]
+            tile_id, _ = wram.tile(x + dx, y + dy, live["layer"])
+            if grid.get((x + dx, y + dy)) is False and tile_id < 0xBD:
+                refusal = native.walk_refusal(wram, live["slot"], live["kind"], live["x"],
+                                              live["y"], map_id)
+                if refusal:
+                    return None, refusal
+                return (native.walk_command(map_id, live, direction, WORK_FRAMES),
+                        f"working at the {direction} tile")
+        return None, "at place (nothing solid to work at)"
 
 
 def story_flags(wram):
@@ -350,7 +386,7 @@ def observe_once(world, wram, real=None, drivers=None):
         live = native.bind(native.decode_npcs(wram), spec.native) if spec.native else None
         place = world.desired_place(npc_id, state, map_id)
         driver = drivers.setdefault(npc_id, NativeDriver(world.world, npc_id))
-        command, reason = driver.plan(wram, place, map_id)
+        command, reason = driver.plan(wram, place, map_id, state.get("activity"))
         lines.append(f"{npc_id}: {state['activity']} -> "
                      f"{place.name + str(place.tile) if place else '-'}; live "
                      f"{'slot %d tile %s' % (live['slot'], live['tile']) if live else 'not loaded'}"

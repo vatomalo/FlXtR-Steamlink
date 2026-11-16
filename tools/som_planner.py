@@ -7,6 +7,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 
 from som_curiosity import Curiosity, LINGER_RADIUS
+from som_weapon_ranges import DEFAULT_REACH_PX, WEAPONS as RANGES, is_long
 from som_build import profile as build_profile
 from som_tactics import CLOSE_SWING_PX
 
@@ -28,15 +29,11 @@ ENGAGE_RANGE_Y = 112
 CLOSE_QUARTERS_PX = 48
 # Conservative initial sword/glove contact envelope until verified hit events
 # establish actual per-weapon reach. Do not swing at 48x48 diagonally.
-DEFAULT_STRIKE_AXIAL_PX = 28
+DEFAULT_STRIKE_AXIAL_PX = DEFAULT_REACH_PX
 DEFAULT_STRIKE_SIDE_PX = 14
-# Forward reach of a normal attack per weapon (som-decomp weapons-ranged.md
-# 2.4 and the projectile tables: whip box 26-86 px ahead and nothing under
-# ~16 px; bow, javelin and boomerang stage 0 hit 14-70 px; spear a little
-# longer than the sword). Kept inside the measured hits.
-WEAPON_REACH_PX = {"glove": 24, "sword": 28, "axe": 28, "spear": 34,
-                   "whip": 80, "bow": 70, "javelin": 70, "boomerang": 64}
-WEAPON_MIN_PX = {"whip": 18}
+# Per-weapon reach and the short/long grouping live in som_weapon_ranges.
+WEAPON_REACH_PX = {w.name: w.reach_px for w in RANGES}
+WEAPON_MIN_PX = {w.name: w.min_px for w in RANGES if w.min_px}
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -766,7 +763,7 @@ class MemoryPlanner:
                            abs(dy) <= DEFAULT_STRIKE_SIDE_PX) or
                           (nearest < abs(dy) <= reach and
                            abs(dx) <= DEFAULT_STRIKE_SIDE_PX))
-        if attack_aligned and self._tactic(enemy) == "close":
+        if attack_aligned and not is_long(held) and self._tactic(enemy) == "close":
             attack_aligned = abs(dx) + abs(dy) <= CLOSE_SWING_PX
         if attack_aligned and observation.get("weapons_enabled"):
             # Only a mature learned range can veto a normal swing. Existing
@@ -781,6 +778,7 @@ class MemoryPlanner:
             # charge, no range-learner veto) while the enemy is still close.
             countering = self.previous_action == "block" and recharge == 0
             close_in = (not countering and learner is not None and alone and
+                        not is_long(held) and
                         weapon.get("verified") and
                         recharge == 0 and not self.charge_stage(hero, enemy) and
                         learner.should_close(
@@ -794,6 +792,13 @@ class MemoryPlanner:
                         return PlannerDecision("attack", f"counter enemy {enemy['slot']} "
                                                "after guarding", "engage_enemy")
                     return strike
+        # Long range (bow, javelin, boomerang, whip): within the weapon's reach
+        # on one axis, step sideways onto the enemy's line and shoot from
+        # there; do not walk up to it.
+        if is_long(held) and observation.get("weapons_enabled"):
+            lined = self._line_up(enemy, held, dx, dy, reach, nearest, open_steps)
+            if lined is not None:
+                return lined
         # Follow the learned map first. Taking the straight-line step whenever
         # its first tile was open, and the map route only when it was not,
         # sent the hero up into a dead end and back down, over and over.
@@ -856,6 +861,27 @@ class MemoryPlanner:
                 enemy.get("hp", 0) < CHARGE_MIN_ENEMY_HP):
             return 0
         return min(int(weapon["level"]), CHARGE_MAX_STAGE)
+
+    @staticmethod
+    def _line_up(enemy, held, dx, dy, reach, nearest, open_steps):
+        """A sideways step that puts a ranged shot on the enemy's line, or None.
+
+        Shooting along x needs the enemy within (nearest, reach] px on x and
+        the y offset brought inside DEFAULT_STRIKE_SIDE_PX; the same for y.
+        The axis needing the smaller sideways move wins."""
+        options = []
+        if nearest < abs(dx) <= reach:
+            options.append((abs(dy), "step_down" if dy > 0 else "step_up", abs(dx)))
+        if nearest < abs(dy) <= reach:
+            options.append((abs(dx), "step_right" if dx > 0 else "step_left", abs(dy)))
+        for side, step, along in sorted(options):
+            if side <= DEFAULT_STRIKE_SIDE_PX:
+                return None              # already lined up: strike or turn
+            if step in open_steps:
+                return PlannerDecision(step, f"line up the {held} on enemy {enemy['slot']} "
+                                       f"({along} px away, {side} px off the line)",
+                                       "engage_enemy")
+        return None
 
     def _tactic(self, enemy):
         if self.tactic_learner is None:

@@ -30,28 +30,35 @@ static inline int som_disc_has_dodge(unsigned discipline){
 /* Dodges, driven by the proxy. The game's own poses (back roll 0x8D, leap
  * 0x9E, hop 0x95) do not play in field play: written as +0x1C/+0x11 they
  * end within 6 frames without moving (headless Steam Link test,
- * 2026-11-15; their scripts run under the event VM).
+ * 2026-11-15; their scripts run under the event VM). So the proxy carries
+ * the hero `speed` px per frame for `frames` frames onto open ground,
+ * keeps him untouchable a little longer, and draws an after-image trail.
+ * forward: toward the facing (else away from it) when no direction is
+ * held. speed 0: this class has no dodge.
  *
- * Every dodge is Kawarimi no Jutsu (substitution): A arms it for a few
- * seconds and it fires only when a monster touches or hits the hero. Then
- * he vanishes in smoke and reappears up to speed * frames px away from the
- * monster on open ground (the first wall on the way stops him), a log
- * stands where he was, the hit is dropped, and he stays untouchable for
- * `frames` plus a little grace. speed 0: this class has no dodge. Ninja
- * with sword or chakram cast clone jutsu on A instead (som_ai_proxy.c
- * som_evade_start). `forward` is unused since Kawarimi. */
+ * Kawarimi no Jutsu (substitution) is no longer the evade: the AI arms it
+ * with its own command (som_ai_proxy.c som_kawarimi_arm) and it then fires
+ * when a monster touches or hits the hero, carrying him speed * frames px
+ * away from the monster. Shunshin no Jutsu (ninja + sword) has its own
+ * command too (som_shunshin_start). */
+/* Weapons by range (7E:E1E4 ids, som_weapon_types order; the bridge's
+ * table is tools/som_weapon_ranges.py). Short: glove 0, sword 1, axe 2,
+ * spear 3. Long: whip 4, bow 5, boomerang 6, javelin 7. */
+#define SOM_WEAPON_TYPES 8u
+static inline int som_weapon_long_range(unsigned weapon){return weapon>=4u&&weapon<SOM_WEAPON_TYPES;}
+static inline int som_weapon_short_range(unsigned weapon){return weapon<4u;}
 typedef struct { unsigned speed, frames; int forward; const char *name; } SomDodge;
 #define SOM_DODGE_GRACE 8u                 /* untouchable frames after the move */
 #define SOM_KAWARIMI_NAME "Kawarimi no Jutsu"
 static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
-    SomDodge d={0u,0u,0,SOM_KAWARIMI_NAME};
+    SomDodge d={0u,0u,0,""};
     (void)weapon;
     switch(discipline){
-    case 0: case 10: d.speed=3u;d.frames=16u;break;        /* 48 px */
-    case 1: case 9: d.speed=2u;d.frames=18u;break;         /* 36 px */
-    case 11: d.speed=3u;d.frames=18u;break;                /* 54 px back */
-    case 2: d.speed=3u;d.frames=16u;break;                 /* 48 px */
-    default:d.name="";break;
+    case 0: case 10: d.speed=3u;d.frames=16u;d.name="Evade";break;        /* 48 px roll */
+    case 1: case 9: d.speed=2u;d.frames=18u;d.name="Evade";break;         /* 36 px hop */
+    case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
+    case 2: d.speed=3u;d.frames=16u;d.name="Evade";break;                 /* 48 px */
+    default:break;
     }
     return d;
 }

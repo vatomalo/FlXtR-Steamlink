@@ -2,7 +2,7 @@
 
 Each discipline carries two weapons (B primary, Y secondary; WEAPONS in
 som_class_director). The reach numbers are the planner's
-(som_planner.WEAPON_REACH_PX, from som-decomp weapons-ranged.md): melee
+(som_weapon_ranges, from som-decomp weapons-ranged.md): melee
 weapons hit within ~28 px, the whip 18-80 px, bow/javelin/boomerang to ~70.
 
 The fight plan: hit with the short weapon up close; when the enemy is

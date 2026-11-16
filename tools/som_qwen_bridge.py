@@ -43,6 +43,7 @@ from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WE
                                 ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
                                 CONTACT_PX as CLASS_CONTACT_PX)
 from som_weapon_tactics import WeaponTactics
+from som_jutsu import JutsuTactics
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -90,7 +91,8 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
-                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade"} | \
+                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
+                    "kawarimi", "shunshin"} | \
     {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
@@ -1335,6 +1337,7 @@ def main() -> int:
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
     tool_out = "sword"                           # tool weapon taken out (sword/whip)
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
+    jutsu = JutsuTactics()                        # Kawarimi / Shunshin (som_jutsu)
     combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
     style = dict(zip(COMBAT_NAMES, combat))
     charge_failed = False
@@ -1892,6 +1895,31 @@ def main() -> int:
                             except (OSError, subprocess.SubprocessError, ValueError) as exc:
                                 weapon_tactics.refused()
                                 print(f"[weapon] switch failed: {exc}", flush=True)
+                    # Kawarimi before an expected hit, Shunshin clones in a
+                    # fight (som_jutsu); the evade below stays the plain hop.
+                    if class_director.current is not None and grass_restore is None:
+                        actor = context.get("actor") or {}
+                        near = [max(abs(e["x_px"] - actor.get("x_px", 0)),
+                                    abs(e["y_px"] - actor.get("y_px", 0)))
+                                for e in observation.get("enemy_slots", [])
+                                if e.get("active") and not e.get("familiar") and
+                                isinstance(e.get("x_px"), int) and isinstance(e.get("y_px"), int)]
+                        cast = jutsu.decide(class_director.current, held,
+                                            min(near) if near else None,
+                                            hp / max_hp if max_hp else 1.0,
+                                            decision.action == "block", style["evade"])
+                        if cast is not None:
+                            name, why = cast
+                            try:
+                                link.send_control(name)
+                                print(f"[jutsu] {name}: {why}", flush=True)
+                                announce(f"AI: {name.capitalize()}|{why[:30]}")
+                                if name == "kawarimi" and decision.action == "block":
+                                    previous = "wait"
+                                    continue    # armed instead of guarding
+                            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                jutsu.refused(name)
+                                print(f"[jutsu] {name} failed: {exc}", flush=True)
                     now = time.monotonic()
                     command = None
                     if (class_director.current is not None and now >= spell_ready_at and

@@ -653,8 +653,8 @@ static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 static int kawarimi_log_x,kawarimi_log_y;
 static unsigned long kawarimi_log_start;
 static unsigned kawarimi_log_map;
-/* A arms Kawarimi for SOM_KAWARIMI_ARM_FRAMES; it fires only when a
- * monster touches (or hits) the hero meanwhile. */
+/* The AI's "kawarimi" arms it for SOM_KAWARIMI_ARM_FRAMES; it fires only
+ * when a monster touches (or hits) the hero meanwhile. */
 #define SOM_KAWARIMI_ARM_FRAMES 180ul
 static unsigned long kawarimi_armed_until;
 static int som_kawarimi_check(uint8_t *ram);
@@ -1703,6 +1703,37 @@ static void som_bash_tick(void){
         fprintf(stderr,"[som-ai] BASH strike\n");
     }
 }
+/* Field play, no event, not casting, not in a pose or power attack, not
+ * knocked out or held by a status that stops movement: a dodge or jutsu
+ * may start. */
+static int som_jutsu_free(const uint8_t *ram){
+    const uint8_t *hero=ram+0xE000u;
+    return !(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||
+             hero[0x060]||hero[0x01C]==0x40||hero[0x01C]==0x80||
+             (som_word(hero+0x190)&0xC160u));
+}
+/* A shadow clone on each side of the ninja, across his facing (clone,
+ * ninja, clone): Kage Bunshin (long-range weapon, on A) and Shunshin
+ * (short-range weapon, AI). */
+static int som_clone_jutsu(uint8_t *ram,const char *jutsu){
+    uint8_t *hero=ram+0xE000u;
+    const unsigned made=som_bun_spawn(&bunshin,ram,(int)som_bun_u16(hero+2),
+        (int)som_bun_u16(hero+4),hero[0x010],som_hero_place(hero),frame_number);
+    if(!made){
+        som_overlay_set(&overlay,"^No room|for shadow clones",SOM_MESSAGE_FRAMES/2u);
+        return 0;
+    }
+    for(unsigned i=0;i<SOM_BUN_COUNT;i++)
+        if(bunshin.alive[i])som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
+    char title[40];snprintf(title,sizeof(title),"^%s",jutsu);
+    som_overlay_set(&overlay,title,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] JUTSU %s: %u clone(s)\n",jutsu,made);
+    return 1;
+}
+/* A (and the AI's "evade"): the class's plain dodge hop. A ninja with the
+ * long-range weapon (chakram/boomerang) casts Kage Bunshin instead, and with clones out A swaps
+ * him into one. Kawarimi and Shunshin are not on A (AI commands
+ * "kawarimi" / "shunshin"). */
 static int som_evade_start(uint8_t *ram){
     if(!ram||evade_active)return 0;
     if(disciplines.selected>=SOM_DISCIPLINE_COUNT||!som_disc_has_dodge(disciplines.selected)){
@@ -1710,42 +1741,54 @@ static int som_evade_start(uint8_t *ram){
         return 0;
     }
     uint8_t *hero=ram+0xE000u;
-    /* Field play, no event, not casting, not in a pose or power attack,
-     * not knocked out or held by a status that stops movement. */
-    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||
-       hero[0x060]||hero[0x01C]==0x40||hero[0x01C]==0x80||
-       (som_word(hero+0x190)&0xC160u))return 0;
-    /* Ninjutsu jutsu by the weapon in hand: sword = Shunshin no Jutsu,
-     * chakram/boomerang = Kage Bunshin no Jutsu. Both put a shadow clone on
-     * each side of the ninja, across his facing (clone, ninja, clone). With
-     * clones out, A swaps the ninja into one instead. */
+    if(!som_jutsu_free(ram))return 0;
     const int ninja=disciplines.selected==2u;
     if(ninja&&som_bun_alive(&bunshin))
         return som_bunshin_swap(ram,0,0,0,evade_dir_x,evade_dir_y);
-    if(ninja&&(hero[0x1E4]==1u||hero[0x1E4]==6u)){
-        const char *jutsu=hero[0x1E4]==1u?"Shunshin no Jutsu":"Kage Bunshin no Jutsu";
-        const unsigned made=som_bun_spawn(&bunshin,ram,(int)som_bun_u16(hero+2),
-            (int)som_bun_u16(hero+4),hero[0x010],som_hero_place(hero),frame_number);
-        if(!made){
-            som_overlay_set(&overlay,"^No room|for shadow clones",SOM_MESSAGE_FRAMES/2u);
-            return 0;
-        }
-        for(unsigned i=0;i<SOM_BUN_COUNT;i++)
-            if(bunshin.alive[i])som_bun_boom(bunshin_booms,bunshin.x[i],bunshin.y[i],1,frame_number);
-        char title[40];snprintf(title,sizeof(title),"^%s",jutsu);
-        som_overlay_set(&overlay,title,SOM_MESSAGE_FRAMES/2u);
-        fprintf(stderr,"[som-ai] EVADE %s: %u clone(s)\n",jutsu,made);
-        return 1;
-    }
+    if(ninja&&som_weapon_long_range(hero[0x1E4]))return som_clone_jutsu(ram,"Kage Bunshin no Jutsu");
     const SomDodge dodge=som_disc_dodge(disciplines.selected,hero[0x1E4]);
     if(!dodge.speed)return 0;
-    /* Kawarimi is only armed here; som_kawarimi_check fires it when a
-     * monster touches or hits him before the window closes. */
+    /* The held direction, else back from (or, forward: toward) the facing. */
+    int dx=evade_dir_x,dy=evade_dir_y;
+    if(!dx&&!dy){
+        const unsigned facing=hero[0x010];
+        if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;
+        else if(facing==0x01u)dy=1;else dy=-1;
+        if(!dodge.forward){dx=-dx;dy=-dy;}
+    }
+    /* Dodge Mastery lengthens the move, not the grace. */
+    const unsigned move=dodge.frames+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
+    hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
+    evade_frames=move+SOM_DODGE_GRACE;
+    hero[0x006]=hero[0x007]=0;
+    evade_hp=som_word(hero+0x182);
+    evade_active=1;evade_started=frame_number;evade_xp_given=0;
+    som_overlay_set(&overlay,"^Evade",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
+            dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,move);
+    return 1;
+}
+/* AI "kawarimi": arm the substitution for SOM_KAWARIMI_ARM_FRAMES (the
+ * classes with a dodge); som_kawarimi_check fires it when a monster touches
+ * or hits him before the window closes. */
+static int som_kawarimi_arm(uint8_t *ram){
+    if(!ram||evade_active||kawarimi_armed_until)return 0;
+    if(disciplines.selected>=SOM_DISCIPLINE_COUNT||!som_disc_has_dodge(disciplines.selected))
+        return 0;
+    if(!som_jutsu_free(ram))return 0;
+    const SomDodge dodge=som_disc_dodge(disciplines.selected,ram[0xE1E4]);
+    if(!dodge.speed)return 0;
     kawarimi_armed_until=frame_number+SOM_KAWARIMI_ARM_FRAMES;
     som_overlay_set(&overlay,"^" SOM_KAWARIMI_NAME "|ready",SOM_MESSAGE_FRAMES/2u);
-    fprintf(stderr,"[som-ai] EVADE %s armed as %s for %lu frames\n",
-            dodge.name,som_discipline_names[disciplines.selected],SOM_KAWARIMI_ARM_FRAMES);
+    fprintf(stderr,"[som-ai] KAWARIMI armed as %s for %lu frames\n",
+            som_discipline_names[disciplines.selected],SOM_KAWARIMI_ARM_FRAMES);
     return 1;
+}
+/* AI "shunshin": ninja with a short-range weapon in hand, no clones out. */
+static int som_shunshin_start(uint8_t *ram){
+    if(!ram||evade_active||disciplines.selected!=2u||!som_weapon_short_range(ram[0xE1E4]))return 0;
+    if(som_bun_alive(&bunshin)||!som_jutsu_free(ram))return 0;
+    return som_clone_jutsu(ram,"Shunshin no Jutsu");
 }
 /* Before each frame while Kawarimi is armed: a monster touching the hero,
  * or a hit queued on him (E059 mask / pending damage E1F1), makes him
@@ -1803,7 +1846,7 @@ static int som_kawarimi_check(uint8_t *ram){
         som_xp_give(disciplines.selected,SOM_XP_DODGE,
                     ram[SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)toucher+0x180u],
                     SOM_XPK_DODGE,"kawarimi");
-    fprintf(stderr,"[som-ai] EVADE %s fired (%s): %d,%d -> %d,%d\n",dodge.name,
+    fprintf(stderr,"[som-ai] KAWARIMI fired (%s): %d,%d -> %d,%d\n",
             toucher>=0?"touched":"hit",x0,y0,x,y);
     return 1;
 }
@@ -2458,9 +2501,16 @@ static int som_handle_command(const char *command){
         return clone_no_slot;
     }
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
-    /* The AI's dodge: the same evade/jutsu as the player's A. */
+    /* The AI's dodge: the same evade as the player's A. Kawarimi and
+     * Shunshin are AI-only jutsu (not on any button yet). */
     if(!strcmp(command,"evade"))
         return som_evade_start(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+    if(!strcmp(command,"kawarimi"))
+        return som_kawarimi_arm(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+    if(!strcmp(command,"shunshin"))
+        return som_shunshin_start(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strcmp(command,"summon_boss"))return som_summon_boss();
     if(!strcmp(command,"vram_dump")){som_vram_dump();return 1;}

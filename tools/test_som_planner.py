@@ -69,6 +69,29 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(decision.action, "attack")
         self.assertIn("enemy 1", decision.reason)
 
+    def test_ranged_weapon_lines_up_and_shoots_from_range(self):
+        # Bow in hand, enemy 60 px right and 24 px below: step down onto its
+        # line instead of walking up to it, then shoot from 60 px.
+        planner = MemoryPlanner()
+        planner.assumed_facing = "step_right"
+        state = observation(enemy={"slot": 1, "active": True, "x_px": 100, "y_px": 80})
+        state["party"][0]["weapon"] = {"type": "bow"}
+        decision = planner.decide(state, previous="step_right")
+        self.assertEqual(decision.action, "step_down", decision.reason)
+        self.assertIn("line up the bow", decision.reason)
+        state = observation(enemy={"slot": 1, "active": True, "x_px": 100, "y_px": 56})
+        state["party"][0]["weapon"] = {"type": "bow"}
+        decision = planner.decide(state, previous="step_right")
+        self.assertEqual(decision.action, "attack", decision.reason)
+        # Every long-range weapon lines up; no short-range one does.
+        from som_weapon_ranges import LONG_RANGE, SHORT_RANGE
+        for held in LONG_RANGE + SHORT_RANGE:
+            state = observation(enemy={"slot": 1, "active": True, "x_px": 100, "y_px": 80})
+            state["party"][0]["weapon"] = {"type": held}
+            decision = MemoryPlanner().decide(state, previous="step_right")
+            self.assertEqual("line up" in decision.reason, held in LONG_RANGE,
+                             (held, decision.reason))
+
     def test_does_not_swing_at_enemy_outside_contact_reach(self):
         planner = MemoryPlanner()
         planner.assumed_facing = "step_right"

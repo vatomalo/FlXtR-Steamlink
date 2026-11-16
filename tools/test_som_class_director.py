@@ -151,14 +151,46 @@ class WantedBuildTest(unittest.TestCase):
         self.assertEqual(record.stats(), {10: (1, 20, 5)})
 
 
-class PlanTieBreakTest(unittest.TestCase):
-    def test_untried_ties_go_to_classes_fights_already_pick(self):
-        from som_class_director import plan_classes
-        wanted, _ = plan_classes("balanced", {2: (15, 30, 10)})
-        self.assertIn(2, wanted)                     # Ninjutsu, picked by crowds
-        self.assertNotIn(1, wanted)                  # not Martial Arts by list order
+class TeamPlanTest(unittest.TestCase):
+    def test_archetype_names_expand_to_their_team(self):
+        from som_class_director import parse_classes
+        self.assertEqual(sorted(parse_classes("shinobi")), [1, 2, 10])
+        self.assertEqual(parse_classes("ranger, Bushido"), [11, 9, 2, 10])
 
-    def test_with_no_record_situation_strengths_break_ties(self):
-        from som_class_director import plan_classes
+    def test_plan_is_a_team_that_covers_the_fights(self):
+        from som_class_director import plan_classes, team_score
         wanted, why = plan_classes("balanced")
-        self.assertEqual(wanted, [0, 8, 10])         # Bushido: tough and crowd
+        self.assertEqual(len(wanted), 3)
+        self.assertIn("covers", why)
+        _, covered = team_score(wanted, {i: 0 for i in range(12)}, False)
+        self.assertGreaterEqual(len(covered), 3)
+
+    def test_synergy_beats_three_strong_loners(self):
+        from som_class_director import team_score
+        values = {i: 0 for i in range(12)}
+        shinobi, _ = team_score((1, 2, 10), values, False)
+        loners, _ = team_score((3, 5, 6), values, False)       # spells, no MP
+        self.assertGreater(shinobi, loners)
+
+    def test_a_team_that_fights_well_together_wins(self):
+        from som_class_director import plan_classes, team_key
+        good = {team_key((1, 2, 10)): (300, 3000, 0)}
+        wanted, why = plan_classes("balanced", team_record=good)
+        self.assertEqual(wanted, [1, 2, 10])
+        self.assertIn("shinobi", why)
+        self.assertIn("together", why)
+
+    def test_record_counts_team_fights_only_under_a_member(self):
+        import sqlite3
+        from som_class_director import ClassRecord
+        record = ClassRecord(sqlite3.connect(":memory:"))
+        def state(hero_hp, enemy_hp):
+            return {"party": [{"hp": hero_hp, "max_hp": 100}],
+                    "tile_context": {"map_id": 1, "actor": {"x_px": 0, "y_px": 0}},
+                    "enemy_slots": [{"slot": 1, "active": True, "identity": 7,
+                                     "x_px": 20, "y_px": 0, "hp": enemy_hp}]}
+        record.record(state(80, 50), 10, (1, 2, 10))
+        record.record(state(80, 40), 0, (1, 2, 10))           # Swordsmanship: not a member
+        record.record(state(80, 30), 0, (1, 2, 10))
+        self.assertEqual(record.team_stats(), {"1,2,10": (1, 10, 0)})
+        self.assertEqual(record.stats()[0], (1, 10, 0))

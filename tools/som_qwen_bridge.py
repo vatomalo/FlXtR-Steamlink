@@ -1156,7 +1156,8 @@ def main() -> int:
                         help="play loop hunting map (default: best gold per HP from memory)")
     parser.add_argument("--wanted-classes", default="",
                         help="the player's wanted build: comma-separated classes the hero "
-                             "trains and favours (names or 0-11); empty = the AI decides")
+                             "trains and favours (names or 0-11) or an archetype (shinobi, "
+                             "knight, ranger, mage, bard); empty = the AI decides")
     parser.add_argument("--trip-gold", type=int, default=100,
                         help="play loop: GP to earn per hunting trip")
     parser.add_argument("--no-anticipation", action="store_true",
@@ -1841,7 +1842,8 @@ def main() -> int:
                             time.monotonic() - plan_checked_at >= PLAN_REFRESH_S)):
                         plan_checked_at = time.monotonic()
                         wanted, plan_why = plan_classes(
-                            build, class_record.stats() if class_record else None, max_mp)
+                            build, class_record.stats() if class_record else None, max_mp,
+                            team_record=class_record.team_stats() if class_record else None)
                         if class_director.set_plan(wanted):
                             names = ", ".join(CLASS_NAMES[i] for i in wanted)
                             print(f"[plan] wanted build: {names} ({plan_why})", flush=True)
@@ -2273,7 +2275,8 @@ def main() -> int:
                 if tactic_learner is not None and observation is not None:
                     tactic_learner.record(observation)
                 if class_record is not None and observation is not None:
-                    class_record.record(observation, class_director.current)
+                    class_record.record(observation, class_director.current,
+                                        class_director.wanted)
                 if attack_predictor is not None and observation is not None:
                     attack_predictor.record(observation)
             if history is not None and observation is not None:

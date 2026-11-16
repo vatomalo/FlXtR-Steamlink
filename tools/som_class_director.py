@@ -22,6 +22,8 @@ weapons are least trained, so the plan's weapons level up together.
 need_cut can restrict the choice to sword classes (the bridge borrows the
 sword for grass instead). Pure logic; the bridge sends the command.
 """
+import itertools
+
 
 NAMES = ("Swordsmanship", "Martial Arts", "Ninjutsu", "Magic", "Divine Arts",
          "Dark Arts", "Summoning", "Support & Dance", "Weapon Flow",
@@ -97,14 +99,32 @@ PLAN_MIN_SAMPLES = 60                # decisions before a class's record counts
 PLAN_CURIOSITY = 3                   # an untried class's stand-in record value
 PLAN_RECORD_CAP = 6                  # learned record clamp (per-decision score)
 HP_WEIGHT = 2.0                      # HP lost counts double (as som_tactics)
+# Team scoring: a plan is judged as a team of PLAN_SIZE classes.
+TEAM_COVER_BONUS = 2                 # per fight situation the team handles
+TEAM_SHARED_SKILL = 1                # per extra member sharing Kawarimi (dodge)
+TEAM_SHARED_WEAPON = 1               # per weapon two or more members train
+TEAM_SITUATIONS = ("crowd", "tough", "duel", "far", "hurt")
+
+# Named teams the player can ask for in one word (--wanted-classes shinobi).
+ARCHETYPES = {
+    "shinobi": (2, 10, 1),           # Ninjutsu, Bushido, Martial Arts
+    "knight": (0, 8, 4),             # Swordsmanship, Weapon Flow, Divine Arts
+    "ranger": (11, 9, 2),            # Archery, Roguecraft, Ninjutsu
+    "mage": (3, 5, 6),               # Magic, Dark Arts, Summoning
+    "bard": (7, 4, 3),               # Support & Dance, Divine Arts, Magic
+}
 
 
 def parse_classes(text):
-    """Class indices from "Bushido, archery, 8" (names, prefixes or numbers)."""
+    """Class indices from "Bushido, archery, 8" (names, prefixes or numbers)
+    or an archetype name ("shinobi", see ARCHETYPES)."""
     picked = []
     for part in (text or "").split(","):
         part = part.strip().lower()
         if not part:
+            continue
+        if part in ARCHETYPES:
+            picked += [i for i in ARCHETYPES[part] if i not in picked]
             continue
         if part.isdigit() and int(part) < len(NAMES):
             index = int(part)
@@ -126,46 +146,72 @@ def record_score(samples, dealt, taken):
     return max(-PLAN_RECORD_CAP, min(PLAN_RECORD_CAP, value))
 
 
-def plan_classes(build, record=None, max_mp=0, size=PLAN_SIZE):
-    """(wanted classes, why): the AI's own build plan.
+def _weapons(index):
+    return set(WEAPONS[index]) | ({THIRD_WEAPONS[index]} if index in THIRD_WEAPONS else set())
 
-    Stat fit (the build bonus, doubled) plus how each class has actually
-    fought (record {class: (samples, dealt, taken)}); classes not yet tried
-    enough get PLAN_CURIOSITY so the hero gives them a fair go. Spell-only
-    strengths need MP, so without MP the healers drop out.
 
-    Slots are filled one by one; equal values go to the class fights have
-    already picked most (samples), then the one with more situation
-    strengths it can use, then the one bringing weapons the plan lacks
-    (list order decided ties before: Martial Arts won by being second).
+def team_key(classes):
+    return ",".join(str(i) for i in sorted(classes))
+
+
+def team_score(team, values, magic):
+    """(score, covered situations) of a team from its members' values plus
+    synergy: situations covered, a shared Kawarimi, shared weapons."""
+    covered = {tag for tag, klass, _, needs_mp, _ in ADVANTAGES
+               if klass in team and tag in TEAM_SITUATIONS and (magic or not needs_mp)}
+    dodgers = sum(1 for i in team if i in DODGE_CLASSES)
+    counts = {}
+    for i in team:
+        for weapon in _weapons(i):
+            counts[weapon] = counts.get(weapon, 0) + 1
+    shared = sum(1 for n in counts.values() if n >= 2)
+    value = (sum(values[i] for i in team) + TEAM_COVER_BONUS * len(covered) +
+             TEAM_SHARED_SKILL * max(0, dodgers - 1) + TEAM_SHARED_WEAPON * shared)
+    return value, covered
+
+
+def plan_classes(build, record=None, max_mp=0, size=PLAN_SIZE, team_record=None):
+    """(wanted classes, why): the AI's own build plan, chosen as a team.
+
+    Each class is worth its stat fit (the build bonus, doubled) plus how it
+    has actually fought (record {class: (samples, dealt, taken)}; untried
+    classes get PLAN_CURIOSITY so the hero gives them a fair go). A team
+    adds synergy (team_score) and its own record (team_record {team_key:
+    (samples, dealt, taken)}), so teams that really work together win.
+    Spell-only strengths need MP, so without MP the healers drop out.
+    Ties go to the team fights have already played most.
     """
-    record = record or {}
+    record, team_record = record or {}, team_record or {}
     bonus = BUILD_BONUS.get(build, BUILD_BONUS["balanced"])
     magic = (max_mp or 0) >= MIN_SPELL_MP
-    options = {}
+    values, learned = {}, {}
     for index in range(len(NAMES)):
         if index in HEALERS and not magic:
             continue
-        samples = record.get(index, (0, 0, 0))[0]
-        learned = record_score(*record.get(index, (0, 0, 0)))
-        value = 2 * bonus.get(index, 0) + (PLAN_CURIOSITY if learned is None else learned)
-        strengths = len({tag for tag, klass, _, needs_mp, _ in ADVANTAGES
-                         if klass == index and (magic or not needs_mp)})
-        options[index] = (value, samples, strengths, learned)
-    chosen, covered = [], set()
-    while options and len(chosen) < size:
-        def rank(index):
-            value, samples, strengths, _ = options[index]
-            weapons = set(WEAPONS[index]) | ({THIRD_WEAPONS[index]} if index in THIRD_WEAPONS
-                                            else set())
-            return (value, samples, strengths, len(weapons - covered), -index)
-        pick = max(options, key=rank)
-        chosen.append((pick, options.pop(pick)[3]))
-        covered |= set(WEAPONS[pick]) | ({THIRD_WEAPONS[pick]} if pick in THIRD_WEAPONS
-                                         else set())
-    parts = [f"{NAMES[index]} {'untried' if learned is None else f'{learned:+.1f}'}"
-             for index, learned in chosen]
-    return sorted(index for index, _ in chosen), f"{build} build; " + ", ".join(parts)
+        learned[index] = record_score(*record.get(index, (0, 0, 0)))
+        values[index] = 2 * bonus.get(index, 0) + (
+            PLAN_CURIOSITY if learned[index] is None else learned[index])
+    best = None
+    for team in itertools.combinations(sorted(values), min(size, len(values))):
+        value, covered = team_score(team, values, magic)
+        together = record_score(*team_record.get(team_key(team), (0, 0, 0)))
+        if together is not None:
+            value += len(team) * together     # the record speaks for every member
+        played = sum(record.get(i, (0, 0, 0))[0] for i in team)
+        rank = (value, played, -sum(team))
+        if best is None or rank > best[0]:
+            best = (rank, team, covered, together)
+    if best is None:
+        return [], f"{build} build; no class fits"
+    _, team, covered, together = best
+    parts = [f"{NAMES[i]} {'untried' if learned[i] is None else f'{learned[i]:+.1f}'}"
+             for i in team]
+    name = next((n for n, members in ARCHETYPES.items() if set(members) == set(team)), None)
+    why = (f"{build} build; " + (f"{name}: " if name else "") + ", ".join(parts) +
+           f"; covers {', '.join(t for t in TEAM_SITUATIONS if t in covered) or 'nothing'}")
+    if together is not None:
+        why += f"; together {together:+.1f}"
+    return list(team), why
 
 
 def training_need(index, levels):
@@ -310,18 +356,27 @@ class ClassRecord:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS class_stats (class INTEGER PRIMARY KEY, "
                 "samples INTEGER NOT NULL, dealt INTEGER NOT NULL, taken INTEGER NOT NULL)")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS team_stats (team TEXT PRIMARY KEY, "
+                "samples INTEGER NOT NULL, dealt INTEGER NOT NULL, taken INTEGER NOT NULL)")
 
     def stats(self):
         return {int(k): (n, d, t) for k, n, d, t in self.db.execute(
             "SELECT class,samples,dealt,taken FROM class_stats")}
 
-    def record(self, observation, klass):
+    def team_stats(self):
+        return {team: (n, d, t) for team, n, d, t in self.db.execute(
+            "SELECT team,samples,dealt,taken FROM team_stats")}
+
+    def record(self, observation, klass, team=None):
+        """team: the wanted build in force; its member's fights count for it."""
         from som_tactics import _nearest
         hero = ((observation or {}).get("party") or [{}])[0] or {}
         hp, max_hp = hero.get("hp"), hero.get("max_hp") or 0
         map_id = ((observation or {}).get("tile_context") or {}).get("map_id")
         if self.pending is not None and isinstance(hp, int):
-            before_class, slot, identity, hero_before, enemy_before, pending_map = self.pending
+            before_class, slot, identity, hero_before, enemy_before, pending_map, \
+                before_team = self.pending
             lost = hero_before - hp
             if hp > 0 and 0 <= lost and (not max_hp or lost < max_hp) and map_id == pending_map:
                 enemy = next((e for e in (observation or {}).get("enemy_slots", [])
@@ -336,9 +391,16 @@ class ClassRecord:
                         "INSERT INTO class_stats VALUES(?,1,?,?) ON CONFLICT(class) DO UPDATE "
                         "SET samples=samples+1,dealt=dealt+excluded.dealt,"
                         "taken=taken+excluded.taken", (before_class, dealt, lost))
+                    if before_team:
+                        self.db.execute(
+                            "INSERT INTO team_stats VALUES(?,1,?,?) ON CONFLICT(team) DO UPDATE "
+                            "SET samples=samples+1,dealt=dealt+excluded.dealt,"
+                            "taken=taken+excluded.taken", (before_team, dealt, lost))
         self.pending = None
         enemy = _nearest(observation)
         if (klass is not None and enemy is not None and isinstance(hp, int) and hp > 0 and
                 isinstance(enemy.get("hp"), int)):
+            # Only fights under a member of the team count for the team.
+            together = team_key(team) if team and klass in team else None
             self.pending = (klass, enemy.get("slot"), enemy.get("identity"), hp,
-                            enemy["hp"], map_id)
+                            enemy["hp"], map_id, together)

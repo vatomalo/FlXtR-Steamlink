@@ -123,10 +123,12 @@ with tempfile.TemporaryDirectory() as tmp:
         hw=(root/'game-runtime.cfg').read_text()
         assert json.loads((home/'runtime-env.json').read_text())['SDL_PE_GFX_RESOLUTION']==f'{width}x{output}'
         assert 'aspect_ratio_index = "22"' in hw and f'video_fullscreen_x = "{width}"' in hw
+        assert 'audio_latency = "96"' in hw
     # Native output leaves the framebuffer alone.
     (root/'settings.cfg').write_text('game_output=0\ngame_view=0\n')
     launch()
     assert 'SDL_PE_GFX_RESOLUTION' not in json.loads((home/'runtime-env.json').read_text())
+    assert 'audio_latency' not in (root/'game-runtime.cfg').read_text()
     del env['FLXTR_HW_SCALER']
     (root/'settings.cfg').write_text('game_output=240\ngame_view=2\n')
     (root/'games.json').write_text(json.dumps([{'title':'Large','rom':str(roms/'Large.sfc'),'core':str(stock)}]))

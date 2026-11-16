@@ -785,6 +785,14 @@ static int games_run(void){
               "video_vsync = \"true\"\n",f);
     }
     fprintf(stderr,"Game performance profile: %d (0=performance 1=balanced 2=low latency)\\n",performance);
+    /* Steam Link (one A9 core): heavy scenes miss the frame deadline in
+     * bursts of up to ~7 frames, longer than the global 64 ms audio buffer,
+     * and every burst crackled. 96 ms rides them out; low latency keeps
+     * the global value. */
+    if(hw&&performance!=2){
+        fputs("audio_latency = \"96\"\n",f);
+        fprintf(stderr,"Game audio: 96 ms buffer for the Steam Link\n");
+    }
     /* Keep Neo Geo and other working systems on their existing configuration. */
     const char *core_base=strrchr(core,'/');core_base=core_base?core_base+1:core;
     if(!strncmp(core_base,"snes9x",6)||!strncmp(core_base,"mame2003",8)){

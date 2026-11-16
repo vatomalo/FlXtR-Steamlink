@@ -134,6 +134,23 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertIsNone(rabite._flank({"slot": 3, "identity": 0, "x_px": 130, "y_px": 100},
                                         30, 0, steps))
 
+    def test_stale_terrain_cache_gets_a_refreshing_tap_not_an_endless_wait(self):
+        from som_planner import UNVERIFIED_WAITS
+        planner = MemoryPlanner()
+        state = {"party": [{"hp": 127}], "tile_context": {
+            "runtime_verified": False, "game_mode": "field", "map_id": 139,
+            "verification_error": "actor_tile_attributes_disagree",
+            "actor": {"x_px": 280, "y_px": 1002, "layer": 1},
+            "actor_tile": [17, 62], "map_size_tiles": [40, 72]}}
+        decisions = [planner.decide(state) for _ in range(UNVERIFIED_WAITS)]
+        self.assertTrue(all(d.action == "wait" for d in decisions[:-1]))
+        self.assertEqual(decisions[-1].intention, "unstick")
+        self.assertTrue(decisions[-1].turn_only)
+        # Other reasons to wait (a map loading, an event) never tap.
+        other = MemoryPlanner()
+        state["tile_context"]["verification_error"] = "not_field_mode"
+        self.assertTrue(all(other.decide(state).action == "wait" for _ in range(30)))
+
     def test_reaching_the_intended_tile_is_not_a_deflection(self):
         planner = MemoryPlanner()
         first = observation()

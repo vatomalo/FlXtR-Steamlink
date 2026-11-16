@@ -91,6 +91,8 @@ DEAD_END_VISITS = 3
 # are ignored for SLIDE_FAILSAFE_DECISIONS, so a wrong memory cannot trap
 # the hero; a remembered slide he then walks through cleanly is forgotten.
 SLIDE_FAILSAFE_WAITS = 8
+# Waits in place on a tile that does not verify before a refreshing tap.
+UNVERIFIED_WAITS = 10
 SLIDE_FAILSAFE_DECISIONS = 150
 FRONTIER_NO_PROGRESS = 24
 FRONTIER_COOLDOWN = 200
@@ -186,6 +188,9 @@ class MemoryPlanner:
         self.deflections = {}
         self.last_step_origin = None
         self.slides = None              # remembered slides, loaded lazily
+        self.unverified_at = None       # where the hero waits on an unverified tile
+        self.unverified_waits = 0
+        self.unverified_nudges = 0
         self.field_waits = 0
         self.slide_failsafe = 0
         # Grass cutting: learned cuttable attributes (without a database),
@@ -1936,6 +1941,44 @@ class MemoryPlanner:
                              if tile_layer in (None, layer))
         return walls
 
+    def _unverified_nudge(self, context, why, mode):
+        """Break the wait on a stale hero terrain cache with a short tap.
+
+        Turbo refreshes the hero's cached tile values (ground effect, tile
+        id) only when he moves, and the planner never moves on a tile it
+        cannot verify: after a reload on map 139 (ground effect 0x21 under
+        him, 0 cached) he waited 30 minutes (16 Nov). After UNVERIFIED_WAITS
+        such waits in place, tap once toward a walked tile, else the next
+        direction in turn. The tap is a turn-length pulse (turn_only), so
+        the bridge's tile guard lets it through.
+        """
+        actor = (context or {}).get("actor") or {}
+        here = (context or {}).get("map_id"), actor.get("x_px"), actor.get("y_px")
+        if (why != "actor_tile_attributes_disagree" or mode != "field" or
+                context.get("map_loading") or not isinstance(here[1], int)):
+            self.unverified_waits = 0
+            return None
+        if self.unverified_at != here:
+            self.unverified_at, self.unverified_waits = here, 0
+        self.unverified_waits += 1
+        if self.unverified_waits < UNVERIFIED_WAITS:
+            return None
+        self.unverified_waits = 0
+        size, tile = context.get("map_size_tiles"), context.get("actor_tile")
+        walked = self._walked(here[0])
+        order = list(STEP_OFFSETS)
+        if isinstance(size, list) and isinstance(tile, list):
+            order.sort(key=lambda step: self._neighbor(tuple(tile), STEP_OFFSETS[step],
+                                                       tuple(size)) not in walked)
+        start = self.unverified_nudges % len(order)
+        self.unverified_nudges += 1
+        step = order[0] if order and isinstance(tile, list) and isinstance(size, list) and \
+            self._neighbor(tuple(tile), STEP_OFFSETS[order[0]], tuple(size)) in walked \
+            else order[start]
+        return PlannerDecision(step, f"tile under the hero does not verify ({why}) after "
+                               f"{UNVERIFIED_WAITS} waits: tapping {step[5:]} to refresh "
+                               "his terrain", "unstick", turn_only=True)
+
     def _forbidden_steps(self, context):
         """{(tile, step)} blocked on this map and layer, for route searches."""
         actor = context.get("actor") or {}
@@ -2064,9 +2107,13 @@ class MemoryPlanner:
         if not isinstance(context, dict) or not context.get("runtime_verified"):
             why = context.get("verification_error") if isinstance(context, dict) else None
             mode = context.get("game_mode") if isinstance(context, dict) else None
+            nudge = self._unverified_nudge(context, why, mode)
+            if nudge is not None:
+                return nudge
             detail = f" ({why}, mode={mode})" if why else ""
             return PlannerDecision("wait", f"no runtime-verified tile context{detail}",
                                    "observe")
+        self.unverified_waits = 0
         if context.get("game_mode") != "field":
             return PlannerDecision("wait", f"game mode is {context.get('game_mode')}", "observe")
         status = ((observation.get("party") or [{}])[0] or {}).get("status") or {}

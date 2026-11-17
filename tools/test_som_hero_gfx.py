@@ -67,3 +67,16 @@ class RomTest(unittest.TestCase):
                     image = gfx.render(villager, pieces)
                     filled = sum(1 for row in image for value in row if value)
                     self.assertGreater(filled, 250, (anim, direction, frame))
+
+    def test_working_villager_wears_its_colours_and_keeps_the_axe(self):
+        import som_villager_work as W
+        gfx = HeroGfx.load(ROM)
+        cmap = W.colour_map(gfx, 0xC0)
+        self.assertEqual(set(cmap), set(range(1, 16)))
+        frames = W.work_frames(gfx, 0xC0, "axe", 18)
+        self.assertEqual(len(frames), len(gfx.script("axe", 0, "side")))
+        for image, _ in frames:
+            used = {p for row in image for p in row if p}
+            self.assertTrue(used & set(range(17, 22)), "axe drawn in every step")
+            edge = [image[0], image[-1], [r[0] for r in image], [r[-1] for r in image]]
+            self.assertFalse(any(p for line in edge for p in line), "nothing clipped")

@@ -26,3 +26,20 @@ class RomTest(unittest.TestCase):
             self.assertTrue(1 <= len(pieces) <= 4)
             image = gfx.render("boy", pieces)
             self.assertGreater(sum(1 for row in image for value in row if value), 100)
+
+    def test_weapon_pieces_draw_the_sword_in_the_swing(self):
+        gfx = HeroGfx.load(ROM)
+        sword_row = 9                       # first sword (D0:1000 + 12 * row)
+        tiles = gfx.weapon_tiles(sword_row)
+        self.assertEqual(len(tiles), 64 * 32)
+        drawn = 0
+        for flags, frame, _ in gfx.script("sword", 0, "side"):
+            pieces = gfx.weapon_pieces(sword_row, frame, flags)
+            self.assertTrue(1 <= len(pieces) <= 10)
+            for *_, indices in pieces:
+                self.assertTrue(all(i is None or 0 <= i < 64 for i in indices))
+            image = gfx.render("boy", pieces, source=tiles, base=16)
+            values = [v for row in image for v in row if v]
+            self.assertTrue(all(17 <= v <= 21 for v in values))   # colours 1-5
+            drawn += len(values)
+        self.assertGreater(drawn, 150)

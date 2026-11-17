@@ -11,6 +11,15 @@ arms) needs the pictures decoded here.
 - Scripts: attack states D1:3040 + 240*weapon_type, ordinary states D1:37CC;
   entry (anim*3 + dir)*2, dir 0 up, 1 down, 2 side (left = side mirrored).
 - Frame descriptors: D1:[word D0:FFD0 + 2*type] + 2*frame; piece lists in D2.
+- Weapon pieces (frame list 2, $C0:F1CF): D4:[table word + 2*frame], where the
+  table is the third/fourth byte of D4:C000 + 4*g. Their tiles index the 64
+  effect tiles the equip refresh ($C0:EA41) expands from D4 (Turbo encoding:
+  24 bytes per tile, colours 1-5), and their 5 colours come from
+  D1:F600 + 10 * weapon palette id ($C1:859B; id = row byte 4, the
+  equip refresh stores it in +0x069). Turbo routes $C1:859B through F0:257B
+  and F0:4BCB, which pass each colour through a filter keyed on 7E:CF06; the
+  raw table colours are used here. Shapes match the swing; the colours and
+  which palette slots they land in are NOT yet checked against a live game.
 
 File offset of HiROM address bank:addr = (bank - 0xC0) << 16 | addr (the
 Turbo ROM is 4 MiB without a copier header).
@@ -123,9 +132,78 @@ class HeroGfx:
                         [pool + s for s in sources[4 * k:4 * k + 4]]))
         return out
 
-    def tile(self, offset):
-        """8x8 colour indices of the 4bpp tile at a file offset."""
-        data = self.rom[offset:offset + 32]
+    def weapon_group(self, row):
+        """(graphics group g, weapon row bytes) as $C0:EA41 reads them."""
+        r = self.rom[off(0xD0, 0x1000 + 12 * row):][:12]
+        g = r[0] if r[3] < 4 else r[3] + 0x12
+        return g, r
+
+    def weapon_tiles(self, row):
+        """The 64 effect tiles (32 bytes each, SNES 4bpp) the game expands into
+        the hero's buffer 7E:2000 for this weapon row (Turbo's converter)."""
+        g, _ = self.weapon_group(row)
+        start = 24 * self.w16(0xD4, 0xC000 + 4 * g)
+        src, out = self.rom[off(0xD4, start):][:64 * 24], bytearray(64 * 32)
+        for t in range(64):
+            s, o = src[24 * t:24 * t + 24], 32 * t
+            for y in range(8):
+                a, b, c = s[2 * y], s[2 * y + 1], s[16 + y]
+                keep = ~(b & c) & 0xFF
+                out[o + 2 * y], out[o + 2 * y + 1] = a & keep, b & keep
+                out[o + 16 + 2 * y] = c & keep
+        return bytes(out)
+
+    def weapon_pieces(self, row, frame, entry_flags=0, left=False):
+        """[(x, y, hflip, vflip, [4 tile indices or None])] of list 2 for a frame,
+        relative to the same point as pieces() (the boy: no nibble offset)."""
+        g, _ = self.weapon_group(row)
+        table = self.w16(0xD4, 0xC000 + 4 * g + 2)
+        pointer = self.w16(0xD4, table + 2 * frame)
+        header = self.rom[off(0xD4, pointer)]
+        count = header & 15
+        if count == 0 or count >= 11:
+            return []
+        cursor, tiles = pointer + 1, []
+        while len(tiles) < 4 * count:
+            b0 = self.rom[off(0xD4, cursor)]
+            if not b0 & 0x80:
+                cursor += 1
+                tiles.append(None if b0 & 0x7F == 0x7F else b0 & 0x7F)
+                continue
+            b1 = self.rom[off(0xD4, cursor + 1)]
+            cursor += 2
+            run, first = (b0 & 0x3F) + 1, b1 & 0x7F
+            if b0 & 0x40:
+                tiles += [first + k for k in range(run)]
+            else:
+                tiles += [None if first == 0x7F else first] * run
+        tiles = tiles[:4 * count]
+        flips = (((entry_flags ^ (0x20 if left else 0)) << 1) & 0xC0)
+        scale = 2 if header & 0x10 else 1
+        out = []
+        for k in range(count):
+            lo, hi = self.rom[off(0xD4, cursor)], self.rom[off(0xD4, cursor + 1)]
+            cursor += 2
+            y, x = sext7(lo & 0x7F) * scale, sext7(hi & 0x7F) * scale
+            if flips & 0x80:
+                y = -y - 16
+            if flips & 0x40:
+                x = -x - 16
+            out.append((x, y, (hi >> 7) ^ ((flips >> 6) & 1), (lo >> 7) ^ (flips >> 7),
+                        tiles[4 * k:4 * k + 4]))
+        return out
+
+    def weapon_palette(self, palette_id):
+        """16 RGB colours: 1-5 from D1:F600 + 10 * id, the rest unused."""
+        colours = [(0, 0, 0)] * 16
+        for k in range(5):
+            value = self.w16(0xD1, 0xF600 + 10 * palette_id + 2 * k)
+            colours[1 + k] = tuple(((value >> s) & 31) * 255 // 31 for s in (0, 5, 10))
+        return colours
+
+    @staticmethod
+    def tile_pixels(data):
+        """8x8 colour indices of 32 bytes of SNES 4bpp."""
         rows = []
         for y in range(8):
             p0, p1, p2, p3 = data[2 * y], data[2 * y + 1], data[16 + 2 * y], data[17 + 2 * y]
@@ -133,6 +211,10 @@ class HeroGfx:
                          (((p2 >> (7 - x)) & 1) << 2) | (((p3 >> (7 - x)) & 1) << 3)
                          for x in range(8)])
         return rows
+
+    def tile(self, offset):
+        """8x8 colour indices of the 4bpp tile at a file offset."""
+        return self.tile_pixels(self.rom[offset:offset + 32])
 
     def palette(self, hero):
         """16 RGB colours (index 0 = transparent)."""
@@ -143,20 +225,27 @@ class HeroGfx:
             colours.append(tuple(((value >> s) & 31) * 255 // 31 for s in (0, 5, 10)))
         return colours
 
-    def render(self, hero, pieces, size=64, origin=(32, 48)):
-        """Colour-index image (rows of ints, 0 transparent) of a frame's pieces."""
-        image = [[0] * size for _ in range(size)]
+    def render(self, hero, pieces, size=64, origin=(32, 48), image=None, source=None,
+               base=0):
+        """Colour-index image (rows of ints, 0 transparent) of a frame's pieces.
+        Tiles are ROM offsets, or indices into `source` (weapon_tiles) drawn
+        with colour index + `base` so two palettes can share one image."""
+        image = image or [[0] * size for _ in range(size)]
+        size = len(image)
         for x, y, hflip, vflip, tiles in pieces:
             quads = [(0, 0), (8, 0), (0, 8), (8, 8)]   # top-left, top-right, bottom-left, -right
             for (qx, qy), offset in zip(quads, tiles):
-                pixels = self.tile(offset)
+                if offset is None:
+                    continue
+                pixels = (self.tile(offset) if source is None else
+                          self.tile_pixels(source[32 * offset:32 * offset + 32]))
                 for ty in range(8):
                     for tx in range(8):
                         sx = (15 - (qx + tx)) if hflip else qx + tx
                         sy = (15 - (qy + ty)) if vflip else qy + ty
                         px, py = origin[0] + x + sx, origin[1] + y + sy
                         if pixels[ty][tx] and 0 <= px < size and 0 <= py < size:
-                            image[py][px] = pixels[ty][tx]
+                            image[py][px] = pixels[ty][tx] + base
         return image
 
 

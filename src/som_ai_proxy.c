@@ -18,6 +18,7 @@
 #include "som_familiar.h"
 #include "som_npc_walk.h"
 #include "som_npc_work.h"
+#include "som_general.h"
 #include "som_net_pad.h"
 #include "som_songs.h"
 #include "som_combo.h"
@@ -3083,6 +3084,76 @@ static void som_music_publish_rate(void){
 }
 #define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
 #define SOM_COMBO_LABEL_RISE_PX 40   /* counter top, above the hero's head */
+/* Generals (src/som_general.h, EXPERIMENTAL): named elite monsters with a
+ * rank and a memory, on only while the marker file exists. */
+#define SOM_GENERAL_FILE "/home/apps/retroarch/cores/experimental/som_generals.txt"
+#define SOM_GENERAL_ENABLE_FILE "/home/apps/retroarch/cores/experimental/som_ai_generals_enable"
+static const char *general_file=SOM_GENERAL_FILE;
+static const char *general_enable_file=SOM_GENERAL_ENABLE_FILE;
+static SomGeneral generals[SOM_GEN_MAX];
+static SomGeneralLive generals_live[SOM_GEN_MAX];
+static unsigned general_count;
+static int generals_on;
+static const char *const som_general_events[]={"","ELECTED","DEFEATED","WON","ESCAPED",
+    "BACKING AWAY","STANDS ITS GROUND"};
+static void som_generals_load(void){
+    generals_on=access(general_enable_file,F_OK)==0;
+    general_count=0;
+    for(unsigned i=0;i<SOM_GEN_MAX;i++)som_gen_reset_live(&generals_live[i]);
+    if(!generals_on)return;
+    char text[2048]={0};
+    FILE *f=fopen(general_file,"r");
+    if(f){size_t n=fread(text,1,sizeof(text)-1,f);text[n]=0;fclose(f);}
+    general_count=som_gen_parse(text,generals,SOM_GEN_MAX);
+    if(!general_count)general_count=som_gen_defaults(&generals[0]);
+    fprintf(stderr,"[som-ai] GENERALS on: %u (%s R%u, %u encounters)\n",general_count,
+        generals[0].name,generals[0].rank,generals[0].encounters);
+}
+static void som_generals_save(void){
+    char text[2048];
+    const size_t n=som_gen_format(generals,general_count,text,sizeof(text));
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",general_file);
+    FILE *f=fopen(temp,"w");
+    if(!f)return;
+    const int ok=fwrite(text,1,n,f)==n;
+    if(fclose(f)!=0||!ok||rename(temp,general_file)!=0)
+        fprintf(stderr,"[som-ai] GENERALS could not save %s\n",general_file);
+}
+static void som_generals_frame(void){
+    if(!generals_on||!game_loaded||!on_turbo||!backend_retro_get_memory_data||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    for(unsigned i=0;i<general_count;i++){
+        SomGeneral *g=&generals[i];SomGeneralLive *l=&generals_live[i];
+        int event=som_gen_elect(g,l,ram,frame_number,familiar.slot);
+        if(event==SOM_GEN_NONE)event=som_gen_tick(g,l,ram,frame_number);
+        if(event==SOM_GEN_NONE)continue;
+        static const char *const weapons[8]={"glove","sword","axe","spear","whip","bow",
+            "boomerang","javelin"};
+        const char *nemesis=g->nemesis>=0?weapons[g->nemesis]:"none";
+        if(event==SOM_GEN_ELECTED)
+            fprintf(stderr,"[som-ai] GENERAL %s R%u ELECTED in slot %d on map %u: HP %u, bite every %u frames, nemesis %s\n",
+                g->name,g->rank,l->slot,g->home_map,l->prev_hp,som_gen_cooldown_cap(g->rank),nemesis);
+        else if(event==SOM_GEN_BACKING||event==SOM_GEN_STANDING)
+            fprintf(stderr,"[som-ai] GENERAL %s %s (the boy holds the %s that beat it; bite %s)\n",
+                g->name,som_general_events[event],nemesis,event==SOM_GEN_BACKING?"recharging":"ready or out of reach");
+        else{
+            fprintf(stderr,"[som-ai] GENERAL %s %s: now R%u, %u encounters, %u defeats, %u wins, %u escapes, nemesis %s\n",
+                g->name,som_general_events[event],g->rank,g->encounters,g->defeats,g->wins,g->escapes,nemesis);
+            som_generals_save();
+        }
+    }
+}
+/* Screen position of an on-field general's label (base pixels), 0 if none. */
+static int som_general_label_at(const uint8_t *ram,unsigned i,int *x,int *y){
+    const SomGeneralLive *l=&generals_live[i];
+    if(!generals_on||l->slot<0||!ram)return 0;
+    const uint8_t *o=ram+SOM_GEN_MONSTER_BASE+(unsigned)l->slot*SOM_GEN_OBJECT;
+    const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
+    *x=(int16_t)(som_gen_u16(o+2)-som_gen_u16(ram+cam));
+    *y=(int16_t)(som_gen_u16(o+4)-som_gen_u16(ram+cam+2u))-o[0x45]-30;
+    return *x>=0&&*x<256&&*y>=0&&*y<224;
+}
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch);
 static uint64_t perf_video_us;
 static void som_frontend_video(const void *data,unsigned width,unsigned height,size_t pitch){
@@ -3127,7 +3198,14 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
     const int worker=npc_work.active&&!menu;
-    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    int general_x=-1,general_y=-1;
+    char general_text[40]={0};
+    if(!menu&&general_count&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE&&
+       som_general_label_at((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),
+                            0,&general_x,&general_y))
+        som_gen_label(&generals[0],general_text,sizeof(general_text));
+    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0])||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
         return;
@@ -3149,6 +3227,11 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
     pitch=row;
     if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
+    if(general_text[0])
+        som_overlay_label(overlay_frame,width,height,pitch,pixel_format,general_text,
+                          general_x,general_y,1,
+                          generals[0].rank>=3u?som_overlay_color(pixel_format,255,80,64):
+                                               som_overlay_color(pixel_format,255,214,64));
     if(worker){
         size_t ram_size=0;
         const uint8_t *ram=som_npc_ram(&ram_size);
@@ -3340,6 +3423,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     weapon_trace_on=0;som_weapon_trace_reset();
     hero_pal_have=0;
     som_gambit_load();som_music_genre_load();
+    som_generals_load();
     last_input_frame=frame_number;idle_started=0;
     const char *direct=getenv("FLXTR_SOM_AI_DIRECT");
     direct_transport=direct&&direct[0]=='1'&&direct[1]=='\0';
@@ -3656,6 +3740,7 @@ RETRO_API void retro_run(void){
     som_npc_work_frame();
     som_clone_tick();
     som_familiar_frame();
+    som_generals_frame();
     /* No automatic hero VRAM caching: old monster-style snapshots garbled art. */
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)

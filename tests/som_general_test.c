@@ -93,6 +93,19 @@ int main(void){
     put16(0xDC,131);
     assert(som_gen_tick(&g[0],&l,ram,202)==SOM_GEN_ESCAPED&&g[0].escapes==1&&g[0].rank==3);
 
+    /* Vanished (slot cleared or overwritten by a villager): no record. */
+    {   SomGeneral v;som_gen_defaults(&v);SomGeneralLive vl;som_gen_reset_live(&vl);
+        field(130);assert(som_gen_elect(&v,&vl,ram,300,-1)==SOM_GEN_ELECTED);
+        ram[0xE600]=1;ram[0xE780]=0xC4;                          /* a villager kind */
+        assert(som_gen_tick(&v,&vl,ram,301)==SOM_GEN_VANISHED&&v.rank==1&&v.defeats==0&&
+               v.encounters==0&&vl.slot<0&&vl.done);
+        som_gen_reset_live(&vl);field(130);som_gen_elect(&v,&vl,ram,302,-1);
+        ram[0xE600]=0;                                           /* cleared */
+        assert(som_gen_tick(&v,&vl,ram,303)==SOM_GEN_VANISHED&&v.rank==1);
+        som_gen_reset_live(&vl);field(130);som_gen_elect(&v,&vl,ram,304,-1);
+        put16(0xE790,0x8000);                                    /* killed: status */
+        assert(som_gen_tick(&v,&vl,ram,305)==SOM_GEN_DEFEATED&&v.rank==2);
+    }
     /* Rank is capped. */
     g[0].rank=SOM_GEN_MAX_RANK;SomGeneralLive c;som_gen_reset_live(&c);c.slot=0;
     som_gen_conclude(&g[0],&c,SOM_GEN_DEFEATED);assert(g[0].rank==SOM_GEN_MAX_RANK);

@@ -1,14 +1,21 @@
 /* Raids: a general and its pack attack a town; champions defend it
  * (EXPERIMENTAL, part of the generals opt-in).
  *
- * Monsters exist only on their own maps, so raiders are carried there the
- * way the familiar is (src/som_familiar.h): on the general's home map the
- * object, its sprite tiles in VRAM and its palette are captured; in town a
- * free monster slot gets the object and the tiles/palette are written back
- * every frame. In towns the three monster slots (objects 3-5) also hold
- * villagers, so a raider takes only a free slot and is left out when its
- * palette or any of its tiles is in use by another object on the map
- * (villager sprites would be garbled otherwise).
+ * Monsters exist only on their own maps, so raiders are carried there: on
+ * the general's home map the object, its sprite tile buffer
+ * (7E:5000 + slot * 0x1000) and its palette (7E:DFA0 + slot * 0x20) are
+ * captured (som_familiar_save). In town the three monster slots (objects
+ * 3-5) also hold villagers, each with its own VRAM tile area and palette
+ * (live 2026-11-17, Potos: object 3 = villager C4, tile base 0x40, OBJ
+ * palette 6; objects 4/5 empty with bases 0x48/0x60). A raider is
+ * therefore relocated like clone_enemy: it takes a free slot, keeps that
+ * slot's own fields (tile base, VRAM addresses), gets its art in that
+ * slot's tile buffer, and an OBJ palette 5-7 that no active object uses
+ * (attribute bits of +0x8B and the tile fields, palette address +0xF8 =
+ * 0x20 * p + 2 as the villager's 0xC2 for palette 6). Buffer and palette
+ * are rewritten every frame. A raid starts only after the map has been in
+ * field mode for SOM_RAID_SETTLE_FRAMES, since the town's own object setup
+ * clears slots on arrival.
  *
  * Champions: villagers with work frames (src/som_npc_work.h). During a raid
  * the proxy picks a static villager within SOM_RAID_CHAMPION_REACH of a
@@ -34,6 +41,9 @@
 #define SOM_RAID_CHAMPION_REACH 40          /* px, Manhattan */
 #define SOM_RAID_CHAMPION_DAMAGE 8u
 #define SOM_RAID_RAIDERS 2u                 /* the general, then one of its pack */
+#define SOM_RAID_SETTLE_FRAMES 120ul
+#define SOM_RAID_TILE_BUFFER 0x5000u
+#define SOM_RAID_TILE_BUFFER_SIZE 0x1000u
 
 typedef struct {
     SomFamiliarCarry carry[SOM_RAID_RAIDERS];
@@ -42,6 +52,7 @@ typedef struct {
     int active;
     unsigned map;
     int slot[SOM_RAID_RAIDERS];             /* monster slot of each raider, -1 = none */
+    unsigned palette[SOM_RAID_RAIDERS];     /* OBJ palette it was given */
     unsigned long ended_at;
     int have_ended;
     int strike_target;                      /* raider slot a champion swings at, -1 */
@@ -55,62 +66,88 @@ static inline void som_raid_reset(SomRaid *r){
     r->strike_target=-1;
 }
 
-/* 1 when a carried raider can be drawn on this map: its palette and tiles
- * are not used by any active object in slots 0-11 (heroes, NPCs, monsters). */
-static inline int som_raid_fits(const SomFamiliarCarry *c,const uint8_t *ram){
-    if(!c->valid||!c->has_vram)return 0;
-    const unsigned palette=(c->object[0x8B]>>1)&7u;
-    for(unsigned i=0;i<12u;i++){
-        const uint8_t *o=ram+0xE000u+i*0x200u;
-        if(o[0]!=1u)continue;
-        if(i>=3u&&((o[0x8B]>>1)&7u)==palette)return 0;
-        for(unsigned f=0;f<sizeof(som_familiar_tile_fields);f++){
-            const unsigned v=som_fam_u16(o+som_familiar_tile_fields[f]);
-            if(!v)continue;
-            const unsigned base=(v&0xFFu)|((v>>8)&1u)<<8;
-            const unsigned corner[4]={base,base+1u,base+16u,base+17u};
-            for(unsigned k=0;k<4u;k++)
-                for(unsigned t=0;t<c->tile_count;t++)
-                    if(c->tile_id[t]==corner[k])return 0;
+/* An OBJ palette 5-7 that no active object (slots 0-11) uses and that is
+ * not in `taken` (bit mask), or -1. */
+static inline int som_raid_free_palette(const uint8_t *ram,unsigned taken){
+    for(unsigned p=5;p<=7u;p++){
+        if(taken&(1u<<p))continue;
+        int used=0;
+        for(unsigned i=0;i<12u&&!used;i++){
+            const uint8_t *o=ram+0xE000u+i*0x200u;
+            used=o[0]==1u&&((o[0x8B]>>1)&7u)==p;
         }
+        if(!used)return (int)p;
     }
-    return 1;
+    return -1;
+}
+/* Gives the object in `o` OBJ palette p and the sprite priority bits
+ * `priority` (attribute & 0x30, from its home object): +0x8B, the attribute
+ * byte of every tile field, and the palette address +0xF8. */
+static inline void som_raid_set_palette(uint8_t *o,unsigned p,unsigned priority){
+    const unsigned keep=~(0x30u|0x0Eu);
+    o[0x8B]=(uint8_t)((o[0x8B]&keep)|(priority&0x30u)|p<<1);
+    for(unsigned f=0;f<sizeof(som_familiar_tile_fields);f++){
+        uint8_t *attr=o+som_familiar_tile_fields[f]+1;
+        if(o[som_familiar_tile_fields[f]]|*attr)
+            *attr=(uint8_t)((*attr&keep)|(priority&0x30u)|p<<1);
+    }
+    o[0xF8]=(uint8_t)(0x20u*p+2u);
+}
+/* Writes a raider's art and colours for its slot and palette. */
+static inline void som_raid_paint(const SomFamiliarCarry *c,uint8_t *ram,int slot,unsigned p){
+    memcpy(ram+SOM_RAID_TILE_BUFFER+(unsigned)slot*SOM_RAID_TILE_BUFFER_SIZE,c->tiles,
+           sizeof(c->tiles));
+    memcpy(ram+0xDF00u+32u*p,c->palette,sizeof(c->palette));
+    memcpy(ram+0x0700u+32u*p,c->palette,sizeof(c->palette));
 }
 
-/* An open spot SOM_RAID_SPAWN_DISTANCE px from the hero (tries 4 sides). */
+/* An open spot about SOM_RAID_SPAWN_DISTANCE px from the hero (4 sides,
+ * then 2/3 and 4/3 of that distance). */
 static inline int som_raid_spot(const uint8_t *ram,unsigned which,int *x,int *y){
     static const int dirs[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
     const int hx=(int)som_fam_u16(ram+0xE002),hy=(int)som_fam_u16(ram+0xE004);
     const unsigned place=ram[0xE00B];
-    for(unsigned k=0;k<4u;k++){
+    static const int reach[3]={SOM_RAID_SPAWN_DISTANCE,SOM_RAID_SPAWN_DISTANCE*2/3,
+                               SOM_RAID_SPAWN_DISTANCE*4/3};
+    for(unsigned n=0;n<3u;n++)for(unsigned k=0;k<4u;k++){
         const int *d=dirs[(which+k)&3u];
-        const int cx=hx+d[0]*SOM_RAID_SPAWN_DISTANCE,cy=hy+d[1]*SOM_RAID_SPAWN_DISTANCE;
+        const int cx=hx+d[0]*reach[n],cy=hy+d[1]*reach[n];
         if(som_bun_spot_open(ram,cx,cy,place)){*x=cx;*y=cy;return 1;}
     }
     return 0;
 }
 
 /* Starts a raid on the current map: returns the number of raiders placed
- * (0 = none fit; the raid is then not active). */
-static inline unsigned som_raid_start(SomRaid *r,uint8_t *ram,uint8_t *vram){
-    if(!vram)return 0;
-    unsigned placed=0;
+ * (0 = no free slot or palette; the raid is then not active). */
+static inline unsigned som_raid_start(SomRaid *r,uint8_t *ram){
+    unsigned placed=0,taken=0;
     for(unsigned k=0;k<SOM_RAID_RAIDERS;k++){
         r->slot[k]=-1;
         const SomFamiliarCarry *c=&r->carry[k];
-        if(!r->captured[k]||!som_raid_fits(c,ram))continue;
+        if(!r->captured[k]||!c->valid)continue;
+        const int p=som_raid_free_palette(ram,taken);
         int x,y;
-        if(!som_raid_spot(ram,k,&x,&y))continue;
+        if(p<0||!som_raid_spot(ram,k,&x,&y))continue;
         for(int slot=0;slot<3;slot++){
             uint8_t *to=ram+SOM_FAMILIAR_MONSTER_BASE+(unsigned)slot*SOM_FAMILIAR_OBJECT;
             if(to[0]==1u)continue;
+            uint8_t keep[sizeof(som_familiar_slot_fields)][2];
+            for(unsigned i=0;i<sizeof(som_familiar_slot_fields);i++){
+                keep[i][0]=to[som_familiar_slot_fields[i]];
+                keep[i][1]=to[som_familiar_slot_fields[i]+1];
+            }
             memcpy(to,c->object,SOM_FAMILIAR_OBJECT);
-            som_familiar_reapply(c,ram,vram);
+            for(unsigned i=0;i<sizeof(som_familiar_slot_fields);i++){
+                to[som_familiar_slot_fields[i]]=keep[i][0];
+                to[som_familiar_slot_fields[i]+1]=keep[i][1];
+            }
+            som_raid_set_palette(to,(unsigned)p,c->object[0x8B]);
+            som_raid_paint(c,ram,slot,(unsigned)p);
             som_fam_put16(to+2,(unsigned)x);som_fam_put16(to+4,(unsigned)y);
             to[0x0B]=ram[0xE00B];                  /* the hero's layer and floor */
             to[0x1F1]=0;to[0x1AC]=0xFF;
             som_fam_put16(to+0x182,som_fam_u16(to+0x184));
-            r->slot[k]=slot;placed++;
+            r->slot[k]=slot;r->palette[k]=(unsigned)p;taken|=1u<<p;placed++;
             break;
         }
     }
@@ -127,14 +164,14 @@ static inline int som_raid_raider_alive(const SomRaid *r,const uint8_t *ram,unsi
 enum { SOM_RAID_GOING = 0, SOM_RAID_REPELLED, SOM_RAID_LEFT };
 
 /* Once per frame while active: keeps the raiders drawn and reports the end. */
-static inline int som_raid_tick(SomRaid *r,uint8_t *ram,uint8_t *vram,unsigned long frame){
+static inline int som_raid_tick(SomRaid *r,uint8_t *ram,unsigned long frame){
     if(!r->active)return SOM_RAID_GOING;
     if((som_fam_u16(ram+0xDC)&0x1FFu)!=r->map){
         r->active=0;r->ended_at=frame;r->have_ended=1;return SOM_RAID_LEFT;
     }
     unsigned alive=0;
     for(unsigned k=0;k<SOM_RAID_RAIDERS;k++){
-        if(som_raid_raider_alive(r,ram,k)){alive++;som_familiar_reapply(&r->carry[k],ram,vram);}
+        if(som_raid_raider_alive(r,ram,k)){alive++;som_raid_paint(&r->carry[k],ram,r->slot[k],r->palette[k]);}
         else r->slot[k]=-1;
     }
     if(!alive){r->active=0;r->ended_at=frame;r->have_ended=1;return SOM_RAID_REPELLED;}

@@ -62,7 +62,8 @@ typedef struct {
 } SomGeneralLive;
 
 enum { SOM_GEN_NONE = 0, SOM_GEN_ELECTED, SOM_GEN_DEFEATED, SOM_GEN_WON, SOM_GEN_ESCAPED,
-       SOM_GEN_BACKING, SOM_GEN_STANDING };
+       SOM_GEN_BACKING, SOM_GEN_STANDING, SOM_GEN_VANISHED };
+
 
 static inline unsigned som_gen_u16(const uint8_t *p){return (unsigned)(p[0]|p[1]<<8);}
 static inline void som_gen_put16(uint8_t *p,unsigned v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);}
@@ -71,6 +72,13 @@ static inline uint8_t *som_gen_object(uint8_t *ram,int slot){
 }
 static inline int som_gen_alive(const uint8_t *o){
     return o[0]==1u&&o[0x180]<0x80u&&!(som_gen_u16(o+0x190)&0x8000u);
+}
+/* A monster that was killed: its slot shows the dying marker +0x180 = 0xF9
+ * or the chest 0xEA (live 2026-11-14), or status bit 0x8000. Anything else
+ * (slot cleared, another object written over it) is not a defeat. */
+static inline int som_gen_killed(const uint8_t *o,unsigned last_hp){
+    if(last_hp==0u)return 1;
+    return o[0]==1u&&(o[0x180]==0xF9u||o[0x180]==0xEAu||(som_gen_u16(o+0x190)&0x8000u));
 }
 static inline unsigned som_gen_map(const uint8_t *ram){return som_gen_u16(ram+0xDC)&0x1FFu;}
 static inline int som_gen_field(const uint8_t *ram){
@@ -184,6 +192,10 @@ static inline int som_gen_tick(SomGeneral *g,SomGeneralLive *l,uint8_t *ram,unsi
     uint8_t *o=som_gen_object(ram,l->slot);
     const unsigned weapon=ram[0xE1E4]&7u;
     if(!som_gen_alive(o)||o[0x180]!=g->species){
+        if(!som_gen_killed(o,l->prev_hp)){           /* gone without a fight: no record */
+            l->slot=-1;l->done=1;
+            return SOM_GEN_VANISHED;
+        }
         if(l->prev_hp)l->damage[weapon]+=l->prev_hp;   /* the killing blow */
         som_gen_conclude(g,l,SOM_GEN_DEFEATED);
         return SOM_GEN_DEFEATED;

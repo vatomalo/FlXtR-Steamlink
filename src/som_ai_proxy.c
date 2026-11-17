@@ -3098,12 +3098,13 @@ static SomGeneralLive generals_live[SOM_GEN_MAX];
 static unsigned general_count;
 static int generals_on;
 static const char *const som_general_events[]={"","ELECTED","DEFEATED","WON","ESCAPED",
-    "BACKING AWAY","STANDS ITS GROUND"};
+    "BACKING AWAY","STANDS ITS GROUND","VANISHED (not a fight; no record)"};
 /* Raids (src/som_raid.h): the general carried into Potos; champions. */
 static SomRaid raid;
 static int raid_forced;
 static unsigned raid_visit_map=0xFFFFu;
 static int raid_tried;                  /* this visit already had its chance */
+static unsigned long raid_field_since;  /* first frame of field mode on this map */
 static int som_raid_has_frames(unsigned kind,void *ctx){
     (void)ctx;
     SomWorkEntry entry;
@@ -3120,8 +3121,6 @@ static void som_general_raid_command(void){
 static void som_raid_capture(uint8_t *ram,const SomGeneral *g,const SomGeneralLive *l){
     if(l->slot<0||l->away||frame_number-l->elected_at<SOM_RAID_CAPTURE_DELAY)return;
     if(raid.captured[0]&&frame_number-raid.captured_at<SOM_RAID_CAPTURE_EVERY)return;
-    uint8_t *vram=som_vram();
-    if(!vram)return;
     const int slots[SOM_RAID_RAIDERS]={l->slot,-1};
     int pack=-1;
     for(int s=0;s<3;s++){
@@ -3131,13 +3130,11 @@ static void som_raid_capture(uint8_t *ram,const SomGeneral *g,const SomGeneralLi
     for(unsigned k=0;k<SOM_RAID_RAIDERS;k++){
         const int slot=k?pack:slots[0];
         if(slot<0)continue;
-        const uint8_t *o=ram+SOM_GEN_MONSTER_BASE+(unsigned)slot*SOM_GEN_OBJECT;
         som_familiar_save(&raid.carry[k],ram,slot);
-        som_familiar_capture_vram(&raid.carry[k],ram,vram,o,l->map);
-        if(!raid.captured[k]&&raid.carry[k].has_vram)
-            fprintf(stderr,"[som-ai] RAID captured %s from slot %d: %u tiles, palette 7E%04X\n",
-                k?"pack Rabite":g->name,slot,raid.carry[k].tile_count,raid.carry[k].palette_address);
-        raid.captured[k]=raid.carry[k].has_vram;
+        if(!raid.captured[k])
+            fprintf(stderr,"[som-ai] RAID captured %s from slot %d (object, tile buffer, palette)\n",
+                k?"pack Rabite":g->name,slot);
+        raid.captured[k]=raid.carry[k].valid;
     }
     raid.captured_at=frame_number;
 }
@@ -3146,7 +3143,7 @@ static void som_raid_frame(uint8_t *ram){
     const unsigned map=som_gen_map(ram);
     if(map==g->home_map)som_raid_capture(ram,g,l);
     if(raid.active){
-        const int end=som_raid_tick(&raid,ram,som_vram(),frame_number);
+        const int end=som_raid_tick(&raid,ram,frame_number);
         if(end!=SOM_RAID_GOING){
             fprintf(stderr,"[som-ai] RAID on map %u %s\n",raid.map,
                     end==SOM_RAID_REPELLED?"REPELLED: every raider is down":"ended: the hero left");
@@ -3180,23 +3177,27 @@ static void som_raid_frame(uint8_t *ram){
         }
         return;
     }
-    if(map!=raid_visit_map){raid_visit_map=map;raid_tried=0;}
+    if(map!=raid_visit_map){raid_visit_map=map;raid_tried=0;raid_field_since=0;}
+    if(!som_gen_field(ram)){raid_field_since=0;return;}
+    if(!raid_field_since)raid_field_since=frame_number;
+    if(frame_number-raid_field_since<SOM_RAID_SETTLE_FRAMES)return;   /* the town sets up first */
     if(raid_tried&&!raid_forced)return;        /* one try per visit */
     /* A forced raid (general_raid) may hit any map but the home map. */
-    if((raid_forced?map==g->home_map:map!=SOM_RAID_TOWN_MAP)||!som_gen_field(ram)||!raid.captured[0])return;
+    if((raid_forced?map==g->home_map:map!=SOM_RAID_TOWN_MAP)||!raid.captured[0])return;
     raid_tried=1;                              /* the town is up: this is the try */
     if(!raid_forced&&(g->rank<SOM_RAID_MIN_RANK||
        (raid.have_ended&&frame_number-raid.ended_at<SOM_RAID_GAP_FRAMES)))return;
     raid_forced=0;
-    const unsigned placed=som_raid_start(&raid,ram,som_vram());
-    if(!placed){fprintf(stderr,"[som-ai] RAID refused: no free slot, or the raiders' tiles/palette are in use here\n");return;}
+    const unsigned placed=som_raid_start(&raid,ram);
+    if(!placed){fprintf(stderr,"[som-ai] RAID refused: no free monster slot, OBJ palette 5-7 or open spot near the hero\n");return;}
     if(raid.slot[0]>=0){
         som_gen_reset_live(l);
         l->map=map;l->slot=raid.slot[0];l->away=1;l->done=0;l->elected_at=frame_number;
         l->prev_hp=som_gen_u16(ram+SOM_GEN_MONSTER_BASE+(unsigned)raid.slot[0]*SOM_GEN_OBJECT+0x182u);
         l->hero_was_down=som_gen_u16(ram+0xE182)==0u;
     }
-    fprintf(stderr,"[som-ai] RAID %s R%u attacks map %u with %u raider(s)\n",g->name,g->rank,map,placed);
+    fprintf(stderr,"[som-ai] RAID %s R%u attacks map %u with %u raider(s): slots %d/%d, palettes %u/%u\n",
+            g->name,g->rank,map,placed,raid.slot[0],raid.slot[1],raid.palette[0],raid.palette[1]);
 }
 static void som_generals_load(void){
     generals_on=access(general_enable_file,F_OK)==0;
@@ -3208,7 +3209,7 @@ static void som_generals_load(void){
     if(f){size_t n=fread(text,1,sizeof(text)-1,f);text[n]=0;fclose(f);}
     general_count=som_gen_parse(text,generals,SOM_GEN_MAX);
     if(!general_count)general_count=som_gen_defaults(&generals[0]);
-    som_raid_reset(&raid);raid_forced=0;raid_visit_map=0xFFFFu;raid_tried=0;
+    som_raid_reset(&raid);raid_forced=0;raid_visit_map=0xFFFFu;raid_tried=0;raid_field_since=0;
     fprintf(stderr,"[som-ai] GENERALS on: %u (%s R%u, %u encounters)\n",general_count,
         generals[0].name,generals[0].rank,generals[0].encounters);
 }

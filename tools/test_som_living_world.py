@@ -140,6 +140,36 @@ class DriverTest(unittest.TestCase):
                    for _ in range(lw.WORK_EVERY)}
         self.assertIn("at place (nothing solid to work at)", reasons)
 
+    def test_with_work_frames_the_villager_swings_a_tool_instead(self):
+        doorstep = self.world.location("potos_c7_doorstep")
+        wram = WRAM(bytes(synthetic(npc_tile=(27, 25), walls=[(28, 25)])))
+        driver = lw.NativeDriver(self.world, NPC)
+        lw.WORK_KINDS.clear()
+        try:
+            for _ in range(lw.WORK_EVERY * 2):
+                command, _ = driver.plan(wram, doorstep, 131, "work")
+                if command:
+                    break
+            lw.WORK_KINDS.add(int(command.split()[3]))      # the kind from the wall walk
+            for _ in range(lw.WORK_EVERY):
+                command, reason = driver.plan(wram, doorstep, 131, "work")
+                if command:
+                    break
+            self.assertTrue(command.startswith("npc_work 131 "), command)
+            self.assertTrue(command.endswith(f" 2 {lw.WORK_SWINGS}"), command)   # right
+            self.assertEqual(reason, "swinging at the right tile")
+        finally:
+            lw.WORK_KINDS.clear()
+
+    def test_work_pack_kinds_are_read_from_the_pack(self):
+        import struct
+        import tempfile
+        body = struct.pack("<4B20H", 0xC7, 2, 2, 1, *range(20)) + struct.pack("<BbbBB", 1, 0, 0, 1, 2) + b"\x01\x02"
+        with tempfile.NamedTemporaryFile(suffix=".bin") as f:
+            f.write(b"SOMWORK1" + struct.pack("<H", 1) + body)
+            f.flush()
+            self.assertEqual(lw.load_work_kinds(f.name), {0xC7})
+
     def test_arrived_and_blocked_steps_replan_then_give_up(self):
         doorstep = self.world.location("potos_c7_doorstep")
         arrived = synthetic(npc_tile=(27, 25))

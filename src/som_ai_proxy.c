@@ -17,6 +17,7 @@
 #include "som_magic.h"
 #include "som_familiar.h"
 #include "som_npc_walk.h"
+#include "som_npc_work.h"
 #include "som_net_pad.h"
 #include "som_songs.h"
 #include "som_combo.h"
@@ -2454,10 +2455,75 @@ static int npc_rom_verified;
 static unsigned long npc_last_walk_frame;
 static int npc_have_walked;
 #define SOM_NPC_MIN_GAP_FRAMES 8u
+/* Working villagers (src/som_npc_work.h): frames from the pack file. */
+static const char *npc_work_pack_file=SOM_WORK_PACK_FILE;
+static uint8_t *npc_work_pack;
+static size_t npc_work_pack_size;
+static int npc_work_pack_tried;
+static SomNpcWorkState npc_work;
+static void som_npc_work_load_pack(void){
+    if(npc_work_pack_tried)return;
+    npc_work_pack_tried=1;
+    FILE *f=fopen(npc_work_pack_file,"rb");
+    if(!f){fprintf(stderr,"[som-ai] NPC work: no frame pack %s\n",npc_work_pack_file);return;}
+    if(fseek(f,0,SEEK_END)==0){
+        const long n=ftell(f);
+        if(n>10&&n<(16l<<20)&&fseek(f,0,SEEK_SET)==0&&(npc_work_pack=malloc((size_t)n))){
+            if(fread(npc_work_pack,1,(size_t)n,f)==(size_t)n)npc_work_pack_size=(size_t)n;
+            else{free(npc_work_pack);npc_work_pack=NULL;}
+        }
+    }
+    fclose(f);
+    fprintf(stderr,"[som-ai] NPC work: frame pack %s (%lu bytes)\n",
+        npc_work_pack?"loaded":"unreadable",(unsigned long)npc_work_pack_size);
+}
+static uint8_t *som_npc_ram(size_t *size){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return NULL;
+    *size=backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
+    return (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+}
+static int som_npc_work_command(const char *line){
+    size_t size=0;
+    uint8_t *ram=som_npc_ram(&size);
+    if(!strcmp(line,"npc_work_stop")){
+        if(npc_work.active&&ram&&size==SOM_WRAM_SIZE){
+            som_npc_work_end(&npc_work,ram);
+            fprintf(stderr,"[som-ai] NPC WORK stopped\n");
+        }
+        return 1;
+    }
+    SomNpcWork work;
+    if(!som_npc_parse_work(line,&work)){
+        fprintf(stderr,"[som-ai] NPC work refused: malformed command\n");return 0;
+    }
+    if(!npc_rom_verified){fprintf(stderr,"[som-ai] NPC work refused: ROM routines not verified\n");return 0;}
+    if(access(npc_enable_file,F_OK)!=0){fprintf(stderr,"[som-ai] NPC work refused: living world not enabled\n");return 0;}
+    if(npc_work.active){fprintf(stderr,"[som-ai] NPC work refused: another villager is working\n");return 0;}
+    if(!ram||size!=SOM_WRAM_SIZE)return 0;
+    som_npc_work_load_pack();
+    SomWorkEntry entry;
+    const char *refusal=som_npc_work_refusal(ram,size,&work,npc_work_pack,npc_work_pack_size,&entry);
+    if(refusal){fprintf(stderr,"[som-ai] NPC work refused: %s\n",refusal);return 0;}
+    som_npc_work_begin(&npc_work,ram,&work,&entry,frame_number);
+    fprintf(stderr,"[som-ai] NPC WORK map %u slot %u kind %02X at (%u,%u) dir %u, %u swings (%lu frames)\n",
+        work.map,work.slot,work.kind,work.x,work.y,work.dir,work.cycles,npc_work.length);
+    return 1;
+}
+static void som_npc_work_frame(void){
+    if(!npc_work.active)return;
+    size_t size=0;
+    uint8_t *ram=som_npc_ram(&size);
+    if(!ram||size!=SOM_WRAM_SIZE){npc_work.active=0;return;}
+    const char *why=som_npc_work_tick(&npc_work,ram,frame_number);
+    if(why)fprintf(stderr,"[som-ai] NPC WORK ended: %s\n",why);
+}
 static int som_npc_walk_command(const char *line){
     SomNpcWalk walk;
     if(!som_npc_parse_walk(line,&walk)){
         fprintf(stderr,"[som-ai] NPC refused: malformed command\n");return 0;
+    }
+    if(npc_work.active&&npc_work.slot==walk.slot){
+        fprintf(stderr,"[som-ai] NPC refused: that villager is working\n");return 0;
     }
     if(!npc_rom_verified){fprintf(stderr,"[som-ai] NPC refused: ROM routines not verified\n");return 0;}
     if(access(npc_enable_file,F_OK)!=0){fprintf(stderr,"[som-ai] NPC refused: living world not enabled\n");return 0;}
@@ -2485,7 +2551,8 @@ static void som_check_npc_command(void){
     fclose(input);
     if(unlink(npc_command_file)!=0||!have)return;
     line[strcspn(line,"\r\n")]=0;
-    som_npc_walk_command(line);
+    if(!strncmp(line,"npc_work",8))som_npc_work_command(line);
+    else som_npc_walk_command(line);
 }
 static int som_undo_spawn(void){
     if(!undo_ready||!backend_retro_unserialize){
@@ -3059,7 +3126,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    const int worker=npc_work.active&&!menu;
+    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
         return;
@@ -3081,6 +3149,13 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
     pitch=row;
     if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
+    if(worker){
+        size_t ram_size=0;
+        const uint8_t *ram=som_npc_ram(&ram_size);
+        if(ram&&ram_size==SOM_WRAM_SIZE)
+            som_npc_work_draw(&npc_work,ram,frame_number,overlay_frame,width,height,pitch,
+                              pixel_format);
+    }
     if(hero_drawn){
         if(clones){
             som_trail_draw(overlay_frame,width,height,pitch);
@@ -3419,6 +3494,11 @@ static int som_save_auto_state(void){
     return 1;
 }
 RETRO_API void retro_unload_game(void){
+    if(npc_work.active){
+        size_t ram_size=0;
+        uint8_t *ram=som_npc_ram(&ram_size);
+        som_npc_work_end(&npc_work,ram&&ram_size==SOM_WRAM_SIZE?ram:NULL);
+    }
     som_save_auto_state();
     som_xp_flush(1);
     som_net_pad_close(&net_pad);net_pad_was_active=0;
@@ -3573,6 +3653,7 @@ RETRO_API void retro_run(void){
         som_check_npc_command();
         som_check_message();
     }
+    som_npc_work_frame();
     som_clone_tick();
     som_familiar_frame();
     /* No automatic hero VRAM caching: old monster-style snapshots garbled art. */

@@ -52,6 +52,36 @@ GIVE_UP_CYCLES = 40        # driver pause after giving up
 WORK_ACTIVITIES = ("work",)
 WORK_FRAMES = 12
 WORK_EVERY = 6
+# With a frame pack (tools/som_villager_work.py --pack, deployed beside the
+# proxy) a worker whose kind is in it swings a tool instead: the proxy hides
+# the native sprite and draws the swing (src/som_npc_work.h).
+WORK_SWINGS = 4
+WORK_KINDS = set()
+
+
+def load_work_kinds(path):
+    """Villager kinds with work frames in a SOMWORK1 pack."""
+    import struct
+    data = Path(path).read_bytes()
+    if data[:8] != b"SOMWORK1":
+        raise ValueError(f"{path}: not a work frame pack")
+    kinds, pos = set(), 10
+    for _ in range(struct.unpack_from("<H", data, 8)[0]):
+        kind, frames = data[pos], data[pos + 3]
+        kinds.add(kind)
+        pos += 44
+        for _ in range(frames):
+            pos += 5 + data[pos + 3] * data[pos + 4]
+    return kinds
+
+
+def work_command(map_id, npc, direction, swings=WORK_SWINGS):
+    """The proxy's npc_work line (same fields as npc_walk, swings last)."""
+    values = (map_id, npc["slot"], npc["kind"], npc["x"], npc["y"],
+              native.DIRECTIONS[direction][0], swings)
+    if not all(isinstance(value, int) and value >= 0 for value in values):
+        raise ValueError("work fields must be non-negative integers")
+    return "npc_work " + " ".join(str(value) for value in values)
 HERO_SLOTS = (0, 1, 2)
 MESSAGE_ALLOWED = re.compile(r"[^A-Za-z0-9 .,!?:/%+=()|-]")
 STORY_FLAGS = (0x10, 0x11, 0x12, 0x0D)
@@ -324,6 +354,9 @@ class NativeDriver:
                                               live["y"], map_id)
                 if refusal:
                     return None, refusal
+                if live["kind"] in WORK_KINDS:
+                    return (work_command(map_id, live, direction),
+                            f"swinging at the {direction} tile")
                 return (native.walk_command(map_id, live, direction, WORK_FRAMES),
                         f"working at the {direction} tile")
         return None, "at place (nothing solid to work at)"
@@ -416,6 +449,7 @@ def main(argv=None):
                      help="send native NPC walks (proxy enable marker still required)")
     run.add_argument("--no-messages", action="store_true")
     run.add_argument("--steps", type=int, default=0)
+    run.add_argument("--work-pack", help="local copy of som_work_frames.bin: workers swing tools")
     run.add_argument("--director", action="store_true",
                      help="once per game day let Qwen pick one validated schedule change")
     run.add_argument("--ollama-url", default="http://127.0.0.1:11434")
@@ -455,6 +489,9 @@ def main(argv=None):
         for command in commands:
             print(f"planned (not sent): {command}")
     else:
+        if args.work_pack:
+            WORK_KINDS.update(load_work_kinds(args.work_pack))
+            print(f"[living-world] {len(WORK_KINDS)} villager kinds can swing tools", flush=True)
         return run_loop(world, args)
     return 0
 

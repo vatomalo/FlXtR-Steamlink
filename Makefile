@@ -67,6 +67,13 @@ test-som-combo:
 
 .PHONY: test-som-combo
 
+test-som-npc-work:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_npc_work_test.c -o build/som-npc-work-test
+	./build/som-npc-work-test
+
+.PHONY: test-som-npc-work
+
 test-rom-core-category:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/rom_core_category_test.c -o build/rom-core-category-test

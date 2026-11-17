@@ -100,19 +100,25 @@ static inline unsigned long som_work_swing_frames(const SomWorkEntry *e){
 }
 
 /* NULL when the work may start, else why not. */
-static inline const char *som_npc_work_refusal(const uint8_t *wram,size_t size,const SomNpcWork *w,
-                                        const uint8_t *pack,size_t pack_size,SomWorkEntry *entry){
+static inline const char *som_npc_work_refusal_ex(const uint8_t *wram,size_t size,const SomNpcWork *w,
+                                        const uint8_t *pack,size_t pack_size,SomWorkEntry *entry,
+                                        int allow_combat){
     if(!w)return "no command";
     if(w->dir>3u)return "bad direction";
     if(w->cycles<1u||w->cycles>SOM_WORK_MAX_CYCLES)return "bad cycle count";
     const SomNpcWalk as_walk={w->map,w->slot,w->kind,w->x,w->y,w->dir,1u};
-    const char *refusal=som_npc_walk_refusal(wram,size,&as_walk);
+    const char *refusal=som_npc_walk_refusal_ex(wram,size,&as_walk,allow_combat);
     if(refusal)return refusal;
     if(wram[SOM_NPC_OBJECT(w->slot)+0x0Eu]&SOM_WORK_HERO_HIDDEN)return "NPC already hidden";
     if(!pack)return "no frame pack";
     if(!som_work_find(pack,pack_size,w->kind,w->dir>2u?2u:w->dir,entry))
         return "no work frames for this kind";
     return NULL;
+}
+
+static inline const char *som_npc_work_refusal(const uint8_t *wram,size_t size,const SomNpcWork *w,
+                                        const uint8_t *pack,size_t pack_size,SomWorkEntry *entry){
+    return som_npc_work_refusal_ex(wram,size,w,pack,pack_size,entry,0);
 }
 
 static inline void som_npc_work_begin(SomNpcWorkState *s,uint8_t *wram,const SomNpcWork *w,

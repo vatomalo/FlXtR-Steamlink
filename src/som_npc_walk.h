@@ -89,8 +89,11 @@ static unsigned som_npc_u16(const uint8_t *wram,unsigned offset){
 }
 
 /* NULL when the walk may be applied now, else the reason it is refused.
- * Order matters only for the message; every check must pass. */
-static const char *som_npc_walk_refusal(const uint8_t *wram,size_t size,const SomNpcWalk *w){
+ * Order matters only for the message; every check must pass. $ED bit 7 is
+ * the combat-map flag (the B button swings only when it is set, $C0:B96C);
+ * `allow_combat` accepts it, for champions during a raid. */
+static inline const char *som_npc_walk_refusal_ex(const uint8_t *wram,size_t size,const SomNpcWalk *w,
+                                           int allow_combat){
     if(!wram||size<0x20000u)return "no WRAM";
     if(!w)return "no command";
     if(w->slot<SOM_NPC_FIRST_SLOT||w->slot>SOM_NPC_LAST_SLOT)return "slot is not an NPC slot";
@@ -104,7 +107,7 @@ static const char *som_npc_walk_refusal(const uint8_t *wram,size_t size,const So
     if(wram[0x007D]==1u)return "ring menu open";
     if(wram[0x0052]|wram[0x00FF]|wram[0x00F1])return "world paused or map change pending";
     if(wram[0x00E8]&0x04u)return "objects frozen";
-    if(wram[0x00ED]&0x80u)return "boss object mode";
+    if((wram[0x00ED]&0x80u)&&!allow_combat)return "combat map";
     if((som_npc_u16(wram,0x00DC)&0x1FFu)!=w->map)return "different map";
     unsigned o=SOM_NPC_OBJECT(w->slot);
     if(wram[o]!=1u)return "slot not active";
@@ -115,6 +118,10 @@ static const char *som_npc_walk_refusal(const uint8_t *wram,size_t size,const So
     if(wram[o+0x0Au]|wram[o+0x42u]|wram[o+0x1Cu]|wram[o+0x60u]|wram[o+0x06u]|wram[o+0x07u])
         return "NPC busy";
     return NULL;
+}
+
+static inline const char *som_npc_walk_refusal(const uint8_t *wram,size_t size,const SomNpcWalk *w){
+    return som_npc_walk_refusal_ex(wram,size,w,0);
 }
 
 /* The NPC branch of ACTOR_WALK ($C1:EEEA) with a nonzero count. */

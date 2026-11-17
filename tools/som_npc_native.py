@@ -118,7 +118,7 @@ def walk_refusal(wram, slot, kind, x, y, map_id):
     if wram.u8(0x7E00E8) & 0x04:
         return "objects frozen"
     if wram.u8(0x7E00ED) & 0x80:
-        return "boss object mode"
+        return "combat map"
     if wram.u16(MAP_ID) & 0x1FF != map_id:
         return "different map"
     base = object_base(slot)

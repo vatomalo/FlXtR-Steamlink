@@ -53,6 +53,10 @@ int main(void){
                                    "no work frames for this kind"));
     bad=w;bad.x=470;assert(!strcmp(som_npc_work_refusal(wram,sizeof(wram),&bad,pack,size,&e),"stale position"));
     assert(!strcmp(som_npc_work_refusal(wram,sizeof(wram),&w,NULL,0,&e),"no frame pack"));
+    wram[0x00ED]=0x80;                                   /* combat map: refused unless a raid */
+    assert(!strcmp(som_npc_work_refusal(wram,sizeof(wram),&w,pack,size,&e),"combat map"));
+    assert(som_npc_work_refusal_ex(wram,sizeof(wram),&w,pack,size,&e,1)==NULL);
+    wram[0x00ED]=0;
 
     /* Begin: only bit 7 of +0x0E changes. */
     static uint8_t before[sizeof(wram)];

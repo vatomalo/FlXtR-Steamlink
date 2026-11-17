@@ -42,8 +42,6 @@
 #define SOM_RAID_CHAMPION_DAMAGE 8u
 #define SOM_RAID_RAIDERS 2u                 /* the general, then one of its pack */
 #define SOM_RAID_SETTLE_FRAMES 120ul
-#define SOM_RAID_HERO_REACH 32              /* px along the boy's facing */
-#define SOM_RAID_HERO_SPAN 16               /* px across it */
 #define SOM_RAID_TILE_BUFFER 0x5000u
 #define SOM_RAID_TILE_BUFFER_SIZE 0x1000u
 
@@ -58,7 +56,7 @@ typedef struct {
     unsigned long ended_at;
     int have_ended;
     int strike_target;                      /* raider slot a champion swings at, -1 */
-    uint8_t hero_attack;                    /* the boy's +0x1C last frame */
+    uint8_t combat_was;                     /* $ED bit 7 before the raid */
     unsigned strike_npc;
     unsigned long strike_at;
 } SomRaid;
@@ -120,6 +118,19 @@ static inline int som_raid_spot(const uint8_t *ram,unsigned which,int *x,int *y)
     return 0;
 }
 
+/* Combat in town: $ED bit 7 is the game's combat-map flag. Only with it
+ * does B start a swing or a charge ($C0:B96C BIT $ED / BMI -> $C0:B29F;
+ * $C0:B7B7), so on a town map the boy could not fight raiders (live
+ * 2026-11-17). It is set while a raid runs and put back when it ends, only
+ * if the hero is still on the raided map (another map sets its own). */
+static inline void som_raid_combat_on(SomRaid *r,uint8_t *ram){
+    r->combat_was=ram[0xED]&0x80u;
+    ram[0xED]|=0x80u;
+}
+static inline void som_raid_combat_off(SomRaid *r,uint8_t *ram){
+    if((som_fam_u16(ram+0xDC)&0x1FFu)==r->map&&!r->combat_was)ram[0xED]&=(uint8_t)~0x80u;
+}
+
 /* Starts a raid on the current map: returns the number of raiders placed
  * (0 = no free slot or palette; the raid is then not active). */
 static inline unsigned som_raid_start(SomRaid *r,uint8_t *ram){
@@ -154,7 +165,10 @@ static inline unsigned som_raid_start(SomRaid *r,uint8_t *ram){
             break;
         }
     }
-    if(placed){r->active=1;r->map=som_fam_u16(ram+0xDC)&0x1FFu;r->strike_target=-1;}
+    if(placed){
+        r->active=1;r->map=som_fam_u16(ram+0xDC)&0x1FFu;r->strike_target=-1;
+        som_raid_combat_on(r,ram);
+    }
     return placed;
 }
 
@@ -177,7 +191,10 @@ static inline int som_raid_tick(SomRaid *r,uint8_t *ram,unsigned long frame){
         if(som_raid_raider_alive(r,ram,k)){alive++;som_raid_paint(&r->carry[k],ram,r->slot[k],r->palette[k]);}
         else r->slot[k]=-1;
     }
-    if(!alive){r->active=0;r->ended_at=frame;r->have_ended=1;return SOM_RAID_REPELLED;}
+    if(!alive){
+        som_raid_combat_off(r,ram);
+        r->active=0;r->ended_at=frame;r->have_ended=1;return SOM_RAID_REPELLED;
+    }
     return SOM_RAID_GOING;
 }
 
@@ -222,44 +239,6 @@ static inline int som_raid_strike(SomRaid *r,uint8_t *ram){
     const unsigned pending=m[0x1F1]+SOM_RAID_CHAMPION_DAMAGE;
     m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
     return 1;
-}
-
-/* The boy's blows on raiders. On a town map the game's own weapon hits do
- * not damage monsters (live 2026-11-17, Potos: raiders kept full HP and
- * +0x1F1 = 0 under the sword), so when the boy starts a swing (+0x1C turns
- * 0x20, or 0x80 for a charged attack; som-decomp graphics.md 5) the raider
- * nearest in front of him (facing +0x10: 0 up, 1 down, 2 side, bit 7 left)
- * within SOM_RAID_HERO_REACH along and SOM_RAID_HERO_SPAN across gets
- * pending damage: his strength +0x188, doubled when charged. Returns the
- * raider slot hit, or -1. Once per swing. */
-static inline int som_raid_hero_hit(SomRaid *r,uint8_t *ram){
-    const uint8_t attack=ram[0xE01C],before=r->hero_attack;
-    r->hero_attack=attack;
-    if(!r->active||!attack||before)return -1;
-    const unsigned facing=ram[0xE010];
-    const int hx=(int)som_fam_u16(ram+0xE002),hy=(int)som_fam_u16(ram+0xE004);
-    int best=-1,best_d=0;
-    for(unsigned k=0;k<SOM_RAID_RAIDERS;k++){
-        if(!som_raid_raider_alive(r,ram,k))continue;
-        const uint8_t *m=ram+SOM_FAMILIAR_MONSTER_BASE+(unsigned)r->slot[k]*SOM_FAMILIAR_OBJECT;
-        const int dx=(int)som_fam_u16(m+2)-hx,dy=(int)som_fam_u16(m+4)-hy;
-        int along,across;
-        switch(facing&0x0Fu){
-        case 0:along=-dy;across=dx;break;
-        case 1:along=dy;across=dx;break;
-        default:along=(facing&0x80u)?-dx:dx;across=dy;break;
-        }
-        if(along<-4||along>SOM_RAID_HERO_REACH||abs(across)>SOM_RAID_HERO_SPAN)continue;
-        const int d=abs(along)+abs(across);
-        if(best<0||d<best_d){best=r->slot[k];best_d=d;}
-    }
-    if(best<0)return -1;
-    uint8_t *m=ram+SOM_FAMILIAR_MONSTER_BASE+(unsigned)best*SOM_FAMILIAR_OBJECT;
-    unsigned damage=ram[0xE188]?ram[0xE188]:1u;
-    if(attack&0x80u)damage*=2u;
-    const unsigned pending=m[0x1F1]+damage;
-    m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-    return best;
 }
 
 #endif

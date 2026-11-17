@@ -74,23 +74,19 @@ int main(void){
     r.strike_target=1;put16(0xE802,500);
     assert(!som_raid_strike(&r,ram)&&ram[0xE9F1]==8);         /* it moved away */
 
-    /* The boy's swing: raider slot 1 at (500,300); boy faces right from 480. */
-    put16(0xE002,480);put16(0xE004,300);ram[0xE188]=19;ram[0xE010]=0x02;ram[0xE9F1]=0;
-    r.hero_attack=0;ram[0xE01C]=0;assert(som_raid_hero_hit(&r,ram)==-1);   /* no swing */
-    ram[0xE01C]=0x20;assert(som_raid_hero_hit(&r,ram)==1&&ram[0xE9F1]==19);
-    assert(som_raid_hero_hit(&r,ram)==-1&&ram[0xE9F1]==19);                /* once per swing */
-    ram[0xE01C]=0;som_raid_hero_hit(&r,ram);
-    ram[0xE010]=0x82;ram[0xE01C]=0x20;assert(som_raid_hero_hit(&r,ram)==-1); /* facing left */
-    ram[0xE01C]=0;som_raid_hero_hit(&r,ram);
-    ram[0xE010]=0x02;ram[0xE01C]=0x80;assert(som_raid_hero_hit(&r,ram)==1&&ram[0xE9F1]==19+38);
-    ram[0xE01C]=0;som_raid_hero_hit(&r,ram);
-    put16(0xE004,330);ram[0xE01C]=0x20;assert(som_raid_hero_hit(&r,ram)==-1);  /* 30 px off-axis */
+    /* Combat on while the raid runs (set at start), off when repelled. */
+    assert(ram[0xED]&0x80);
     ram[0xE980]=0xF9;
     assert(som_raid_tick(&r,ram,12)==SOM_RAID_REPELLED&&!r.active&&r.ended_at==12);
+    assert(!(ram[0xED]&0x80));
+    /* A combat map keeps its flag; leaving the map leaves the new map's flag alone. */
+    town();ram[0xED]=0x80;assert(som_raid_start(&r,ram)==2);
+    ram[0xEB80]=0xF9;ram[0xE980]=0xF9;som_raid_tick(&r,ram,13);assert(ram[0xED]&0x80);
 
     /* Leaving the map ends it too. */
     town();assert(som_raid_start(&r,ram)==2);
-    put16(0xDC,130);assert(som_raid_tick(&r,ram,20)==SOM_RAID_LEFT&&!r.active);
+    put16(0xDC,130);ram[0xED]=0x80;
+    assert(som_raid_tick(&r,ram,20)==SOM_RAID_LEFT&&!r.active&&(ram[0xED]&0x80));
     town();for(unsigned i=0;i<12;i++){ram[0xE000+i*0x200]=1;ram[0xE08B+i*0x200]=(uint8_t)(0x20|(5+i%3)<<1);}
     ram[0xE600]=0;ram[0xE800]=0;                             /* free slots, no free palette */
     assert(som_raid_start(&r,ram)==0);

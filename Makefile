@@ -81,6 +81,13 @@ test-som-general:
 
 .PHONY: test-som-general
 
+test-som-raid:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_raid_test.c -o build/som-raid-test
+	./build/som-raid-test
+
+.PHONY: test-som-raid
+
 test-rom-core-category:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/rom_core_category_test.c -o build/rom-core-category-test

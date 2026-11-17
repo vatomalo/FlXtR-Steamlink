@@ -55,6 +55,8 @@ typedef struct {
     int done;                         /* fell or won this visit: no new election */
     int hero_was_down;
     int backing;                      /* currently backing away (for the log) */
+    int away;                         /* raiding another map: its palette is carried */
+    unsigned long elected_at;
     unsigned long last_tint;
     uint8_t tinted[32];
 } SomGeneralLive;
@@ -151,7 +153,7 @@ static inline int som_gen_elect(const SomGeneral *g,SomGeneralLive *l,uint8_t *r
         uint8_t *pal=ram+SOM_GEN_PALETTE+(unsigned)slot*0x20u;
         som_pal_apply(pal,som_gen_tint_profile(g->rank));
         memcpy(l->tinted,pal,32);
-        l->slot=slot;l->prev_hp=hp;l->last_tint=frame;
+        l->slot=slot;l->prev_hp=hp;l->last_tint=frame;l->elected_at=frame;
         memset(l->damage,0,sizeof(l->damage));
         l->hero_was_down=som_gen_u16(ram+0xE182)==0u;
         return SOM_GEN_ELECTED;
@@ -197,7 +199,7 @@ static inline int som_gen_tick(SomGeneral *g,SomGeneralLive *l,uint8_t *ram,unsi
     l->hero_was_down=hero_down;
     const unsigned cap=som_gen_cooldown_cap(g->rank);
     if(o[0x1ED]>cap)o[0x1ED]=(uint8_t)cap;
-    if(frame-l->last_tint>=SOM_GEN_RETINT_FRAMES){
+    if(!l->away&&frame-l->last_tint>=SOM_GEN_RETINT_FRAMES){
         uint8_t *pal=ram+SOM_GEN_PALETTE+(unsigned)l->slot*0x20u;
         if(memcmp(pal,l->tinted,32)!=0){             /* the game reloaded it */
             som_pal_apply(pal,som_gen_tint_profile(g->rank));

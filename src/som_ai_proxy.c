@@ -3093,6 +3093,11 @@ static void som_music_publish_rate(void){
 #define SOM_GENERAL_ENABLE_FILE "/home/apps/retroarch/cores/experimental/som_ai_generals_enable"
 static const char *general_file=SOM_GENERAL_FILE;
 static const char *general_enable_file=SOM_GENERAL_ENABLE_FILE;
+/* Raids have their own opt-in: the first native-combat raid (2026-11-17)
+ * left the screen red; off until that is understood. */
+#define SOM_RAID_ENABLE_FILE "/home/apps/retroarch/cores/experimental/som_ai_raids_enable"
+static const char *raid_enable_file=SOM_RAID_ENABLE_FILE;
+static int raids_on;
 static SomGeneral generals[SOM_GEN_MAX];
 static SomGeneralLive generals_live[SOM_GEN_MAX];
 static unsigned general_count;
@@ -3111,7 +3116,7 @@ static int som_raid_has_frames(unsigned kind,void *ctx){
     return npc_work_pack&&som_work_find(npc_work_pack,npc_work_pack_size,kind,2u,&entry);
 }
 static void som_general_raid_command(void){
-    if(!generals_on||!general_count){fprintf(stderr,"[som-ai] RAID refused: generals not enabled\n");return;}
+    if(!generals_on||!general_count||!raids_on){fprintf(stderr,"[som-ai] RAID refused: raids not enabled\n");return;}
     if(!raid.captured[0]){fprintf(stderr,"[som-ai] RAID refused: %s not captured yet (visit map %u first)\n",
                                   generals[0].name,generals[0].home_map);return;}
     raid_forced=1;
@@ -3211,8 +3216,9 @@ static void som_generals_load(void){
     general_count=som_gen_parse(text,generals,SOM_GEN_MAX);
     if(!general_count)general_count=som_gen_defaults(&generals[0]);
     som_raid_reset(&raid);raid_forced=0;raid_visit_map=0xFFFFu;raid_tried=0;raid_field_since=0;
-    fprintf(stderr,"[som-ai] GENERALS on: %u (%s R%u, %u encounters)\n",general_count,
-        generals[0].name,generals[0].rank,generals[0].encounters);
+    raids_on=access(raid_enable_file,F_OK)==0;
+    fprintf(stderr,"[som-ai] GENERALS on: %u (%s R%u, %u encounters); raids %s\n",general_count,
+        generals[0].name,generals[0].rank,generals[0].encounters,raids_on?"on":"off");
 }
 static void som_generals_save(void){
     char text[2048];
@@ -3248,7 +3254,7 @@ static void som_generals_frame(void){
             som_generals_save();
         }
     }
-    if(general_count)som_raid_frame(ram);
+    if(general_count&&(raids_on||raid.active))som_raid_frame(ram);
 }
 /* Screen position of an on-field general's label (base pixels), 0 if none. */
 static int som_general_label_at(const uint8_t *ram,unsigned i,int *x,int *y){

@@ -21,6 +21,15 @@ arms) needs the pictures decoded here.
   raw table colours are used here. Shapes match the swing; the colours and
   which palette slots they land in are NOT yet checked against a live game.
 
+Any other object kind (villagers 0x83-0xFF, monsters) is read from its
+16-byte object-table entry at C0:0000 + 16 * id (docs/monster-3.md section
+3): tile pool bank D5 + (byte 1 >> 2 & 7) at (word 0 & 0x3FF) << 6, piece
+lists at D2:[word 2 + 2 * h], ordinary scripts word 5, attack scripts
+word 7, palette C8:1000 + 30 * id, frame descriptors D1:[D0:FFF0] + 2 * frame.
+Hero ids 0x80-0x82 resolve to the same pools and lists as the names. The
+empty tile (pool offset 0x7FE0, zero in the hero pools) is skipped, since
+villager pools do not end on a 32 KiB window.
+
 File offset of HiROM address bank:addr = (bank - 0xC0) << 16 | addr (the
 Turbo ROM is 4 MiB without a copier header).
 """
@@ -33,6 +42,7 @@ HEROES = {"boy": (0x000, 0x150000, 0x81F00), "girl": (0x200, 0x158000, 0x81F1E),
 WEAPON_TYPES = ("glove", "sword", "axe", "spear", "whip", "bow", "boomerang", "javelin")
 ATTACK_SCRIPTS, ATTACK_STRIDE, POSE_SCRIPTS = 0x3040, 240, 0x37CC
 DIRS = {"up": 0, "down": 1, "side": 2}
+EMPTY_TILE = 0x7FE0
 
 
 def off(bank, addr):
@@ -68,11 +78,28 @@ class HeroGfx:
     def w16(self, bank, addr):
         return struct.unpack_from("<H", self.rom, off(bank, addr))[0]
 
-    def script(self, weapon, anim, direction, attack=True):
-        """[(entry flags, frame index, ticks)] of an animation up to its end."""
+    def actor(self, kind):
+        """Graphics of an object kind (int) or hero name: dict of piece-list
+        offset, tile-pool file offset, palette file offset and the ordinary /
+        attack script tables (bank D1)."""
+        if isinstance(kind, str):
+            lists, pool, palette = HEROES[kind]
+            return {"lists": lists, "pool": pool, "palette": palette,
+                    "ordinary": POSE_SCRIPTS, "attack": None}
+        e = self.rom[0x100000 + 16 * kind:0x100000 + 16 * kind + 16]
+        word0 = e[0] | e[1] << 8
+        return {"lists": e[2] | e[3] << 8,
+                "pool": (0x15 + ((e[1] >> 2) & 7)) << 16 | (word0 & 0x3FF) << 6,
+                "palette": 0x81000 + 30 * kind,
+                "ordinary": e[5] | e[6] << 8, "attack": e[7] | e[8] << 8}
+
+    def script(self, weapon, anim, direction, attack=True, table=None):
+        """[(entry flags, frame index, ticks)] of an animation up to its end.
+        `table` (bank D1) overrides the hero tables, e.g. actor(k)["ordinary"]."""
         wtype = WEAPON_TYPES.index(weapon) if isinstance(weapon, str) else weapon
         d = DIRS.get(direction, direction)
-        table = (ATTACK_SCRIPTS + ATTACK_STRIDE * wtype) if attack else POSE_SCRIPTS
+        if table is None:
+            table = (ATTACK_SCRIPTS + ATTACK_STRIDE * wtype) if attack else POSE_SCRIPTS
         pointer = self.w16(0xD1, table + (anim * 3 + d) * 2)
         steps = []
         for _ in range(256):
@@ -96,10 +123,16 @@ class HeroGfx:
 
     def pieces(self, hero, weapon, frame, entry_flags=0, left=False):
         """[(x, y, hflip, vflip, [4 tile byte offsets])], x/y from the foot point
-        minus the body height, as docs/graphics.md section 5 steps 2-4."""
-        wtype = WEAPON_TYPES.index(weapon) if isinstance(weapon, str) else weapon
-        lists, pool, _ = HEROES[hero]
-        base = struct.unpack_from("<H", self.rom, 0x10FFD0 + 2 * wtype)[0]
+        minus the body height, as docs/graphics.md section 5 steps 2-4.
+        `hero` is a hero name or object kind; weapon None selects the
+        descriptor table of the other objects (D0:FFF0). Empty tiles are None."""
+        sprite = self.actor(hero)
+        lists, pool = sprite["lists"], sprite["pool"]
+        if weapon is None:
+            base = struct.unpack_from("<H", self.rom, 0x10FFF0)[0]
+        else:
+            wtype = WEAPON_TYPES.index(weapon) if isinstance(weapon, str) else weapon
+            base = struct.unpack_from("<H", self.rom, 0x10FFD0 + 2 * wtype)[0]
         desc = self.w16(0xD1, base + 2 * frame)
         lo, hi = desc & 0xFF, desc >> 8
         flags = entry_flags ^ (0x20 if left else 0)
@@ -129,7 +162,8 @@ class HeroGfx:
                 y = -y - 16
             hflip = ((word >> 15) & 1) ^ ((flips >> 6) & 1)
             out.append((x, y, hflip, (flips >> 7) & 1,
-                        [pool + s for s in sources[4 * k:4 * k + 4]]))
+                        [None if s == EMPTY_TILE else pool + s
+                         for s in sources[4 * k:4 * k + 4]]))
         return out
 
     def weapon_group(self, row):
@@ -217,8 +251,8 @@ class HeroGfx:
         return self.tile_pixels(self.rom[offset:offset + 32])
 
     def palette(self, hero):
-        """16 RGB colours (index 0 = transparent)."""
-        start = HEROES[hero][2]
+        """16 RGB colours (index 0 = transparent) of a hero name or kind."""
+        start = self.actor(hero)["palette"]
         colours = [(0, 0, 0)]
         for k in range(15):
             value = struct.unpack_from("<H", self.rom, start + 2 * k)[0]

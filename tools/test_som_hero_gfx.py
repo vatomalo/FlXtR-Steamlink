@@ -43,3 +43,27 @@ class RomTest(unittest.TestCase):
             self.assertTrue(all(17 <= v <= 21 for v in values))   # colours 1-5
             drawn += len(values)
         self.assertGreater(drawn, 150)
+
+    def test_hero_kinds_share_the_named_hero_graphics(self):
+        gfx = HeroGfx.load(ROM)
+        for kind, name in ((0x80, "boy"), (0x81, "girl"), (0x82, "sprite")):
+            entry, named = gfx.actor(kind), gfx.actor(name)
+            for key in ("lists", "pool", "palette"):
+                self.assertEqual(entry[key], named[key], (name, key))
+        self.assertEqual(gfx.pieces(0x80, "axe", 3), gfx.pieces("boy", "axe", 3))
+
+    def test_villager_stands_and_walks_in_every_facing(self):
+        gfx = HeroGfx.load(ROM)
+        villager = 0xC0                       # Potos villager, D7:8000
+        table = gfx.actor(villager)["ordinary"]
+        self.assertEqual(gfx.actor(villager)["pool"], 0x178000)
+        for anim in (0, 1):                   # stand, walk (docs/npcs.md section 4)
+            for direction in ("up", "down", "side"):
+                steps = gfx.script(None, anim, direction, attack=False, table=table)
+                self.assertTrue(steps)
+                for flags, frame, _ in steps:
+                    pieces = gfx.pieces(villager, None, frame, flags)
+                    self.assertTrue(1 <= len(pieces) <= 6)
+                    image = gfx.render(villager, pieces)
+                    filled = sum(1 for row in image for value in row if value)
+                    self.assertGreater(filled, 250, (anim, direction, frame))

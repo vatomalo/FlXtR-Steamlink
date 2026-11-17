@@ -70,7 +70,9 @@ int main(void){
     assert(som_npc_work_pose(&s,5)!=s.entry.first&&som_npc_work_pose(&s,14)!=s.entry.first);
     assert(som_npc_work_pose(&s,15)==s.entry.first);
 
-    /* Draw at frame 1000: foot (72,104); frame 0 pixel at (-3,-20) -> (69,84). */
+    /* Draw at frame 1000: foot (72,104); frame 0 pixel at (-3,-20) -> (69,84).
+     * The colour buffer holds the villager's red in OBJ palette 0. */
+    wram[0x0702]=0x1F;
     const uint32_t red=som_overlay_color(0,255,0,0);
     assert(som_npc_work_draw(&s,wram,1000,(uint8_t*)frame,256,224,512,0));
     assert(frame[84][69]==red&&frame[84][70]==0&&frame[83][69]==0);
@@ -97,6 +99,37 @@ int main(void){
     wram[0x00DC]=132;wram[0xF03D]=0xC0;wram[0xF00E]=0x80;
     assert(!strcmp(som_npc_work_tick(&s,wram,3001),"villager or map gone")&&!s.active);
     assert(wram[0xF00E]==0x80);
+    /* Live colours: the Turbo filter measured at CF06 = 4 (R|1, G|1, B/2). */
+    {
+        SomNpcWorkState c;memset(&c,0,sizeof(c));
+        c.slot=8;c.active=1;
+        for(unsigned i=0;i<20;i++){                       /* spread-out ROM colours */
+            const unsigned r=(i*3u)&31u,g=(31u-i*2u)&31u,b=(i*5u+2u)&31u;
+            c.entry.colours[i]=(uint16_t)(r|g<<5|b<<10);
+        }
+        field();
+        wram[0xF08B]=0x27;                                /* attribute: palette 3 */
+        for(unsigned i=1;i<=15;i++){
+            const unsigned v=c.entry.colours[i-1];
+            const unsigned f=(((v&31u)|1u))|((((v>>5)&31u)|1u)<<5)|((((v>>10)&31u)>>1)<<10);
+            wram[0x0700+32*3+2*i]=(uint8_t)f;wram[0x0700+32*3+2*i+1]=(uint8_t)(f>>8);
+        }
+        uint16_t out[21];
+        assert(som_npc_work_colours(&c,wram,out));
+        for(unsigned i=1;i<=15;i++)assert(out[i]==(wram[0x760+2*i]|wram[0x761+2*i]<<8));
+        for(unsigned i=16;i<=20;i++){
+            const unsigned v=c.entry.colours[i-1];
+            const int want[3]={(int)((v&31u)|1u),(int)(((v>>5)&31u)|1u),(int)(((v>>10)&31u)>>1)};
+            for(unsigned ch=0;ch<3;ch++){
+                const int got=(out[i]>>(5*ch))&31;
+                assert(got-want[ch]<=1&&want[ch]-got<=1);
+            }
+        }
+        wram[0xF08B]=0x25;                                /* wrong slot: ROM colours */
+        for(unsigned i=1;i<=15;i++){wram[0x0740+2*i]=(uint8_t)(i*37u);wram[0x0741+2*i]=(uint8_t)(i*11u&0x7F);}
+        assert(!som_npc_work_colours(&c,wram,out));
+        for(unsigned i=1;i<=20;i++)assert(out[i]==c.entry.colours[i-1]);
+    }
     puts("som npc work: ok");
     return 0;
 }

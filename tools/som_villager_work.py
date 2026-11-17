@@ -101,7 +101,7 @@ def humanoid(gfx, kind):
 
 
 def bgr555(colour):
-    r, g, b = (c * 31 // 255 for c in colour)
+    r, g, b = ((c * 31 + 127) // 255 for c in colour)   # exact inverse of palette()
     return r | g << 5 | b << 10
 
 

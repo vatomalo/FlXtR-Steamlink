@@ -166,6 +166,64 @@ static inline const uint8_t *som_npc_work_pose(const SomNpcWorkState *s,unsigned
     return s->entry.first;
 }
 
+/* The worker's colours 1-20 (BGR555) as the game shows them now. Turbo
+ * passes every sprite colour through a filter that changes with 7E:CF06
+ * (measured 2026-11-17 at CF06 = 4: red and green | 1, blue / 2), so the
+ * villager's own palette is taken from the colour buffer 7E:0700 (OBJ
+ * palette = sprite attribute obj+0x8B bits 1-3, as the boy's 0x23 =
+ * palette 1), and the weapon's five ROM colours are mapped per channel the
+ * way the villager's fifteen were (piecewise linear between measured
+ * values). If the buffer does not look like a filtered copy of the pack
+ * colours (one ROM value -> two live values far apart, order not kept, or
+ * a value moved by more than 16), the pack colours are used unchanged. Returns 1 when live colours were used. */
+static inline int som_npc_work_colours(const SomNpcWorkState *s,const uint8_t *wram,uint16_t out[21]){
+    for(unsigned i=1;i<=20u;i++)out[i]=s->entry.colours[i-1u];
+    out[0]=0;
+    if(!wram)return 0;
+    const unsigned pal=(wram[SOM_NPC_OBJECT(s->slot)+0x8Bu]>>1)&7u;
+    const uint8_t *live=wram+0x0700u+32u*pal;
+    int lut[3][32];
+    for(unsigned c=0;c<3u;c++)for(unsigned v=0;v<32u;v++)lut[c][v]=-1;
+    for(unsigned i=1;i<=15u;i++){
+        const unsigned rom=s->entry.colours[i-1u],now=live[2u*i]|(unsigned)live[2u*i+1u]<<8;
+        if(now&0x8000u)return 0;
+        for(unsigned c=0;c<3u;c++){
+            const int r=(int)((rom>>(5u*c))&31u),l=(int)((now>>(5u*c))&31u);
+            if(lut[c][r]<0)lut[c][r]=l;
+            else if(lut[c][r]-l>2||l-lut[c][r]>2)return 0;
+        }
+    }
+    for(unsigned c=0;c<3u;c++){      /* a filter keeps order and moves values by <= 16 */
+        int last=-1;
+        for(int v=0;v<32;v++){
+            if(lut[c][v]<0)continue;
+            if(lut[c][v]<last-2||lut[c][v]-v>16||v-lut[c][v]>16)return 0;
+            last=lut[c][v];
+        }
+    }
+    for(unsigned i=1;i<=15u;i++)out[i]=(uint16_t)(live[2u*i]|live[2u*i+1u]<<8);
+    for(unsigned i=16;i<=20u;i++){
+        unsigned value=0;
+        for(unsigned c=0;c<3u;c++){
+            const int v=(int)((s->entry.colours[i-1u]>>(5u*c))&31u);
+            int lo=-1,hi=-1;
+            for(int k=v;k>=0;k--)if(lut[c][k]>=0){lo=k;break;}
+            for(int k=v;k<32;k++)if(lut[c][k]>=0){hi=k;break;}
+            int mapped;
+            if(lo<0&&hi<0)mapped=v;
+            else if(lo<0)mapped=hi?lut[c][hi]*v/hi:lut[c][hi];
+            else if(hi<0)mapped=lo?lut[c][lo]*v/lo:lut[c][lo];
+            else if(hi==lo)mapped=lut[c][lo];
+            else mapped=lut[c][lo]+(lut[c][hi]-lut[c][lo])*(v-lo)/(hi-lo);
+            if(mapped<0)mapped=0;
+            if(mapped>31)mapped=31;
+            value|=(unsigned)mapped<<(5u*c);
+        }
+        out[i]=(uint16_t)value;
+    }
+    return 1;
+}
+
 /* Draws the worker on the frame copy (base screen 256x224, doubled when the
  * frame is). The foot point is world minus the camera, as $C0:E443 computes
  * +0x20/+0x22 (+0x0B bit 7 selects the second camera), lifted by the jump
@@ -184,9 +242,11 @@ static inline int som_npc_work_draw(const SomNpcWorkState *s,const uint8_t *wram
     const int dx=(int8_t)p[1],dy=(int8_t)p[2],w=p[3],h=p[4];
     const uint8_t *px=p+5;
     const int mirror=s->dir==3u;
+    uint16_t bgr[21];
+    som_npc_work_colours(s,wram,bgr);
     uint32_t colours[21];
     for(unsigned i=1;i<=20u;i++){
-        const unsigned c=s->entry.colours[i-1u];
+        const unsigned c=bgr[i];
         colours[i]=som_overlay_color(format,(c&31u)*255u/31u,((c>>5)&31u)*255u/31u,
                                      ((c>>10)&31u)*255u/31u);
     }

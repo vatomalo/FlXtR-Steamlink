@@ -56,6 +56,7 @@ typedef struct {
     int hero_was_down;
     int backing;                      /* currently backing away (for the log) */
     int away;                         /* raiding another map: its palette is carried */
+    unsigned max_hp;                  /* its boosted max HP, kept if the game resets it */
     unsigned long elected_at;
     unsigned long last_tint;
     uint8_t tinted[32];
@@ -161,7 +162,7 @@ static inline int som_gen_elect(const SomGeneral *g,SomGeneralLive *l,uint8_t *r
         uint8_t *pal=ram+SOM_GEN_PALETTE+(unsigned)slot*0x20u;
         som_pal_apply(pal,som_gen_tint_profile(g->rank));
         memcpy(l->tinted,pal,32);
-        l->slot=slot;l->prev_hp=hp;l->last_tint=frame;l->elected_at=frame;
+        l->slot=slot;l->prev_hp=hp;l->last_tint=frame;l->elected_at=frame;l->max_hp=hp;
         memset(l->damage,0,sizeof(l->damage));
         l->hero_was_down=som_gen_u16(ram+0xE182)==0u;
         return SOM_GEN_ELECTED;
@@ -199,6 +200,12 @@ static inline int som_gen_tick(SomGeneral *g,SomGeneralLive *l,uint8_t *ram,unsi
         if(l->prev_hp)l->damage[weapon]+=l->prev_hp;   /* the killing blow */
         som_gen_conclude(g,l,SOM_GEN_DEFEATED);
         return SOM_GEN_DEFEATED;
+    }
+    /* Off its home map the game rebuilds the stats (live: 160 -> 40 in
+     * Potos); keep the boost, and full HP stays full. */
+    if(l->max_hp&&som_gen_u16(o+0x184)!=l->max_hp){
+        if(som_gen_u16(o+0x182)>=som_gen_u16(o+0x184))som_gen_put16(o+0x182,l->max_hp);
+        som_gen_put16(o+0x184,l->max_hp);
     }
     const unsigned hp=som_gen_u16(o+0x182);
     if(hp<l->prev_hp)l->damage[weapon]+=l->prev_hp-hp;

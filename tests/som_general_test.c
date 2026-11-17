@@ -106,6 +106,14 @@ int main(void){
         put16(0xE790,0x8000);                                    /* killed: status */
         assert(som_gen_tick(&v,&vl,ram,305)==SOM_GEN_DEFEATED&&v.rank==2);
     }
+    /* The game rebuilds stats away from home: boost kept, full stays full. */
+    {   SomGeneral v;som_gen_defaults(&v);SomGeneralLive vl;som_gen_reset_live(&vl);
+        field(130);assert(som_gen_elect(&v,&vl,ram,400,-1)==SOM_GEN_ELECTED&&vl.max_hp==40);
+        put16(0xE782,20);put16(0xE784,20);som_gen_tick(&v,&vl,ram,401);
+        assert(som_gen_u16(ram+0xE784)==40&&som_gen_u16(ram+0xE782)==40);
+        put16(0xE782,10);put16(0xE784,20);som_gen_tick(&v,&vl,ram,402);
+        assert(som_gen_u16(ram+0xE784)==40&&som_gen_u16(ram+0xE782)==10);
+    }
     /* Rank is capped. */
     g[0].rank=SOM_GEN_MAX_RANK;SomGeneralLive c;som_gen_reset_live(&c);c.slot=0;
     som_gen_conclude(&g[0],&c,SOM_GEN_DEFEATED);assert(g[0].rank==SOM_GEN_MAX_RANK);

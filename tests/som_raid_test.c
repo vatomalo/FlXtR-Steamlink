@@ -74,6 +74,17 @@ int main(void){
     r.strike_target=1;put16(0xE802,500);
     assert(!som_raid_strike(&r,ram)&&ram[0xE9F1]==8);         /* it moved away */
 
+    /* The boy's swing: raider slot 1 at (500,300); boy faces right from 480. */
+    put16(0xE002,480);put16(0xE004,300);ram[0xE188]=19;ram[0xE010]=0x02;ram[0xE9F1]=0;
+    r.hero_attack=0;ram[0xE01C]=0;assert(som_raid_hero_hit(&r,ram)==-1);   /* no swing */
+    ram[0xE01C]=0x20;assert(som_raid_hero_hit(&r,ram)==1&&ram[0xE9F1]==19);
+    assert(som_raid_hero_hit(&r,ram)==-1&&ram[0xE9F1]==19);                /* once per swing */
+    ram[0xE01C]=0;som_raid_hero_hit(&r,ram);
+    ram[0xE010]=0x82;ram[0xE01C]=0x20;assert(som_raid_hero_hit(&r,ram)==-1); /* facing left */
+    ram[0xE01C]=0;som_raid_hero_hit(&r,ram);
+    ram[0xE010]=0x02;ram[0xE01C]=0x80;assert(som_raid_hero_hit(&r,ram)==1&&ram[0xE9F1]==19+38);
+    ram[0xE01C]=0;som_raid_hero_hit(&r,ram);
+    put16(0xE004,330);ram[0xE01C]=0x20;assert(som_raid_hero_hit(&r,ram)==-1);  /* 30 px off-axis */
     ram[0xE980]=0xF9;
     assert(som_raid_tick(&r,ram,12)==SOM_RAID_REPELLED&&!r.active&&r.ended_at==12);
 

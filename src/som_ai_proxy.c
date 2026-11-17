@@ -3150,6 +3150,12 @@ static void som_raid_frame(uint8_t *ram){
             if(npc_work.active)som_npc_work_end(&npc_work,ram);
             return;
         }
+        {
+            const int hit=som_raid_hero_hit(&raid,ram);
+            if(hit>=0)fprintf(stderr,"[som-ai] RAID the boy hits raider slot %d for %u%s\n",hit,
+                (unsigned)(ram[0xE188]?ram[0xE188]:1u)*((ram[0xE01C]&0x80u)?2u:1u),
+                (ram[0xE01C]&0x80u)?" (charged)":"");
+        }
         if(raid.strike_target>=0&&frame_number>=raid.strike_at){
             const int target=raid.strike_target;
             if(som_raid_strike(&raid,ram))
@@ -3195,6 +3201,7 @@ static void som_raid_frame(uint8_t *ram){
         l->map=map;l->slot=raid.slot[0];l->away=1;l->done=0;l->elected_at=frame_number;
         l->prev_hp=som_gen_u16(ram+SOM_GEN_MONSTER_BASE+(unsigned)raid.slot[0]*SOM_GEN_OBJECT+0x182u);
         l->hero_was_down=som_gen_u16(ram+0xE182)==0u;
+        l->max_hp=som_gen_u16(ram+SOM_GEN_MONSTER_BASE+(unsigned)raid.slot[0]*SOM_GEN_OBJECT+0x184u);
     }
     fprintf(stderr,"[som-ai] RAID %s R%u attacks map %u with %u raider(s): slots %d/%d, palettes %u/%u\n",
             g->name,g->rank,map,placed,raid.slot[0],raid.slot[1],raid.palette[0],raid.palette[1]);

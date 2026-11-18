@@ -301,7 +301,7 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertIn(decision.action, ("step_down", "step_left"))
             history.close()
 
-    def _blocked_south(self, history, evade, wall=False):
+    def _blocked_south(self, history, evade, wall=False, turns_work=True):
         for x in range(8):
             for y in range(8):
                 kind = "blocked" if wall and y == 4 else ("h2" if y == 5 else "open")
@@ -314,16 +314,19 @@ class TestMultiMapTravel(unittest.TestCase):
                  "tile_context": {
                      "runtime_verified": True, "game_mode": "field", "radius": 1,
                      "map_id": 16, "map_size_tiles": [32, 32], "actor_tile": [3, 3],
-                     "actor": {"x_px": 56, "y_px": 56, "layer": 1},
+                     "actor": {"x_px": 56, "y_px": 56, "layer": 1, "facing": "step_down"},
                      "passability_rows": ["...", ".@.", "###" if wall else "..."]}}
         planner = MemoryPlanner(history)
         planner.evade_past = evade
         errand = {"place": "map 144", "anchor": {"map_id": 144}}
         decisions, previous = [], "none"
-        for _ in range(12):           # the hero never moves: someone is in the way
+        for _ in range(16):           # the hero never moves: someone is in the way
             decision = planner.decide(state, previous, errand=errand)
             decisions.append(decision)
             previous = decision.action
+            if decision.action in ("step_up", "step_down", "step_left", "step_right") and \
+                    (turns_work or not decision.turn_only):
+                state["tile_context"]["actor"]["facing"] = decision.action
         return decisions
 
     def test_someone_in_the_way_is_evaded_past(self):
@@ -334,6 +337,17 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertEqual((decisions[turn].action, decisions[turn].turn_only),
                              ("step_up", True))
             self.assertEqual(decisions[turn + 1].action, "evade")
+            history.close()
+
+    def test_no_evade_while_still_facing_the_blocker(self):
+        # The evade overwrote the turn tap in the proxy's one action slot:
+        # the hero still faced the gatekeeper and hopped away from him.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "slot.sqlite")
+            decisions = self._blocked_south(history, evade=True, turns_work=False)
+            self.assertTrue(any("still facing step_down" in d.reason for d in decisions),
+                            [d.reason for d in decisions])
+            self.assertFalse(any(d.action == "evade" for d in decisions))
             history.close()
 
     def test_no_evade_past_a_wall_or_without_an_evade(self):

@@ -107,6 +107,11 @@ EXIT_BOUNCE_DECISIONS = 4
 # collision): face away, then evade, which goes back from the facing. Tried
 # this often per tile and step before the step stays blocked.
 EVADE_PAST_ATTEMPTS = 2
+# The turn tap and the evade share the proxy's one action slot, and an evade
+# sent right after the tap overwrote it: the hero still faced the blocker and
+# hopped back, away from him (2026-11-18). The evade waits until the game
+# reports the hero facing away; the tap is repeated this often before giving up.
+EVADE_PAST_TURNS = 4
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
@@ -238,7 +243,8 @@ class MemoryPlanner:
         # Set by the bridge while the class has an evade (DODGE_CLASSES).
         self.evade_past = False
         self.evade_past_pending = None     # (stall key) after the turn tap
-        self.evade_past_tries = {}
+        self.evade_past_tries = {}         # per visit: reset on another map
+        self.evade_past_map = None
         # Set while the play loop hunts on the current map: exploration must
         # not walk over exit tiles (it used to leave map 129 for 128 and be
         # sent straight back, over and over).
@@ -1647,9 +1653,19 @@ class MemoryPlanner:
         deflected = self._check_deflection(observation, previous)
         pending, self.evade_past_pending = self.evade_past_pending, None
         if pending is not None and self.evade_past:
-            # Facing away from the blocker now: the evade hops back past him.
-            return PlannerDecision("evade", f"evade past whoever blocks {pending[1]} "
-                                   f"({pending[2]}/{EVADE_PAST_ATTEMPTS})", "evade_past")
+            key, blocked, tries, turns = pending
+            away = OPPOSITE_STEP[blocked]
+            context = observation.get("tile_context") if isinstance(observation, dict) else {}
+            facing = ((context or {}).get("actor") or {}).get("facing")
+            if facing == away:
+                # Back to the blocker: the evade hops backward, past him.
+                return PlannerDecision("evade", f"evade past whoever blocks {blocked} "
+                                       f"({tries}/{EVADE_PAST_ATTEMPTS})", "evade_past")
+            if turns < EVADE_PAST_TURNS:
+                self.evade_past_pending = (key, blocked, tries, turns + 1)
+                return PlannerDecision(away, f"still facing {facing}; turning {away[5:]} "
+                                       f"to evade past ({turns + 1}/{EVADE_PAST_TURNS})",
+                                       "evade_past", turn_only=True)
         decision = self._decide(observation, previous, directive, errand)
         if deflected:
             decision = replace(decision, reason=f"{deflected}; {decision.reason}")
@@ -2200,11 +2216,13 @@ class MemoryPlanner:
         if cells.get(ahead) not in walkable or cells.get(beyond) not in walkable:
             return None
         key = self._stall_key(context, action)
+        if self.evade_past_map != context.get("map_id"):
+            self.evade_past_map, self.evade_past_tries = context.get("map_id"), {}
         tries = self.evade_past_tries.get(key, 0) + 1
         if tries > EVADE_PAST_ATTEMPTS:
             return None
         self.evade_past_tries[key] = tries
-        self.evade_past_pending = (key, action, tries)
+        self.evade_past_pending = (key, action, tries, 1)
         # The hop may land past him; let the step be tried again right away.
         self.blocked_moves.pop(key, None)
         away = OPPOSITE_STEP[action]

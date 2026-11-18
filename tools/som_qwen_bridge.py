@@ -97,10 +97,12 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
                     "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
-                    "kawarimi", "shunshin", "iai_3", "iai_4", "flykick"} | \
+                    "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap"} | \
     {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
 # Blink to a tile (proxy som_blink_start checks range and open ground).
 BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")
+# A Fuma throw's hit plus the clone's smoke take ~40 frames: swap then.
+FUMA_SWAP_DELAY_S = 0.7
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # The proxy's saved discipline: "v1 <selected> <level> <xp> ..." (som_disc_save).
 DISCIPLINE_CHECK_S = 2.0     # how often the game's own class is read
@@ -1383,6 +1385,7 @@ def main() -> int:
     combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
     style = dict(zip(COMBAT_NAMES, combat))
     charge_failed = False
+    fuma_swap_at = None                            # monotonic time to swap into the clone
     tactic_learner = attack_predictor = None
     if not args.no_anticipation and history is not None and args.policy in ("hybrid", "memory"):
         attack_predictor = AttackPredictor(history.connection)
@@ -1852,6 +1855,7 @@ def main() -> int:
                 planner.evade_past = bool(link and class_director.current in DODGE_CLASSES and
                                           style["evade"] > 0)
                 planner.blink = isinstance(link, RemoteLink)    # the Steam Link proxy
+                planner.fuma_swap = planner.blink and class_director.current == NINJA
                 decision = planner.decide(observation, previous, directive, errand)
                 # Missing a taught inn/save macro must NOT freeze the hero.
                 # The play-loop phase stays committed, but the deterministic
@@ -2264,6 +2268,15 @@ def main() -> int:
                         play_loop.save_failed(str(exc))
                     previous = "wait"
                     continue
+                if link and fuma_swap_at is not None and time.monotonic() >= fuma_swap_at:
+                    fuma_swap_at = None
+                    try:
+                        link.send_control("fuma_swap")
+                        print("[ai] fuma swap: into the clone beside the monster", flush=True)
+                    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                        print(f"[ai] fuma swap failed: {exc}", flush=True)
+                    previous = "wait"
+                    continue
                 if link and decision.intention == "blink":
                     print(f"[ai] intent=blink: {decision.reason}", flush=True)
                     try:
@@ -2386,6 +2399,8 @@ def main() -> int:
                         print(f"[movement] current walk stopped: {exc}",flush=True)
                 else:
                     link.send_action(sent_action) if link else send_action(args.host, sent_action)
+                    if decision.swap_after and link:
+                        fuma_swap_at = time.monotonic() + FUMA_SWAP_DELAY_S
                     if sent_action == "block" and link:
                         # The proxy holds R for 15 frames but decisions are
                         # ~40 frames apart, so a single tap left the guard

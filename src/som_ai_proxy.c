@@ -729,9 +729,15 @@ static void som_fuma_frame(uint8_t *ram);
 #define SOM_BLINK_RANGE 12
 #define SOM_BLINK_SPEED 4
 #define SOM_BLINK_COOLDOWN 600ul
-static int blink_active,blink_hid,blink_tx,blink_ty;
+static int blink_active,blink_hid,blink_tx,blink_ty,blink_is_swap;
 static unsigned long blink_ready;
 static int som_blink_start(uint8_t *ram,int tx,int ty);
+static int som_blink_go(uint8_t *ram,int x,int y);
+/* Fuma swap (ninja: A while the clone shows, or AI "fuma_swap"): the hero
+ * takes the clone's place by the same hidden travel as Blink (no Blink
+ * cooldown or range: the clone is never far); a strike not yet made lands
+ * at once and the clone is gone. Refused where the hero cannot stand. */
+static int som_fuma_swap(uint8_t *ram);
 static void som_camera_follow(uint8_t *ram,int dx,int dy);
 static void som_blink_frame(uint8_t *ram);
 static void som_flykick_frame(uint8_t *ram);
@@ -1927,12 +1933,36 @@ static int som_blink_start(uint8_t *ram,int tx,int ty){
         fprintf(stderr,"[som-ai] BLINK refused: tile %d,%d is not open ground\n",tx,ty);
         return 0;
     }
+    som_blink_go(ram,x,y);
+    som_overlay_set(&overlay,"^Blink",SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] BLINK from %d,%d to tile %d,%d (%d,%d)\n",x0,y0,tx,ty,x,y);
+    return 1;
+}
+/* The hidden straight-line travel shared by Blink and the Fuma swap. */
+static int som_blink_go(uint8_t *ram,int x,int y){
+    uint8_t *hero=ram+0xE000u;
     blink_active=1;blink_tx=x;blink_ty=y;
     blink_hid=!(hero[0x0E]&0x80u);
     hero[0x0E]|=0x80u;
-    som_bun_boom(bunshin_booms,x0,y0,1,frame_number);
-    som_overlay_set(&overlay,"^Blink",SOM_MESSAGE_FRAMES/3u);
-    fprintf(stderr,"[som-ai] BLINK from %d,%d to tile %d,%d (%d,%d)\n",x0,y0,tx,ty,x,y);
+    som_bun_boom(bunshin_booms,(int)som_bun_u16(hero+2),(int)som_bun_u16(hero+4),1,frame_number);
+    return 1;
+}
+static int som_fuma_swap(uint8_t *ram){
+    if(!ram||!fuma.active||frame_number<fuma.start||blink_active||
+       disciplines.selected!=SOM_DISC_NINJUTSU)return 0;
+    uint8_t *hero=ram+0xE000u;
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return 0;
+    if(!som_bun_spot_open(ram,fuma.wx,fuma.wy,som_hero_place(hero))){
+        fprintf(stderr,"[som-ai] FUMA swap refused: the clone stands where the hero cannot\n");
+        return 0;
+    }
+    if(!fuma_struck){fuma_strike_at=frame_number;som_fuma_frame(ram);}
+    const int x=fuma.wx,y=fuma.wy;
+    fuma.active=0;fuma_target=-1;fuma_ready=frame_number+SOM_FUMA_COOLDOWN;
+    som_blink_go(ram,x,y);
+    blink_is_swap=1;               /* not a Blink: its cooldown is untouched */
+    som_overlay_set(&overlay,"^Fuma|swap",SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] FUMA swap: hero takes the clone's place at %d,%d\n",x,y);
     return 1;
 }
 /* Each frame of a blink: SOM_BLINK_SPEED px per axis toward the landing
@@ -1955,7 +1985,8 @@ static void som_blink_frame(uint8_t *ram){
         fprintf(stderr,"[som-ai] BLINK arrived at %d,%d\n",x,y);
     }
     if(ram&&blink_hid)ram[0xE00E]&=(uint8_t)~0x80u;
-    blink_active=0;blink_hid=0;blink_ready=frame_number+SOM_BLINK_COOLDOWN;
+    if(!blink_is_swap)blink_ready=frame_number+SOM_BLINK_COOLDOWN;
+    blink_active=0;blink_hid=0;blink_is_swap=0;
 }
 /* Before each emulated frame: advance the bash. */
 static void som_bash_tick(void){
@@ -2092,6 +2123,7 @@ static int som_evade_start(uint8_t *ram){
     uint8_t *hero=ram+0xE000u;
     if(!som_jutsu_free(ram))return 0;
     const int ninja=disciplines.selected==2u;
+    if(ninja&&fuma.active&&frame_number>=fuma.start)return som_fuma_swap(ram);
     if(ninja&&som_bun_alive(&bunshin)&&!bunshin_shunshin)
         return som_bunshin_swap(ram,0,0,0,evade_dir_x,evade_dir_y);
     if(ninja&&som_weapon_long_range(hero[0x1E4]))return som_clone_jutsu(ram,"Kage Bunshin no Jutsu");
@@ -2968,6 +3000,9 @@ static int som_handle_command(const char *command){
             return som_blink_start(backend_retro_get_memory_data?
                 (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL,tx,ty);
     }
+    if(!strcmp(command,"fuma_swap"))
+        return som_fuma_swap(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strcmp(command,"kawarimi"))
         return som_kawarimi_arm(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);

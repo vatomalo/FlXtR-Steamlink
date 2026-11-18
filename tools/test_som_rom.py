@@ -397,6 +397,38 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertIn("pinned", results[-1].reason)
             history.close()
 
+    def test_boomerang_at_an_unwalkable_monster_asks_for_the_fuma_swap(self):
+        # A rabite across water: lined up and in reach, but no tile route.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "fuma.sqlite")
+            for x in range(8):
+                for y in range(8):
+                    kind = "blocked" if x in (4, 5) else "open"     # a river between
+                    history.connection.execute(
+                        "INSERT OR REPLACE INTO world_cells VALUES(16,1,?,?,?,1,0)", (x, y, kind))
+            state = {"weapons_enabled": True,
+                     "enemy_slots": [{"slot": 0, "active": True, "identity": 1, "hp": 40,
+                                      "max_hp": 40, "hp_plausible": True,
+                                      "x_px": 56 + 64, "y_px": 56}],
+                     "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0,
+                                "weapon": {"type": "boomerang", "verified": True,
+                                           "level": 1}}],
+                     "tile_context": {
+                         "runtime_verified": True, "game_mode": "field", "radius": 1,
+                         "map_id": 16, "map_size_tiles": [32, 32], "actor_tile": [3, 3],
+                         "actor": {"x_px": 56, "y_px": 56, "layer": 1, "facing": "step_right"},
+                         "passability_rows": ["..#", ".@#", "..#"]}}
+            planner = MemoryPlanner(history)
+            planner.fuma_swap = True
+            decisions = [planner.decide(state, "step_right") for _ in range(3)]
+            throws = [d for d in decisions if d.action == "attack"]
+            self.assertTrue(throws, [d.reason for d in decisions])
+            self.assertTrue(throws[0].swap_after, throws[0].reason)
+            planner.fuma_swap = False
+            self.assertFalse(any(d.swap_after for d in
+                                 (planner.decide(state, "step_right") for _ in range(3))))
+            history.close()
+
     def test_no_evade_while_still_facing_the_blocker(self):
         # The evade overwrote the turn tap in the proxy's one action slot:
         # the hero still faced the gatekeeper and hopped away from him.

@@ -174,6 +174,9 @@ class PlannerDecision:
     # A tap that only turns the hero (toward an adjacent enemy or grass);
     # not moving is expected, so stall detection ignores it.
     turn_only: bool = False
+    # A boomerang throw at a monster the hero cannot walk to: the bridge
+    # swaps him into the Fuma clone that the hit brings (proxy fuma_swap).
+    swap_after: bool = False
     # For action "charge": the stage to hold the attack button until.
     charge_stage: int = 0
     enemy_slot: int | None = None
@@ -266,6 +269,7 @@ class MemoryPlanner:
         self.evade_past_map = None
         self.decision_count = 0
         self.blink = False                 # set by the bridge when the proxy can blink
+        self.fuma_swap = False             # set by the bridge for a ninja on the Steam Link
         self.blink_at = None               # clock() of the last blink asked for
         self.stall_log = []                # (decision, map, x, y) of recent stalls
         self.step_tiles = []               # (map, x, y) of the last PIN_STEPS steps
@@ -967,6 +971,16 @@ class MemoryPlanner:
                     if countering and strike.action == "attack":
                         return PlannerDecision("attack", f"counter enemy {enemy['slot']} "
                                                "after guarding", "engage_enemy")
+                    if (strike.action in ("attack", "charge") and held == "boomerang" and
+                            self.fuma_swap and distance > CLOSE_QUARTERS_PX and
+                            self._route_toward(context, dx, dy, open_steps) is None):
+                        # No way there on foot: the hit's Fuma clone is the
+                        # way. A plain throw brings the clone soonest.
+                        self.swing_decided_at = self.clock()
+                        return PlannerDecision("attack", f"throw the boomerang at enemy "
+                                               f"{enemy['slot']} ({distance} px, no path on "
+                                               "foot); swap into the Fuma clone after the hit",
+                                               "engage_enemy", swap_after=True)
                     return strike
         # Long range (bow, javelin, boomerang, whip): within the weapon's reach
         # on one axis, step sideways onto the enemy's line and shoot from

@@ -112,6 +112,13 @@ EVADE_PAST_ATTEMPTS = 2
 # hopped back, away from him (2026-11-18). The evade waits until the game
 # reports the hero facing away; the tap is repeated this often before giving up.
 EVADE_PAST_TURNS = 4
+# Trapped: this many stalls within TRAP_TILES of each other in the last
+# TRAP_WINDOW decisions. Boxed in behind slide tiles on map 130 (the strip
+# above the cliffs, 2026-11-18), walking could not get the hero out; the
+# evade hop can, so a trapped hero hops even where memory shows no ground.
+TRAP_STALLS = 3
+TRAP_TILES = 3
+TRAP_WINDOW = 80
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
@@ -245,6 +252,8 @@ class MemoryPlanner:
         self.evade_past_pending = None     # (stall key) after the turn tap
         self.evade_past_tries = {}         # per visit: reset on another map
         self.evade_past_map = None
+        self.decision_count = 0
+        self.stall_log = []                # (decision, map, x, y) of recent stalls
         # Set while the play loop hunts on the current map: exploration must
         # not walk over exit tiles (it used to leave map 129 for 128 and be
         # sent straight back, over and over).
@@ -577,9 +586,8 @@ class MemoryPlanner:
         map_id, layer = context["map_id"], context["actor"]["layer"]
         size = tuple(context["map_size_tiles"])
 
-        def gap(point):
-            return (abs(self._wrapped_delta(target[0], point[0], size[0])) +
-                    abs(self._wrapped_delta(target[1], point[1], size[1])))
+        def gap(point):                     # straight-line: field maps do not wrap
+            return abs(target[0] - point[0]) + abs(target[1] - point[1])
         best = None
         for point, (first, distance) in routes.items():
             if (first is None or first not in open_steps or
@@ -1419,9 +1427,10 @@ class MemoryPlanner:
             # Scanned collision islands can be disconnected when the agent
             # crossed an area before map learning was enabled. Keep a stable
             # heading toward the observed exit while checking every next tile.
-            size = tuple(context["map_size_tiles"])
-            dx = self._wrapped_delta(target[0], position[0], size[0])
-            dy = self._wrapped_delta(target[1], position[1], size[1])
+            # Field maps do not wrap: the wrapped delta sent the hero "40 tiles
+            # north" to an exit 76 tiles south on map 16 (116 rows), straight
+            # back over the crossing into Potos, again and again (2026-11-18).
+            dx, dy = target[0] - position[0], target[1] - position[1]
             # No known route yet: explore the edge of known ground nearest the
             # exit instead of pushing at a wall, which made the planner fall
             # back to unrelated frontier exploring and undo the trip step by
@@ -1640,6 +1649,7 @@ class MemoryPlanner:
         self.whip_blocked = {key: turns - 1 for key, turns in self.whip_blocked.items()
                              if turns > 1}
         self.previous_action = previous
+        self.decision_count += 1
         self.block_cooldown = max(0, self.block_cooldown - 1)
         if previous in STEP_OFFSETS:
             self.assumed_facing = previous
@@ -2193,7 +2203,7 @@ class MemoryPlanner:
         why = self._whip_options(context).get(decision.action)
         if why is not None:
             return self._whip_cross(context, decision.action, why)
-        past = self._evade_past(context, decision.action)
+        past = self._evade_past(context, decision.action, trapped=self._trapped(context))
         if past is not None:
             return past
         return PlannerDecision(
@@ -2201,9 +2211,22 @@ class MemoryPlanner:
             f"{context.get('actor_tile')}; blocking that step for "
             f"{STALL_BLOCK_DECISIONS} decisions", "replan")
 
-    def _evade_past(self, context, action):
-        """Turn away from a blocker standing on open ground; the next
-        decision evades back past him. None when the map itself is the wall."""
+    def _trapped(self, context):
+        """Record this stall; True when it is the TRAP_STALLS-th close by."""
+        tile = context.get("actor_tile")
+        if not isinstance(tile, list):
+            return False
+        now, here = self.decision_count, context.get("map_id")
+        self.stall_log = [s for s in self.stall_log if now - s[0] <= TRAP_WINDOW]
+        self.stall_log.append((now, here, tile[0], tile[1]))
+        near = [s for s in self.stall_log if s[1] == here and
+                abs(s[2] - tile[0]) <= TRAP_TILES and abs(s[3] - tile[1]) <= TRAP_TILES]
+        return len(near) >= TRAP_STALLS
+
+    def _evade_past(self, context, action, trapped=False):
+        """Turn away from a blocker standing on open ground (or, trapped,
+        from any refused step); the next decision evades back past it.
+        None when the map itself is the wall and the hero is not trapped."""
         if not self.evade_past or not context.get("actor_tile"):
             return None
         size = tuple(context.get("map_size_tiles") or (0, 0))
@@ -2213,7 +2236,8 @@ class MemoryPlanner:
         ahead = self._neighbor(here, offset, size)
         beyond = self._neighbor(ahead, offset, size)
         walkable = ("open", "pass", "h1", "h2")       # h1/h2: floor heights
-        if cells.get(ahead) not in walkable or cells.get(beyond) not in walkable:
+        if not trapped and (cells.get(ahead) not in walkable or
+                            cells.get(beyond) not in walkable):
             return None
         key = self._stall_key(context, action)
         if self.evade_past_map != context.get("map_id"):
@@ -2226,8 +2250,10 @@ class MemoryPlanner:
         # The hop may land past him; let the step be tried again right away.
         self.blocked_moves.pop(key, None)
         away = OPPOSITE_STEP[action]
-        return PlannerDecision(away, f"someone blocks {action} onto open ground at "
-                               f"{ahead[0]},{ahead[1]}; turning {away[5:]} to evade past",
+        why = (f"trapped here ({TRAP_STALLS} stalls close by); hop {action[5:]} to get out"
+               if trapped else f"someone blocks {action} onto open ground at "
+                               f"{ahead[0]},{ahead[1]}")
+        return PlannerDecision(away, f"{why}; turning {away[5:]} to evade past",
                                "evade_past", turn_only=True)
 
     def _decide(self, observation, previous, directive, errand):

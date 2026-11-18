@@ -301,7 +301,7 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertIn(decision.action, ("step_down", "step_left"))
             history.close()
 
-    def _blocked_south(self, history, evade, wall=False, turns_work=True):
+    def _blocked_south(self, history, evade, wall=False, turns_work=True, decisions_run=16):
         for x in range(8):
             for y in range(8):
                 kind = "blocked" if wall and y == 4 else ("h2" if y == 5 else "open")
@@ -320,7 +320,7 @@ class TestMultiMapTravel(unittest.TestCase):
         planner.evade_past = evade
         errand = {"place": "map 144", "anchor": {"map_id": 144}}
         decisions, previous = [], "none"
-        for _ in range(16):           # the hero never moves: someone is in the way
+        for _ in range(decisions_run):  # the hero never moves: someone is in the way
             decision = planner.decide(state, previous, errand=errand)
             decisions.append(decision)
             previous = decision.action
@@ -337,6 +337,19 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertEqual((decisions[turn].action, decisions[turn].turn_only),
                              ("step_up", True))
             self.assertEqual(decisions[turn + 1].action, "evade")
+            history.close()
+
+    def test_trapped_hero_hops_even_at_a_wall(self):
+        # Boxed in behind slide tiles (map 130): every way out stalls, so
+        # after TRAP_STALLS stalls close together he evades anyway.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "trap.sqlite")
+            decisions = self._blocked_south(history, evade=True, wall=True, decisions_run=80)
+            reasons = [d.reason for d in decisions]
+            first = next(i for i, r in enumerate(reasons) if "trapped here" in r)
+            self.assertGreaterEqual(sum("no progress" in r or "evade past" in r
+                                        for r in reasons[:first]), 2, reasons[:first])
+            self.assertIn("evade", [d.action for d in decisions[first:]])
             history.close()
 
     def test_no_evade_while_still_facing_the_blocker(self):
@@ -360,6 +373,30 @@ class TestMultiMapTravel(unittest.TestCase):
                                  any(d.intention == "evade_past" for d in decisions),
                                  (evade, wall, [d.reason for d in decisions]))
                 history.close()
+
+    def test_far_exit_on_a_tall_map_is_approached_without_wrapping(self):
+        # Map 16 is 116 rows: an exit 76 rows south was "40 rows north" with
+        # wrapping, which walked the hero back over the crossing into Potos.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "tall.sqlite")
+            history.connection.execute(
+                "INSERT INTO map_edges VALUES(16,144,1,42,107,'step_up',5,0)")
+            for x in range(48, 55):
+                for y in range(28, 35):
+                    history.connection.execute(
+                        "INSERT OR REPLACE INTO world_cells VALUES(16,1,?,?,'h2',1,0)", (x, y))
+            state = {"weapons_enabled": True, "enemy_slots": [],
+                     "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0}],
+                     "tile_context": {
+                         "runtime_verified": True, "game_mode": "field", "radius": 1,
+                         "map_id": 16, "map_size_tiles": [70, 116], "actor_tile": [51, 31],
+                         "actor": {"x_px": 824, "y_px": 504, "layer": 1},
+                         "passability_rows": ["...", ".@.", "..."]}}
+            decision = MemoryPlanner(history).decide(
+                state, errand={"place": "map 144", "anchor": {"map_id": 144}})
+            # South-west toward the exit, never north into Potos.
+            self.assertIn(decision.action, ("step_down", "step_left"), decision.reason)
+            history.close()
 
     def test_learned_exit_that_only_bounces_is_dropped(self):
         # The hero flipped step_right/step_left for minutes beside a learned

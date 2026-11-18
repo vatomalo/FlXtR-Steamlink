@@ -34,6 +34,12 @@ KICK_KIND_BASE = 0x90
 KICK_WEAPON = 0xFD
 KICK_FRAMES = {0: (92, 93), 1: (90, 91), 2: (88, 89)}   # facing: chamber, kick
 KICK_TICKS = (1, 4)
+# Fuma (Ninjutsu boomerang): a shadow clone's sword swing, kinds 0xA0 + hero,
+# weapon 0xFC: the hero's own sword attack (anim 0) with the blade drawn over
+# it (colours 16-20, sword row 9), facings 0 up, 1 down, 2 side.
+FUMA_KIND_BASE = 0xA0
+FUMA_WEAPON = 0xFC
+SWORD_ROW = 9
 
 
 def rotate(image, turns, pivot):
@@ -72,6 +78,19 @@ def flying_kick(gfx, hero, frame_ids):
             for f, t in zip(frame_ids, KICK_TICKS)]
 
 
+def sword_swing(gfx, hero, direction, row=SWORD_ROW):
+    """[(image, ticks)] of the hero's plain sword swing, blade included."""
+    tiles = gfx.weapon_tiles(row)
+    frames = []
+    for flags, frame, ticks in gfx.script("sword", 0, direction):
+        image = gfx.render(hero, gfx.pieces(hero, "sword", frame, flags),
+                           size=V.CELL, origin=V.ORIGIN)
+        gfx.render(hero, gfx.weapon_pieces(row, frame, flags), image=image,
+                   origin=V.ORIGIN, source=tiles, base=16)
+        frames.append((image, ticks))
+    return frames
+
+
 def pack(gfx):
     out, entries = bytearray(), 0
     for i, hero in enumerate(HEROES):
@@ -87,6 +106,16 @@ def pack(gfx):
             frames = flying_kick(gfx, hero, frame_ids)
             out += struct.pack("<4B20H", KICK_KIND_BASE + i, KICK_WEAPON, facing, len(frames),
                                *colours)
+            for image, ticks in frames:
+                dx, dy, w, h, data = V.crop(image)
+                out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
+            entries += 1
+        blade = [V.bgr555(c) for c in
+                 gfx.weapon_palette(gfx.weapon_group(SWORD_ROW)[1][4])[1:6]]
+        for facing, direction in enumerate(V.FACINGS):
+            frames = sword_swing(gfx, hero, direction)
+            out += struct.pack("<4B20H", FUMA_KIND_BASE + i, FUMA_WEAPON, facing, len(frames),
+                               *(colours[:15] + blade))
             for image, ticks in frames:
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data

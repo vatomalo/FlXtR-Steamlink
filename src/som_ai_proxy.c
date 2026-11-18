@@ -698,6 +698,26 @@ static int bash_kick,flykick_from_ai;
 static SomNpcWorkState flykick;
 static int flykick_hid;
 static int som_flykick_start(uint8_t *ram);
+/* Fuma (Ninjutsu, boomerang): when the hero's boomerang hits a monster, a
+ * shadow clone appears in smoke beside it, on the hero's side, swings the
+ * sword at it once and vanishes in smoke. The strike lands through the
+ * monster's pending damage +0x1F1 (like the clone explosion), worth the
+ * boomerang's hit times (2 + level) / 2, level = the Ninjutsu level capped
+ * at the sword's learned charge level (hero +0x1C0 low nibble) and 8.
+ * Frames: tools/som_cartwheel.py, kinds 0xA0-0xA2, drawn in the hero's
+ * live (class) colours at a fixed world spot. Headless check 2026-11-18:
+ * a thrown boomerang hit is the combo HP drop (rabite 40 -> 15). */
+#define SOM_FUMA_KIND 0xA0u
+#define SOM_FUMA_APPEAR 16ul            /* smoke first (mostly cleared), then the swing */
+#define SOM_FUMA_LINGER 12ul            /* last pose held before the smoke */
+#define SOM_FUMA_COOLDOWN 30ul
+#define SOM_FUMA_OFFSET 20              /* px from the monster */
+static SomNpcWorkState fuma;
+static int fuma_target=-1,fuma_struck;
+static unsigned fuma_target_id,fuma_damage,fuma_level;
+static unsigned long fuma_strike_at,fuma_end_at,fuma_ready;
+static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base);
+static void som_fuma_frame(uint8_t *ram);
 static void som_flykick_frame(uint8_t *ram);
 static int som_bash_start(uint8_t *ram);
 static void som_bash_tick(void);
@@ -754,6 +774,8 @@ static void som_combo_frame(void){
             som_xp_give(som_xp_weapon_discipline(weapon,sel,
                             sel<SOM_DISCIPLINE_COUNT?som_disc_weapons[sel]:NULL),
                         SOM_XP_HIT,e[0x180],SOM_XPK_HIT,"weapon hit");
+            if(sel==SOM_DISC_NINJUTSU&&weapon==6u&&!fuma.active)   /* Fuma: boomerang hit */
+                som_fuma_start(ram,i,combo_hp[i]-hp);
             if(combo.mixes!=mixes_before)
                 som_xp_give(SOM_DISC_FLOW,SOM_XP_FLOW,e[0x180],SOM_XPK_FLOW,"weapon switch hit");
             if(som_combo_effective_level())
@@ -1803,6 +1825,73 @@ static void som_flykick_frame(uint8_t *ram){
     }else flykick.lift=0;
     const int game_over=!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F;
     if(game_over||(!bash_stage&&!special_stage&&t>=flykick.length)||t>180ul)som_flykick_end(ram);
+}
+static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base){
+    if(!ram||fuma.active||frame_number<fuma_ready||slot>2u||!base)return;
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
+    }
+    const uint8_t *hero=ram+0xE000u,*m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    const unsigned id=hero[0x180];
+    if(!cartwheel_pack||id<0x80u||id>0x82u)return;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    const int mx=(int)som_bun_u16(m+2),my=(int)som_bun_u16(m+4);
+    int cx=mx,cy=my;
+    unsigned facing,dir;
+    if(abs(hx-mx)>=abs(hy-my)){                 /* beside it, facing it */
+        const int side=hx>=mx?1:-1;
+        cx=mx+side*SOM_FUMA_OFFSET;facing=2u;dir=side>0?3u:2u;
+    }else{                                      /* above or below it */
+        const int side=hy>=my?1:-1;
+        cy=my+side*SOM_FUMA_OFFSET;facing=side>0?0u:1u;dir=facing;
+    }
+    SomWorkEntry entry;
+    if(!som_work_find(cartwheel_pack,cartwheel_pack_size,SOM_FUMA_KIND+id-0x80u,facing,&entry))
+        return;
+    unsigned level=disciplines.level[SOM_DISC_NINJUTSU];
+    const unsigned sword=hero[0x1C0]&0x0Fu;
+    if(level>sword)level=sword;
+    if(level>8u)level=8u;
+    unsigned damage=base*(2u+level)/2u;
+    if(damage>0xFFu)damage=0xFFu;
+    memset(&fuma,0,sizeof(fuma));
+    fuma.active=1;fuma.slot=0;fuma.kind=id;fuma.dir=dir;fuma.entry=entry;fuma.own_palette=1;
+    fuma.fixed=1;fuma.wx=cx;fuma.wy=cy;
+    fuma.start=frame_number+SOM_FUMA_APPEAR;
+    const unsigned long swing=som_work_swing_frames(&entry);
+    fuma.length=swing+SOM_FUMA_LINGER;
+    fuma_strike_at=fuma.start+swing*2ul/3ul;
+    fuma_end_at=fuma.start+fuma.length;
+    fuma_target=(int)slot;fuma_target_id=m[0x180];fuma_damage=damage;fuma_level=level;
+    fuma_struck=0;
+    som_bun_boom(bunshin_booms,cx,cy,1,frame_number);
+    char text[48];
+    snprintf(text,sizeof(text),"^Fuma|shadow strike level %u",level);
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] FUMA clone at %d,%d strikes monster %u: level %u, %u damage "
+            "(boomerang hit %u)\n",cx,cy,slot,level,damage,base);
+}
+/* Each frame: the clone's strike lands two thirds into the swing; then it
+ * holds its pose and vanishes in smoke. */
+static void som_fuma_frame(uint8_t *ram){
+    if(!fuma.active)return;
+    const int field=ram&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    if(field&&!fuma_struck&&frame_number>=fuma_strike_at){
+        fuma_struck=1;
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)fuma_target;
+        if(som_bun_monster_alive(m)&&m[0x180]==fuma_target_id){
+            const unsigned pending=m[0x1F1]+fuma_damage;
+            m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+            som_xp_give(SOM_DISC_NINJUTSU,SOM_XP_HIT,m[0x180],SOM_XPK_HIT,"fuma strike");
+            fprintf(stderr,"[som-ai] FUMA strike: %u damage queued on monster %d\n",
+                    fuma_damage,fuma_target);
+        }else fprintf(stderr,"[som-ai] FUMA strike missed: monster %d gone\n",fuma_target);
+    }
+    if(!field||frame_number>=fuma_end_at){
+        if(field)som_bun_boom(bunshin_booms,fuma.wx,fuma.wy,1,frame_number);
+        fuma.active=0;fuma_target=-1;fuma_ready=frame_number+SOM_FUMA_COOLDOWN;
+    }
 }
 /* Before each emulated frame: advance the bash. */
 static void som_bash_tick(void){
@@ -3476,7 +3565,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||flykick.active)&&!menu;
+    const int worker=(npc_work.active||flykick.active||
+                      (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
     if(!menu&&general_count&&backend_retro_get_memory_data&&
@@ -3520,6 +3610,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                   pixel_format);
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+            if(fuma.active&&frame_number>=fuma.start)
+                som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
         }
     }
@@ -4044,6 +4137,7 @@ RETRO_API void retro_run(void){
         som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo){
         som_bash_tick();
+        if(fuma.active)som_fuma_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(flykick.active&&backend_retro_get_memory_data)
             som_flykick_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     }

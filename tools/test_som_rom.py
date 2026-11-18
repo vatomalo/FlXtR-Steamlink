@@ -275,6 +275,65 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertEqual((decision.action, decision.reason), ("wait", "on exit to map 130"))
             history.close()
 
+    def test_stepless_learned_exit_is_dropped_when_nothing_happens(self):
+        # A KO reload or warp logged as a crossing without a step: the hero
+        # stood on it waiting for a transition for hours (map 132>16).
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "warp.sqlite")
+            history.connection.execute(
+                "INSERT INTO map_edges VALUES(132,16,1,2,3,NULL,5,0)")
+            for x in range(8):
+                for y in range(8):
+                    history.connection.execute(
+                        "INSERT OR REPLACE INTO world_cells VALUES(132,1,?,?,'open',1,0)",
+                        (x, y))
+            state = {"weapons_enabled": True, "enemy_slots": [],
+                     "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0}],
+                     "tile_context": {
+                         "runtime_verified": True, "game_mode": "field", "radius": 1,
+                         "map_id": 132, "map_size_tiles": [8, 8], "actor_tile": [2, 3],
+                         "actor": {"x_px": 40, "y_px": 56, "layer": 1},
+                         "passability_rows": ["...", ".@.", "..."]}}
+            errand = {"place": "inn", "anchor": {"map_id": 16, "layer": 1,
+                                                 "target": [8, 8]}}
+            planner = MemoryPlanner(history)
+            reasons = [planner.decide(state, errand=errand).reason for _ in range(40)]
+            self.assertTrue(reasons[0].startswith("on exit to map 16"), reasons[0])
+            self.assertTrue(any(r.startswith("learned exit to map 16 did not move the hero")
+                                for r in reasons), reasons)
+            self.assertIn("132>16", history.rejected_edges())
+            self.assertIsNone(history.return_waypoint(132, 16))
+            self.assertNotIn("on exit to map 16", reasons[-1])
+            history.close()
+
+    def test_dash_crossing_learns_steps_both_ways(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "dash.sqlite")
+            history._learn_edge({"map_id": 132, "layer": 1, "target": [29, 11],
+                                 "action": "dash_right"},
+                                {"map_id": 16, "layer": 1, "target": [10, 35],
+                                 "action": None})
+            rows = dict(((f, t), a) for f, t, a in history.connection.execute(
+                "SELECT from_map,to_map,action FROM map_edges"))
+            self.assertEqual(rows, {(132, 16): "step_right", (16, 132): "step_left"})
+            history.close()
+
+    def test_old_dash_edges_are_repaired_on_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "old.sqlite"
+            history = ObservationHistory(path)
+            history.connection.executemany(
+                "INSERT INTO map_edges VALUES(?,?,1,0,0,?,1,0)",
+                [(132, 16, "dash_right"), (16, 132, None), (5, 6, None), (6, 5, None)])
+            history.connection.commit()
+            history.close()
+            history = ObservationHistory(path)
+            rows = dict(((f, t), a) for f, t, a in history.connection.execute(
+                "SELECT from_map,to_map,action FROM map_edges"))
+            self.assertEqual(rows, {(132, 16): "step_right", (16, 132): "step_left",
+                                    (5, 6): None, (6, 5): None})
+            history.close()
+
     def test_reachable_rom_exit_beats_a_nearer_learned_crossing(self):
         planner = MemoryPlanner()
         for x in range(8):

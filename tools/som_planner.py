@@ -96,6 +96,9 @@ UNVERIFIED_WAITS = 10
 SLIDE_FAILSAFE_DECISIONS = 150
 FRONTIER_NO_PROGRESS = 24
 FRONTIER_COOLDOWN = 200
+# Waits on a learned crossing that has no step (the game should move the
+# hero) before the crossing is dropped as a warp, KO reload or cutscene.
+EXIT_WAIT_DECISIONS = 25
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
@@ -191,6 +194,7 @@ class MemoryPlanner:
         self.unverified_at = None       # where the hero waits on an unverified tile
         self.unverified_waits = 0
         self.unverified_nudges = 0
+        self.exit_wait = (None, 0)      # (map, tile, next map), waits on it
         self.field_waits = 0
         self.slide_failsafe = 0
         # Grass cutting: learned cuttable attributes (without a database),
@@ -1290,7 +1294,20 @@ class MemoryPlanner:
                     return PlannerDecision(exit_action, f"take learned exit toward {place}",
                                            travel_intent, 1)
                 if crossing and exit_action is None:
-                    # On a ROM exit tile; the game starts the transition.
+                    # On an exit tile; the game starts the transition. A
+                    # learned crossing without a step can be a warp or KO
+                    # reload instead: waiting there forever traps the hero.
+                    key = (context.get("map_id"), position, destination.get("next_map"))
+                    waits = self.exit_wait[1] + 1 if self.exit_wait[0] == key else 1
+                    self.exit_wait = (key, waits)
+                    if (waits > EXIT_WAIT_DECISIONS and destination.get("source") != "rom" and
+                            hasattr(self.history, "reject_edge")):
+                        self.exit_wait = (None, 0)
+                        self.history.reject_edge(context.get("map_id"),
+                                                 destination.get("next_map"))
+                        return PlannerDecision("wait", f"learned exit to map "
+                                               f"{destination.get('next_map')} did not "
+                                               f"move the hero; rerouting", "replan")
                     return PlannerDecision("wait", f"on exit to map "
                                            f"{destination.get('next_map')}", travel_intent)
                 if exit_action is None:

@@ -35,6 +35,22 @@ WALKABLE_KINDS = ("open", "pass", "cuttable", "h1", "h2")
 OPPOSITE_STEP = {"step_right": "step_left", "step_left": "step_right",
                  "step_up": "step_down", "step_down": "step_up",
                  "right": "left", "left": "right", "up": "down", "down": "up"}
+
+
+def walk_step(action):
+    """step_<dir> for a walking/dashing action ("dash_right", "right"), else as is.
+
+    The planner routes with step_* only; an edge stored as dash_right was
+    unusable and its reverse lost its direction (stored NULL), which left
+    the hero waiting on the crossing tile for a transition that never came.
+    """
+    if isinstance(action, str):
+        for prefix in ("dash_", "step_", ""):
+            if action.startswith(prefix) and action[len(prefix):] in ("up", "down", "left", "right"):
+                return "step_" + action[len(prefix):]
+    return action
+
+
 ITEM_NAMES = ("candy", "medical_herb", "cup_of_wishes", "faerie_walnut",
               "royal_jam", "chocolate", "barrel", "magic_rope",
               "flammie_drum", "moogle_belt", "midge_mallet", "unknown_curative")
@@ -799,6 +815,25 @@ class ObservationHistory:
         self._anchor_misses = 0
         if not self.connection.execute("SELECT 1 FROM map_edges LIMIT 1").fetchone():
             self._backfill_edges()
+        self._normalize_edge_steps()
+
+    def _normalize_edge_steps(self):
+        """Repair edges learned before walk_step: dash/plain directions become
+        step_*, and a NULL reverse of a stepped crossing gets the opposite step."""
+        original = {(f, t): a for f, t, a in self.connection.execute(
+            "SELECT from_map,to_map,action FROM map_edges")}
+        steps = {edge: walk_step(action) for edge, action in original.items()}
+        changed = False
+        for (from_map, to_map), action in steps.items():
+            if action is None:
+                action = OPPOSITE_STEP.get(steps.get((to_map, from_map)))
+            if action != original[(from_map, to_map)]:
+                self.connection.execute(
+                    "UPDATE map_edges SET action=? WHERE from_map=? AND to_map=?",
+                    (action, from_map, to_map))
+                changed = True
+        if changed:
+            self.connection.commit()
 
     @staticmethod
     def _verified_position(state, action):
@@ -826,9 +861,10 @@ class ObservationHistory:
                    f"{current['map_id']}>{previous['map_id']}"}
         if rejected & crossed:
             self.set_agent_state("rejected_edges", sorted(rejected - crossed))
-        reverse = OPPOSITE_STEP.get(previous["action"])
+        step = walk_step(previous["action"])
+        reverse = OPPOSITE_STEP.get(step)
         for origin, destination, action in (
-                (previous, current["map_id"], previous["action"]),
+                (previous, current["map_id"], step),
                 (current, previous["map_id"], reverse)):
             self.connection.execute(
                 "INSERT INTO map_edges(from_map,to_map,layer,x,y,action,seen,last_ts) "
@@ -1315,8 +1351,11 @@ class ObservationHistory:
     def return_waypoint(self, current_map, target_map):
         """First exit on the shortest learned chain of maps to target_map."""
         edges = {}
+        rejected = self.rejected_edges()
         for from_map, to_map, layer, x, y, action in self.connection.execute(
                 "SELECT from_map,to_map,layer,x,y,action FROM map_edges"):
+            if f"{from_map}>{to_map}" in rejected:
+                continue
             edges.setdefault(from_map, []).append((to_map, layer, x, y, action))
         first_hop = {current_map: None}
         queue = deque([current_map])

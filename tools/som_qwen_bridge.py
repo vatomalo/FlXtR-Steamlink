@@ -46,6 +46,7 @@ from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WE
 from som_weapon_tactics import WeaponTactics, reach as weapon_reach
 from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
 from som_trials import TrialLearner
+import som_quest
 from som_class_arts import FlyingKickTactics, IaiTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
 from som_anticipate import AttackPredictor
@@ -78,6 +79,10 @@ GAMBIT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_gambits"
 # Second gambit page (src/som_gambit.h som_combat_names): how the AI fights.
 COMBAT_FILE = "/home/apps/retroarch/cores/experimental/som_ai_combat"
 COMBAT_DEFAULTS = "32223333"
+# Quest gambits (proxy page QUEST, tools/som_quest.py): story, level up.
+QUEST_FILE = "/home/apps/retroarch/cores/experimental/som_ai_quest"
+QUEST_NAMES = ("story", "level")
+QUEST_DEFAULTS = "33"
 COMBAT_NAMES = ("press", "distance", "guard", "evade", "charge", "magic", "classes", "weapons")
 PLAN_REFRESH_S = 600.0  # seconds between re-plans of the AI's wanted build
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
@@ -497,6 +502,9 @@ REMOTE_LOOP = (
     "gmc) m=; [ -f " + COMBAT_FILE + " ] && read -r m < " + COMBAT_FILE + "; "
     "case \"$m\" in " + "[0-5]" * len(COMBAT_DEFAULTS) + ") ;; *) m=" + COMBAT_DEFAULTS + ";; esac; "
     "echo \"GMC $m\";; "
+    "gmq) m=; [ -f " + QUEST_FILE + " ] && read -r m < " + QUEST_FILE + "; "
+    "case \"$m\" in " + "[0-5]" * len(QUEST_DEFAULTS) + ") ;; *) m=" + QUEST_DEFAULTS + ";; esac; "
+    "echo \"GMQ $m\";; "
     "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
     "case \"$m\" in [0-5][0-5][0-5][0-5][0-5][0-5]) ;; *) m=" + GAMBIT_DEFAULTS + ";; esac; "
     "echo \"GMB $m\";; "
@@ -742,6 +750,14 @@ class RemoteLink:
             raise OSError(f"combat gambits unavailable ({status})")
         return tuple(int(c) for c in digits)
 
+    def fetch_quest(self):
+        """The quest gambits (tuple of 0..5, QUEST_NAMES order)."""
+        status, _ = self._request("gmq")
+        digits = status[4:] if status.startswith("GMQ ") else ""
+        if len(digits) != len(QUEST_NAMES) or any(c not in "012345" for c in digits):
+            raise OSError(f"quest gambits unavailable ({status})")
+        return tuple(int(c) for c in digits)
+
     def fetch_familiar(self):
         """Monster slot (1..3) of the hero's familiar, or 0 for none."""
         status, _ = self._request("fam")
@@ -891,6 +907,13 @@ class AndroidRelayLink:
             text = COMBAT_DEFAULTS
         return tuple(int(c) for c in text)
 
+    def fetch_quest(self):
+        pending = self._wait_pending()
+        text = pending[1].get("quest", QUEST_DEFAULTS) if pending else QUEST_DEFAULTS
+        if len(text) != len(QUEST_NAMES) or any(c not in "012345" for c in text):
+            text = QUEST_DEFAULTS
+        return tuple(int(c) for c in text)
+
     def fetch_familiar(self):
         pending = self._wait_pending()
         value = pending[1].get("familiar", 0) if pending else 0
@@ -1018,6 +1041,30 @@ def load_rom_exits(host, cache=ROM_TABLE_CACHE):
         print(f"[rom] exit table unavailable, using learned crossings only: {exc}",
               flush=True)
         return None
+
+
+QUEST_TABLE_CACHE = Path.home() / ".local/state/flxtr/som-quest.json"
+
+
+def load_quest(host, history, cache=QUEST_TABLE_CACHE):
+    """som_quest.Quest from the ROM's boss and monster tables, or None."""
+    def run(command, binary):
+        result = subprocess.run([*SSH_BASE, host, command], capture_output=True,
+                                check=True, timeout=60)
+        return result.stdout if binary else result.stdout.decode()
+
+    def digest():
+        text = run(f'sha1sum "{ROM_PATH}"', False).split()
+        return text[0] if text else None
+
+    try:
+        data = som_quest.load(lambda: run(f'cat "{ROM_PATH}"', True), cache, digest)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"[quest] tables unavailable, exploring instead: {exc}", flush=True)
+        return None
+    print(f"[quest] {len(data['bosses'])} boss spawns, {len(data['monsters'])} monster maps",
+          flush=True)
+    return som_quest.Quest(data, history, log=lambda line: print(line, flush=True))
 
 
 MAX_CHARGE_FAILURES = 2
@@ -1399,9 +1446,10 @@ def main() -> int:
         block_learner = BlockLearner(history.connection, log=lambda line: print(line, flush=True))
         planner.block_learner = block_learner
     if args.play_loop and history is not None and args.policy in ("hybrid", "memory"):
+        quest = load_quest(args.host, history) if isinstance(link, RemoteLink) else None
         play_loop = PlayLoop(history, args.hunt_map, args.trip_gold,
                              log=lambda line: print(line, flush=True),
-                             inn_saves=bool(args.save_slot))
+                             inn_saves=bool(args.save_slot), quest=quest)
         planner.fight_all = True
         print(f"[loop] play loop on; phase {play_loop.phase}", flush=True)
     if history is not None:
@@ -1723,6 +1771,16 @@ def main() -> int:
                               flush=True)
                     combat = fighting
                     style = dict(zip(COMBAT_NAMES, combat))
+                    if play_loop is not None and play_loop.quest is not None:
+                        try:
+                            quest_weights = link.fetch_quest()
+                        except (OSError, subprocess.SubprocessError, AttributeError):
+                            quest_weights = play_loop.quest.weights
+                        if quest_weights != play_loop.quest.weights:
+                            print("[quest] " + ", ".join(
+                                f"{n} {w}" for n, w in zip(QUEST_NAMES, quest_weights)),
+                                  flush=True)
+                        play_loop.quest.update(weights=quest_weights)
                     # Press vs keep distance overrides the build's preference.
                     profile = dict(build_profile(build))
                     if style["distance"] > style["press"]:
@@ -1742,6 +1800,8 @@ def main() -> int:
                               if wram_now is not None and not shop_disabled and
                               gambit(GAMBIT_SHOP) else None)
                 summary = memory_summary(history, observation, money, shop_offer)
+                if play_loop is not None and play_loop.quest is not None:
+                    play_loop.quest.update(wram=wram_now, observation=observation)
 
                 def reachable(map_id, here=current_map):
                     return (history is not None and

@@ -860,9 +860,23 @@ int main(void){
     /* Gambit menu text and drawing. */
     {
         SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
-            {3,2,2,2,3,3,3,3},0};
+            {3,2,2,2,3,3,3,3},{3,3},0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
+        /* Quest page: two weights + exit, changed with Right, saved as digits. */
+        {
+            SomGambits q=g;q.page=SOM_PAGE_QUEST;q.cursor=1;
+            char qt[33],digits[SOM_QUEST_COUNT+1];
+            assert(som_gambit_line(&q,0,qt)&&strstr(qt,"QUEST"));
+            assert(som_gambit_line(&q,1,qt)&&strstr(qt,"Advance the story"));
+            assert(som_gambit_line(&q,2,qt)&&strstr(qt,"Level up"));
+            assert(som_gambit_line(&q,3,qt)&&strstr(qt,"Exit"));
+            assert(!som_gambit_line(&q,4,qt));
+            assert(som_gambit_press(&q,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_CHANGED);
+            som_quest_format(&q,digits);assert(!strcmp(digits,"34"));
+            som_quest_parse(&q,"x9");assert(q.quest[0]==3&&q.quest[1]==3);
+            som_quest_parse(&q,"50");assert(q.quest[0]==5&&q.quest[1]==0);
+        }
         assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));
         assert(som_gambit_line(&g,2,text)&&text[0]=='>'&&strstr(text,"5 ooooo"));
         assert(strlen(text)<=32);
@@ -906,7 +920,9 @@ int main(void){
             assert(som_gambit_line(&c,SOM_COMBAT_ITEMS,text)&&strstr(text,"Exit gambits"));
             assert(!som_gambit_line(&c,SOM_COMBAT_ITEMS+1,text));
             assert(som_gambit_press(&c,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_EXIT&&!c.open);
+            som_gambit_turn_page(&c,1);assert(c.page==SOM_PAGE_QUEST);
             som_gambit_turn_page(&c,1);assert(c.page==SOM_PAGE_ACTIONS);
+            som_gambit_turn_page(&c,0);assert(c.page==SOM_PAGE_QUEST);
             som_gambit_turn_page(&c,0);assert(c.page==SOM_PAGE_COMBAT);
             /* Saved to its own file, loaded back. */
             char path[]="/tmp/flxtr-combat-XXXXXX";int cfd=mkstemp(path);assert(cfd>=0);close(cfd);

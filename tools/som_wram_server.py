@@ -35,6 +35,7 @@ BLOCKS = WRAM_BYTES // BLOCK
 OUTER = 4096
 GAMBIT_DEFAULTS = "433341"
 COMBAT_DEFAULTS = "32223333"
+QUEST_DEFAULTS = "33"
 ACTION_TEXT = re.compile(r"[a-z0-9_]+\Z")
 MESSAGE_TEXT = re.compile(r"[A-Za-z0-9 .,!?:/%+=()|^-]+\Z")
 # --profile living: what tools/som_living_world.REMOTE_LOOP allowed, no more.
@@ -89,6 +90,7 @@ class Server:
         self.familiar = os.path.join(tmp, "flxtr-som-familiar")
         self.gambits = os.path.join(config, "som_ai_gambits")
         self.combat = os.path.join(config, "som_ai_combat")
+        self.quest = os.path.join(config, "som_ai_quest")
         self.disciplines = os.path.join(config, "som_ai_disciplines")
         self.base = bytes(WRAM_BYTES)       # last image sent by `dlt`
 
@@ -165,6 +167,10 @@ class Server:
             m = self._first_line(self.combat)
             ok = len(m) == len(COMBAT_DEFAULTS) and all(c in "012345" for c in m)
             return ("GMC %s\n" % (m if ok else COMBAT_DEFAULTS)).encode()
+        if cmd == "gmq":            # quest gambits: story, level up
+            m = self._first_line(self.quest)
+            ok = len(m) == len(QUEST_DEFAULTS) and all(c in "012345" for c in m)
+            return ("GMQ %s\n" % (m if ok else QUEST_DEFAULTS)).encode()
         if cmd == "gmb":
             m = self._first_line(self.gambits)
             ok = len(m) == len(GAMBIT_DEFAULTS) and all(c in "012345" for c in m)

@@ -159,6 +159,8 @@ static int som_write_ring_ai_marker(void);
 static const char *gambit_file=SOM_GAMBIT_FILE;
 #define SOM_COMBAT_FILE "/home/apps/retroarch/cores/experimental/som_ai_combat"
 static const char *combat_file=SOM_COMBAT_FILE;
+#define SOM_QUEST_FILE "/home/apps/retroarch/cores/experimental/som_ai_quest"
+static const char *quest_file=SOM_QUEST_FILE;
 /* Independent from the six Gambit priority digits, shared with the
  * external song-id -> yt-dlp playback bridge. */
 #define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
@@ -166,7 +168,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},0};
+    {3,2,2,2,3,3,3,3},{3,3},0};
 static SomDisciplines disciplines;
 /* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
@@ -286,6 +288,10 @@ static void som_gambit_load(void){
     in=fopen(combat_file,"r");
     if(in){if(!fgets(combat,sizeof(combat),in))combat[0]=0;fclose(in);}
     som_combat_parse(&gambits,combat[0]?combat:NULL);
+    char quest[16]={0};
+    in=fopen(quest_file,"r");
+    if(in){if(!fgets(quest,sizeof(quest),in))quest[0]=0;fclose(in);}
+    som_quest_parse(&gambits,quest[0]?quest:NULL);
 }
 static void som_gambit_write(const char *path,const char *text){
     char temp[256];
@@ -301,6 +307,9 @@ static void som_gambit_save(void){
     som_gambit_format(&gambits,text);som_combat_format(&gambits,combat);
     som_gambit_write(gambit_file,text);
     som_gambit_write(combat_file,combat);
+    char quest[SOM_QUEST_COUNT+1];
+    som_quest_format(&gambits,quest);
+    som_gambit_write(quest_file,quest);
 }
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
@@ -1167,12 +1176,12 @@ static void som_input_poll(void){
             const uint16_t tabs=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L)|
                                            (1u<<RETRO_DEVICE_ID_JOYPAD_R));
             if(pressed&tabs){
-                /* L1/R1 cycle Actions -> Combat -> Disciplines. */
+                /* L1/R1 cycle Actions -> Combat -> Quest -> Disciplines. */
                 const int forward=(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R))!=0;
                 if(som_menu_disciplines){
                     som_menu_disciplines=0;
-                    gambits.page=forward?SOM_PAGE_ACTIONS:SOM_PAGE_COMBAT;gambits.cursor=0;
-                }else if((forward&&gambits.page==SOM_PAGE_COMBAT)||
+                    gambits.page=forward?SOM_PAGE_ACTIONS:SOM_GAMBIT_PAGES-1u;gambits.cursor=0;
+                }else if((forward&&gambits.page==SOM_GAMBIT_PAGES-1u)||
                          (!forward&&gambits.page==SOM_PAGE_ACTIONS)){
                     som_menu_disciplines=1;
                 }else som_gambit_turn_page(&gambits,forward);
@@ -1194,9 +1203,11 @@ static void som_input_poll(void){
                 break;
             case SOM_GAMBIT_CHANGED:
                 som_gambit_save();
-                {char text[SOM_GAMBIT_COUNT+1],combat[SOM_COMBAT_COUNT+1];
+                {char text[SOM_GAMBIT_COUNT+1],combat[SOM_COMBAT_COUNT+1],
+                      quest[SOM_QUEST_COUNT+1];
                  som_gambit_format(&gambits,text);som_combat_format(&gambits,combat);
-                 fprintf(stderr,"[som-ai] GAMBITS %s COMBAT %s\n",text,combat);}
+                 som_quest_format(&gambits,quest);
+                 fprintf(stderr,"[som-ai] GAMBITS %s COMBAT %s QUEST %s\n",text,combat,quest);}
                 break;
             case SOM_GAMBIT_TEST_SWITCH:
                 som_infinite_mp_changed();

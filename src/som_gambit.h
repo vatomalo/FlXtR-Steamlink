@@ -15,10 +15,11 @@
  * The SkyLoft bridge reads the weights from SOM_GAMBIT_FILE (one digit per
  * gambit, this order) and weighs the activities against each other.
  *
- * Two pages (L1/R1 in the proxy): ACTIONS (the activities above) and
+ * Three pages (L1/R1 in the proxy): ACTIONS (the activities above),
  * COMBAT, how the AI fights: one weight per strategy, saved separately as
  * SOM_COMBAT_COUNT digits (the bridge's COMBAT order), so the actions file
- * keeps its six-digit format.
+ * keeps its six-digit format, and QUEST: advance the story and level up
+ * (SOM_QUEST_COUNT digits, the bridge's QUEST order, tools/som_quest.py).
  * Pure model and drawing, no I/O. */
 #ifndef FLXTR_SOM_GAMBIT_H
 #define FLXTR_SOM_GAMBIT_H
@@ -67,7 +68,16 @@ static const char *const som_combat_names[SOM_COMBAT_COUNT] = {
     "Switch weapons",
 };
 static const uint8_t som_combat_defaults[SOM_COMBAT_COUNT] = {3, 2, 2, 2, 3, 3, 3, 3};
-enum { SOM_PAGE_ACTIONS, SOM_PAGE_COMBAT, SOM_GAMBIT_PAGES };
+/* Quest page: what the AI's trips are for. Order = the bridge's QUEST order. */
+#define SOM_QUEST_COUNT 2u
+#define SOM_QUEST_EXIT_ITEM SOM_QUEST_COUNT
+#define SOM_QUEST_ITEMS (SOM_QUEST_COUNT + 1u)            /* + exit */
+static const char *const som_quest_names[SOM_QUEST_COUNT] = {
+    "Advance the story",
+    "Level up",
+};
+static const uint8_t som_quest_defaults[SOM_QUEST_COUNT] = {3, 3};
+enum { SOM_PAGE_ACTIONS, SOM_PAGE_COMBAT, SOM_PAGE_QUEST, SOM_GAMBIT_PAGES };
 
 typedef struct {
     int open;
@@ -76,6 +86,7 @@ typedef struct {
     int infinite_mp;                                /* test switch, not saved */
     unsigned page;                                  /* SOM_PAGE_* */
     uint8_t combat[SOM_COMBAT_COUNT];
+    uint8_t quest[SOM_QUEST_COUNT];
     unsigned music_genre; /* stored separately from the six AI priority digits */
 } SomGambits;
 
@@ -119,6 +130,29 @@ static inline void som_combat_format(const SomGambits *g, char out[SOM_COMBAT_CO
     out[SOM_COMBAT_COUNT] = 0;
 }
 
+/* Quest page digits, same rules: invalid text keeps the defaults. */
+static inline void som_quest_parse(SomGambits *g, const char *text) {
+    memcpy(g->quest, som_quest_defaults, sizeof(g->quest));
+    if (!text) return;
+    for (unsigned i = 0; i < SOM_QUEST_COUNT; i++)
+        if (text[i] < '0' || text[i] > (char)('0' + SOM_GAMBIT_MAX_WEIGHT)) return;
+    for (unsigned i = 0; i < SOM_QUEST_COUNT; i++) g->quest[i] = (uint8_t)(text[i] - '0');
+}
+
+static inline void som_quest_format(const SomGambits *g, char out[SOM_QUEST_COUNT + 1]) {
+    for (unsigned i = 0; i < SOM_QUEST_COUNT; i++) out[i] = (char)('0' + g->quest[i]);
+    out[SOM_QUEST_COUNT] = 0;
+}
+
+/* A weights-only page (COMBAT, QUEST): its names, weights and size. */
+static inline unsigned som_page_weights(const SomGambits *g, const char *const **names,
+                                        uint8_t **weights) {
+    if (g->page == SOM_PAGE_QUEST) {
+        *names = som_quest_names; *weights = (uint8_t *)g->quest; return SOM_QUEST_COUNT;
+    }
+    *names = som_combat_names; *weights = (uint8_t *)g->combat; return SOM_COMBAT_COUNT;
+}
+
 /* L1/R1: next or previous page; the cursor starts at the top. */
 static inline void som_gambit_turn_page(SomGambits *g, int forward) {
     g->page = (g->page + (forward ? 1u : SOM_GAMBIT_PAGES - 1u)) % SOM_GAMBIT_PAGES;
@@ -126,17 +160,20 @@ static inline void som_gambit_turn_page(SomGambits *g, int forward) {
 }
 
 static inline int som_combat_press(SomGambits *g, uint16_t pressed) {
+    const char *const *names; uint8_t *weights;
+    const unsigned count = som_page_weights(g, &names, &weights), items = count + 1u;
+    (void)names;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_UP))
-        g->cursor = (g->cursor + SOM_COMBAT_ITEMS - 1u) % SOM_COMBAT_ITEMS;
+        g->cursor = (g->cursor + items - 1u) % items;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN))
-        g->cursor = (g->cursor + 1u) % SOM_COMBAT_ITEMS;
-    if (g->cursor == SOM_COMBAT_EXIT_ITEM) {
+        g->cursor = (g->cursor + 1u) % items;
+    if (g->cursor == count) {
         if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_B)) {
             g->open = 0;
             return SOM_GAMBIT_EXIT;
         }
     } else {
-        uint8_t *w = &g->combat[g->cursor];
+        uint8_t *w = &weights[g->cursor];
         const uint8_t before = *w;
         if ((pressed & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT)) && *w > 0) (*w)--;
         if ((pressed & (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT)) && *w < SOM_GAMBIT_MAX_WEIGHT) (*w)++;
@@ -159,7 +196,8 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
         g->cursor = 0;
         return SOM_GAMBIT_OPENED;
     }
-    if (g->page == SOM_PAGE_COMBAT) return som_combat_press(g, pressed);
+    if (g->page == SOM_PAGE_COMBAT || g->page == SOM_PAGE_QUEST)
+        return som_combat_press(g, pressed);
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_UP))
         g->cursor = (g->cursor + SOM_GAMBIT_ITEMS - 1u) % SOM_GAMBIT_ITEMS;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN))
@@ -200,23 +238,25 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
 
 /* Text of menu line `line` (0 = title) into out[33]; returns 0 past the end. */
 static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[33]) {
-    if (g->page == SOM_PAGE_COMBAT) {
+    if (g->page == SOM_PAGE_COMBAT || g->page == SOM_PAGE_QUEST) {
+        const char *const *names; uint8_t *weights;
+        const unsigned count = som_page_weights(g, &names, &weights);
         if (line == 0) {
-            snprintf(out, 33, "GAMBITS: COMBAT    L1/R1:page");
+            snprintf(out, 33, g->page == SOM_PAGE_QUEST ? "GAMBITS: QUEST     L1/R1:page"
+                                                        : "GAMBITS: COMBAT    L1/R1:page");
             return 1;
         }
         const unsigned item = line - 1u;
-        if (item >= SOM_COMBAT_ITEMS) return 0;
+        if (item > count) return 0;
         const char *mark = g->cursor == item ? ">" : " ";
-        if (item == SOM_COMBAT_EXIT_ITEM) {
+        if (item == count) {
             snprintf(out, 33, "%s Exit gambits: you play", mark);
             return 1;
         }
         char bar[SOM_GAMBIT_MAX_WEIGHT + 1];
-        for (unsigned i = 0; i < SOM_GAMBIT_MAX_WEIGHT; i++) bar[i] = i < g->combat[item] ? 'o' : '.';
+        for (unsigned i = 0; i < SOM_GAMBIT_MAX_WEIGHT; i++) bar[i] = i < weights[item] ? 'o' : '.';
         bar[SOM_GAMBIT_MAX_WEIGHT] = 0;
-        snprintf(out, 33, "%s %-19s %u %s", mark, som_combat_names[item],
-                 (unsigned)g->combat[item], bar);
+        snprintf(out, 33, "%s %-19s %u %s", mark, names[item], (unsigned)weights[item], bar);
         return 1;
     }
     if (line == 0) {
@@ -251,7 +291,11 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
                                    size_t pitch, int format, const SomGambits *g) {
     if (!g->open || !pixels) return;
     const unsigned sx = width >= 512 ? 2u : 1u, sy = height >= 400 ? 2u : 1u;
-    const unsigned lines = (g->page == SOM_PAGE_COMBAT ? SOM_COMBAT_ITEMS : SOM_GAMBIT_ITEMS) + 1u,
+    const char *const *page_names; uint8_t *page_weights;
+    const int weights_page = g->page == SOM_PAGE_COMBAT || g->page == SOM_PAGE_QUEST;
+    const unsigned page_count = weights_page ? som_page_weights(g, &page_names, &page_weights) : 0u;
+    (void)page_names;
+    const unsigned lines = (weights_page ? page_count + 1u : SOM_GAMBIT_ITEMS) + 1u,
                    columns = 31u;
     const unsigned box_w = (columns * 6u + 9u) * sx, box_h = (lines * 10u + 7u) * sy;
     if (box_w + 4u * sx > width || box_h + 4u * sy > height) return;
@@ -264,8 +308,8 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
     const uint32_t dim = som_overlay_color(format, 150, 160, 200);
     char text[33];
     for (unsigned line = 0; line < lines && som_gambit_line(g, line, text); line++) {
-        const int off = line >= 1u && (g->page == SOM_PAGE_COMBAT ?
-            (line - 1u < SOM_COMBAT_COUNT && !g->combat[line - 1u]) :
+        const int off = line >= 1u && (weights_page ?
+            (line - 1u < page_count && !page_weights[line - 1u]) :
             ((line - 1u < SOM_GAMBIT_COUNT && !g->weight[line - 1u]) ||
              (line - 1u == SOM_GAMBIT_MUSIC_ITEM &&
               g->music_genre == SOM_MUSIC_GENRE_COUNT - 1u) ||

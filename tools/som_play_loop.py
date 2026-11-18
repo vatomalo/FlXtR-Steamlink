@@ -69,7 +69,7 @@ def best_hunt_map(history, reachable, exclude=()):
 
 class PlayLoop:
     def __init__(self, history, hunt_map=None, trip_gold=TRIP_GOLD,
-                 hunt_decisions=HUNT_DECISIONS, log=print, inn_saves=False):
+                 hunt_decisions=HUNT_DECISIONS, log=print, inn_saves=False, quest=None):
         self.history, self.fixed_hunt_map = history, hunt_map
         # The inn's own "Save?" (InnMacro save_slot) saves on every stay, so
         # without a taught save the save phase must not wait for one forever.
@@ -82,6 +82,7 @@ class PlayLoop:
             {"phase": "hunt", "trip_gold": None, "steps": 0, "cycles": 0}
         self.warned = set()
         self.frontier = Frontier(history, log) if history is not None else None
+        self.quest = quest            # som_quest.Quest: story / level-up trips first
         # The durable objective survives game resets and tactical interruptions.
         # Phase is persisted; the short-term tactical decision is not.
 
@@ -180,13 +181,15 @@ class PlayLoop:
         return "hunt_here"
 
     def _trip_target(self, summary, reachable):
-        """This trip's hunting map: a new or still-useful place (som_frontier),
-        else the best gold per HP lost. Kept for the whole trip."""
+        """This trip's hunting map: the quest's story or level-up map
+        (som_quest), else a new or still-useful place (som_frontier), else
+        the best gold per HP lost. Kept for the whole trip."""
         here = summary.get("map_id")
         if "target" not in self.state or (self.state["target"] is None and
                                           not self.state.get("target_checked")):
-            pick = (self.frontier.choose(here, summary.get("max_hp"), reachable)
-                    if self.frontier is not None else None)
+            pick = self.quest.choose(summary, reachable) if self.quest is not None else None
+            if pick is None and self.frontier is not None:
+                pick = self.frontier.choose(here, summary.get("max_hp"), reachable)
             self.state["target"] = (pick[0] if pick else
                                     best_hunt_map(self.history, reachable))
             self.state["target_checked"] = True

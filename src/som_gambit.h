@@ -160,7 +160,7 @@ static inline void som_gambit_turn_page(SomGambits *g, int forward) {
 }
 
 static inline int som_combat_press(SomGambits *g, uint16_t pressed) {
-    const char *const *names; uint8_t *weights;
+    const char *const *names = NULL; uint8_t *weights = NULL;
     const unsigned count = som_page_weights(g, &names, &weights), items = count + 1u;
     (void)names;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_UP))
@@ -239,7 +239,7 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
 /* Text of menu line `line` (0 = title) into out[33]; returns 0 past the end. */
 static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[33]) {
     if (g->page == SOM_PAGE_COMBAT || g->page == SOM_PAGE_QUEST) {
-        const char *const *names; uint8_t *weights;
+        const char *const *names = NULL; uint8_t *weights = NULL;
         const unsigned count = som_page_weights(g, &names, &weights);
         if (line == 0) {
             snprintf(out, 33, g->page == SOM_PAGE_QUEST ? "GAMBITS: QUEST     L1/R1:page"
@@ -291,7 +291,7 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
                                    size_t pitch, int format, const SomGambits *g) {
     if (!g->open || !pixels) return;
     const unsigned sx = width >= 512 ? 2u : 1u, sy = height >= 400 ? 2u : 1u;
-    const char *const *page_names; uint8_t *page_weights;
+    const char *const *page_names = NULL; uint8_t *page_weights = NULL;
     const int weights_page = g->page == SOM_PAGE_COMBAT || g->page == SOM_PAGE_QUEST;
     const unsigned page_count = weights_page ? som_page_weights(g, &page_names, &page_weights) : 0u;
     (void)page_names;

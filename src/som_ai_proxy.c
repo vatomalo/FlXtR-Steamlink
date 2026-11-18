@@ -695,7 +695,7 @@ static int cartwheel_pack_tried,cartwheel_hid;
 static SomNpcWorkState cartwheel;
 #define SOM_FLYKICK_LIFT 12             /* px at the top of the jump */
 #define SOM_FLYKICK_KIND 0x90u
-static int bash_kick;
+static int bash_kick,flykick_from_ai;
 static SomNpcWorkState flykick;
 static int flykick_hid;
 static int som_flykick_start(uint8_t *ram);
@@ -1829,7 +1829,10 @@ static void som_bash_tick(void){
         const unsigned hits=combo.hits;
         if(level){                 /* the kick lands as the combo finisher */
             bash_stage=SOM_BASH_NONE;bash_kick=0;
-            if(som_special_start(0,level)){
+            special_from_ai=flykick_from_ai;
+            const int finisher=som_special_start(0,level);
+            special_from_ai=0;flykick_from_ai=0;
+            if(finisher){
                 special_chord=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);special_suppress=1;
                 char text[64];
                 snprintf(text,sizeof(text),"^Flying kick|%u-hit combo, level %u",hits,level);
@@ -1844,7 +1847,7 @@ static void som_bash_tick(void){
     }else if(t>=SOM_BASH_STRIKE_FRAMES){
         bash_stage=SOM_BASH_NONE;
         fprintf(stderr,"[som-ai] %s strike\n",bash_kick?"FLYING KICK":"BASH");
-        bash_kick=0;
+        bash_kick=0;flykick_from_ai=0;
     }
 }
 /* Field play, no event, not casting, not in a pose or power attack, not
@@ -2848,6 +2851,15 @@ static int som_handle_command(const char *command){
                 return som_cast_spell(ram,spell);
         }
         return 0;
+    }
+    /* flykick: Martial Arts' flying kick for the AI (as X/Triangle). */
+    if(!strcmp(command,"flykick")){
+        uint8_t *ram=backend_retro_get_memory_data?
+            backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+        flykick_from_ai=1;
+        const int ok=som_flykick_start(ram);
+        if(!ok)flykick_from_ai=0;
+        return ok;
     }
     /* iai_3 / iai_4: Bushido's Iaijutsu for the AI (same cooldown). */
     if(!strcmp(command,"iai_3")||!strcmp(command,"iai_4")){

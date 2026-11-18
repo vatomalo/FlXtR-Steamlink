@@ -37,7 +37,8 @@ class Fixture(unittest.TestCase):
         self.fake = str(fake)
         self.loop = (REMOTE_LOOP.replace("/tmp/", str(self.root) + "/")
                      .replace(bridge.GAMBIT_FILE, str(self.root / "som_ai_gambits"))
-                     .replace(bridge.COMBAT_FILE, str(self.root / "som_ai_combat")))
+                     .replace(bridge.COMBAT_FILE, str(self.root / "som_ai_combat"))
+                     .replace(bridge.DISCIPLINE_FILE, str(self.root / "som_ai_disciplines")))
         self.server_cmd = f"exec {sys.executable} {SERVER} --tmp {self.root} --config {self.root}"
 
     def tearDown(self):
@@ -60,12 +61,17 @@ class TestServerMatchesShellLoop(Fixture):
         for marker in (False, True):
             if marker:
                 (self.root / "flxtr-som-ai-enabled").write_text("enabled\n")
-            for line in ("obs", "obsm", "nav", "gmb", "gmc", "fam", "act up",
+            for line in ("obs", "obsm", "nav", "gmb", "gmc", "fam", "dsc", "act up",
                          "act rm -rf", "act ", "msg Hello there!|Next", "msg $(reboot)",
                          "nonsense", "dltx"):
                 with self.subTest(line=line, marker=marker):
                     self.assertEqual(server.handle(line), shell_reply(self.loop, self.root, line))
         self.assertEqual((self.root / "flxtr-som-ai-action").read_text(), "up\n")
+        for text, want in (("v1 1 5 29 4 131\n", b"DSC 1\n"), ("v1 255 1 0\n", b"DSC 255\n"),
+                           ("bogus\n", b"DSC 255\n")):
+            (self.root / "som_ai_disciplines").write_text(text)
+            self.assertEqual(server.handle("dsc"), want)
+            self.assertEqual(shell_reply(self.loop, self.root, "dsc"), want)
 
     def test_compressed_replies_inflate_to_the_same_bytes(self):
         server = Server(str(self.root), str(self.root))
@@ -143,6 +149,9 @@ class TestDeltaLink(Fixture):
             (self.root / "som_ai_combat").write_text("01234501\n")
             self.assertEqual(link.fetch_combat(), (0, 1, 2, 3, 4, 5, 0, 1))
             self.assertEqual(link.fetch_familiar(), 0)
+            self.assertIsNone(link.fetch_discipline())
+            (self.root / "som_ai_disciplines").write_text("v1 1 5 29\n")
+            self.assertEqual(link.fetch_discipline(), 1)
             self.assertTrue(link.serving)
         finally:
             link.close()

@@ -89,6 +89,7 @@ class Server:
         self.familiar = os.path.join(tmp, "flxtr-som-familiar")
         self.gambits = os.path.join(config, "som_ai_gambits")
         self.combat = os.path.join(config, "som_ai_combat")
+        self.disciplines = os.path.join(config, "som_ai_disciplines")
         self.base = bytes(WRAM_BYTES)       # last image sent by `dlt`
 
     @staticmethod
@@ -168,6 +169,10 @@ class Server:
             m = self._first_line(self.gambits)
             ok = len(m) == len(GAMBIT_DEFAULTS) and all(c in "012345" for c in m)
             return ("GMB %s\n" % (m if ok else GAMBIT_DEFAULTS)).encode()
+        if cmd == "dsc":            # the selected discipline ("v1 <n> ...")
+            words = self._first_line(self.disciplines).split()
+            n = words[1] if len(words) > 1 and words[0] == "v1" and words[1].isdigit() else "255"
+            return ("DSC %s\n" % n).encode()
         if cmd == "fam":
             f = self._first_line(self.familiar)
             return ("FAM %s\n" % (f if f in ("1", "2", "3") else "0")).encode()

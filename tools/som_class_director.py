@@ -38,6 +38,10 @@ WEAPONS = (("sword", "axe"), ("glove", "spear"), ("sword", "boomerang"),
 # Weapon Flow's third weapon (X; som_disc_third_weapon in som_disciplines.h).
 THIRD_WEAPONS = {8: "bow"}
 BUSHIDO = 10                                  # X = Iaijutsu, no spells
+MARTIAL_ARTS = 1                              # X = flying kick
+# Right after the director switches, the game's saved class may still show
+# the old one for a moment: no player pick is read from it meanwhile.
+ADOPT_SETTLE_S = 3.0
 SWORD_CLASSES = tuple(i for i, (b, _) in enumerate(WEAPONS) if b == "sword")
 DODGE_CLASSES = (0, 1, 2, 9, 10, 11)          # som_disc_has_dodge
 ATTACK_MAGIC = (2, 3, 4, 5, 6, 7, 9, 11)      # classes with a hostile spell (som_magic.h)
@@ -266,6 +270,7 @@ class ClassDirector:
         self.cooldown = DEFAULT_COOLDOWN_S   # None = never switch (gambit 0)
         self.wanted = ()             # the wanted build (class indices)
         self.wanted_fixed = False    # set by the player: the AI keeps it
+        self.pinned = False          # the player picked the class in the game
 
     def set_plan(self, classes, fixed=False):
         """Adopt a wanted build; returns True when it changed."""
@@ -301,6 +306,8 @@ class ClassDirector:
 
         situation: hp_fraction, enemies, nearest (px or None), toughest (max HP).
         in_combat = an enemy in contact (no switching then)."""
+        if self.pinned:
+            return None
         tags = situation_tags(**situation)
         training = None
         if "calm" in tags and self.wanted:
@@ -336,6 +343,19 @@ class ClassDirector:
         reason = ("grass ahead needs a sword" if need_cut else
                   why or f"fits a {build} hero best (score {best_value})")
         return best, reason
+
+    def adopt(self, selected):
+        """The class selected in the game (None = none). When it is not what
+        this director asked for, the player picked it: the director takes it
+        as current and stops switching. Returns True when that happened."""
+        if selected is None or selected == self.current:
+            return False
+        if (self.switched_at is not None and
+                self.clock() - self.switched_at < ADOPT_SETTLE_S):
+            return False
+        self.current, self.pinned = selected, True
+        self.switched_at = self.clock()
+        return True
 
     def switched(self, index):
         self.current = index

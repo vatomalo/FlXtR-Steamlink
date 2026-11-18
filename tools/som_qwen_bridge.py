@@ -46,8 +46,8 @@ from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WE
 from som_weapon_tactics import WeaponTactics, reach as weapon_reach
 from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
 from som_trials import TrialLearner
-from som_class_arts import IaiTactics
-from som_class_director import BUFF_CLASSES, BUSHIDO, THIRD_WEAPONS
+from som_class_arts import FlyingKickTactics, IaiTactics
+from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -97,9 +97,12 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
                     "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
-                    "kawarimi", "shunshin", "iai_3", "iai_4"} | \
+                    "kawarimi", "shunshin", "iai_3", "iai_4", "flykick"} | \
     {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
+# The proxy's saved discipline: "v1 <selected> <level> <xp> ..." (som_disc_save).
+DISCIPLINE_CHECK_S = 2.0     # how often the game's own class is read
+DISCIPLINE_FILE = "/home/apps/retroarch/cores/experimental/som_ai_disciplines"
 # Longest names first so "step_right" is not read as "right"-style prefixes.
 _ACTION_PATTERN = re.compile(
     r"(?<![a-z_])(" + "|".join(sorted(ACTIONS, key=len, reverse=True)) + r")(?![a-z_])")
@@ -493,6 +496,8 @@ REMOTE_LOOP = (
     "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
     "case \"$m\" in [0-5][0-5][0-5][0-5][0-5][0-5]) ;; *) m=" + GAMBIT_DEFAULTS + ";; esac; "
     "echo \"GMB $m\";; "
+    "dsc) d=; [ -f " + DISCIPLINE_FILE + " ] && read -r v d rest < " + DISCIPLINE_FILE + "; "
+    "case \"$d\" in ''|*[!0-9]*) d=255;; esac; echo \"DSC $d\";; "
     "fam) f=; [ -f " + FAMILIAR_FILE + " ] && read -r f < " + FAMILIAR_FILE + "; "
     "case \"$f\" in [1-3]) ;; *) f=0;; esac; echo \"FAM $f\";; "
     "obsz|obsmz) "
@@ -739,6 +744,15 @@ class RemoteLink:
         if status not in ("FAM 0", "FAM 1", "FAM 2", "FAM 3"):
             raise OSError(f"familiar unavailable ({status})")
         return int(status[4:])
+
+    def fetch_discipline(self):
+        """The discipline selected in the game (0-11), or None for none."""
+        status, _ = self._request("dsc")
+        value = status[4:] if status.startswith("DSC ") else ""
+        if not value.isdigit():
+            raise OSError(f"discipline unavailable ({status})")
+        n = int(value)
+        return n if n < 12 else None
 
     def show_message(self, text: str) -> None:
         """Ask the proxy to draw a short two-line message box ('|' = new line)."""
@@ -1362,6 +1376,8 @@ def main() -> int:
     jutsu = JutsuTactics()                        # Kawarimi / Shunshin (som_jutsu)
     trials = None                                 # learned thresholds (som_trials)
     iai = IaiTactics()                            # samurai Iaijutsu (som_class_arts)
+    flykick = FlyingKickTactics()                 # monk flying kick (som_class_arts)
+    discipline_checked_at = None                  # last read of the game's own class
     combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
     style = dict(zip(COMBAT_NAMES, combat))
     charge_failed = False
@@ -1910,6 +1926,20 @@ def main() -> int:
                             grass_restore = None
                         elif held != tool_out:
                             grass_restore = None
+                    # A class the player picked in the game wins over the
+                    # director's last pick: its weapons are the ones used
+                    # (a hand-picked monk kept getting the AI's sword and bow).
+                    if (hasattr(link, "fetch_discipline") and (discipline_checked_at is None or
+                            time.monotonic() - discipline_checked_at >= DISCIPLINE_CHECK_S)):
+                        discipline_checked_at = time.monotonic()
+                        try:
+                            selected = link.fetch_discipline()
+                        except (OSError, subprocess.SubprocessError) as exc:
+                            selected = class_director.current
+                            print(f"[class] discipline read failed: {exc}", flush=True)
+                        if class_director.adopt(selected):
+                            print(f"[class] player picked {CLASS_NAMES[selected]}: "
+                                  f"the AI keeps it", flush=True)
                     actor_now = context.get("actor") or {}
                     foes = [e for e in observation.get("enemy_slots", [])
                             if e.get("active") and not e.get("familiar")]
@@ -2095,6 +2125,26 @@ def main() -> int:
                         except (OSError, subprocess.SubprocessError, ValueError) as exc:
                             iai.refused()
                             print(f"[iai] {draw} failed: {exc}; plain swing", flush=True)
+                # Monk: the flying kick (run + kick) at an enemy in line
+                # ahead, past the glove's reach but within the run.
+                if (link and class_director.current == MARTIAL_ARTS and not args.dry_run and
+                        grass_restore is None and decision.action != "charge"):
+                    actor = context.get("actor") or {}
+                    kick = flykick.decide(
+                        actor.get("facing"), actor.get("x_px"), actor.get("y_px"),
+                        [(e["x_px"], e["y_px"]) for e in observation.get("enemy_slots", [])
+                         if e.get("active") and not e.get("familiar") and
+                         isinstance(e.get("x_px"), int) and isinstance(e.get("y_px"), int)])
+                    if kick is not None:
+                        try:
+                            link.send_control(kick)
+                            print(f"[kick] flying kick ({decision.reason})", flush=True)
+                            announce("AI: Flying kick|run and kick")
+                            previous = "attack"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            flykick.refused()
+                            print(f"[kick] flying kick failed: {exc}", flush=True)
                 # Charged attacks without holding: the proxy's special_<n>
                 # sets the gauge once the swing ends (needs a class).
                 # One at a time: the proxy takes commands through a file and

@@ -1603,6 +1603,15 @@ int main(void){
             assert(flykick.active);                           /* drawn through the finisher */
             special_stage=0;special_suppress=0;frame_number+=30;som_flykick_frame(ram);
             assert(!flykick.active&&!(hero[0x0E]&0x80u));
+            /* The AI's "flykick": the same move; refused for other classes. */
+            disciplines.selected=0;assert(!som_handle_command("flykick"));
+            disciplines.selected=1;hero[0x1ED]=0;hero[0x01C]=0;
+            assert(som_handle_command("flykick")&&bash_stage==SOM_BASH_LUNGE&&bash_kick);
+            for(unsigned f=0;f<=SOM_BASH_LUNGE_FRAMES+SOM_BASH_STRIKE_FRAMES+1;f++){
+                frame_number++;som_bash_tick();som_flykick_frame(ram);
+            }
+            assert(!bash_stage&&!flykick_from_ai);
+            frame_number+=30;som_flykick_frame(ram);
             cartwheel_pack=NULL;cartwheel_pack_size=0;hero[0x19C]=1;hero[0x010]=0x02;
             disciplines.selected=0;hero[0x1E4]=1;
         }

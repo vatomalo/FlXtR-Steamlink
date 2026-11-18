@@ -370,6 +370,33 @@ class TestMultiMapTravel(unittest.TestCase):
                              [d.reason for d in decisions])
             history.close()
 
+    def test_hero_pinned_by_a_chase_loop_blinks_out(self):
+        # "close on enemy 1 at 230px / 220px" for minutes: always moving,
+        # never stalled, yet never leaving a few tiles.
+        from som_planner import PIN_STEPS, PlannerDecision
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "pin.sqlite")
+            cols = [r[1] for r in history.connection.execute("pragma table_info(walked_cells)")]
+            for x, y in ((10, 10), (11, 11), (20, 18)):
+                row = {"map_id": 130, "x": x, "y": y}
+                history.connection.execute(
+                    f"INSERT INTO walked_cells VALUES({','.join('?' * len(cols))})",
+                    [row.get(c, 1 if c == "layer" else 0) for c in cols])
+            planner = MemoryPlanner(history)
+            planner.blink = True
+            results = []
+            for i in range(PIN_STEPS):
+                tile = [10, 10 + i % 2]
+                observation = {"tile_context": {"map_id": 130, "actor_tile": tile,
+                                                "actor": {"layer": 1}}}
+                step = PlannerDecision("step_up" if i % 2 else "step_down",
+                                       "close on enemy 1 at 230px", "engage_enemy")
+                results.append(planner._check_pinned(observation, step))
+            self.assertTrue(all(r.intention == "engage_enemy" for r in results[:-1]))
+            self.assertEqual(results[-1].action, "blink_20_18", results[-1].reason)
+            self.assertIn("pinned", results[-1].reason)
+            history.close()
+
     def test_no_evade_while_still_facing_the_blocker(self):
         # The evade overwrote the turn tap in the proxy's one action slot:
         # the hero still faced the gatekeeper and hopped away from him.

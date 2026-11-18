@@ -124,6 +124,12 @@ TRAP_WINDOW = 80
 # refuses other ground and has its own 10 s cooldown, so the planner waits
 # BLINK_COOLDOWN_S between asks and evades meanwhile.
 BLINK_RANGE = 12
+# Pinned: the last PIN_STEPS step decisions all stayed within PIN_TILES of
+# each other. The hero chased an unreachable monster for minutes ("close on
+# enemy 1 at 230px", "220px", "230px"...), always moving, so no stall ever
+# counted; pinned counts as trapped.
+PIN_STEPS = 40
+PIN_TILES = 2
 BLINK_COOLDOWN_S = 12.0
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
@@ -262,6 +268,7 @@ class MemoryPlanner:
         self.blink = False                 # set by the bridge when the proxy can blink
         self.blink_at = None               # clock() of the last blink asked for
         self.stall_log = []                # (decision, map, x, y) of recent stalls
+        self.step_tiles = []               # (map, x, y) of the last PIN_STEPS steps
         # Set while the play loop hunts on the current map: exploration must
         # not walk over exit tiles (it used to leave map 129 for 128 and be
         # sent straight back, over and over).
@@ -1689,6 +1696,7 @@ class MemoryPlanner:
             decision = replace(decision, reason=f"{deflected}; {decision.reason}")
         decision = self._observe_curiosity(observation, decision, directive, errand)
         decision = self._check_stall(observation, decision)
+        decision = self._check_pinned(observation, decision)
         return self._slide_failsafe_tick(observation, decision)
 
     BUSY_INTENTIONS = ("engage_enemy", "survive", "recover_at_inn", "return_to_inn",
@@ -2236,15 +2244,43 @@ class MemoryPlanner:
                 abs(s[2] - tile[0]) <= TRAP_TILES and abs(s[3] - tile[1]) <= TRAP_TILES]
         return len(near) >= TRAP_STALLS
 
-    def _blink_out(self, context):
+    def _check_pinned(self, observation, decision):
+        """Escape (Blink, else an evade hop along the step) when the last
+        PIN_STEPS steps never left a (2 * PIN_TILES + 1)-tile box."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        if (not isinstance(context, dict) or decision.action not in STEP_OFFSETS or
+                decision.turn_only or not isinstance(context.get("actor_tile"), list)):
+            return decision
+        here, tile = context.get("map_id"), context["actor_tile"]
+        self.step_tiles = [t for t in self.step_tiles if t[0] == here][-(PIN_STEPS - 1):]
+        self.step_tiles.append((here, tile[0], tile[1]))
+        if len(self.step_tiles) < PIN_STEPS:
+            return decision
+        xs = [t[1] for t in self.step_tiles]
+        ys = [t[2] for t in self.step_tiles]
+        if max(xs) - min(xs) > 2 * PIN_TILES or max(ys) - min(ys) > 2 * PIN_TILES:
+            return decision
+        trap = [(x, y) for _, x, y in self.step_tiles]
+        self.step_tiles = []
+        why = f"pinned: {PIN_STEPS} steps never left a box around {tile[0]},{tile[1]}"
+        blink = self._blink_out(context, trap)
+        if blink is not None:
+            return replace(blink, reason=f"{why}; {blink.reason}")
+        past = self._evade_past(context, decision.action, trapped=True)
+        if past is not None:
+            return replace(past, reason=f"{why}; {past.reason}")
+        return decision
+
+    def _blink_out(self, context, trap=None):
         """Blink to the walked tile farthest from the trap (within range,
-        more than TRAP_TILES from every stall here), or None."""
+        more than TRAP_TILES from every trap tile: the stalls here, or the
+        tiles a pinned hero kept to), or None."""
         now = self.clock()
         if (not self.blink or self.history is None or
                 (self.blink_at is not None and now - self.blink_at < BLINK_COOLDOWN_S)):
             return None
         here, tile = context.get("map_id"), context.get("actor_tile")
-        stalls = [(s[2], s[3]) for s in self.stall_log if s[1] == here]
+        stalls = trap or [(s[2], s[3]) for s in self.stall_log if s[1] == here]
         if not isinstance(tile, list) or not stalls:
             return None
         cx = sum(x for x, _ in stalls) / len(stalls)

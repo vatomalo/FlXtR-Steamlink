@@ -92,6 +92,19 @@ LINES = {
 # (it flipped between five classes every 1-3 minutes on 2026-11-16).
 SWITCH_MARGIN = 3
 MIN_HOLD_S = 90.0
+# Sister classes (the player's family, 2026-11-19): Martial Arts, Ninjutsu,
+# Roguecraft, Bushido. A hero in one of them switches between them in a
+# fight by situation, at most every SISTER_HOLD_S, even with a class the
+# player picked; calm again, he goes back to the class he was in before.
+SISTERS = (1, 2, 9, 10)
+SISTER_HOLD_S = 8.0
+SISTER_PICKS = (            # first match wins: (tag, class, why)
+    ("hurt", 9, "hurt: Roguecraft cartwheels away and shoots from range"),
+    ("far", 2, "enemy far: Ninjutsu's boomerang, Fuma clone and swap"),
+    ("tough", 10, "tough enemy: Bushido's Iaijutsu"),
+    ("crowd", 10, "crowd: Bushido's Iaijutsu cuts them all"),
+    ("duel", 1, "one enemy close: Martial Arts combo and flying kick"),
+)
 CONTACT_PX = 40                      # no switching with an enemy this close
 DEFAULT_COOLDOWN_S = 50.0
 
@@ -271,6 +284,29 @@ class ClassDirector:
         self.wanted = ()             # the wanted build (class indices)
         self.wanted_fixed = False    # set by the player: the AI keeps it
         self.pinned = False          # the player picked the class in the game
+        self.home = None             # sister class to return to when calm
+
+    def sister_choose(self, hp_fraction=1.0, enemies=0, nearest=None, toughest=0):
+        """(sister class, reason) for this moment of a fight, the home class
+        once calm, or None. Only for a hero already in a sister class."""
+        if self.current not in SISTERS or self.cooldown is None:
+            return None
+        tags = situation_tags(hp_fraction, enemies, nearest, toughest)
+        if "calm" in tags:
+            home, self.home = self.home, None
+            if home is not None and home != self.current:
+                return home, f"fight over: back to {NAMES[home]}"
+            return None
+        if self.switched_at is not None and self.clock() - self.switched_at < SISTER_HOLD_S:
+            return None
+        for tag, klass, why in SISTER_PICKS:
+            if tag in tags:
+                if klass == self.current:
+                    return None
+                if self.home is None:
+                    self.home = self.current
+                return klass, why
+        return None
 
     def set_plan(self, classes, fixed=False):
         """Adopt a wanted build; returns True when it changed."""
@@ -306,6 +342,9 @@ class ClassDirector:
 
         situation: hp_fraction, enemies, nearest (px or None), toughest (max HP).
         in_combat = an enemy in contact (no switching then)."""
+        sister = self.sister_choose(**situation)
+        if sister is not None or (self.current in SISTERS and self.pinned):
+            return sister
         if self.pinned:
             return None
         tags = situation_tags(**situation)

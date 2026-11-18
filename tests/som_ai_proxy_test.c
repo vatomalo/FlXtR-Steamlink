@@ -1335,6 +1335,8 @@ int main(void){
         uint8_t *foe=ram+0xE600;
         disciplines.selected=0;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
         hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
+        ram[0xA8]=100;ram[0xA9]=0;ram[0xAA]=100;ram[0xAB]=0;            /* camera */
+        ram[0xB0]=116;ram[0xB1]=0;ram[0xAC]=30;ram[0xAD]=0;ram[0xB4]=50;ram[0xB5]=1;
         mocked_buttons=r1a;som_input_poll();
         assert(evade_active&&!kawarimi_armed_until&&!(hero[0x191]&0x04));
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
@@ -1352,13 +1354,44 @@ int main(void){
             }
             assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(hero+4)==200);
             assert(!evade_active&&!kawarimi_log_start&&trail_until>=hop_start+16u);
+            /* The camera and both layers' scroll words followed him. */
+            assert(som_bun_u16(ram+0xA8)==52&&som_bun_u16(ram+0xB0)==68&&
+                   som_bun_u16(ram+0xAC)==0xFFFFu-17u&&som_bun_u16(ram+0xB4)==306-48&&
+                   som_bun_u16(ram+0xAA)==100);
         }
-        /* Rogue A: evade too (2 x 18 = 36 px); A held right moves right. */
-        disciplines.selected=9;hero[2]=200;
+        /* At the map's left edge the camera stays put. */
+        ram[0xA8]=10;ram[0xA9]=0;hero[2]=200;hero[0x010]=0x02;
+        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(ram+0xA8)==0);
+        /* Rogue A: a cartwheel (4 x 16 = 64 px); A held right moves right.
+         * Without a frame pack it is only the move. */
+        disciplines.selected=9;hero[2]=200;ram[0xA8]=100;
         mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
         mocked_buttons=0;som_input_poll();
+        assert(!cartwheel.active&&!(hero[0x0E]&0x80u));
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(som_bun_u16(hero+2)==200+36&&!evade_active);
+        assert(som_bun_u16(hero+2)==200+64&&!evade_active&&som_bun_u16(ram+0xA8)==164);
+        /* With a pack (one 1-pixel frame of 5 ticks = 25 frames): the hero
+         * is hidden and drawn turning for the spin, then shown again. */
+        {
+            static uint8_t pack[10+44+6];
+            memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            pack[10]=0x80;pack[11]=0xFE;pack[12]=2;pack[13]=1;
+            pack[54]=5;pack[57]=1;pack[58]=1;pack[59]=1;
+            cartwheel_pack=pack;cartwheel_pack_size=sizeof(pack);cartwheel_pack_tried=1;
+            hero[0x180]=0x80;hero[0x0E]=0;hero[2]=200;hero[3]=0;
+            mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(cartwheel.active&&cartwheel.dir==2u&&(hero[0x0E]&0x80u)&&evade_frames==25u);
+            for(unsigned f=0;f<24;f++){som_hop_step();som_evade_tick();frame_number++;}
+            assert(evade_active&&cartwheel.active&&(hero[0x0E]&0x80u));
+            for(unsigned f=0;f<4;f++){som_hop_step();som_evade_tick();frame_number++;}
+            assert(!evade_active&&!cartwheel.active&&!(hero[0x0E]&0x80u));
+            assert(som_bun_u16(hero+2)==200+64);
+            cartwheel_pack=NULL;cartwheel_pack_size=0;hero[3]=0;
+        }
         /* AI "kawarimi": armed; nothing moves until a monster touches him.
          * Then he reappears 3 x 16 = 48 px away from it, the hit is
          * dropped, a log stands on his old spot, and he is untouchable for
@@ -1416,12 +1449,12 @@ int main(void){
         assert(som_bun_u16(hero+2)==200-48);
         for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
         perks_enabled=1;disciplines.level[0]=1;hero[0x1F1]=0;
-        /* Monk: 2 x 18 = 36 px; archer 3 x 18 away from a monster above,
+        /* Monk: 4 x 16 = 64 px (the cartwheel's reach); archer 3 x 18 away from a monster above,
          * stopped short of a wall; rogue arms too. */
         disciplines.selected=1;hero[2]=200;hero[4]=200;
         assert(som_handle_command("kawarimi"));
         hero[0x1F1]=9;som_hop_step();
-        assert(som_bun_u16(hero+2)==200-36);
+        assert(som_bun_u16(hero+2)==200-64);
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         disciplines.selected=11;hero[2]=200;hero[0x1F1]=0;
         assert(som_handle_command("kawarimi"));

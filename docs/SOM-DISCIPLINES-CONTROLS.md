@@ -178,6 +178,29 @@ PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py'
 
 No Steam Link deployment should occur before build and hardware validation.
 
+## Cartwheel evade (monk and rogue, 2026-11-18)
+
+Martial Arts and Roguecraft evade with a cartwheel; the ninja keeps his
+evade and jutsu. The hero is hidden (object +0x0E bit 7) and the proxy draws
+him turning over the move: his standing frame turned 0, 90, 180, 270
+degrees and upright again (`tools/som_cartwheel.py`, pack
+`som_cartwheel_frames.bin` in cores/experimental, npc_work format, kind
+0x80-0x82; sideways uses the front frame, up/down the side frame), in his
+live palette, so the class colours stay. 4 px x 16 frames (64 px), spin 25
+frames. Without the pack it is the same move, drawn as the plain sprite.
+
+Camera: every dodge now moves the camera with the hero. The game scrolls
+only by the hero's own walking steps, so a proxy-carried hero left the
+camera behind (offline replay of a field state: 48 px hop, camera 7E:00A8
+unmoved). The camera words move together with their BG scroll words:
+A8/B0 and AA/B2 (BG1), AC/B4 and AE/B6 (BG2), clamped to the map size
+C0/C2; new tile columns stream in on their own (checked at 4 px per frame).
+
+ROM frames found on the way (boy, pose table D0:FFF0): handstand 176-179
+(one picture), curled tumble 134-137 (end of pose 30), ball and handstand in
+pose 34 (likely the cannonball launch), side kick 89 (glove attack 2),
+airborne kicks 92, 166, 167.
+
 ## Dodge roll from the native somersault (planned, waiting on a recording)
 
 The player wants the game's own somersault animation used as a dodge roll.
@@ -353,7 +376,7 @@ Now (`som_disc_dodge`): the proxy carries the hero per frame onto open ground (w
 of the clones), keeps status 0x0400 (untouchable) for the move plus 8 frames, hides
 A/D-pad/B/Y/X from the game meanwhile and draws an after-image trail (his own sprite, 4
 and 8 frames behind, every other frame). Swordsman/samurai 3 px x 16 (48 px) back, monk/
-rogue 2 x 18 (36 px), archer 3 x 18 (54 px), ninja with sword = Shunshin 6 x 12 (72 px)
+rogue cartwheel 4 x 16 (64 px, see below), archer 3 x 18 (54 px), ninja with sword = Shunshin 6 x 12 (72 px)
 forward, other ninja weapons 3 x 16. A held direction aims any of them.
 Verified headless on the Steam Link: 48 px roll with status 0400 set then cleared,
 Shunshin stopped by a wall, trail drawn.

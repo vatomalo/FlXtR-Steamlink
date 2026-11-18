@@ -1791,6 +1791,66 @@ static int som_clone_jutsu(uint8_t *ram,const char *jutsu){
     fprintf(stderr,"[som-ai] JUTSU %s: %u clone(s)\n",jutsu,made);
     return 1;
 }
+/* Cartwheel evade (Martial Arts, Roguecraft; som_disc_dodge .cartwheel):
+ * the hero is hidden (+0x0E bit 7, checked offline 2026-11-18) and drawn
+ * turning a cartwheel from som_cartwheel_frames.bin (tools/som_cartwheel.py,
+ * the npc_work pack format: kind 0x80-0x82 = boy, girl, sprite; facing 2 =
+ * sideways, 1 = up/down) in his own live colours, while som_hop_step
+ * carries him. */
+#define SOM_CARTWHEEL_PACK_FILE "/home/apps/retroarch/cores/experimental/som_cartwheel_frames.bin"
+static void som_load_pack_file(const char *path,const char *what,uint8_t **pack,size_t *size);
+static uint8_t *cartwheel_pack;
+static size_t cartwheel_pack_size;
+static int cartwheel_pack_tried,cartwheel_hid;
+static SomNpcWorkState cartwheel;
+/* Starts the drawing for a dodge of (dx, dy); the frames the spin lasts,
+ * 0 when there is nothing to draw (no pack or no entry for this hero). */
+static unsigned long som_cartwheel_begin(uint8_t *ram,int dx,int dy){
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Cartwheel",&cartwheel_pack,&cartwheel_pack_size);
+    }
+    uint8_t *hero=ram+0xE000u;
+    const unsigned id=hero[0x180];
+    SomWorkEntry entry;
+    if(!cartwheel_pack||id<0x80u||id>0x82u||
+       !som_work_find(cartwheel_pack,cartwheel_pack_size,id,dx?2u:1u,&entry))return 0;
+    memset(&cartwheel,0,sizeof(cartwheel));
+    cartwheel.active=1;cartwheel.slot=0;cartwheel.kind=id;
+    cartwheel.dir=dx<0?3u:dx>0?2u:dy>0?1u:0u;
+    cartwheel.start=frame_number;cartwheel.entry=entry;cartwheel.own_palette=1;
+    cartwheel.length=som_work_swing_frames(&entry);
+    cartwheel_hid=!(hero[0x0E]&0x80u);
+    hero[0x0E]|=0x80u;
+    return cartwheel.length;
+}
+static void som_cartwheel_end(uint8_t *ram){
+    if(!cartwheel.active)return;
+    if(ram&&cartwheel_hid)ram[0xE00E]&=(uint8_t)~0x80u;
+    cartwheel.active=0;cartwheel_hid=0;
+}
+/* The camera follows a dodge. The game scrolls only by the hero's own
+ * walking steps, so a hero carried by the proxy left it behind (offline
+ * replay of a field state, 2026-11-18: 48 px hop, camera A8 unmoved). Each
+ * camera word moves with its BG scroll word, A8/B0 and AA/B2 (BG1), AC/B4
+ * and AE/B6 (BG2, the second camera); moving A8 alone shifted the sprites
+ * but not the ground. Clamped to the map (C0/C2 minus the screen); new
+ * tile rows stream in by themselves (checked at 4 px per frame). */
+static void som_camera_follow(uint8_t *ram,int dx,int dy){
+    const int w=(int)som_bun_u16(ram+0xC0),h=(int)som_bun_u16(ram+0xC2);
+    const int cx=(int)som_bun_u16(ram+0xA8),cy=(int)som_bun_u16(ram+0xAA);
+    int nx=cx+dx,ny=cy+dy;
+    if(w>=256&&w<=4096){if(nx>w-256)nx=w-256;if(nx<0)nx=0;}else nx=cx;
+    if(h>=224&&h<=4096){if(ny>h-224)ny=h-224;if(ny<0)ny=0;}else ny=cy;
+    dx=nx-cx;dy=ny-cy;
+    static const unsigned xs[4]={0xA8u,0xB0u,0xACu,0xB4u},ys[4]={0xAAu,0xB2u,0xAEu,0xB6u};
+    for(unsigned k=0;k<4u;k++){
+        const unsigned vx=(som_bun_u16(ram+xs[k])+(unsigned)dx)&0xFFFFu;
+        const unsigned vy=(som_bun_u16(ram+ys[k])+(unsigned)dy)&0xFFFFu;
+        ram[xs[k]]=(uint8_t)vx;ram[xs[k]+1u]=(uint8_t)(vx>>8);
+        ram[ys[k]]=(uint8_t)vy;ram[ys[k]+1u]=(uint8_t)(vy>>8);
+    }
+}
 /* A (and the AI's "evade"): the class's plain dodge hop. A ninja with the
  * long-range weapon (chakram/boomerang) casts Kage Bunshin instead, and with clones out A swaps
  * him into one. Kawarimi and Shunshin are not on A (AI commands
@@ -1821,10 +1881,14 @@ static int som_evade_start(uint8_t *ram){
     const unsigned move=dodge.frames+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
     hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
     evade_frames=move+SOM_DODGE_GRACE;
+    if(dodge.cartwheel){
+        const unsigned long spin=som_cartwheel_begin(ram,dx,dy);
+        if(spin>evade_frames)evade_frames=(unsigned)spin;
+    }
     hero[0x006]=hero[0x007]=0;
     evade_hp=som_word(hero+0x182);
     evade_active=1;evade_started=frame_number;evade_xp_given=0;
-    som_overlay_set(&overlay,"^Evade",SOM_MESSAGE_FRAMES/2u);
+    som_overlay_set(&overlay,dodge.cartwheel?"^Cartwheel":"^Evade",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
             dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,move);
     return 1;
@@ -1928,7 +1992,7 @@ static void som_hop_step(void){
     som_evade_shield(ram);
     int x=(int)som_bun_u16(hero+2),y=(int)som_bun_u16(hero+4);
     const unsigned slot=(unsigned)(frame_number%SOM_TRAIL_LENGTH);
-    trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;
+    if(!cartwheel.active){trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;}
     if(!evade_xp_given&&disciplines.selected<SOM_DISCIPLINE_COUNT){
         const int near=som_bun_toucher(ram,x,y,SOM_XP_NEAR_MISS_PX,SOM_XP_NEAR_MISS_PX,familiar.slot);
         if(near>=0){
@@ -1940,8 +2004,10 @@ static void som_hop_step(void){
     if(!hop_frames_left)return;
     const unsigned place=som_hero_place(hero);
     int moved=0;
+    const int x0=x,y0=y;
     if(hop_dx&&som_bun_spot_open(ram,x+hop_dx,y,place)){x+=hop_dx;moved=1;}
     if(hop_dy&&som_bun_spot_open(ram,x,y+hop_dy,place)){y+=hop_dy;moved=1;}
+    if(moved)som_camera_follow(ram,x-x0,y-y0);
     hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
     hero[0x006]=hero[0x007]=0;
     hop_frames_left=moved?hop_frames_left-1u:0u;
@@ -1972,6 +2038,7 @@ static void som_evade_tick(void){
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
     evade_active=0;hop_frames_left=0;
+    som_cartwheel_end(ram);
 }
 /* After-images of the dodge, 4 and 8 frames behind, on even frames only
  * (a flicker reads as translucent; the boy's palette has no colour math). */
@@ -2463,21 +2530,25 @@ static uint8_t *npc_work_pack;
 static size_t npc_work_pack_size;
 static int npc_work_pack_tried;
 static SomNpcWorkState npc_work;
-static void som_npc_work_load_pack(void){
-    if(npc_work_pack_tried)return;
-    npc_work_pack_tried=1;
-    FILE *f=fopen(npc_work_pack_file,"rb");
-    if(!f){fprintf(stderr,"[som-ai] NPC work: no frame pack %s\n",npc_work_pack_file);return;}
+/* Reads a whole frame pack (at most 16 MiB) into memory. */
+static void som_load_pack_file(const char *path,const char *what,uint8_t **pack,size_t *size){
+    FILE *f=fopen(path,"rb");
+    if(!f){fprintf(stderr,"[som-ai] %s: no frame pack %s\n",what,path);return;}
     if(fseek(f,0,SEEK_END)==0){
         const long n=ftell(f);
-        if(n>10&&n<(16l<<20)&&fseek(f,0,SEEK_SET)==0&&(npc_work_pack=malloc((size_t)n))){
-            if(fread(npc_work_pack,1,(size_t)n,f)==(size_t)n)npc_work_pack_size=(size_t)n;
-            else{free(npc_work_pack);npc_work_pack=NULL;}
+        if(n>10&&n<(16l<<20)&&fseek(f,0,SEEK_SET)==0&&(*pack=malloc((size_t)n))){
+            if(fread(*pack,1,(size_t)n,f)==(size_t)n)*size=(size_t)n;
+            else{free(*pack);*pack=NULL;}
         }
     }
     fclose(f);
-    fprintf(stderr,"[som-ai] NPC work: frame pack %s (%lu bytes)\n",
-        npc_work_pack?"loaded":"unreadable",(unsigned long)npc_work_pack_size);
+    fprintf(stderr,"[som-ai] %s: frame pack %s (%lu bytes)\n",what,
+        *pack?"loaded":"unreadable",(unsigned long)*size);
+}
+static void som_npc_work_load_pack(void){
+    if(npc_work_pack_tried)return;
+    npc_work_pack_tried=1;
+    som_load_pack_file(npc_work_pack_file,"NPC work",&npc_work_pack,&npc_work_pack_size);
 }
 static uint8_t *som_npc_ram(size_t *size){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size)return NULL;
@@ -3309,7 +3380,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=npc_work.active&&!menu;
+    const int worker=(npc_work.active||cartwheel.active)&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
     if(!menu&&general_count&&backend_retro_get_memory_data&&
@@ -3347,9 +3418,14 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     if(worker){
         size_t ram_size=0;
         const uint8_t *ram=som_npc_ram(&ram_size);
-        if(ram&&ram_size==SOM_WRAM_SIZE)
-            som_npc_work_draw(&npc_work,ram,frame_number,overlay_frame,width,height,pitch,
-                              pixel_format);
+        if(ram&&ram_size==SOM_WRAM_SIZE){
+            if(npc_work.active)
+                som_npc_work_draw(&npc_work,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+            if(cartwheel.active)
+                som_npc_work_draw(&cartwheel,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+        }
     }
     if(hero_drawn){
         if(clones){
@@ -3504,6 +3580,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
+    cartwheel.active=0;cartwheel_hid=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;

@@ -67,15 +67,18 @@ static inline unsigned som_disc_third_weapon(unsigned discipline){
 #define SOM_WEAPON_TYPES 8u
 static inline int som_weapon_long_range(unsigned weapon){return weapon>=4u&&weapon<SOM_WEAPON_TYPES;}
 static inline int som_weapon_short_range(unsigned weapon){return weapon<4u;}
-typedef struct { unsigned speed, frames; int forward; const char *name; } SomDodge;
+/* cartwheel: the proxy draws the hero turning a cartwheel (tools/som_cartwheel.py
+ * frames) over the hidden hero instead of the after-image hop. */
+typedef struct { unsigned speed, frames; int forward; const char *name; int cartwheel; } SomDodge;
 #define SOM_DODGE_GRACE 8u                 /* untouchable frames after the move */
 #define SOM_KAWARIMI_NAME "Kawarimi no Jutsu"
 static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
-    SomDodge d={0u,0u,0,""};
+    SomDodge d={0u,0u,0,"",0};
     (void)weapon;
     switch(discipline){
     case 0: case 10: d.speed=3u;d.frames=16u;d.name="Evade";break;        /* 48 px roll */
-    case 1: case 9: d.speed=2u;d.frames=18u;d.name="Evade";break;         /* 36 px hop */
+    case 1: case 9:                    /* monk, rogue: 64 px cartwheel */
+        d.speed=4u;d.frames=16u;d.name="Cartwheel";d.cartwheel=1;break;
     case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
     case 2: d.speed=3u;d.frames=16u;d.name="Evade";break;                 /* 48 px */
     default:break;

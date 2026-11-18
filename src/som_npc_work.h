@@ -50,6 +50,7 @@ typedef struct {
     unsigned map, slot, kind, dir;
     unsigned long start, length;     /* frames */
     SomWorkEntry entry;
+    int own_palette;                 /* colours 1-15 straight from the object's live palette */
 } SomNpcWorkState;
 
 /* Walks one frame record; NULL when it would leave the pack. */
@@ -188,6 +189,10 @@ static inline int som_npc_work_colours(const SomNpcWorkState *s,const uint8_t *w
     if(!wram)return 0;
     const unsigned pal=(wram[SOM_NPC_OBJECT(s->slot)+0x8Bu]>>1)&7u;
     const uint8_t *live=wram+0x0700u+32u*pal;
+    if(s->own_palette){             /* a hero in his own (class) colours */
+        for(unsigned i=1;i<=15u;i++)out[i]=(uint16_t)((live[2u*i]|live[2u*i+1u]<<8)&0x7FFFu);
+        return 1;
+    }
     int lut[3][32];
     for(unsigned c=0;c<3u;c++)for(unsigned v=0;v<32u;v++)lut[c][v]=-1;
     for(unsigned i=1;i<=15u;i++){

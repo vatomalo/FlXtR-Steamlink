@@ -429,6 +429,36 @@ class TestMultiMapTravel(unittest.TestCase):
                                  (planner.decide(state, "step_right") for _ in range(3))))
             history.close()
 
+    def test_refused_blink_target_is_not_chosen_again(self):
+        # Tile 30,19 was refused as not open ground again and again.
+        from som_planner import PIN_STEPS, PlannerDecision
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "refused.sqlite")
+            cols = [r[1] for r in history.connection.execute("pragma table_info(walked_cells)")]
+            for x, y in ((20, 18), (16, 16)):
+                row = {"map_id": 130, "x": x, "y": y}
+                history.connection.execute(
+                    f"INSERT INTO walked_cells VALUES({','.join('?' * len(cols))})",
+                    [row.get(c, 1 if c == "layer" else 0) for c in cols])
+            now = [100.0]
+            planner = MemoryPlanner(history)
+            planner.clock = lambda: now[0]
+            planner.blink = True
+
+            def pin():
+                result = None
+                for i in range(PIN_STEPS):
+                    obs = {"tile_context": {"map_id": 130, "actor_tile": [10, 10 + i % 2],
+                                            "actor": {"layer": 1}}}
+                    result = planner._check_pinned(obs, PlannerDecision(
+                        "step_up" if i % 2 else "step_down", "close on enemy", "engage_enemy"))
+                return result
+            self.assertEqual(pin().action, "blink_20_18")
+            now[0] += 2.0                       # the proxy refused: he is still here
+            planner._blink_outcome({"map_id": 130, "actor_tile": [10, 11]})
+            self.assertEqual(pin().action, "blink_16_16")
+            history.close()
+
     def test_no_evade_while_still_facing_the_blocker(self):
         # The evade overwrote the turn tap in the proxy's one action slot:
         # the hero still faced the gatekeeper and hopped away from him.

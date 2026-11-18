@@ -131,6 +131,7 @@ BLINK_RANGE = 12
 PIN_STEPS = 40
 PIN_TILES = 2
 BLINK_COOLDOWN_S = 12.0
+BLINK_SETTLE_S = 1.5        # travel time before a blink's result is judged
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
@@ -271,6 +272,8 @@ class MemoryPlanner:
         self.blink = False                 # set by the bridge when the proxy can blink
         self.fuma_swap = False             # set by the bridge for a ninja on the Steam Link
         self.blink_at = None               # clock() of the last blink asked for
+        self.blink_sent = None             # (map, from tile, target) awaiting the result
+        self.blink_failed = set()          # (map, target) that did not move the hero
         self.stall_log = []                # (decision, map, x, y) of recent stalls
         self.step_tiles = []               # (map, x, y) of the last PIN_STEPS steps
         # Set while the play loop hunts on the current map: exploration must
@@ -1690,6 +1693,8 @@ class MemoryPlanner:
             self.escape_left -= 1
             directive = self.escape_directive
         deflected = self._check_deflection(observation, previous)
+        self._blink_outcome(observation.get("tile_context") if isinstance(observation, dict)
+                            else None)
         pending, self.evade_past_pending = self.evade_past_pending, None
         if pending is not None and self.evade_past:
             key, blocked, tries, turns = pending
@@ -2258,6 +2263,23 @@ class MemoryPlanner:
                 abs(s[2] - tile[0]) <= TRAP_TILES and abs(s[3] - tile[1]) <= TRAP_TILES]
         return len(near) >= TRAP_STALLS
 
+    def _last_blink_target_failed(self):
+        return getattr(self, "_last_blink", None) in self.blink_failed
+
+    def _blink_outcome(self, context):
+        """After a blink was asked for: a target the hero did not reach
+        (refused by the proxy) is not chosen again on this map."""
+        if self.blink_sent is None or not isinstance(context, dict):
+            return
+        if self.clock() - (self.blink_at or 0) < BLINK_SETTLE_S:
+            return
+        here, start, target = self.blink_sent
+        self.blink_sent = None
+        tile = context.get("actor_tile")
+        if (context.get("map_id") == here and isinstance(tile, list) and
+                abs(tile[0] - target[0]) + abs(tile[1] - target[1]) > 2):
+            self.blink_failed.add((here, target))
+
     def _check_pinned(self, observation, decision):
         """Escape (Blink, else an evade hop along the step) when the last
         PIN_STEPS steps never left a (2 * PIN_TILES + 1)-tile box."""
@@ -2290,20 +2312,27 @@ class MemoryPlanner:
         more than TRAP_TILES from every trap tile: the stalls here, or the
         tiles a pinned hero kept to), or None."""
         now = self.clock()
+        last_failed = self.blink_sent is None and self.blink_failed and \
+            self.blink_at is not None and now - self.blink_at < BLINK_COOLDOWN_S and \
+            self._last_blink_target_failed()
         if (not self.blink or self.history is None or
-                (self.blink_at is not None and now - self.blink_at < BLINK_COOLDOWN_S)):
+                (self.blink_at is not None and now - self.blink_at < BLINK_COOLDOWN_S and
+                 not last_failed)):
             return None
         here, tile = context.get("map_id"), context.get("actor_tile")
         stalls = trap or [(s[2], s[3]) for s in self.stall_log if s[1] == here]
         if not isinstance(tile, list) or not stalls:
             return None
         cx = sum(x for x, _ in stalls) / len(stalls)
+        failed = {t for m, t in self.blink_failed if m == here}
         cy = sum(y for _, y in stalls) / len(stalls)
         best = None
         for x, y in self._walked(here):
             if abs(x - tile[0]) > BLINK_RANGE or abs(y - tile[1]) > BLINK_RANGE:
                 continue
             if any(abs(x - sx) <= TRAP_TILES and abs(y - sy) <= TRAP_TILES for sx, sy in stalls):
+                continue
+            if (x, y) in failed:
                 continue
             score = abs(x - cx) + abs(y - cy)
             if best is None or score > best[0]:
@@ -2313,6 +2342,8 @@ class MemoryPlanner:
         self.blink_at, self.stall_log = now, []
         self._set_intention(None)
         _, x, y = best
+        self.blink_sent = (here, tuple(tile), (x, y))
+        self._last_blink = (here, (x, y))
         return PlannerDecision(f"blink_{x}_{y}", f"trapped at {tile[0]},{tile[1]}: blinking to "
                                f"walked tile {x},{y}", "blink")
 

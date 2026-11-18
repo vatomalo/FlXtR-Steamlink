@@ -1928,8 +1928,17 @@ static int som_blink_start(uint8_t *ram,int tx,int ty){
         fprintf(stderr,"[som-ai] BLINK refused: tile %d,%d out of range\n",tx,ty);
         return 0;
     }
-    const int x=tx*16+8,y=ty*16+8;
-    if(!som_bun_spot_open(ram,x,y,som_hero_place(hero))){
+    /* The tile centre first, then nearby spots the hero's box fits in: a
+     * tile he walked through can be too narrow at its centre (tile 30,19
+     * on map 130 refused again and again, 2026-11-19). */
+    static const int near[][2]={{0,0},{0,-4},{0,4},{-4,0},{4,0},{-4,-4},{4,-4},{-4,4},{4,4},
+                                {0,-7},{0,7},{-7,0},{7,0}};
+    int x=0,y=0,found=0;
+    for(unsigned k=0;k<sizeof(near)/sizeof(near[0])&&!found;k++){
+        x=tx*16+8+near[k][0];y=ty*16+8+near[k][1];
+        found=som_bun_spot_open(ram,x,y,som_hero_place(hero));
+    }
+    if(!found){
         fprintf(stderr,"[som-ai] BLINK refused: tile %d,%d is not open ground\n",tx,ty);
         return 0;
     }

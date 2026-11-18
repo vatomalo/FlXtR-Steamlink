@@ -89,6 +89,16 @@ class PlayLoopTest(unittest.TestCase):
         self.assertTrue(any("save unavailable" in line for line in self.logs))
         self.assertTrue(any("HP already full" in line for line in self.logs))
 
+    def test_inn_saves_so_missing_taught_save_hands_back_to_hunting(self):
+        # Full HP skipped the inn, then the hero waited in the save phase
+        # forever for a taught save (2026-11-18); the inn saves on each stay.
+        play = self.make()
+        play.inn_saves = True
+        play._enter("shop", "test")
+        self.assertTrue(play.goal(summary(), False, True, False, ALL).startswith("hunt"))
+        self.assertEqual(play.phase, "hunt")
+        self.assertTrue(any("the inn saves" in line for line in self.logs))
+
     def test_unusable_inn_goes_to_save(self):
         play = self.make()
         play._enter("inn", "test")

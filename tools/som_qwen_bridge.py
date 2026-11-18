@@ -1395,7 +1395,8 @@ def main() -> int:
         planner.block_learner = block_learner
     if args.play_loop and history is not None and args.policy in ("hybrid", "memory"):
         play_loop = PlayLoop(history, args.hunt_map, args.trip_gold,
-                             log=lambda line: print(line, flush=True))
+                             log=lambda line: print(line, flush=True),
+                             inn_saves=bool(args.save_slot))
         planner.fight_all = True
         print(f"[loop] play loop on; phase {play_loop.phase}", flush=True)
     if history is not None:
@@ -1844,6 +1845,10 @@ def main() -> int:
                               "avoid_fights": True}
                 elif args.visit_map == current_map:
                     errand = None
+                # Hop past someone standing in the way (planner evade_past);
+                # an evade gambit of 0 means the player wants no evading.
+                planner.evade_past = bool(link and class_director.current in DODGE_CLASSES and
+                                          style["evade"] > 0)
                 decision = planner.decide(observation, previous, directive, errand)
                 # Missing a taught inn/save macro must NOT freeze the hero.
                 # The play-loop phase stays committed, but the deterministic
@@ -2255,6 +2260,15 @@ def main() -> int:
                         announce("AI: save failed|see log")
                         play_loop.save_failed(str(exc))
                     previous = "wait"
+                    continue
+                if link and decision.intention == "evade_past" and decision.action == "evade":
+                    print(f"[ai] intent=evade_past: {decision.reason}", flush=True)
+                    try:
+                        link.send_control("evade")
+                        announce("AI: Evade|past the one in the way")
+                    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                        print(f"[combat] evade past failed: {exc}", flush=True)
+                    previous = "evade"
                     continue
                 directive_turns -= 1
                 action = decision.action

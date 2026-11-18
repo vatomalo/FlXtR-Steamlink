@@ -14,7 +14,9 @@ the existing closed-loop macros already carry out:
   macro rejects a full-HP stay and would disable the inn for the run.
 - save: replay the save the player taught with tools/som_teach_save.py and
   verify that the taught final page appeared. An untaught/failed save is
-  blocked rather than being silently counted as complete.
+  blocked rather than being silently counted as complete, unless the inn
+  saves (inn_saves): then a verified inn stay is the save, and with no taught
+  save the phase hands back to hunting.
 
 Survival (HP at or below half) stays with the planner, which retreats to the
 inn by itself; a successful inn stay from any cause advances the loop to
@@ -24,6 +26,7 @@ import threading
 import time
 
 from som_dialogue import GLYPHS
+from som_frontier import Frontier
 from som_game_over import deaths_by_map
 from som_menu import REPLAYABLE, InnMacro, MacroFailed
 
@@ -66,8 +69,11 @@ def best_hunt_map(history, reachable, exclude=()):
 
 class PlayLoop:
     def __init__(self, history, hunt_map=None, trip_gold=TRIP_GOLD,
-                 hunt_decisions=HUNT_DECISIONS, log=print):
+                 hunt_decisions=HUNT_DECISIONS, log=print, inn_saves=False):
         self.history, self.fixed_hunt_map = history, hunt_map
+        # The inn's own "Save?" (InnMacro save_slot) saves on every stay, so
+        # without a taught save the save phase must not wait for one forever.
+        self.inn_saves = inn_saves
         self.trip_gold, self.hunt_decisions, self.log = trip_gold, hunt_decisions, log
         # HP fraction that ends a hunting trip; the gambit weights move it.
         self.leave_fraction = LEAVE_HP_TENTHS / 10
@@ -75,6 +81,7 @@ class PlayLoop:
         self.state = state if isinstance(state, dict) and state.get("phase") in PHASES else \
             {"phase": "hunt", "trip_gold": None, "steps": 0, "cycles": 0}
         self.warned = set()
+        self.frontier = Frontier(history, log) if history is not None else None
         # The durable objective survives game resets and tactical interruptions.
         # Phase is persisted; the short-term tactical decision is not.
 
@@ -89,6 +96,8 @@ class PlayLoop:
     def _enter(self, phase, why):
         if phase == "hunt":
             self.state["trip_gold"] = None
+            self.state["target"] = None     # chosen afresh for each trip
+            self.state["target_checked"] = False
             self.state["cycles"] = self.state.get("cycles", 0) + 1
         self.state["phase"], self.state["steps"] = phase, 0
         self._save_state()
@@ -126,7 +135,7 @@ class PlayLoop:
                 earned = (gold - self.state["trip_gold"]
                           if isinstance(gold, int) and self.state.get("trip_gold") is not None
                           else 0)
-                target = self.fixed_hunt_map or best_hunt_map(self.history, reachable)
+                target = self.fixed_hunt_map or self._trip_target(summary, reachable)
                 if max_hp and hp < max_hp * self.leave_fraction:
                     self._enter("shop", f"HP {hp}/{max_hp}, earned {earned} GP")
                     continue
@@ -134,6 +143,9 @@ class PlayLoop:
                     self._enter("shop", f"earned {earned} GP this trip")
                     continue
                 if self.state["steps"] >= self.hunt_decisions:
+                    if (target is not None and target != here and
+                            not self.state.get("arrived") and self.frontier is not None):
+                        self.frontier.failed(target, f"{self.state['steps']} decisions")
                     self._enter("shop", f"hunted {self.state['steps']} decisions, "
                                 f"earned {earned} GP")
                     continue
@@ -157,12 +169,34 @@ class PlayLoop:
                     continue
                 return "go_to_inn"
             if phase == "save":
+                if not save_ready and self.inn_saves:
+                    self._enter("hunt", "no taught save; the inn saves on each stay")
+                    continue
                 if not save_ready:
                     self._warn_once("no_save", "[loop] save unavailable: teach/repair "
                                     "save (tools/som_teach_save.py); commitment held")
                     return "await_save_setup"
                 return "go_to_save"
         return "hunt_here"
+
+    def _trip_target(self, summary, reachable):
+        """This trip's hunting map: a new or still-useful place (som_frontier),
+        else the best gold per HP lost. Kept for the whole trip."""
+        here = summary.get("map_id")
+        if "target" not in self.state or (self.state["target"] is None and
+                                          not self.state.get("target_checked")):
+            pick = (self.frontier.choose(here, summary.get("max_hp"), reachable)
+                    if self.frontier is not None else None)
+            self.state["target"] = (pick[0] if pick else
+                                    best_hunt_map(self.history, reachable))
+            self.state["target_checked"] = True
+            self.state["arrived"] = False
+            self._save_state()
+        target = self.state["target"]
+        if target is not None and here == target and not self.state.get("arrived"):
+            self.state["arrived"] = True
+            self._save_state()
+        return target
 
     @staticmethod
     def cornered(summary, reachable):

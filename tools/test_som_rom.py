@@ -275,6 +275,107 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertEqual((decision.action, decision.reason), ("wait", "on exit to map 130"))
             history.close()
 
+    def test_unrouted_exit_explores_the_known_edge_nearest_it(self):
+        # Exit to map 144 lay past unknown ground: a blocked straight step
+        # handed over to unrelated frontier exploring, which undid the trip.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "edge.sqlite")
+            history.connection.execute(
+                "INSERT INTO map_edges VALUES(16,144,1,2,7,'step_down',5,0)")
+            for x in range(8):
+                for y in range(4):
+                    history.connection.execute(
+                        "INSERT OR REPLACE INTO world_cells VALUES(16,1,?,?,'open',1,0)",
+                        (x, y))
+            state = {"weapons_enabled": True, "enemy_slots": [],
+                     "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0}],
+                     "tile_context": {
+                         "runtime_verified": True, "game_mode": "field", "radius": 1,
+                         "map_id": 16, "map_size_tiles": [8, 8], "actor_tile": [5, 0],
+                         "actor": {"x_px": 88, "y_px": 8, "layer": 1},
+                         "passability_rows": ["...", ".@.", "..."]}}
+            errand = {"place": "map 144", "anchor": {"map_id": 144}}
+            decision = MemoryPlanner(history).decide(state, errand=errand)
+            self.assertTrue(decision.reason.startswith("explore toward learned map 144 exit"),
+                            decision.reason)
+            self.assertIn(decision.action, ("step_down", "step_left"))
+            history.close()
+
+    def _blocked_south(self, history, evade, wall=False):
+        for x in range(8):
+            for y in range(8):
+                kind = "blocked" if wall and y == 4 else ("h2" if y == 5 else "open")
+                history.connection.execute(
+                    "INSERT OR REPLACE INTO world_cells VALUES(16,1,?,?,?,1,0)", (x, y, kind))
+        history.connection.execute(
+            "INSERT INTO map_edges VALUES(16,144,1,3,6,'step_down',5,0)")
+        state = {"weapons_enabled": True, "enemy_slots": [],
+                 "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0}],
+                 "tile_context": {
+                     "runtime_verified": True, "game_mode": "field", "radius": 1,
+                     "map_id": 16, "map_size_tiles": [32, 32], "actor_tile": [3, 3],
+                     "actor": {"x_px": 56, "y_px": 56, "layer": 1},
+                     "passability_rows": ["...", ".@.", "###" if wall else "..."]}}
+        planner = MemoryPlanner(history)
+        planner.evade_past = evade
+        errand = {"place": "map 144", "anchor": {"map_id": 144}}
+        decisions, previous = [], "none"
+        for _ in range(12):           # the hero never moves: someone is in the way
+            decision = planner.decide(state, previous, errand=errand)
+            decisions.append(decision)
+            previous = decision.action
+        return decisions
+
+    def test_someone_in_the_way_is_evaded_past(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "npc.sqlite")
+            decisions = self._blocked_south(history, evade=True)
+            turn = next(i for i, d in enumerate(decisions) if d.intention == "evade_past")
+            self.assertEqual((decisions[turn].action, decisions[turn].turn_only),
+                             ("step_up", True))
+            self.assertEqual(decisions[turn + 1].action, "evade")
+            history.close()
+
+    def test_no_evade_past_a_wall_or_without_an_evade(self):
+        for evade, wall in ((True, True), (False, False)):
+            with tempfile.TemporaryDirectory() as directory:
+                history = ObservationHistory(Path(directory) / "wall.sqlite")
+                decisions = self._blocked_south(history, evade=evade, wall=wall)
+                self.assertFalse(any(d.intention == "evade_past" and "step_down" in d.reason
+                                     for d in decisions) if evade else
+                                 any(d.intention == "evade_past" for d in decisions),
+                                 (evade, wall, [d.reason for d in decisions]))
+                history.close()
+
+    def test_learned_exit_that_only_bounces_is_dropped(self):
+        # The hero flipped step_right/step_left for minutes beside a learned
+        # inn exit whose step never changed the map (2026-11-18, critic).
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "bounce.sqlite")
+            history.connection.execute(
+                "INSERT INTO map_edges VALUES(132,16,1,2,3,'step_right',5,0)")
+            for x in range(8):
+                for y in range(8):
+                    history.connection.execute(
+                        "INSERT OR REPLACE INTO world_cells VALUES(132,1,?,?,'open',1,0)",
+                        (x, y))
+            state = {"weapons_enabled": True, "enemy_slots": [],
+                     "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0}],
+                     "tile_context": {
+                         "runtime_verified": True, "game_mode": "field", "radius": 1,
+                         "map_id": 132, "map_size_tiles": [8, 8], "actor_tile": [2, 3],
+                         "actor": {"x_px": 40, "y_px": 56, "layer": 1},
+                         "passability_rows": ["...", ".@.", "..."]}}
+            errand = {"place": "inn", "anchor": {"map_id": 16, "layer": 1,
+                                                 "target": [8, 8]}}
+            planner = MemoryPlanner(history)
+            decisions = [planner.decide(state, errand=errand) for _ in range(10)]
+            self.assertEqual(decisions[0].action, "step_right")
+            self.assertTrue(any("only bounces" in d.reason for d in decisions),
+                            [d.reason for d in decisions])
+            self.assertIn("132>16", history.rejected_edges())
+            history.close()
+
     def test_stepless_learned_exit_is_dropped_when_nothing_happens(self):
         # A KO reload or warp logged as a crossing without a step: the hero
         # stood on it waiting for a transition for hours (map 132>16).

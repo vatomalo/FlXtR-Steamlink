@@ -99,6 +99,14 @@ FRONTIER_COOLDOWN = 200
 # Waits on a learned crossing that has no step (the game should move the
 # hero) before the crossing is dropped as a warp, KO reload or cutscene.
 EXIT_WAIT_DECISIONS = 25
+# A learned exit step taken this often from its tile without the map
+# changing is not an exit: the hero bounces between it and the next tile.
+EXIT_BOUNCE_DECISIONS = 4
+# Someone standing in the way (a villager, a guard) refuses a step onto open
+# ground. A dodge class hops through people (the proxy's hop checks only map
+# collision): face away, then evade, which goes back from the facing. Tried
+# this often per tile and step before the step stays blocked.
+EVADE_PAST_ATTEMPTS = 2
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
@@ -195,6 +203,7 @@ class MemoryPlanner:
         self.unverified_waits = 0
         self.unverified_nudges = 0
         self.exit_wait = (None, 0)      # (map, tile, next map), waits on it
+        self.exit_bounce = (None, 0)    # (map, tile, next map), exit steps from it
         self.field_waits = 0
         self.slide_failsafe = 0
         # Grass cutting: learned cuttable attributes (without a database),
@@ -226,6 +235,10 @@ class MemoryPlanner:
         # Play loop: every monster is a target; the "cost more HP than GP"
         # avoid list made the hero dance around enemies instead of hunting.
         self.fight_all = False
+        # Set by the bridge while the class has an evade (DODGE_CLASSES).
+        self.evade_past = False
+        self.evade_past_pending = None     # (stall key) after the turn tap
+        self.evade_past_tries = {}
         # Set while the play loop hunts on the current map: exploration must
         # not walk over exit tiles (it used to leave map 129 for 128 and be
         # sent straight back, over and over).
@@ -551,6 +564,30 @@ class MemoryPlanner:
         for action, landing, height in (jumps or {}).get(position, ()):
             yield ("whip:" + action, landing, level if height is None else height,
                    WHIP_ROUTE_COST)
+
+    def _frontier_toward(self, context, cells, routes, target, open_steps):
+        """(first step, steps, tiles left) to the reachable known tile next to
+        unknown ground that is nearest `target`, if it is nearer than here."""
+        map_id, layer = context["map_id"], context["actor"]["layer"]
+        size = tuple(context["map_size_tiles"])
+
+        def gap(point):
+            return (abs(self._wrapped_delta(target[0], point[0], size[0])) +
+                    abs(self._wrapped_delta(target[1], point[1], size[1])))
+        best = None
+        for point, (first, distance) in routes.items():
+            if (first is None or first not in open_steps or
+                    self.frontier_rejected.get((map_id, layer, point), 0) > self.frontier_clock):
+                continue
+            if not any(self._neighbor(point, offset, size) not in cells
+                       for offset in STEP_OFFSETS.values()):
+                continue
+            candidate = (gap(point), distance, first, point)
+            if best is None or candidate < best:
+                best = candidate
+        if best is None or best[0] >= gap(tuple(context["actor_tile"])):
+            return None
+        return best[2], best[1], best[0]
 
     def _choose_frontier(self, context, cells, routes, directive="explore_unknown",
                          open_steps=None):
@@ -1289,8 +1326,23 @@ class MemoryPlanner:
             via = destination.get("path")
             hop = (f" via maps {'>'.join(str(m) for m in via)}"
                    if isinstance(via, list) and len(via) > 2 else "")
+            if self.exit_bounce[0] is not None and self.exit_bounce[0][0] != context.get("map_id"):
+                self.exit_bounce = (None, 0)    # the map changed: the exit worked
             if target == position:
                 if exit_action in open_steps:
+                    key = (context.get("map_id"), position, destination.get("next_map"))
+                    bounces = self.exit_bounce[1] + 1 if self.exit_bounce[0] == key else 1
+                    self.exit_bounce = (key, bounces)
+                    if (bounces > EXIT_BOUNCE_DECISIONS and crossing and
+                            destination.get("source") != "rom" and
+                            hasattr(self.history, "reject_edge")):
+                        self.exit_bounce = (None, 0)
+                        self.history.reject_edge(context.get("map_id"),
+                                                 destination.get("next_map"))
+                        return PlannerDecision("wait", f"learned exit to map "
+                                               f"{destination.get('next_map')} by "
+                                               f"{exit_action} only bounces; rerouting",
+                                               "replan")
                     return PlannerDecision(exit_action, f"take learned exit toward {place}",
                                            travel_intent, 1)
                 if crossing and exit_action is None:
@@ -1364,6 +1416,16 @@ class MemoryPlanner:
             size = tuple(context["map_size_tiles"])
             dx = self._wrapped_delta(target[0], position[0], size[0])
             dy = self._wrapped_delta(target[1], position[1], size[1])
+            # No known route yet: explore the edge of known ground nearest the
+            # exit instead of pushing at a wall, which made the planner fall
+            # back to unrelated frontier exploring and undo the trip step by
+            # step (map 16 -> 144, 2026-11-18).
+            edge = self._frontier_toward(context, cells, routes, target, open_steps)
+            if edge is not None:
+                step, steps, gap = edge
+                return PlannerDecision(step, f"explore toward learned {place} exit at "
+                                       f"{target[0]},{target[1]} (edge {gap} tiles from it, "
+                                       f"{steps} steps)", travel_intent, steps)
             action = self._approach_direction(dx, dy, open_steps)
             if action:
                 return PlannerDecision(action,
@@ -1583,6 +1645,11 @@ class MemoryPlanner:
             self.escape_left -= 1
             directive = self.escape_directive
         deflected = self._check_deflection(observation, previous)
+        pending, self.evade_past_pending = self.evade_past_pending, None
+        if pending is not None and self.evade_past:
+            # Facing away from the blocker now: the evade hops back past him.
+            return PlannerDecision("evade", f"evade past whoever blocks {pending[1]} "
+                                   f"({pending[2]}/{EVADE_PAST_ATTEMPTS})", "evade_past")
         decision = self._decide(observation, previous, directive, errand)
         if deflected:
             decision = replace(decision, reason=f"{deflected}; {decision.reason}")
@@ -2110,10 +2177,40 @@ class MemoryPlanner:
         why = self._whip_options(context).get(decision.action)
         if why is not None:
             return self._whip_cross(context, decision.action, why)
+        past = self._evade_past(context, decision.action)
+        if past is not None:
+            return past
         return PlannerDecision(
             "wait", f"no progress with {decision.action} from tile "
             f"{context.get('actor_tile')}; blocking that step for "
             f"{STALL_BLOCK_DECISIONS} decisions", "replan")
+
+    def _evade_past(self, context, action):
+        """Turn away from a blocker standing on open ground; the next
+        decision evades back past him. None when the map itself is the wall."""
+        if not self.evade_past or not context.get("actor_tile"):
+            return None
+        size = tuple(context.get("map_size_tiles") or (0, 0))
+        cells = self._known_cells(context.get("map_id"), (context.get("actor") or {}).get("layer"))
+        here = tuple(context["actor_tile"])
+        offset = STEP_OFFSETS[action]
+        ahead = self._neighbor(here, offset, size)
+        beyond = self._neighbor(ahead, offset, size)
+        walkable = ("open", "pass", "h1", "h2")       # h1/h2: floor heights
+        if cells.get(ahead) not in walkable or cells.get(beyond) not in walkable:
+            return None
+        key = self._stall_key(context, action)
+        tries = self.evade_past_tries.get(key, 0) + 1
+        if tries > EVADE_PAST_ATTEMPTS:
+            return None
+        self.evade_past_tries[key] = tries
+        self.evade_past_pending = (key, action, tries)
+        # The hop may land past him; let the step be tried again right away.
+        self.blocked_moves.pop(key, None)
+        away = OPPOSITE_STEP[action]
+        return PlannerDecision(away, f"someone blocks {action} onto open ground at "
+                               f"{ahead[0]},{ahead[1]}; turning {away[5:]} to evade past",
+                               "evade_past", turn_only=True)
 
     def _decide(self, observation, previous, directive, errand):
         context = observation.get("tile_context") if isinstance(observation, dict) else None

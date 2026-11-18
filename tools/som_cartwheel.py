@@ -1,4 +1,4 @@
-"""Cartwheel frames for the evade, made from the heroes' own standing frames.
+"""Hero move frames for the proxy: the cartwheel evade and the flying kick.
 
 Seen from the front, a cartwheel is the body turning in the screen plane,
 so each step is a hero's standing frame rotated by a quarter turn about the
@@ -8,7 +8,12 @@ again. Quarter turns of pixel art are exact, so no pixels are invented.
     python3 som_cartwheel.py ROM OUT.bin      # the proxy pack (SOMWORK1)
     python3 som_cartwheel.py ROM OUT.png --sheet
 
-Pack entries use the npc_work format (tools/som_villager_work.py) with kind
+The flying kick (Martial Arts, kinds 0x90 + hero, weapon 0xFD) is the
+glove's own kick from the pose table D0:FFF0, the chamber for one tick and
+the kick held: side 88 -> 89, down 90 -> 91, up 92 -> 93 (the glove's attack
+2 in each direction).
+
+Cartwheel pack entries use the npc_work format (tools/som_villager_work.py) with kind
 0x80 + hero (boy, girl, sprite) and weapon 0xFE. Facing 2 (side) is the
 front frame turning clockwise: the head leads to the right, and the proxy
 mirrors it for a cartwheel to the left. Facing 1 (down) is the side frame
@@ -25,6 +30,10 @@ WEAPON = 0xFE
 HEROES = ("boy", "girl", "sprite")
 TURNS = (0, 1, 2, 3, 0)         # quarter turns clockwise per step
 TICKS = 1                       # one actor tick (5 frames) per step
+KICK_KIND_BASE = 0x90
+KICK_WEAPON = 0xFD
+KICK_FRAMES = {0: (92, 93), 1: (90, 91), 2: (88, 89)}   # facing: chamber, kick
+KICK_TICKS = (1, 4)
 
 
 def rotate(image, turns, pivot):
@@ -58,6 +67,11 @@ def cartwheel(gfx, hero, source="down"):
     return [(rotate(still, t, pivot), TICKS) for t in TURNS]
 
 
+def flying_kick(gfx, hero, frame_ids):
+    return [(gfx.render(hero, gfx.pieces(hero, None, f), size=V.CELL, origin=V.ORIGIN), t)
+            for f, t in zip(frame_ids, KICK_TICKS)]
+
+
 def pack(gfx):
     out, entries = bytearray(), 0
     for i, hero in enumerate(HEROES):
@@ -65,6 +79,14 @@ def pack(gfx):
         for facing, source in ((0, "side"), (1, "side"), (2, "down")):
             frames = cartwheel(gfx, hero, source)
             out += struct.pack("<4B20H", KIND_BASE + i, WEAPON, facing, len(frames), *colours)
+            for image, ticks in frames:
+                dx, dy, w, h, data = V.crop(image)
+                out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
+            entries += 1
+        for facing, frame_ids in KICK_FRAMES.items():
+            frames = flying_kick(gfx, hero, frame_ids)
+            out += struct.pack("<4B20H", KICK_KIND_BASE + i, KICK_WEAPON, facing, len(frames),
+                               *colours)
             for image, ticks in frames:
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
@@ -90,11 +112,15 @@ def main():
         palette += gfx.palette(hero)
         for source in ("down", "side"):
             frames = cartwheel(gfx, hero, source)
+            if source == "side":
+                frames += [im for ids in KICK_FRAMES.values() for im in flying_kick(gfx, hero, ids)]
             for y in range(V.CELL):
                 line = []
                 for image, _ in frames:
                     line += [p + 16 * i if p else 0 for p in image[y]]
                 rows.append(line)
+    width = max(len(line) for line in rows)
+    rows = [line + [0] * (width - len(line)) for line in rows]
     H.write_png(args.out, rows, palette, scale=2)
 
 

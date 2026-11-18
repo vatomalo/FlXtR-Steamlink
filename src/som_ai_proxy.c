@@ -681,6 +681,25 @@ static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int di
 enum {SOM_BASH_NONE,SOM_BASH_LUNGE,SOM_BASH_RELEASE,SOM_BASH_STRIKE};
 static int bash_stage;
 static unsigned long bash_started;
+/* Flying kick (Martial Arts, X): the same run, then the glove; while it
+ * plays the hero is hidden and drawn as the glove's kick in a jump arc
+ * (frames: tools/som_cartwheel.py, kinds 0x90-0x92). With a combo level
+ * ready the landing kick is the combo finisher at that level. */
+/* Hero move frames (cartwheel and flying kick), one pack: see
+ * tools/som_cartwheel.py. */
+#define SOM_CARTWHEEL_PACK_FILE "/home/apps/retroarch/cores/experimental/som_cartwheel_frames.bin"
+static void som_load_pack_file(const char *path,const char *what,uint8_t **pack,size_t *size);
+static uint8_t *cartwheel_pack;
+static size_t cartwheel_pack_size;
+static int cartwheel_pack_tried,cartwheel_hid;
+static SomNpcWorkState cartwheel;
+#define SOM_FLYKICK_LIFT 12             /* px at the top of the jump */
+#define SOM_FLYKICK_KIND 0x90u
+static int bash_kick;
+static SomNpcWorkState flykick;
+static int flykick_hid;
+static int som_flykick_start(uint8_t *ram);
+static void som_flykick_frame(uint8_t *ram);
 static int som_bash_start(uint8_t *ram);
 static void som_bash_tick(void);
 static void som_class_supply_frame(void);
@@ -1005,6 +1024,12 @@ static void som_input_poll(void){
                 const int result=wram[0xE1E4]==want?SOM_EQUIP_OK:
                     (pressed&x_bit)?som_equip_weapon(wram,want):som_equip_weapon_direct(wram,want);
                 if(result==SOM_EQUIP_OK)x_weapon_swap=1;else x_spell_blocked=1;
+            }
+        }else if(x_role==SOM_X_FLYING_KICK){
+            /* Martial Arts: X is the flying kick (the game never sees X). */
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+                x_spell_blocked=1;
+                if(pressed&x_bit)som_flykick_start(wram);
             }
         }else if(x_role==SOM_X_IAI){
             /* Bushido: release X for Iaijutsu, katana charge level 3; held
@@ -1730,11 +1755,55 @@ static int som_bash_start(uint8_t *ram){
         som_overlay_set(&overlay,"^Bash|catch your breath",SOM_MESSAGE_FRAMES/2u);
         return 0;
     }
-    if(som_equip_weapon(ram,1u)!=SOM_EQUIP_OK)return 0;
+    const unsigned weapon=bash_kick?0u:1u;           /* glove for the kick, else sword */
+    if(som_equip_weapon(ram,weapon)!=SOM_EQUIP_OK)return 0;
     bash_stage=SOM_BASH_LUNGE;bash_started=frame_number;
-    som_overlay_set(&overlay,"^Bash!",SOM_MESSAGE_FRAMES/3u);
-    fprintf(stderr,"[som-ai] BASH lunge\n");
+    som_overlay_set(&overlay,bash_kick?"^Flying kick!":"^Bash!",SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] %s lunge\n",bash_kick?"FLYING KICK":"BASH");
     return 1;
+}
+/* Martial Arts' X: see SOM_FLYKICK_LIFT. Returns 1 when it started. */
+static int som_flykick_start(uint8_t *ram){
+    if(!ram||disciplines.selected!=SOM_DISC_MARTIAL_ARTS||flykick.active)return 0;
+    bash_kick=1;
+    if(!som_bash_start(ram)){bash_kick=0;return 0;}
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
+    }
+    uint8_t *hero=ram+0xE000u;
+    const unsigned id=hero[0x180],facing=hero[0x010];
+    const unsigned pack_facing=(facing&0x7Fu)==0x02u?2u:facing==0x01u?1u:0u;
+    SomWorkEntry entry;
+    if(cartwheel_pack&&id>=0x80u&&id<=0x82u&&
+       som_work_find(cartwheel_pack,cartwheel_pack_size,SOM_FLYKICK_KIND+id-0x80u,pack_facing,&entry)){
+        memset(&flykick,0,sizeof(flykick));
+        flykick.active=1;flykick.slot=0;flykick.kind=id;
+        flykick.dir=facing==0x82u?3u:pack_facing;
+        flykick.start=frame_number;flykick.entry=entry;flykick.own_palette=1;
+        flykick.length=som_work_swing_frames(&entry);
+        flykick_hid=!(hero[0x0E]&0x80u);
+        hero[0x0E]|=0x80u;
+    }
+    return 1;
+}
+static void som_flykick_end(uint8_t *ram){
+    if(!flykick.active)return;
+    if(ram&&flykick_hid)ram[0xE00E]&=(uint8_t)~0x80u;
+    flykick.active=0;flykick_hid=0;
+}
+/* Each frame: the jump arc over the run, landing at the strike; the
+ * drawing ends with its frames, or with the finisher it started. */
+static void som_flykick_frame(uint8_t *ram){
+    if(!flykick.active)return;
+    const unsigned long t=frame_number-flykick.start;
+    if(bash_stage==SOM_BASH_LUNGE){
+        const long l=(long)SOM_BASH_LUNGE_FRAMES,k=(long)t;
+        flykick.lift=k>=l?SOM_FLYKICK_LIFT/3:(int)(4l*SOM_FLYKICK_LIFT*k*(l-k)/(l*l));
+        if(flykick.lift<SOM_FLYKICK_LIFT/3&&k>l/2)flykick.lift=SOM_FLYKICK_LIFT/3;
+    }else flykick.lift=0;
+    const int game_over=!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F;
+    if(game_over||(!bash_stage&&!special_stage&&t>=flykick.length)||t>180ul)som_flykick_end(ram);
 }
 /* Before each emulated frame: advance the bash. */
 static void som_bash_tick(void){
@@ -1744,7 +1813,7 @@ static void som_bash_tick(void){
     uint8_t *hero=ram+0xE000u;
     const unsigned long t=frame_number-bash_started;
     if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||t>60ul){
-        bash_stage=SOM_BASH_NONE;return;
+        bash_stage=SOM_BASH_NONE;bash_kick=0;return;
     }
     if(bash_stage==SOM_BASH_LUNGE){
         const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
@@ -1756,11 +1825,26 @@ static void som_bash_tick(void){
     }else if(bash_stage==SOM_BASH_RELEASE){
         /* Releasing A loaded the run gauge E1ED; the swing hits at full. */
         hero[0x1ED]=0;
+        const unsigned level=bash_kick?som_combo_effective_level():0u;
+        const unsigned hits=combo.hits;
+        if(level){                 /* the kick lands as the combo finisher */
+            bash_stage=SOM_BASH_NONE;bash_kick=0;
+            if(som_special_start(0,level)){
+                special_chord=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);special_suppress=1;
+                char text[64];
+                snprintf(text,sizeof(text),"^Flying kick|%u-hit combo, level %u",hits,level);
+                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+                fprintf(stderr,"[som-ai] FLYING KICK finisher: %u hits, level %u\n",hits,level);
+                return;
+            }
+            bash_kick=1;           /* refused: the plain kick */
+        }
         bash_stage=SOM_BASH_STRIKE;bash_started=frame_number;
         som_combo_swing(0);
     }else if(t>=SOM_BASH_STRIKE_FRAMES){
         bash_stage=SOM_BASH_NONE;
-        fprintf(stderr,"[som-ai] BASH strike\n");
+        fprintf(stderr,"[som-ai] %s strike\n",bash_kick?"FLYING KICK":"BASH");
+        bash_kick=0;
     }
 }
 /* Field play, no event, not casting, not in a pose or power attack, not
@@ -1797,12 +1881,6 @@ static int som_clone_jutsu(uint8_t *ram,const char *jutsu){
  * the npc_work pack format: kind 0x80-0x82 = boy, girl, sprite; facing 2 =
  * sideways, 1 = up/down) in his own live colours, while som_hop_step
  * carries him. */
-#define SOM_CARTWHEEL_PACK_FILE "/home/apps/retroarch/cores/experimental/som_cartwheel_frames.bin"
-static void som_load_pack_file(const char *path,const char *what,uint8_t **pack,size_t *size);
-static uint8_t *cartwheel_pack;
-static size_t cartwheel_pack_size;
-static int cartwheel_pack_tried,cartwheel_hid;
-static SomNpcWorkState cartwheel;
 /* Starts the drawing for a dodge of (dx, dy); the frames the spin lasts,
  * 0 when there is nothing to draw (no pack or no entry for this hero). */
 static unsigned long som_cartwheel_begin(uint8_t *ram,int dx,int dy){
@@ -1827,7 +1905,7 @@ static unsigned long som_cartwheel_begin(uint8_t *ram,int dx,int dy){
 static void som_cartwheel_end(uint8_t *ram){
     if(!cartwheel.active)return;
     if(ram&&cartwheel_hid)ram[0xE00E]&=(uint8_t)~0x80u;
-    cartwheel.active=0;cartwheel_hid=0;
+    cartwheel.active=0;cartwheel_hid=0;flykick.active=0;flykick_hid=0;bash_kick=0;
 }
 /* The camera follows a dodge. The game scrolls only by the hero's own
  * walking steps, so a hero carried by the proxy left it behind (offline
@@ -3380,7 +3458,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||cartwheel.active)&&!menu;
+    const int worker=(npc_work.active||cartwheel.active||flykick.active)&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
     if(!menu&&general_count&&backend_retro_get_memory_data&&
@@ -3424,6 +3502,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                   pixel_format);
             if(cartwheel.active)
                 som_npc_work_draw(&cartwheel,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+            if(flykick.active)
+                som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
         }
     }
@@ -3580,7 +3661,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
-    cartwheel.active=0;cartwheel_hid=0;
+    cartwheel.active=0;cartwheel_hid=0;flykick.active=0;flykick_hid=0;bash_kick=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
@@ -3946,7 +4027,11 @@ RETRO_API void retro_run(void){
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_bunshin_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    if(test_enabled&&on_turbo)som_bash_tick();
+    if(test_enabled&&on_turbo){
+        som_bash_tick();
+        if(flykick.active&&backend_retro_get_memory_data)
+            som_flykick_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    }
     if(test_enabled&&on_turbo)som_hop_step();
     if(test_enabled&&on_turbo){
         const uint64_t t=PERF_NOW();

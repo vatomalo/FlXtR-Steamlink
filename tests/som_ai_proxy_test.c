@@ -1559,6 +1559,53 @@ int main(void){
         hero[0x1ED]=10;mocked_buttons=(uint16_t)(r1|r1a);som_input_poll();
         assert(bash_stage==SOM_BASH_NONE);                     /* out of breath */
         mocked_buttons=0;som_input_poll();hero[0x1ED]=0;hero[0x006]=0;
+        /* Martial Arts X: the flying kick = the bash's run, then the glove.
+         * The game never sees X; with a frame pack the hero is hidden and
+         * drawn kicking in a jump arc, landing at the strike. */
+        {
+            static uint8_t pack[10+44+6+6];
+            memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            pack[10]=0x90;pack[11]=0xFD;pack[12]=2;pack[13]=2;   /* boy kick, side */
+            pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=1;         /* chamber 1 tick */
+            pack[60]=4;pack[63]=1;pack[64]=1;pack[65]=1;         /* kick 4 ticks */
+            cartwheel_pack=pack;cartwheel_pack_size=sizeof(pack);cartwheel_pack_tried=1;
+            const uint16_t xb=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+            disciplines.selected=1;hero[0x180]=0x80;hero[0x010]=0x82;hero[0x0E]=0;hero[0x1E4]=0;
+            som_combo_clear();
+            mocked_buttons=xb;som_input_poll();
+            assert(bash_stage==SOM_BASH_LUNGE&&bash_kick&&hero[0x1E4]==0);
+            assert(flykick.active&&flykick.dir==3u&&(hero[0x0E]&0x80u));
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+            mocked_buttons=0;som_input_poll();
+            hero[0x006]=3;
+            int peak=0;
+            for(unsigned f=0;f<SOM_BASH_LUNGE_FRAMES;f++){
+                frame_number++;som_bash_tick();som_flykick_frame(ram);
+                if(flykick.lift>peak)peak=flykick.lift;
+            }
+            assert(peak==SOM_FLYKICK_LIFT&&bash_stage==SOM_BASH_RELEASE);
+            frame_number++;som_bash_tick();som_flykick_frame(ram);
+            assert(bash_stage==SOM_BASH_STRIKE&&!flykick.lift);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+            frame_number+=SOM_BASH_STRIKE_FRAMES;som_bash_tick();som_flykick_frame(ram);
+            assert(bash_stage==SOM_BASH_NONE&&!bash_kick&&flykick.active);
+            frame_number+=25;som_flykick_frame(ram);
+            assert(!flykick.active&&!(hero[0x0E]&0x80u));
+            /* With a combo level ready the landing kick is the finisher. */
+            hero[0x006]=0;hero[0x1ED]=0;hero[0x19C]=2;hero[0x19B]=0;hero[0x01C]=0;
+            som_combo_clear();combo.hits=5;combo.mixes=1;combo.hit_frame=frame_number;
+            mocked_buttons=xb;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(bash_stage==SOM_BASH_LUNGE);
+            for(unsigned f=0;f<=SOM_BASH_LUNGE_FRAMES;f++){frame_number++;som_bash_tick();som_flykick_frame(ram);}
+            assert(bash_stage==SOM_BASH_NONE&&special_stage==2u&&special_weapon==0u&&special_suppress);
+            assert(flykick.active);                           /* drawn through the finisher */
+            special_stage=0;special_suppress=0;frame_number+=30;som_flykick_frame(ram);
+            assert(!flykick.active&&!(hero[0x0E]&0x80u));
+            cartwheel_pack=NULL;cartwheel_pack_size=0;hero[0x19C]=1;hero[0x010]=0x02;
+            disciplines.selected=0;hero[0x1E4]=1;
+        }
         /* AI commands: class choice and casts within the class. */
         assert(som_handle_command("class_3")&&disciplines.selected==3);
         assert(!som_handle_command("class_12")&&!som_handle_command("class_x"));

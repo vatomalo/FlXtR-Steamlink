@@ -30,9 +30,11 @@ static inline int som_disc_has_dodge(unsigned discipline){
 /* What X does per class (docs/SOM-CLASS-ASSESSMENT.md). Spells for the
  * casters and the hybrids; Bushido (samurai) has no magic: X is Iaijutsu,
  * a straight charge level 3 strike with the katana (hold X: level 4), one
- * per SOM_IAI_COOLDOWN_FRAMES; Weapon Flow (weaponsmaster) has no magic:
+ * per SOM_IAI_COOLDOWN_FRAMES; Martial Arts (monk): X is the flying kick,
+ * a run and a kick (som_ai_proxy.c som_flykick_start); Weapon Flow (weaponsmaster) has no magic:
  * X attacks with a third weapon, som_disc_third_weapon. */
-enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON};
+enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON, SOM_X_FLYING_KICK};
+#define SOM_DISC_MARTIAL_ARTS 1u
 #define SOM_DISC_WEAPON_FLOW 8u
 #define SOM_DISC_BUSHIDO 10u
 #define SOM_IAI_LEVEL 3u
@@ -41,6 +43,7 @@ enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON};
 #define SOM_NO_WEAPON 0xFFu
 static inline unsigned som_disc_x_role(unsigned discipline){
     return discipline==SOM_DISC_BUSHIDO?SOM_X_IAI:
+           discipline==SOM_DISC_MARTIAL_ARTS?SOM_X_FLYING_KICK:
            discipline==SOM_DISC_WEAPON_FLOW?SOM_X_THIRD_WEAPON:SOM_X_SPELLS;
 }
 /* Weapon Flow: sword (B), spear (Y), bow (X): short, reach, long. */

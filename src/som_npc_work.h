@@ -51,6 +51,7 @@ typedef struct {
     unsigned long start, length;     /* frames */
     SomWorkEntry entry;
     int own_palette;                 /* colours 1-15 straight from the object's live palette */
+    int lift;                        /* px drawn above the object (a jump the game does not know) */
 } SomNpcWorkState;
 
 /* Walks one frame record; NULL when it would leave the pack. */
@@ -246,7 +247,7 @@ static inline int som_npc_work_draw(const SomNpcWorkState *s,const uint8_t *wram
     const unsigned o=SOM_NPC_OBJECT(s->slot);
     const unsigned cam=(wram[o+0x0Bu]&0x80u)?0xACu:0xA8u;
     const int fx=(int16_t)(som_npc_u16(wram,o+0x02u)-som_npc_u16(wram,cam));
-    const int fy=(int16_t)(som_npc_u16(wram,o+0x04u)-som_npc_u16(wram,cam+2u))-wram[o+0x45u];
+    const int fy=(int16_t)(som_npc_u16(wram,o+0x04u)-som_npc_u16(wram,cam+2u))-wram[o+0x45u]-s->lift;
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
     const int base_w=(int)(width/sx),base_h=(int)(height/sy);
     const uint8_t *p=som_npc_work_pose(s,frame-s->start);

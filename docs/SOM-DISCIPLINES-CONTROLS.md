@@ -201,6 +201,19 @@ ROM frames found on the way (boy, pose table D0:FFF0): handstand 176-179
 pose 34 (likely the cannonball launch), side kick 89 (glove attack 2),
 airborne kicks 92, 166, 167.
 
+## Flying kick (Martial Arts, X/Triangle, 2026-11-18)
+
+X (Triangle) no longer casts for Martial Arts: it is the flying kick. It is
+the swordsman's R1+A bash with the glove: the game's own run (A held, up to
+14 frames, stops at a wall or next to a monster), A released, then the
+game's glove attack (B) at a full gauge, which counts as a combo hit. With
+a combo level ready (3+ hits) the landing kick is the combo finisher instead:
+the glove's charged attack at that level (capped at what it learned).
+While it plays the hero is hidden and drawn as the glove's own kick (pose
+table frames: side 88 -> 89, down 90 -> 91, up 92 -> 93) in a 12 px jump
+arc over the run, landing at the strike (pack kinds 0x90-0x92 in
+som_cartwheel_frames.bin). Spells stay in the ring menu.
+
 ## Dodge roll from the native somersault (planned, waiting on a recording)
 
 The player wants the game's own somersault animation used as a dodge roll.

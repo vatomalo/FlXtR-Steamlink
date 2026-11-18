@@ -8,7 +8,8 @@
   touched), runs a scenario on the Steam Link (`--host`) or locally, checks
   `#! expect-log` / `#! expect-no-log` lines, fetches screenshots as PNG into
   `build/som-headless/` (ignored by Git) and deletes the run folder. Timeout: exit 3.
-- `scenarios/`: title Start, field load + save-state round trip, dodge, clones, no free XP.
+- `scenarios/`: title Start, field load + save-state round trip, dodge, clones, no free XP,
+  the game's own cartwheel (`miss_cartwheel`: E1E5 poke only; `cartwheel`: monk A via the proxy).
 
 Requirements: Python 3, a C compiler; for `--host`, the Steam Link SDK
 (`STEAMLINK_SDK_PATH`, or `/opt/steamlink-sdk`) and BatchMode ssh. The ROM and save are

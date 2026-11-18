@@ -1,0 +1,27 @@
+# The game's own evade: a missed hit stores reaction 0x11-0x13 in E1E5 and the
+# hero's next combat tick plays pose 0x91-0x93; 0x93 is the cartwheel
+# (frames 65,66,67,66 flipped,65; 25 px back in 25 frames). Writing 0x13
+# should start it without a monster. Start: rabites.state (map 130).
+expect u16 00DC == 130
+frames 30
+peek
+mark
+poke E1E5 0x13
+frames 2
+peek
+frames 4
+peek
+shot cart_a
+frames 6
+peek
+shot cart_b
+frames 6
+peek
+shot cart_c
+frames 6
+peek
+shot cart_d
+frames 10
+peek
+expect-moved 15 40
+expect u8 E1E5 == 0xFF

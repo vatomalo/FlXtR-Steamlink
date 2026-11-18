@@ -1364,34 +1364,43 @@ int main(void){
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(ram+0xA8)==0);
-        /* Rogue A: a cartwheel (4 x 16 = 64 px); A held right moves right.
-         * Without a frame pack it is only the move. */
+        /* Rogue A off a combat map: the game has no cartwheel there, so the
+         * 4 x 16 = 64 px hop; A held right moves right. */
         disciplines.selected=9;hero[2]=200;ram[0xA8]=100;
         mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
         mocked_buttons=0;som_input_poll();
-        assert(!cartwheel.active&&!(hero[0x0E]&0x80u));
+        assert(!cartwheel_native&&!(hero[0x0E]&0x80u));
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(som_bun_u16(hero+2)==200+64&&!evade_active&&som_bun_u16(ram+0xA8)==164);
-        /* With a pack (one 1-pixel frame of 5 ticks = 25 frames): the hero
-         * is hidden and drawn turning for the spin, then shown again. */
-        {
-            static uint8_t pack[10+44+6];
-            memset(pack,0,sizeof(pack));
-            memcpy(pack,"SOMWORK1",8);pack[8]=1;
-            pack[10]=0x80;pack[11]=0xFE;pack[12]=2;pack[13]=1;
-            pack[54]=5;pack[57]=1;pack[58]=1;pack[59]=1;
-            cartwheel_pack=pack;cartwheel_pack_size=sizeof(pack);cartwheel_pack_tried=1;
-            hero[0x180]=0x80;hero[0x0E]=0;hero[2]=200;hero[3]=0;
-            mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
-            mocked_buttons=0;som_input_poll();
-            assert(cartwheel.active&&cartwheel.dir==2u&&(hero[0x0E]&0x80u)&&evade_frames==25u);
-            for(unsigned f=0;f<24;f++){som_hop_step();som_evade_tick();frame_number++;}
-            assert(evade_active&&cartwheel.active&&(hero[0x0E]&0x80u));
-            for(unsigned f=0;f<4;f++){som_hop_step();som_evade_tick();frame_number++;}
-            assert(!evade_active&&!cartwheel.active&&!(hero[0x0E]&0x80u));
-            assert(som_bun_u16(hero+2)==200+64);
-            cartwheel_pack=NULL;cartwheel_pack_size=0;hero[3]=0;
-        }
+        /* On a combat map ($ED bit 7) the game's own cartwheel: reaction
+         * 0x13 in E1E5, the hero turned to face away from the way held (it
+         * goes backwards), no proxy move; the pose plays, nothing falls back. */
+        ram[0xED]=0x80;hero[0x1E5]=0xFF;hero[2]=200;hero[3]=0;hero[0x010]=0x02;hero[0x01C]=0;
+        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(cartwheel_native&&hero[0x1E5]==0x13&&hero[0x010]==0x82&&!hop_frames_left);
+        assert(evade_frames==30u+SOM_DODGE_GRACE);
+        hero[0x1E5]=0xFF;hero[0x01C]=0x40;hero[0x011]=0x93;     /* the combat tick took it */
+        for(unsigned f=0;f<20;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(evade_active&&cartwheel_native&&som_bun_u16(hero+2)==200);
+        hero[0x01C]=0;hero[0x011]=0;
+        for(unsigned f=0;f<20;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(!evade_active&&!cartwheel_native&&som_bun_u16(hero+2)==200);
+        /* The game refuses (the pose never starts): after 8 frames the
+         * request is withdrawn and the 64 px hop runs instead. */
+        hero[0x1E5]=0xFF;hero[0x010]=0x82;
+        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT));som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(cartwheel_native&&hero[0x1E5]==0x13&&hero[0x010]==0x02);
+        for(unsigned f=0;f<60;f++){som_hop_step();som_evade_tick();frame_number++;}
+        assert(!evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF&&som_bun_u16(hero+2)==200-64);
+        /* Busy (already in a pose): straight to the hop. */
+        hero[0x01C]=0x40;hero[2]=200;
+        mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(!cartwheel_native&&hero[0x1E5]==0xFF);
+        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+        hero[0x01C]=0;ram[0xED]=0;hero[2]=200;hero[3]=0;
         /* AI "kawarimi": armed; nothing moves until a monster touches him.
          * Then he reappears 3 x 16 = 48 px away from it, the hit is
          * dropped, a log stands on his old spot, and he is untouchable for

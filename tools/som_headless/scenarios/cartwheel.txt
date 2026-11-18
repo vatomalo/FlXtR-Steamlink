@@ -1,0 +1,30 @@
+# Monk A on a combat map = the game's own cartwheel (miss reaction pose 0x93),
+# 25 px away from the facing; a held direction turns him first (held LEFT:
+# facing right, so it goes left). The game moves him: walls and monsters stop it.
+# Start: rabites.state (map 130, from to_rabites.txt).
+#! expect-log EVADE Cartwheel as Martial Arts: the game's own
+#! expect-no-log cartwheel did not start
+expect u16 00DC == 130
+cmd class_1
+# the class change equips the glove a little later; let it land first
+frames 120
+mark
+hold A 1
+frames 8
+peek
+expect u8 E01C == 0x40
+expect u8 E011 == 0x93
+shot cartwheel_mid
+frames 40
+peek
+expect-moved 15 40
+frames 20
+mark
+hold A,LEFT 1
+frames 8
+peek
+expect u8 E011 == 0x93
+expect u8 E010 == 0x02
+frames 40
+peek
+expect-moved 15 40

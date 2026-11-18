@@ -20,7 +20,7 @@ spec.loader.exec_module(runner)
 SCENARIOS = sorted((ROOT / "tools/som_headless/scenarios").glob("*.txt"))
 COMMANDS = re.compile(r"^(frames \d+|bench \d+|hold [A-Z0-9,]+ \d+|cmd \S.*|shot \S+|peek|oam|save \S+|"
                       r"unload|dump \S+|audio \S+|mark|expect-moved \d+ \d+|expect u(8|16) [0-9A-Fa-f]+ "
-                      r"(==|!=|<|<=|>|>=) (0x[0-9A-Fa-f]+|\d+)|monster [0-2] -?\d+ -?\d+)$")
+                      r"(==|!=|<|<=|>|>=) (0x[0-9A-Fa-f]+|\d+)|poke [0-9A-Fa-f]+ (0x[0-9A-Fa-f]+|\d+)|monster [0-2] -?\d+ -?\d+)$")
 
 
 class RewriteTests(unittest.TestCase):

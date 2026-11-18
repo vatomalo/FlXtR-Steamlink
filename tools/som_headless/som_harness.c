@@ -23,6 +23,7 @@
  *                            (OP: == != < <= > >=); a miss fails the run
  *   expect-moved MIN MAX     hero moved MIN..MAX px (Manhattan) since mark
  *   mark                     remember the hero position for expect-moved
+ *   poke ADDR V              write byte V to WRAM (7E/7F offset, hex)
  *   monster SLOT DX DY       move monster SLOT relative to the hero
  *
  * Exit status: 0 all expectations met, 1 an expectation failed, 2 usage or
@@ -245,6 +246,13 @@ int main(int argc,char **argv){
             }
         }else if(!strcmp(line,"unload")){unload_game();fputs("[harness] unloaded\n",stderr);break;}
         else if(!strcmp(line,"mark")){mark_x=(int)u16(ram+0xE002);mark_y=(int)u16(ram+0xE004);}
+        else if(sscanf(line,"poke %lx %li",&addr,(long*)&v)==2){
+            if(addr>=0x20000u||v>0xFFu){
+                fprintf(stderr,"[harness] FAIL line %lu: bad poke\n",line_no);return 2;
+            }
+            ram[addr]=(uint8_t)v;
+            fprintf(stderr,"[harness] poke 7E:%04lX = %02lX\n",addr,v);
+        }
         else if(sscanf(line,"expect-moved %lu %lu",&k,&v)==2){
             const unsigned long moved=(unsigned long)(abs((int)u16(ram+0xE002)-mark_x)+
                                                       abs((int)u16(ram+0xE004)-mark_y));

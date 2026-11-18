@@ -99,6 +99,8 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
                     "kawarimi", "shunshin", "iai_3", "iai_4", "flykick"} | \
     {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
+# Blink to a tile (proxy som_blink_start checks range and open ground).
+BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")
 FAMILIAR_FILE = "/tmp/flxtr-som-familiar"
 # The proxy's saved discipline: "v1 <selected> <level> <xp> ..." (som_disc_save).
 DISCIPLINE_CHECK_S = 2.0     # how often the game's own class is read
@@ -782,7 +784,7 @@ class RemoteLink:
 
     def send_control(self, command: str) -> None:
         """Experimental proxy commands that only tools (never Qwen) may send."""
-        if command not in CONTROL_COMMANDS:
+        if command not in CONTROL_COMMANDS and not BLINK_COMMAND.fullmatch(command):
             raise ValueError(f"refusing unknown control command {command!r}")
         status, _ = self._request("act " + command)
         if status != "OK":
@@ -1849,6 +1851,7 @@ def main() -> int:
                 # an evade gambit of 0 means the player wants no evading.
                 planner.evade_past = bool(link and class_director.current in DODGE_CLASSES and
                                           style["evade"] > 0)
+                planner.blink = isinstance(link, RemoteLink)    # the Steam Link proxy
                 decision = planner.decide(observation, previous, directive, errand)
                 # Missing a taught inn/save macro must NOT freeze the hero.
                 # The play-loop phase stays committed, but the deterministic
@@ -2259,6 +2262,15 @@ def main() -> int:
                         print(f"[save] disabled for this run: {exc}", flush=True)
                         announce("AI: save failed|see log")
                         play_loop.save_failed(str(exc))
+                    previous = "wait"
+                    continue
+                if link and decision.intention == "blink":
+                    print(f"[ai] intent=blink: {decision.reason}", flush=True)
+                    try:
+                        link.send_control(decision.action)
+                        announce("AI: Blink|out of the trap")
+                    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                        print(f"[ai] blink failed: {exc}", flush=True)
                     previous = "wait"
                     continue
                 if link and decision.intention == "evade_past" and decision.action == "evade":

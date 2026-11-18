@@ -301,7 +301,8 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertIn(decision.action, ("step_down", "step_left"))
             history.close()
 
-    def _blocked_south(self, history, evade, wall=False, turns_work=True, decisions_run=16):
+    def _blocked_south(self, history, evade, wall=False, turns_work=True, decisions_run=16,
+                       blink=False):
         for x in range(8):
             for y in range(8):
                 kind = "blocked" if wall and y == 4 else ("h2" if y == 5 else "open")
@@ -318,6 +319,7 @@ class TestMultiMapTravel(unittest.TestCase):
                      "passability_rows": ["...", ".@.", "###" if wall else "..."]}}
         planner = MemoryPlanner(history)
         planner.evade_past = evade
+        planner.blink = blink
         errand = {"place": "map 144", "anchor": {"map_id": 144}}
         decisions, previous = [], "none"
         for _ in range(decisions_run):  # the hero never moves: someone is in the way
@@ -350,6 +352,22 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertGreaterEqual(sum("no progress" in r or "evade past" in r
                                         for r in reasons[:first]), 2, reasons[:first])
             self.assertIn("evade", [d.action for d in decisions[first:]])
+            history.close()
+
+    def test_trapped_hero_blinks_to_walked_ground_outside_the_trap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "blink.sqlite")
+            cols = [r[1] for r in history.connection.execute("pragma table_info(walked_cells)")]
+            for x, y in ((3, 2), (4, 3), (12, 10), (30, 30)):   # in trap, in trap, ok, too far
+                row = {"map_id": 16, "x": x, "y": y}
+                values = [row.get(c, 1 if c == "layer" else 0) for c in cols]
+                history.connection.execute(
+                    f"INSERT INTO walked_cells VALUES({','.join('?' * len(cols))})", values)
+            decisions = self._blocked_south(history, evade=True, wall=True, decisions_run=80,
+                                            blink=True)
+            blinks = [d for d in decisions if d.intention == "blink"]
+            self.assertEqual([d.action for d in blinks][:1], ["blink_12_10"],
+                             [d.reason for d in decisions])
             history.close()
 
     def test_no_evade_while_still_facing_the_blocker(self):

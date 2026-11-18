@@ -119,6 +119,12 @@ EVADE_PAST_TURNS = 4
 TRAP_STALLS = 3
 TRAP_TILES = 3
 TRAP_WINDOW = 80
+# Blink (proxy "blink_<tx>_<ty>"): a trapped hero first blinks to a tile he
+# has walked on, outside the trap and within BLINK_RANGE tiles; the proxy
+# refuses other ground and has its own 10 s cooldown, so the planner waits
+# BLINK_COOLDOWN_S between asks and evades meanwhile.
+BLINK_RANGE = 12
+BLINK_COOLDOWN_S = 12.0
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
 # Facing byte E010 is trusted after this many steps agreed with it.
@@ -253,6 +259,8 @@ class MemoryPlanner:
         self.evade_past_tries = {}         # per visit: reset on another map
         self.evade_past_map = None
         self.decision_count = 0
+        self.blink = False                 # set by the bridge when the proxy can blink
+        self.blink_at = None               # clock() of the last blink asked for
         self.stall_log = []                # (decision, map, x, y) of recent stalls
         # Set while the play loop hunts on the current map: exploration must
         # not walk over exit tiles (it used to leave map 129 for 128 and be
@@ -2203,7 +2211,12 @@ class MemoryPlanner:
         why = self._whip_options(context).get(decision.action)
         if why is not None:
             return self._whip_cross(context, decision.action, why)
-        past = self._evade_past(context, decision.action, trapped=self._trapped(context))
+        trapped = self._trapped(context)
+        if trapped:
+            blink = self._blink_out(context)
+            if blink is not None:
+                return blink
+        past = self._evade_past(context, decision.action, trapped=trapped)
         if past is not None:
             return past
         return PlannerDecision(
@@ -2222,6 +2235,36 @@ class MemoryPlanner:
         near = [s for s in self.stall_log if s[1] == here and
                 abs(s[2] - tile[0]) <= TRAP_TILES and abs(s[3] - tile[1]) <= TRAP_TILES]
         return len(near) >= TRAP_STALLS
+
+    def _blink_out(self, context):
+        """Blink to the walked tile farthest from the trap (within range,
+        more than TRAP_TILES from every stall here), or None."""
+        now = self.clock()
+        if (not self.blink or self.history is None or
+                (self.blink_at is not None and now - self.blink_at < BLINK_COOLDOWN_S)):
+            return None
+        here, tile = context.get("map_id"), context.get("actor_tile")
+        stalls = [(s[2], s[3]) for s in self.stall_log if s[1] == here]
+        if not isinstance(tile, list) or not stalls:
+            return None
+        cx = sum(x for x, _ in stalls) / len(stalls)
+        cy = sum(y for _, y in stalls) / len(stalls)
+        best = None
+        for x, y in self._walked(here):
+            if abs(x - tile[0]) > BLINK_RANGE or abs(y - tile[1]) > BLINK_RANGE:
+                continue
+            if any(abs(x - sx) <= TRAP_TILES and abs(y - sy) <= TRAP_TILES for sx, sy in stalls):
+                continue
+            score = abs(x - cx) + abs(y - cy)
+            if best is None or score > best[0]:
+                best = (score, x, y)
+        if best is None:
+            return None
+        self.blink_at, self.stall_log = now, []
+        self._set_intention(None)
+        _, x, y = best
+        return PlannerDecision(f"blink_{x}_{y}", f"trapped at {tile[0]},{tile[1]}: blinking to "
+                               f"walked tile {x},{y}", "blink")
 
     def _evade_past(self, context, action, trapped=False):
         """Turn away from a blocker standing on open ground (or, trapped,

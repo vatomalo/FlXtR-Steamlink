@@ -718,6 +718,22 @@ static unsigned fuma_target_id,fuma_damage,fuma_level;
 static unsigned long fuma_strike_at,fuma_end_at,fuma_ready;
 static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base);
 static void som_fuma_frame(uint8_t *ram);
+/* Blink (AI "blink_<tx>_<ty>", any class): the hero vanishes in smoke,
+ * travels unseen in a straight line to the centre of tile (tx, ty) on this
+ * map, over walls, and reappears in smoke. The landing spot must be open
+ * ground (som_bun_spot_open) within SOM_BLINK_RANGE tiles; the AI picks a
+ * tile the hero has walked on. For a hero boxed in where walking cannot get
+ * out (behind slide tiles above map 130's cliffs, 2026-11-18). The camera
+ * follows at SOM_BLINK_SPEED px per frame, the rate checked to stream new
+ * tile rows (som_camera_follow). No MP: the boy often has none. */
+#define SOM_BLINK_RANGE 12
+#define SOM_BLINK_SPEED 4
+#define SOM_BLINK_COOLDOWN 600ul
+static int blink_active,blink_hid,blink_tx,blink_ty;
+static unsigned long blink_ready;
+static int som_blink_start(uint8_t *ram,int tx,int ty);
+static void som_camera_follow(uint8_t *ram,int dx,int dy);
+static void som_blink_frame(uint8_t *ram);
 static void som_flykick_frame(uint8_t *ram);
 static int som_bash_start(uint8_t *ram);
 static void som_bash_tick(void);
@@ -1893,6 +1909,54 @@ static void som_fuma_frame(uint8_t *ram){
         fuma.active=0;fuma_target=-1;fuma_ready=frame_number+SOM_FUMA_COOLDOWN;
     }
 }
+static int som_blink_start(uint8_t *ram,int tx,int ty){
+    if(!ram||blink_active||evade_active||bash_stage||special_stage)return 0;
+    if(frame_number<blink_ready){
+        fprintf(stderr,"[som-ai] BLINK refused: ready in %lu frames\n",blink_ready-frame_number);
+        return 0;
+    }
+    uint8_t *hero=ram+0xE000u;
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    const int x0=(int)som_bun_u16(hero+2),y0=(int)som_bun_u16(hero+4);
+    if(tx<0||ty<0||abs(tx-x0/16)>SOM_BLINK_RANGE||abs(ty-y0/16)>SOM_BLINK_RANGE){
+        fprintf(stderr,"[som-ai] BLINK refused: tile %d,%d out of range\n",tx,ty);
+        return 0;
+    }
+    const int x=tx*16+8,y=ty*16+8;
+    if(!som_bun_spot_open(ram,x,y,som_hero_place(hero))){
+        fprintf(stderr,"[som-ai] BLINK refused: tile %d,%d is not open ground\n",tx,ty);
+        return 0;
+    }
+    blink_active=1;blink_tx=x;blink_ty=y;
+    blink_hid=!(hero[0x0E]&0x80u);
+    hero[0x0E]|=0x80u;
+    som_bun_boom(bunshin_booms,x0,y0,1,frame_number);
+    som_overlay_set(&overlay,"^Blink",SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] BLINK from %d,%d to tile %d,%d (%d,%d)\n",x0,y0,tx,ty,x,y);
+    return 1;
+}
+/* Each frame of a blink: SOM_BLINK_SPEED px per axis toward the landing
+ * spot, camera along; smoke and the hero back on arrival. */
+static void som_blink_frame(uint8_t *ram){
+    if(!blink_active)return;
+    uint8_t *hero=ram?ram+0xE000u:NULL;
+    const int field=ram&&hero[0]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    int x=field?(int)som_bun_u16(hero+2):0,y=field?(int)som_bun_u16(hero+4):0;
+    if(field){
+        const int dx=blink_tx-x,dy=blink_ty-y;
+        const int sx=dx>SOM_BLINK_SPEED?SOM_BLINK_SPEED:dx<-SOM_BLINK_SPEED?-SOM_BLINK_SPEED:dx;
+        const int sy=dy>SOM_BLINK_SPEED?SOM_BLINK_SPEED:dy<-SOM_BLINK_SPEED?-SOM_BLINK_SPEED:dy;
+        x+=sx;y+=sy;
+        hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
+        hero[0x006]=hero[0x007]=0;
+        som_camera_follow(ram,sx,sy);
+        if(x!=blink_tx||y!=blink_ty)return;
+        som_bun_boom(bunshin_booms,x,y,1,frame_number);
+        fprintf(stderr,"[som-ai] BLINK arrived at %d,%d\n",x,y);
+    }
+    if(ram&&blink_hid)ram[0xE00E]&=(uint8_t)~0x80u;
+    blink_active=0;blink_hid=0;blink_ready=frame_number+SOM_BLINK_COOLDOWN;
+}
 /* Before each emulated frame: advance the bash. */
 static void som_bash_tick(void){
     if(!bash_stage||!backend_retro_get_memory_data)return;
@@ -2898,6 +2962,12 @@ static int som_handle_command(const char *command){
     if(!strcmp(command,"evade"))
         return som_evade_start(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+    {
+        int tx,ty;char tail;
+        if(!strncmp(command,"blink_",6)&&sscanf(command+6,"%3d_%3d%c",&tx,&ty,&tail)==2)
+            return som_blink_start(backend_retro_get_memory_data?
+                (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL,tx,ty);
+    }
     if(!strcmp(command,"kawarimi"))
         return som_kawarimi_arm(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -4138,6 +4208,7 @@ RETRO_API void retro_run(void){
     if(test_enabled&&on_turbo){
         som_bash_tick();
         if(fuma.active)som_fuma_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        if(blink_active)som_blink_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(flykick.active&&backend_retro_get_memory_data)
             som_flykick_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     }

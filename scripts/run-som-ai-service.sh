@@ -12,7 +12,13 @@ objective=${SOM_AI_OBJECTIVE:-Explore safely using verified tiles and attack whe
 ollama_url=${SOM_AI_OLLAMA_URL:-http://127.0.0.1:11434}
 interval=${SOM_AI_INTERVAL:-0.1}
 start_timeout=${SOM_AI_START_TIMEOUT:-3600}
-history_db=${SOM_AI_HISTORY_DB:-"$state_dir/som-ai.sqlite"}
+history_db=${SOM_AI_HISTORY_DB:-"$state_dir/som-ai${SOM_AI_INSTANCE:+-$SOM_AI_INSTANCE}.sqlite"}
+# A second instance (e.g. Android) starts with the maps the main one learned.
+if [ -n "${SOM_AI_INSTANCE:-}" ] && [ ! -e "$history_db" ] && [ -e "$state_dir/som-ai.sqlite" ]; then
+  python3 -c 'import sqlite3, sys
+src = sqlite3.connect(sys.argv[1]); dst = sqlite3.connect(sys.argv[2])
+src.backup(dst); dst.close(); src.close()' "$state_dir/som-ai.sqlite" "$history_db"
+fi
 hunt_direction=${SOM_AI_HUNT_DIRECTION:-west}
 shop_gold=${SOM_AI_SHOP_GOLD:-500}
 gp_reward=${SOM_AI_GP_REWARD:-1}

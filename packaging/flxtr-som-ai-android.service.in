@@ -1,0 +1,20 @@
+[Unit]
+Description=FlXtR Secret of Mana AI bridge for Android (Tailscale relay)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+Environment=PYTHONUNBUFFERED=1
+# Shared settings first, then the Android overrides (SOM_AI_ANDROID=1, own DB).
+EnvironmentFile=-%h/.config/flxtr/som-ai.env
+EnvironmentFile=-%h/.config/flxtr/som-ai-android.env
+ExecStart=/bin/bash @REPO@/scripts/run-som-ai-service.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

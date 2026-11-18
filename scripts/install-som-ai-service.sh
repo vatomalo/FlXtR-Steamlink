@@ -24,8 +24,13 @@ else
   echo "Preserved existing $config_dir/som-ai.env"
 fi
 
+if [[ ! -e "$config_dir/som-ai-android.env" ]]; then
+  install -m 0600 "$repo/packaging/som-ai-android.env.example" "$config_dir/som-ai-android.env"
+  echo "Created $config_dir/som-ai-android.env"
+fi
+
 escaped_repo=${repo//&/\\&}
-units=(flxtr-som-ai.service flxtr-som-living-world.service)
+units=(flxtr-som-ai.service flxtr-som-ai-android.service flxtr-som-living-world.service)
 for unit in "${units[@]}"; do
   sed "s&@REPO@&$escaped_repo&g" "$repo/packaging/$unit.in" > "$unit_dir/$unit"
   chmod 0644 "$unit_dir/$unit"
@@ -36,4 +41,4 @@ systemctl --user enable --now "${units[@]}"
 
 echo "Installed and started ${units[*]}"
 echo "Enable boot without login once with: sudo loginctl enable-linger $USER"
-echo "Logs: journalctl --user -u flxtr-som-ai.service -u flxtr-som-living-world.service -f"
+echo "Logs: journalctl --user -u flxtr-som-ai.service -u flxtr-som-ai-android.service -u flxtr-som-living-world.service -f"

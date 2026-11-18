@@ -52,6 +52,15 @@ adb install -r dist/FlXtR-Android-preview.apk
 
 ## Start the SkyLoft service
 
+`scripts/install-som-ai-service.sh` installs `flxtr-som-ai-android.service`
+beside the Steam Link bridge, so both games get an AI at once. It reads
+`som-ai.env` and then `~/.config/flxtr/som-ai-android.env` (`SOM_AI_ANDROID=1`,
+the listen address, `SOM_AI_INSTANCE=android`). Its history database is
+`som-ai-android.sqlite`, seeded from the Steam Link one on first start. Leave
+`SOM_AI_ANDROID` unset in `som-ai.env`, or the Steam Link bridge would switch
+to Android too. The single-service setup below still works.
+
+
 SkyLoft needs Python 3 and the repository's `tools/` modules. They use the
 Python standard library, including SQLite; no Python runtime or packages are
 installed on Android. Hybrid policy additionally needs the configured local

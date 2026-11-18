@@ -390,11 +390,19 @@ class TestMultiMapTravel(unittest.TestCase):
                 observation = {"tile_context": {"map_id": 130, "actor_tile": tile,
                                                 "actor": {"layer": 1}}}
                 step = PlannerDecision("step_up" if i % 2 else "step_down",
-                                       "close on enemy 1 at 230px", "engage_enemy")
+                                       "close on enemy 1 at 230px", "engage_enemy", 14)
                 results.append(planner._check_pinned(observation, step))
             self.assertTrue(all(r.intention == "engage_enemy" for r in results[:-1]))
             self.assertEqual(results[-1].action, "blink_20_18", results[-1].reason)
             self.assertIn("pinned", results[-1].reason)
+            # Kiting in the same box is fighting, not being pinned.
+            planner.blink_at = None
+            for i in range(PIN_STEPS * 2):
+                observation = {"tile_context": {"map_id": 130, "actor_tile": [10, 10 + i % 2],
+                                                "actor": {"layer": 1}}}
+                kite = PlannerDecision("step_up" if i % 2 else "step_down",
+                                       "keep distance", "kite_enemy")
+                self.assertEqual(planner._check_pinned(observation, kite).intention, "kite_enemy")
             history.close()
 
     def test_boomerang_at_an_unwalkable_monster_asks_for_the_fuma_swap(self):
@@ -451,7 +459,7 @@ class TestMultiMapTravel(unittest.TestCase):
                     obs = {"tile_context": {"map_id": 130, "actor_tile": [10, 10 + i % 2],
                                             "actor": {"layer": 1}}}
                     result = planner._check_pinned(obs, PlannerDecision(
-                        "step_up" if i % 2 else "step_down", "close on enemy", "engage_enemy"))
+                        "step_up" if i % 2 else "step_down", "frontier", "explore_frontier"))
                 return result
             self.assertEqual(pin().action, "blink_20_18")
             now[0] += 2.0                       # the proxy refused: he is still here
@@ -527,7 +535,19 @@ class TestMultiMapTravel(unittest.TestCase):
             errand = {"place": "inn", "anchor": {"map_id": 16, "layer": 1,
                                                  "target": [8, 8]}}
             planner = MemoryPlanner(history)
-            decisions = [planner.decide(state, errand=errand) for _ in range(10)]
+            # Standing on the exit while a slow transition starts: no bounce.
+            still = [planner.decide(state, errand=errand) for _ in range(6)]   # < stall limit
+            self.assertFalse(any("only bounces" in d.reason for d in still))
+            self.assertNotIn("132>16", history.rejected_edges())
+            # Stepping off sideways and coming back, again and again: a bounce.
+            import copy
+            decisions = []
+            for i in range(24):
+                where = copy.deepcopy(state)
+                if i % 2:
+                    where["tile_context"]["actor_tile"] = [3, 3]
+                    where["tile_context"]["actor"]["x_px"] = 56
+                decisions.append(planner.decide(where, errand=errand))
             self.assertEqual(decisions[0].action, "step_right")
             self.assertTrue(any("only bounces" in d.reason for d in decisions),
                             [d.reason for d in decisions])

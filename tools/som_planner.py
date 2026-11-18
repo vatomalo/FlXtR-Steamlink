@@ -130,6 +130,11 @@ BLINK_RANGE = 12
 # counted; pinned counts as trapped.
 PIN_STEPS = 40
 PIN_TILES = 2
+# Approaching a monster still this many tiles away counts (the unreachable
+# chase at 220-230 px); closer fighting and kiting do not.
+PIN_CHASE_TILES = 4
+PIN_INTENTIONS = {"explore_frontier", "leave_room", "return_to_inn", "go_to_inn",
+                  "go_to_shop", "go_to_map", "visit_map", "replan", "stuck"}
 BLINK_COOLDOWN_S = 12.0
 BLINK_SETTLE_S = 1.5        # travel time before a blink's result is judged
 # Keep the current evasion heading unless another step is clearly safer.
@@ -232,6 +237,7 @@ class MemoryPlanner:
         self.unverified_nudges = 0
         self.exit_wait = (None, 0)      # (map, tile, next map), waits on it
         self.exit_bounce = (None, 0)    # (map, tile, next map), exit steps from it
+        self.exit_bounce_tile = None    # the hero's tile on the previous travel decision
         self.field_waits = 0
         self.slide_failsafe = 0
         # Grass cutting: learned cuttable attributes (without a database),
@@ -1319,6 +1325,9 @@ class MemoryPlanner:
     def _travel(self, context, anchor, open_steps, place, travel_intent, arrive_intent, strict=False):
         """Follow learned maps and tiles to a taught place; None if no route."""
         actor = context["actor"]
+        tile_now = context.get("actor_tile")
+        previous_tile, self.exit_bounce_tile = (self.exit_bounce_tile,
+                                                tuple(tile_now) if tile_now else None)
         destination = anchor
         exit_action = None
         crossing = False
@@ -1377,7 +1386,12 @@ class MemoryPlanner:
             if target == position:
                 if exit_action in open_steps:
                     key = (context.get("map_id"), position, destination.get("next_map"))
-                    bounces = self.exit_bounce[1] + 1 if self.exit_bounce[0] == key else 1
+                    # A bounce is coming back onto the exit tile; standing on
+                    # it while a slow transition starts is not (that rejected
+                    # map 130's real exit to Potos, 2026-11-19).
+                    returned = previous_tile != position
+                    bounces = (self.exit_bounce[1] + (1 if returned else 0)
+                               if self.exit_bounce[0] == key else 1)
                     self.exit_bounce = (key, bounces)
                     if (bounces > EXIT_BOUNCE_DECISIONS and crossing and
                             destination.get("source") != "rom" and
@@ -2280,12 +2294,30 @@ class MemoryPlanner:
                 abs(tile[0] - target[0]) + abs(tile[1] - target[1]) > 2):
             self.blink_failed.add((here, target))
 
+    def _tile_visits(self, map_id, layer):
+        """{(x, y): visits} on this map, {} without memory."""
+        if self.history is None:
+            return {}
+        try:
+            rows = self.history.connection.execute(
+                "SELECT x,y,SUM(visits) FROM tile_visits WHERE map_id=? GROUP BY x,y", (map_id,))
+            return {(x, y): n or 0 for x, y, n in rows}
+        except Exception:                # an old or partial database
+            return {}
+
     def _check_pinned(self, observation, decision):
         """Escape (Blink, else an evade hop along the step) when the last
         PIN_STEPS steps never left a (2 * PIN_TILES + 1)-tile box."""
         context = observation.get("tile_context") if isinstance(observation, dict) else None
         if (not isinstance(context, dict) or decision.action not in STEP_OFFSETS or
                 decision.turn_only or not isinstance(context.get("actor_tile"), list)):
+            return decision
+        chasing = (decision.intention == "engage_enemy" and
+                   (decision.remaining_tiles or 0) >= PIN_CHASE_TILES)
+        if decision.intention not in PIN_INTENTIONS and not chasing:
+            # Kiting and circling a monster stay in a small box on purpose;
+            # pinned blinks there pulled the hero out of his fights.
+            self.step_tiles = []
             return decision
         here, tile = context.get("map_id"), context["actor_tile"]
         self.step_tiles = [t for t in self.step_tiles if t[0] == here][-(PIN_STEPS - 1):]
@@ -2326,6 +2358,10 @@ class MemoryPlanner:
         cx = sum(x for x, _ in stalls) / len(stalls)
         failed = {t for m, t in self.blink_failed if m == here}
         cy = sum(y for _, y in stalls) / len(stalls)
+        # The most-walked tile in range: the roads the hero really uses. The
+        # farthest walked tile landed him in pockets with no route out
+        # (escapes 24 -> 124 an hour, straight-line guessing 0 -> 21 %).
+        visits = self._tile_visits(here, (context.get("actor") or {}).get("layer"))
         best = None
         for x, y in self._walked(here):
             if abs(x - tile[0]) > BLINK_RANGE or abs(y - tile[1]) > BLINK_RANGE:
@@ -2334,7 +2370,7 @@ class MemoryPlanner:
                 continue
             if (x, y) in failed:
                 continue
-            score = abs(x - cx) + abs(y - cy)
+            score = (visits.get((x, y), 0), abs(x - cx) + abs(y - cy))
             if best is None or score > best[0]:
                 best = (score, x, y)
         if best is None:

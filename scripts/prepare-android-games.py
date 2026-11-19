@@ -6,8 +6,25 @@ root=Path(__file__).resolve().parents[1]
 deps=root/'android/build/game-sources';deps.mkdir(parents=True,exist_ok=True)
 def checkout(name,url,revision):
     path=deps/name
+    if name not in ('moonlight','gambatte','fceumm') or not path.resolve().is_relative_to(deps.resolve()):
+        raise RuntimeError('Refusing to modify a path outside generated Android sources')
     if not (path/'.git').exists(): subprocess.run(['git','clone','--no-checkout',url,str(path)],check=True)
+    # A checkout at the SAME revision does not discard dirty tracked vendor
+    # files. This left a locally modified AppView.java importing a missing
+    # GamezBridge class and broke :moonlight:compileDebugJavaWithJavac.
+    # Preserve the experimental diff first, then restore ONLY the generated
+    # third-party checkout, never the main FlXtR source worktree.
+    dirty=subprocess.run(['git','-C',str(path),'diff','HEAD','--binary'],
+                         capture_output=True,check=True).stdout
+    if dirty:
+        from datetime import datetime, timezone
+        timestamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        backup=deps / f'{name}-local-{timestamp}.patch'
+        backup.write_bytes(dirty)
+        print(f'Backed up uncommitted generated {name} patches: {backup}',flush=True)
+    subprocess.run(['git','-C',str(path),'reset','--hard'],check=True)
     subprocess.run(['git','-C',str(path),'checkout','--detach',revision],check=True)
+    subprocess.run(['git','-C',str(path),'reset','--hard',revision],check=True)
     subprocess.run(['git','-C',str(path),'submodule','update','--init','--recursive'],check=True)
     return path
 moon=checkout('moonlight','https://github.com/moonlight-stream/moonlight-android.git','1b1b100e63e8ffcf1496e324ff7b57ee9f2db2a9')

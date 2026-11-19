@@ -15,7 +15,7 @@ static const SettingsTab settings_tabs[]={
     {"TV",5,{7,8,12,13,14}},
     {"SERVICES",8,{23,24,25,15,18,30,33,34}},
     {"GENERAL",7,{3,9,16,40,41,42,35}},
-    {"STREAM",4,{36,37,38,39}}
+    {"STREAM",5,{35,36,37,38,39}}
 };
 static int settings_tab,settings_row=-1;
 static void settings_switch(int step){

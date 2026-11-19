@@ -703,6 +703,15 @@ static unsigned kawarimi_log_map;
 #define SOM_KAWARIMI_ARM_FRAMES 180ul
 static unsigned long kawarimi_armed_until;
 static int som_kawarimi_check(uint8_t *ram);
+static int som_kawarimi_arm(uint8_t *ram);
+static int som_shunshin_start(uint8_t *ram);
+/* Hold A (Circle) SOM_A_HOLD_FRAMES: Kawarimi. The tap's hop still fires on
+ * the press; the held request waits up to SOM_A_HOLD_WAIT frames for the
+ * hero to be free (the hop over), even if A is let go meanwhile. */
+#define SOM_A_HOLD_FRAMES 20ul
+#define SOM_A_HOLD_WAIT 90ul
+static unsigned long a_press_frame,a_kawarimi_since;
+static int a_hold_done=1,a_kawarimi_pending;
 static void som_bunshin_frame(uint8_t *ram);
 static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y);
 /* R1+A bash (swordsman): the game's own run for up to SOM_BASH_LUNGE_FRAMES
@@ -1273,7 +1282,8 @@ static void som_input_poll(void){
             disciplines.selected<SOM_DISCIPLINE_COUNT&&som_disc_has_dodge(disciplines.selected);
         if(evade_a_hidden&&(pressed&a_bit)){
             const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
-            if(disciplines.selected==0u&&(current&r1_bit))som_bash_start(wram);
+            a_press_frame=frame_number;a_hold_done=0;
+            if(disciplines.selected==0u&&(current&r1_bit)){som_bash_start(wram);a_hold_done=1;}
             else{
                 evade_dir_x=(current&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:
                             (current&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
@@ -1281,6 +1291,20 @@ static void som_input_poll(void){
                             (current&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?-1:0;
                 som_evade_start(wram);
                 evade_dir_x=evade_dir_y=0;
+            }
+        }
+        /* Hold A: Kawarimi no Jutsu, armed once the hop is over. */
+        if(!(current&a_bit))a_hold_done=1;
+        if(evade_a_hidden&&(current&a_bit)&&!a_hold_done&&
+           frame_number-a_press_frame>=SOM_A_HOLD_FRAMES){
+            a_hold_done=1;a_kawarimi_pending=1;a_kawarimi_since=frame_number;
+        }
+        if(a_kawarimi_pending){
+            if(!wram||ring_ai_enabled||kawarimi_armed_until||
+               frame_number-a_kawarimi_since>SOM_A_HOLD_WAIT)a_kawarimi_pending=0;
+            else if(som_kawarimi_arm(wram)){
+                a_kawarimi_pending=0;
+                fprintf(stderr,"[som-ai] KAWARIMI from held A\n");
             }
         }
         /* Combo finisher: hold B or Y with a chain level ready. That button's
@@ -1350,6 +1374,16 @@ static void som_input_poll(void){
                  !(current&(l2_bit|r2))&&!special_suppress){
             if(!x_cycled)som_cast_spell(wram,som_current_spell());
             x_cycled=0;
+        }
+        /* L2+X: Shunshin no Jutsu (a clone on each side) for a ninja with a
+         * short-range weapon in hand; the game never sees that X. Every
+         * other case keeps L2+X reaching the game. */
+        if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
+           disciplines.selected==SOM_DISC_NINJUTSU&&som_weapon_short_range(wram[0xE1E4])&&
+           (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
+            x_spell_blocked=1;
+            if((pressed&x_bit)&&som_shunshin_start(wram))
+                fprintf(stderr,"[som-ai] SHUNSHIN from L2+X\n");
         }
         /* Start opens Class Progress manually; retain L2+R2 as an alias.
          * While open, all pad input is consumed by the overlay. */
@@ -2454,8 +2488,8 @@ static void som_camera_follow(uint8_t *ram,int dx,int dy){
 }
 /* A (and the AI's "evade"): the class's plain dodge hop. A ninja with the
  * long-range weapon (chakram/boomerang) casts Kage Bunshin instead, and with clones out A swaps
- * him into one. Kawarimi and Shunshin are not on A (AI commands
- * "kawarimi" / "shunshin"). */
+ * him into one. Holding A arms Kawarimi after the hop, and L2+X is
+ * Shunshin (also AI commands "kawarimi" / "shunshin"). */
 static int som_evade_start(uint8_t *ram){
     if(!ram||evade_active)return 0;
     if(disciplines.selected>=SOM_DISCIPLINE_COUNT||!som_disc_has_dodge(disciplines.selected)){

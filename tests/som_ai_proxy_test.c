@@ -1488,6 +1488,27 @@ int main(void){
         assert(!cartwheel_native&&hero[0x1E5]==0xFF);
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         hero[0x01C]=0;ram[0xED]=0;hero[2]=200;hero[3]=0;
+        /* Hold A: the hop fires on the press, then Kawarimi is armed once
+         * he is free again. A tap leaves Kawarimi unarmed. */
+        {
+            const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+            uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
+            hero[2]=200;hero[3]=0;hero[0x01C]=0;
+            mocked_buttons=a;som_input_poll();assert(evade_active);
+            mocked_buttons=0;som_input_poll();
+            for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;som_input_poll();}
+            assert(!evade_active&&!kawarimi_armed_until);
+            hero[2]=200;hero[3]=0;hero[0x01C]=0;
+            mocked_buttons=a;som_input_poll();assert(evade_active);
+            for(unsigned f=0;f<60&&!kawarimi_armed_until;f++){
+                som_hop_step();som_evade_tick();frame_number++;som_input_poll();
+            }
+            assert(kawarimi_armed_until&&!evade_active);
+            mocked_buttons=0;som_input_poll();
+            kawarimi_armed_until=0;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+        }
         /* AI "kawarimi": armed; nothing moves until a monster touches him.
          * Then he reappears 3 x 16 = 48 px away from it, the hit is
          * dropped, a log stands on his old spot, and he is untouchable for
@@ -1779,11 +1800,27 @@ int main(void){
         assert(hero[0x170]==0);                  /* release after a cycle: no cast */
         for(unsigned i=0;i<som_class_spell_count(2)-1u;i++)som_next_spell();
         assert(som_current_spell()==SOM_SPELL_FIRE_BALL);  /* wraps */
-        /* L2+X keeps the game's own X. */
-        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
-        som_input_poll();
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==1);
-        mocked_buttons=0;som_input_poll();
+        /* L2+X: a ninja with a short-range weapon casts Shunshin (X hidden);
+         * with a long-range weapon L2+X keeps the game's own X. */
+        {
+            const uint8_t weapon=hero[0x1E4];
+            hero[0x1E4]=4;                       /* long range */
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
+            som_input_poll();
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==1);
+            assert(!som_bun_alive(&bunshin));
+            mocked_buttons=0;som_input_poll();
+            hero[0x1E4]=0;                       /* short range, hero free */
+            hero[0x01C]=0;hero[0x060]=0;hero[0x190]=0;hero[0x191]=0;
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
+            som_input_poll();
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+            const int shunshin=som_bun_alive(&bunshin)&&bunshin_shunshin;
+            mocked_buttons=0;som_input_poll();
+            som_bun_clear(&bunshin);bunshin_shunshin=0;
+            hero[0x1E4]=weapon;
+            assert(shunshin);
+        }
         /* Infinite MP (gambit test switch) keeps casting possible at 0 MP. */
         hero[0x186]=0;hero[0x187]=0;hero[0x01C]=0;hero[0x060]=0;
         gambits.infinite_mp=1;som_infinite_mp_frame();

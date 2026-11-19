@@ -394,6 +394,18 @@ forward, other ninja weapons 3 x 16. A held direction aims any of them.
 Verified headless on the Steam Link: 48 px roll with status 0400 set then cleared,
 Shunshin stopped by a wall, trail drawn.
 
+### Jutsu buttons (2026-11-19)
+
+- **Hold A / Circle** (20 frames, any class with a dodge): the tap's hop still fires on
+  the press; the held request then arms **Kawarimi no Jutsu** as soon as the hero is free
+  (waits up to 90 frames, even if A is let go). Armed for 3 s, it fires when a monster
+  touches or hits him. Log: `[som-ai] KAWARIMI from held A`.
+- **L2 + X / Triangle** (ninja with a short-range weapon in hand): **Shunshin no Jutsu**,
+  a clone on each side across the facing that explodes when a monster reaches him. The
+  game never sees that X. Any other class or weapon: L2+X still reaches the game.
+  Log: `[som-ai] SHUNSHIN from L2+X`.
+- The AI keeps its own commands `kawarimi` / `shunshin`.
+
 ## Learning by doing: discipline XP (Phase B, 2026-11-15)
 
 Until now `som_disc_award` had no caller: no discipline ever gained XP. `src/som_xp.h` and

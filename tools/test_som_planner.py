@@ -360,6 +360,31 @@ class TestMemoryPlanner(unittest.TestCase):
             again = planner.decide(state)
             self.assertNotEqual(again.intention, "engage_enemy")
 
+    def test_a_chase_that_gets_no_closer_is_given_up(self):
+        # Reachable on paper, but 15 s pass with no ground gained and no hit.
+        enemy = {"slot": 2, "active": True, "x_px": 120, "y_px": 56, "hp": 30}
+        planner = MemoryPlanner()
+        now = [100.0]
+        planner.clock = lambda: now[0]
+        state = observation(enemy=enemy, recharge=20)
+        reasons = []
+        for _ in range(20):
+            reasons.append(planner.decide(state).reason)
+            now[0] += 1.0
+        self.assertTrue(any("not reached in 15 s" in r for r in reasons), reasons)
+        given_up = next(i for i, r in enumerate(reasons) if "not reached" in r)
+        self.assertGreaterEqual(given_up, 15)
+        self.assertNotEqual(planner.decide(state).intention, "engage_enemy")
+        # A hit on it restarts the watch: no give-up while it is losing HP.
+        fresh = MemoryPlanner()
+        fresh.clock = lambda: now[0]
+        reasons = []
+        for step in range(20):
+            hurt = dict(enemy, hp=30 - step)
+            reasons.append(fresh.decide(observation(enemy=hurt, recharge=20)).reason)
+            now[0] += 1.0
+        self.assertFalse(any("not reached" in r for r in reasons))
+
     def test_unreachable_enemy_cooldown_expires(self):
         enemy = {"slot": 3, "active": True, "x_px": 40, "y_px": 0}
         planner = MemoryPlanner()

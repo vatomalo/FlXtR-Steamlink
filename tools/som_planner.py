@@ -51,6 +51,10 @@ LINE_UP_MAX_PX = 40         # longest sidestep onto the enemy's line
 KITE_STEPS = 4
 # Decisions to ignore an enemy whose straight line and known routes are walled.
 UNREACHABLE_COOLDOWN = 20
+# A chase with no progress (_engage_stalled) gives up for longer.
+ENGAGE_STALL_S = 15.0
+STALL_GAIN_PX = 16
+STALL_COOLDOWN = 300
 # Leave survival when the inn spot does not heal or no recovery happens.
 # HP does not regenerate on its own, so an endless retreat is a dead end.
 INN_WAIT_DECISIONS = 30
@@ -319,6 +323,7 @@ class MemoryPlanner:
         # sent straight back, over and over).
         self.stay_on_map = False
         self.clock = time.monotonic
+        self.engage_watch = None           # _engage_stalled: one chase's progress
         self.last_swing = None
         # Optional som_tactics.TacticLearner: per enemy type fighting style.
         self.tactic_learner = None
@@ -933,6 +938,13 @@ class MemoryPlanner:
                          if value[3].get("slot") == engaged.get("enemy")), None)
             if kept is not None and kept[0] <= distance + TARGET_SWITCH_PX:
                 distance, dx, dy, enemy = kept
+        if not self.provoked and self._engage_stalled(enemy, distance, context):
+            cooldowns[str(enemy["slot"])] = STALL_COOLDOWN
+            self._set_state("unreachable", cooldowns)
+            self._set_intention(None)
+            return PlannerDecision("wait", f"enemy {enemy['slot']} not reached in "
+                                   f"{ENGAGE_STALL_S:.0f} s (no closer, no damage); ignoring "
+                                   f"it for {STALL_COOLDOWN} decisions", "engage_enemy")
         hero = observation.get("party", [{}])[0]
         split = self._unsplit([value[3] for value in targets], actor,
                               (width_px, height_px), open_steps)
@@ -1741,6 +1753,27 @@ class MemoryPlanner:
                                          (dy and action in ("step_up", "step_down"))):
                 return action
         return None
+
+    def _engage_stalled(self, enemy, distance, context):
+        """True once one target has been chased ENGAGE_STALL_S without coming
+        STALL_GAIN_PX closer or losing HP: a monster across a wall made the
+        hero step, turn and line up the bow for minutes (map 16, 2026-11-20)."""
+        key = ((context.get("map_id") if isinstance(context, dict) else None),
+               enemy.get("slot"), enemy.get("identity"))
+        hp = enemy.get("hp")
+        now = self.clock()
+        watch = self.engage_watch
+        if watch is None or watch["key"] != key or now - watch["seen"] > 3.0 or \
+                (isinstance(hp, int) and isinstance(watch["hp"], int) and hp < watch["hp"]) or \
+                distance <= watch["best"] - STALL_GAIN_PX:
+            self.engage_watch = {"key": key, "since": now, "seen": now,
+                                 "best": distance, "hp": hp}
+            return False
+        watch["seen"] = now
+        if now - watch["since"] < ENGAGE_STALL_S:
+            return False
+        self.engage_watch = None
+        return True
 
     def _update_provoked(self, observation, context, hp):
         """Start (or count down) fight-back mode after a hit from a nearby enemy."""

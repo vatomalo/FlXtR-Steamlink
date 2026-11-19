@@ -33,6 +33,7 @@ from som_menu import REPLAYABLE, InnMacro, MacroFailed
 PHASES = ("hunt", "shop", "inn", "save")
 TRIP_GOLD = 100
 HUNT_DECISIONS = 3000
+STORY_BUDGET = 3                 # a story trip may take this many hunting budgets
 ERRAND_DECISIONS = 1500   # shop alone may time out; inn/save never expire
 NEXT = {"hunt": "shop", "shop": "inn", "inn": "save", "save": "hunt"}
 LEAVE_HP_TENTHS = 6
@@ -140,10 +141,15 @@ class PlayLoop:
                 if max_hp and hp < max_hp * self.leave_fraction:
                     self._enter("shop", f"HP {hp}/{max_hp}, earned {earned} GP")
                     continue
-                if earned >= self.trip_gold:
+                # A story trip is not over when the purse is full (it turned
+                # back to the Potos inn with 108 GP, 2026-11-20); only HP or
+                # a longer decision budget end it.
+                story = bool(self.state.get("target_story")) and not self.fixed_hunt_map
+                if earned >= self.trip_gold and not story:
                     self._enter("shop", f"earned {earned} GP this trip")
                     continue
-                if self.state["steps"] >= self.hunt_decisions:
+                budget = self.hunt_decisions * (STORY_BUDGET if story else 1)
+                if self.state["steps"] >= budget:
                     if (target is not None and target != here and
                             not self.state.get("arrived") and self.frontier is not None):
                         self.frontier.failed(target, f"{self.state['steps']} decisions")

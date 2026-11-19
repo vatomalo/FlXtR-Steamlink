@@ -67,6 +67,19 @@ class PlayLoopTest(unittest.TestCase):
         quest.pick = (400, "story: elsewhere")         # a story trip is kept
         self.assertEqual(play.goal(summary(map_id=144), True, True, True, ALL), "hunt_map_287")
 
+    def test_a_full_purse_does_not_end_a_story_trip(self):
+        class Quest:
+            def choose(self, summary, reachable):
+                return (287, "story: boss 0x59 ... from map 287")
+        play = self.make(quest=Quest())
+        self.assertEqual(play.goal(summary(gold=0), True, True, True, ALL), "hunt_map_287")
+        self.assertEqual(play.goal(summary(gold=150, map_id=16), True, True, True, ALL),
+                         "hunt_map_287")
+        self.assertEqual(play.state["phase"], "hunt")
+        # Low HP still sends him back.
+        self.assertNotEqual(play.goal(summary(hp=10, gold=150, map_id=16), True, True, True,
+                                      ALL), "hunt_map_287")
+
     def test_no_hunting_memory_hunts_here(self):
         play = self.make(rewards=())
         self.assertEqual(play.goal(summary(), False, True, True, ALL), "hunt_here")

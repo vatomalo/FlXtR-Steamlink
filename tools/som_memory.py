@@ -741,6 +741,15 @@ class ObservationHistory:
             "y INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, "
             "source TEXT NOT NULL, seen INTEGER NOT NULL, last_ts REAL NOT NULL, "
             "PRIMARY KEY(map_id,layer,x,y,kind))")
+        # Multiple inns have independent verified locations and interaction
+        # facing. A global safe_anchor stays for old databases but no longer
+        # dictates where every future inn trip goes.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS inn_anchors "
+            "(map_id INTEGER NOT NULL, layer INTEGER NOT NULL, x INTEGER NOT NULL, "
+            "y INTEGER NOT NULL, face TEXT, taught INTEGER NOT NULL, "
+            "source TEXT NOT NULL, last_ts REAL NOT NULL, "
+            "PRIMARY KEY(map_id,layer,x,y))")
         # Tiles the hero actually stood on. Kept apart from world_cells so a
         # later "conditional"/"blocked" grid reading (bridges switch layers)
         # can never undo proof that the tile is walkable. Layer-agnostic.
@@ -1252,6 +1261,77 @@ class ObservationHistory:
         return {"map_id": context.get("map_id"), "layer": actor.get("layer"),
                 "target": list(tile)}
 
+    def _remember_inn_anchor(self, anchor, source):
+        """Persist one proven inn/recovery location without erasing others."""
+        if not (isinstance(anchor, dict) and
+                all(isinstance(anchor.get(field), int) for field in ("map_id", "layer")) and
+                isinstance(anchor.get("target"), list) and
+                len(anchor["target"]) == 2 and
+                all(isinstance(value, int) for value in anchor["target"])):
+            return
+        taught = bool(anchor.get("taught") and anchor.get("face") in
+                      ("step_up", "step_down", "step_left", "step_right"))
+        self.connection.execute(
+            "INSERT INTO inn_anchors "
+            "(map_id,layer,x,y,face,taught,source,last_ts) VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(map_id,layer,x,y) DO UPDATE SET "
+            "face=CASE WHEN excluded.taught THEN excluded.face ELSE inn_anchors.face END,"
+            "taught=MAX(inn_anchors.taught,excluded.taught),"
+            "source=CASE WHEN excluded.taught THEN excluded.source ELSE inn_anchors.source END,"
+            "last_ts=excluded.last_ts",
+            (anchor["map_id"], anchor["layer"], *anchor["target"],
+             anchor.get("face") if taught else None, int(taught), source, time.time()))
+        self.connection.commit()
+
+    def known_inns(self):
+        """Known inn locations, including a taught inn from pre-migration data.
+
+        A generic full-health safe point is NOT proof of an inn. It is
+        deliberately excluded from the executable inn list.
+        """
+        inns = {}
+        for map_id, layer, x, y, face, taught in self.connection.execute(
+                "SELECT map_id,layer,x,y,face,taught FROM inn_anchors"):
+            inns[(map_id, layer, x, y)] = {
+                "map_id": map_id, "layer": layer, "target": [x, y],
+                **({"face": face, "taught": True} if taught and face else {})}
+        legacy = self.get_agent_state("safe_anchor")
+        if (isinstance(legacy, dict) and legacy.get("taught") and
+                legacy.get("face") in ("step_up", "step_down", "step_left", "step_right")):
+            target = legacy.get("target")
+            if (isinstance(target, list) and len(target) == 2 and
+                    all(isinstance(v, int) for v in target) and
+                    isinstance(legacy.get("map_id"), int) and
+                    isinstance(legacy.get("layer"), int)):
+                self._remember_inn_anchor(legacy, "legacy_taught")
+                inns[(legacy["map_id"], legacy["layer"], *target)] = dict(legacy)
+        return list(inns.values())
+
+    def select_inn(self, current_map, require_taught=True, current_layer=None):
+        """Prefer the current town's known inn; otherwise shortest learned trip.
+
+        Only a taught inn may be used by the automated innkeeper macro. An
+        unreachable inn is never returned merely because it was visited.
+        """
+        choices = []
+        for anchor in self.known_inns():
+            if require_taught and not anchor.get("taught"):
+                continue
+            if anchor["map_id"] == current_map and (current_layer is None or
+                    anchor["layer"] == current_layer):
+                hops = 0
+            elif anchor["map_id"] == current_map:
+                continue  # no proof of a route between floors within one map
+            else:
+                path = self.map_path(current_map, anchor["map_id"])
+                if path is None:
+                    continue
+                hops = len(path) - 1
+            choices.append((hops, 0 if anchor.get("taught") else 1,
+                            anchor["map_id"], anchor["layer"],
+                            *anchor["target"], anchor))
+        return min(choices)[-1] if choices else None
+
     def safe_anchor(self):
         """Return the learned inn/safe position, bootstrapping old runs once."""
         anchor = self.get_agent_state("safe_anchor")
@@ -1306,11 +1386,15 @@ class ObservationHistory:
         anchor = self.get_agent_state("safe_anchor")
         taught = isinstance(anchor, dict) and anchor.get("taught")
         # A Candy heal is not an inn, and a taught inn is never replaced.
-        healed = (candidate is not None and not used_candy and not taught and
+        healed = (candidate is not None and not used_candy and
                   isinstance(previous.get("hp"), int) and
                   isinstance(hero.get("hp"), int) and hero["hp"] > previous["hp"])
         if healed:
-            self.set_agent_state("safe_anchor", candidate)
+            # A recovery in another town is a new independent landmark, not a
+            # reason to forget the innkeeper previously taught in Potos.
+            self._remember_inn_anchor(candidate, "health_increase")
+            if not taught:
+                self.set_agent_state("safe_anchor", candidate)
             self.remember_place(candidate["map_id"], candidate["layer"],
                                 *candidate["target"], "inn", "observed recovery point",
                                 "health_increase")
@@ -1329,6 +1413,7 @@ class ObservationHistory:
         anchor = {"map_id": position["map_id"], "layer": position["layer"],
                   "target": position["target"], "face": face, "taught": True}
         self.set_agent_state("safe_anchor", anchor)
+        self._remember_inn_anchor(anchor, "player_demonstration")
         self.remember_pattern("inn", state)
         self.remember_place(anchor["map_id"], anchor["layer"], *anchor["target"],
                             "inn", "taught innkeeper tile", "player_demonstration")

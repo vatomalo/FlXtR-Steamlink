@@ -901,11 +901,26 @@ int main(void){
         assert(som_gambit_line(&g,1,text)&&strstr(text,"Fight monsters")&&strstr(text,"0 ....."));
         assert(som_gambit_line(&g,2,text)&&text[0]=='>'&&strstr(text,"5 ooooo"));
         assert(strlen(text)<=32);
-        g.cursor=SOM_GAMBIT_COUNT;g.music_genre=0;
+        g.cursor=SOM_GAMBIT_MUSIC_ITEM;g.music_genre=0;
         assert(som_gambit_line(&g,SOM_GAMBIT_MUSIC_ITEM+1u,text)&&strstr(text,"Music genre: Lo-Fi"));
         assert(som_gambit_press(&g,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_GENRE_CHANGED);
         assert(g.music_genre==1);
         assert(som_gambit_line(&g,SOM_GAMBIT_MUSIC_ITEM+1u,text)&&strstr(text,"Jazz"));
+        /* The new brain rows must not alias the music row. */
+        g.cursor=SOM_GAMBIT_MODEL_ITEM;
+        assert(som_gambit_line(&g,SOM_GAMBIT_MODEL_ITEM+1u,text)&&strstr(text,"Qwen3 0.6B"));
+        assert(som_gambit_press(&g,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_BRAIN_CHANGED);
+        assert(g.ai_model==1&&g.music_genre==1);
+        assert(som_gambit_line(&g,SOM_GAMBIT_MODEL_ITEM+1u,text)&&strstr(text,"Qwen3 1.7B"));
+        g.cursor=SOM_GAMBIT_CRITIC_ITEM;
+        assert(som_gambit_line(&g,SOM_GAMBIT_CRITIC_ITEM+1u,text)&&strstr(text,"ON"));
+        assert(som_gambit_press(&g,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_BRAIN_CHANGED);
+        assert(g.critic==0);
+        assert(som_gambit_line(&g,SOM_GAMBIT_CRITIC_ITEM+1u,text)&&strstr(text,"off"));
+        char brain[16];som_brain_format(&g,brain);assert(!strcmp(brain,"1 0"));
+        som_brain_parse(&g,"14 1");assert(g.ai_model==14&&g.critic==1);
+        som_brain_parse(&g,"15 0");assert(g.ai_model==0&&g.critic==1);
+        som_brain_parse(&g,"5 2");assert(g.ai_model==0&&g.critic==1);
         assert(som_gambit_line(&g,SOM_GAMBIT_ITEMS,text)&&strstr(text,"Exit gambits"));
         assert(som_gambit_line(&g,SOM_GAMBIT_INFINITE_MP+1,text)&&strstr(text,"Infinite MP")&&
                strstr(text,"off"));
@@ -948,13 +963,18 @@ int main(void){
             /* Saved to its own file, loaded back. */
             char path[]="/tmp/flxtr-combat-XXXXXX";int cfd=mkstemp(path);assert(cfd>=0);close(cfd);
             const char *saved_combat=combat_file,*saved_gambit=gambit_file;
+            const char *saved_quest=quest_file,*saved_brain=brain_file;
             char gpath[]="/tmp/flxtr-gambit-XXXXXX";int gfd=mkstemp(gpath);assert(gfd>=0);close(gfd);
-            combat_file=path;gambit_file=gpath;
+            char qpath[]="/tmp/flxtr-quest-XXXXXX";int qfd=mkstemp(qpath);assert(qfd>=0);close(qfd);
+            char bpath[]="/tmp/flxtr-brain-XXXXXX";int bfd=mkstemp(bpath);assert(bfd>=0);close(bfd);
+            combat_file=path;gambit_file=gpath;quest_file=qpath;brain_file=bpath;
             SomGambits keep=gambits;gambits=c;som_gambit_save();
             memset(&gambits,0,sizeof(gambits));som_gambit_load();
             assert(gambits.combat[0]==4&&gambits.combat[1]==0&&gambits.weight[0]==4);
             assert(gambits.page==SOM_PAGE_ACTIONS);
-            gambits=keep;combat_file=saved_combat;gambit_file=saved_gambit;unlink(path);unlink(gpath);
+            gambits=keep;combat_file=saved_combat;gambit_file=saved_gambit;
+            quest_file=saved_quest;brain_file=saved_brain;
+            unlink(path);unlink(gpath);unlink(qpath);unlink(bpath);
         }
         static uint16_t frame[224][256];
         memset(frame,0,sizeof(frame));

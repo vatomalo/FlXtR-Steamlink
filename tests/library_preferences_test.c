@@ -2,6 +2,26 @@
 #include "../src/shell.c"
 #undef main
 #include <assert.h>
+#include <dirent.h>
+#include <sys/stat.h>
+
+/* Tests run in an isolated mkdtemp directory. The shell may create more
+ * fixture files than this test names explicitly; clean up all of them. */
+static void remove_fixture_tree(const char *path) {
+    DIR *dir=opendir(path);assert(dir);
+    struct dirent *entry;
+    while((entry=readdir(dir))!=NULL) {
+        if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,".."))continue;
+        char child[4096];
+        int len=snprintf(child,sizeof(child),"%s/%s",path,entry->d_name);
+        assert(len>0&&(size_t)len<sizeof(child));
+        struct stat st;assert(!lstat(child,&st));
+        if(S_ISDIR(st.st_mode))remove_fixture_tree(child);
+        else assert(!unlink(child));
+    }
+    assert(!closedir(dir));
+    assert(!rmdir(path));
+}
 static void marker(const char *token){FILE *f=fopen("playback-started","w");assert(f);fprintf(f,"%s 4.000\n",token);fclose(f);}
 int main(void){
     char temp[]="/tmp/flxtr-library-prefs-XXXXXX";assert(mkdtemp(temp));assert(!chdir(temp));
@@ -45,7 +65,7 @@ int main(void){
     assert(server_preference_save("movie","sflix"));auto_count=4;
     strcpy(auto_servers[0],"alpha");strcpy(auto_servers[1],"echo");strcpy(auto_servers[2],"fmovies");strcpy(auto_servers[3],"sflix");
     auto_prefer_flixer_server();assert(!strcmp(auto_servers[0],"echo")&&!strcmp(auto_servers[2],"fmovies")&&!strcmp(auto_servers[3],"sflix"));
-    unlink("settings.cfg");unlink("tv-gambits.cfg");unlink("server-preferences.cfg");
-    SDL_Quit();assert(!chdir("/tmp"));assert(!rmdir(temp));
+    unlink("playback-started");unlink("settings.cfg");unlink("tv-gambits.cfg");unlink("server-preferences.cfg");
+    SDL_Quit();assert(!chdir("/tmp"));remove_fixture_tree(temp);
     puts("PASS: independent persistent genres/order, cancelled filters, validated settings, confirmed server learning and provider fallbacks");
 }

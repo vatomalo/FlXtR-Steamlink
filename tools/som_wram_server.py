@@ -91,6 +91,7 @@ class Server:
         self.gambits = os.path.join(config, "som_ai_gambits")
         self.combat = os.path.join(config, "som_ai_combat")
         self.quest = os.path.join(config, "som_ai_quest")
+        self.brain = os.path.join(config, "som_ai_brain")
         self.disciplines = os.path.join(config, "som_ai_disciplines")
         self.base = bytes(WRAM_BYTES)       # last image sent by `dlt`
 
@@ -175,6 +176,12 @@ class Server:
             m = self._first_line(self.gambits)
             ok = len(m) == len(GAMBIT_DEFAULTS) and all(c in "012345" for c in m)
             return ("GMB %s\n" % (m if ok else GAMBIT_DEFAULTS)).encode()
+        if cmd == "gmm":            # numeric Ollama model and critic switch
+            fields = self._first_line(self.brain).split()
+            if (len(fields) == 2 and fields[0].isascii() and fields[0].isdigit() and
+                    0 <= int(fields[0]) <= 14 and fields[1] in ("0", "1")):
+                return ("GMM %d %s\n" % (int(fields[0]), fields[1])).encode()
+            return b"GMM 0 1\n"
         if cmd == "dsc":            # the selected discipline ("v1 <n> ...")
             words = self._first_line(self.disciplines).split()
             n = words[1] if len(words) > 1 and words[0] == "v1" and words[1].isdigit() else "255"

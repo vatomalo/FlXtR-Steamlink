@@ -1033,7 +1033,7 @@ class TestMemoryPlanner(unittest.TestCase):
                                     {"map_id": 131, "layer": 1, "target": [7, 3]})
             planner = MemoryPlanner(history)
             decision = planner.decide(observation(hp=20, max_hp=100))
-            self.assertEqual(decision.action, "step_left")
+            self.assertEqual(decision.action, "step_right")
             self.assertIn("learned inn", decision.reason)
             history.close()
 

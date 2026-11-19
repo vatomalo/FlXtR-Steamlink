@@ -50,7 +50,9 @@ import som_quest
 from som_npc_knowledge import loop_hint_directive
 from som_ai_brain import BrainController, parse_brain
 from som_critic import Critic
-from som_class_arts import FlyingKickTactics, IaiTactics
+from som_critic_link import (FINISHER_COOLDOWN_SCALE, critic_coach, critic_tags,
+                             nudge_style, read_critic)
+from som_class_arts import KICK_COOLDOWN_S, FlyingKickTactics, IaiTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
@@ -280,9 +282,9 @@ def choose_directive(url, model, objective, observation, current,
 # state it was chosen for is gone.
 DIRECTOR_MAX_AGE = 90.0
 
-def choose_goal(url, model, objective, summary, offered, current):
+def choose_goal(url, model, objective, summary, offered, current, coach=None):
     """Ask Qwen for one goal from `offered`; ValueError on anything else."""
-    prompt = build_goal_prompt(objective, summary, offered, current)
+    prompt = build_goal_prompt(objective, summary, offered, current, coach)
     payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
                           "think": False, "keep_alive": "30m",
                           "options": DIRECTOR_OPTIONS}).encode()
@@ -1453,6 +1455,7 @@ def main() -> int:
     discipline_checked_at = None                  # last read of the game's own class
     combat = tuple(int(c) for c in COMBAT_DEFAULTS)  # second gambit page
     style = dict(zip(COMBAT_NAMES, combat))
+    critic_now, critic_nudged = set(), []          # critic test (som_critic_link)
     charge_failed = False
     fuma_swap_at = None                            # monotonic time to swap into the clone
     tactic_learner = attack_predictor = None
@@ -1823,6 +1826,12 @@ def main() -> int:
                                 f"{n} {w}" for n, w in zip(QUEST_NAMES, quest_weights)),
                                   flush=True)
                         play_loop.quest.update(weights=quest_weights)
+                    critic_now = critic_tags(read_critic())
+                    style, nudged = nudge_style(style, critic_now)
+                    if nudged and nudged != critic_nudged:
+                        print(f"[critic] {', '.join(sorted(critic_now))}: "
+                              f"+1 {', '.join(nudged)}", flush=True)
+                    critic_nudged = nudged
                     # Press vs keep distance overrides the build's preference.
                     profile = dict(build_profile(build))
                     if style["distance"] > style["press"]:
@@ -1887,8 +1896,12 @@ def main() -> int:
                         requested_map, facts, choices, current, selected_model = request_data
                         started = time.monotonic()
                         try:
+                            coach = critic_coach(read_critic())
+                            if coach:
+                                print(f"[critic] coach: {coach}", flush=True)
                             selected = choose_goal(args.ollama_url, selected_model,
-                                                   args.objective, facts, choices, current)
+                                                   args.objective, facts, choices, current,
+                                                   coach)
                             print(f"[qwen-director] answered in "
                                   f"{time.monotonic() - started:.1f}s", flush=True)
                             director_results.put((requested_map, selected, None, started,
@@ -2267,6 +2280,8 @@ def main() -> int:
                          if e.get("active") and not e.get("familiar") and
                          isinstance(e.get("x_px"), int) and isinstance(e.get("y_px"), int)])
                     if kick is not None:
+                        if "no_finisher" in critic_now:     # critic: finish more often
+                            flykick.ready_at -= KICK_COOLDOWN_S * (1 - FINISHER_COOLDOWN_SCALE)
                         try:
                             link.send_control(kick)
                             print(f"[kick] flying kick ({decision.reason})", flush=True)

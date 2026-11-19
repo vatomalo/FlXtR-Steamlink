@@ -105,7 +105,7 @@ def offered_goals(summary, hunt_direction="west", reachable=lambda map_id: True)
     return goals
 
 
-def build_goal_prompt(objective, summary, offered, current):
+def build_goal_prompt(objective, summary, offered, current, coach=None):
     """Short prompt: CPU prompt processing dominates small-model latency."""
     here = summary.get("map_id")
     rewards = ", ".join(f"map {item['map_id']} score {item['score']}"
@@ -131,7 +131,8 @@ def build_goal_prompt(objective, summary, offered, current):
         f"Current goal: {current}. Goals: {', '.join(offered)}. "
         "Consider useful NPC clues, but keep survival and verified routes first. "
         "Keep the current goal unless another earns a better score. "
-        "Reply with exactly one goal from the list."
+        + (f"Your coach watched your last minute of play and says: {coach} " if coach else "")
+        + "Reply with exactly one goal from the list."
     )
 
 

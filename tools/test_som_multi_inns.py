@@ -95,6 +95,15 @@ class MultiInnTests(unittest.TestCase):
         self.assertIsNone(self.history.select_inn(150, require_taught=True))
         self.assertEqual(len(self.history.known_inns()), 2)
 
+    def test_preexisting_other_town_recovery_comes_from_places_atlas(self):
+        # Old databases predate inn_anchors. Keep their recorded recovery
+        # locations without claiming the innkeeper macro was trained.
+        self.history.remember_place(150, 1, 4, 5, "inn",
+                                    "observed recovery point", "health_increase")
+        self.assertEqual(self.history.select_inn(150, require_taught=False),
+                         {"map_id": 150, "layer": 1, "target": [4, 5]})
+        self.assertIsNone(self.history.select_inn(150, require_taught=True))
+
     def test_generic_full_health_potos_fallback_is_not_a_taught_inn(self):
         self.history.set_agent_state(
             "safe_anchor", {"map_id": 131, "layer": 1, "target": [3, 4]})

@@ -38,7 +38,8 @@ def memory_summary(history, observation, gold=None, shop_errand=None):
                "gold": gold, "candy": (observation or {}).get("candy_count"),
                "enemies_near": sum(1 for enemy in (observation or {}).get("enemy_slots", [])
                                    if isinstance(enemy, dict) and enemy.get("active")),
-               "inn_map": None, "shop_map": None, "shop_ready": bool(shop_errand),
+               "inn_map": None, "inn_taught": False, "shop_map": None,
+               "shop_ready": bool(shop_errand),
                "known_maps": [], "reward_maps": [], "avoided_enemies": [],
                "weapon": None, "status": [], "npc_clues": []}
     weapon, status = hero.get("weapon") or {}, hero.get("status") or {}
@@ -48,9 +49,13 @@ def memory_summary(history, observation, gold=None, shop_errand=None):
         summary["status"] = list(status.get("effects") or [])
     if history is None:
         return summary
-    anchor = history.safe_anchor()
+    here = summary["map_id"]
+    anchor = history.select_inn(here, require_taught=True) if here is not None else None
+    if anchor is None:
+        anchor = history.safe_anchor()
     if isinstance(anchor, dict):
         summary["inn_map"] = anchor.get("map_id")
+        summary["inn_taught"] = bool(anchor.get("taught") and anchor.get("face"))
     shop = history.get_agent_state("shop")
     if isinstance(shop, dict):
         summary["shop_map"] = shop.get("map_id")
@@ -81,8 +86,9 @@ def offered_goals(summary, hunt_direction="west", reachable=lambda map_id: True)
         goals += [f"explore_{heading}" for heading in
                   heard_directions(summary.get("npc_clues"), here)]
     hp, max_hp = summary.get("hp"), summary.get("max_hp")
-    if (summary.get("inn_map") is not None and isinstance(hp, int) and max_hp and
-            hp * 10 < max_hp * 9 and reachable(summary["inn_map"])):
+    if (summary.get("inn_map") is not None and summary.get("inn_taught", True) and
+            isinstance(hp, int) and max_hp and hp * 10 < max_hp * 9 and
+            reachable(summary["inn_map"])):
         goals.append("go_to_inn")
     if summary.get("shop_ready") and summary.get("shop_map") is not None and \
             reachable(summary["shop_map"]):

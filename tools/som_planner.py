@@ -96,11 +96,34 @@ DEAD_END_VISITS = 3
 # are ignored for SLIDE_FAILSAFE_DECISIONS, so a wrong memory cannot trap
 # the hero; a remembered slide he then walks through cleanly is forgotten.
 SLIDE_FAILSAFE_WAITS = 8
+# Moving floors (ground 0x30-0x3F: river currents) carry the hero. Live map
+# 128 (19 Nov) counted ground 0x31 as open: every route north stepped into
+# the current, which carried him back south 2-5 tiles, so he looped between
+# 33,56 and 32,51 for minutes (too far for a slide, so nothing was learned).
+# Carried back against his step this many times on one ground code of one
+# map, the push is learned and no route steps against it on those tiles.
+CURRENT_LIMIT = 2
+HELD_TO_STEP = {"up": "step_up", "down": "step_down",
+                "left": "step_left", "right": "step_right"}
 # Waits in place on a tile that does not verify before a refreshing tap.
 UNVERIFIED_WAITS = 10
 SLIDE_FAILSAFE_DECISIONS = 150
 FRONTIER_NO_PROGRESS = 24
 FRONTIER_COOLDOWN = 200
+# Exploring without a heading keeps the direction of the last leg
+# (momentum): the next target lies ahead of it while anything is left
+# ahead. Visit counts compare in powers of two, so a tile visited 5 times
+# and one visited 7 times tie and distance decides. On fully known map 170
+# the hero hopped 14,6 -> 21,11 -> 13,8 -> 18,11 -> 15,7 by the fewest
+# visits, then 8,7 -> 26,7 -> 9,10 -> 27,8 end to end (2026-11-19).
+# Without a heading the nearest target ahead wins (farthest-first ended
+# every leg at the map edge, so the next leg had to turn back); on known
+# ground a patrol leg is at least PATROL_MIN_LEG tiles.
+PATROL_MIN_LEG = 8
+
+
+def _visit_band(visits):
+    return int(visits).bit_length()
 # Waits on a learned crossing that has no step (the game should move the
 # hero) before the crossing is dropped as a warp, KO reload or cutscene.
 EXIT_WAIT_DECISIONS = 25
@@ -237,6 +260,9 @@ class MemoryPlanner:
         self.deflections = {}
         self.last_step_origin = None
         self.slides = None              # remembered slides, loaded lazily
+        self.currents = None            # {"map:layer:ground": [dx, dy]} (persistent)
+        self.current_counts = {}
+        self.current_origin = None
         self.unverified_at = None       # where the hero waits on an unverified tile
         self.unverified_waits = 0
         self.unverified_nudges = 0
@@ -314,11 +340,13 @@ class MemoryPlanner:
         self.last_pixel = None
         self.block_cooldown = 0
         self.route_diagonals = {}
+        self.route_currents = {}        # (map, layer) -> {position: ground}
         self.route_threats = []
         self.enemy_tracks = {}       # slot -> (identity, x, y, heading)
         self.flank_steps = 0
         self.frontier_clock = 0
         self.frontier_rejected = {}
+        self.explore_heading = None     # (map, layer, (dx, dy)) of the last leg
         # Curiosity (som_curiosity): rewards new maps/areas, penalises
         # lingering; loaded from agent state on the first field decision.
         self.curiosity = None
@@ -446,6 +474,7 @@ class MemoryPlanner:
         # ordinary floor and verified cuts are preferred to tight corners.
         key = (context["map_id"], context["actor"]["layer"])
         diagonal = self.route_diagonals.setdefault(key, set())
+        currents = self.route_currents.setdefault(key, {})
         radius = context.get("radius", 0)
         center = context["actor_tile"]
         size = context["map_size_tiles"]
@@ -460,6 +489,10 @@ class MemoryPlanner:
                     diagonal.add(position)
                 else:
                     diagonal.discard(position)
+                if 0x30 <= ground <= 0x3F:
+                    currents[position] = ground
+                else:
+                    currents.pop(position, None)
         self._learn_whip(observation)
         if self.history is None:
             self.local_cuttable.update(detect_cuts(self.previous_observation, observation))
@@ -643,6 +676,13 @@ class MemoryPlanner:
         size = tuple(context["map_size_tiles"])
         origin = tuple(context["actor_tile"])
         direction = directive.removeprefix("explore_")
+        heading = None
+        if self.explore_heading and self.explore_heading[:2] == (map_id, layer):
+            heading = self.explore_heading[2]
+        directed = direction in ("east", "west", "south", "north")
+
+        def ahead(dx, dy):
+            return heading is None or dx * heading[0] + dy * heading[1] > 0
         candidates = []
         for position, (first, distance) in routes.items():
             if first is None:
@@ -667,7 +707,7 @@ class MemoryPlanner:
                 "north": (dy < 0, -dy, abs(dx)),
             }
             aligned, progress, straightness = direction_values.get(
-                direction, (True, distance, 0))
+                direction, (True, -distance, 0))
             # A Qwen-selected heading is the first priority. Within that
             # heading, prefer unseen and distant frontier cells.
             # Curiosity: areas never stood in come before revisits.
@@ -677,17 +717,34 @@ class MemoryPlanner:
             # so distance still decides between similar areas).
             learned = (round(self.curiosity.value(map_id, layer, position) / VALUE_STEP)
                        if self.curiosity else 0)
-            candidates.append((not aligned, seen, -learned, visits, -progress, straightness,
+            # A Qwen/hunt heading already fixes the way; momentum is for
+            # undirected exploring.
+            candidates.append((not aligned, not directed and not ahead(dx, dy), seen, -learned,
+                               _visit_band(visits), -progress, straightness,
                                -distance, -unknown_edges, position))
         if not candidates:
+            # Fully known ground (eagle eye, hunting here): patrol on with
+            # momentum, whatever the heading (live hunts run explore_west).
             for position, (first, distance) in routes.items():
                 if (distance and (open_steps is None or first in open_steps or
                                   first.startswith("whip:")) and
                         self.frontier_rejected.get((map_id, layer, position), 0)
                         <= self.frontier_clock):
-                    candidates.append((False, False, 0, self._visits(map_id, layer, *position),
-                                       -distance, 0, -distance, 0, position))
-        return min(candidates)[-1] if candidates else None
+                    dx = self._wrapped_delta(position[0], origin[0], size[0])
+                    dy = self._wrapped_delta(position[1], origin[1], size[1])
+                    candidates.append((False, not ahead(dx, dy), False, 0,
+                                       _visit_band(self._visits(map_id, layer, *position)),
+                                       distance < PATROL_MIN_LEG, 0, distance, 0, position))
+        if not candidates:
+            return None
+        target = min(candidates)[-1]
+        dx = self._wrapped_delta(target[0], origin[0], size[0])
+        dy = self._wrapped_delta(target[1], origin[1], size[1])
+        if dx or dy:                    # dominant compass axis of the leg
+            axis = (((dx > 0) - (dx < 0), 0) if abs(dx) >= abs(dy) else
+                    (0, (dy > 0) - (dy < 0)))
+            self.explore_heading = (map_id, layer, axis)
+        return target
 
     def _dead_end_weights(self, map_id, layer, cells):
         """Extra route cost through areas that led nowhere before (negative
@@ -1722,7 +1779,10 @@ class MemoryPlanner:
         if self.escape_left and errand is None and directive.startswith("explore_"):
             self.escape_left -= 1
             directive = self.escape_directive
+        carried = self._check_current(observation, previous)
         deflected = self._check_deflection(observation, previous)
+        if carried:
+            deflected = f"{carried}; {deflected}" if deflected else carried
         self._blink_outcome(observation.get("tile_context") if isinstance(observation, dict)
                             else None)
         pending, self.evade_past_pending = self.evade_past_pending, None
@@ -2165,7 +2225,83 @@ class MemoryPlanner:
                 x, y, action = key[len(prefix):].split(":")
                 if x.lstrip("-").isdigit() and y.lstrip("-").isdigit():
                     forbidden.add(((int(x), int(y)), action))
+        if not self.slide_failsafe:
+            forbidden |= self._against_currents(context)
         return forbidden or None
+
+    def _currents(self):
+        if self.currents is None:
+            stored = self._get_state("currents")
+            self.currents = dict(stored) if isinstance(stored, dict) else {}
+        return self.currents
+
+    def _against_currents(self, context):
+        """{(tile, step)} that walk upstream into or across a learned current."""
+        actor = context.get("actor") or {}
+        map_id, layer = context.get("map_id"), actor.get("layer")
+        size = context.get("map_size_tiles")
+        learned = self._currents()
+        tiles = self.route_currents.get((map_id, layer))
+        if not learned or not tiles or not isinstance(size, list) or len(size) != 2:
+            return set()
+        forbidden = set()
+        for position, ground in tiles.items():
+            push = learned.get(f"{map_id}:{layer}:{ground}")
+            if not push:
+                continue
+            push = tuple(push)
+            step = next((s for s, o in STEP_OFFSETS.items()
+                         if o == (-push[0], -push[1])), None)
+            if step is None:
+                continue
+            forbidden.add((position, step))      # upstream on the current
+            # and stepping into it from the tile downstream of it
+            forbidden.add((self._neighbor(position, push, tuple(size)), step))
+        return forbidden
+
+    def _check_current(self, observation, previous):
+        """Learn which way a moving floor carries the hero."""
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        origin, self.current_origin = self.current_origin, None
+        if (not isinstance(context, dict) or not context.get("runtime_verified") or
+                context.get("game_mode") != "field"):
+            return None
+        actor = context.get("actor") or {}
+        tile, size = context.get("actor_tile"), context.get("map_size_tiles")
+        if not (isinstance(tile, list) and len(tile) == 2 and
+                isinstance(size, list) and len(size) == 2):
+            return None
+        here = (context.get("map_id"), actor.get("layer"), tuple(tile))
+        self.current_origin = here
+        step = HELD_TO_STEP.get(previous, previous)
+        if (origin is None or step not in STEP_OFFSETS or self.just_hit or
+                origin[:2] != here[:2]):
+            return None
+        tiles = self.route_currents.get(here[:2]) or {}
+        offset = STEP_OFFSETS[step]
+        start = origin[2]
+        ground = tiles.get(start, tiles.get(self._neighbor(start, offset, tuple(size))))
+        if ground is None:
+            return None
+        dx = self._wrapped_delta(here[2][0], start[0], size[0])
+        dy = self._wrapped_delta(here[2][1], start[1], size[1])
+        progress = dx * offset[0] + dy * offset[1]
+        if progress >= 0 or max(abs(dx), abs(dy)) > 6:
+            return None                  # moved on, or a warp/knockback
+        key = f"{here[0]}:{here[1]}:{ground}"
+        push = [-offset[0], -offset[1]]
+        if self._currents().get(key) == push:
+            return None
+        self.current_counts[key] = self.current_counts.get(key, 0) + 1
+        if self.current_counts[key] < CURRENT_LIMIT:
+            return None
+        self.current_counts.pop(key, None)
+        self._currents()[key] = push
+        self._set_state("currents", dict(self._currents()))
+        self._set_intention(None)
+        return (f"{previous} on moving floor 0x{ground:02X} carried the hero back to "
+                f"{list(here[2])} from {list(start)} {CURRENT_LIMIT} times; no more "
+                f"routes against that current")
 
     def _check_deflection(self, observation, previous):
         """Block a step that keeps landing the hero beside its target tile."""
@@ -2232,7 +2368,8 @@ class MemoryPlanner:
                 isinstance(context, dict) and context.get("runtime_verified") and
                 context.get("game_mode") == "field")
         self.field_waits = self.field_waits + 1 if idle else 0
-        if self.field_waits < SLIDE_FAILSAFE_WAITS or not self._slides():
+        if (self.field_waits < SLIDE_FAILSAFE_WAITS or
+                not (self._slides() or self._currents())):
             return decision
         self.field_waits = 0
         self.slide_failsafe = SLIDE_FAILSAFE_DECISIONS

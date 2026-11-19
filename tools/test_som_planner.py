@@ -82,6 +82,41 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertNotIn("131:1:4:2:step_down", MemoryPlanner(history)._slides())
             history.close()
 
+    def test_river_current_that_carries_the_hero_back_is_not_walked_against(self):
+        # Live map 128 (19 Nov): ground 0x31 counted as open, every route
+        # north stepped into it and the current carried the hero 2-5 tiles
+        # back south, looping for minutes.
+        rows = ("....", "....", "....", "....", "....", "....", "....")
+        def at(tile):
+            state = observation(rows=tuple(r + "." for r in rows))
+            context = state["tile_context"]
+            context.update(radius=2, actor_tile=list(tile), map_size_tiles=[8, 10])
+            context["passability_rows"] = ["....."] * 5
+            # rows y 0..4 of the map are a current (ground 0x31), 5.. dry
+            context["attribute_rows"] = [
+                " ".join("02023100" if tile[1] - 2 + r <= 4 else "12020000"
+                         for _ in range(5)) for r in range(5)]
+            context["actor"] = {"x_px": tile[0] * 16 + 8, "y_px": tile[1] * 16 + 8,
+                                "layer": 1}
+            return state
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "currents.sqlite")
+            planner = MemoryPlanner(history)
+            planner.decide(at((3, 6)), "none")
+            planner.decide(at((3, 4)), "up")            # into the river
+            planner.decide(at((3, 6)), "up")            # carried back once
+            self.assertEqual(planner._currents(), {})
+            planner.decide(at((3, 4)), "step_up")
+            decision = planner.decide(at((3, 7)), "step_up")   # carried back again
+            self.assertIn("carried the hero back", decision.reason)
+            self.assertEqual(MemoryPlanner(history)._currents(), {"131:1:49": [0, 1]})
+            forbidden = planner._forbidden_steps(at((3, 7))["tile_context"])
+            self.assertIn(((3, 5), "step_up"), forbidden)    # dry bank into river
+            self.assertIn(((3, 3), "step_up"), forbidden)    # upstream in river
+            self.assertNotIn(((3, 3), "step_left"), forbidden)
+            self.assertNotIn(((3, 7), "step_up"), forbidden)
+            history.close()
+
     def test_missed_whip_shifts_stance_and_tries_again_before_giving_up(self):
         from som_planner import WHIP_ATTEMPTS, WHIP_REPOSITIONS
         planner = MemoryPlanner()
@@ -377,6 +412,37 @@ class TestMemoryPlanner(unittest.TestCase):
         active = planner._get_intention()
         if active is not None:
             self.assertNotEqual(tuple(active["target"]), first_target)
+
+    def test_patrol_on_known_ground_keeps_its_heading(self):
+        # Live map 170 (19 Nov, fully known): the hero ran 8,7 -> 26,7 ->
+        # 9,10 -> 27,8, picking the farthest least-visited tile each time.
+        # The live hunt sends explore_west; known ground ignores it.
+        size = (40, 3)
+        cells = {(x, y): "open" if x else "blocked" for x in range(40) for y in range(3)}
+        for directive in ("explore_unknown", "explore_west"):
+            planner = MemoryPlanner()
+            ctx = observation()["tile_context"]
+            ctx.update(map_size_tiles=list(size))
+            position, xs = (20, 1), []
+            for _ in range(2):
+                ctx["actor_tile"] = list(position)
+                routes = MemoryPlanner._routes(position, cells, size)
+                position = planner._choose_frontier(ctx, cells, routes, directive)
+                xs.append(position[0])
+            # Legs of at least PATROL_MIN_LEG, all one way, not across the map.
+            steps = [b - a for a, b in zip([20] + xs, xs)]
+            self.assertTrue(all(8 <= abs(step) <= 10 for step in steps), (directive, xs))
+            self.assertTrue(all(step > 0 for step in steps) or
+                            all(step < 0 for step in steps), (directive, xs))
+
+    def test_unknown_heading_explores_the_nearest_frontier(self):
+        planner = MemoryPlanner()
+        ctx = observation()["tile_context"]
+        ctx.update(map_size_tiles=[40, 3], actor_tile=[20, 1])
+        # Known corridor 14..37 on a 40-wide map: the west end is nearer.
+        cells = {(x, y): "open" for x in range(14, 38) for y in range(3)}
+        routes = MemoryPlanner._routes((20, 1), cells, (40, 3))
+        self.assertEqual(planner._choose_frontier(ctx, cells, routes)[0], 14)
 
     def test_frontier_selector_rejects_routes_with_blocked_first_step(self):
         planner = MemoryPlanner()

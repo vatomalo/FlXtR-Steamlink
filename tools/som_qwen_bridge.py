@@ -47,7 +47,7 @@ from som_weapon_tactics import WeaponTactics, reach as weapon_reach
 from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
 from som_trials import TrialLearner
 import som_quest
-from som_npc_knowledge import loop_hint_directive
+from som_npc_knowledge import follow_comment, loop_hint_directive
 from som_ai_brain import BrainController, parse_brain
 from som_critic import Critic
 from som_critic_link import (FINISHER_COOLDOWN_SCALE, critic_coach, critic_tags,
@@ -1547,6 +1547,13 @@ def main() -> int:
                     if bubble:
                         announce(bubble)
                         print(f"[npc-comment] {bubble}", flush=True)
+                    for lesson in npc_dialogue.drain_lessons():
+                        print(f"[npc-learn] map {lesson['map_id']} npc {lesson['npc_id']:#04x}: "
+                              f"{lesson['new_lines']} new line(s); heading "
+                              f"{','.join(lesson['directions']) or '-'}; names "
+                              f"{', '.join(lesson['names']) or '-'}"
+                              f"{'; warning' if lesson['warning'] else ''}"
+                              f"{'; save point' if lesson['save'] else ''}", flush=True)
                 if learner is not None:
                     learned = learner.observe(observation)
                     if learned is not None:
@@ -1971,10 +1978,19 @@ def main() -> int:
                     # A short local clue can guide safe frontier exploration,
                     # never a shopping/inn/save/visit errand or combat decision.
                     if args.visit_map is None and goal_errand is None:
+                        hint_before = npc_hint_key
                         heard, npc_hint_key, npc_hint_until = loop_hint_directive(
                             summary, goal, step, npc_hint_key, npc_hint_until)
                         if heard:
                             directive = heard
+                            if npc_hint_key != hint_before:
+                                clue = next((c for c in summary.get("npc_clues") or ()
+                                             if c.get("quote") == npc_hint_key[3]), {})
+                                remark = follow_comment(clue)
+                                announce("^" + remark)
+                                print(f"[npc-follow] {heard}: {remark} "
+                                      f"(map {clue.get('map_id')} npc {clue.get('npc_id')})",
+                                      flush=True)
                     auto_errand = None
                 errand = goal_errand or auto_errand
                 if args.visit_map is not None and current_map != args.visit_map:

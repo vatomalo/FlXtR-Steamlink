@@ -112,7 +112,9 @@ def build_goal_prompt(objective, summary, offered, current, coach=None):
                         for item in (summary.get("reward_maps") or [])[:3]) or "none yet"
     # Quotes remain attributed to their actual NPC/map. Never present hearsay
     # as a confirmed quest, and never let dialogue broaden the command set.
-    clues = [{"map": c.get("map_id"), "npc": c.get("npc_id"), "said": c.get("quote")}
+    clues = [{"map": c.get("map_id"), "npc": c.get("npc_id"), "said": c.get("quote"),
+              **({"heading": c["directions"]} if c.get("directions") else {}),
+              **({"names": c["names"]} if c.get("names") else {})}
              for c in (summary.get("npc_clues") or [])[:4]]
     return (
         "You choose the next goal for a Secret of Mana hero. Score: +1 per gold "

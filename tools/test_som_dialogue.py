@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from som_dialogue import Commentary, GLYPHS, NpcDialogue, dialogue_line, npc_records, speech_bubble
+from unittest.mock import patch
+
+from som_dialogue import (Commentary, GLYPHS, NpcDialogue, acceptable_comment, dialogue_line,
+                         npc_records, qwen_comment, speech_bubble)
 from som_memory import ObservationHistory, WRAM
 from som_planner import MemoryPlanner
 from test_som_doors import room
@@ -100,7 +103,25 @@ class TestNpcDialogue(unittest.TestCase):
         self.npc.observe(w, w.observe())
         self.assertEqual(self.history.connection.execute(
             "SELECT text FROM npc_dialogue_lines").fetchall(), [("Hello there!",)])
-        self.comments.offer.assert_called_once_with(131, "Hello there!")
+        # The remark waits for the end of the talk, then covers all of it.
+        self.comments.offer.assert_not_called()
+        field = snapshot("field")
+        self.npc.observe(field, field.observe())
+        self.npc.observe(field, field.observe())
+        self.comments.offer.assert_called_once()
+        map_id, learned = self.comments.offer.call_args.args
+        self.assertEqual((map_id, learned["said"], learned["new_lines"]), (131, "Hello there!", 1))
+        self.assertEqual(len(self.npc.drain_lessons()), 1)
+        self.assertEqual(self.npc.drain_lessons(), [])
+
+    def test_a_repeated_talk_is_logged_but_not_remarked_on(self):
+        for _ in range(2):
+            w, field = snapshot("event"), snapshot("field")
+            for self.now in (self.now + 1, self.now + 1.7):
+                self.npc.observe(w, w.observe())
+            self.npc.observe(field, field.observe())
+        self.assertEqual(self.comments.offer.call_count, 1)
+        self.assertEqual([l["new_lines"] for l in self.npc.drain_lessons()], [1, 0])
 
     def test_native_start_and_acknowledged_non_choice_page(self):
         w = snapshot()
@@ -168,6 +189,49 @@ class TestNpcDialogue(unittest.TestCase):
         item = comments.results.get(timeout=2)
         comments.results.put(item)
         self.assertIsNone(comments.poll(131))
+
+
+    def test_echoes_and_meta_talk_are_rejected(self):
+        said = "Get out of here!"
+        self.assertIsNone(acceptable_comment("here!", said))
+        self.assertIsNone(acceptable_comment("observedline: here!", said))
+        self.assertIsNone(acceptable_comment("I'm curious about the NPC's thoughts.", said))
+        self.assertIsNone(acceptable_comment("Get out of here, he says!", said))
+        self.assertEqual(acceptable_comment('"Rude. I will find another way in."', said),
+                         "Rude. I will find another way in.")
+
+    def learned(self, **extra):
+        return dict({"said": "Make thy way towards Gaia's Navel. South and keep onward.",
+                     "new_lines": 2, "directions": ["south"], "names": ["Gaia's Navel"],
+                     "warning": False, "save": False}, **extra)
+
+    def reply(self, text):
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read = Mock(return_value=('{"response": %s}' % __import__("json").dumps(text)).encode())
+        return response
+
+    def test_model_remark_is_used_when_it_is_the_heros_own(self):
+        with patch("urllib.request.urlopen", return_value=self.reply("A navel in the earth? Odd. South it is.")):
+            self.assertEqual(qwen_comment("http://x", "m", self.learned()),
+                             "^A navel in the earth? Odd. South|it is.")
+
+    def test_a_bad_or_missing_model_reply_falls_back_to_the_lesson(self):
+        with patch("urllib.request.urlopen", return_value=self.reply("observed_line: south")):
+            self.assertEqual(qwen_comment("http://x", "m", self.learned()),
+                             "^Gaia's Navel, to the south. I'll|go see.")
+        with patch("urllib.request.urlopen", side_effect=OSError("offline")):
+            self.assertTrue(qwen_comment("http://x", "m", self.learned()).startswith("^Gaia's"))
+        with patch("urllib.request.urlopen") as call:
+            self.assertIsNone(qwen_comment("http://x", "m", self.learned(new_lines=0)))
+            call.assert_not_called()
+        with patch("urllib.request.urlopen") as call:         # gossip: no model call
+            self.assertEqual(qwen_comment("http://x", "m", self.learned(directions=[], names=[])),
+                             "^Village talk. Nothing to act on|yet.")
+            call.assert_not_called()
+        with patch("urllib.request.urlopen", return_value=self.reply("I'll go check the weather.")):
+            self.assertTrue(qwen_comment("http://x", "m", self.learned()).startswith("^Gaia's"))
 
 
 if __name__ == "__main__":

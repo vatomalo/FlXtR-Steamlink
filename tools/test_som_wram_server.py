@@ -38,6 +38,8 @@ class Fixture(unittest.TestCase):
         self.loop = (REMOTE_LOOP.replace("/tmp/", str(self.root) + "/")
                      .replace(bridge.GAMBIT_FILE, str(self.root / "som_ai_gambits"))
                      .replace(bridge.COMBAT_FILE, str(self.root / "som_ai_combat"))
+                     .replace(bridge.QUEST_FILE, str(self.root / "som_ai_quest"))
+                     .replace(bridge.BRAIN_FILE, str(self.root / "som_ai_brain"))
                      .replace(bridge.DISCIPLINE_FILE, str(self.root / "som_ai_disciplines")))
         self.server_cmd = f"exec {sys.executable} {SERVER} --tmp {self.root} --config {self.root}"
 
@@ -57,16 +59,21 @@ class TestServerMatchesShellLoop(Fixture):
         server = Server(str(self.root), str(self.root))
         (self.root / "som_ai_gambits").write_text("504321\n")
         (self.root / "som_ai_combat").write_text("bogus\n")
+        (self.root / "som_ai_brain").write_text("14 0\n")
         (self.root / "flxtr-som-familiar").write_text("2\n")
         for marker in (False, True):
             if marker:
                 (self.root / "flxtr-som-ai-enabled").write_text("enabled\n")
-            for line in ("obs", "obsm", "nav", "gmb", "gmc", "fam", "dsc", "act up",
+            for line in ("obs", "obsm", "nav", "gmb", "gmc", "gmm", "fam", "dsc", "act up",
                          "act rm -rf", "act ", "msg Hello there!|Next", "msg $(reboot)",
                          "nonsense", "dltx"):
                 with self.subTest(line=line, marker=marker):
                     self.assertEqual(server.handle(line), shell_reply(self.loop, self.root, line))
         self.assertEqual((self.root / "flxtr-som-ai-action").read_text(), "up\n")
+        self.assertEqual(server.handle("gmm"), b"GMM 14 0\n")
+        (self.root / "som_ai_brain").write_text("99 1\n")
+        self.assertEqual(server.handle("gmm"), b"GMM 0 1\n")
+        self.assertEqual(shell_reply(self.loop, self.root, "gmm"), b"GMM 0 1\n")
         for text, want in (("v1 1 5 29 4 131\n", b"DSC 1\n"), ("v1 255 1 0\n", b"DSC 255\n"),
                            ("bogus\n", b"DSC 255\n")):
             (self.root / "som_ai_disciplines").write_text(text)
@@ -148,6 +155,9 @@ class TestDeltaLink(Fixture):
             self.assertEqual(link.fetch_gambits(), tuple(int(c) for c in bridge.GAMBIT_DEFAULTS))
             (self.root / "som_ai_combat").write_text("01234501\n")
             self.assertEqual(link.fetch_combat(), (0, 1, 2, 3, 4, 5, 0, 1))
+            self.assertEqual(link.fetch_brain(), (0, True))
+            (self.root / "som_ai_brain").write_text("9 0\n")
+            self.assertEqual(link.fetch_brain(), (9, False))
             self.assertEqual(link.fetch_familiar(), 0)
             self.assertIsNone(link.fetch_discipline())
             (self.root / "som_ai_disciplines").write_text("v1 1 5 29\n")

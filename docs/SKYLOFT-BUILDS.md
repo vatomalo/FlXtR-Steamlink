@@ -64,7 +64,7 @@ is unchecked. Desktop publication creates a GitHub release with the finished
 archive, checksum, title, and change notes. It does not replace the Steam Link
 update channel. `--no-publish` does not require GitHub publishing credentials.
 
-Logs are in `/opt/dockers/storage/build-logs/flxtr-*.log`. The command displays
+Logs are in `/opt/dockers/storage/build-logs/flxtr-*.log`. The portal keeps its own per-job `build.log` after both successful **and failed** builds. The live log panel shows the most recent 64 KiB for responsive polling; **Copy full output** explicitly fetches the complete log, and **Download log** saves the complete redacted log as text. These options work after a failure and for historical jobs. The CLI command `flxtr-build --last-log` replays the complete last saved command-line log even after the console output is gone. The command displays
 the current log path when it starts. Android signatures are verified before
 publication. Builds do not force installation on devices; their normal updater
 behavior applies after publication.

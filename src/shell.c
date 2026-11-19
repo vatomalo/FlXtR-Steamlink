@@ -1587,12 +1587,12 @@ static void flow_face(SDL_Texture *poster,const FlowCard *card,Uint8 light,int f
     int tw,th;if(SDL_QueryTexture(poster,NULL,NULL,&tw,&th))return;
     int strips=card->skew?14:1;
     for(int i=0;i<strips;i++){
-        float u=((float)i+0.5f)/strips,far=card->direction<0?1.0f-u:u;
-        int inset=(int)(card->skew*far);
+        float u=((float)i+0.5f)/strips,depth=card->direction<0?1.0f-u:u;
+        int inset=(int)(card->skew*depth);
         int x0=card->x+i*card->w/strips,x1=card->x+(i+1)*card->w/strips;
         SDL_Rect source={i*tw/strips,0,(i+1)*tw/strips-i*tw/strips,th};
         SDL_Rect target={x0,card->y+inset,x1-x0+(i+1<strips),card->h-inset*2};
-        Uint8 shade=(Uint8)(light*(1.0f-far*(card->skew?0.20f:0.0f)));
+        Uint8 shade=(Uint8)(light*(1.0f-depth*(card->skew?0.20f:0.0f)));
         SDL_SetTextureColorMod(poster,shade,shade,shade);
         SDL_RenderCopyEx(renderer,poster,&source,&target,0,NULL,flip?SDL_FLIP_VERTICAL:SDL_FLIP_NONE);
     }

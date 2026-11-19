@@ -467,6 +467,37 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertEqual(pin().action, "blink_16_16")
             history.close()
 
+    def test_a_far_monster_does_not_pull_the_hero_off_his_trip(self):
+        # A rabite at ~190 px: two steps toward it, back to the road, again.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "pull.sqlite")
+            history.connection.execute(
+                "INSERT INTO map_edges VALUES(16,144,1,2,3,'step_left',5,0)")
+            for x in range(40):
+                for y in range(10):
+                    history.connection.execute(
+                        "INSERT OR REPLACE INTO world_cells VALUES(16,1,?,?,'open',1,0)", (x, y))
+            def state(enemy_dx):
+                return {"weapons_enabled": True,
+                        "enemy_slots": [{"slot": 2, "active": True, "identity": 1, "hp": 40,
+                                         "max_hp": 40, "hp_plausible": True,
+                                         "x_px": 200 + enemy_dx, "y_px": 56}],
+                        "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0}],
+                        "tile_context": {
+                            "runtime_verified": True, "game_mode": "field", "radius": 1,
+                            "map_id": 16, "map_size_tiles": [40, 40], "actor_tile": [12, 3],
+                            "actor": {"x_px": 200, "y_px": 56, "layer": 1},
+                            "passability_rows": ["...", ".@.", "..."]}}
+            errand = {"place": "map 144", "anchor": {"map_id": 144}}
+            planner = MemoryPlanner(history)
+            planner.fight_all = True
+            far = [planner.decide(state(120), errand=errand) for _ in range(4)]
+            self.assertTrue(all(d.intention == "go_to_map_144" for d in far),
+                            [d.reason for d in far])
+            near = planner.decide(state(64), errand=errand)
+            self.assertEqual(near.intention, "engage_enemy", near.reason)
+            history.close()
+
     def test_no_evade_while_still_facing_the_blocker(self):
         # The evade overwrote the turn tap in the proxy's one action slot:
         # the hero still faced the gatekeeper and hopped away from him.

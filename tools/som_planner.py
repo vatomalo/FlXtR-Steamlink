@@ -25,6 +25,11 @@ OPPOSITE_STEP = {
 # Chase only monsters on screen (SNES view 256 x 224 around the hero).
 ENGAGE_RANGE_X = 128
 ENGAGE_RANGE_Y = 112
+# On a trip, a new fight starts only this close (Manhattan px); one already
+# under way is still followed to the full range. A rabite at ~190 px pulled
+# the hero two steps off the road to map 144 and the trip pulled him back,
+# for minutes (2026-11-19).
+TRAVEL_ENGAGE_PX = 96
 # Below this distance the straight-line step is used when no route is known.
 CLOSE_QUARTERS_PX = 48
 # Conservative initial sword/glove contact envelope until verified hit events
@@ -269,6 +274,7 @@ class MemoryPlanner:
         # Play loop: every monster is a target; the "cost more HP than GP"
         # avoid list made the hero dance around enemies instead of hunting.
         self.fight_all = False
+        self.travelling = False            # an errand with a destination this decision
         # Set by the bridge while the class has an evade (DODGE_CLASSES).
         self.evade_past = False
         self.evade_past_pending = None     # (stall key) after the turn tap
@@ -853,6 +859,12 @@ class MemoryPlanner:
             # behind a wall made the hero walk back and forth for minutes.
             if abs(dx) <= ENGAGE_RANGE_X and abs(dy) <= ENGAGE_RANGE_Y:
                 targets.append((abs(dx) + abs(dy), dx, dy, enemy))
+        if self.travelling and not self.provoked:
+            engaged = self._get_intention()
+            fighting = (engaged.get("enemy") if isinstance(engaged, dict) and
+                        engaged.get("kind") == "engage" else None)
+            targets = [t for t in targets
+                       if t[0] <= TRAVEL_ENGAGE_PX or t[3].get("slot") == fighting]
         if not targets:
             return None
         distance, dx, dy, enemy = min(targets, key=lambda value: value[0])
@@ -2493,10 +2505,14 @@ class MemoryPlanner:
                                   "go_to_destination", "at_destination", strict=True)
             if travel is not None:
                 return travel
+        self.travelling = isinstance(errand, dict) and isinstance(errand.get("anchor"), dict)
         combat = self._combat(observation, context, open_steps, directive)
         if combat is not None:
             return combat
         if isinstance(errand, dict) and isinstance(errand.get("anchor"), dict):
+            engaged = self._get_intention()
+            if isinstance(engaged, dict) and engaged.get("kind") == "engage":
+                self._set_intention(None)      # the trip resumes: that fight is over
             place = errand.get("place", "errand")
             slug = str(place).replace(" ", "_")
             travel = self._travel(context, errand["anchor"], open_steps, place,

@@ -60,6 +60,13 @@ test-som-songs:
 
 .PHONY: test-som-songs
 
+test-som-weapon-styles:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_weapon_styles_test.c -o build/som-weapon-styles-test
+	./build/som-weapon-styles-test
+
+.PHONY: test-som-weapon-styles
+
 test-som-combo:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_combo_test.c -o build/som-combo-test

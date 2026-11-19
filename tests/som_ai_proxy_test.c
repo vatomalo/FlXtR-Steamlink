@@ -196,14 +196,44 @@ int main(void){
     mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
     for(unsigned i=0;i<8;i++)mocked_wram[0xCC54+i]=0xFF;
     mocked_wram[0xCC55]=0x43; /* already-owned tier-3 sword */
-    assert(som_class_supply(mocked_wram,2)==1); /* Ninja gains chakram */
-    assert(mocked_wram[0xCC55]==0x43&&mocked_wram[0xCC5A]==0);
+    assert(som_class_supply(mocked_wram,2)==2); /* Ninja gains chakram + Taijutsu glove */
+    assert(mocked_wram[0xCC55]==0x43&&mocked_wram[0xCC5A]==0&&mocked_wram[0xCC54]==0);
     assert(som_class_supply(mocked_wram,2)==0); /* idempotent */
     assert(som_class_supply(mocked_wram,10)==1); /* Samurai gains yumi */
     assert(mocked_wram[0xCC59]==0&&mocked_wram[0xCC55]==0x43);
     mocked_wram[0xE4]=0;mocked_wram[0xCC56]=0xFF;
     assert(som_class_supply(mocked_wram,0)==0); /* no changes outside field */
     assert(mocked_wram[0xCC56]==0xFF);
+
+    /* Taijutsu: glove, glove, sword, then again; a pause restarts it. */
+    frame_number=1000;taijutsu_last=0;taijutsu_step=0;
+    assert(som_taijutsu_peek()==0u);som_taijutsu_advance();
+    assert(som_taijutsu_peek()==0u);som_taijutsu_advance();
+    assert(som_taijutsu_peek()==1u);som_taijutsu_advance();
+    assert(som_taijutsu_peek()==0u);som_taijutsu_advance();
+    frame_number+=SOM_TAIJUTSU_RESET+1ul;
+    assert(som_taijutsu_peek()==0u&&taijutsu_step==0u);
+    /* Styles: Samurai's three swords; style commands need a class. */
+    {
+        unsigned index;
+        som_styles_init(&styles);
+        const SomWeaponStyle *st=som_style_of(&styles,10,&index);
+        assert(st&&!strcmp(st->name,"Katana")&&st->weapon==1u);
+        assert(!strcmp(som_weapon_styles[som_style_index(10,0)].name,"Tanto"));
+        assert(!strcmp(som_weapon_styles[som_style_index(10,2)].name,"Dai Katana"));
+        assert(som_weapon_styles[som_style_index(10,2)].reach_bonus>0);
+        assert(som_weapon_styles[som_style_index(10,0)].speed_pct>100u);
+        for(unsigned c=0;c<SOM_DISCIPLINE_COUNT;c++)
+            assert(som_weapon_styles[som_style_index(c,0)].weapon==som_disc_weapons[c][0]&&
+                   som_weapon_styles[som_style_index(c,2)].weapon==som_disc_weapons[c][0]);
+    }
+    /* Throw: back is the D-pad away from the facing. */
+    mocked_wram[0xE010]=0x02u;   /* facing right */
+    assert(som_throw_back_pressed(mocked_wram,(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)));
+    assert(!som_throw_back_pressed(mocked_wram,(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)));
+    mocked_wram[0xE010]=0x00u;   /* facing up */
+    assert(som_throw_back_pressed(mocked_wram,(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)));
+    frame_number=0;
 
     /* Progression belongs to a save (src/som_progress.h). */
     {

@@ -28,6 +28,7 @@
 #include "som_xp.h"
 #include "som_progress.h"
 #include "som_perks.h"
+#include "som_weapon_styles.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include <time.h>
@@ -845,6 +846,30 @@ static void som_class_selected(void){
 static int y_weapon_swap, y_weapon_blocked, b_weapon_blocked, x_spell_blocked;
 static int x_weapon_swap;                 /* Weapon Flow: X attacks as B (third weapon) */
 static unsigned long iai_ready;           /* Bushido: next frame Iaijutsu may start */
+/* Taijutsu (Ninjutsu's B, player's design 2026-11-19): B, B are glove
+ * punches, the third B is the sword; SOM_TAIJUTSU_RESET frames without a B
+ * start the chain over. Ninjutsu keeps its colours throughout (the glove
+ * does not make the hero a monk). */
+#define SOM_TAIJUTSU_RESET 90ul
+#define SOM_TAIJUTSU_PUNCHES 2u
+static unsigned taijutsu_step,taijutsu_want=SOM_NO_WEAPON;
+static int taijutsu_counted;
+static unsigned long taijutsu_last;
+static unsigned som_taijutsu_peek(void){
+    if(frame_number-taijutsu_last>SOM_TAIJUTSU_RESET)taijutsu_step=0;
+    return taijutsu_step<SOM_TAIJUTSU_PUNCHES?0u:1u;   /* glove, glove, sword */
+}
+static void som_taijutsu_advance(void){
+    taijutsu_step=(taijutsu_step+1u)%(SOM_TAIJUTSU_PUNCHES+1u);
+    taijutsu_last=frame_number;
+}
+static SomStyles styles;
+static int style_b_hidden,throw_active;
+static void som_style_cycle(int to);
+static void som_style_give(unsigned species);
+static const char *const som_weapon_types[8];
+static int som_throw_back_pressed(const uint8_t *ram,uint16_t pressed);
+static int som_throw_start(uint8_t *ram);
 static int som_cycle_weapon(uint8_t *ram);
 /* Verified field play: hero object active, field mode (7E:00E4 = 1,
  * 7E:00E6 = 0x0F), no event running (7E:00D0 = 0) and the ring closed
@@ -882,9 +907,11 @@ static void som_combo_frame(void){
            combo_ids[i]==e[0x180]&&hp<combo_hp[i]&&som_combo_on_hit(&combo,frame_number)){
             last_attack_frame=frame_number;
             const unsigned weapon=ram[0xE1E4],sel=disciplines.selected;
-            som_xp_give(som_xp_weapon_discipline(weapon,sel,
+            som_xp_give(sel==SOM_DISC_NINJUTSU&&weapon==0u?SOM_DISC_NINJUTSU:   /* Taijutsu */
+                        som_xp_weapon_discipline(weapon,sel,
                             sel<SOM_DISCIPLINE_COUNT?som_disc_weapons[sel]:NULL),
                         SOM_XP_HIT,e[0x180],SOM_XPK_HIT,"weapon hit");
+            som_style_give(e[0x180]);
             if(sel==SOM_DISC_NINJUTSU&&weapon==6u&&!fuma.active)   /* Fuma: boomerang hit */
                 som_fuma_start(ram,i,combo_hp[i]-hp);
             som_perk_hit((uint8_t*)ram,i,combo_hp[i]-hp,hp);
@@ -1078,7 +1105,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         if(bitmask)actual=(int16_t)(actual&~a);
         else if(id<16u&&(a&(1u<<id)))actual=0;
     }
-    if(seal_mode&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+    if((seal_mode||throw_active)&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
@@ -1195,9 +1222,29 @@ static void som_input_poll(void){
         }
         y_weapon_swap=0;y_weapon_blocked=0;b_weapon_blocked=0;x_spell_blocked=0;x_weapon_swap=0;
         uint8_t *wram=field?(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
-        if(wram&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
+        /* L1+B: the next style of the class's B weapon (B hidden meanwhile;
+         * L1 itself still reaches the game). */
+        const uint16_t l1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
+        style_b_hidden=field&&(current&l1_bit)&&!ring_ai_enabled&&
+            disciplines.selected<SOM_DISCIPLINE_COUNT;
+        if(style_b_hidden&&(pressed&b_bit))som_style_cycle(-1);
+        if(style_b_hidden&&(current&b_bit))b_weapon_blocked=1;
+        /* Samurai's throw: R1 (block) + the D-pad away from the facing. */
+        if(wram&&disciplines.selected==SOM_DISC_BUSHIDO&&!ring_ai_enabled&&
+           (current&(1u<<RETRO_DEVICE_ID_JOYPAD_R))&&(pressed&dpad)&&
+           som_throw_back_pressed(wram,pressed))
+            som_throw_start(wram);
+        if(wram&&!style_b_hidden&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
-            const unsigned want=som_disc_weapons[disciplines.selected][which];
+            unsigned want=som_disc_weapons[disciplines.selected][which];
+            if(!which&&disciplines.selected==SOM_DISC_NINJUTSU){
+                /* Taijutsu: the chain's weapon is chosen on the press and
+                 * kept while B stays held (a held B may be charging). */
+                if((pressed&b_bit)||taijutsu_want==SOM_NO_WEAPON){
+                    taijutsu_want=som_taijutsu_peek();taijutsu_counted=0;
+                }
+                want=taijutsu_want;
+            }
             /* Switch on the press, or as soon as the hero is free while the
              * button stays held; the game then sees a fresh press. */
             int result=wram[0xE1E4]==want?SOM_EQUIP_OK:
@@ -1208,7 +1255,14 @@ static void som_input_poll(void){
             else if(result==SOM_EQUIP_BUSY)b_weapon_blocked=1;
             /* B with a weapon that cannot be switched directly keeps the
              * held weapon rather than leaving the hero unable to attack. */
+            /* The swing this press lets through is the chain's: next step. */
+            if(!which&&disciplines.selected==SOM_DISC_NINJUTSU&&result==SOM_EQUIP_OK&&
+               taijutsu_want!=SOM_NO_WEAPON&&!taijutsu_counted){
+                som_taijutsu_advance();taijutsu_counted=1;
+                fprintf(stderr,"[som-ai] TAIJUTSU %s\n",som_weapon_types[taijutsu_want]);
+            }
         }
+        if(!(current&b_bit))taijutsu_want=SOM_NO_WEAPON;
         /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
         const uint16_t x_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
         /* A: evade / jutsu for the disciplines with a dodge; the game's A
@@ -1718,10 +1772,12 @@ static void som_weapon_gfx_verify_frame(const uint8_t *ram){
 /* A row with Str/Agi/Con/Int/Wis bonuses needs the full stat rebuild
  * ($C0:4530); refuse those rather than leave stats half-updated. */
 static int som_weapon_row_plain(const uint8_t *r){return r[1]==0&&(r[2]&3u)==0;}
-static int som_equip_weapon_direct(uint8_t *ram,unsigned type){
+static void som_style_restore_attack(uint8_t *hero);
+/* force: re-apply the held weapon's row (its owned tier changed). */
+static int som_equip_weapon_row(uint8_t *ram,unsigned type,int force){
     if(!ram||type>=8u)return SOM_EQUIP_REFUSED;
     uint8_t *hero=ram+0xE000u;
-    if(hero[0x1E4]==type)return SOM_EQUIP_OK;
+    if(hero[0x1E4]==type&&!force)return SOM_EQUIP_OK;
     if(!som_field_idle(ram))return SOM_EQUIP_BUSY;
     uint8_t *owned=ram+0xCC54u;
     const unsigned current=hero[0x1E4];
@@ -1735,6 +1791,7 @@ static int som_equip_weapon_direct(uint8_t *ram,unsigned type){
        !som_weapon_row_plain(old_row)||!som_weapon_row_plain(m.row))
         return SOM_EQUIP_REFUSED;
     const uint8_t *r=m.row;
+    som_style_restore_attack(hero);     /* the row difference needs the game's value */
     /* Stats ($C0:4530 for a plain row): power and hit change by the row
      * difference; crit = 3*level + row crit, halved for bow/boomerang/javelin. */
     const uint8_t levels=hero[0x1C0u+type/2u];
@@ -1762,6 +1819,9 @@ static int som_equip_weapon_direct(uint8_t *ram,unsigned type){
     fprintf(stderr,"[som-ai] WEAPON equipped without the ring: %s (row %u)\n",
             som_weapon_types[type],row);
     return SOM_EQUIP_OK;
+}
+static int som_equip_weapon_direct(uint8_t *ram,unsigned type){
+    return som_equip_weapon_row(ram,type,0);
 }
 static unsigned long equip_notice_frame;
 static int som_equip_weapon(uint8_t *ram,unsigned type){
@@ -2713,8 +2773,10 @@ static unsigned som_class_supply(uint8_t *ram,unsigned discipline){
     if(!ram||discipline>=SOM_DISCIPLINE_COUNT||ram[0xE000]!=1||
        ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
     unsigned given=0;
-    for(unsigned i=0;i<2;i++){
-        unsigned type=som_disc_weapons[discipline][i];
+    for(unsigned i=0;i<3;i++){
+        /* the third: Ninjutsu's glove for Taijutsu */
+        unsigned type=i<2u?som_disc_weapons[discipline][i]:
+            discipline==SOM_DISC_NINJUTSU?0u:SOM_NO_WEAPON;
         if(type<8u&&ram[0xCC54u+type]==0xFF){
             ram[0xCC54u+type]=0;
             given++;
@@ -2744,6 +2806,241 @@ static void som_class_supply_frame(void){
         /* Retry while the hero is busy or the art check is still pending. */
         if(result==SOM_EQUIP_OK||(result==SOM_EQUIP_REFUSED&&weapon_gfx_verified))
             class_equip_pending=0;
+    }
+}
+/* ---- Class weapon styles (src/som_weapon_styles.h) ----
+ * The class's B weapon is pinned at its top plain tier (som_style_top_tier:
+ * the highest row with no stat bonus, which the direct equip can apply),
+ * and while a style weapon is in hand its attack +0x198 is the style's:
+ * the game's own value minus the row's attack plus som_style_attack. The
+ * game rebuilds +0x198 on level-ups and ring equips; a value other than
+ * the one written means it did, so the base is read again. */
+#define SOM_STYLE_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_styles"
+static const char *style_file=SOM_STYLE_FILE;
+static int style_dirty,style_carry,style_atk_active;
+static uint8_t style_written_atk,style_game_atk;
+static unsigned long style_saved_frame,style_swing_frame;
+static int style_swing_prev,style_cut_pending;
+static uint16_t style_cut_hp[3];
+static uint8_t style_cut_id[3];
+static void som_styles_save(void){
+    char line[600],temp[300];
+    if(!som_styles_format(&styles,line,sizeof(line)))return;
+    snprintf(temp,sizeof(temp),"%s.tmp",style_file);
+    FILE *out=fopen(temp,"w");
+    if(!out)return;
+    int ok=fprintf(out,"%s\n",line)>0;
+    if(fclose(out)!=0)ok=0;
+    if(ok)rename(temp,style_file);else unlink(temp);
+    style_dirty=0;style_saved_frame=frame_number;
+}
+static void som_styles_load(void){
+    som_styles_init(&styles);
+    FILE *in=fopen(style_file,"r");
+    if(!in)return;
+    char line[600];
+    if(fgets(line,sizeof(line),in)&&!som_styles_parse(&styles,line)){
+        som_styles_init(&styles);
+        fprintf(stderr,"[som-ai] STYLES file unreadable; starting fresh\n");
+    }
+    fclose(in);
+}
+/* Highest tier of `type` whose row the direct equip can apply. */
+static unsigned som_style_top_tier(unsigned type){
+    for(unsigned t=9u;t-->0u;){
+        const uint8_t *r=som_rom_at(0xD01000u+12u*(type*9u+t),12u);
+        if(r&&r[0]==type&&som_weapon_row_plain(r))return t;
+    }
+    return 0;
+}
+static unsigned som_style_row_attack(unsigned type,unsigned tier){
+    const uint8_t *r=som_rom_at(0xD01000u+12u*(type*9u+tier),12u);
+    return r?r[8]:0u;
+}
+/* Put the game's own attack back (before a direct equip, or with no style). */
+static void som_style_restore_attack(uint8_t *hero){
+    if(style_atk_active&&hero[0x198]==style_written_atk)hero[0x198]=style_game_atk;
+    style_atk_active=0;
+}
+static const SomWeaponStyle *som_style_held(const uint8_t *ram,unsigned *index){
+    if(!ram||disciplines.selected>=SOM_DISCIPLINE_COUNT)return NULL;
+    const SomWeaponStyle *st=som_style_of(&styles,disciplines.selected,index);
+    return st&&ram[0xE1E4]==st->weapon?st:NULL;
+}
+static void som_style_cycle(int to){
+    const unsigned cls=disciplines.selected;
+    if(cls>=SOM_DISCIPLINE_COUNT)return;
+    styles.selected[cls]=(uint8_t)(to>=0?(unsigned)to%SOM_STYLES_PER_CLASS:
+                                   (styles.selected[cls]+1u)%SOM_STYLES_PER_CLASS);
+    unsigned index;
+    const SomWeaponStyle *st=som_style_of(&styles,cls,&index);
+    char text[64];
+    snprintf(text,sizeof(text),"^%s|Lv%u %s",st->name,(unsigned)styles.level[index],
+             st->speed_pct>100u?"fast":st->reach_bonus>0||st->power_pct>100u?"heavy":"balanced");
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] STYLE %s: %s Lv%u (speed %u%%, power %u%%, reach +%d)\n",
+            som_discipline_names[cls],st->name,(unsigned)styles.level[index],
+            (unsigned)st->speed_pct,(unsigned)st->power_pct,(int)st->reach_bonus);
+    som_styles_save();
+}
+static void som_style_give(unsigned species){
+    unsigned index;
+    uint8_t *ram=backend_retro_get_memory_data?
+        (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+    const SomWeaponStyle *st=som_style_held(ram,&index);
+    if(!st)return;
+    (void)species;
+    if(som_style_award(&styles,index,SOM_STYLE_XP_HIT)){
+        char text[64];
+        snprintf(text,sizeof(text),"^%s|level %u",st->name,(unsigned)styles.level[index]);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] STYLE %s level %u\n",st->name,(unsigned)styles.level[index]);
+        som_styles_save();
+    }else style_dirty=1;
+}
+/* Before the game's frame: pin the tier, write the attack. */
+static void som_style_frame(uint8_t *ram){
+    if(!ram||!som_rom)return;
+    uint8_t *hero=ram+0xE000u;
+    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
+    if(!field)return;
+    unsigned index;
+    const SomWeaponStyle *any=disciplines.selected<SOM_DISCIPLINE_COUNT?
+        som_style_of(&styles,disciplines.selected,&index):NULL;
+    if(any&&weapon_gfx_verified){
+        const unsigned type=any->weapon,top=som_style_top_tier(type);
+        uint8_t *owned=ram+0xCC54u+type;
+        if(*owned!=0xFF&&(*owned&0x0Fu)<top&&(hero[0x1E4]!=type||som_field_idle(ram))){
+            *owned=(uint8_t)((*owned&0xF0u)|top);
+            fprintf(stderr,"[som-ai] STYLE %s pinned at tier %u\n",som_weapon_types[type],top);
+            if(hero[0x1E4]==type){            /* re-apply the held row at the new tier */
+                som_equip_weapon_row(ram,type,1);
+            }
+        }
+    }
+    const SomWeaponStyle *st=som_style_held(ram,&index);
+    if(!st){som_style_restore_attack(hero);return;}
+    const uint8_t *row=som_rom_at(0xD01000u+12u*hero[0x1E3],12u);
+    if(!row||hero[0x1E3]>=72u)return;
+    const unsigned game=style_atk_active&&hero[0x198]==style_written_atk?style_game_atk:hero[0x198];
+    const unsigned base=game>row[8]?game-row[8]:0u;
+    const unsigned want=base+som_style_attack(st,styles.level[index],
+        som_style_row_attack(st->weapon,0u),som_style_row_attack(st->weapon,som_style_top_tier(st->weapon)));
+    const uint8_t value=(uint8_t)(want>255u?255u:want);
+    if(!style_atk_active||hero[0x198]!=value){
+        style_game_atk=(uint8_t)game;style_written_atk=value;hero[0x198]=value;
+        if(!style_atk_active)
+            fprintf(stderr,"[som-ai] STYLE %s Lv%u attack %u (game %u)\n",st->name,
+                    (unsigned)styles.level[index],(unsigned)value,game);
+        style_atk_active=1;
+    }
+}
+/* After the game's frame: the cooldown at the style's speed, and the long
+ * cut a heavy style adds past the game's reach. */
+static void som_style_after(uint8_t *ram){
+    if(!ram)return;
+    uint8_t *hero=ram+0xE000u;
+    unsigned index;
+    const SomWeaponStyle *st=som_style_held(ram,&index);
+    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    if(!st||!field){style_carry=0;style_cut_pending=0;style_swing_prev=0;return;}
+    if(st->speed_pct!=100u&&!special_stage)
+        hero[0x1ED]=som_style_cooldown(hero[0x1ED],st->speed_pct,&style_carry);
+    const int swinging=ram[0xE01C]!=0;
+    if(swinging&&!style_swing_prev&&st->reach_bonus>0&&som_weapon_short_range(st->weapon)){
+        style_swing_frame=frame_number;style_cut_pending=1;
+        for(unsigned i=0;i<3u;i++){
+            const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
+            style_cut_hp[i]=som_word(m+0x182);style_cut_id[i]=m[0x180];
+        }
+    }
+    style_swing_prev=swinging;
+    if(!style_cut_pending||frame_number-style_swing_frame<SOM_STYLE_CUT_FRAMES)return;
+    style_cut_pending=0;
+    static const int native[4]={24,28,28,34};      /* som_weapon_ranges.py */
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    for(unsigned i=0;i<3u;i++){
+        if((int)i==familiar.slot)continue;
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
+        if(!som_bun_monster_alive(m)||m[0x180]!=style_cut_id[i]||
+           som_word(m+0x182)<style_cut_hp[i])continue;     /* the game's swing got it */
+        if(!som_style_in_cut((int)som_bun_u16(m+2)-hx,(int)som_bun_u16(m+4)-hy,hero[0x010],
+                             native[st->weapon],st->reach_bonus))continue;
+        unsigned damage=perk_last_hit_damage?perk_last_hit_damage:hero[0x198]/2u+1u;
+        const unsigned pending=m[0x1F1]+damage;
+        m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+        monster_hit_frame[i]=frame_number;
+        fprintf(stderr,"[som-ai] STYLE %s long cut: %u on monster %u\n",st->name,damage,i);
+        break;
+    }
+}
+/* ---- Samurai's throw (player's design, 2026-11-19) ----
+ * A defensive move: holding block (R1), press the D-pad away from the
+ * facing with a monster in contact, and the samurai grabs it and throws it
+ * over himself: the monster flies SOM_THROW_FRAMES to the spot
+ * SOM_THROW_PX behind him (open ground only, else no throw), lands for
+ * pending damage +0x1F1 and is dazed (its attack cooldown +0x1ED held).
+ * The game has no grab: the decomp's glove power attacks are all strikes
+ * (som-decomp docs/glove-attacks.md), so the proxy moves the monster. */
+#define SOM_THROW_FRAMES 12ul
+#define SOM_THROW_PX 26
+#define SOM_THROW_COOLDOWN 150ul
+#define SOM_THROW_DAZE 90u
+static int throw_slot=-1,throw_x0,throw_y0,throw_x1,throw_y1;
+static unsigned long throw_start,throw_ready;
+static unsigned throw_damage;
+static int som_throw_back_pressed(const uint8_t *ram,uint16_t pressed){
+    unsigned back;
+    switch(ram[0xE010]){
+    case 0x00u: back=RETRO_DEVICE_ID_JOYPAD_DOWN;break;
+    case 0x01u: back=RETRO_DEVICE_ID_JOYPAD_UP;break;
+    case 0x02u: back=RETRO_DEVICE_ID_JOYPAD_LEFT;break;
+    case 0x82u: back=RETRO_DEVICE_ID_JOYPAD_RIGHT;break;
+    default: return 0;
+    }
+    return (pressed&(1u<<back))!=0;
+}
+static int som_throw_start(uint8_t *ram){
+    if(!ram||throw_active||frame_number<throw_ready||disciplines.selected!=SOM_DISC_BUSHIDO||
+       ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return 0;
+    const uint8_t *hero=ram+0xE000u;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    const int slot=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X+8,SOM_BUN_HERO_TOUCH_Y+8,
+                                   familiar.slot);
+    if(slot<0){fprintf(stderr,"[som-ai] THROW refused: no monster in reach\n");return 0;}
+    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)slot;
+    const int mx=(int)som_bun_u16(m+2),my=(int)som_bun_u16(m+4);
+    int tx=hx,ty=hy;
+    if(abs(mx-hx)>=abs(my-hy))tx=hx+(mx>=hx?-SOM_THROW_PX:SOM_THROW_PX);
+    else ty=hy+(my>=hy?-SOM_THROW_PX:SOM_THROW_PX);
+    if(!som_bun_spot_open(ram,tx,ty,m[0x0B])){
+        fprintf(stderr,"[som-ai] THROW refused: no open ground behind\n");return 0;
+    }
+    throw_active=1;throw_slot=slot;throw_start=frame_number;
+    throw_x0=mx;throw_y0=my;throw_x1=tx;throw_y1=ty;
+    throw_damage=hero[0x198]/2u+disciplines.level[SOM_DISC_BUSHIDO]/2u+4u;
+    throw_ready=frame_number+SOM_THROW_COOLDOWN;
+    som_overlay_set(&overlay,"^Throw!",SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] THROW monster %d from %d,%d to %d,%d\n",slot,mx,my,tx,ty);
+    return 1;
+}
+static void som_throw_frame(uint8_t *ram){
+    if(!throw_active)return;
+    if(!ram||throw_slot<0||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F){throw_active=0;return;}
+    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)throw_slot;
+    if(!som_bun_monster_alive(m)){throw_active=0;return;}
+    const unsigned long t=frame_number-throw_start;
+    const long k=(long)(t>SOM_THROW_FRAMES?SOM_THROW_FRAMES:t),n=(long)SOM_THROW_FRAMES;
+    const int x=throw_x0+(int)((throw_x1-throw_x0)*k/n),y=throw_y0+(int)((throw_y1-throw_y0)*k/n);
+    m[2]=(uint8_t)x;m[3]=(uint8_t)(x>>8);m[4]=(uint8_t)y;m[5]=(uint8_t)(y>>8);
+    if(m[0x1ED]<SOM_THROW_DAZE)m[0x1ED]=SOM_THROW_DAZE;
+    if(t>=SOM_THROW_FRAMES){
+        const unsigned pending=m[0x1F1]+throw_damage;
+        m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+        monster_hit_frame[throw_slot]=frame_number;
+        som_xp_give(SOM_DISC_BUSHIDO,SOM_XP_HIT,m[0x180],SOM_XPK_HIT,"throw");
+        fprintf(stderr,"[som-ai] THROW landed: %u on monster %d\n",throw_damage,throw_slot);
+        throw_active=0;
     }
 }
 static int som_use_candy(uint8_t *ram){
@@ -3200,6 +3497,15 @@ static int som_undo_spawn(void){
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
     if(action==SOM_ACT_ATTACK)som_combo_swing(0);
+    if(action==SOM_ACT_ATTACK&&disciplines.selected==SOM_DISC_NINJUTSU&&
+       backend_retro_get_memory_data){
+        uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        const unsigned want=som_taijutsu_peek();
+        if(ram&&som_equip_weapon_direct(ram,want)==SOM_EQUIP_OK){
+            som_taijutsu_advance();
+            fprintf(stderr,"[som-ai] TAIJUTSU %s (AI)\n",som_weapon_types[want]);
+        }
+    }
     active_action=action;
     action_frames=som_action_frames(action);
     armed=1;cancelled=0;completed=0;
@@ -3378,6 +3684,19 @@ static int som_handle_command(const char *command){
         if(!ok)flykick_from_ai=0;
         return ok;
     }
+    /* style_<0-2> / style_next: the class's B weapon style (fast,
+     * balanced, heavy). throw: Samurai's grab and throw (AI). */
+    if(!strncmp(command,"style_",6)){
+        if(disciplines.selected>=SOM_DISCIPLINE_COUNT)return 0;
+        if(!strcmp(command+6,"next")){som_style_cycle(-1);return 1;}
+        if(command[6]>='0'&&command[6]<'0'+(int)SOM_STYLES_PER_CLASS&&!command[7]){
+            som_style_cycle(command[6]-'0');return 1;
+        }
+        return 0;
+    }
+    if(!strcmp(command,"throw"))
+        return som_throw_start(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     /* iai_3 / iai_4: Bushido's Iaijutsu for the AI (same cooldown). */
     if(!strcmp(command,"iai_3")||!strcmp(command,"iai_4")){
         special_from_ai=1;
@@ -4213,6 +4532,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_disc_load();
+    som_styles_load();style_atk_active=0;style_carry=0;style_cut_pending=0;style_swing_prev=0;
+    style_dirty=0;style_b_hidden=0;throw_active=0;throw_slot=-1;throw_ready=0;
+    taijutsu_step=0;taijutsu_want=SOM_NO_WEAPON;taijutsu_last=0;
     memset(&xp_decay,0,sizeof(xp_decay));xp_dirty=0;xp_saved_frame=0;xp_spell_slot=-1;
     som_prog_preserve_legacy();
     som_mix_reset(&music_ring,SOM_MIX_GAIN_DEFAULT);
@@ -4550,6 +4872,12 @@ RETRO_API void retro_run(void){
         som_weapon_gfx_verify_frame((const uint8_t*)
             backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_class_supply_frame();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){
+        uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        som_style_frame(ram);
+        som_throw_frame(ram);
+    }
     if(test_enabled&&on_turbo)som_infinite_mp_frame();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
@@ -4590,6 +4918,10 @@ RETRO_API void retro_run(void){
     backend_run();
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
     if(test_enabled&&on_turbo)som_combo_frame();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_style_after((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    if(style_dirty&&frame_number-style_saved_frame>=3600ul)som_styles_save();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data)
         som_perks_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%30u==0u)som_prog_frame();

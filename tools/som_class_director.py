@@ -39,6 +39,10 @@ WEAPONS = (("sword", "axe"), ("glove", "spear"), ("sword", "boomerang"),
 THIRD_WEAPONS = {8: "bow"}
 BUSHIDO = 10                                  # X = Iaijutsu, no spells
 MARTIAL_ARTS = 1                              # X = flying kick
+# Ninjutsu's B is Taijutsu: glove, glove, sword (som_ai_proxy.c). A ninja
+# never turns monk for fists (player, 2026-11-19).
+NINJUTSU = 2
+TAIJUTSU_WEAPONS = ("glove", "sword")
 # Right after the director switches, the game's saved class may still show
 # the old one for a moment: no player pick is read from it meanwhile.
 ADOPT_SETTLE_S = 3.0
@@ -299,8 +303,11 @@ class ClassDirector:
             return None
         if self.switched_at is not None and self.clock() - self.switched_at < SISTER_HOLD_S:
             return None
+        origin = self.home if self.home is not None else self.current
         for tag, klass, why in SISTER_PICKS:
             if tag in tags:
+                if origin == NINJUTSU and klass == MARTIAL_ARTS:
+                    continue         # Taijutsu is the ninja's fists: stay a ninja
                 if klass == self.current:
                     return None
                 if self.home is None:

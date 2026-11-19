@@ -22,6 +22,7 @@ jobs:
         run: |
           PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py'
           python3 -m unittest discover -s tests -p 'test_flxtr_build_recovery.py'
+          python3 -m unittest discover -s tests -p 'build_portal_test.py'
       - name: Build the headless harness with warnings as errors
         run: |
           cc -std=gnu99 -Wall -Wextra -Werror -o /tmp/som-harness tools/som_headless/som_harness.c -ldl

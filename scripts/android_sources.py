@@ -13,14 +13,17 @@ def checkout(deps, name, url, revision):
     path = (deps / name).resolve()
     if name not in ("moonlight", "gambatte", "fceumm") or not path.is_relative_to(deps):
         raise RuntimeError("Refusing to modify a path outside generated Android sources")
-    if not (path / ".git").exists():
+    fresh = not (path / ".git").exists()
+    if fresh:
         subprocess.run(["git", "clone", "--no-checkout", url, str(path)], check=True)
 
     # git checkout --detach at the same SHA leaves edited AppView.java in place.
     # This caused a missing GamezBridge import to break the Android build.
     # Preserve a diff of tracked generated-vendor files, not the user's repo.
-    dirty = subprocess.run(["git", "-C", str(path), "diff", "HEAD", "--binary"],
-                           capture_output=True, check=True).stdout
+    # --no-checkout starts with an empty worktree; that is not an edited
+    # upstream tree, and backing it up would create a huge false patch.
+    dirty = (subprocess.run(["git", "-C", str(path), "diff", "HEAD", "--binary"],
+                            capture_output=True, check=True).stdout if not fresh else b"")
     if dirty:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup = deps / f"{name}-local-{timestamp}.patch"

@@ -857,6 +857,27 @@ int main(void){
     frame_number+=SOM_SWITCH_HOLD_FRAMES*2;som_input_poll();
     frame_number+=1;pressed=100;som_input_poll();
     assert(!ring_ai_enabled);
+    /* Passive skills: unlock levels, ranks, caps and two-class requirements. */
+    {
+        SomDisciplines d;memset(&d,0,sizeof(d));d.selected=2u;
+        assert(!som_perk_value(SOM_EFFECT_REELING_BONUS,&d,1));
+        d.level[2]=4;assert(som_perk_value(SOM_EFFECT_REELING_BONUS,&d,1)==25);   /* Coup */
+        d.level[2]=9;assert(som_perk_value(SOM_EFFECT_REELING_BONUS,&d,1)==50);
+        d.level[2]=30;assert(som_perk_value(SOM_EFFECT_REELING_BONUS,&d,1)==50);  /* cap */
+        assert(!som_perk_value(SOM_EFFECT_REELING_BONUS,&d,0));                  /* off */
+        assert(!som_perk_value(SOM_EFFECT_BLINK_COOLDOWN_CUT,&d,1));   /* needs Rogue 5 */
+        d.level[9]=5;assert(som_perk_value(SOM_EFFECT_BLINK_COOLDOWN_CUT,&d,1)==50);
+        assert(som_perk_value(SOM_EFFECT_FIRST_HIT_CUT,&d,1)==25);    /* Rogue 5: rank 1 */
+        assert(!som_perk_value(SOM_EFFECT_FUMA_LEVEL,&d,1));          /* needs Bushido 5 */
+        d.level[10]=5;assert(som_perk_value(SOM_EFFECT_FUMA_LEVEL,&d,1)==2);
+        assert(som_perk_value(SOM_EFFECT_IAI_COOLDOWN_CUT,&d,1)==15);
+        d.level[1]=3;assert(som_perk_value(SOM_EFFECT_GUARD_COUNTER,&d,1)==1);
+        /* Class perks follow the chosen class's level. */
+        assert(som_perk_value(SOM_EFFECT_KILL_HEAL,&d,1)==9);        /* Ninjutsu 30: top rank */
+        d.level[2]=4;assert(som_perk_value(SOM_EFFECT_KILL_HEAL,&d,1)==3);
+        assert(!som_perk_value(SOM_EFFECT_LOW_HP_BONUS,&d,1));         /* class 4 < 6 */
+        d.selected=1u;assert(!som_perk_value(SOM_EFFECT_KILL_HEAL,&d,1));  /* Martial 3 */
+    }
     /* Gambit menu text and drawing. */
     {
         SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,

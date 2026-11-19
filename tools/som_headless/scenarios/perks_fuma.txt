@@ -1,0 +1,55 @@
+# Passive skills in a Fuma fight on map 130 (route of to_rabites.txt, then a
+# trained ninja at low HP throws the boomerang at a rabite).
+#! expect-log FUMA clone at 528,506 strikes monster 0: level [2-9]
+#! expect-log PERK Coup de Grace \+ Last Resort: \+\d+ on the fuma strike
+#! expect-log PERK Uncanny Dodge: first hit of the fight 7 -> 4
+#! expect-log PERK Battle Rhythm: kill heals \d+ HP
+# Route from the Potos inn save to map 130 (three Rabites); saves rabites.state,
+# fetched into the output folder (outside Git) for the combat scenarios.
+# Boot from the SRAM copy: title, Game Select (Game Files), first file, field.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+hold DOWN 60
+frames 120
+hold DOWN 10
+hold LEFT 90
+hold RIGHT 23
+hold UP 80
+hold LEFT 17
+hold UP 62
+hold LEFT 60
+frames 150
+expect u16 00DC == 130
+expect u8 E600 == 1
+cmd class_2
+cmd test_level_1_8
+cmd test_level_2_9
+cmd test_level_9_8
+cmd test_level_10_8
+frames 30
+cmd equip_boomerang
+frames 60
+hold RIGHT 2
+frames 10
+monster 1 -90 -60
+monster 2 -90 60
+monster 0 48 0
+poke E182 130
+poke E183 0
+frames 2
+poke E182 14
+poke E183 0
+frames 2
+hold Y 2
+frames 90
+peek

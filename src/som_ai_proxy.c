@@ -90,6 +90,22 @@ static SomCombo combo;
 /* Perks (src/som_perks.h): on unless FLXTR_SOM_PERKS=0 at game load. */
 static int perks_enabled=1;
 static int som_perk(unsigned effect);
+/* Passive skills (src/som_perks.h ids 5-12). A "fight" ends after
+ * SOM_FIGHT_QUIET_FRAMES with no live monster within SOM_FIGHT_NEAR_PX. A
+ * monster hit within SOM_REEL_FRAMES of the previous hit is still reeling. */
+#define SOM_FIGHT_NEAR_PX 160
+#define SOM_FIGHT_QUIET_FRAMES 180ul
+#define SOM_REEL_FRAMES 90ul
+#define SOM_TIGER_COOLDOWN 60ul
+static unsigned long perk_quiet,monster_hit_frame[3],tiger_ready;
+static uint8_t perk_monster_live[3];
+#define SOM_KILL_CREDIT_FRAMES 120ul    /* a death this soon after our hit is our kill */
+static int perk_first_hit_used;
+static unsigned perk_hero_hp_prev,perk_last_hit_damage=8u;
+static unsigned som_perk_bonus(unsigned slot,unsigned damage,const char *what);
+static void som_perk_hit(uint8_t *ram,unsigned slot,unsigned drop,unsigned hp_after);
+static void som_perks_frame(uint8_t *ram);
+static uint16_t som_word(const uint8_t *p);
 /* The chain level with the Finisher Mastery and Weapon Flow perks. */
 static unsigned som_combo_effective_level(void);
 static SomFamiliar familiar={-1,-1,0,0};
@@ -807,6 +823,7 @@ static void som_combo_frame(void){
                         SOM_XP_HIT,e[0x180],SOM_XPK_HIT,"weapon hit");
             if(sel==SOM_DISC_NINJUTSU&&weapon==6u&&!fuma.active)   /* Fuma: boomerang hit */
                 som_fuma_start(ram,i,combo_hp[i]-hp);
+            som_perk_hit((uint8_t*)ram,i,combo_hp[i]-hp,hp);
             if(combo.mixes!=mixes_before)
                 som_xp_give(SOM_DISC_FLOW,SOM_XP_FLOW,e[0x180],SOM_XPK_FLOW,"weapon switch hit");
             if(som_combo_effective_level())
@@ -824,6 +841,108 @@ static void som_combo_frame(void){
     som_combo_tick(&combo,frame_number,combo_input_held);
 }
 static int som_perk(unsigned effect){return som_perk_value(effect,&disciplines,perks_enabled);}
+/* Extra damage from Coup de Grace (the monster still reels from a hit) and
+ * Last Resort (hero below a quarter of max HP), as a share of `damage`. */
+static unsigned som_perk_bonus(unsigned slot,unsigned damage,const char *what){
+    if(slot>2u||!damage||!backend_retro_get_memory_data)return 0;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram)return 0;
+    int pct=0;
+    const char *names="";
+    if(monster_hit_frame[slot]&&frame_number-monster_hit_frame[slot]<=SOM_REEL_FRAMES){
+        const int coup=som_perk(SOM_EFFECT_REELING_BONUS);
+        if(coup){pct+=coup;names="Coup de Grace";}
+    }
+    const unsigned hp=som_word(ram+0xE182),max=som_word(ram+0xE184);
+    if(max&&hp*4u<max){
+        const int last=som_perk(SOM_EFFECT_LOW_HP_BONUS);
+        if(last){pct+=last;names=*names?"Coup de Grace + Last Resort":"Last Resort";}
+    }
+    const unsigned bonus=damage*(unsigned)pct/100u;
+    if(bonus)fprintf(stderr,"[som-ai] PERK %s: +%u on the %s (monster %u)\n",names,bonus,what,slot);
+    return bonus;
+}
+/* After a hero hit lowered monster `slot` by `drop` to `hp_after`. */
+static void som_perk_hit(uint8_t *ram,unsigned slot,unsigned drop,unsigned hp_after){
+    if(!ram||slot>2u)return;
+    if(drop)perk_last_hit_damage=drop;
+    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    if(hp_after){
+        const unsigned bonus=som_perk_bonus(slot,drop,"hit");
+        if(bonus){
+            const unsigned pending=m[0x1F1]+bonus;
+            m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+        }
+    }
+    monster_hit_frame[slot]=frame_number;
+}
+/* The guard is up: the AI's block action, or the player holding R. */
+static int som_guarding(void){
+    return (armed&&active_action==SOM_ACT_BLOCK)||
+           (!ring_ai_enabled&&(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R)));
+}
+/* After each frame: Uncanny Dodge (the first hit of a fight is cut) and
+ * Tiger Drop (a hit landing on the guard is countered). */
+static void som_perks_frame(uint8_t *ram){
+    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
+        perk_hero_hp_prev=0;return;
+    }
+    uint8_t *hero=ram+0xE000u;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    const unsigned hp=som_word(hero+0x182),max=som_word(hero+0x184);
+    if(som_bun_toucher(ram,hx,hy,SOM_FIGHT_NEAR_PX,SOM_FIGHT_NEAR_PX,familiar.slot)>=0)perk_quiet=0;
+    else if(perk_quiet<SOM_FIGHT_QUIET_FRAMES)perk_quiet++;
+    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)perk_first_hit_used=0;   /* a new fight */
+    const int hurt=perk_hero_hp_prev&&hp&&hp<perk_hero_hp_prev&&!evade_active;
+    unsigned now_hp=hp;
+    if(hurt&&!perk_first_hit_used){
+        perk_first_hit_used=1;
+        const int pct=som_perk(SOM_EFFECT_FIRST_HIT_CUT);
+        const unsigned back=(perk_hero_hp_prev-hp)*(unsigned)pct/100u;
+        if(back){
+            now_hp=hp+back>max?max:hp+back;
+            hero[0x182]=(uint8_t)now_hp;hero[0x183]=(uint8_t)(now_hp>>8);
+            fprintf(stderr,"[som-ai] PERK Uncanny Dodge: first hit of the fight %u -> %u\n",
+                    perk_hero_hp_prev-hp,perk_hero_hp_prev-hp-back);
+        }
+    }
+    const int counter=som_perk(SOM_EFFECT_GUARD_COUNTER);
+    if(counter&&som_guarding()&&frame_number>=tiger_ready&&
+       (hurt||hero[0x059]||hero[0x1F1]||hero[0x1F2])){
+        const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,
+                                      familiar.slot);
+        if(foe>=0){
+            uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)foe;
+            unsigned damage=perk_last_hit_damage*(2u+2u*(unsigned)counter)/2u;
+            damage+=som_perk_bonus((unsigned)foe,damage,"Tiger Drop");
+            const unsigned pending=m[0x1F1]+damage;
+            m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+            monster_hit_frame[foe]=frame_number;
+            tiger_ready=frame_number+SOM_TIGER_COOLDOWN;
+            som_overlay_set(&overlay,"^Tiger Drop!",SOM_MESSAGE_FRAMES/3u);
+            fprintf(stderr,"[som-ai] PERK Tiger Drop: guarded hit countered for %u on monster %d\n",
+                    damage,foe);
+        }
+    }
+    /* Battle Rhythm: a monster we hit (sword, boomerang, Fuma clone, Tiger
+     * Drop) that dies within SOM_KILL_CREDIT_FRAMES heals the hero. */
+    for(unsigned slot=0;slot<3u;slot++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        const int live=som_bun_monster_alive(m)&&som_word(m+0x182)>0;
+        if(perk_monster_live[slot]&&!live&&(int)slot!=familiar.slot&&monster_hit_frame[slot]&&
+           frame_number-monster_hit_frame[slot]<=SOM_KILL_CREDIT_FRAMES){
+            const unsigned heal=max*(unsigned)som_perk(SOM_EFFECT_KILL_HEAL)/100u;
+            if(heal){
+                const unsigned pending=som_word(hero+0x1F3)+heal;
+                hero[0x1F3]=(uint8_t)pending;hero[0x1F4]=(uint8_t)(pending>>8);
+                fprintf(stderr,"[som-ai] PERK Battle Rhythm: kill heals %u HP\n",heal);
+            }
+            monster_hit_frame[slot]=0;
+        }
+        perk_monster_live[slot]=(uint8_t)live;
+    }
+    perk_hero_hp_prev=now_hp;
+}
 static unsigned som_combo_effective_level(void){
     const unsigned base=som_combo_level(&combo);
     if(!base)return 0;                          /* perks never start a chain */
@@ -1885,6 +2004,7 @@ static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base){
     unsigned level=disciplines.level[SOM_DISC_NINJUTSU];
     const unsigned sword=hero[0x1C0]&0x0Fu;
     if(level>sword)level=sword;
+    level+=(unsigned)som_perk(SOM_EFFECT_FUMA_LEVEL);         /* Fuma Mastery */
     if(level>8u)level=8u;
     unsigned damage=base*(2u+level)/2u;
     if(damage>0xFFu)damage=0xFFu;
@@ -1914,6 +2034,9 @@ static void som_fuma_frame(uint8_t *ram){
         fuma_struck=1;
         uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)fuma_target;
         if(som_bun_monster_alive(m)&&m[0x180]==fuma_target_id){
+            /* The boomerang just hit it: Coup de Grace and Last Resort apply. */
+            fuma_damage+=som_perk_bonus((unsigned)fuma_target,fuma_damage,"fuma strike");
+            monster_hit_frame[fuma_target]=frame_number;
             const unsigned pending=m[0x1F1]+fuma_damage;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
             som_xp_give(SOM_DISC_NINJUTSU,SOM_XP_HIT,m[0x180],SOM_XPK_HIT,"fuma strike");
@@ -2005,7 +2128,9 @@ static void som_blink_frame(uint8_t *ram){
         fprintf(stderr,"[som-ai] BLINK arrived at %d,%d\n",x,y);
     }
     if(ram&&blink_hid)ram[0xE00E]&=(uint8_t)~0x80u;
-    if(!blink_is_swap)blink_ready=frame_number+SOM_BLINK_COOLDOWN;
+    if(!blink_is_swap)                         /* Shadow Step shortens it */
+        blink_ready=frame_number+SOM_BLINK_COOLDOWN*(unsigned long)(100-som_perk(
+            SOM_EFFECT_BLINK_COOLDOWN_CUT))/100ul;
     blink_active=0;blink_hid=0;blink_is_swap=0;
 }
 /* Before each emulated frame: advance the bash. */
@@ -2386,7 +2511,8 @@ static int som_iai_start(unsigned level){
         return 0;
     }
     if(!som_special_start(0,level))return 0;
-    iai_ready=frame_number+SOM_IAI_COOLDOWN_FRAMES;
+    iai_ready=frame_number+(unsigned long)SOM_IAI_COOLDOWN_FRAMES*
+              (unsigned long)(100-som_perk(SOM_EFFECT_IAI_COOLDOWN_CUT))/100ul;   /* Iai Focus */
     special_chord=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);special_suppress=1;
     char text[40];snprintf(text,sizeof(text),"^Iaijutsu|level %u",special_stage);
     som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
@@ -3019,6 +3145,19 @@ static int som_handle_command(const char *command){
         if(!strncmp(command,"blink_",6)&&sscanf(command+6,"%3d_%3d%c",&tx,&ty,&tail)==2)
             return som_blink_start(backend_retro_get_memory_data?
                 (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL,tx,ty);
+    }
+    /* Headless tests only (FLXTR_SOM_TEST_COMMANDS=1, set by
+     * tools/som_headless/run.py; never in the live game): set a discipline's
+     * level, e.g. test_level_2_9 = Ninjutsu 9, to exercise the perks. */
+    {
+        const char *tests=getenv("FLXTR_SOM_TEST_COMMANDS");
+        unsigned d,l;char tail;
+        if(tests&&!strcmp(tests,"1")&&!strncmp(command,"test_level_",11)&&
+           sscanf(command+11,"%2u_%3u%c",&d,&l,&tail)==2&&d<SOM_DISCIPLINE_COUNT&&l>=1u&&l<=100u){
+            disciplines.level[d]=(uint16_t)l;
+            fprintf(stderr,"[som-ai] TEST %s level %u\n",som_discipline_names[d],l);
+            return 1;
+        }
     }
     if(!strcmp(command,"fuma_swap"))
         return som_fuma_swap(backend_retro_get_memory_data?
@@ -4289,6 +4428,8 @@ RETRO_API void retro_run(void){
     backend_run();
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
     if(test_enabled&&on_turbo)som_combo_frame();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data)
+        som_perks_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%30u==0u)som_prog_frame();
     if(test_enabled&&on_turbo)som_special_tick();
     if(test_enabled&&on_turbo)som_evade_tick();

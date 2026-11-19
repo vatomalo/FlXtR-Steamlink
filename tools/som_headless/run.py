@@ -38,7 +38,8 @@ REPO = Path(__file__).resolve().parents[2]
 TURBO_NAME = "Secret of Mana, Turbo.smc"          # the proxy enables itself on this name
 LIVE_PREFIXES = ("/home/apps/retroarch/cores/experimental/som_", "/tmp/flxtr-")
 SDK_CANDIDATES = ("/opt/steamlink-sdk", "/opt/dockers/storage/toolchains/steamlink-sdk")
-DEVICE_DATA = ("som_song_names.tsv", "som_ai_rom_patch.txt", "som_cartwheel_frames.bin")
+DEVICE_DATA = ("som_song_names.tsv", "som_ai_rom_patch.txt", "som_cartwheel_frames.bin",
+               "som_ai_disciplines")
 
 
 def rewrite_paths(text, run_dir):
@@ -156,7 +157,7 @@ def main(argv=None):
             if local:
                 newer = shlex.quote(os.path.join(local, name))
                 setup.append("[ ! -f %s ] || cp %s %s/" % (newer, newer, run_dir))
-        run = ("cd %s && FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 ./som-harness "
+        run = ("cd %s && FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 FLXTR_SOM_TEST_COMMANDS=1 ./som-harness "
                "./som_ai_proxy_test.so %s %s scenario.txt %s") % (
                    shlex.quote(run_dir), shlex.quote(rom), shlex.quote(start), shlex.quote(run_dir))
         cleanup = "rm -rf %s" % shlex.quote(run_dir)

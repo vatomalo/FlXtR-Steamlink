@@ -9,12 +9,12 @@ publication to auto-update channels. See
 
 | Platform | Package |
 | --- | --- |
-| Android 8+ | [Latest signed APK — build 2093 (November 14, 2026)](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-2093-24d58748e045/FlXtR-Android-preview.apk) |
-| Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Windows-x86_64.zip) |
-| Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-Linux-x86_64.tgz) |
+| Android 8+ | [Latest signed APK — build 2137 (November 19, 2026)](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-2137-88b1eb7a1a0a/FlXtR-Android-preview.apk) |
+| Windows x86_64 | [Complete ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-windows-x86_64-88b1eb7a1a0a505c0c47a778062947828d850905/FlXtR-Windows-x86_64.zip) |
+| Linux x86_64 | [Complete bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-linux-x86_64-88b1eb7a1a0a505c0c47a778062947828d850905/FlXtR-Linux-x86_64.tgz) |
 | Steam Deck | [x86_64 bundle](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/desktop-2026.11.05-b0fffcf/FlXtR-SteamDeck-x86_64.tgz) |
 | PSP | [Experimental homebrew ZIP](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/psp-49601dfa187deaa88e1452ad2a9d1eee2804d489/FlXtR-PSP-beta.zip) |
-| Steam Link | [Complete ARM package — Tailscale QR sign-in](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-ed1dcae98bd1e4440273bbb1353e9ff733f9a986/greenlink.tgz) |
+| Steam Link | [Complete ARM package — Tailscale QR sign-in](https://github.com/vatomalo/FlXtR-Steamlink/releases/download/package-88b1eb7a1a0a505c0c47a778062947828d850905/greenlink.tgz) |
 
 [Release notes, installation and checksums](https://github.com/vatomalo/FlXtR-Steamlink/releases).
 Each download above is pinned to its platform's most recent published package.

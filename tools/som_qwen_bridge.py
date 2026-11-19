@@ -1906,9 +1906,14 @@ def main() -> int:
                           flush=True)
                 if goal not in offered and not is_travel(goal):
                     goal = "hunt_here"
+                current_inn = (history.select_inn(
+                    current_map, require_taught=True,
+                    current_layer=context.get("actor", {}).get("layer"))
+                    if history is not None else None)
+                if current_inn is None and history is not None:
+                    current_inn = history.safe_anchor()
                 directive, goal_errand, done = goal_plan(
-                    goal, summary, args.hunt_direction,
-                    history.safe_anchor() if history is not None else None, shop_offer)
+                    goal, summary, args.hunt_direction, current_inn, shop_offer)
                 if play_loop is None and (done or (is_travel(goal) and (step >= goal_deadline or
                                                  (goal_errand is None and not done)))):
                     print(f"[goal] {goal} {'reached' if done else 'ended'}; hunting here",
@@ -1921,7 +1926,7 @@ def main() -> int:
                                gambit(GAMBIT_SHOP) else None)
                 if play_loop is not None:
                     # The loop owns goals: no Qwen goal and no automatic shop detour.
-                    inn_anchor = history.safe_anchor()
+                    inn_anchor = current_inn
                     save_point = history.get_agent_state("save")
                     loop_goal = play_loop.goal(
                         summary, shop_offer is not None,
@@ -2335,8 +2340,9 @@ def main() -> int:
                     continue
                 if (link and not inn_disabled and history is not None and
                         decision.intention == "recover_at_inn"):
-                    anchor = history.safe_anchor()
-                    if isinstance(anchor, dict) and anchor.get("face"):
+                    anchor = current_inn
+                    if (isinstance(anchor, dict) and anchor.get("taught") and
+                            anchor.get("face")):
                         if learner is not None:
                             learner.cancel("inn macro")
                         announce("AI: staying at the inn")

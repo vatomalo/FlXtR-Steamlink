@@ -773,12 +773,50 @@ static int som_fuma_swap(uint8_t *ram);
 #define SOM_COMPANION_WALK 0xB0u
 #define SOM_COMPANION_SWING 0xB1u
 #define SOM_COMPANION_MOVING 8ul       /* frames a step keeps the walk going */
+/* She is a Shinobi: the player's sister classes (Martial Arts, Ninjutsu,
+ * Roguecraft, Bushido), switched by her situation at most every
+ * SOM_COMPANION_SWITCH_FRAMES, never into the hero's class of the moment
+ * (the pair covers two styles); the next pick down the list instead. */
+#define SOM_COMPANION_SWITCH_FRAMES 480ul
+#define SOM_COMPANION_LOOK_FRAMES 60ul     /* she reads the situation every second */
+#define SOM_COMPANION_TOUGH_HP 200u
+static const uint8_t som_shinobi[4]={9u,10u,2u,1u};     /* priority order below */
 static struct {
     int active,px,py;
     unsigned cls,facing,dir;
-    unsigned long moved_at,swing_at,strike_seen,walk_start;
+    unsigned long moved_at,swing_at,strike_seen,walk_start,switched_at;
     SomNpcWorkState draw;
 } companion;
+/* Her Shinobi class for this moment: hurt -> Roguecraft, tough monster or a
+ * crowd -> Bushido, target far -> Ninjutsu, one close -> Martial Arts; the
+ * hero's class is skipped for the next in that order. */
+static unsigned som_companion_pick(const uint8_t *ram,unsigned slot,const char **why){
+    const uint8_t *o=ram+SOM_NPC_OBJECT(slot);
+    /* The familiar's own HP is refilled every frame (som_familiar_tick):
+     * "hurt" is the hero's. */
+    const unsigned hp=som_bun_u16(ram+0xE182),max=som_bun_u16(ram+0xE184);
+    const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
+    unsigned near=0,tough=0;int far=1;
+    for(unsigned m=0;m<3u;m++){
+        if((int)m==familiar.slot)continue;
+        const uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*m;
+        if(!som_bun_monster_alive(e))continue;
+        const int dx=abs((int)som_bun_u16(e+2)-x),dy=abs((int)som_bun_u16(e+4)-y);
+        if(dx>160||dy>160)continue;
+        near++;
+        if(som_bun_u16(e+0x184)>=SOM_COMPANION_TOUGH_HP)tough=1;
+        if(dx+dy<=64)far=0;
+    }
+    int want;                                   /* index into som_shinobi */
+    if(max&&hp*2u<max){want=0;*why="hero hurt: Roguecraft";}
+    else if(tough||near>=2u){want=1;*why=tough?"tough monster: Bushido":"crowd: Bushido";}
+    else if(near&&far){want=2;*why="target far: Ninjutsu";}
+    else{want=3;*why=near?"one monster close: Martial Arts":"calm: Martial Arts";}
+    if(som_shinobi[want]==disciplines.selected){
+        want=(want+1)%4;*why="the hero has that one: next Shinobi class";
+    }
+    return som_shinobi[want];
+}
 static void som_companion_frame(uint8_t *ram);
 static void som_camera_follow(uint8_t *ram,int dx,int dy);
 static void som_blink_frame(uint8_t *ram);
@@ -2169,6 +2207,18 @@ static void som_companion_frame(uint8_t *ram){
     const unsigned slot=3u+(unsigned)familiar.slot;
     uint8_t *o=ram+SOM_NPC_OBJECT(slot);
     o[0x0E]|=0x80u;                                /* the monster sprite stays hidden */
+    if(!companion.switched_at||(frame_number%SOM_COMPANION_LOOK_FRAMES==0&&
+                                frame_number-companion.switched_at>=SOM_COMPANION_SWITCH_FRAMES)){
+        const char *why="";
+        const unsigned pick=som_companion_pick(ram,slot,&why);
+        const int first=!companion.switched_at;
+        if(pick!=companion.cls||first){
+            companion.switched_at=frame_number;
+            companion.cls=pick;
+            som_bun_boom(bunshin_booms,(int)som_bun_u16(o+2),(int)som_bun_u16(o+4),1,frame_number);
+            fprintf(stderr,"[som-ai] COMPANION %s (%s)\n",som_discipline_names[pick],why);
+        }
+    }
     const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
     const int dx=x-companion.px,dy=y-companion.py;
     if(dx||dy){
@@ -3209,8 +3259,9 @@ static int som_handle_command(const char *command){
     }
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
     {
-        unsigned cls;char tail;
-        if(!strncmp(command,"companion_",10)&&sscanf(command+10,"%2u%c",&cls,&tail)==1&&
+        unsigned cls=som_shinobi[3];char tail;
+        if((!strcmp(command,"companion")||
+            (!strncmp(command,"companion_",10)&&sscanf(command+10,"%2u%c",&cls,&tail)==1))&&
            cls<SOM_DISCIPLINE_COUNT){
             companion.cls=cls;
             if(companion.active)return 1;               /* a new class for her */

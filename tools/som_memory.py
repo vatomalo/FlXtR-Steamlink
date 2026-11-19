@@ -1295,6 +1295,14 @@ class ObservationHistory:
             inns[(map_id, layer, x, y)] = {
                 "map_id": map_id, "layer": layer, "target": [x, y],
                 **({"face": face, "taught": True} if taught and face else {})}
+        # Old history used the places atlas to record health-confirmed
+        # recovery locations, but held only one active anchor in agent_meta.
+        # Recover those earlier town discoveries without inventing a facing.
+        for map_id, layer, x, y in self.connection.execute(
+                "SELECT map_id,layer,x,y FROM places "
+                "WHERE kind='inn' AND source='health_increase'"):
+            inns.setdefault((map_id, layer, x, y), {
+                "map_id": map_id, "layer": layer, "target": [x, y]})
         legacy = self.get_agent_state("safe_anchor")
         if (isinstance(legacy, dict) and legacy.get("taught") and
                 legacy.get("face") in ("step_up", "step_down", "step_left", "step_right")):

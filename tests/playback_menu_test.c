@@ -54,7 +54,10 @@ int main(void){
     double bookmarked=0;assert(fscanf(saved,"%lf",&bookmarked)==1&&bookmarked==10);fclose(saved);
     unlink("bookmarks/1234abcd.txt");rmdir("bookmarks");unlink("gamez-last-request");
     int fd[2];assert(!pipe(fd));control_fd=fd[0];assert(!fcntl(control_fd,F_SETFL,O_NONBLOCK));
-    assert(write(fd[1],"md",2)==2);menu_row=0;menu_poll();assert(menu_open&&menu_row==1);close(fd[0]);close(fd[1]);
+    /* The previous test left the menu open after a Gamez request. Reset the
+     * fixture: m opens a CLOSED menu, and d selects the next row. */
+    menu_open=0;menu_row=0;
+    assert(write(fd[1],"md",2)==2);menu_poll();assert(menu_open&&menu_row==1);close(fd[0]);close(fd[1]);
     assert(!chdir("/tmp"));rmdir(temp);
     puts("PASS: playback commands, seek bounds, pause clock, disabled actions, subtitle limits and control pipe");return 0;
 }

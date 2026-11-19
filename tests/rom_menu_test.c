@@ -27,7 +27,8 @@ int main(void){
  action(SDLK_RETURN);assert(rom_core_menu);action(SDLK_UP);action(SDLK_RETURN);assert(rom_core_selected==0);
  assert(!rom_core_preference("0123456789abcdef",preferred,sizeof(preferred)));
  f=fopen("game-cores.tsv","r");assert(f);assert(!fgets(saved,sizeof(saved),f));fclose(f);
- action(SDLK_ESCAPE);action(SDLK_x);assert(game_exit&&!running);
+ action(SDLK_ESCAPE);action(SDLK_x);assert(!game_exit); /* X is not Play on the library grid. */
+ action(SDLK_RETURN);assert(game_exit&&!running); /* Enter/A is Play. */
  f=fopen("game-request","r");int id=-1;assert(f&&fscanf(f,"%d",&id)==1&&id==1);fclose(f);
  unlink("catalog.tsv");unlink("game-request");unlink("settings.cfg");unlink("game-cores.tsv");unlink("rom-cores.tsv");
  unlink("cores/zeta_libretro.so");unlink("cores/alpha_libretro.so");unlink("cores/not-a-core.txt");rmdir("cores");

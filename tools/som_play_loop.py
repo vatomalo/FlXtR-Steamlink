@@ -192,8 +192,22 @@ class PlayLoop:
                 pick = self.frontier.choose(here, summary.get("max_hp"), reachable)
             self.state["target"] = (pick[0] if pick else
                                     best_hunt_map(self.history, reachable))
+            self.state["target_story"] = bool(pick and str(pick[1]).startswith("story"))
             self.state["target_checked"] = True
             self.state["arrived"] = False
+            self.state["story_checked_map"] = here
+            self._save_state()
+        elif (self.quest is not None and not self.state.get("target_story") and
+              here is not None and self.state.get("story_checked_map") != here):
+            # A story goal outranks a hunting trip already under way; asked
+            # once per map entered (the route search is not free).
+            self.state["story_checked_map"] = here
+            pick = self.quest.choose(summary, reachable)
+            if pick is not None and str(pick[1]).startswith("story") and \
+                    pick[0] != self.state.get("target"):
+                self.log(f"[loop] story first: map {pick[0]} replaces trip target "
+                         f"{self.state.get('target')}")
+                self.state.update(target=pick[0], target_story=True, arrived=False)
             self._save_state()
         target = self.state["target"]
         if target is not None and here == target and not self.state.get("arrived"):

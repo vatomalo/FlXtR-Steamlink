@@ -50,6 +50,23 @@ class PlayLoopTest(unittest.TestCase):
         play = self.make(hunt_map=130)
         self.assertEqual(play.goal(summary(), False, True, True, ALL), "hunt_map_130")
 
+    def test_a_story_goal_replaces_a_hunting_trip_on_the_next_map(self):
+        class Quest:
+            pick = None
+
+            def choose(self, summary, reachable):
+                return self.pick
+        quest = Quest()
+        play = self.make(quest=quest)
+        self.assertEqual(play.goal(summary(), True, True, True, ALL), "hunt_map_129")
+        quest.pick = (287, "story: boss 0x59 ... from map 287")
+        # Same map: not asked again; the next map entered: the story wins.
+        self.assertEqual(play.goal(summary(), True, True, True, ALL), "hunt_map_129")
+        self.assertEqual(play.goal(summary(map_id=16), True, True, True, ALL), "hunt_map_287")
+        self.assertTrue(any("story first" in line for line in self.logs))
+        quest.pick = (400, "story: elsewhere")         # a story trip is kept
+        self.assertEqual(play.goal(summary(map_id=144), True, True, True, ALL), "hunt_map_287")
+
     def test_no_hunting_memory_hunts_here(self):
         play = self.make(rewards=())
         self.assertEqual(play.goal(summary(), False, True, True, ALL), "hunt_here")

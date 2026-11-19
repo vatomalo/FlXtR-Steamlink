@@ -47,6 +47,7 @@ from som_weapon_tactics import WeaponTactics, reach as weapon_reach
 from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
 from som_trials import TrialLearner
 import som_quest
+from som_npc_knowledge import loop_hint_directive
 from som_ai_brain import BrainController, parse_brain
 from som_critic import Critic
 from som_class_arts import FlyingKickTactics, IaiTactics
@@ -1423,6 +1424,7 @@ def main() -> int:
     play_loop = None
     save_disabled = False
     last_loop_goal = None
+    npc_hint_key, npc_hint_until = None, -1
     block_learner = None
     boss_recorder = BossRecorder(log=lambda line: print(line, flush=True)) if args.wram_remote else None
     # Off by default: on maps 129/130 at level 5-6 the hero dealt ~5x the
@@ -1946,6 +1948,15 @@ def main() -> int:
                     else:
                         directive, goal_errand, _ = goal_plan(
                             goal, summary, args.hunt_direction, inn_anchor, shop_offer)
+                    # The normal SkyLoft service runs this loop by default.
+                    # Without this path, NPC facts were remembered but unused.
+                    # A short local clue can guide safe frontier exploration,
+                    # never a shopping/inn/save/visit errand or combat decision.
+                    if args.visit_map is None and goal_errand is None:
+                        heard, npc_hint_key, npc_hint_until = loop_hint_directive(
+                            summary, goal, step, npc_hint_key, npc_hint_until)
+                        if heard:
+                            directive = heard
                     auto_errand = None
                 errand = goal_errand or auto_errand
                 if args.visit_map is not None and current_map != args.visit_map:

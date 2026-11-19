@@ -6,7 +6,7 @@ from pathlib import Path
 from som_dialogue import NpcDialogue
 from som_goals import build_goal_prompt, memory_summary, offered_goals
 from som_memory import ObservationHistory
-from som_npc_knowledge import hear_npc_clues, heard_directions
+from som_npc_knowledge import hear_npc_clues, heard_directions, loop_hint_directive
 
 
 class TestNpcKnowledge(unittest.TestCase):
@@ -74,6 +74,27 @@ class TestNpcKnowledge(unittest.TestCase):
         self.assertEqual(clues[0]["map_id"], 130)
         self.assertEqual(heard_directions(clues, 131), [])
         self.assertEqual(heard_directions(clues, 130), ["west"])
+
+    def test_default_play_loop_tries_npc_direction_only_for_a_bounded_hunt(self):
+        hints = [{"map_id": 131, "npc_id": 192, "event": 1104,
+                  "quote": "Go east to the cave", "directions": ["east"]}]
+        summary = {"map_id": 131, "npc_clues": hints, "enemies_near": 0}
+        command, key, deadline = loop_hint_directive(summary, "hunt_here", 10)
+        self.assertEqual(command, "explore_east")
+        self.assertEqual(loop_hint_directive(summary, "hunt_here", 11,
+                                             key, deadline)[0], "explore_east")
+        self.assertIsNone(loop_hint_directive(summary, "hunt_here",
+                                               deadline, key, deadline)[0])
+        self.assertIsNone(loop_hint_directive(summary, "go_to_inn", 12,
+                                               key, deadline)[0])
+        self.assertIsNone(loop_hint_directive(dict(summary, enemies_near=1),
+                                               "hunt_here", 12, key, deadline)[0])
+        self.assertIsNone(loop_hint_directive(dict(summary, map_id=130),
+                                               "hunt_here", 12, key, deadline)[0])
+        changed = [dict(hints[0], quote="Go south now", directions=["south"])]
+        self.assertEqual(loop_hint_directive(dict(summary, npc_clues=changed),
+                                             "hunt_here", deadline, key, deadline)[0],
+                         "explore_south")
 
     def test_deduplication_and_bounded_history(self):
         for n in range(10):

@@ -1849,7 +1849,7 @@ def main() -> int:
                 offered = offered_goals(summary, args.hunt_direction, reachable)
                 if args.policy == "hybrid":
                     try:
-                        requested_map, selected, director_error, asked = \
+                        requested_map, selected, director_error, asked, source_model = \
                             director_results.get_nowait()
                         director_running = False
                         if director_error is not None:
@@ -1858,6 +1858,7 @@ def main() -> int:
                             print(f"[qwen-director] unavailable; keeping goal {goal}: "
                                   f"{director_error}", flush=True)
                         elif (requested_map != current_map or selected not in offered or
+                              source_model != args.model or
                               time.monotonic() - asked > DIRECTOR_MAX_AGE):
                             print(f"[qwen-director] ignored stale goal {selected}", flush=True)
                         else:
@@ -1879,19 +1880,21 @@ def main() -> int:
                         (directive_turns <= 0 or current_map != directive_map)):
                     # Qwen can take tens of seconds on CPU. Never freeze the
                     # controller; the goal arrives through a thread-safe queue.
-                    request = (current_map, dict(summary), list(offered), goal)
+                    request = (current_map, dict(summary), list(offered), goal, args.model)
                     def direct_in_background(request_data=request):
-                        requested_map, facts, choices, current = request_data
+                        requested_map, facts, choices, current, selected_model = request_data
                         started = time.monotonic()
                         try:
-                            selected = choose_goal(args.ollama_url, args.model,
+                            selected = choose_goal(args.ollama_url, selected_model,
                                                    args.objective, facts, choices, current)
                             print(f"[qwen-director] answered in "
                                   f"{time.monotonic() - started:.1f}s", flush=True)
-                            director_results.put((requested_map, selected, None, started))
+                            director_results.put((requested_map, selected, None, started,
+                                                  selected_model))
                         except Exception as exc:  # any failure must free the director
                             director_results.put((requested_map, None,
-                                                  f"{type(exc).__name__}: {exc}", started))
+                                                  f"{type(exc).__name__}: {exc}", started,
+                                                  selected_model))
                     threading.Thread(target=direct_in_background, daemon=True,
                                      name="som-qwen-director").start()
                     director_running = True

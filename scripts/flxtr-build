@@ -6,6 +6,8 @@ usage(){
 Usage: flxtr-build --android|--steamlink|--linux|--windows|--desktop|--all
                    [--branch NAME] [--arch ARCH]
                    [--release-title TEXT] [--notes-file PATH] [--no-publish]
+       flxtr-build --last-log        # replay COMPLETE previous build output
+       flxtr-build --last-log-path   # print its absolute saved path
 
 Pulls the selected branch from origin using fast-forward only, then builds.
 Without --branch, builds the currently checked-out branch. Multiple targets
@@ -15,6 +17,8 @@ Android architectures: universal (default), arm64, armv7. Steam Link is armv7.
 Linux and Windows are x86_64. --desktop builds both; --all builds all four.
 Single-architecture APKs publish as separate downloads, keeping the universal
 auto-update channel compatible with both Android architectures.
+Every failed build keeps its complete stdout AND stderr in a timestamped file.
+Use --last-log to replay and copy the full output even after a command fails.
 
 Examples:
   flxtr-build --android
@@ -23,6 +27,19 @@ Examples:
   flxtr-build --android --no-publish
 HELP
 }
+# Read the saved output BEFORE checking disk mounts, locks or build targets.
+# The output must remain accessible even when the previous build aborted.
+if [[ ${1:-} == --last-log || ${1:-} == --last-log-path ]]; then
+    [[ $# -eq 1 ]] || { echo 'Log replay options take no other arguments.' >&2; exit 2; }
+    mode=$1
+    storage=${FLXTR_STORAGE:-/opt/dockers/storage}
+    shopt -s nullglob
+    logs=("$storage"/build-logs/flxtr-*.log)
+    ((${#logs[@]})) || { printf 'No saved FlXtR build logs under %s/build-logs\n' "$storage" >&2; exit 1; }
+    latest=$(printf '%s\n' "${logs[@]}" | LC_ALL=C sort | tail -n 1)
+    if [[ $mode == --last-log ]]; then cat -- "$latest"; else printf '%s\n' "$latest"; fi
+    exit 0
+fi
 android=0 steamlink=0 linux=0 windows=0 branch= publish=1 arch=auto notes= title= output=
 while (($#)); do
     case "$1" in
@@ -69,7 +86,15 @@ export FLXTR_BUILD_LOCK_HELD=1
 log="$storage/build-logs/flxtr-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
 exec > >(tee -a "$log") 2>&1
 printf 'Build log: %s\n' "$log"
-trap 'result=$?; if ((result)); then printf "Build failed (exit %s). Log: %s\n" "$result" "$log"; fi' EXIT
+on_build_exit(){
+    result=$?
+    if ((result)); then
+        printf '\nBuild failed (exit %s). Full output was preserved: %s\n' "$result" "$log"
+        printf 'COPY ALL OUTPUT: bash scripts/flxtr-build --last-log\n'
+        printf 'Or show file: cat -- %q\n' "$log"
+    fi
+}
+trap on_build_exit EXIT
 cd "$repo"
 # Builds generate files in source-adjacent directories. Older checked-out
 # branches may not ignore them, so clean only these known outputs before the

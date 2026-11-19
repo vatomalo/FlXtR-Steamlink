@@ -266,7 +266,7 @@ def handler_for(store):
                     return self.reply(200, dict(branches=store.branches(), defaultBranch='main', server='SkyLoft'))
                 if path == '/api/state':
                     return self.reply(200, {'jobs': store.list()})
-                match = re.fullmatch(r'/api/jobs/([0-9a-f]{32})(?:/(log(?:\\.txt)?|artifacts/([^/]+)))?', path)
+                match = re.fullmatch(r'/api/jobs/([0-9a-f]{32})(?:/(log(?:\.txt)?|artifacts/([^/]+)))?', path)
                 if not match:
                     return self.reply(404, {'error': 'Not found.'})
                 folder = store.folder(match[1])

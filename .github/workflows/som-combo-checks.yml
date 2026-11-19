@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/som-disciplines-controls-20261114
+      - fix/som-ai-brain-20261119
   workflow_dispatch:
 permissions:
   contents: read

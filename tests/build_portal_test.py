@@ -21,6 +21,9 @@ class PortalTest(unittest.TestCase):
     def test_page_has_copy_output_button_with_http_fallback(self):
         page = (Path(__file__).resolve().parents[1] / 'web/skyloft/index.html').read_text()
         self.assertIn('id="copy-output"', page)
+        self.assertIn('id="download-log"', page)
+        self.assertIn("'/log?full=1'", page)
+        self.assertIn("'/log.txt'", page)
         self.assertIn("navigator.clipboard.writeText(value)", page)
         self.assertIn("document.execCommand('copy')", page)
         self.assertIn('id="clean-checkout"', page)
@@ -96,6 +99,39 @@ print('Build complete.',flush=True)
         code, log = self.request('GET', '/api/jobs/' + job['id'] + '/log')
         self.assertEqual(code, 200)
         self.assertIn('Build complete.', json.loads(log)['text'])
+
+    def test_failed_job_retains_full_copyable_and_downloadable_output(self):
+        # The live preview is intentionally only the last 64 KiB to keep
+        # three-second polling light. Copy/Download must NEVER be truncated.
+        identity = 'f' * 32
+        folder = self.store.jobs / identity
+        folder.mkdir()
+        portal.atomic_json(folder / 'job.json', {
+            'id': identity, 'status': 'failed', 'created': time.time(),
+            'platform': 'android', 'arch': 'universal', 'branch': 'main',
+            'artifacts': [], 'releases': []})
+        token = 'gho_' + 'A' * 30
+        log = 'START OF FAILED BUILD\n' + ('compiler output\n' * 7000)
+        log += token + '\nGamezBridge symbol not found\n'
+        (folder / 'build.log').write_text(log)
+        base = '/api/jobs/' + identity
+        code, tail = self.request('GET', base + '/log')
+        tail = json.loads(tail)
+        self.assertEqual(code, 200)
+        self.assertFalse(tail['complete'])
+        self.assertNotIn('START OF FAILED BUILD', tail['text'])
+        self.assertIn('GamezBridge symbol not found', tail['text'])
+        code, full = self.request('GET', base + '/log?full=1')
+        full = json.loads(full)
+        self.assertEqual(code, 200)
+        self.assertTrue(full['complete'])
+        self.assertTrue(full['text'].startswith('START OF FAILED BUILD'))
+        self.assertIn('GamezBridge symbol not found', full['text'])
+        self.assertNotIn(token, full['text'])
+        self.assertIn('[redacted]', full['text'])
+        code, download = self.request('GET', base + '/log.txt')
+        self.assertEqual(code, 200)
+        self.assertEqual(download.decode(), full['text'])
 
     def test_cross_origin_requests_are_rejected(self):
         status, _ = self.request('POST', '/api/jobs', '{}', **{

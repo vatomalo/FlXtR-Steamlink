@@ -47,6 +47,7 @@ from som_weapon_tactics import WeaponTactics, reach as weapon_reach
 from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
 from som_trials import TrialLearner
 import som_quest
+from som_npc_knowledge import loop_hint_directive
 from som_ai_brain import BrainController, parse_brain
 from som_critic import Critic
 from som_class_arts import FlyingKickTactics, IaiTactics
@@ -1423,6 +1424,7 @@ def main() -> int:
     play_loop = None
     save_disabled = False
     last_loop_goal = None
+    npc_hint_key, npc_hint_until = None, -1
     block_learner = None
     boss_recorder = BossRecorder(log=lambda line: print(line, flush=True)) if args.wram_remote else None
     # Off by default: on maps 129/130 at level 5-6 the hero dealt ~5x the
@@ -1904,9 +1906,14 @@ def main() -> int:
                           flush=True)
                 if goal not in offered and not is_travel(goal):
                     goal = "hunt_here"
+                current_inn = (history.select_inn(
+                    current_map, require_taught=True,
+                    current_layer=context.get("actor", {}).get("layer"))
+                    if history is not None else None)
+                if current_inn is None and history is not None:
+                    current_inn = history.safe_anchor()
                 directive, goal_errand, done = goal_plan(
-                    goal, summary, args.hunt_direction,
-                    history.safe_anchor() if history is not None else None, shop_offer)
+                    goal, summary, args.hunt_direction, current_inn, shop_offer)
                 if play_loop is None and (done or (is_travel(goal) and (step >= goal_deadline or
                                                  (goal_errand is None and not done)))):
                     print(f"[goal] {goal} {'reached' if done else 'ended'}; hunting here",
@@ -1919,7 +1926,7 @@ def main() -> int:
                                gambit(GAMBIT_SHOP) else None)
                 if play_loop is not None:
                     # The loop owns goals: no Qwen goal and no automatic shop detour.
-                    inn_anchor = history.safe_anchor()
+                    inn_anchor = current_inn
                     save_point = history.get_agent_state("save")
                     loop_goal = play_loop.goal(
                         summary, shop_offer is not None,
@@ -1946,6 +1953,15 @@ def main() -> int:
                     else:
                         directive, goal_errand, _ = goal_plan(
                             goal, summary, args.hunt_direction, inn_anchor, shop_offer)
+                    # The normal SkyLoft service runs this loop by default.
+                    # Without this path, NPC facts were remembered but unused.
+                    # A short local clue can guide safe frontier exploration,
+                    # never a shopping/inn/save/visit errand or combat decision.
+                    if args.visit_map is None and goal_errand is None:
+                        heard, npc_hint_key, npc_hint_until = loop_hint_directive(
+                            summary, goal, step, npc_hint_key, npc_hint_until)
+                        if heard:
+                            directive = heard
                     auto_errand = None
                 errand = goal_errand or auto_errand
                 if args.visit_map is not None and current_map != args.visit_map:
@@ -2324,8 +2340,9 @@ def main() -> int:
                     continue
                 if (link and not inn_disabled and history is not None and
                         decision.intention == "recover_at_inn"):
-                    anchor = history.safe_anchor()
-                    if isinstance(anchor, dict) and anchor.get("face"):
+                    anchor = current_inn
+                    if (isinstance(anchor, dict) and anchor.get("taught") and
+                            anchor.get("face")):
                         if learner is not None:
                             learner.cancel("inn macro")
                         announce("AI: staying at the inn")

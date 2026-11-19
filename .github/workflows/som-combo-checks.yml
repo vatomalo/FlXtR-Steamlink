@@ -4,6 +4,7 @@ on:
     branches:
       - feature/som-disciplines-controls-20261114
       - fix/som-ai-brain-20261119
+      - fix/android-npc-memory-build-output-20261119
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,6 +21,8 @@ jobs:
       - name: Python tests (AI bridge, planner, soundtrack, headless harness; no ROM)
         run: |
           PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py'
+          python3 -m unittest discover -s tests -p 'test_flxtr_build_recovery.py'
+          python3 -m unittest discover -s tests -p 'build_portal_test.py'
       - name: Build the headless harness with warnings as errors
         run: |
           cc -std=gnu99 -Wall -Wextra -Werror -o /tmp/som-harness tools/som_headless/som_harness.c -ldl

@@ -266,19 +266,33 @@ def handler_for(store):
                     return self.reply(200, dict(branches=store.branches(), defaultBranch='main', server='SkyLoft'))
                 if path == '/api/state':
                     return self.reply(200, {'jobs': store.list()})
-                match = re.fullmatch(r'/api/jobs/([0-9a-f]{32})(?:/(log|artifacts/([^/]+)))?', path)
+                match = re.fullmatch(r'/api/jobs/([0-9a-f]{32})(?:/(log(?:\.txt)?|artifacts/([^/]+)))?', path)
                 if not match:
                     return self.reply(404, {'error': 'Not found.'})
                 folder = store.folder(match[1])
-                if match[2] == 'log':
+                if match[2] in ('log', 'log.txt'):
                     log = folder / 'build.log'
                     text = ''
+                    full = match[2] == 'log.txt' or urlsplit(self.path).query == 'full=1'
                     if log.exists():
                         with log.open('rb') as stream:
-                            stream.seek(max(0, log.stat().st_size - 65536))
+                            if not full:
+                                stream.seek(max(0, log.stat().st_size - 65536))
                             text = stream.read().decode(errors='replace')
+                    # Both previews and full downloads redact the same tokens.
                     text = re.sub(r'gh[opusr]_[A-Za-z0-9_]{20,}', '[redacted]', text)
-                    return self.reply(200, {'text': text})
+                    if match[2] == 'log.txt':
+                        payload = text.encode('utf-8')
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                        self.send_header('Content-Length', str(len(payload)))
+                        self.send_header('Content-Disposition', f'attachment; filename="flxtr-{match[1]}.log"')
+                        self.send_header('Cache-Control', 'no-store')
+                        self.send_header('X-Content-Type-Options', 'nosniff')
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
+                    return self.reply(200, {'text': text, 'complete': full})
                 if match[3]:
                     if match[3] not in ARTIFACTS:
                         return self.reply(404, {'error': 'Artifact not found.'})

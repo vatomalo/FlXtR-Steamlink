@@ -763,6 +763,23 @@ static int som_blink_go(uint8_t *ram,int x,int y);
  * cooldown or range: the clone is never far); a strike not yet made lands
  * at once and the clone is gone. Refused where the hero cannot stand. */
 static int som_fuma_swap(uint8_t *ram);
+/* Companion (test team-mate, AI/tool command companion_<class>): a familiar
+ * (a cloned monster the proxy fights with, src/som_familiar.h) whose own
+ * sprite is hidden and which is drawn as the girl with custom parts: her
+ * body and walk, a villager's head and colours, her class's primary weapon
+ * swing (tools/som_cartwheel.py kinds 0xB0-0xB8), recoloured with her
+ * class palette (src/som_class_palette.h). No summoner class needed; the
+ * party and save are untouched. */
+#define SOM_COMPANION_WALK 0xB0u
+#define SOM_COMPANION_SWING 0xB1u
+#define SOM_COMPANION_MOVING 8ul       /* frames a step keeps the walk going */
+static struct {
+    int active,px,py;
+    unsigned cls,facing,dir;
+    unsigned long moved_at,swing_at,strike_seen,walk_start;
+    SomNpcWorkState draw;
+} companion;
+static void som_companion_frame(uint8_t *ram);
 static void som_camera_follow(uint8_t *ram,int dx,int dy);
 static void som_blink_frame(uint8_t *ram);
 static void som_flykick_frame(uint8_t *ram);
@@ -2133,6 +2150,62 @@ static void som_blink_frame(uint8_t *ram){
             SOM_EFFECT_BLINK_COOLDOWN_CUT))/100ul;
     blink_active=0;blink_hid=0;blink_is_swap=0;
 }
+static void som_companion_frame(uint8_t *ram){
+    if(!companion.active)return;
+    companion.draw.active=0;
+    if(familiar.slot<0){
+        if(!familiar_carry.valid&&!familiar_pending&&!clone_pending_until){
+            companion.active=0;
+            fprintf(stderr,"[som-ai] COMPANION gone\n");
+        }
+        return;                                    /* carried across a map */
+    }
+    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F)return;
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
+    }
+    if(!cartwheel_pack)return;
+    const unsigned slot=3u+(unsigned)familiar.slot;
+    uint8_t *o=ram+SOM_NPC_OBJECT(slot);
+    o[0x0E]|=0x80u;                                /* the monster sprite stays hidden */
+    const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
+    const int dx=x-companion.px,dy=y-companion.py;
+    if(dx||dy){
+        if(frame_number-companion.moved_at>SOM_COMPANION_MOVING)companion.walk_start=frame_number;
+        companion.moved_at=frame_number;
+        if(abs(dx)>=abs(dy)){companion.facing=2u;companion.dir=dx>0?2u:3u;}
+        else{companion.facing=dy>0?1u:0u;companion.dir=companion.facing;}
+    }
+    companion.px=x;companion.py=y;
+    if(familiar.last_strike!=companion.strike_seen){   /* she struck: face the target */
+        companion.strike_seen=familiar.last_strike;companion.swing_at=frame_number;
+        if(familiar.target>=0){
+            const uint8_t *t=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)familiar.target;
+            const int tx=(int)som_bun_u16(t+2)-x,ty=(int)som_bun_u16(t+4)-y;
+            if(abs(tx)>=abs(ty)){companion.facing=2u;companion.dir=tx>0?2u:3u;}
+            else{companion.facing=ty>0?1u:0u;companion.dir=companion.facing;}
+        }
+    }
+    const unsigned weapon=som_disc_weapons[companion.cls][0];
+    SomWorkEntry swing,walk;
+    const int have_swing=som_work_find(cartwheel_pack,cartwheel_pack_size,
+                                       SOM_COMPANION_SWING+weapon,companion.facing,&swing);
+    if(!som_work_find(cartwheel_pack,cartwheel_pack_size,SOM_COMPANION_WALK,companion.facing,&walk))
+        return;
+    SomDisciplines as_class=disciplines;as_class.selected=(uint8_t)companion.cls;
+    SomNpcWorkState *d=&companion.draw;
+    memset(d,0,sizeof(*d));
+    d->active=1;d->slot=slot;d->kind=SOM_COMPANION_WALK;d->dir=companion.dir;
+    d->profile=som_disc_visual_profile(&as_class);
+    if(have_swing&&frame_number-companion.swing_at<som_work_swing_frames(&swing)){
+        d->entry=swing;d->start=companion.swing_at;            /* her class weapon */
+    }else if(frame_number-companion.moved_at<=SOM_COMPANION_MOVING){
+        d->entry=walk;d->start=companion.walk_start;d->no_rest=1;   /* walking */
+    }else{
+        d->entry=walk;d->start=frame_number;                    /* standing */
+    }
+}
 /* Before each emulated frame: advance the bash. */
 static void som_bash_tick(void){
     if(!bash_stage||!backend_retro_get_memory_data)return;
@@ -3135,6 +3208,26 @@ static int som_handle_command(const char *command){
         return clone_no_slot;
     }
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
+    {
+        unsigned cls;char tail;
+        if(!strncmp(command,"companion_",10)&&sscanf(command+10,"%2u%c",&cls,&tail)==1&&
+           cls<SOM_DISCIPLINE_COUNT){
+            companion.cls=cls;
+            if(companion.active)return 1;               /* a new class for her */
+            memset(&companion,0,sizeof(companion));companion.cls=cls;companion.active=1;
+            if(familiar.slot>=0||familiar_carry.valid)return 1;    /* she takes it over */
+            familiar_pending=1;
+            fprintf(stderr,"[som-ai] COMPANION as %s\n",som_discipline_names[cls]);
+            if(som_clone_enemy()){som_familiar_bind();return 1;}
+            if(clone_no_slot){
+                clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;
+                return 1;
+            }
+            familiar_pending=0;companion.active=0;
+            fprintf(stderr,"[som-ai] COMPANION refused: no monster to take the shape of\n");
+            return 0;
+        }
+    }
     /* The AI's dodge: the same evade as the player's A. Kawarimi and
      * Shunshin are AI-only jutsu (not on any button yet). */
     if(!strcmp(command,"evade"))
@@ -3829,7 +3922,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||flykick.active||
+    const int worker=(npc_work.active||flykick.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -3878,6 +3971,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(fuma.active&&frame_number>=fuma.start)
                 som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
+            if(companion.draw.active)
+                som_npc_work_draw(&companion.draw,ram,frame_number,overlay_frame,width,height,
+                                  pitch,pixel_format);
         }
     }
     if(hero_drawn){
@@ -4403,6 +4499,7 @@ RETRO_API void retro_run(void){
         som_bash_tick();
         if(fuma.active)som_fuma_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(blink_active)som_blink_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        if(companion.active)som_companion_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(flykick.active&&backend_retro_get_memory_data)
             som_flykick_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     }

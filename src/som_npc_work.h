@@ -28,6 +28,7 @@
 #include <string.h>
 #include "som_npc_walk.h"
 #include "som_overlay.h"
+#include "som_class_palette.h"
 
 #define SOM_WORK_PACK_FILE "/home/apps/retroarch/cores/experimental/som_work_frames.bin"
 #define SOM_WORK_MAX_CYCLES 60u
@@ -53,6 +54,8 @@ typedef struct {
     int own_palette;                 /* colours 1-15 straight from the object's live palette */
     int lift;                        /* px drawn above the object (a jump the game does not know) */
     int fixed,wx,wy;                 /* fixed: drawn at world (wx, wy), not at the object */
+    unsigned profile;                /* som_class_palette profile for colours 1-15, 0 = none */
+    int no_rest;                     /* loop the frames without the resting pose (a walk) */
 } SomNpcWorkState;
 
 /* Walks one frame record; NULL when it would leave the pack. */
@@ -163,7 +166,7 @@ static inline const char *som_npc_work_tick(SomNpcWorkState *s,uint8_t *wram,uns
 /* The frame record shown `elapsed` frames into the work. */
 static inline const uint8_t *som_npc_work_pose(const SomNpcWorkState *s,unsigned long elapsed){
     const unsigned long swing=som_work_swing_frames(&s->entry);
-    unsigned long t=elapsed%(swing+SOM_WORK_REST_FRAMES);
+    unsigned long t=elapsed%(swing+(s->no_rest?0u:SOM_WORK_REST_FRAMES));
     const uint8_t *p=s->entry.first;
     if(t>=swing)return p;            /* resting: the first pose */
     for(unsigned f=0;f<s->entry.frames;f++){
@@ -188,6 +191,10 @@ static inline const uint8_t *som_npc_work_pose(const SomNpcWorkState *s,unsigned
 static inline int som_npc_work_colours(const SomNpcWorkState *s,const uint8_t *wram,uint16_t out[21]){
     for(unsigned i=1;i<=20u;i++)out[i]=s->entry.colours[i-1u];
     out[0]=0;
+    if(s->profile){                 /* a class palette over the pack's own colours */
+        for(unsigned i=1;i<=15u;i++)out[i]=som_pal_color(out[i],s->profile);
+        return 1;
+    }
     if(!wram)return 0;
     const unsigned pal=(wram[SOM_NPC_OBJECT(s->slot)+0x8Bu]>>1)&7u;
     const uint8_t *live=wram+0x0700u+32u*pal;

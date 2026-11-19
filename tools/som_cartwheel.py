@@ -40,6 +40,15 @@ KICK_TICKS = (1, 4)
 FUMA_KIND_BASE = 0xA0
 FUMA_WEAPON = 0xFC
 SWORD_ROW = 9
+# Companion (test team-mate, src/som_ai_proxy.c companion_<class>): the
+# girl's body with a villager's head and colours (the working-villager
+# custom parts, som_villager_work), kind 0xB0 = her walk (ordinary anim 1),
+# 0xB1 + weapon type = her swing with that weapon (tier-0 row = type * 9).
+# The proxy recolours 1-15 with her class palette (som_class_palette.h).
+COMPANION_BODY = "girl"
+COMPANION_HEAD = 0x8C
+COMPANION_WALK = 0xB0
+COMPANION_SWING = 0xB1
 
 
 def rotate(image, turns, pivot):
@@ -91,6 +100,45 @@ def sword_swing(gfx, hero, direction, row=SWORD_ROW):
     return frames
 
 
+def companion_walk(gfx, direction, body=COMPANION_BODY, head=COMPANION_HEAD):
+    """[(image, ticks)] of the body's walk with the villager's head and colours."""
+    cmap = V.colour_map(gfx, head, body)
+    _, vx, vhead = V.head_row(V.standing(gfx, head, direction))
+    vtop = min(piece[1] for piece in vhead)
+    table = gfx.actor(body)["ordinary"]
+    frames = []
+    for flags, frame, ticks in gfx.script(None, 1, direction, attack=False, table=table):
+        pieces = gfx.pieces(body, None, frame, flags)
+        htop, hx, _ = V.head_row(pieces)
+        image = gfx.render(body, [q for q in pieces if q[1] != htop], size=V.CELL,
+                           origin=V.ORIGIN)
+        image = [[cmap[q] if q else 0 for q in line] for line in image]
+        moved = [(x - vx + hx, y - vtop + htop, hf, vf, t) for x, y, hf, vf, t in vhead]
+        gfx.render(head, moved, image=image, origin=V.ORIGIN)
+        frames.append((image, ticks))
+    return frames
+
+
+def companion_entries(gfx, body=COMPANION_BODY, head=COMPANION_HEAD):
+    """[(kind, facing, frames, colours)] for the companion pack entries."""
+    villager = [V.bgr555(c) for c in gfx.palette(head)[1:16]]
+    out = []
+    for facing, direction in enumerate(V.FACINGS):
+        out.append((COMPANION_WALK, facing, companion_walk(gfx, direction, body, head),
+                    villager + [0] * 5))
+    for wtype, weapon in enumerate(H.WEAPON_TYPES):
+        row = wtype * 9
+        try:
+            blade = [V.bgr555(c) for c in
+                     gfx.weapon_palette(gfx.weapon_group(row)[1][4])[1:6]]
+            for facing, direction in enumerate(V.FACINGS):
+                frames = V.work_frames(gfx, head, weapon, row, hero=body, direction=direction)
+                out.append((COMPANION_SWING + wtype, facing, frames, villager + blade))
+        except (IndexError, KeyError, ValueError, struct.error):
+            continue                 # a weapon this body has no swing for
+    return out
+
+
 def pack(gfx):
     out, entries = bytearray(), 0
     for i, hero in enumerate(HEROES):
@@ -120,6 +168,12 @@ def pack(gfx):
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
             entries += 1
+    for kind, facing, frames, colours in companion_entries(gfx):
+        out += struct.pack("<4B20H", kind, 0xFB, facing, len(frames), *colours)
+        for image, ticks in frames:
+            dx, dy, w, h, data = V.crop(image)
+            out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
+        entries += 1
     return b"SOMWORK1" + struct.pack("<H", entries) + bytes(out)
 
 

@@ -1826,7 +1826,7 @@ def main() -> int:
                                 f"{n} {w}" for n, w in zip(QUEST_NAMES, quest_weights)),
                                   flush=True)
                         play_loop.quest.update(weights=quest_weights)
-                    critic_now = critic_tags(read_critic())
+                    critic_now = critic_tags(read_critic() if critic.enabled else None)
                     style, nudged = nudge_style(style, critic_now)
                     if nudged and nudged != critic_nudged:
                         print(f"[critic] {', '.join(sorted(critic_now))}: "
@@ -1896,7 +1896,7 @@ def main() -> int:
                         requested_map, facts, choices, current, selected_model = request_data
                         started = time.monotonic()
                         try:
-                            coach = critic_coach(read_critic())
+                            coach = critic_coach(read_critic() if critic.enabled else None)
                             if coach:
                                 print(f"[critic] coach: {coach}", flush=True)
                             selected = choose_goal(args.ollama_url, selected_model,

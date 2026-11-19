@@ -1644,7 +1644,11 @@ class MemoryPlanner:
                                      if action != reverse)[1]
             self._set_state("last_evade", threat_retreat)
 
-        anchor = self.history.safe_anchor() if self.history is not None else None
+        anchor = (self.history.select_inn(
+            context.get("map_id"), require_taught=True,
+            current_layer=actor.get("layer")) if self.history is not None else None)
+        if anchor is None and self.history is not None:
+            anchor = self.history.safe_anchor()  # legacy safe-point fallback
         travel = self._travel(context, anchor, open_steps, "inn",
                               "return_to_inn", "recover_at_inn")
         if travel is not None:

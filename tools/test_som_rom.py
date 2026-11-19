@@ -115,6 +115,38 @@ class TestRomTables(unittest.TestCase):
             self.assertEqual(fetched, [])
             self.assertEqual(again.trigger_exit(130, 0xC0), first.trigger_exit(130, 0xC0))
 
+    def test_story_gated_map_change_in_a_script_is_found(self):
+        # Event 0x45A on Potos' second trigger tile: text, then
+        # IF_FLAG_RANGE 0x15 5-5 -> MAP_CHANGE transition 4 (map 257), END.
+        rom = bytearray(potos_rom())
+        script = bytes([0x60, 0x57, 0x01, 0x61, 0x42, 0x15, 0x55, 0x18, 0x04, 0x00])
+        bank = 0x0A0000
+        for index, pointer in ((0x5A, 0x1000), (0x5B, 0x1000 + len(script))):
+            rom[bank + 2 * index], rom[bank + 2 * index + 1] = pointer & 0xFF, pointer >> 8
+        rom[bank + 0x1000:bank + 0x1000 + len(script)] = script
+        tables = RomTables.from_rom(bytes(rom))
+        self.assertEqual(tables.scripted, {131: [(257, (0x15, 5, 5))]})
+        self.assertEqual(tables.scripted_into(257), {131})
+        flags = bytearray(256)
+        self.assertEqual(tables.scripted_into(257, flags), set())    # gate shut
+        flags[0x15] = 5
+        self.assertEqual(tables.scripted_into(257, flags), {131})
+        self.assertNotIn(257, tables.neighbours(131))                # never a planner exit
+        again = RomTables.from_json(tables.to_json())
+        self.assertEqual(again.scripted, tables.scripted)
+
+    def test_cache_without_scripted_exits_is_rebuilt_once(self):
+        rom = potos_rom()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "exits.json"
+            first = load_tables(lambda: rom, cache, lambda: None)
+            data = first.to_json()
+            data.pop("scripted")
+            cache.write_text(__import__("json").dumps(data))
+            fetched = []
+            load_tables(lambda: fetched.append(1) or rom, cache, lambda: first.digest)
+            self.assertEqual(fetched, [1])
+
     def test_scan_finds_exit_tiles_in_the_live_work_map(self):
         tables = RomTables.from_rom(potos_rom())
         wram = wram_with_tiles(40, 48, {(33, 11): 0xC0, (33, 31): 0xC1, (5, 5): 0x20})

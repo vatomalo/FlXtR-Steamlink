@@ -77,6 +77,22 @@ class QuestTest(unittest.TestCase):
         self.assertEqual(quest.choose(summary(10), lambda m: m == 400)[0], 400)
         self.assertIsNone(quest.choose(summary(10), lambda m: False))
 
+    def test_a_boss_room_behind_a_story_event_sends_him_next_to_it(self):
+        # 290 is entered only by scripts from 287 and 292; 287 is nearer.
+        class Tables:
+            @staticmethod
+            def scripted_into(target, flags=None):
+                return {287, 292} if target == 290 else set()
+        quest = self.quest()
+        quest.history.rom_tables = Tables()
+        quest.history.map_path = lambda a, b: list(range(a, a + (3 if b == 287 else 5)))
+        reachable = lambda m: m in (287, 292, 400)
+        target, why = quest.choose(summary(10, 131), reachable)
+        self.assertEqual(target, 287)
+        self.assertIn("story event from map 287", why)
+        # No door reachable: the next boss that is.
+        self.assertEqual(quest.choose(summary(10, 131), lambda m: m == 400)[0], 400)
+
     def test_both_weights_off_leaves_it_to_exploring(self):
         self.assertIsNone(self.quest(weights=(0, 0)).choose(summary(10), lambda m: True))
 

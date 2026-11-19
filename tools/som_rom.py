@@ -47,11 +47,14 @@ def strip_header(data):
 class RomTables:
     """Parsed exit tables; built from a ROM image or a cached JSON dict."""
 
-    def __init__(self, maps, transitions, digest=None):
+    def __init__(self, maps, transitions, digest=None, scripted=None):
         # maps: {map_id: {"base": int, "entry": bool, "events": [int, ...]}}
         self.maps = maps
         self.transitions = transitions   # [(map, x, y, layer2, flags), ...]
         self.digest = digest
+        # Map changes inside event scripts (scan_scripted_exits): {map:
+        # [(target, (flag, lo, hi) or None)]}. None: not scanned (old cache).
+        self.scripted = scripted
 
     @classmethod
     def from_rom(cls, data):
@@ -98,16 +101,44 @@ class RomTables:
                        "entry": bool(header[3] & 4), "events": events}
         if len(maps) < 100:
             raise RomLayoutError(f"only {len(maps)} map headers found")
-        return cls(maps, transitions, digest)
+        scripted = scan_scripted_exits(rom, maps, transitions, map_pointers)
+        return cls(maps, transitions, digest, scripted)
 
     def to_json(self):
-        return {"digest": self.digest, "transitions": self.transitions,
+        data = {"digest": self.digest, "transitions": self.transitions,
                 "maps": {str(m): info for m, info in self.maps.items()}}
+        if self.scripted is not None:
+            data["scripted"] = {str(m): [[t, list(c) if c else None] for t, c in exits]
+                                for m, exits in self.scripted.items()}
+        return data
 
     @classmethod
     def from_json(cls, data):
+        scripted = data.get("scripted")
+        if scripted is not None:
+            scripted = {int(m): [(t, tuple(c) if c else None) for t, c in exits]
+                        for m, exits in scripted.items()}
         return cls({int(m): info for m, info in data["maps"].items()},
-                   [tuple(item) for item in data["transitions"]], data.get("digest"))
+                   [tuple(item) for item in data["transitions"]], data.get("digest"),
+                   scripted)
+
+    def scripted_into(self, target, flags=None):
+        """Maps whose event scripts can change to target: their trigger
+        tiles, entry event or NPC talks. With flags (256 bytes of
+        $7E:CF00) a gated change counts only while its IF_FLAG_RANGE holds.
+        These are never planner exits: where on the map the script starts
+        (a tile, an NPC, a story beat) is not known here."""
+        found = set()
+        for map_id, exits in (self.scripted or {}).items():
+            for to_map, condition in exits:
+                if to_map != target:
+                    continue
+                if condition and flags is not None:
+                    flag, lo, hi = condition
+                    if not lo <= flags[flag] <= hi:
+                        continue
+                found.add(map_id)
+        return found
 
     def trigger_exit(self, map_id, tile_id):
         """Direct transition started by standing on tile_id, or None.
@@ -171,6 +202,104 @@ def scan_exit_tiles(wram, map_id, tables):
     return exits
 
 
+# Event scripts (cidwel/som-decomp docs/cutscene-engine.md sections 4, 6, 8):
+# ids 0x000-0x3FF in bank $C9, 0x400-0x7FF in $CA, each bank starting with a
+# 1024-word pointer table; a script ends where the next entry starts.
+SCRIPT_BANKS = (0x090000, 0x0A0000)
+SCRIPT_MAX = 0x1000                      # bytes walked per script at most
+SCRIPT_DEPTH = 64                        # events followed per start at most
+TEXT_ARGUMENT = {0x57, 0x59, 0x5A, 0x5C}  # text codes followed by one byte
+
+
+def _op_length(op, a):
+    if op < 0x10 or op == 0x35 or op in (0x3D, 0x3E, 0x3F, 0x44, 0x45, 0x46, 0x47, 0x4F):
+        return 1
+    if op == 0x2D:
+        return 4 if a in (5, 6) or 0x80 <= a <= 0x8F else 2
+    if op in (0x30, 0x31, 0x32, 0x33, 0x34, 0x36, 0x37, 0x42, 0x43):
+        return 3
+    if op in (0x39, 0x3A, 0x48) or 0x49 <= op <= 0x4E:
+        return 4
+    if op in (0x40, 0x41):
+        return 5
+    return 2                             # 0x10-0x2F, 0x38, 0x3B, 0x3C
+
+
+def _script_span(rom, event):
+    bank, index = SCRIPT_BANKS[event >> 10], event & 0x3FF
+    start = rom[bank + 2 * index] | rom[bank + 2 * index + 1] << 8
+    end = (rom[bank + 2 * index + 2] | rom[bank + 2 * index + 3] << 8
+           if index < 0x3FF else start + SCRIPT_MAX)
+    if not 0x800 <= start <= end or end - start > SCRIPT_MAX:
+        return None                      # relocated or unbounded: fail closed
+    return bank + start, bank + end
+
+
+def _script_map_changes(rom, event, seen):
+    """[(transition, (flag, lo, hi) or None)] reachable from this event.
+
+    Follows GOTO and CALL; a MAP_CHANGE right after IF_FLAG_RANGE keeps
+    that test as its condition (and so does everything a gated GOTO/CALL
+    leads to). Other branches are taken as possible.
+    """
+    if event in seen or event >= 0x800 or len(seen) >= SCRIPT_DEPTH:
+        return []
+    seen.add(event)
+    span = _script_span(rom, event)
+    if span is None:
+        return []
+    pc, end = span
+    found, condition = [], None
+    while pc < end:
+        op = rom[pc]
+        if op >= 0x50:                   # text block up to the first command
+            while pc < end and rom[pc] >= 0x50:
+                if rom[pc] == 0x7D:      # credits segment 0x7D ... 0x7E
+                    while pc < end and rom[pc] != 0x7E:
+                        pc += 1
+                pc += 2 if rom[pc] in TEXT_ARGUMENT else 1
+            continue
+        a = rom[pc + 1] if pc + 1 < len(rom) else 0
+        guard, condition = condition, None
+        if op == 0x42:
+            condition = (a, rom[pc + 2] >> 4, rom[pc + 2] & 15)
+        elif 0x18 <= op <= 0x1B:
+            found.append(((op & 3) * 256 + a, guard))
+        elif 0x10 <= op <= 0x17 or 0x20 <= op <= 0x27:
+            found += [(t, c or guard) for t, c in
+                      _script_map_changes(rom, (op & 7) * 256 + a, seen)]
+            if op <= 0x17 and guard is None:
+                break                    # an unconditional GOTO never returns
+        elif op == 0x00 and guard is None:
+            break
+        pc += _op_length(op, a)
+    return found
+
+
+def scan_scripted_exits(rom, maps, transitions, map_pointers):
+    """{map: [(target map, condition)]} from the event scripts a map starts:
+    its entry event, its trigger tiles' script words and its NPC records'
+    talk events (+6/+7 of each 8-byte object record)."""
+    exits = {}
+    for map_id, info in maps.items():
+        events = [e & 0xFFF for e in info["events"]]
+        start = map_pointers[map_id]
+        end = map_pointers[map_id + 1] if map_id + 1 < len(map_pointers) else start
+        for record in range(BANK_C8 + start + 8, BANK_C8 + end - 7, 8):
+            events.append((rom[record + 6] | rom[record + 7] << 8) & 0xFFF)
+        found = set()
+        for event in events:
+            if event >= 0x800:
+                continue
+            for transition, condition in _script_map_changes(rom, event, set()):
+                target = transitions[transition][0]
+                if target != map_id:
+                    found.add((target, condition))
+        if found:
+            exits[map_id] = sorted(found, key=lambda item: (item[0], item[1] or ()))
+    return exits
+
+
 def load_tables(fetch_rom, cache_path, fetch_digest=None):
     """Tables from cache when the ROM digest matches, else parse fetch_rom().
 
@@ -185,7 +314,8 @@ def load_tables(fetch_rom, cache_path, fetch_digest=None):
         cached = None
     if cached and fetch_digest is not None:
         digest = fetch_digest()
-        if digest and digest == cached.get("digest"):
+        # A cache from before the script scan is rebuilt once.
+        if digest and digest == cached.get("digest") and "scripted" in cached:
             return RomTables.from_json(cached)
     tables = RomTables.from_rom(fetch_rom())
     try:

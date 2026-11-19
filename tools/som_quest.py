@@ -100,6 +100,7 @@ class Quest:
         self.weights = (3, 3)             # story, level up (gambit page QUEST)
         self.boss_slots = {}              # monster slot -> (boss id, map)
         self.last = None
+        self.here = None                  # map of the latest choice
 
     # Inputs each decision ------------------------------------------------
     def update(self, wram=None, weights=None, observation=None):
@@ -160,7 +161,28 @@ class Quest:
                     continue          # flag past (or before) its range: not now
             if reachable(boss["map"]):
                 return boss
+            approach = self._approach(boss["map"], reachable)
+            if approach is not None:
+                return dict(boss, approach=approach)
         return None
+
+    def _approach(self, boss_map, reachable):
+        """A reachable map whose event scripts lead into boss_map (the boss
+        rooms are entered by scripts, often behind a story event that has
+        not happened yet), nearest first; None without one."""
+        tables = getattr(self.history, "rom_tables", None)
+        if tables is None or not hasattr(tables, "scripted_into"):
+            return None
+        blocked = self._blocked_maps()
+        here = getattr(self, "here", None)
+
+        def hops(map_id):
+            path = (self.history.map_path(here, map_id)
+                    if here is not None and hasattr(self.history, "map_path") else None)
+            return (len(path) if path else 999, map_id)
+        doors = sorted((m for m in tables.scripted_into(boss_map)
+                        if m not in blocked and reachable(m)), key=hops)
+        return doors[0] if doors else None
 
     def grind_map(self, hero_level, reachable, here=None):
         """Reachable map whose monsters are closest above the hero's level."""
@@ -187,6 +209,7 @@ class Quest:
         raw = summary.get("level")
         hero = (raw + 1) if isinstance(raw, int) else 1   # +0x181 is 0-based
         here = summary.get("map_id")
+        self.here = here
         boss = self.story_boss(hero, reachable) if story_w else None
         if boss is not None:
             gate = boss["level"] + max(0, level_w - 2)
@@ -197,6 +220,11 @@ class Quest:
                     return self._pick(map_id, f"level up first: hero {hero} < {gate} for boss "
                                       f"0x{boss['id']:02x} (level {boss['level']}) on map "
                                       f"{boss['map']}; {count} monsters near level {mean:.0f}")
+            if boss.get("approach") is not None:
+                return self._pick(boss["approach"], f"story: boss 0x{boss['id']:02x} (level "
+                                  f"{boss['level']}) on map {boss['map']} is entered by a "
+                                  f"story event from map {boss['approach']}; go there, "
+                                  f"hero level {hero}")
             return self._pick(boss["map"], f"story: boss 0x{boss['id']:02x} (level "
                               f"{boss['level']}) on map {boss['map']}, hero level {hero}")
         if level_w and not story_w:

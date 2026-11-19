@@ -47,6 +47,8 @@ from som_weapon_tactics import WeaponTactics, reach as weapon_reach
 from som_jutsu import JutsuTactics, NINJA, DODGE_CLASSES as JUTSU_DODGE
 from som_trials import TrialLearner
 import som_quest
+from som_ai_brain import BrainController, parse_brain
+from som_critic import Critic
 from som_class_arts import FlyingKickTactics, IaiTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
 from som_anticipate import AttackPredictor
@@ -83,6 +85,7 @@ COMBAT_DEFAULTS = "32223333"
 QUEST_FILE = "/home/apps/retroarch/cores/experimental/som_ai_quest"
 QUEST_NAMES = ("story", "level")
 QUEST_DEFAULTS = "33"
+BRAIN_FILE = "/home/apps/retroarch/cores/experimental/som_ai_brain"
 COMBAT_NAMES = ("press", "distance", "guard", "evade", "charge", "magic", "classes", "weapons")
 PLAN_REFRESH_S = 600.0  # seconds between re-plans of the AI's wanted build
 GAMBIT_REFRESH = 5      # decisions between reads of the gambit mask
@@ -508,6 +511,9 @@ REMOTE_LOOP = (
     "gmb) m=; [ -f " + GAMBIT_FILE + " ] && read -r m < " + GAMBIT_FILE + "; "
     "case \"$m\" in [0-5][0-5][0-5][0-5][0-5][0-5]) ;; *) m=" + GAMBIT_DEFAULTS + ";; esac; "
     "echo \"GMB $m\";; "
+    "gmm) i= c= extra=; [ -f " + BRAIN_FILE + " ] && read -r i c extra < " + BRAIN_FILE + "; "
+    'case "$i:$c:$extra" in [0-9]:[01]:|1[0-4]:[01]:) ;; *) i=0; c=1;; esac; '
+    'echo "GMM $i $c";; '
     "dsc) d=; [ -f " + DISCIPLINE_FILE + " ] && read -r v d rest < " + DISCIPLINE_FILE + "; "
     "case \"$d\" in ''|*[!0-9]*) d=255;; esac; echo \"DSC $d\";; "
     "fam) f=; [ -f " + FAMILIAR_FILE + " ] && read -r f < " + FAMILIAR_FILE + "; "
@@ -758,6 +764,13 @@ class RemoteLink:
             raise OSError(f"quest gambits unavailable ({status})")
         return tuple(int(c) for c in digits)
 
+    def fetch_brain(self):
+        """Numeric model (0..14) and saved critic state from the device."""
+        status, _ = self._request("gmm")
+        if not status.startswith("GMM "):
+            raise OSError(f"AI brain settings unavailable ({status})")
+        return parse_brain(status[4:])
+
     def fetch_familiar(self):
         """Monster slot (1..3) of the hero's familiar, or 0 for none."""
         status, _ = self._request("fam")
@@ -913,6 +926,11 @@ class AndroidRelayLink:
         if len(text) != len(QUEST_NAMES) or any(c not in "012345" for c in text):
             text = QUEST_DEFAULTS
         return tuple(int(c) for c in text)
+
+    def fetch_brain(self):
+        pending = self._wait_pending()
+        text = pending[1].get("brain", "0 1") if pending else "0 1"
+        return parse_brain(text)
 
     def fetch_familiar(self):
         pending = self._wait_pending()
@@ -1315,6 +1333,8 @@ def main() -> int:
                   flush=True)
     link = (AndroidRelayLink(args.android_listen) if args.android_listen else
             RemoteLink(args.host) if not args.dry_run else None)
+    brain_controller = BrainController(args.ollama_url, args.model)
+    critic = Critic(args.ollama_url)
     if args.ring_control and not args.android_listen:
         print(f"[ai] {args.policy} policy waiting for Action Grid confirmation", flush=True)
         deadline = time.monotonic() + args.start_timeout
@@ -1481,6 +1501,26 @@ def main() -> int:
                     break
                 observation = WRAM(raw).observe(radius=5)
             if observation is not None:
+                # Model downloads are asynchronous; only completed pulls become
+                # the active model. Settings are also read during Qwen-only play.
+                if link and step % GAMBIT_REFRESH == 0:
+                    try:
+                        selected_model, critic_on = link.fetch_brain()
+                        brain_controller.select(selected_model, critic_on)
+                        critic.enabled = critic_on
+                    except (OSError, subprocess.SubprocessError, AttributeError):
+                        pass   # older device servers do not support gmm
+                for notice in brain_controller.drain():
+                    announce(notice)
+                if args.model != brain_controller.model:
+                    args.model = brain_controller.model
+                    print(f"[ai-brain] switched director to {args.model}", flush=True)
+                    if args.policy == "hybrid":
+                        threading.Thread(target=warm_model,
+                                         args=(args.ollama_url, args.model),
+                                         daemon=True, name="som-ollama-new-model").start()
+                for advice in critic.drain():
+                    announce("Critic: " + advice)
                 if link and step % GAMBIT_REFRESH == 0:
                     try:
                         familiar_slot = link.fetch_familiar()
@@ -2484,6 +2524,8 @@ def main() -> int:
                 history.record(observation, action if args.dry_run else
                                sent_action if actual is not None else None)
             previous = actual if actual is not None else "wait"
+            if not args.dry_run and observation is not None:
+                critic.offer(observation, previous)
             if args.steps == 0 or step < args.steps:
                 time.sleep(args.interval)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:

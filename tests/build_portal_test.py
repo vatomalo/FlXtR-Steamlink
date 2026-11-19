@@ -111,8 +111,8 @@ print('Build complete.',flush=True)
             'platform': 'android', 'arch': 'universal', 'branch': 'main',
             'artifacts': [], 'releases': []})
         token = 'gho_' + 'A' * 30
-        log = 'START OF FAILED BUILD\\n' + ('compiler output\\n' * 7000)
-        log += token + '\\nGamezBridge symbol not found\\n'
+        log = 'START OF FAILED BUILD\n' + ('compiler output\n' * 7000)
+        log += token + '\nGamezBridge symbol not found\n'
         (folder / 'build.log').write_text(log)
         base = '/api/jobs/' + identity
         code, tail = self.request('GET', base + '/log')

@@ -161,7 +161,7 @@ int main(void){
     pd.selected=SOM_DISCIPLINE_NONE;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==0);
     pd.level[2]=10;assert(som_perk_value(SOM_EFFECT_CLONE_DAMAGE,&pd,1)==8);
     pd.level[8]=5;assert(som_perk_value(SOM_EFFECT_FLOW_MIX,&pd,1)==1);
-    assert(som_perk_bits(&pd)==((1u<<2)|(1u<<4)));
+    assert(som_perk_bits(&pd)==((1u<<2)|(1u<<4)|(1u<<6)));  /* Coup de Grace at Ninjutsu 10 */
     {   SomPerk synergy={9,"Shadow Strike",2,10,5,1,SOM_EFFECT_FINISHER_LEVEL,1,1,0,10};
         pd.level[2]=10;pd.level[0]=9;assert(som_perk_rank(&synergy,&pd)==0);   /* needs Sword 10 */
         pd.level[0]=10;assert(som_perk_rank(&synergy,&pd)==1);

@@ -35,10 +35,23 @@ static const char *const som_music_genre_names[SOM_MUSIC_GENRE_COUNT] = {
     "Lo-Fi", "Jazz", "City Pop", "Orchestral", "Piano",
     "Synthwave", "Rock", "Ambient", "Off"
 };
-#define SOM_GAMBIT_MUSIC_ITEM SOM_GAMBIT_COUNT
-#define SOM_GAMBIT_INFINITE_MP (SOM_GAMBIT_COUNT + 1u) /* test switch row */
-#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 2u)
-#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 3u)       /* + music, test, exit */
+/* The AI's brain on SkyLoft: the Ollama model its planner talks to and the
+ * critic (a second model that judges the play and coaches it). Saved as
+ * "<model index> <critic 0/1>" to SOM_BRAIN_FILE; the bridge downloads a
+ * model that SkyLoft does not have yet. Order = the bridge's AI_MODELS
+ * (tools/som_qwen_bridge.py; a test keeps the two lists equal). */
+#define SOM_AI_MODEL_COUNT 15u
+static const char *const som_ai_model_names[SOM_AI_MODEL_COUNT] = {
+    "Qwen3 0.6B", "Qwen3 1.7B", "Qwen3 4B", "Qwen3.5 4B", "Qwen2.5 3B",
+    "StarCoder2 3B", "Llama3.2 1B", "Llama3.2 3B", "Gemma3 1B", "Gemma3 4B",
+    "Phi-4 mini", "SmolLM2 1.7B", "DeepSeek-R1 1.5B", "Mistral 7B", "Granite3.3 2B"
+};
+#define SOM_GAMBIT_MODEL_ITEM SOM_GAMBIT_COUNT
+#define SOM_GAMBIT_CRITIC_ITEM (SOM_GAMBIT_COUNT + 1u)
+#define SOM_GAMBIT_MUSIC_ITEM (SOM_GAMBIT_COUNT + 2u)
+#define SOM_GAMBIT_INFINITE_MP (SOM_GAMBIT_COUNT + 3u) /* test switch row */
+#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 4u)
+#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 5u)       /* + model, critic, music, test, exit */
 #define SOM_GAMBIT_MAX_WEIGHT 5u
 
 /* Activities only; how the AI fights or moves is not a gambit. The order is
@@ -88,11 +101,26 @@ typedef struct {
     uint8_t combat[SOM_COMBAT_COUNT];
     uint8_t quest[SOM_QUEST_COUNT];
     unsigned music_genre; /* stored separately from the six AI priority digits */
+    unsigned ai_model;    /* index into som_ai_model_names */
+    int critic;           /* the critic model judges and coaches the play */
 } SomGambits;
 
 enum { SOM_GAMBIT_NONE, SOM_GAMBIT_OPENED, SOM_GAMBIT_CLOSED,
        SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT, SOM_GAMBIT_TEST_SWITCH,
-       SOM_GAMBIT_GENRE_CHANGED };
+       SOM_GAMBIT_GENRE_CHANGED, SOM_GAMBIT_BRAIN_CHANGED };
+
+/* "<model> <critic>\n"; invalid text keeps model 0 with the critic on. */
+static inline void som_brain_parse(SomGambits *g, const char *text) {
+    unsigned model = 0; int critic = 1;
+    g->ai_model = 0; g->critic = 1;
+    if (text && sscanf(text, "%u %d", &model, &critic) == 2 && model < SOM_AI_MODEL_COUNT &&
+        (critic == 0 || critic == 1)) {
+        g->ai_model = model; g->critic = critic;
+    }
+}
+static inline void som_brain_format(const SomGambits *g, char out[16]) {
+    snprintf(out, 16, "%u %d", g->ai_model % SOM_AI_MODEL_COUNT, g->critic ? 1 : 0);
+}
 
 static inline void som_gambit_defaults_into(SomGambits *g) {
     memcpy(g->weight, som_gambit_defaults, sizeof(g->weight));
@@ -202,7 +230,20 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
         g->cursor = (g->cursor + SOM_GAMBIT_ITEMS - 1u) % SOM_GAMBIT_ITEMS;
     if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN))
         g->cursor = (g->cursor + 1u) % SOM_GAMBIT_ITEMS;
-    if (g->cursor == SOM_GAMBIT_MUSIC_ITEM) {
+    if (g->cursor == SOM_GAMBIT_MODEL_ITEM) {
+        const unsigned before = g->ai_model;
+        if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT))
+            g->ai_model = (g->ai_model + SOM_AI_MODEL_COUNT - 1u) % SOM_AI_MODEL_COUNT;
+        if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_RIGHT) | (1u << RETRO_DEVICE_ID_JOYPAD_B)))
+            g->ai_model = (g->ai_model + 1u) % SOM_AI_MODEL_COUNT;
+        if (before != g->ai_model) return SOM_GAMBIT_BRAIN_CHANGED;
+    } else if (g->cursor == SOM_GAMBIT_CRITIC_ITEM) {
+        if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_B) | (1u << RETRO_DEVICE_ID_JOYPAD_LEFT) |
+                       (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT))) {
+            g->critic = !g->critic;
+            return SOM_GAMBIT_BRAIN_CHANGED;
+        }
+    } else if (g->cursor == SOM_GAMBIT_MUSIC_ITEM) {
         unsigned before = g->music_genre;
         if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT))
             g->music_genre = (g->music_genre + SOM_MUSIC_GENRE_COUNT - 1u) % SOM_MUSIC_GENRE_COUNT;
@@ -266,6 +307,15 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
     unsigned item = line - 1u;
     if (item >= SOM_GAMBIT_ITEMS) return 0;
     const char *mark = g->cursor == item ? ">" : " ";
+    if (item == SOM_GAMBIT_MODEL_ITEM) {
+        snprintf(out, 33, "%s AI model: %s", mark,
+                 som_ai_model_names[g->ai_model % SOM_AI_MODEL_COUNT]);
+        return 1;
+    }
+    if (item == SOM_GAMBIT_CRITIC_ITEM) {
+        snprintf(out, 33, "%s %-19s %s", mark, "Critic", g->critic ? "ON" : "off");
+        return 1;
+    }
     if (item == SOM_GAMBIT_MUSIC_ITEM) {
         snprintf(out, 33, "%s Music genre: %s", mark,
                  som_music_genre_names[g->music_genre % SOM_MUSIC_GENRE_COUNT]);
@@ -313,7 +363,8 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
             ((line - 1u < SOM_GAMBIT_COUNT && !g->weight[line - 1u]) ||
              (line - 1u == SOM_GAMBIT_MUSIC_ITEM &&
               g->music_genre == SOM_MUSIC_GENRE_COUNT - 1u) ||
-             (line - 1u == SOM_GAMBIT_INFINITE_MP && !g->infinite_mp)));
+             (line - 1u == SOM_GAMBIT_INFINITE_MP && !g->infinite_mp) ||
+             (line - 1u == SOM_GAMBIT_CRITIC_ITEM && !g->critic)));
         for (unsigned i = 0; text[i]; i++) {
             unsigned char c = (unsigned char)text[i];
             if (c < 32u || c > 126u) continue;

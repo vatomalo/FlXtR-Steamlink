@@ -177,6 +177,8 @@ static const char *gambit_file=SOM_GAMBIT_FILE;
 static const char *combat_file=SOM_COMBAT_FILE;
 #define SOM_QUEST_FILE "/home/apps/retroarch/cores/experimental/som_ai_quest"
 static const char *quest_file=SOM_QUEST_FILE;
+#define SOM_BRAIN_FILE "/home/apps/retroarch/cores/experimental/som_ai_brain"
+static const char *brain_file=SOM_BRAIN_FILE;
 /* Independent from the six Gambit priority digits, shared with the
  * external song-id -> yt-dlp playback bridge. */
 #define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
@@ -184,7 +186,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},{3,3},0};
+    {3,2,2,2,3,3,3,3},{3,3},0,0,1};
 static SomDisciplines disciplines;
 /* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
@@ -308,6 +310,10 @@ static void som_gambit_load(void){
     in=fopen(quest_file,"r");
     if(in){if(!fgets(quest,sizeof(quest),in))quest[0]=0;fclose(in);}
     som_quest_parse(&gambits,quest[0]?quest:NULL);
+    char brain[16]={0};
+    in=fopen(brain_file,"r");
+    if(in){if(!fgets(brain,sizeof(brain),in))brain[0]=0;fclose(in);}
+    som_brain_parse(&gambits,brain[0]?brain:NULL);
 }
 static void som_gambit_write(const char *path,const char *text){
     char temp[256];
@@ -326,6 +332,9 @@ static void som_gambit_save(void){
     char quest[SOM_QUEST_COUNT+1];
     som_quest_format(&gambits,quest);
     som_gambit_write(quest_file,quest);
+    char brain[16];
+    som_brain_format(&gambits,brain);
+    som_gambit_write(brain_file,brain);
 }
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
@@ -1382,6 +1391,11 @@ static void som_input_poll(void){
                  som_gambit_format(&gambits,text);som_combat_format(&gambits,combat);
                  som_quest_format(&gambits,quest);
                  fprintf(stderr,"[som-ai] GAMBITS %s COMBAT %s QUEST %s\n",text,combat,quest);}
+                break;
+            case SOM_GAMBIT_BRAIN_CHANGED:
+                som_gambit_save();
+                fprintf(stderr,"[som-ai] BRAIN model %s, critic %s\n",
+                        som_ai_model_names[gambits.ai_model],gambits.critic?"on":"off");
                 break;
             case SOM_GAMBIT_TEST_SWITCH:
                 som_infinite_mp_changed();

@@ -70,3 +70,29 @@ def heard_directions(clues, map_id):
             directions.update(d for d in item.get("directions", ())
                               if d in ("north", "south", "east", "west"))
     return sorted(directions)
+
+
+def loop_hint_directive(summary, goal, step, previous=None, until=-1, window=120):
+    """Use a recently-heard local direction briefly during the default loop.
+
+    Does not change the play-loop's goals. Rest, shopping, saving, fights,
+    and explicit map visits keep priority. A bounded trial avoids following
+    an old, mistaken hint forever. Output is an allowed exploration directive.
+    """
+    if goal != "hunt_here" or summary.get("enemies_near"):
+        return None, previous, until
+    here = summary.get("map_id")
+    for item in summary.get("npc_clues") or ():
+        if item.get("map_id") != here or not item.get("directions"):
+            continue
+        direction = item["directions"][0]
+        if direction not in ("north", "south", "east", "west"):
+            continue
+        key = (here, item.get("npc_id"), item.get("event"),
+               item.get("quote"), direction)
+        if key != previous:
+            return "explore_" + direction, key, step + window
+        if step < until:
+            return "explore_" + direction, key, until
+        return None, key, until
+    return None, previous, until

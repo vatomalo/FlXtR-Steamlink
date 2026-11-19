@@ -131,6 +131,9 @@ class TestNpcKnowledge(unittest.TestCase):
         lesson = understand("Elder:Oh, Mana, you're back. The Mana Sword is gone! "
                             "That's our commander, Major Dyluck. This is the castle of Pandora.")
         self.assertEqual(lesson["names"], ["Mana Sword", "Major Dyluck", "Pandora"])
+        repeated = understand("The Mana Sword is gone! Where is the Sword now, Elder? "
+                              "Ask Major Dyluck. Dyluck knows.")
+        self.assertEqual(repeated["names"], ["Mana Sword", "Major Dyluck"])
         self.assertTrue(understand("Monsters have been seen!")["warning"])
         self.assertEqual(understand("Never go north.")["directions"], [])
 

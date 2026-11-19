@@ -35,7 +35,7 @@ NOT_NAMES = {
     "I", "I'm", "Shall", "Have", "Took", "Just", "Maybe", "Geez", "So",
     "There's", "Whoa", "Cut", "Shut", "Get", "Idiots", "Didn't", "An", "A", "Ooooh",
     "Kuwabara", "Thy", "Thou", "Hello", "Go", "Find", "Do", "Don't", "Danger",
-    "Elder", "Timothy", "Elliott", "Yes", "No", "We", "He", "She", "They", "My",
+    "Elder", "Timothy", "Elliott", "Ask", "Where", "Yes", "No", "We", "He", "She", "They", "My",
 }
 NAME = re.compile(r"\b[A-Z][a-z]+(?:'s)?(?:\s+(?:of\s+)?[A-Z][a-z]+(?:'s)?)*")
 HERO = {"Mana"}          # the hero's own name in this save, not news
@@ -66,6 +66,11 @@ def understand(text):
         # One capitalised word at a sentence start is usually just a word.
         if len(words) == 1 and sentence_start and not TITLE.match(name):
             continue
+        # "Sword" after "Mana Sword" is the same thing, not a second name.
+        if any(re.search(rf"\b{re.escape(name)}\b", known) for known in names):
+            continue
+        names = [known for known in names
+                 if not re.search(rf"\b{re.escape(known)}\b", name)]
         names.append(name)
     return {"directions": sorted(directions), "names": names[:4],
             "warning": bool(WARNING.search(text)),

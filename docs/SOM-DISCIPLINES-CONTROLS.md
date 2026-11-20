@@ -12,7 +12,7 @@
 | **L3 + B** | Legacy L1+B style-cycle shortcut, moved to L3. B is suppressed so it cannot accidentally attack or start a combo. |
 | **L3 + Y/X** | Native weapon/item or magic ring shortcut, formerly using L2. The proxy sends native L2+Y/X and does not trigger a class attack/spell on release. |
 | **L2 or R3 held alone for 1 s, release** | Start AI mode. A long R2 block no longer starts AI. |
-| **Start** | Party class editor (also inside the ring: for the ring's owner); L2+R2 still opens it in the field. |
+| **Start** | Party class editor (also inside the ring: for the ring's owner). The L2+R2 alias was removed 2026-11-21. |
 | **L2 + R1 / L2 + L1** | Next / previous class for the boy (all 16, wrapping). L1 alone still locks on. |
 
 Outside active field play, the base game's menu buttons remain unchanged.

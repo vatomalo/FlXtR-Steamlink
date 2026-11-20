@@ -165,9 +165,13 @@ int main(void){
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
     assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
     backend_retro_get_memory_data=mocked_memory_data;mocked_wram[0x7D]=0;
-    /* Manual-play Class Progress menu via L2+R2 in verified field play. */
+    /* Manual-play class menu via Start in verified field play (L2+R2 no
+     * longer opens it). */
     mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+    som_input_poll();assert(!som_manual_disciplines);
+    mocked_buttons=0;som_input_poll();
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
     som_input_poll();
     assert(som_manual_disciplines&&disciplines.open&&!ring_ai_enabled);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
@@ -189,6 +193,9 @@ int main(void){
         const int fd=mkstemp(juke_req);assert(fd>=0);close(fd);
         juke_request_file=juke_req;juke_list_file="/nonexistent/flxtr-juke-list";
         mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+        som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(!som_manual_disciplines);                     /* L2+R2 no longer opens it */
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
         som_input_poll();mocked_buttons=0;som_input_poll();
         assert(som_manual_disciplines&&disciplines.open);
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);som_input_poll();

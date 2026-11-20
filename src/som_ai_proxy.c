@@ -2023,16 +2023,14 @@ static void som_input_poll(void){
             fprintf(stderr,"[som-ai] PARTY menu opened from the ring (%s)\n",
                     som_party_names[disciplines.who]);
         }
-        /* Start opens Class Progress manually; retain L2+R2 as an alias.
-         * While open, all pad input is consumed by the overlay. */
-        const uint16_t class_chord=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
-                                              (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+        /* Start opens the class menu (the L2+R2 alias was removed at the
+         * player's request, 2026-11-21). While open, all pad input is
+         * consumed by the overlay. */
         const uint16_t class_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
         if(ring_party){
             /* Opened from the ring this frame: that press is not a menu choice. */
         }else if(!ring_ai_enabled && !som_manual_disciplines && som_overlay_field() &&
-           ((pressed&class_start)||
-            ((current&class_chord)==class_chord&&(pressed&class_chord)))){
+           (pressed&class_start)){
             som_manual_disciplines=1;
             disciplines.open=1;
             disciplines.cursor=0;disciplines.who=0;

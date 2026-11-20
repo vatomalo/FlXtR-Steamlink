@@ -1946,6 +1946,7 @@ static int familiar_pending;
 /* Carried between maps: saved every second while it is with the hero and
  * restored into an empty slot once the new map has settled. */
 static SomFamiliarCarry familiar_carry;
+static SomFamiliarCarry clone_source_art; /* captured before mutating destination */
 static unsigned long familiar_arrived;
 #define SOM_FAMILIAR_SETTLE_FRAMES 60ul
 static void som_familiar_bind(void);
@@ -3991,6 +3992,16 @@ static int som_clone_enemy(void){
     if(target<0){clone_no_slot=1;return 0;}
     if(!som_take_undo())return 0;
     uint8_t *from=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
+    /* The destination's VRAM is stale until the core uploads new tiles.
+     * Capture the currently visible source monster before overwriting it. */
+    clone_source_art.has_vram=0;
+    if(familiar_pending){
+        som_familiar_save(&clone_source_art,ram,source);
+        const uint8_t *source_vram=som_vram();
+        if(source_vram)
+            som_familiar_capture_vram(&clone_source_art,ram,source_vram,from,
+                                      som_bun_u16(ram+0xDCu));
+    }
     uint8_t *to=ram+SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE;
     uint8_t keep[sizeof(som_slot_fields)][2];
     for(unsigned i=0;i<sizeof(som_slot_fields);i++){
@@ -5428,13 +5439,21 @@ static void som_familiar_bind(void){
         som_familiar_tint((uint8_t*)ram+SOM_MONSTER_PALETTE+
                           (unsigned)familiar.slot*SOM_MONSTER_PALETTE_SIZE);
         som_familiar_save(&familiar_carry,ram,familiar.slot);
-        uint8_t *vram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
-        if(vram&&backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=0x10000){
-            som_familiar_capture_vram(&familiar_carry,ram,vram,
-                ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE,familiar.map);
-            fprintf(stderr,"[som-ai] FAMILIAR sprite captured: %u tiles, palette 7E%04X\n",
-                    familiar_carry.tile_count,familiar_carry.palette_address);
+        /* Translate the original source monster's captured graphics into
+         * the destination slot; never capture the just-cloned target's VRAM. */
+        if(clone_source_art.has_vram){
+            familiar_carry.has_vram=1;
+            familiar_carry.tile_count=clone_source_art.tile_count;
+            memcpy(familiar_carry.tile_id,clone_source_art.tile_id,
+                   sizeof(familiar_carry.tile_id));
+            memcpy(familiar_carry.tile_data,clone_source_art.tile_data,
+                   sizeof(familiar_carry.tile_data));
+            memcpy(familiar_carry.source_frame_tile,clone_source_art.source_frame_tile,
+                   sizeof(familiar_carry.source_frame_tile));
         }
+        som_familiar_reapply(&familiar_carry,(uint8_t*)ram,som_vram());
+        fprintf(stderr,"[som-ai] FAMILIAR source art: %u native VRAM tiles\n",
+                familiar_carry.tile_count);
     }
     som_familiar_publish();
     som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
@@ -5453,6 +5472,8 @@ static int som_summon_boss(void){
     FILE *in=fopen(summon_file,"rb");
     if(!in){fprintf(stderr,"[som-ai] SUMMON refused: no %s\n",summon_file);return 0;}
     static SomFamiliarCarry loaded;
+    memset(&loaded,0,sizeof(loaded)); /* old packages have no VRAM capture */
+    loaded.painted_slot=-1;
     size_t got=fread(loaded.object,1,sizeof(loaded.object),in);
     got+=fread(loaded.tiles,1,sizeof(loaded.tiles),in);
     got+=fread(loaded.palette,1,sizeof(loaded.palette),in);
@@ -5503,10 +5524,11 @@ static void som_familiar_frame(void){
         som_xp_give(SOM_DISC_SUMMONING,SOM_XP_FAMILIAR,
                     ram[0xE600u+0x200u*(unsigned)familiar.target+0x180u],SOM_XPK_FAMILIAR,
                     "familiar strike");
-    if(state==SOM_FAMILIAR_HERE&&familiar.map!=familiar_carry.home_map)
-        som_familiar_reapply(&familiar_carry,ram,som_vram());      /* keep it drawn */
+    if(state==SOM_FAMILIAR_HERE)
+        som_familiar_reapply(&familiar_carry,ram,som_vram()); /* own slot only */
     if(state==SOM_FAMILIAR_HERE){
-        if(frame_number%60u==0)som_familiar_save(&familiar_carry,ram,familiar.slot);
+        if(frame_number%60u==0)
+            som_familiar_update_object(&familiar_carry,ram,familiar.slot);
         return;
     }
     som_familiar_publish();

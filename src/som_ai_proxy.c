@@ -1954,6 +1954,7 @@ static int familiar_pending;
  * restored into an empty slot once the new map has settled. */
 static SomFamiliarCarry familiar_carry;
 static SomFamiliarCarry clone_source_art; /* captured before mutating destination */
+static int familiar_is_native_control; /* Mind Control never repaints native art */
 static unsigned long familiar_arrived;
 #define SOM_FAMILIAR_SETTLE_FRAMES 60ul
 static void som_familiar_bind(void);
@@ -4046,6 +4047,7 @@ static int som_clone_enemy(void){
     /* The destination's VRAM is stale until the core uploads new tiles.
      * Capture the currently visible source monster before overwriting it. */
     clone_source_art.has_vram=0;
+    familiar_is_native_control=0;
     if(familiar_pending){
         som_familiar_save(&clone_source_art,ram,source);
         const uint8_t *source_vram=som_vram();
@@ -5496,7 +5498,7 @@ static void som_familiar_bind(void){
         som_familiar_save(&familiar_carry,ram,familiar.slot);
         /* Translate the original source monster's captured graphics into
          * the destination slot; never capture the just-cloned target's VRAM. */
-        if(clone_source_art.has_vram){
+        if(!familiar_is_native_control&&clone_source_art.has_vram){
             familiar_carry.has_vram=1;
             familiar_carry.tile_count=clone_source_art.tile_count;
             memcpy(familiar_carry.tile_id,clone_source_art.tile_id,
@@ -5506,7 +5508,8 @@ static void som_familiar_bind(void){
             memcpy(familiar_carry.source_frame_tile,clone_source_art.source_frame_tile,
                    sizeof(familiar_carry.source_frame_tile));
         }
-        som_familiar_reapply(&familiar_carry,(uint8_t*)ram,som_vram());
+        if(!familiar_is_native_control)
+            som_familiar_reapply(&familiar_carry,(uint8_t*)ram,som_vram());
         fprintf(stderr,"[som-ai] FAMILIAR source art: %u native VRAM tiles\n",
                 familiar_carry.tile_count);
     }
@@ -5579,7 +5582,7 @@ static void som_familiar_frame(void){
         som_xp_give(SOM_DISC_SUMMONING,SOM_XP_FAMILIAR,
                     ram[0xE600u+0x200u*(unsigned)familiar.target+0x180u],SOM_XPK_FAMILIAR,
                     "familiar strike");
-    if(state==SOM_FAMILIAR_HERE)
+    if(state==SOM_FAMILIAR_HERE&&!familiar_is_native_control)
         som_familiar_reapply(&familiar_carry,ram,som_vram()); /* own slot only */
     if(state==SOM_FAMILIAR_HERE){
         if(frame_number%60u==0)
@@ -5589,9 +5592,14 @@ static void som_familiar_frame(void){
     som_familiar_publish();
     if(state==SOM_FAMILIAR_LEFT_MAP){
         familiar_arrived=0;
+        if(familiar_is_native_control){
+            familiar_carry.valid=0;
+            familiar_is_native_control=0;
+            mind_slot=-1;mind_until=0;
+        }
         fprintf(stderr,"[som-ai] FAMILIAR follows the hero to the next map\n");
     }else{
-        familiar_carry.valid=0;
+        familiar_carry.valid=0;familiar_is_native_control=0;
         fprintf(stderr,"[som-ai] FAMILIAR gone (died)\n");
     }
 }
@@ -5753,7 +5761,7 @@ static void som_mind_release(uint8_t *ram){
         som_overlay_set(&overlay,"^The mind is free again",SOM_MESSAGE_FRAMES/2u);
     }
     fprintf(stderr,"[som-ai] MIND CONTROL ends (monster slot %d)\n",mind_slot+1);
-    mind_slot=-1;mind_until=0;
+    mind_slot=-1;mind_until=0;familiar_is_native_control=0;
 }
 static int som_class_x(uint8_t *ram){
     const unsigned d=disciplines.selected;
@@ -5808,6 +5816,7 @@ static int som_class_x(uint8_t *ram){
         if(best<0){som_overlay_set(&overlay,"^Mind Control|no mind near",SOM_MESSAGE_FRAMES/3u);return 0;}
         memcpy(mind_palette,ram+SOM_MONSTER_PALETTE+(unsigned)best*SOM_MONSTER_PALETTE_SIZE,
                SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
+        familiar_is_native_control=1;clone_source_art.has_vram=0;
         familiar_pending=1;last_clone_target=best;
         som_familiar_bind();
         mind_slot=best;mind_until=frame_number+SOM_MIND_FRAMES;

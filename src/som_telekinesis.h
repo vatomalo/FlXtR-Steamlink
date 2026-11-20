@@ -1,9 +1,10 @@
 /* Mentalist telekinesis: pull native treasure chest actors toward the hero.
  * No loot, story flags, NPC state or chest contents are written by the proxy.
  * Only actor positions (+0x02/+0x04) change, one collision-checked step at
- * a time. Chests are distinguished by status2 bit 7 (actor +0x1B1).
- * See the SoM WRAM character layout. Do not generalise this to event props:
- * many share the actor array but cannot safely be relocated.
+ * a time. Dropped treasure chests are monster type 0x56 in SoM's native
+ * creature table, occupying the three monster slots (actors 3..5).
+ * Do not generalise this to NPC/event props without identifying their
+ * native object type: many share this actor array but cannot be moved.
  */
 #ifndef FLXTR_SOM_TELEKINESIS_H
 #define FLXTR_SOM_TELEKINESIS_H
@@ -14,7 +15,8 @@
 #include "som_bunshin.h"
 
 #define SOM_TK_FIRST_SLOT 3u
-#define SOM_TK_LAST_SLOT 11u
+#define SOM_TK_LAST_SLOT 5u
+#define SOM_TK_CHEST_ID 0x56u
 #define SOM_TK_RANGE 160
 #define SOM_TK_STOP 28
 #define SOM_TK_SPEED 3
@@ -22,7 +24,7 @@
 #define SOM_TK_COOLDOWN 240ul
 
 typedef struct {
-    int slot;                     /* object slot 3..11; -1 while idle */
+    int slot;                     /* native monster slot 3..5; -1 while idle */
     unsigned map;
     uint8_t kind;
     int last_x,last_y;            /* reject an object changed by the game */
@@ -39,8 +41,8 @@ static inline int som_tk_field(const uint8_t *ram) {
            ram[0x7Du]!=1u&&!(ram[0xE8u]&0x04u);
 }
 static inline int som_tk_is_chest(const uint8_t *o) {
-    return o[0]==1u&&(o[0x1B1u]&0x80u)!=0u&&
-           o[0x181u]!=0xFFu&&(o[0x1FBu]&0x04u)==0u;
+    const unsigned status=(unsigned)o[0x190u]|(unsigned)o[0x191u]<<8;
+    return o[0]==1u&&o[0x180u]==SOM_TK_CHEST_ID&&!(status&0x8000u);
 }
 static inline int som_tk_nearest(const uint8_t *ram,int hx,int hy,unsigned place) {
     int found=-1,nearest=SOM_TK_RANGE+1;

@@ -1057,8 +1057,8 @@ int main(void){
         assert(ram[0x6000]==0x33&&ram[0xDFC0]==0x44);              /* tiles, colours */
         assert(som_fam_u16(back+2)==som_fam_u16(ram+0xE002)+24u);  /* by the hero */
         assert(ram[0xE600+0x3D]==0xC7);                            /* villager kept */
-        /* VRAM capture: its exact sprite tiles and palette go with it and
-         * are written back with its home layout on the next map. */
+        /* VRAM capture: source art must be remapped to the destination's
+         * own tile IDs. The previous map's VRAM/palette must stay intact. */
         {
             static uint8_t vram[0x10000],slots_before[0x600],pal_before[0x20];
             static SomFamiliarCarry vc;
@@ -1070,16 +1070,21 @@ int main(void){
             for(unsigned t=0;t<512;t++)vram[0xC000+t*32]=(uint8_t)t;
             memset(ram+0xDFE0,0x66,0x20);                        /* palette 7 */
             memcpy(vc.object,home,sizeof(home));vc.valid=1;
+            memset(vc.tiles,0x33,sizeof(vc.tiles));
+            memset(vc.palette,0x66,sizeof(vc.palette));
             som_familiar_capture_vram(&vc,ram,vram,home,130);
             assert(vc.has_vram&&vc.tile_count==8&&vc.palette_address==0xDFE0);
             /* sprites at 0xA0 and 0xA2: A0 A1 B0 B1 A2 A3 B2 B3; zero fields skipped */
             memset(vram+0xC000,0,0x4000);memset(ram+0xDFE0,0,0x20);  /* new map */
             memset(ram+0xE600,0,0x600);
+            som_fam_put16(ram+0xE600+0x8A,0x2A40);  /* reserved OBJ tile 40, palette 5 */
             int slot=som_familiar_restore(&vc,ram,vram);
-            assert(slot==0&&som_fam_u16(ram+0xE600+0x8A)==0x2EA0);   /* home layout */
-            assert(vram[0xC000+0xA0*32]==0xA0&&vram[0xC000+0xB1*32]==0xB1);
-            assert(vram[0xC000+0x60*32]==0);                         /* others untouched */
-            assert(ram[0xDFE0]==0x66&&ram[0x07E0]==0x66);           /* shadow + working */
+            assert(slot==0&&som_fam_u16(ram+0xE600+0x8A)==0x2A40);  /* destination layout */
+            assert(vram[0xC000+0x40*32]==0xA0&&vram[0xC000+0x51*32]==0xB1);
+            assert(vram[0xC000+0xA0*32]==0);                         /* old map untouched */
+            assert(vram[0xC000+0x60*32]==0);                         /* other slots untouched */
+            assert(ram[0xDFA0]==0x66&&ram[0x07A0]==0x66);           /* target palette */
+            assert(ram[0xDFE0]==0&&ram[0x07E0]==0);                 /* old palette untouched */
             memcpy(ram+0xE600,slots_before,sizeof(slots_before));
             memcpy(ram+0xDFE0,pal_before,sizeof(pal_before));
         }

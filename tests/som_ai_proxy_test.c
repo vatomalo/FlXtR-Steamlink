@@ -1535,30 +1535,38 @@ int main(void){
             memcpy(ram+0xA8,camera,sizeof(camera));
             disciplines.selected=keep_class;hero[0x1E4]=keep_weapon;
         }
-        /* Samurai A on a combat map: Ukemi is the game's cartwheel (reaction
-         * 0x13); with no direction it goes back, with forward held it goes
-         * forward (he is turned round for it) and faces forward again after. */
+        /* Samurai A: Ukemi, a 54 px roll (back with no direction, forward
+         * with forward held) drawn as the hero's somersault from the frame
+         * pack, the hero hidden meanwhile and shown again after. */
         {
-            const uint8_t keep=disciplines.selected,keep_ed=ram[0xED];
+            const uint8_t keep=disciplines.selected;
+            static uint8_t pack[10+44+6+6];
+            memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            pack[10]=0xC0;pack[11]=0xFA;pack[12]=2;pack[13]=2;   /* boy somersault, side */
+            pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=1;
+            pack[60]=1;pack[63]=1;pack[64]=1;pack[65]=1;
+            uint8_t *keep_pack=cartwheel_pack;size_t keep_size=cartwheel_pack_size;
+            const int keep_tried=cartwheel_pack_tried;
+            cartwheel_pack=pack;cartwheel_pack_size=sizeof(pack);cartwheel_pack_tried=1;
             disciplines.selected=SOM_DISC_BUSHIDO;
             for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;   /* nobody to grab */
-            ram[0xED]|=0x80u;
+            uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
             for(unsigned forward=0;forward<2u;forward++){
                 hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
-                hero[0x011]=0;hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
+                hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x0E]=0;hero[0x180]=0x80;
                 const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
                 mocked_buttons=(uint16_t)(a|(forward?1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT:0u));
                 som_input_poll();mocked_buttons=0;som_input_poll();
-                assert(evade_active&&cartwheel_native&&hero[0x1E5]==0x13);
-                assert(hero[0x010]==(forward?0x82:0x02));             /* turned for forward */
-                hero[0x01C]=0x40;hero[0x011]=0x93;                      /* the game plays it */
-                for(unsigned f=0;f<SOM_CARTWHEEL_FRAMES+20u;f++){
-                    if(f==25u)hero[0x01C]=0;                            /* pose over */
-                    som_hop_step();som_evade_tick();frame_number++;
-                }
-                assert(!evade_active&&hero[0x010]==0x02);
+                assert(evade_active&&!cartwheel_native&&ukemi.active&&(hero[0x0E]&0x80u));
+                assert(ukemi.dir==(forward?2u:3u));                    /* 3: mirrored side */
+                for(unsigned f=0;f<40u;f++){som_hop_step();som_evade_tick();frame_number++;}
+                assert(!evade_active&&!ukemi.active&&!(hero[0x0E]&0x80u));
+                assert(som_bun_u16(hero+2)==(forward?200+54:200-54)&&hero[0x010]==0x02);
             }
-            hero[0x01C]=0;hero[0x011]=0;hero[0x1E5]=0xFF;ram[0xED]=keep_ed;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            cartwheel_pack=keep_pack;cartwheel_pack_size=keep_size;cartwheel_pack_tried=keep_tried;
             disciplines.selected=keep;
         }
         /* Mage A: Blink step, the carried dodge with the hero hidden while

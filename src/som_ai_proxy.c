@@ -892,6 +892,12 @@ static int cartwheel_pack_tried;
 static int bash_kick,flykick_from_ai;
 static SomNpcWorkState flykick;
 static int flykick_hid;
+/* Ukemi (ninja, samurai): the carried dodge drawn as the hero's own
+ * somersault (pose script 34, the cannon flight's tuck and flip; pack kinds
+ * 0xC0 + hero, tools/som_cartwheel.py) with the hero hidden meanwhile. */
+#define SOM_UKEMI_KIND 0xC0u
+static SomNpcWorkState ukemi;
+static int ukemi_hid;
 static int som_flykick_start(uint8_t *ram);
 /* Fuma (Ninjutsu, boomerang): when the hero's boomerang hits a monster, a
  * shadow clone appears in smoke beside it, on the hero's side, swings the
@@ -2817,6 +2823,26 @@ static int som_evade_start(uint8_t *ram){
         hero[0x0E]|=0x80u;
         som_bun_boom(bunshin_booms,(int)som_bun_u16(hero+2),(int)som_bun_u16(hero+4),1,frame_number);
     }
+    if(!cartwheel_native&&!evade_blink&&
+       (disciplines.selected==SOM_DISC_NINJUTSU||disciplines.selected==SOM_DISC_BUSHIDO)){
+        if(!cartwheel_pack_tried){
+            cartwheel_pack_tried=1;
+            som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
+        }
+        const unsigned id=hero[0x180];
+        const unsigned pack_facing=dx?2u:dy>0?1u:0u;
+        SomWorkEntry entry;
+        if(cartwheel_pack&&id>=0x80u&&id<=0x82u&&
+           som_work_find(cartwheel_pack,cartwheel_pack_size,SOM_UKEMI_KIND+id-0x80u,pack_facing,&entry)){
+            memset(&ukemi,0,sizeof(ukemi));
+            ukemi.active=1;ukemi.slot=0;ukemi.kind=id;
+            ukemi.dir=dx<0?3u:pack_facing;
+            ukemi.start=frame_number;ukemi.entry=entry;ukemi.own_palette=1;
+            ukemi.length=som_work_swing_frames(&entry);
+            ukemi_hid=!(hero[0x0E]&0x80u);
+            hero[0x0E]|=0x80u;
+        }
+    }
     char dodge_text[32];snprintf(dodge_text,sizeof(dodge_text),"^%s",
                                  evade_blink?"Blink step":dodge.name);
     som_overlay_set(&overlay,dodge_text,SOM_MESSAGE_FRAMES/2u);
@@ -2948,7 +2974,7 @@ static void som_hop_step(void){
                     hero[0x01C],hero[0x011]);
         }else cartwheel_fallback=0;
     }
-    if(!cartwheel_native&&!evade_blink){trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;}
+    if(!cartwheel_native&&!evade_blink&&!ukemi.active){trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;}
     if(!evade_xp_given&&disciplines.selected<SOM_DISCIPLINE_COUNT){
         const int near=som_bun_toucher(ram,x,y,SOM_XP_NEAR_MISS_PX,SOM_XP_NEAR_MISS_PX,familiar.slot);
         if(near>=0){
@@ -3182,6 +3208,10 @@ static void som_evade_tick(void){
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
     som_evade_blink_end(ram);
+    if(ukemi.active){
+        if(ukemi_hid)ram[0xE00E]&=(uint8_t)~0x80u;
+        ukemi.active=0;ukemi_hid=0;
+    }
     if(native_restore_facing>=0){ram[0xE010]=(uint8_t)native_restore_facing;native_restore_facing=-1;}
     evade_active=0;hop_frames_left=0;cartwheel_native=0;issen_active=0;
 }
@@ -4942,7 +4972,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||flykick.active||companion.draw.active||
+    const int worker=(npc_work.active||flykick.active||ukemi.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -5001,6 +5031,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                   pixel_format);
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+            if(ukemi.active)
+                som_npc_work_draw(&ukemi,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
             if(fuma.active&&frame_number>=fuma.start)
                 som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,

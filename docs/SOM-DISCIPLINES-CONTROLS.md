@@ -705,3 +705,35 @@ Magic keeps the game's names.
 - Necromancy: X raises the dead (after a kill); Psionics: X takes over a mind.
 - For all four, **X again while one is bound releases it** at once (the mind-controlled
   monster is let go, a familiar is dismissed). Their extra spells are on the B/Y spell sets.
+
+### Ninjutsu X then A: Blink (2026-11-20)
+
+Ninja Storm style: a tapped X waits a quarter second before the jutsu goes off. Press **A in
+that wait** and the jutsu becomes **Blink**, the higher evade: up to 96 px toward the held
+direction (else the facing), stopping before any wall. Blink costs 10 Chakra and 2 AP, and
+has its 10 s cooldown.
+
+### FlXtR MP and AP (2026-11-20)
+
+Every class has its own energy, named its own way: Spirit (Swordsmanship), Chi (Martial
+Arts), Chakra (Ninjutsu), Mana (Magic), Faith (Divine Arts), Malice (Dark Arts), Bond
+(Summoning), Rhythm (Support & Dance), Flow (Weapon Flow), Nerve (Roguecraft), Ki (Bushido),
+Focus (Archery), Zeal (Vampire Hunting), Souls (Necromancy), Steam (Artifice), Psi (Psionics).
+It holds 50 + 2 per class level (max 250), refills 3 a second, and 10 a second standing still
+(no D-pad: charging). The class techniques spend it; the game's spells keep the game's MP.
+
+AP: four pips shared by the evades, one back every 1.5 s. The HUD shows the energy bar and the
+pips under the class and weapon names.
+
+| Technique | Energy | AP |
+|---|---|---|
+| Evade (any class's A dodge) | 0 | 1 |
+| Blink (X then A), AI Blink | 10 | 2 / 1 |
+| Kawarimi (hold A) | 15 | 1 |
+| Shunshin, class L2+X move, class X move, clone jutsu | 15 | 0 |
+| Issen, Hundred Fists | 20 | 0 |
+| Iaijutsu, Telekinesis | 10 | 0 |
+| Flying kick, grab and throw | 8 | 0 |
+| Shield bash | 5 | 0 |
+
+Releasing a bound familiar or mind (X again) is free.

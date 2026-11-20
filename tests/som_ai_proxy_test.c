@@ -87,6 +87,7 @@ static void reset_proxy(void){
     switch_holding=switch_spoiled=0;
 }
 int main(void){
+    energy_free=1;              /* moves cost nothing here; the cost test turns it off */
     char path[]="/tmp/flxtr-ai-test-XXXXXX";
     char wram_path[]="/tmp/flxtr-wram-test-XXXXXX";
     char wram_tmp_path[]="/tmp/flxtr-wram-temp-test-XXXXXX";
@@ -1687,6 +1688,57 @@ int main(void){
             memcpy(ram+0xA8,camera,sizeof(camera));
             disciplines.selected=keep;
         }
+        /* FlXtR MP/AP: a technique is paid from the class's own pool
+         * (Chakra for the ninja) and evades from the AP pips; refused when
+         * short, refilled over time, faster standing still. */
+        {
+            SomEnergy e;som_energy_init(&e);
+            som_energy_tick(&e,2,1,0);
+            assert(e.energy[2]==SOM_ENERGY_BASE&&e.ap==SOM_AP_MAX);
+            assert(!strcmp(som_energy_name(2),"Chakra")&&!strcmp(som_energy_name(1),"Chi"));
+            som_energy_take(&e,2,45,4);
+            assert(!som_energy_can(&e,2,10,0)&&!som_energy_can(&e,2,0,1)&&som_energy_can(&e,2,5,0));
+            for(unsigned f=0;f<SOM_ENERGY_STILL_FRAMES*5u;f++)som_energy_tick(&e,2,1,1);
+            assert(e.energy[2]==10&&e.ap==0);
+            for(unsigned f=0;f<SOM_AP_REFILL_FRAMES;f++)som_energy_tick(&e,2,1,0);
+            assert(e.ap==1);
+            assert(som_energy_max(51)==SOM_ENERGY_BASE+100u);
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=14;energy_free=0;
+            energy.started[14]=1;energy.energy[14]=50;energy.ap=0;
+            for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;
+            assert(!som_evade_start(ram)&&!evade_active);               /* no AP: no dodge */
+            energy.ap=1;
+            assert(som_evade_start(ram)&&evade_active&&energy.ap==0);   /* one pip */
+            for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+            hero[2]=200;hero[3]=0;
+            energy_free=1;disciplines.selected=keep;
+        }
+        /* Ninjutsu X then A (Ninja Storm): the tapped jutsu waits, A in the
+         * wait is Blink toward the held direction instead, no jutsu. */
+        {
+            uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=SOM_DISC_NINJUTSU;hero[0x1E4]=1;
+            for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x82;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x0E]=0;hero[0x170]=0;
+            blink_ready=0;x_cast_at=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(x_cast_at&&hero[0x170]==0);                       /* waiting */
+            frame_number+=3;
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+            som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(!x_cast_at&&blink_active&&!evade_active&&blink_tx==200+SOM_BLINK_DASH_PX);
+            for(unsigned f=0;f<60;f++){som_blink_frame(ram);som_input_poll();frame_number++;}
+            assert(!blink_active&&hero[0x170]==0&&som_bun_u16(hero+2)==200+SOM_BLINK_DASH_PX);
+            hero[2]=200;hero[3]=0;hero[0x010]=0x02;hero[0x0E]=0;blink_ready=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            disciplines.selected=keep;
+        }
         /* Samurai Issen (L2+X): a dash-cut that passes a monster cuts it
          * exactly once; he is untouchable meanwhile; then a cooldown. */
         {
@@ -2132,6 +2184,7 @@ int main(void){
         som_input_poll();                        /* press: nothing cast yet */
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
         mocked_buttons=0;som_input_poll();       /* release: not enough MP */
+        for(unsigned f=0;f<=SOM_X_A_WINDOW;f++){frame_number++;som_input_poll();}  /* the A wait */
         assert(hero[0x01C]==0&&hero[0x060]==0&&hero[0x170]==0);
         hero[0x186]=5;near[0x191]=0x80;          /* nearest one is dead */
         hero[0x179]=4;hero[0x17A]=5;             /* stale list from an old cast */
@@ -2140,7 +2193,9 @@ int main(void){
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
         som_input_poll();
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
-        mocked_buttons=0;som_input_poll();       /* tap released: cast */
+        mocked_buttons=0;som_input_poll();       /* tap released: the jutsu waits for A */
+        assert(x_cast_at&&hero[0x170]!=0x0C);
+        for(unsigned f=0;f<=SOM_X_A_WINDOW;f++){frame_number++;som_input_poll();}  /* no A: cast */
         assert(hero[0x170]==0x0C&&hero[0x177]==2&&hero[0x176]==1);
         assert(hero[0x178]==4&&hero[0x179]==0&&hero[0x17A]==0);     /* slot 3 */
         assert(hero[0x172]==0xFF&&hero[0x173]==0xFF&&hero[0x174]==0xFF);
@@ -2212,6 +2267,7 @@ int main(void){
             disciplines.selected=keep;
         }
         /* Holding X steps to the next Ninjutsu spell instead of casting. */
+        x_cast_at=0;                             /* an earlier tap's jutsu, still waiting */
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
         som_input_poll();
         frame_number+=SOM_X_HOLD_FRAMES;som_input_poll();

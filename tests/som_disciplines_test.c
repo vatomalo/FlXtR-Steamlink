@@ -66,7 +66,7 @@ int main(void){
            !strcmp(som_discipline_names[11],"Archery")&&
            !strcmp(som_discipline_names[15],"Psionics"));
     for(unsigned k=0;k<SOM_DISCIPLINE_COUNT;k++)
-        assert(som_disc_has_dodge(k)==(k==0||k==1||k==2||k==9||k==10||k==11));
+        assert(som_disc_has_dodge(k)==(k==0||k==1||k==2||k==3||k==9||k==10||k==11||k==12||k==14));
     {
         SomDisciplines v;som_disc_init(&v);
         unsigned seen[3];

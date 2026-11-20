@@ -116,8 +116,8 @@ static uint8_t combo_ids[3],combo_live[3];
 static int combo_input_held;
 static unsigned long combo_hold_start;
 static int combo_hold_tried;
-/* R2+B: native level-1 charged primary attack.
- * R2+Y: native level-2 charged secondary attack.
+/* L2+B: native level-1 charged primary attack.
+ * L2+Y: native level-2 charged secondary attack.
  * These are existing weapon animations, not new ROM routines. */
 static unsigned special_stage,special_weapon;
 static unsigned long special_started;
@@ -161,7 +161,7 @@ static int idle_started;
 static uint8_t ring_ai_initial_cell;
 static unsigned long ring_ai_grace_until;
 /* In-game switch that works with a solo hero (the Action Grid only exists
- * once companions have joined): hold R2 or R3 ALONE for one second and
+ * once companions have joined): hold L2 or R3 ALONE for one second and
  * release to raise the same AI signal as "ai_on". The SNES has neither, so
  * the game never reacts to them. (Select cannot be used: on the Steam Link
  * it is RetroArch's hotkey-enable button, which RetroArch withholds from
@@ -714,7 +714,7 @@ static void som_next_spell(void){
     if(n<=base)return;                    /* Bushido / Weapon Flow: no spells */
     spell_cursor[d]=(spell_cursor[d]+1u)%(n-base);
 }
-/* Seals: D-pad presses counted while R2 is held (som_magic.h). */
+/* Seals: D-pad presses counted while L2 is held (som_magic.h). */
 static unsigned seal_count;
 static int seal_mode;
 static int special_from_ai;           /* special_<n> command while the AI plays */
@@ -765,7 +765,7 @@ static int som_shunshin_start(uint8_t *ram);
 /* Bushido kit (2026-11-20). Issen (L2+X): a straight dash-cut along the
  * facing, SOM_ISSEN_SPEED px x SOM_ISSEN_FRAMES (~84 px), untouchable like
  * the dodge; each monster passed is cut once. Iai counter: a hit landing
- * on the samurai's guard (R1) is cancelled and answered with a cut, on the
+ * on the samurai's guard (R2) is cancelled and answered with a cut, on the
  * Iaijutsu cooldown. Zanshin: a kill readies Iaijutsu at once. */
 #define SOM_ISSEN_SPEED 6
 #define SOM_ISSEN_FRAMES 14u
@@ -844,7 +844,7 @@ static unsigned long telekinesis_ready;
 static int som_telekinesis_cast(uint8_t *ram);
 static int som_class_x(uint8_t *ram);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
- * style): tap L1 (without B or Y in between) to lock onto the nearest
+ * style): tap L1 to lock onto the nearest
  * monster within SOM_LOCK_RANGE px, tap again to let go. While locked the
  * hero keeps facing it, before and after the game's frame, so walking
  * strafes around it and every attack goes its way; a marker floats over
@@ -852,7 +852,7 @@ static int som_class_x(uint8_t *ram);
  * SOM_LOCK_DROP px away, and on a map change. Player only (not the AI). */
 #define SOM_LOCK_RANGE 160
 #define SOM_LOCK_DROP 220
-static int lock_slot=-1,l1_alone;
+static int lock_slot=-1;
 static uint8_t lock_identity;
 static unsigned lock_map;
 static void som_lock_toggle(uint8_t *ram);
@@ -872,7 +872,7 @@ static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int di
 /* R1+A bash (swordsman): the game's own run for up to SOM_BASH_LUNGE_FRAMES
  * (A held: 3 px per frame, stopped by walls, hero-movement.md 4.1), then one
  * frame with nothing pressed (A released), then the game's own sword swing
- * (B) at a full gauge. Only the pad the game sees is changed; R1 (block),
+ * (B) at a full gauge. Only the pad the game sees is changed; R2 (block),
  * the D-pad, Y and X are hidden while it plays. */
 #define SOM_BASH_LUNGE_FRAMES 14ul      /* ~42 px */
 #define SOM_BASH_STRIKE_FRAMES 3ul
@@ -1156,7 +1156,7 @@ static void som_perk_hit(uint8_t *ram,unsigned slot,unsigned drop,unsigned hp_af
     }
     monster_hit_frame[slot]=frame_number;
 }
-/* The guard is up: the AI's block action, or the player holding R. */
+/* The guard is up: the AI's block action, or physical R2. */
 static int som_guarding(void){
     return (armed&&active_action==SOM_ACT_BLOCK)||
            (!ring_ai_enabled&&(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R2)));
@@ -1445,8 +1445,8 @@ static void som_input_poll(void){
         const uint16_t l2_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
         const uint16_t b_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         const int field=som_y_field_play();
-        /* Seals: with R2 held, each D-pad press is one seal (hidden from
-         * the game); B or Y then fires charge level = seals. */
+        /* Seals: with L2 held, D-pad signs become seals; B/Y charges.
+         * R2 remains the independent physical guard. */
         const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
@@ -1467,7 +1467,7 @@ static void som_input_poll(void){
                 som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
             }
         }else{seal_mode=0;seal_count=0;}
-        /* R2+attack is handled before ordinary B/Y weapon switching. */
+        /* L2+attack is handled before ordinary B/Y weapon switching. */
         if(field&&!special_stage&&!special_suppress&&!ring_ai_enabled&&
            (current&l2_bit)&&(pressed&(y_bit|b_bit))&&!(current&r2)){
             unsigned which=(pressed&y_bit)?1u:0u;
@@ -1490,16 +1490,14 @@ static void som_input_poll(void){
         style_b_hidden=field&&(current&(l3_bit|b_bit))==(l3_bit|b_bit)&&
             !ring_ai_enabled&&!som_manual_disciplines&&
             disciplines.selected<SOM_DISCIPLINE_COUNT;
-        if(pressed&l1_bit)l1_alone=1;
-        if(wram&&!ring_ai_enabled&&l1_alone&&(last_physical_buttons&l1_bit)&&!(current&l1_bit)){
-            l1_alone=0;som_lock_toggle(wram);
-        }
+        if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&(pressed&l1_bit))
+            som_lock_toggle(wram); /* immediate L1 tap, no B/Y dependency */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (pressed&r1_bit)&&!(current&(l2_bit|r2)))
             som_style_cycle(-1);
         if(style_b_hidden&&(pressed&b_bit))som_style_cycle(-1);
         if(style_b_hidden)b_weapon_blocked=1;
-        /* Samurai's throw: R1 (block) + the D-pad away from the facing. */
+        /* Samurai's throw: R2 (block) + D-pad away from the facing. */
         if(wram&&disciplines.selected==SOM_DISC_BUSHIDO&&!ring_ai_enabled&&
            (current&r2)&&(pressed&dpad)&&
            som_throw_back_pressed(wram,pressed))
@@ -3690,7 +3688,7 @@ static void som_style_after(uint8_t *ram){
     }
 }
 /* ---- Samurai's throw (player's design, 2026-11-19) ----
- * A defensive move: holding block (R1), press the D-pad away from the
+ * A defensive move: holding block (R2), press the D-pad away from the
  * facing with a monster in contact, and the samurai grabs it and throws it
  * over himself: the monster flies SOM_THROW_FRAMES to the spot
  * SOM_THROW_PX behind him (open ground only, else no throw), lands for
@@ -5150,17 +5148,16 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,class_title,
                           hud_x+SOM_HUD_LABEL_DX,hud_y+SOM_HUD_LABEL_DY,0,
                           som_overlay_color(pixel_format,255,255,255));
-        /* The weapon in hand by its game name, the style after it. */
+        /* Only FlXtR's selected style or custom class-weapon name.
+         * Never display native forge-grade strings like 'Masamune Katana'. */
         const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         const unsigned type=ram?ram[0xE1E4]:8u;
         if(type<8u&&ram[0xCC54u+type]!=0xFF){
             char text[48];
-            unsigned index;
-            const SomWeaponStyle *st=som_style_held(ram,&index);
-            const char *name=som_weapon_name(type,ram[0xCC54u+type]&0x0Fu);
+            const unsigned slot=som_class_arm_slot(disciplines.selected,type);
+            const char *name=som_custom_weapon_name(&styles,disciplines.selected,slot);
             if(name[0]){
-                if(st)snprintf(text,sizeof(text),"%s %s",name,st->name);
-                else snprintf(text,sizeof(text),"%s",name);
+                snprintf(text,sizeof(text),"%s",name);
                 /* Centred under the class title. */
                 const int centre=hud_x+SOM_HUD_LABEL_DX+((int)strlen(class_title)*6-1)/2;
                 som_overlay_label(overlay_frame,width,height,pitch,pixel_format,text,

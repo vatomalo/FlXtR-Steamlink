@@ -98,7 +98,7 @@ static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
     (void)weapon;
     switch(discipline){
     case 2: case 10:                   /* ninja, samurai: Ukemi, the cartwheel, else 54 px */
-        d.speed=3u;d.frames=18u;d.name="Ukemi";d.cartwheel=SOM_REACT_CARTWHEEL;break;
+        d.speed=3u;d.frames=18u;d.name="Ukemi";d.cartwheel=SOM_REACT_UKEMI;break;
     case 0: case 1: case 9:            /* swordsman, monk, rogue: cartwheel, else 64 px */
         d.speed=4u;d.frames=16u;d.name="Cartwheel";d.cartwheel=SOM_REACT_CARTWHEEL;break;
     case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */

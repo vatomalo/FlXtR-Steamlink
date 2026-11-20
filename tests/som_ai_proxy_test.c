@@ -2246,7 +2246,7 @@ int main(void){
             hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x0E]=0;hero[0x1E5]=0xFF;
             mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
             som_input_poll();mocked_buttons=0;som_input_poll();
-            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==3u);  /* mirrored */
+            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==2u);  /* right: as drawn */
             assert(hop_dx==2&&hero[0x010]==0x02&&(hero[0x0E]&0x80u));
             for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
             assert(!evade_active&&!ukemi_draw.active&&!(hero[0x0E]&0x80u));
@@ -2257,7 +2257,7 @@ int main(void){
             hero[2]=200;hero[3]=0;hero[0x010]=0x00;hero[0x0E]=0;hero[0x1E5]=0xFF;
             mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
             som_input_poll();mocked_buttons=0;som_input_poll();
-            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==3u&&hop_dx==2);
+            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==2u&&hop_dx==2);
             for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
             assert(!evade_active&&som_bun_u16(hero+2)==200+26&&hero[0x010]==0x00);
             hero[2]=200;hero[3]=0;hero[0x010]=0x02;hero[0x0E]=0;hero[0x1E5]=0xFF;
@@ -2266,6 +2266,19 @@ int main(void){
             assert(evade_active&&!ukemi_draw.active);
             for(unsigned f=0;f<60u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
             hero[0x1E5]=0xFF;hero[0x010]=0x02;
+            /* Up/down + A: drawn with the game's down-cartwheel look, carried
+             * the way pressed (26 px), on any map; facing kept. */
+            for(int sgn=-1;sgn<=1;sgn+=2){
+                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x0E]=0;hero[0x1E5]=0xFF;
+                mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|
+                    (1u<<(sgn>0?RETRO_DEVICE_ID_JOYPAD_DOWN:RETRO_DEVICE_ID_JOYPAD_UP)));
+                som_input_poll();mocked_buttons=0;som_input_poll();
+                assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&
+                       ukemi_draw.dir==SOM_UPDOWN_CART_DIR&&hop_dy==2*sgn&&hero[0x1E5]==0xFF);
+                for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
+                assert(!evade_active&&som_bun_u16(hero+4)==(unsigned)(200+26*sgn)&&hero[0x010]==0x02);
+            }
+            hero[4]=200;hero[5]=0;
             /* Every cartwheel: the rogue, and the monk's Ukemi to the side
              * (the monk tumbles now, Ukemi like the ninja and samurai). */
             assert(!strcmp(som_disc_dodge(1,0).name,"Ukemi"));
@@ -2277,8 +2290,7 @@ int main(void){
                 mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
                 som_input_poll();mocked_buttons=0;som_input_poll();
                 assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&hop_dx>0);
-                /* Right: the rogue's frames mirrored, Ukemi's (the monk) not. */
-                assert(ukemi_draw.dir==(classes[c]==SOM_DISC_MARTIAL_ARTS?2u:3u));
+                assert(ukemi_draw.dir==2u);              /* right: as drawn, every class */
                 for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
                 assert(!evade_active&&som_bun_u16(hero+2)>200&&hero[0x010]==0x02);
             }

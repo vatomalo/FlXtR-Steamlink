@@ -1061,6 +1061,7 @@ static int cartwheel_pack_tried;
 #define SOM_SIDE_CART_FRAMES 13u
 /* Ukemi's up/down tumble is the cannon-flight ball: drawn this size, about
  * the feet, so it rolls on the ground rather than flying (player, 2026-11-20). */
+#define SOM_UPDOWN_CART_DIR 2u     /* which mirroring matches the game's down cartwheel */
 #define SOM_UKEMI_SCALE_PCT 85      /* 75 was slightly too small (player) */
 static SomNpcWorkState ukemi_draw;
 static int ukemi_hid;
@@ -3301,6 +3302,43 @@ static void som_ukemi_frame(uint8_t *ram){
        frame_number-ukemi_draw.start>=ukemi_draw.length)
         som_ukemi_end(ram);
 }
+/* Up + A: the game's cartwheel facing up goes down; while its pose plays,
+ * each frame's step (and any camera scroll with it) is turned the other
+ * way, onto open ground only. */
+static int cart_flip_y;
+static unsigned cart_last_y,cart_last_cam;
+static unsigned som_hero_place(const uint8_t *hero);
+static void som_camera_follow(uint8_t *ram,int dx,int dy);
+/* Walls only (terrain 3, layer switches): the full box check refused
+ * ground the hero had just cartwheeled over (headless map 130). */
+static int som_cart_ground(const uint8_t *ram,int x,int y,unsigned place){
+    if(x<0||y<0)return 0;
+    const int layer2=(place&0x80u)!=0;
+    const unsigned index=(((unsigned)y>>4)&0x7Fu)*128u+(((unsigned)x>>4)&0x7Fu);
+    const unsigned id=ram[(layer2?0x14000u:0x10000u)+index];
+    const uint8_t *a=ram+(layer2?0x1BC00u:0x1B800u)+id*4u;
+    return !(a[0]&8u)&&(a[0]&7u)!=3u;
+}
+static void som_cart_flip_after(uint8_t *ram){
+    if(!cart_flip_y)return;
+    uint8_t *hero=ram?ram+0xE000u:NULL;
+    if(!hero||!evade_active||!cartwheel_native||hero[0]!=1){cart_flip_y=0;return;}
+    if(hero[0x011]!=SOM_CARTWHEEL_POSE){
+        if(frame_number-evade_started>SOM_CARTWHEEL_CHECK)cart_flip_y=0;   /* over, or refused */
+        cart_last_y=som_word(hero+4);cart_last_cam=som_word(ram+0xAA);
+        return;
+    }
+    const int d=(int)som_word(hero+4)-(int)cart_last_y;
+    const int c=(int)som_word(ram+0xAA)-(int)cart_last_cam;
+    int ny=(int)cart_last_y;
+    if(d){
+        const int want=(int)cart_last_y-d;
+        if(som_cart_ground(ram,(int)som_word(hero+2),want-4,som_hero_place(hero)))ny=want;
+        som_put_word(hero+4,(uint16_t)ny);
+    }
+    if(c)som_camera_follow(ram,0,-2*c);
+    cart_last_y=(unsigned)ny;cart_last_cam=som_word(ram+0xAA);
+}
 static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
     uint8_t *hero=ram+0xE000u;
     if(!(ram[0xED]&0x80u)||hero[0x1E5]!=0xFFu||hero[0x01C]==0x40u)return 0;
@@ -3383,10 +3421,29 @@ static int som_evade_start_raw(uint8_t *ram){
     const int backward=(dx>0&&facing_before==0x82u)||(dx<0&&facing_before==0x02u);
     const int forward_cart=(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class)&&dx&&!backward&&
         som_move_begin_draw(ram,dx,0,SOM_FORWARD_CART_KIND);
-    /* The frames face the other way: mirrored for the cartwheel classes;
-     * Ukemi's cartwheel the other way round (player, 2026-11-21: Ukemi's
-     * faced the wrong direction). */
-    if(forward_cart)ukemi_draw.dir=(dx<0)!=(ukemi_class!=0)?2u:3u;
+    /* Mirrored to the left (player, 2026-11-21: both the cartwheel classes'
+     * and Ukemi's faced the wrong way the other way round). */
+    if(forward_cart)ukemi_draw.dir=dx<0?3u:2u;
+    /* Up/down (cartwheel classes): always the game's own cartwheel with
+     * the hero facing up (its back-view picture, player 2026-11-21). It
+     * travels away from the facing, so down plays as it is and up has its
+     * motion mirrored after each game frame (som_cart_flip_after). Off
+     * combat maps the game refuses it: drawn instead (it was a bare slide). */
+    const int vertical_cart=!dx&&dy&&dodge.cartwheel==SOM_REACT_CARTWHEEL;
+    int updown_native=0;
+    if(vertical_cart&&!forward_cart){
+        updown_native=som_cartwheel_request(ram,0,1,SOM_REACT_CARTWHEEL);   /* faces up */
+        cart_flip_y=updown_native&&dy<0;
+        cart_last_y=som_word(hero+4);cart_last_cam=som_word(ram+0xAA);
+    }
+    const int updown_cart=vertical_cart&&!forward_cart&&!updown_native&&
+        som_move_begin_draw(ram,1,0,SOM_FORWARD_CART_KIND);
+    if(updown_cart){
+        ukemi_draw.dir=SOM_UPDOWN_CART_DIR;
+        hop_dx=0;hop_dy=dy*(int)SOM_SIDE_CART_SPEED;
+        hop_frames_left=SOM_SIDE_CART_FRAMES+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
+        evade_frames=hop_frames_left+SOM_DODGE_GRACE;
+    }
     /* A cartwheel to the side goes the game's own distance (about 25 px in
      * 25 frames), not the 54-64 px of the old hop (player: too far). */
     const int side_cart=dx&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class);
@@ -3396,8 +3453,9 @@ static int som_evade_start_raw(uint8_t *ram){
         evade_frames=hop_frames_left+SOM_DODGE_GRACE;
     }
     const unsigned side_move=hop_frames_left;
-    cartwheel_native=!forward_cart&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
-        som_cartwheel_request(ram,dx,dy,SOM_REACT_CARTWHEEL);
+    cartwheel_native=updown_native||(!forward_cart&&!updown_cart&&!vertical_cart&&
+        (dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
+        som_cartwheel_request(ram,dx,dy,SOM_REACT_CARTWHEEL));
     if(ukemi_class&&!dx){
         if(som_ukemi_begin_draw(ram,dx,dy))
             ukemi_draw.scale_pct=SOM_UKEMI_SCALE_PCT;     /* a ball on the floor */
@@ -6752,6 +6810,8 @@ RETRO_API void retro_run(void){
         som_perks_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%30u==0u)som_prog_frame();
     if(test_enabled&&on_turbo)som_special_tick();
+    if(test_enabled&&on_turbo&&cart_flip_y)
+        som_cart_flip_after((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_evade_tick();
     if(test_enabled&&on_turbo)som_weapon_trace_frame();
     if(test_enabled&&on_turbo)som_ring_ai_tick();

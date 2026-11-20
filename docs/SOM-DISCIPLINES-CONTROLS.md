@@ -552,3 +552,31 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
 - **Volley (archer):** three arrows in a cone: every monster up to 128 px ahead and within
   16 + distance/3 px of the line takes 10 + Archery level. 3 s cooldown.
 - An L2+X release is never read as a plain X release (no stray cast or Iaijutsu).
+
+### Class weapons: real game weapons, class stats (2026-11-20)
+
+Each class's weapons are real game weapons pinned at a fixed forge grade (their art and
+the ROM's name, shown under the class title on the HUD with the style after it), with
+stats set by the class, not by the grade. The B weapon keeps its styles (power, speed,
+reach: Tanto / Katana / Dai Katana for the samurai's Masamune). The Y weapon (and
+Weapon Flow's X bow) hits like its type's tier-0 row at class level 1 rising to its top
+plain row at class level 8, times the class's power share (`som_class_arms`).
+
+| Class | B | Y | X |
+|---|---|---|---|
+| Swordsman | Excalibur | Gold Axe | |
+| Monk | Hyper Fist | Coral Spear (90 %) | |
+| Ninja | Kusanagi | Shuriken | |
+| Mage | Silver Flail (70 %) | Full Moon Ring (70 %) | |
+| Cleric | Daedalus' Lance (75 %) | Morning Star (70 %) | |
+| Warlock | Diamond Flail (75 %) | Imp Harpoon (70 %) | |
+| Summoner | Cobra Shuttle (75 %) | Chain Flail (70 %) | |
+| Dancer | Silver Flail (75 %) | Moogle Claws (70 %) | |
+| Weaponmaster | Orchicalcum | Halberd | Wingbow |
+| Rogue | Kusanagi | Longbow (95 %) | |
+| Samurai | Masamune (110 %) | Wingbow (85 %) | |
+| Archer | Garuda Buster (115 %) | Valkyrian (110 %) | |
+
+The pinned grade replaces whatever grade the weapon had (orb forging no longer changes
+what a class weapon hits for). Grass: the AI already takes the sword out to cut and puts
+the class weapon back after (`[grass] sword out`).

@@ -597,6 +597,36 @@ static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {1,5},   /* Bushido: katana (sword), yumi (bow) */
     {5,7},   /* Archery: bow, javelin */
 };
+/* Each class's weapons are real game weapons at a fixed forge grade (their
+ * art and name), with stats set by the class, not by the grade (player's
+ * design, 2026-11-20): the B weapon keeps its styles (som_weapon_styles.h,
+ * e.g. the samurai's Masamune as Tanto, Katana or Dai Katana); the Y weapon
+ * (and Weapon Flow's X bow) hits like the type's tier-0 row at class level 1
+ * rising to its top plain row at class level 8, times power_pct. Grades are
+ * rows the direct equip can apply (no stat-bonus rows). Names: the ROM's
+ * name block (Turbo: sword 5 = Masamune). Slots: B, Y, X (0xFF = none). */
+typedef struct { uint8_t grade, power_pct; } SomClassArm;
+static const SomClassArm som_class_arms[SOM_DISCIPLINE_COUNT][3]={
+    {{4,100},{4,100},{0xFF,0}},   /* Swordsman: Excalibur, Gold Axe */
+    {{5,100},{5, 90},{0xFF,0}},   /* Monk: Hyper Fist, Coral Spear */
+    {{2,100},{7,100},{0xFF,0}},   /* Ninja: Kusanagi, Shuriken */
+    {{4, 70},{3, 70},{0xFF,0}},   /* Mage: Silver Flail, Full Moon Ring */
+    {{8, 75},{5, 70},{0xFF,0}},   /* Cleric: Daedalus' Lance, Morning Star */
+    {{7, 75},{5, 70},{0xFF,0}},   /* Warlock: Diamond Flail, Imp Harpoon */
+    {{5, 75},{3, 70},{0xFF,0}},   /* Summoner: Cobra Shuttle, Chain Flail */
+    {{4, 75},{2, 70},{0xFF,0}},   /* Dancer: Silver Flail, Moogle Claws */
+    {{3,100},{4,100},{6,100}},    /* Weaponmaster: Orchicalcum, Halberd, Wingbow */
+    {{2,100},{2, 95},{0xFF,0}},   /* Rogue: Kusanagi, Longbow */
+    {{5,110},{6, 85},{0xFF,0}},   /* Samurai: Masamune, Wingbow */
+    {{8,115},{8,110},{0xFF,0}},   /* Archer: Garuda Buster, Valkyrian */
+};
+/* The class's grade for weapon `type` (B, then Y, then X), else 0xFF. */
+static unsigned som_class_arm_slot(unsigned cls,unsigned type){
+    if(cls>=SOM_DISCIPLINE_COUNT)return 3u;
+    for(unsigned slot=0;slot<2u;slot++)if(som_disc_weapons[cls][slot]==type)return slot;
+    if(cls==SOM_DISC_FLOW&&type==5u)return 2u;
+    return 3u;
+}
 /* Discipline experience (src/som_xp.h): only verified events reach here.
  * The file is written on every level-up and at most once a minute. */
 static SomXpDecay xp_decay;
@@ -3186,6 +3216,30 @@ static void som_styles_load(void){
     }
     fclose(in);
 }
+/* The game's name of weapon `type` at `grade`: the ROM's name block (event
+ * texts 0x800+, bank $CA; weapons from entry 0x32, som-decomp
+ * tools/names.py). Cached; "" without the ROM. */
+static const char *som_weapon_name(unsigned type,unsigned grade){
+    static char names[72][24];
+    static uint8_t done[72];
+    if(type>=8u||grade>8u)return "";
+    const unsigned i=type*9u+grade;
+    if(done[i])return names[i];
+    const unsigned ev=0x800u+0x32u+i;
+    const uint8_t *p=som_rom_at(0xCA0000u+(ev-0x400u)*2u,2u);
+    if(!p)return "";
+    const uint8_t *t=som_rom_at(0xCA0000u+(unsigned)(p[0]|p[1]<<8),23u);
+    if(!t)return "";
+    unsigned n=0;
+    for(;n<23u&&t[n];n++){
+        const uint8_t c=t[n];
+        names[i][n]=c==0x80u?' ':c>=0x81u&&c<=0x9Au?(char)(c-0x20u):
+                    c>=0x9Bu&&c<=0xB4u?(char)(c-0x5Au):c>=0xB5u&&c<=0xBEu?(char)(c-0x85u):
+                    c==0xBFu?'.':c==0xC2u?'\'':'?';
+    }
+    names[i][n]=0;done[i]=1;
+    return names[i];
+}
 /* Highest tier of `type` whose row the direct equip can apply. */
 static unsigned som_style_top_tier(unsigned type){
     for(unsigned t=9u;t-->0u;){
@@ -3248,31 +3302,50 @@ static void som_style_frame(uint8_t *ram){
     unsigned index;
     const SomWeaponStyle *any=disciplines.selected<SOM_DISCIPLINE_COUNT?
         som_style_of(&styles,disciplines.selected,&index):NULL;
-    if(any&&weapon_gfx_verified){
-        const unsigned type=any->weapon,top=som_style_top_tier(type);
-        uint8_t *owned=ram+0xCC54u+type;
-        if(*owned!=0xFF&&(*owned&0x0Fu)<top&&(hero[0x1E4]!=type||som_field_idle(ram))){
-            *owned=(uint8_t)((*owned&0xF0u)|top);
-            fprintf(stderr,"[som-ai] STYLE %s pinned at tier %u\n",som_weapon_types[type],top);
-            if(hero[0x1E4]==type){            /* re-apply the held row at the new tier */
-                som_equip_weapon_row(ram,type,1);
-            }
+    (void)any;
+    const unsigned cls=disciplines.selected;
+    if(cls<SOM_DISCIPLINE_COUNT&&weapon_gfx_verified){
+        for(unsigned type=0;type<8u;type++){
+            const unsigned slot=som_class_arm_slot(cls,type);
+            if(slot>2u)continue;
+            const unsigned grade=som_class_arms[cls][slot].grade;
+            const uint8_t *r=som_rom_at(0xD01000u+12u*(type*9u+grade),12u);
+            uint8_t *owned=ram+0xCC54u+type;
+            if(grade>8u||!r||!som_weapon_row_plain(r)||*owned==0xFF||(*owned&0x0Fu)==grade||
+               (hero[0x1E4]==type&&!som_field_idle(ram)))continue;
+            *owned=(uint8_t)((*owned&0xF0u)|grade);
+            fprintf(stderr,"[som-ai] CLASS %s: %s pinned at grade %u (%s)\n",
+                    som_discipline_titles[cls],som_weapon_types[type],grade,
+                    som_weapon_name(type,grade));
+            if(hero[0x1E4]==type)som_equip_weapon_row(ram,type,1);   /* the new art */
         }
     }
     const SomWeaponStyle *st=som_style_held(ram,&index);
+    SomWeaponStyle arm;unsigned arm_level=0;
+    if(!st&&cls<SOM_DISCIPLINE_COUNT){
+        /* The Y (or X) weapon: class-set stats at the class level. */
+        const unsigned slot=som_class_arm_slot(cls,hero[0x1E4]);
+        if(slot>0u&&slot<3u&&som_class_arms[cls][slot].grade<=8u){
+            arm=(SomWeaponStyle){som_weapon_types[hero[0x1E4]],hero[0x1E4],0,100,
+                                 som_class_arms[cls][slot].power_pct};
+            arm_level=disciplines.level[cls]<SOM_STYLE_MAX_LEVEL?disciplines.level[cls]:
+                      SOM_STYLE_MAX_LEVEL;
+            st=&arm;
+        }
+    }
     if(!st){som_style_restore_attack(hero);return;}
     const uint8_t *row=som_rom_at(0xD01000u+12u*hero[0x1E3],12u);
     if(!row||hero[0x1E3]>=72u)return;
     const unsigned game=style_atk_active&&hero[0x198]==style_written_atk?style_game_atk:hero[0x198];
     const unsigned base=game>row[8]?game-row[8]:0u;
-    const unsigned want=base+som_style_attack(st,styles.level[index],
+    const unsigned want=base+som_style_attack(st,arm_level?arm_level:styles.level[index],
         som_style_row_attack(st->weapon,0u),som_style_row_attack(st->weapon,som_style_top_tier(st->weapon)));
     const uint8_t value=(uint8_t)(want>255u?255u:want);
     if(!style_atk_active||hero[0x198]!=value){
         style_game_atk=(uint8_t)game;style_written_atk=value;hero[0x198]=value;
         if(!style_atk_active)
             fprintf(stderr,"[som-ai] STYLE %s Lv%u attack %u (game %u)\n",st->name,
-                    (unsigned)styles.level[index],(unsigned)value,game);
+                    arm_level?arm_level:(unsigned)styles.level[index],(unsigned)value,game);
         style_atk_active=1;
     }
 }
@@ -4740,10 +4813,27 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                               hero_x,hero_y-SOM_COMBO_LABEL_RISE_PX,1,
                               som_overlay_color(pixel_format,255,208,64));
     }
-    if(class_title)
+    if(class_title){
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,class_title,
                           hud_x+SOM_HUD_LABEL_DX,hud_y+SOM_HUD_LABEL_DY,0,
                           som_overlay_color(pixel_format,255,255,255));
+        /* The weapon in hand by its game name, the style after it. */
+        const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        const unsigned type=ram?ram[0xE1E4]:8u;
+        if(type<8u&&ram[0xCC54u+type]!=0xFF){
+            char text[48];
+            unsigned index;
+            const SomWeaponStyle *st=som_style_held(ram,&index);
+            const char *name=som_weapon_name(type,ram[0xCC54u+type]&0x0Fu);
+            if(name[0]){
+                if(st)snprintf(text,sizeof(text),"%s %s",name,st->name);
+                else snprintf(text,sizeof(text),"%s",name);
+                som_overlay_label(overlay_frame,width,height,pitch,pixel_format,text,
+                                  hud_x+SOM_HUD_LABEL_DX,hud_y+SOM_HUD_LABEL_DY+8,0,
+                                  som_overlay_color(pixel_format,255,214,96));
+            }
+        }
+    }
     if(overlay.frames_left){
         som_overlay_draw(overlay_frame,width,height,pitch,pixel_format,&overlay,hero_x,hero_y);
         overlay.frames_left--;

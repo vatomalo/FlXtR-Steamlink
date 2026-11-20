@@ -1939,6 +1939,26 @@ int main(void){
         gambit_file="/nonexistent/flxtr-gambits";gambits.infinite_mp=1;som_gambit_load();
         assert(!gambits.infinite_mp);            /* never carries over a load */
         hero[0x01C]=0;hero[0x060]=0;
+        /* Weapon names from the ROM name block; the samurai's class weapon
+         * is pinned at its grade (sword 5, Masamune in Turbo). */
+        {
+            const unsigned ev=0x800u+0x32u+1u*9u+5u;
+            const unsigned text=0x9000u;
+            rom[0x0A0000+(ev-0x400u)*2u]=(uint8_t)text;rom[0x0A0000+(ev-0x400u)*2u+1u]=(uint8_t)(text>>8);
+            static const uint8_t masamune[]={0xA7,0x81,0x93,0x81,0x8D,0x95,0x8E,0x85,0x00};
+            memcpy(rom+0x0A0000+text,masamune,sizeof(masamune));
+            assert(!strcmp(som_weapon_name(1,5),"Masamune"));
+            assert(som_class_arm_slot(SOM_DISC_BUSHIDO,1)==0u&&som_class_arm_slot(SOM_DISC_BUSHIDO,5)==1u);
+            assert(som_class_arm_slot(SOM_DISC_BUSHIDO,2)==3u);
+            assert(som_class_arm_slot(SOM_DISC_FLOW,5)==2u);
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=SOM_DISC_BUSHIDO;
+            ram[0xCC55]=(uint8_t)((ram[0xCC55]&0xF0u)|2u);           /* sword at grade 2 */
+            hero[0x1E4]=0;hero[0x01C]=0;hero[0x060]=0;
+            som_style_frame(ram);
+            assert((ram[0xCC55]&0x0Fu)==5u);
+            disciplines.selected=keep;
+        }
         #undef EXPECT_TILES
         physical_state=mocked_input;mocked_has_vram=0;
         pressed=100;pressed_too=100;

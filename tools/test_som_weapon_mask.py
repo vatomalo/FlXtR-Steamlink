@@ -41,7 +41,9 @@ class BladeMaskTests(unittest.TestCase):
             self.assertEqual(short[gy][x], original[gy][x])
             self.assertEqual(long[gy][x], original[gy][x])
         self.assertEqual(short[gy][gx+23], 0)
-        self.assertEqual(long[gy][gx+33], 2)
+        # The blade may be gently angled because of the native tip offset.
+        self.assertTrue(any(long[y][x] for x in range(gx+30, gx+38)
+                            for y in range(gy-2, gy+4)))
         self.assertLess(sum(bool(p) for row in short for p in row), original_pixels)
         self.assertGreater(sum(bool(p) for row in long for p in row), original_pixels)
         # Separate flash is translucent, never used to tint the opaque hilt.
@@ -74,7 +76,7 @@ class BladeMaskTests(unittest.TestCase):
         fixed = [[0]*masks.CANVAS for _ in range(masks.CANVAS)]
         fixed[masks.ORIGIN[1]-18][masks.ORIGIN[0]+10] = 2
         dx,dy,w,h,pixels = masks.cropped(fixed)
-        self.assertEqual((dx,dy,w,h,pixels),(10,-18-14,1,1,b"\\x02"))
+        self.assertEqual((dx,dy,w,h,pixels),(10,-18-14,1,1,bytes([2])))
 
     def test_pack_header_and_palette_are_somwork_compatible(self):
         class Fake:

@@ -1612,14 +1612,19 @@ static void som_input_poll(void){
            som_throw_back_pressed(wram,pressed))
             som_throw_start(wram);
         /* Casters: B casts the first spell of the class, Y the second; the
-         * game sees neither. B with too little MP stays the weapon swing. */
+         * game sees neither. Their glove is only for looks (player,
+         * 2026-11-20): B with too little MP is nothing, never a punch. */
         const int caster=wram&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
             som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines&&
             !native_ring;
         if(caster&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
             const unsigned spell=som_caster_spell(disciplines.selected,which);
-            if(which||som_spell_affordable(wram,spell)){
+            if(!which&&!som_spell_affordable(wram,spell)){
+                b_weapon_blocked=1;
+                if(pressed&b_bit)som_overlay_set(&overlay,"^Not enough MP|casters do not punch",
+                                                 SOM_MESSAGE_FRAMES/3u);
+            }else{
                 if(which)y_weapon_blocked=1;else b_weapon_blocked=1;
                 if(pressed&(which?y_bit:b_bit)){
                     if(som_cast_spell(wram,spell))
@@ -4464,6 +4469,18 @@ static int som_undo_spawn(void){
 }
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
+    /* A caster's attack is its B spell, never a punch with the decorative
+     * glove (AI too). */
+    if(action==SOM_ACT_ATTACK&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
+       som_disc_caster(disciplines.selected)&&backend_retro_get_memory_data){
+        uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        const unsigned spell=som_caster_spell(disciplines.selected,0);
+        if(ram&&som_spell_affordable(ram,spell)&&som_cast_spell(ram,spell))
+            fprintf(stderr,"[som-ai] CASTER (AI attack): %s\n",
+                    som_class_spell_label(disciplines.selected,spell));
+        else fprintf(stderr,"[som-ai] attack refused: casters do not punch\n");
+        return;
+    }
     if(action==SOM_ACT_ATTACK)som_combo_swing(0);
     if(action==SOM_ACT_ATTACK&&som_taijutsu_peek()!=SOM_NO_WEAPON&&
        backend_retro_get_memory_data){

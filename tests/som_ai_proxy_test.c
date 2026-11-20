@@ -2244,7 +2244,8 @@ int main(void){
         rom[0x102AD0+0x08*64+8]=0x40;           /* undecoded target kind */
         assert(!som_cast_spell(ram,0x08)&&hero[0x170]==0);
         /* Casters trade weapons for spells: Mage B = Fire Ball, Y = Freeze,
-         * X starts at the third spell; B without the MP is the weapon swing. */
+         * X starts at the third spell; B without the MP is nothing (the glove
+         * is only for looks: casters never punch). */
         {
             const uint8_t keep=disciplines.selected;
             disciplines.selected=3;
@@ -2277,7 +2278,7 @@ int main(void){
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
             som_input_poll();
             assert(hero[0x170]==0);                                  /* no MP: */
-            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1); /* swing */
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0); /* no punch */
             mocked_buttons=0;som_input_poll();
             hero[0x186]=5;hero[0x01C]=0;hero[0x060]=0;
             disciplines.selected=keep;

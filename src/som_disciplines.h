@@ -43,7 +43,7 @@ static inline int som_disc_has_dodge(unsigned discipline){
  * a run and a kick (som_ai_proxy.c som_flykick_start); Weapon Flow (weaponsmaster) has no magic:
  * X attacks with a third weapon, som_disc_third_weapon. */
 enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON, SOM_X_FLYING_KICK,
-      SOM_X_HOLY_WATER, SOM_X_RAISE_DEAD, SOM_X_BOMB, SOM_X_MIND_CONTROL};
+      SOM_X_HOLY_WATER, SOM_X_RAISE_DEAD, SOM_X_BOMB, SOM_X_MIND_CONTROL, SOM_X_SUMMON};
 #define SOM_DISC_MARTIAL_ARTS 1u
 #define SOM_DISC_WEAPON_FLOW 8u
 #define SOM_DISC_BUSHIDO 10u
@@ -52,7 +52,8 @@ enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON, SOM_X_FLYING_KICK,
 #define SOM_IAI_COOLDOWN_FRAMES 180ul        /* 3 s */
 #define SOM_NO_WEAPON 0xFFu
 static inline unsigned som_disc_x_role(unsigned discipline){
-    return discipline==12u?SOM_X_HOLY_WATER:discipline==13u?SOM_X_RAISE_DEAD:
+    return discipline==5u||discipline==6u?SOM_X_SUMMON:   /* Dark Arts, Summoning */
+           discipline==12u?SOM_X_HOLY_WATER:discipline==13u?SOM_X_RAISE_DEAD:
            discipline==14u?SOM_X_BOMB:discipline==15u?SOM_X_MIND_CONTROL:
            discipline==SOM_DISC_BUSHIDO?SOM_X_IAI:
            discipline==SOM_DISC_MARTIAL_ARTS?SOM_X_FLYING_KICK:

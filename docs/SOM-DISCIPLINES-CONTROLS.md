@@ -697,3 +697,11 @@ Divine Arts: Holy Light (Lucent Beam), Healing Prayer (Cure Water); Dark Arts: S
 Dance: Slow Waltz, Quickstep; Necromancy: Soul Drain, Grave Gate; Psionics: Mind Sleep,
 Levitate; Archery: Wind / Thunder / Stone Arrow; sabers: Flame / Thunder / Frost Edge.
 Magic keeps the game's names.
+
+### X binds, X again releases (2026-11-20)
+
+- **Summoning: X summons** a familiar (a cloned monster fighting for the hero);
+  **Dark Arts: X makes a Shadow Pact** (the same, a dark familiar).
+- Necromancy: X raises the dead (after a kill); Psionics: X takes over a mind.
+- For all four, **X again while one is bound releases it** at once (the mind-controlled
+  monster is let go, a familiar is dismissed). Their extra spells are on the B/Y spell sets.

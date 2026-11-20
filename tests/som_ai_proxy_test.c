@@ -1795,6 +1795,21 @@ int main(void){
             assert(familiar.slot==0&&mind_slot==0&&mind_until);
             frame_number=mind_until;som_hop_step();
             assert(familiar.slot<0&&mind_slot<0&&!familiar_carry.valid);
+            /* X again lets the bound one go: the mind (Mentalist), a familiar
+             * (Summoner, Necromancer, Dark Arts' shadow pact). */
+            x_move_ready=0;
+            mocked_buttons=x;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(familiar.slot==0&&mind_slot==0);
+            mocked_buttons=x;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(familiar.slot<0&&mind_slot<0);                    /* released at once */
+            for(unsigned c=0;c<2u;c++){
+                static const uint8_t binders[2]={6,13};
+                disciplines.selected=binders[c];x_move_ready=0;
+                familiar.slot=1;familiar_carry.valid=0;
+                mocked_buttons=x;som_input_poll();mocked_buttons=0;som_input_poll();
+                assert(familiar.slot<0);
+            }
+            assert(som_disc_x_role(5)==SOM_X_SUMMON&&som_disc_x_role(6)==SOM_X_SUMMON);
             foe[0]=0;foe[0x1F1]=0;x_move_ready=0;
             disciplines.selected=keep;
         }

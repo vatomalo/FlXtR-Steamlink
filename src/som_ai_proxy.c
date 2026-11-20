@@ -2096,7 +2096,8 @@ static const char *summon_file=SOM_SUMMON_FILE;
 static const char *summon_anyone_file=SOM_SUMMON_ANYONE_FILE;
 static int som_summon_allowed(const uint8_t *ram){
     if(access(summon_anyone_file,F_OK)==0)return 1;
-    if(disciplines.selected==SOM_DISC_SUMMONING||disciplines.selected==SOM_DISC_NECRO)return 1;
+    if(disciplines.selected==SOM_DISC_SUMMONING||disciplines.selected==SOM_DISC_NECRO||
+       disciplines.selected==5u)return 1;                  /* Dark Arts: a shadow pact */
     return ram&&som_familiar_summoner(ram+0xE000);
 }
 static int som_summon_boss(void);
@@ -5968,6 +5969,16 @@ static void som_mind_release(uint8_t *ram){
 static int som_class_x(uint8_t *ram){
     const unsigned d=disciplines.selected;
     if(!ram||d>=SOM_DISCIPLINE_COUNT)return 0;
+    /* The binding classes: X again lets the bound one go (no cooldown). */
+    const int binder=d==5u||d==SOM_DISC_SUMMONING||d==SOM_DISC_NECRO||d==SOM_DISC_PSIONICS;
+    if(binder&&(familiar.slot>=0||familiar_carry.valid||mind_slot>=0)){
+        if(mind_slot>=0)som_mind_release(ram);
+        else som_familiar_dismiss();
+        x_move_ready=frame_number+30ul;                 /* not straight back on the same press */
+        som_overlay_set(&overlay,"^Released",SOM_MESSAGE_FRAMES/3u);
+        fprintf(stderr,"[som-ai] BIND released by X\n");
+        return 1;
+    }
     if(frame_number<x_move_ready){
         som_overlay_set(&overlay,"^Not ready",SOM_MESSAGE_FRAMES/3u);return 0;
     }
@@ -5992,6 +6003,17 @@ static int som_class_x(uint8_t *ram){
     }
     if(familiar.slot>=0||familiar_carry.valid){
         som_overlay_set(&overlay,"^One ally at a time",SOM_MESSAGE_FRAMES/3u);return 0;
+    }
+    if(d==5u||d==SOM_DISC_SUMMONING){                   /* a familiar: summon / shadow pact */
+        familiar_pending=1;
+        x_move_ready=frame_number+SOM_RAISE_COOLDOWN;
+        som_overlay_set(&overlay,d==5u?"^Shadow Pact!":"^Summon!",SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] %s\n",d==5u?"SHADOW PACT":"SUMMON");
+        if(som_clone_enemy()){som_familiar_bind();return 1;}
+        if(clone_no_slot){clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;return 1;}
+        familiar_pending=0;
+        som_overlay_set(&overlay,"^Nothing to bind",SOM_MESSAGE_FRAMES/3u);
+        return 0;
     }
     if(d==SOM_DISC_NECRO){
         if(!last_kill_frame||frame_number-last_kill_frame>SOM_RAISE_WINDOW){

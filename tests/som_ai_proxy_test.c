@@ -1623,21 +1623,33 @@ int main(void){
             disciplines.selected=SOM_DISC_BUSHIDO;
             for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
             ram[0xED]|=0x80u;
+            /* Up and down: the drawn tumble (facing down; back = up). */
             for(unsigned forward=0;forward<2u;forward++){
                 hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;
-                hero[0x010]=0x02;hero[0x01C]=0;hero[0x011]=0;
+                hero[0x010]=0x01;hero[0x01C]=0;hero[0x011]=0;
                 hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
                 const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
-                mocked_buttons=(uint16_t)(a|(forward?1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT:0u));
+                mocked_buttons=(uint16_t)(a|(forward?1u<<RETRO_DEVICE_ID_JOYPAD_DOWN:0u));
                 som_input_poll();mocked_buttons=0;som_input_poll();
                 assert(evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF);
-                assert(hop_dx==(forward?3:-3));
+                assert(hop_dx==0&&hop_dy==(forward?3:-3));
                 for(unsigned f=0;f<40u;f++){
                     som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
                 }
-                assert(!evade_active&&hero[0x010]==0x02);
-                assert(som_bun_u16(hero+2u)==(unsigned)(200+(forward?54:-54)));
+                assert(!evade_active&&hero[0x010]==0x01);
+                assert(som_bun_u16(hero+4u)==(unsigned)(200+(forward?54:-54)));
             }
+            /* Left and right: the game's own cartwheel (no side somersault). */
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;
+            hero[0x010]=0x02;hero[0x01C]=0;hero[0x011]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+            som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(evade_active&&cartwheel_native&&!ukemi_draw.active);
+            for(unsigned f=0;f<80u;f++){
+                som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
+            }
+            hero[0x1E5]=0xFF;
             ram[0xED]=keep_ed;disciplines.selected=keep;
         }
         /* AI "evade_right": the dodge goes right whatever the facing (an

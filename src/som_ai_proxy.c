@@ -2991,14 +2991,18 @@ static int som_evade_start(uint8_t *ram){
     hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
     evade_frames=move+SOM_DODGE_GRACE;
     const unsigned facing_before=hero[0x010];
-    cartwheel_native=dodge.cartwheel==SOM_REACT_CARTWHEEL&&
-        som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
-    if((disciplines.selected==SOM_DISC_NINJUTSU||
-        disciplines.selected==SOM_DISC_BUSHIDO)&&!som_ukemi_begin_draw(ram,dx,dy))
+    /* Ukemi classes: the game has no side-view somersault (the cannon
+     * flight is the same ball every way), so left and right are the game's
+     * own cartwheel; up and down the drawn tumble (player's call, 2026-11-20). */
+    const int ukemi_class=disciplines.selected==SOM_DISC_NINJUTSU||
+                          disciplines.selected==SOM_DISC_BUSHIDO;
+    cartwheel_native=(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
+        som_cartwheel_request(ram,dx,dy,SOM_REACT_CARTWHEEL);
+    if(ukemi_class&&!dx&&!som_ukemi_begin_draw(ram,dx,dy))
         fprintf(stderr,"[som-ai] UKEMI pack missing: rebuild som_cartwheel_frames.bin (pose 34, kinds 0xC0+)\\n");
     native_restore_facing=-1;
     if(cartwheel_native){
-        native_code=(unsigned)dodge.cartwheel;
+        native_code=SOM_REACT_CARTWHEEL;
         cartwheel_fallback=move;hop_frames_left=0;
         evade_frames=(native_code==SOM_REACT_UKEMI?SOM_UKEMI_FRAMES:SOM_CARTWHEEL_FRAMES)+
                      (unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES)+SOM_DODGE_GRACE;

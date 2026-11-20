@@ -916,7 +916,7 @@ static int som_class_x_raw(uint8_t *ram);
 static const char *weapon_mask_file=SOM_WEAPON_MASK_FILE;
 static const char *weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;
 static unsigned long weapon_mask_on_checked;
-static int weapon_mask_on,weapon_mask_tried;
+static int weapon_mask_on,weapon_mask_tried,weapon_mask_faulted;
 static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
 static uint32_t *weapon_mask_index;    /* [2][72][256], byte offsets + 1 */
@@ -6405,7 +6405,7 @@ static int som_weapon_mask_mode(const uint8_t *ram){
         weapon_mask_on_checked=frame_number?frame_number:1ul;
         weapon_mask_on=access(weapon_mask_on_file,F_OK)==0;
     }
-    if(!weapon_mask_on||disciplines.selected!=SOM_DISC_BUSHIDO||
+    if(weapon_mask_faulted||!weapon_mask_on||disciplines.selected!=SOM_DISC_BUSHIDO||
        ram[0xE1E4]!=1u)return -1;
     const unsigned style=styles.selected[SOM_DISC_BUSHIDO]%SOM_STYLES_PER_CLASS;
     return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
@@ -6452,8 +6452,17 @@ static void som_weapon_mask_pick(const uint8_t *ram){
     if(!ram||!weapon_tiles_hidden)return;
     const int mode=som_weapon_mask_mode(ram);
     SomWorkEntry entry;
-    if(mode<0||!som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
-                                      ram[0xE026u]>>1,&entry))return;
+    if(mode<0)return;
+    if(!som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
+                               ram[0xE026u]>>1,&entry)){
+        /* The SNES animation may advance after the pre-frame availability
+         * check. Fail closed for the rest of the session instead of
+         * continuing to blank frames with missing replacement art. */
+        weapon_mask_faulted=1;
+        fprintf(stderr,"[som-ai] BUSHIDO mask frame missing: row %u frame %u, disabling masks for this session\\n",
+                (unsigned)ram[0xE1E3u],(unsigned)(ram[0xE026u]>>1));
+        return;
+    }
     memset(&weapon_masked,0,sizeof(weapon_masked));
     weapon_masked.active=1;weapon_masked.slot=0;weapon_masked.kind=ram[0xE180u];
     weapon_masked.dir=(ram[0xE028u]&0x40u)?3u:2u;

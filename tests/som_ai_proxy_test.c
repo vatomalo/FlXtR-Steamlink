@@ -844,7 +844,7 @@ int main(void){
     som_idle_tick();
     assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);
     unlink(idle_off_path);
-    /* R2 or R3 held alone for one second, then released: AI on (solo hero,
+    /* L2 or R3 held alone for one second, then released: AI on (solo hero,
      * no Action Grid; Select is RetroArch's hotkey button on the Steam Link).
      * Short holds, other buttons and holds begun while the AI runs never
      * start it; any other button still stops it. */
@@ -861,7 +861,7 @@ int main(void){
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();           /* another button */
     pressed=100;frame_number+=1;som_input_poll();
     assert(!ring_ai_enabled);
-    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_R2;som_input_poll();
+    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_L2;som_input_poll();
     frame_number+=SOM_SWITCH_HOLD_FRAMES;som_input_poll();
     frame_number+=1;pressed=100;som_input_poll();
     assert(ring_ai_enabled&&access(ring_ai_path,F_OK)==0);       /* long hold: on */
@@ -1299,15 +1299,19 @@ int main(void){
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         mocked_buttons=0;som_input_poll();
         ram[0xCC56]=0;
-        /* L2+Y still reaches the game (native ring). */
-        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
+        /* L3+Y is the native ring, since L2+Y is now a seal special. */
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L3)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
         som_input_poll();
+        assert(!special_stage&&!y_weapon_swap);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
+               ((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y)));
         mocked_buttons=0;som_input_poll();
 
         /* Level-2 secondary special switches to the axe, then charges. */
         hero[0x19B]=0;hero[0x1ED]=0;
-        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                    (1u<<RETRO_DEVICE_ID_JOYPAD_Y));
         som_input_poll();
         assert(special_stage==2&&special_weapon==2&&hero[0x1E4]==2);
@@ -1318,7 +1322,7 @@ int main(void){
         assert(!special_stage);
         hero[0x19B]=0;som_input_poll();
         /* Level-1 primary special switches back to the sword. */
-        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                    (1u<<RETRO_DEVICE_ID_JOYPAD_B));
         som_input_poll();
         assert(special_stage==1&&special_weapon==1&&hero[0x1E4]==1);
@@ -1326,19 +1330,19 @@ int main(void){
         hero[0x19B]=1;som_special_tick();
         assert(!special_stage);
         hero[0x19B]=0;mocked_buttons=0;som_input_poll();
-        /* Seals: R2 + three D-pad presses + B = level 3 without holding. */
+        /* Seals: L2 + three D-pad presses + B = level 3 without holding. */
         hero[0x19C]=5;
-        const uint16_t r2b=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
-        mocked_buttons=r2b;som_input_poll();
+        const uint16_t l2b=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+        mocked_buttons=l2b;som_input_poll();
         const unsigned seals[3]={RETRO_DEVICE_ID_JOYPAD_UP,RETRO_DEVICE_ID_JOYPAD_LEFT,
                                  RETRO_DEVICE_ID_JOYPAD_DOWN};
         for(unsigned i=0;i<3u;i++){
-            mocked_buttons=(uint16_t)(r2b|(1u<<seals[i]));som_input_poll();
+            mocked_buttons=(uint16_t)(l2b|(1u<<seals[i]));som_input_poll();
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,seals[i])==0);  /* hidden */
-            mocked_buttons=r2b;som_input_poll();
+            mocked_buttons=l2b;som_input_poll();
         }
         assert(seal_count==3);
-        mocked_buttons=(uint16_t)(r2b|(1u<<RETRO_DEVICE_ID_JOYPAD_B));
+        mocked_buttons=(uint16_t)(l2b|(1u<<RETRO_DEVICE_ID_JOYPAD_B));
         som_input_poll();
         assert(special_stage==3&&seal_count==0);
         mocked_buttons=0;som_input_poll();
@@ -1705,9 +1709,8 @@ int main(void){
             foe[0]=0;foe[0x1F1]=0;x_move_ready=0;
             disciplines.selected=keep;
         }
-        /* Lock-on: an L1 tap locks the nearest monster and he faces it
-         * every frame; L1+B is a style, not a tap; a second tap lets go;
-         * a dead target drops the lock. */
+        /* L1 exclusively locks onto the nearest monster; a second tap
+         * releases, and neither L1+B nor L3 shortcuts steal targeting. */
         {
             const uint16_t l1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
@@ -1722,9 +1725,7 @@ int main(void){
             mocked_buttons=l1;som_input_poll();
             mocked_buttons=(uint16_t)(l1|(1u<<RETRO_DEVICE_ID_JOYPAD_B));som_input_poll();
             mocked_buttons=0;som_input_poll();
-            assert(lock_slot==0);                                      /* L1+B: still locked */
-            mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
-            assert(lock_slot<0);                                       /* tap: let go */
+            assert(lock_slot<0);      /* second press toggles immediately */
             mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
             assert(lock_slot==0);
             foe[0x191]=0x80;som_hop_step();                            /* it dies */
@@ -1886,11 +1887,11 @@ int main(void){
         assert(!bunshin.alive[0]&&bunshin.alive[1]);
         som_bun_clear(&bunshin);memset(ram+0x10000,0,0x10000);ram[0x1B800+4*9]=0;
         hero[0x01C]=0;hero[0x011]=0;som_evade_tick();hero[0x1E4]=1;hero[0x191]=0;
-        /* Swordsman R1+A: bash = native run (A), release, native swing (B). */
+        /* Swordsman R2+A: bash = native run (A), release, native swing (B). */
         disciplines.selected=0;hero[0x1ED]=0;hero[0x060]=0;hero[0x00A]=0;
         hero[0x01A]=hero[0x01B]=0;hero[0x190]=hero[0x191]=0;
-        const uint16_t r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
-        mocked_buttons=(uint16_t)(r1|r1a);som_input_poll();
+        const uint16_t block_r2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
+        mocked_buttons=(uint16_t)(block_r2|r1a);som_input_poll();
         assert(bash_stage==SOM_BASH_LUNGE&&!evade_active);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
@@ -1904,7 +1905,7 @@ int main(void){
         frame_number+=SOM_BASH_STRIKE_FRAMES;som_bash_tick();
         assert(bash_stage==SOM_BASH_NONE);
         mocked_buttons=0;som_input_poll();
-        hero[0x1ED]=10;mocked_buttons=(uint16_t)(r1|r1a);som_input_poll();
+        hero[0x1ED]=10;mocked_buttons=(uint16_t)(block_r2|r1a);som_input_poll();
         assert(bash_stage==SOM_BASH_NONE);                     /* out of breath */
         mocked_buttons=0;som_input_poll();hero[0x1ED]=0;hero[0x006]=0;
         /* Martial Arts X: the flying kick = the bash's run, then the glove.

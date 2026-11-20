@@ -801,3 +801,13 @@ tier 0. (A held B keeps that press's weapon for charging.)
 - Every cartwheel **forward + A** is drawn facing forward (the game's cartwheel frames, the
   hero carried 64 px / Ukemi 54 px ahead); back + A or A alone is the game's own cartwheel
   away from the facing.
+
+### Monk and Weapon Flow B chains with power attacks (2026-11-20)
+
+- **Martial Arts B:** punch, punch, then the glove's power attacks level 1, 2, 3, then the
+  **spear's power attack as the finisher** (its highest learned level). The monk's glove has
+  every power level (1-8) unlocked while held, whatever the game had learned.
+- **Weapon Flow B:** sword, axe, whip, javelin, then the **spear's power attack** as the
+  finisher. The spear (both classes' Y) never comes up between, only as the finisher.
+- A power step is a tap: the proxy holds B until the level is charged, then releases it, and
+  the game plays its own power attack. 1.5 s without B starts the chain over.

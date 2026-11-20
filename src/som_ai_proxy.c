@@ -128,6 +128,8 @@ static uint16_t special_chord;
 static int special_suppress;
 #define SOM_SPECIAL_TIMEOUT 360ul
 static int som_special_start(unsigned which,unsigned stage);
+static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet);
+static void som_monk_glove(uint8_t *ram);
 static int som_iai_start(unsigned level);
 static int som_iai_start_raw(unsigned level);
 static void som_special_tick(void);
@@ -1140,22 +1142,43 @@ static unsigned long iai_ready;           /* Bushido: next frame Iaijutsu may st
 static unsigned taijutsu_step,taijutsu_want=SOM_NO_WEAPON;
 static int taijutsu_counted;
 static unsigned long taijutsu_last;
-/* The B chains, by class: Ninjutsu's Taijutsu, and Weapon Flow's flow
- * through weapons beyond its own three (player, 2026-11-20): sword, axe,
- * whip, javelin. Weapon types: 0 glove 1 sword 2 axe 3 spear 4 whip 5 bow
- * 6 boomerang 7 javelin. */
+/* The B chains, by class: Ninjutsu's Taijutsu; Weapon Flow's flow through
+ * weapons beyond its own three; Martial Arts' glove power attacks (player,
+ * 2026-11-20). Each step is a weapon, and a power level (0: a plain swing;
+ * N: that weapon's power attack N, charged by the proxy). The spear (Y for
+ * the monk and Weapon Flow) only ever comes as the finisher. Weapon types:
+ * 0 glove 1 sword 2 axe 3 spear 4 whip 5 bow 6 boomerang 7 javelin. */
+#define SOM_CHAIN_TOP 8u        /* a finisher at the highest level learned */
 static const uint8_t som_chain_ninjutsu[]={0,0,1};
-static const uint8_t som_chain_flow[]={1,2,4,7};
+static const uint8_t som_chain_ninjutsu_levels[]={0,0,0};
+static const uint8_t som_chain_flow[]={1,2,4,7,3};
+static const uint8_t som_chain_flow_levels[]={0,0,0,0,SOM_CHAIN_TOP};
+static const uint8_t som_chain_monk[]={0,0,0,0,0,3};
+static const uint8_t som_chain_monk_levels[]={0,0,1,2,3,SOM_CHAIN_TOP};
+static unsigned som_b_chain_levels(unsigned cls,const uint8_t **steps,const uint8_t **levels){
+    if(cls==SOM_DISC_NINJUTSU){*steps=som_chain_ninjutsu;*levels=som_chain_ninjutsu_levels;
+                               return sizeof(som_chain_ninjutsu);}
+    if(cls==SOM_DISC_WEAPON_FLOW){*steps=som_chain_flow;*levels=som_chain_flow_levels;
+                                  return sizeof(som_chain_flow);}
+    if(cls==SOM_DISC_MARTIAL_ARTS){*steps=som_chain_monk;*levels=som_chain_monk_levels;
+                                   return sizeof(som_chain_monk);}
+    *steps=*levels=NULL;return 0;
+}
 static unsigned som_b_chain(unsigned cls,const uint8_t **steps){
-    if(cls==SOM_DISC_NINJUTSU){*steps=som_chain_ninjutsu;return sizeof(som_chain_ninjutsu);}
-    if(cls==SOM_DISC_WEAPON_FLOW){*steps=som_chain_flow;return sizeof(som_chain_flow);}
-    *steps=NULL;return 0;
+    const uint8_t *levels;return som_b_chain_levels(cls,steps,&levels);
 }
 static unsigned som_taijutsu_peek(void){
     const uint8_t *steps;const unsigned n=som_b_chain(disciplines.selected,&steps);
     if(!n)return SOM_NO_WEAPON;
     if(frame_number-taijutsu_last>SOM_TAIJUTSU_RESET||taijutsu_step>=n)taijutsu_step=0;
     return steps[taijutsu_step];
+}
+/* The power level of the step som_taijutsu_peek() names (0: plain). */
+static unsigned som_taijutsu_peek_level(void){
+    const uint8_t *steps,*levels;const unsigned n=som_b_chain_levels(disciplines.selected,&steps,&levels);
+    if(!n)return 0;
+    (void)som_taijutsu_peek();
+    return levels[taijutsu_step];
 }
 static void som_taijutsu_advance(void){
     const uint8_t *steps;const unsigned n=som_b_chain(disciplines.selected,&steps);
@@ -1641,6 +1664,7 @@ static void som_input_poll(void){
         const int caster=wram&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
             som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines&&
             !native_ring;
+        if(wram)som_monk_glove(wram);
         const int caster_talk=caster&&(current&b_bit)&&!(current&y_bit)&&som_interact_ahead(wram);
         if(caster&&!caster_talk&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
@@ -1674,6 +1698,19 @@ static void som_input_poll(void){
                  * kept while B stays held (a held B may be charging). */
                 if((pressed&b_bit)||taijutsu_want==SOM_NO_WEAPON){
                     taijutsu_want=som_taijutsu_peek();taijutsu_counted=0;
+                    /* A power step (the monk's glove levels, a spear
+                     * finisher): the proxy charges it and holds B itself. */
+                    const unsigned level=(pressed&b_bit)?som_taijutsu_peek_level():0u;
+                    if(level&&som_special_start_weapon(taijutsu_want,level,1)){
+                        special_chord=b_bit;special_suppress=1;
+                        som_taijutsu_advance();taijutsu_counted=1;
+                        char text[48];
+                        snprintf(text,sizeof(text),"^%s|power %u",som_weapon_types[taijutsu_want],
+                                 special_stage);
+                        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+                        fprintf(stderr,"[som-ai] CHAIN power %s level %u\n",
+                                som_weapon_types[taijutsu_want],special_stage);
+                    }
                 }
                 want=taijutsu_want;
             }
@@ -3559,20 +3596,44 @@ static void som_trail_draw(uint8_t *pixels,unsigned width,unsigned height,size_t
 }
 /* Charge the game's actual weapon stage through its normal B input. */
 static int som_special_start(unsigned which,unsigned stage){
-    if(which>1||stage<1||stage>SOM_SEALS_MAX||special_stage||bash_stage||
+    if(which>1||disciplines.selected>=SOM_DISCIPLINE_COUNT)return 0;
+    return som_special_start_weapon(som_disc_weapons[disciplines.selected][which],stage,0);
+}
+/* The Monk's glove: every power level, whatever the game has it learned
+ * (player, 2026-11-20). E19C is the held weapon's learned level; raised
+ * while the monk holds the glove, given back otherwise. */
+#define SOM_MONK_GLOVE_LEVELS 8u
+static int monk_glove_raised=-1;
+static void som_monk_glove(uint8_t *ram){
+    if(!ram)return;
+    const int monk_glove=disciplines.selected==SOM_DISC_MARTIAL_ARTS&&ram[0xE1E4]==0u&&
+                         ram[0xE000]==1u;
+    if(monk_glove){
+        if(ram[0xE19C]<SOM_MONK_GLOVE_LEVELS){
+            if(monk_glove_raised<0)monk_glove_raised=ram[0xE19C];
+            ram[0xE19C]=SOM_MONK_GLOVE_LEVELS;
+        }
+    }else if(monk_glove_raised>=0){
+        if(ram[0xE1E4]==0u&&ram[0xE19C]==SOM_MONK_GLOVE_LEVELS)ram[0xE19C]=(uint8_t)monk_glove_raised;
+        monk_glove_raised=-1;
+    }
+}
+static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
+    if(stage<1||stage>SOM_SEALS_MAX||special_stage||bash_stage||
        (ring_ai_enabled&&!special_from_ai)||som_manual_disciplines||
        disciplines.selected>=SOM_DISCIPLINE_COUNT||
        !backend_retro_get_memory_data)return 0;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
        ram[0xD0]!=0||ram[0x7D]==1||ram[0xE1ED]!=0)return 0;
-    unsigned weapon=som_disc_weapons[disciplines.selected][which];
     if(som_equip_weapon(ram,weapon)!=SOM_EQUIP_OK)return 0;
+    som_monk_glove(ram);
     if(!ram[0xE19C]||ram[0xE19B]!=0){
         fprintf(stderr,"[som-ai] SPECIAL refused: %s needs charge level %u\n",
                 som_weapon_types[weapon],stage);
         return 0;
     }
+    if(ram[0xE19C]<stage&&quiet)stage=ram[0xE19C];   /* a chain finisher: the top learned */
     if(ram[0xE19C]<stage){                    /* only the levels learned */
         char text[64];
         snprintf(text,sizeof(text),"^%s level %u|not learned: level %u",

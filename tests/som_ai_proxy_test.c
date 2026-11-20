@@ -246,8 +246,21 @@ int main(void){
     /* Weapon Flow's B flows through other weapons: sword, axe, whip, javelin. */
     disciplines.selected=SOM_DISC_WEAPON_FLOW;taijutsu_step=0;taijutsu_last=frame_number;
     {
-        static const unsigned flow[]={1,2,4,7,1};
-        for(unsigned k=0;k<5u;k++){assert(som_taijutsu_peek()==flow[k]);som_taijutsu_advance();}
+        /* ...and the spear only as the finisher, at its top power level. */
+        static const unsigned flow[]={1,2,4,7,3,1},flow_levels[]={0,0,0,0,SOM_CHAIN_TOP,0};
+        for(unsigned k=0;k<6u;k++){
+            assert(som_taijutsu_peek()==flow[k]&&som_taijutsu_peek_level()==flow_levels[k]);
+            som_taijutsu_advance();
+        }
+    }
+    /* The monk: punch, punch, glove power 1, 2, 3, the spear finisher. */
+    disciplines.selected=SOM_DISC_MARTIAL_ARTS;taijutsu_step=0;taijutsu_last=frame_number;
+    {
+        static const unsigned monk[]={0,0,0,0,0,3},monk_levels[]={0,0,1,2,3,SOM_CHAIN_TOP};
+        for(unsigned k=0;k<6u;k++){
+            assert(som_taijutsu_peek()==monk[k]&&som_taijutsu_peek_level()==monk_levels[k]);
+            som_taijutsu_advance();
+        }
     }
     disciplines.selected=SOM_DISC_SWORD;
     assert(som_taijutsu_peek()==SOM_NO_WEAPON);                  /* no chain */
@@ -2173,10 +2186,30 @@ int main(void){
             mocked_buttons=xb;som_input_poll();mocked_buttons=0;som_input_poll();
             assert(bash_stage==SOM_BASH_LUNGE);
             for(unsigned f=0;f<=SOM_BASH_LUNGE_FRAMES;f++){frame_number++;som_bash_tick();som_flykick_frame(ram);}
-            assert(bash_stage==SOM_BASH_NONE&&special_stage==2u&&special_weapon==0u&&special_suppress);
+            /* The monk's glove has every level (not capped at the 2 learned). */
+            assert(bash_stage==SOM_BASH_NONE&&special_stage>=2u&&special_weapon==0u&&special_suppress);
+            assert(hero[0x19C]==SOM_MONK_GLOVE_LEVELS);
             assert(flykick.active);                           /* drawn through the finisher */
             special_stage=0;special_suppress=0;frame_number+=30;som_flykick_frame(ram);
             assert(!flykick.active&&!(hero[0x0E]&0x80u));
+            special_stage=0;special_suppress=0;
+            /* The monk's B chain: the third tap is the glove's power 1, the
+             * proxy holding B; the glove's levels go back for another class. */
+            {
+                const uint16_t bb=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+                hero[0x1E4]=0;hero[0x19C]=2;hero[0x19B]=0;hero[0x01C]=0;hero[0x1ED]=0;
+                taijutsu_step=2;taijutsu_last=frame_number;monk_glove_raised=-1;
+                mocked_buttons=bb;som_input_poll();
+                assert(special_stage==1u&&special_weapon==0u&&special_suppress&&taijutsu_step==3u);
+                assert(hero[0x19C]==SOM_MONK_GLOVE_LEVELS);
+                mocked_buttons=0;som_input_poll();
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);  /* held for him */
+                special_stage=0;special_suppress=0;
+                disciplines.selected=0;som_monk_glove(ram);
+                assert(hero[0x19C]==2&&monk_glove_raised<0);
+                disciplines.selected=1;taijutsu_step=0;
+            }
+
             /* The AI's "flykick": the same move; refused for other classes. */
             disciplines.selected=0;assert(!som_handle_command("flykick"));
             disciplines.selected=1;hero[0x1ED]=0;hero[0x01C]=0;

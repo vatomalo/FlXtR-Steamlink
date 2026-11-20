@@ -982,6 +982,7 @@ static int cartwheel_pack_tried;
  * (pose script 34, kinds 0xC0..0xC2). Ninja/Samurai use collision-aware
  * movement; monks and rogues retain the native 0x93 cartwheel. */
 #define SOM_UKEMI_DRAW_KIND 0xC0u
+#define SOM_FORWARD_CART_KIND 0xC8u   /* the game's cartwheel, drawn facing forward */
 static SomNpcWorkState ukemi_draw;
 static int ukemi_hid;
 static unsigned ukemi_map;
@@ -2998,7 +2999,11 @@ static void som_ukemi_end(uint8_t *ram){
         ram[0xE00Eu]&=(uint8_t)~0x80u;
     ukemi_draw.active=0;ukemi_hid=0;
 }
+static int som_move_begin_draw(uint8_t *ram,int dx,int dy,unsigned kind_base);
 static int som_ukemi_begin_draw(uint8_t *ram,int dx,int dy){
+    return som_move_begin_draw(ram,dx,dy,SOM_UKEMI_DRAW_KIND);
+}
+static int som_move_begin_draw(uint8_t *ram,int dx,int dy,unsigned kind_base){
     if(!cartwheel_pack_tried){
         cartwheel_pack_tried=1;
         som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",
@@ -3010,7 +3015,7 @@ static int som_ukemi_begin_draw(uint8_t *ram,int dx,int dy){
     const unsigned facing=dx?2u:(dy>0?1u:0u);
     SomWorkEntry entry;
     if(!som_work_find(cartwheel_pack,cartwheel_pack_size,
-                      SOM_UKEMI_DRAW_KIND+id-0x80u,facing,&entry))return 0;
+                      kind_base+id-0x80u,facing,&entry))return 0;
     memset(&ukemi_draw,0,sizeof(ukemi_draw));
     ukemi_draw.active=1;ukemi_draw.slot=0;ukemi_draw.kind=id;
     ukemi_draw.dir=dx<0?3u:dx>0?2u:dy>0?1u:0u;
@@ -3097,7 +3102,13 @@ static int som_evade_start_raw(uint8_t *ram){
      * own cartwheel; up and down the drawn tumble (player's call, 2026-11-20). */
     const int ukemi_class=disciplines.selected==SOM_DISC_NINJUTSU||
                           disciplines.selected==SOM_DISC_BUSHIDO;
-    cartwheel_native=(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
+    /* Swordsman, forward + A: the game's cartwheel goes away from the
+     * facing, so forward it is drawn facing forward instead (he dashes
+     * ahead facing where he goes; player, 2026-11-20). */
+    const int forward_cart=disciplines.selected==SOM_DISC_SWORD&&dx&&
+        ((dx>0&&facing_before==0x02u)||(dx<0&&facing_before==0x82u))&&
+        som_move_begin_draw(ram,dx,0,SOM_FORWARD_CART_KIND);
+    cartwheel_native=!forward_cart&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
         som_cartwheel_request(ram,dx,dy,SOM_REACT_CARTWHEEL);
     if(ukemi_class&&!dx&&!som_ukemi_begin_draw(ram,dx,dy))
         fprintf(stderr,"[som-ai] UKEMI pack missing: rebuild som_cartwheel_frames.bin (pose 34, kinds 0xC0+)\\n");

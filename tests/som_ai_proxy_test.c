@@ -2181,6 +2181,31 @@ int main(void){
             cartwheel_pack=NULL;cartwheel_pack_size=0;hero[0x19C]=1;hero[0x010]=0x02;
             disciplines.selected=0;hero[0x1E4]=1;
         }
+        /* Swordsman forward + A: the game's cartwheel drawn facing forward,
+         * the hero hidden and carried 64 px ahead (not turned round). */
+        {
+            static uint8_t pack[10+44+6];
+            memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            pack[10]=SOM_FORWARD_CART_KIND;pack[11]=0xF9;pack[12]=2;pack[13]=1;
+            pack[54]=5;pack[57]=1;pack[58]=1;pack[59]=1;
+            cartwheel_pack=pack;cartwheel_pack_size=sizeof(pack);cartwheel_pack_tried=1;
+            uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
+            disciplines.selected=SOM_DISC_SWORD;hero[0x180]=0x80;
+            for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x0E]=0;hero[0x1E5]=0xFF;
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+            som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==2u);
+            assert(hop_dx==4&&hero[0x010]==0x02&&(hero[0x0E]&0x80u));
+            for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
+            assert(!evade_active&&!ukemi_draw.active&&!(hero[0x0E]&0x80u));
+            assert(som_bun_u16(hero+2)==200+64&&hero[0x010]==0x02);
+            hero[2]=200;hero[3]=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            cartwheel_pack=NULL;cartwheel_pack_size=0;
+        }
         /* AI commands: class choice and casts within the class. */
         assert(som_handle_command("class_3")&&disciplines.selected==3);
         assert(!som_handle_command("class_16")&&!som_handle_command("class_x"));

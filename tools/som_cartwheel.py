@@ -39,6 +39,13 @@ UKEMI_BALL_FRONT, UKEMI_BALL_BACK = 140, 139
 UKEMI_TICKS = (1, 1, 1, 1, 2)
 UKEMI_SIDE_TURNS = (0, 1, 2, 3, 0)
 UKEMI_TUMBLE = {"down": (139, 140, 139, 140, 140), "up": (140, 139, 140, 139, 139)}
+# Forward cartwheel (Swordsmanship, forward + A, 2026-11-20): the game's own
+# cartwheel (miss reaction 0x93: frames 65, 66, 67, 66 turned over, 65)
+# travels away from the facing; drawn as it is while the hero moves toward
+# his facing, he dashes forward facing forward. Kinds 0xC8 + hero, side only.
+FORWARD_KIND_BASE = 0xC8
+FORWARD_WEAPON = 0xF9
+FORWARD_FRAMES = ((0, 65), (0, 66), (0, 67), (0xC0, 66), (0, 65))
 HEROES = ("boy", "girl", "sprite")
 TURNS = (0, 1, 2, 3, 0)         # quarter turns clockwise per step
 TICKS = 1                       # one actor tick (5 frames) per step
@@ -105,6 +112,13 @@ def somersault(gfx, hero, direction):
     else:
         images = [ball(frame) for frame in UKEMI_TUMBLE[direction]]
     return list(zip(images, UKEMI_TICKS))
+
+
+def forward_cartwheel(gfx, hero):
+    """[(image, ticks)] of the game's cartwheel frames, facing right."""
+    return [(gfx.render(hero, gfx.pieces(hero, None, frame, flags),
+                        size=V.CELL, origin=V.ORIGIN), 1)
+            for flags, frame in FORWARD_FRAMES]
 
 
 def flying_kick(gfx, hero, frame_ids):
@@ -183,6 +197,13 @@ def pack(gfx):
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
             entries += 1
+        frames = forward_cartwheel(gfx, hero)
+        out += struct.pack("<4B20H", FORWARD_KIND_BASE + i, FORWARD_WEAPON, 2, len(frames),
+                           *colours)
+        for image, ticks in frames:
+            dx, dy, w, h, data = V.crop(image)
+            out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
+        entries += 1
         for facing, frame_ids in KICK_FRAMES.items():
             frames = flying_kick(gfx, hero, frame_ids)
             out += struct.pack("<4B20H", KICK_KIND_BASE + i, KICK_WEAPON, facing, len(frames),

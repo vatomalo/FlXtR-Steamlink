@@ -19,6 +19,7 @@ import math
 import struct
 
 import som_hero_gfx as H
+from som_donor_dagger import import_dagger, place_dagger
 import som_villager_work as V
 
 KIND_TANTO = 0xD4
@@ -99,7 +100,7 @@ def blade_geometry(image, body, foot=ORIGIN):
     return best[1:] if best else None
 
 
-def masked_style(image, body, style, foot=ORIGIN):
+def masked_style(image, body, style, foot=ORIGIN, donor=None):
     """Opaque blade geometry + masked effects, or None for native fallback.
 
     Neither branch scales the original pixels. Pixels not in the identified
@@ -122,11 +123,19 @@ def masked_style(image, body, style, foot=ORIGIN):
             advance = (x-gx)*ux+(y-gy)*uy
             if advance > new_length and advance > 4:
                 out[y][x] = 0
-        # Sharp single-pixel tip, using the original weapon's highlight tone.
-        tx, ty = round(gx+new_length*ux), round(gy+new_length*uy)
-        if 0 <= tx < len(image[0]) and 0 <= ty < len(image):
-            if (tx, ty) in group or out[ty][tx] == 0:
-                out[ty][tx] = image[tip[1]][tip[0]]
+        if donor:
+            # Authentic donor blade replaces only the original distal blade.
+            # No native hilt, guard, or slash effect is stretched.
+            for x, y in axis_mask:
+                if (x-gx)*ux+(y-gy)*uy > 4:
+                    out[y][x] = 0
+            place_dagger(out, donor, grip, tip)
+        else:
+            # Safe procedural version until an SD3 dagger cutout is provided.
+            tx, ty = round(gx+new_length*ux), round(gy+new_length*uy)
+            if 0 <= tx < len(image[0]) and 0 <= ty < len(image):
+                if (tx, ty) in group or out[ty][tx] == 0:
+                    out[ty][tx] = image[tip[1]][tip[0]]
     else:
         extra = min(MAX_BLADE_EXTENSION, max(5, round(reach*0.50)))
         tip_colour = image[tip[1]][tip[0]]
@@ -176,12 +185,11 @@ def cropped(image):
     return dx, dy, x1-x0, y1-y0, bytes(c for row in image[y0:y1] for c in row[x0:x1])
 
 
-def pack(gfx, rows=SWORD_ROWS):
+def pack(gfx, rows=SWORD_ROWS, dagger=None):
     entries, encoded = 0, bytearray()
     for row in rows:
         tiles = gfx.weapon_tiles(row)
         blade = [V.bgr555(c) for c in gfx.weapon_palette(gfx.weapon_group(row)[1][4])[1:6]]
-        palette = blade + blade + [0]*10
         for frame, flags in sword_frames(gfx):
             wp = gfx.weapon_pieces(row, frame, flags)
             if not wp:
@@ -192,11 +200,13 @@ def pack(gfx, rows=SWORD_ROWS):
             gfx.render("boy", gfx.pieces("boy", "sword", frame, flags),
                        image=body, origin=ORIGIN)
             for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI)):
-                art = masked_style(weapon, body, style)
+                art = masked_style(weapon, body, style, donor=dagger if style=="tanto" else None)
                 record = cropped(art) if art else None
                 if record is None:
                     continue
                 dx, dy, w, h, pixels = record
+                colours = [V.bgr555(c) for c in dagger["palette"]] if style=="tanto" and dagger else blade
+                palette = colours + colours + [0]*10
                 encoded += struct.pack("<4B20H", kind, row, frame, 1, *palette)
                 encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
                 entries += 1
@@ -209,8 +219,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("rom", help="local Turbo ROM, read-only")
     parser.add_argument("out", help="SOMWORK1 output file")
+    parser.add_argument("--dagger-png", help="one cropped transparent SD3 dagger PNG")
+    parser.add_argument("--dagger-hilt", help="opaque hilt pixel as X,Y in the cropped image")
+    parser.add_argument("--dagger-tip", help="opaque tip pixel as X,Y in the cropped image")
     args = parser.parse_args()
-    payload = pack(H.HeroGfx.load(args.rom))
+    if bool(args.dagger_png) != bool(args.dagger_hilt and args.dagger_tip):
+        parser.error("--dagger-png requires --dagger-hilt X,Y and --dagger-tip X,Y")
+    def point(value):
+        try:
+            x,y=value.split(",")
+            return int(x),int(y)
+        except (ValueError,AttributeError):
+            parser.error("use X,Y for donor anchor coordinates")
+    donor = import_dagger(args.dagger_png,point(args.dagger_hilt),point(args.dagger_tip)) if args.dagger_png else None
+    payload = pack(H.HeroGfx.load(args.rom), dagger=donor)
     with open(args.out, "wb") as out:
         out.write(payload)
     print(f"Bushido masks: {int.from_bytes(payload[8:10], 'little')} frames, "

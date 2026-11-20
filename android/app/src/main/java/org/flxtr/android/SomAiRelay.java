@@ -15,7 +15,10 @@ final class SomAiRelay implements AutoCloseable {
         "right","left","up","down","attack","open_ring","confirm","cancel",
         "next_ring","prev_ring","menu_x","step_right","step_left","step_up","step_down",
         "dash_right","dash_left","dash_up","dash_down","wait","block","charge",
-        "ai_off","clone_enemy","undo_spawn","summon_familiar","dismiss_familiar"));
+        "ai_off","clone_enemy","undo_spawn","summon_familiar","dismiss_familiar",
+        "telekinesis","class_none","evade","flykick","iai_3","iai_4",
+        "kawarimi","shunshin","fuma_swap","cast_attack","cast_heal","cast_buff"));
+    static {for(int cls=0;cls<16;cls++)ACTIONS.add("class_"+cls);}
     private final Context context;
     private volatile boolean running;
     private Thread thread;

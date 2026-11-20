@@ -714,6 +714,20 @@ static unsigned long kawarimi_armed_until;
 static int som_kawarimi_check(uint8_t *ram);
 static int som_kawarimi_arm(uint8_t *ram);
 static int som_shunshin_start(uint8_t *ram);
+/* Bushido kit (2026-11-20). Issen (L2+X): a straight dash-cut along the
+ * facing, SOM_ISSEN_SPEED px x SOM_ISSEN_FRAMES (~84 px), untouchable like
+ * the dodge; each monster passed is cut once. Iai counter: a hit landing
+ * on the samurai's guard (R1) is cancelled and answered with a cut, on the
+ * Iaijutsu cooldown. Zanshin: a kill readies Iaijutsu at once. */
+#define SOM_ISSEN_SPEED 6
+#define SOM_ISSEN_FRAMES 14u
+#define SOM_ISSEN_COOLDOWN 240ul
+#define SOM_ISSEN_REACH 20
+static int issen_active;
+static unsigned issen_hit;
+static unsigned long issen_ready;
+static int som_issen_start(uint8_t *ram);
+static void som_issen_cut(uint8_t *ram,int x,int y);
 /* Hold A (Circle) SOM_A_HOLD_FRAMES: Kawarimi. The tap's hop still fires on
  * the press; the held request waits up to SOM_A_HOLD_WAIT frames for the
  * hero to be free (the hop over), even if A is let go meanwhile. */
@@ -1015,6 +1029,25 @@ static void som_perks_frame(uint8_t *ram){
                     perk_hero_hp_prev-hp,perk_hero_hp_prev-hp-back);
         }
     }
+    if(disciplines.selected==SOM_DISC_BUSHIDO&&som_guarding()&&frame_number>=iai_ready&&
+       (hero[0x059]||hero[0x1F1]||hero[0x1F2])){
+        const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,
+                                      familiar.slot);
+        if(foe>=0){
+            uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)foe;
+            const unsigned damage=20u+2u*disciplines.level[SOM_DISC_BUSHIDO];
+            const unsigned pending=m[0x1F1]+damage;
+            m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+            hero[0x059]=0;hero[0x1F1]=hero[0x1F2]=0;     /* the hit is parried */
+            if(hurt){hero[0x182]=(uint8_t)perk_hero_hp_prev;hero[0x183]=(uint8_t)(perk_hero_hp_prev>>8);
+                     now_hp=perk_hero_hp_prev;}
+            monster_hit_frame[foe]=frame_number;
+            iai_ready=frame_number+SOM_IAI_COOLDOWN_FRAMES;
+            som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
+            som_overlay_set(&overlay,"^Iai counter!",SOM_MESSAGE_FRAMES/3u);
+            fprintf(stderr,"[som-ai] IAI COUNTER: parried, cut monster %d for %u\n",foe,damage);
+        }
+    }
     const int counter=som_perk(SOM_EFFECT_GUARD_COUNTER);
     if(counter&&som_guarding()&&frame_number>=tiger_ready&&
        (hurt||hero[0x059]||hero[0x1F1]||hero[0x1F2])){
@@ -1045,6 +1078,11 @@ static void som_perks_frame(uint8_t *ram){
                 const unsigned pending=som_word(hero+0x1F3)+heal;
                 hero[0x1F3]=(uint8_t)pending;hero[0x1F4]=(uint8_t)(pending>>8);
                 fprintf(stderr,"[som-ai] PERK Battle Rhythm: kill heals %u HP\n",heal);
+            }
+            if(disciplines.selected==SOM_DISC_BUSHIDO&&frame_number<iai_ready){
+                iai_ready=frame_number;                    /* Zanshin */
+                som_overlay_set(&overlay,"^Zanshin|Iaijutsu ready",SOM_MESSAGE_FRAMES/3u);
+                fprintf(stderr,"[som-ai] ZANSHIN: kill readies Iaijutsu\n");
             }
             monster_hit_frame[slot]=0;
         }
@@ -1399,6 +1437,13 @@ static void som_input_poll(void){
                  !(current&(l2_bit|r2))&&!special_suppress){
             if(!x_cycled)som_cast_spell(wram,som_current_spell());
             x_cycled=0;
+        }
+        /* L2+X: Issen for the samurai (the game never sees that X). */
+        if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
+           disciplines.selected==SOM_DISC_BUSHIDO&&
+           (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
+            x_spell_blocked=1;
+            if(pressed&x_bit)som_issen_start(wram);
         }
         /* L2+X: Shunshin no Jutsu (a clone on each side) for a ninja with a
          * short-range weapon in hand; the game never sees that X. Every
@@ -2690,7 +2735,44 @@ static void som_hop_step(void){
     if(moved)som_camera_follow(ram,x-x0,y-y0);
     hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
     hero[0x006]=hero[0x007]=0;
+    if(issen_active)som_issen_cut(ram,x,y);
     hop_frames_left=moved?hop_frames_left-1u:0u;
+}
+static void som_issen_cut(uint8_t *ram,int x,int y){
+    for(unsigned slot=0;slot<3u;slot++){
+        if((int)slot==familiar.slot||(issen_hit&(1u<<slot)))continue;
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        if(!som_bun_monster_alive(m)||
+           !som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,
+                         SOM_ISSEN_REACH,SOM_ISSEN_REACH))continue;
+        const unsigned damage=16u+2u*disciplines.level[SOM_DISC_BUSHIDO];
+        const unsigned pending=m[0x1F1]+damage;
+        m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+        issen_hit|=1u<<slot;monster_hit_frame[slot]=frame_number;
+        som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
+        fprintf(stderr,"[som-ai] ISSEN cut monster %u for %u\n",slot,damage);
+    }
+}
+/* L2+X (samurai): Issen, the dash-cut. */
+static int som_issen_start(uint8_t *ram){
+    if(!ram||disciplines.selected!=SOM_DISC_BUSHIDO||evade_active)return 0;
+    if(frame_number<issen_ready){
+        som_overlay_set(&overlay,"^Issen|not ready",SOM_MESSAGE_FRAMES/3u);return 0;
+    }
+    if(!som_jutsu_free(ram))return 0;
+    uint8_t *hero=ram+0xE000u;
+    const unsigned facing=hero[0x010];
+    int dx=0,dy=0;
+    if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;else if(facing==0x01u)dy=1;else dy=-1;
+    hop_dx=dx*SOM_ISSEN_SPEED;hop_dy=dy*SOM_ISSEN_SPEED;hop_frames_left=SOM_ISSEN_FRAMES;
+    evade_frames=SOM_ISSEN_FRAMES+SOM_DODGE_GRACE;cartwheel_native=0;cartwheel_fallback=0;
+    hero[0x006]=hero[0x007]=0;
+    evade_hp=som_word(hero+0x182);
+    evade_active=1;evade_started=frame_number;evade_xp_given=0;
+    issen_active=1;issen_hit=0;issen_ready=frame_number+SOM_ISSEN_COOLDOWN;
+    som_overlay_set(&overlay,"^Issen!",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] ISSEN dash-cut toward %d,%d\n",dx,dy);
+    return 1;
 }
 /* Untouchable without the Barrel status (0x0400 is what item 10, the
  * Barrel, toggles: it shows the hero as a barrel). Before and after every
@@ -2717,7 +2799,7 @@ static void som_evade_tick(void){
     som_evade_shield(ram);
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
-    evade_active=0;hop_frames_left=0;cartwheel_native=0;
+    evade_active=0;hop_frames_left=0;cartwheel_native=0;issen_active=0;
 }
 /* After-images of the dodge, 4 and 8 frames behind, on even frames only
  * (a flicker reads as translucent; the boy's palette has no colour math). */

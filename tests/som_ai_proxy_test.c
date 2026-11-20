@@ -1509,6 +1509,31 @@ int main(void){
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
             memcpy(ram+0xA8,camera,sizeof(camera));
         }
+        /* Samurai Issen (L2+X): a dash-cut that passes a monster cuts it
+         * exactly once; he is untouchable meanwhile; then a cooldown. */
+        {
+            uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=SOM_DISC_BUSHIDO;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;
+            foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x1F1]=0;
+            foe[2]=250;foe[3]=0;foe[4]=200;foe[5]=0;foe[0x182]=50;foe[0x183]=0;
+            const uint16_t l2x=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
+            mocked_buttons=l2x;som_input_poll();
+            assert(evade_active&&issen_active);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+            mocked_buttons=0;som_input_poll();
+            for(unsigned f=0;f<30;f++){som_hop_step();som_evade_tick();frame_number++;}
+            assert(foe[0x1F1]==16u+2u*disciplines.level[SOM_DISC_BUSHIDO]);   /* once */
+            assert(som_bun_u16(hero+2)>=200+70&&!evade_active&&!issen_active);
+            mocked_buttons=l2x;som_input_poll();assert(!evade_active);        /* cooldown */
+            mocked_buttons=0;som_input_poll();
+            foe[0]=0;foe[0x1F1]=0;issen_ready=0;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            disciplines.selected=keep;
+        }
         /* AI "kawarimi": armed; nothing moves until a monster touches him.
          * Then he reappears 3 x 16 = 48 px away from it, the hit is
          * dropped, a log stands on his old spot, and he is untouchable for

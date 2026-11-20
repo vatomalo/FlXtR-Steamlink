@@ -522,3 +522,13 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
 | Dark Arts | Dark Force | Energy Absorb | Evil Gate, Dispel Magic, Magic Absorb, Change Form |
 | Summoning | Burst | Sleep Flower | Lunar Magic, Moon Energy |
 | Support & Dance | Speed Down | Cure Water | Speed Up, Defender, Silence, Balloon |
+
+### Samurai kit (2026-11-20)
+
+- **Issen (L2 + X):** a straight dash-cut along the facing, 6 px x 14 frames (~84 px),
+  untouchable like the dodge; every monster passed is cut once (16 + 2 x Bushido level).
+  4 s cooldown. Log `[som-ai] ISSEN ...`.
+- **Iai counter (guard with R1):** a hit landing on the guard is parried (no damage) and
+  answered with a cut on the attacker (20 + 2 x Bushido level), on the Iaijutsu cooldown.
+  Log `[som-ai] IAI COUNTER ...`.
+- **Zanshin:** a kill readies Iaijutsu at once, so kills chain.

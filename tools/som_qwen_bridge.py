@@ -1182,6 +1182,10 @@ def poisoned(observation):
     return isinstance(status, dict) and "poison" in (status.get("effects") or ())
 
 
+HERB_REFUSED_S = 300.0       # after an unconfirmed use (sent, nothing changed)
+herb_last_refused = False     # direct_herb sent use_herb and nothing changed
+
+
 def direct_herb(link, raw, timeout=1.5):
     """Medical Herb without the ring (proxy use_herb): poison cleared and one
     Herb gone. Lullabud poison cost 2-3 HP a second on map 16 and killed him
@@ -1205,7 +1209,13 @@ def direct_herb(link, raw, timeout=1.5):
         if herbs(now) < count and not (now.u16(0x7EE190) & 0x2000):
             print(f"[herb] cured poison: {herbs(now)} Medical Herb left", flush=True)
             return True
-    print("[herb] use_herb not confirmed", flush=True)
+    # Sent, but no Herb gone and still poisoned: the proxy found none (97
+    # refusals in one session, 2026-11-20). Waits HERB_REFUSED_S before the
+    # next try instead of half a minute.
+    global herb_last_refused
+    herb_last_refused = True
+    print("[herb] use_herb not confirmed; next try in "
+          f"{HERB_REFUSED_S:.0f} s", flush=True)
     return False
 
 
@@ -1828,7 +1838,12 @@ def main() -> int:
                 # A proxy without use_herb (game not restarted yet) or a refused
                 # use waits longer before the next try.
                 herb_retry_at = time.monotonic() + HERB_RETRY_S * 6
-                if direct_herb(link, raw):
+                global herb_last_refused
+                herb_last_refused = False
+                herb_done = direct_herb(link, raw)
+                if herb_last_refused:
+                    herb_retry_at = time.monotonic() + HERB_REFUSED_S
+                if herb_done:
                     herb_retry_at = time.monotonic() + HERB_RETRY_S
                     announce("AI: poisoned|Medical Herb")
                     previous = "wait"

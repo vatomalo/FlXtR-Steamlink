@@ -2600,7 +2600,7 @@ int main(void){
         ram[0xE000]=1;ram[0xE08B]=0x22;                       /* palette 1 -> 7EDF20 */
         for(unsigned i=0;i<32;i++)ram[0xDF20+i]=ram[0x0720+i]=(uint8_t)(0x40+i);
         uint8_t original[32];memcpy(original,ram+0xDF20,32);
-        som_disc_init(&disciplines);hero_pal_have=0;
+        som_disc_init(&disciplines);memset(member_pal_have,0,sizeof(member_pal_have));
         som_hero_palette_frame(ram);
         assert(!memcmp(ram+0xDF20,original,32));               /* no discipline */
         disciplines.selected=0;                               /* Swordmaster frost */
@@ -2638,7 +2638,60 @@ int main(void){
             disciplines.selected=(uint8_t)d;
             assert(som_disc_visual_profile(&disciplines)!=SOM_PAL_ORIGINAL);
         }
-        som_disc_init(&disciplines);hero_pal_have=0;
+        som_disc_init(&disciplines);memset(member_pal_have,0,sizeof(member_pal_have));
+    }
+    /* The companions wear their own class colours (2026-11-20): the girl
+     * (slot 1, palette 2 at 7EDF40) and the sprite (slot 2, palette 3). */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));
+        ram[0xE000]=1;ram[0xE08B]=0x22;
+        ram[0xE200]=1;ram[0xE28B]=0x24;ram[0xE384]=82;      /* girl, max HP 82 */
+        ram[0xE400]=1;ram[0xE48B]=0x26;ram[0xE584]=77;      /* sprite */
+        for(unsigned i=0;i<96;i++)ram[0xDF20+i]=ram[0x0720+i]=(uint8_t)(0x40+i);
+        uint8_t original[96];memcpy(original,ram+0xDF20,96);
+        som_disc_init(&disciplines);memset(member_pal_have,0,sizeof(member_pal_have));
+        assert(disciplines.party[0]==SOM_GIRL_DEFAULT_CLASS&&
+               disciplines.party[1]==SOM_SPRITE_DEFAULT_CLASS);
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0xDF20,original,32));                 /* boy: no class */
+        for(unsigned who=1;who<3;who++){
+            const uint8_t *pal=ram+0xDF20+32*who,*was=original+32*who;
+            for(unsigned c=1;c<16;c++){
+                const int clothes=(som_member_clothes[who]>>c)&1u;
+                assert(clothes==(memcmp(pal+2*c,was+2*c,2)!=0)); /* only clothes change */
+            }
+            assert(!memcmp(ram+0x0700+32*(who+1),pal,32));       /* shown buffer too */
+        }
+        uint8_t girl[32];memcpy(girl,ram+0xDF40,32);
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0xDF40,girl,32));                     /* never stacks */
+        ram[0xE4]=1;ram[0xE6]=0x0F;ram[0x0740+20]^=0x11;         /* her hit flash */
+        som_hero_palette_frame(ram);
+        assert(memcmp(ram+0x0740,girl,32));                      /* kept: only the boy's glow is held */
+        ram[0xE4]=0;ram[0xE6]=0;
+        disciplines.party[0]=SOM_DISCIPLINE_NONE;                 /* girl: no class */
+        som_hero_palette_frame(ram);
+        assert(!memcmp(ram+0xDF40,original+32,32));              /* her colours back */
+        ram[0xE384]=0;memset(ram+0xDF40,0x99,32);                /* not joined yet */
+        disciplines.party[0]=SOM_DISC_NINJUTSU;
+        som_hero_palette_frame(ram);
+        assert(ram[0xDF40]==0x99&&ram[0xDF40+31]==0x99);        /* palette 2 left alone */
+        /* Menu: X picks whose class B sets; B there leaves the boy's. */
+        som_disc_init(&disciplines);
+        assert(som_disc_press(&disciplines,1u<<RETRO_DEVICE_ID_JOYPAD_UP)==SOM_DISC_OPENED);
+        char line[33];som_disc_line(&disciplines,0,line);assert(!strncmp(line,"BOY CLASS",9));
+        assert(som_disc_press(&disciplines,1u<<RETRO_DEVICE_ID_JOYPAD_X)==SOM_DISC_WHO);
+        som_disc_line(&disciplines,0,line);assert(!strncmp(line,"GIRL CLASS",10));
+        som_disc_line(&disciplines,1+SOM_GIRL_DEFAULT_CLASS,line);assert(line[1]=='*');
+        disciplines.cursor=SOM_DISC_NINJUTSU;
+        assert(som_disc_press(&disciplines,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_DISC_PARTY_SELECTED);
+        assert(disciplines.party[0]==SOM_DISC_NINJUTSU&&disciplines.selected==SOM_DISCIPLINE_NONE);
+        som_disc_press(&disciplines,1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        som_disc_press(&disciplines,1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        som_disc_line(&disciplines,0,line);assert(!strncmp(line,"BOY CLASS",9));
+        assert(strlen(line)<=32u);
+        som_disc_init(&disciplines);memset(member_pal_have,0,sizeof(member_pal_have));
     }
     /* The playing song (7E:1E05) is announced once per change. */
     {
@@ -2660,12 +2713,18 @@ int main(void){
         som_disc_init(&disciplines);som_disc_load();
         assert(disciplines.selected==6&&disciplines.level[6]==7&&disciplines.experience[6]==42);
         assert(disciplines.level[0]==1);
+        assert(disciplines.party[0]==SOM_GIRL_DEFAULT_CLASS);
+        disciplines.party[0]=SOM_DISC_BUSHIDO;disciplines.party[1]=SOM_DISCIPLINE_NONE;
+        som_disc_save();som_disc_init(&disciplines);som_disc_load();
+        assert(disciplines.party[0]==SOM_DISC_BUSHIDO&&disciplines.party[1]==SOM_DISCIPLINE_NONE&&
+               disciplines.selected==6);
         /* A save from before rogue/samurai/archer (9 disciplines) loads. */
         FILE *old=fopen(disc_path,"w");
         assert(old&&fputs("v1 2 3 10 1 0 4 20 1 0 1 0 1 0 1 0 1 0 1 0\n",old)>=0&&fclose(old)==0);
         som_disc_init(&disciplines);som_disc_load();
         assert(disciplines.selected==2&&disciplines.level[0]==3&&disciplines.level[2]==4&&
                disciplines.level[9]==1&&disciplines.level[11]==1);
+        assert(disciplines.party[1]==SOM_SPRITE_DEFAULT_CLASS);      /* no companions: defaults */
         FILE *bad=fopen(disc_path,"w");assert(bad&&fputs("v1 200 junk\n",bad)>=0&&fclose(bad)==0);
         som_disc_init(&disciplines);som_disc_load();
         assert(disciplines.selected==SOM_DISCIPLINE_NONE);

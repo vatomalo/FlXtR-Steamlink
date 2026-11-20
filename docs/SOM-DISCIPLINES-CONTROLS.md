@@ -824,3 +824,24 @@ pair; changing maps closes them. 20 Steam per portal, travel free. **Tap X** is 
 
 With an NPC or a chest right in front, a caster's B goes to the game (talk, open), no spell and
 no swing; elsewhere B is the spell, never a punch.
+
+### Companion classes and colours (2026-11-20)
+
+The girl and the sprite have classes too. In the CLASSES menu (Start), **X** switches
+whose class the list shows and sets: **BOY → GIRL → SPRITE** (the header says whose).
+Up/Down and B work as for the boy; the `*` marks that member's class, B on it again
+clears it. Defaults: the girl **Divine Arts** (Cleric, she heals), the sprite **Magic**
+(Mage). Levels are the party's, shared with the boy.
+
+- **Colours:** each companion's clothes take their class's colour ramp, the same ramps
+  as the boy's (`src/som_class_palette.h`), on their own sprite palette (girl palette 2
+  at 7E:DF40, sprite palette 3 at 7E:DF60). Hair and skin keep their colours: masks
+  `SOM_GIRL_CLOTHES` / `SOM_SPRITE_CLOTHES` in `src/som_ai_proxy.c`, judged from the
+  live palettes, not yet seen on screen (the saves tested had both companions dead).
+  Unlike the boy, their hit and cast flashes are not held off.
+- A companion not yet in the party (no HP) keeps that palette untouched.
+- Saved in `som_ai_disciplines` as a trailing `p <girl> <sprite>`; older files load with
+  the defaults.
+- **Not yet:** class weapons and moves for the companions. The game's ally AI still
+  fights them with their own equipment (the direct equip writes the boy's weapon art
+  buffer only).

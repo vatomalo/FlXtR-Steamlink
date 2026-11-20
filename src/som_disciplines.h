@@ -117,11 +117,25 @@ typedef struct {
     uint16_t level[SOM_DISCIPLINE_COUNT];
     uint32_t experience[SOM_DISCIPLINE_COUNT];
     uint64_t last_event[SOM_DISCIPLINE_COUNT];
+    /* The companions' classes (player, 2026-11-20): party[0] the girl,
+     * party[1] the sprite. Levels are the party's, shared with the boy.
+     * who: whose class the menu shows (0 boy, 1 girl, 2 sprite). */
+    uint8_t party[2];
+    uint8_t who;
 } SomDisciplines;
-enum {SOM_DISC_NONE, SOM_DISC_OPENED, SOM_DISC_CLOSED, SOM_DISC_SELECTED};
-static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
-    if(!d)return SOM_PAL_ORIGINAL;
-    switch(d->selected){
+#define SOM_PARTY_MEMBERS 3u
+#define SOM_GIRL_DEFAULT_CLASS 4u       /* Divine Arts: she heals */
+#define SOM_SPRITE_DEFAULT_CLASS 3u     /* Magic: he casts the attack spells */
+static const char *const som_party_names[SOM_PARTY_MEMBERS]={"BOY","GIRL","SPRITE"};
+enum {SOM_DISC_NONE, SOM_DISC_OPENED, SOM_DISC_CLOSED, SOM_DISC_SELECTED,
+      SOM_DISC_WHO, SOM_DISC_PARTY_SELECTED};
+/* Member 0 the boy, 1 the girl, 2 the sprite: that member's class. */
+static inline unsigned som_disc_member_class(const SomDisciplines *d,unsigned who){
+    if(!d)return SOM_DISCIPLINE_NONE;
+    return who==0u?d->selected:who<SOM_PARTY_MEMBERS?d->party[who-1u]:SOM_DISCIPLINE_NONE;
+}
+static inline unsigned som_disc_class_profile(unsigned cls){
+    switch(cls){
     case 0: return SOM_PAL_SWORDMASTER_FROST;
     case 1: return SOM_PAL_MONK_CRIMSON_GOLD;
     case 2: return SOM_PAL_NINJA_MIDNIGHT;
@@ -140,6 +154,9 @@ static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
     case 15: return SOM_PAL_PSION_VIOLET;
     default:return SOM_PAL_ORIGINAL;
     }
+}
+static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
+    return d?som_disc_class_profile(d->selected):SOM_PAL_ORIGINAL;
 }
 /* Short class title shown under the hero on the field; NULL with no class. */
 static const char *const som_discipline_titles[SOM_DISCIPLINE_COUNT]={
@@ -186,6 +203,7 @@ static inline int som_disc_draw_label(uint8_t *pixels,unsigned width,unsigned he
 static inline void som_disc_init(SomDisciplines *d){
     memset(d,0,sizeof(*d));
     d->selected=SOM_DISCIPLINE_NONE;
+    d->party[0]=SOM_GIRL_DEFAULT_CLASS;d->party[1]=SOM_SPRITE_DEFAULT_CLASS;
     for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++)d->level[i]=1u;
 }
 static inline uint32_t som_disc_next_xp(unsigned level){
@@ -211,12 +229,22 @@ static inline int som_disc_award(SomDisciplines *d,unsigned skill,unsigned amoun
 /* User-facing menu only. L/R changes page outside this function. */
 static inline int som_disc_press(SomDisciplines *d,uint16_t pressed){
     if(!pressed)return SOM_DISC_NONE;
-    if(!d->open){d->open=1;d->cursor=0;return SOM_DISC_OPENED;}
+    if(!d->open){d->open=1;d->cursor=0;d->who=0;return SOM_DISC_OPENED;}
+    if(d->who>=SOM_PARTY_MEMBERS)d->who=0;
+    if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_X)){     /* X: next member */
+        d->who=(uint8_t)((d->who+1u)%SOM_PARTY_MEMBERS);
+        return SOM_DISC_WHO;
+    }
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))
         d->cursor=(d->cursor+SOM_DISCIPLINE_COUNT-1u)%SOM_DISCIPLINE_COUNT;
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))
         d->cursor=(d->cursor+1u)%SOM_DISCIPLINE_COUNT;
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_B)){
+        if(d->who){
+            uint8_t *c=&d->party[d->who-1u];
+            *c=*c==d->cursor?SOM_DISCIPLINE_NONE:(uint8_t)d->cursor;
+            return SOM_DISC_PARTY_SELECTED;
+        }
         d->selected=d->selected==d->cursor?SOM_DISCIPLINE_NONE:(uint8_t)d->cursor;
         return SOM_DISC_SELECTED;
     }
@@ -226,11 +254,12 @@ static inline int som_disc_press(SomDisciplines *d,uint16_t pressed){
     return SOM_DISC_NONE;
 }
 static inline int som_disc_line(const SomDisciplines *d,unsigned line,char out[33]){
-    if(line==0){snprintf(out,33,"DISCIPLINES L/R:tab A:close");return 1;}
+    const unsigned who=d->who<SOM_PARTY_MEMBERS?d->who:0u;
+    if(line==0){snprintf(out,33,"%s CLASS X:who L/R A:close",som_party_names[who]);return 1;}
     if(line>SOM_DISCIPLINE_COUNT)return 0;
     unsigned i=line-1u;
     snprintf(out,33,"%c%c %-17s Lv%3u",
-        d->cursor==i?'>':' ',d->selected==i?'*':' ',
+        d->cursor==i?'>':' ',som_disc_member_class(d,who)==i?'*':' ',
         som_discipline_names[i],(unsigned)d->level[i]);
     return 1;
 }
@@ -261,7 +290,7 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
         }
     }
     /* Visual preview only. Native hero palettes and saves stay untouched. */
-    unsigned profile=som_disc_visual_profile(d);
+    unsigned profile=som_disc_class_profile(som_disc_member_class(d,d->who));
     const unsigned shades[4]={6u,13u,22u,31u};
     for(unsigned i=0;i<4u;i++){
         uint16_t color=som_pal_color(som_pal_rgb(shades[i],shades[i],shades[i]),profile);

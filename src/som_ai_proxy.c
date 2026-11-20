@@ -201,9 +201,17 @@ static SomDisciplines disciplines;
  * The original colours are kept and re-read whenever the game rewrites
  * the palette (map change, events), so the tint never stacks. */
 #define SOM_HERO_CLOTHES 0x7F00u     /* palette colours 8-14 */
-static uint8_t hero_pal_orig[32],hero_pal_written[32];
-static int hero_pal_have;
-static unsigned hero_pal_addr;
+/* The companions' clothes, judged from their live palettes (2026-11-20,
+ * palette 2 at 7E:DF40, 3 at 7E:DF60): hair 2-4 and skin 6-7 match the
+ * boy's; the girl's greens 5/8/9/13/14 and red ramp 10-12, the sprite's
+ * red ramp 9/13/14 and greens 10-12 (yellow 8, near his skin, kept). */
+#define SOM_GIRL_CLOTHES 0x7F20u
+#define SOM_SPRITE_CLOTHES 0x7E00u
+static const uint16_t som_member_clothes[SOM_PARTY_MEMBERS]={
+    SOM_HERO_CLOTHES,SOM_GIRL_CLOTHES,SOM_SPRITE_CLOTHES};
+static uint8_t member_pal_orig[SOM_PARTY_MEMBERS][32],member_pal_written[SOM_PARTY_MEMBERS][32];
+static int member_pal_have[SOM_PARTY_MEMBERS];
+static unsigned member_pal_addr[SOM_PARTY_MEMBERS];
 /* The chosen discipline, levels and experience survive game restarts. */
 #define SOM_DISC_FILE "/home/apps/retroarch/cores/experimental/som_ai_disciplines"
 #define SOM_DISCIPLINES_V1 9u          /* disciplines before rogue/samurai/archer */
@@ -216,7 +224,8 @@ static void som_disc_save(void){
     for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++)
         ok=fprintf(out," %u %lu",(unsigned)disciplines.level[i],
                    (unsigned long)disciplines.experience[i])>0;
-    ok=ok&&fprintf(out,"\n")>0;
+    ok=ok&&fprintf(out," p %u %u\n",(unsigned)disciplines.party[0],
+                   (unsigned)disciplines.party[1])>0;
     if(fclose(out)!=0)ok=0;
     if(ok)rename(temp,disc_file);else unlink(temp);
 }
@@ -235,55 +244,72 @@ static void som_disc_load(void){
         ok=got==2&&level>=1u&&level<=100u;
         if(ok){loaded.level[i]=(uint16_t)level;loaded.experience[i]=(uint32_t)xp;}
     }
+    /* The companions' classes (files before 2026-11-20 have none: defaults). */
+    unsigned girl=0,sprite=0;
+    if(ok&&fscanf(in," p %u %u",&girl,&sprite)==2){
+        if(girl<SOM_DISCIPLINE_COUNT||girl==SOM_DISCIPLINE_NONE)loaded.party[0]=(uint8_t)girl;
+        if(sprite<SOM_DISCIPLINE_COUNT||sprite==SOM_DISCIPLINE_NONE)loaded.party[1]=(uint8_t)sprite;
+    }
     fclose(in);
     if(!ok){fprintf(stderr,"[som-ai] DISCIPLINES file unreadable; starting fresh\n");return;}
     loaded.selected=(uint8_t)selected;
     disciplines=loaded;
 }
-static void som_hero_palette_frame(uint8_t *ram){
-    if(!ram||ram[0xE000]!=1)return;
-    const unsigned addr=0xDE00u+(128u+((ram[0xE08B]>>1)&7u)*16u)*2u;
+/* One party member's tint: the boy (slot 0) and, since 2026-11-20, the
+ * girl (1) and the sprite (2), each in their own class colours. */
+static void som_member_palette_frame(uint8_t *ram,unsigned who){
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    /* Not in the party (no object, no HP yet): leave that palette alone. */
+    if(o[0]!=1||(who&&!(o[0x184]|o[0x185])))return;
+    const unsigned pal=(o[0x8B]>>1)&7u;
+    const unsigned addr=0xDE00u+(128u+pal*16u)*2u;
     uint8_t *current=ram+addr;
-    const unsigned profile=som_disc_visual_profile(&disciplines);
-    if(hero_pal_have&&addr!=hero_pal_addr)hero_pal_have=0;
+    const unsigned profile=som_disc_class_profile(som_disc_member_class(&disciplines,who));
+    uint8_t *orig=member_pal_orig[who],*written=member_pal_written[who];
+    if(member_pal_have[who]&&addr!=member_pal_addr[who])member_pal_have[who]=0;
+    uint8_t *working=ram+0x0700u+pal*32u;
+    const int field_play=ram[0xE4]==1&&ram[0xE6]==0x0F;
     if(profile==SOM_PAL_ORIGINAL){
-        if(hero_pal_have&&!memcmp(current,hero_pal_written,32))memcpy(current,hero_pal_orig,32);
-        hero_pal_have=0;
-        /* No discipline: still no block/dash glow. The shadow keeps the
-         * plain colours (the glow only touches the shown buffer). */
-        if(ram[0xE4]==1&&ram[0xE6]==0x0F)
-            memcpy(ram+0x0700u+((ram[0xE08B]>>1)&7u)*32u,current,32);
+        if(member_pal_have[who]&&!memcmp(current,written,32)){
+            memcpy(current,orig,32);
+            if(!memcmp(working,written,32))memcpy(working,orig,32);
+        }
+        member_pal_have[who]=0;
+        /* No discipline: still no block/dash glow on the boy. The shadow
+         * keeps the plain colours (the glow only touches the shown buffer). */
+        if(who==0u&&field_play)memcpy(working,current,32);
         return;
     }
-    if(!hero_pal_have||memcmp(current,hero_pal_written,32)){
-        memcpy(hero_pal_orig,current,32);       /* the game wrote fresh colours */
-        hero_pal_have=1;hero_pal_addr=addr;
+    if(!member_pal_have[who]||memcmp(current,written,32)){
+        memcpy(orig,current,32);              /* the game wrote fresh colours */
+        member_pal_have[who]=1;member_pal_addr[who]=addr;
     }
     uint8_t tinted[32];
-    memcpy(tinted,hero_pal_orig,32);
+    memcpy(tinted,orig,32);
     som_pal_apply(tinted,profile);
-    /* Clothes only: outline, hair and skin (1-7) and white (15) keep their
-     * colours. Judged from the boy's live palette, not from sprite data. */
+    /* Clothes only: outline, hair and skin keep their colours. */
     uint8_t dressed[32];
-    memcpy(dressed,hero_pal_orig,32);
+    memcpy(dressed,orig,32);
     for(unsigned i=0;i<16u;i++)
-        if(SOM_HERO_CLOTHES&(1u<<i)){dressed[2u*i]=tinted[2u*i];dressed[2u*i+1u]=tinted[2u*i+1u];}
+        if(som_member_clothes[who]&(1u<<i)){dressed[2u*i]=tinted[2u*i];dressed[2u*i+1u]=tinted[2u*i+1u];}
     memcpy(current,dressed,32);
     /* The game works on (and sends to the screen) a second buffer,
      * 7E:0700 + palette*32 (live trace 2026-11-14: hero palette 1 at 7E:0720
      * equals 7E:DF20, and only it changes during dash/block flashes).
-     * In field play it is held at the tint every frame: the dash/block glow
-     * is the attack-palette routine $C1:CA04 (cidwel/som-decomp
+     * For the boy it is held at the tint every frame of field play: the
+     * dash/block glow is the attack-palette routine $C1:CA04 (cidwel/som-decomp
      * actor-attack-palette.md), which reloads the 15 ROM colours (the
      * "old palette" coming back) and then flashes them. retro_run ends at
      * vblank, so this write is what the NMI sends to CGRAM: no glow, no
-     * relapse. Outside field play (events, fades) only plain or tinted
-     * colours are replaced, as before. */
-    uint8_t *working=ram+0x0700u+((ram[0xE08B]>>1)&7u)*32u;
-    const int field_play=ram[0xE4]==1&&ram[0xE6]==0x0F;
-    if(field_play||!memcmp(working,hero_pal_orig,32)||!memcmp(working,hero_pal_written,32))
+     * relapse. The companions keep their flashes (hit, cast): only plain
+     * or tinted colours are replaced, which also undoes the ROM reload. */
+    if((who==0u&&field_play)||!memcmp(working,orig,32)||!memcmp(working,written,32))
         memcpy(working,dressed,32);
-    memcpy(hero_pal_written,dressed,32);
+    memcpy(written,dressed,32);
+}
+static void som_hero_palette_frame(uint8_t *ram){
+    if(!ram)return;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)som_member_palette_frame(ram,who);
 }
 static int som_menu_disciplines;
 static int som_manual_disciplines;
@@ -1135,6 +1161,12 @@ static void som_bash_tick(void);
 static void som_class_supply_frame(void);
 static int class_supply_pending, class_equip_pending;
 static unsigned long class_last_equip_attempt;
+static void som_party_class_saved(void){
+    som_disc_save();
+    const unsigned who=disciplines.who,cls=som_disc_member_class(&disciplines,who);
+    fprintf(stderr,"[som-ai] PARTY %s class=%s (saved)\n",som_party_names[who%SOM_PARTY_MEMBERS],
+            cls<SOM_DISCIPLINE_COUNT?som_discipline_names[cls]:"none");
+}
 static void som_class_selected(void){
     class_supply_pending=disciplines.selected<SOM_DISCIPLINE_COUNT;
     class_equip_pending=class_supply_pending;
@@ -1944,7 +1976,7 @@ static void som_input_poll(void){
             ((current&class_chord)==class_chord&&(pressed&class_chord)))){
             som_manual_disciplines=1;
             disciplines.open=1;
-            disciplines.cursor=0;
+            disciplines.cursor=0;disciplines.who=0;
             switch_spoiled=1;
             som_overlay_set(&overlay,"DISCIPLINES|A:close B:select",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] MANUAL DISCIPLINES opened\n");
@@ -1973,7 +2005,7 @@ static void som_input_poll(void){
                 som_class_selected();
                 fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)disciplines.selected);
-            }
+            }else if(result==SOM_DISC_PARTY_SELECTED)som_party_class_saved();
         }
         if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
         if(recording)som_record_presses(pressed);
@@ -2030,7 +2062,7 @@ static void som_input_poll(void){
                     som_class_selected();
                     fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)disciplines.selected);
-                }
+                }else if(result==SOM_DISC_PARTY_SELECTED)som_party_class_saved();
             }else switch(som_gambit_press(&gambits,pressed)){
             case SOM_GAMBIT_GENRE_CHANGED:
                 som_music_genre_save();
@@ -5888,7 +5920,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
     weapon_trace_on=0;som_weapon_trace_reset();
-    hero_pal_have=0;
+    memset(member_pal_have,0,sizeof(member_pal_have));
     som_gambit_load();som_music_genre_load();
     som_generals_load();
     last_input_frame=frame_number;idle_started=0;

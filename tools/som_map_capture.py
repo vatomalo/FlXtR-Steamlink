@@ -25,6 +25,7 @@ goes into the repository).
 import argparse
 import json
 import struct
+import subprocess
 import sys
 import time
 import zlib
@@ -148,7 +149,7 @@ def main():
         while True:
             try:
                 raw = link.fetch_wram(False)
-            except OSError:            # no snapshot yet (game loading or restarting)
+            except (OSError, subprocess.SubprocessError):   # no snapshot yet, or a slow link
                 raw = None
             wram = WRAM(raw) if raw is not None else None
             target = args.map if args.map is not None else (map_id(wram) if wram else None)

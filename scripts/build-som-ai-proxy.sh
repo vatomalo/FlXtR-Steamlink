@@ -25,4 +25,18 @@ $CC -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared \
 file build/som-ai/som_ai_proxy_libretro.so
 sha256sum build/som-ai/som_ai_proxy_libretro.so
 echo "Staged only: build/som-ai/som_ai_proxy_libretro.so"
+# Opt-in ROM-derived animation pack: never bundle or modify the ROM itself.
+# Point SOM_ROM_PATH at your own Secret of Mana Turbo .smc/.sfc when building.
+if [[ -n "${SOM_ROM_PATH:-}" ]]; then
+  if [[ ! -f "$SOM_ROM_PATH" ]]; then
+    echo "SOM_ROM_PATH not found: $SOM_ROM_PATH" >&2
+    exit 1
+  fi
+  python3 tools/som_cartwheel.py "$SOM_ROM_PATH" \
+    build/som-ai/som_cartwheel_frames.bin
+  echo "Staged animation pack: build/som-ai/som_cartwheel_frames.bin"
+  echo "Install the pack beside the proxy as cores/experimental/som_cartwheel_frames.bin"
+else
+  echo "Ukemi/flying-kick animated pack not staged: set SOM_ROM_PATH to generate it"
+fi
 echo "DO NOT replace the existing RetroArch binary or SNES core."

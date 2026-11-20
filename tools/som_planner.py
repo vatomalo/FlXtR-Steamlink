@@ -1459,6 +1459,19 @@ class MemoryPlanner:
                                   actor.get("floor_height"), weights,
                                   jumps=self._whip_jumps(context),
                                   forbidden=self._forbidden_steps(context))
+            if target not in routes and target != position and not self.slide_failsafe:
+                # Remembered slides can fence a pocket in for good: 107 on
+                # map 16 cut every way to the Potos exit, and the wait-count
+                # failsafe never fired because the planner kept stepping
+                # (2026-11-20). Without them, a route is tried before
+                # heading blindly.
+                loose = self._routes(position, cells, tuple(context["map_size_tiles"]),
+                                     actor.get("floor_height"), weights,
+                                     jumps=self._whip_jumps(context),
+                                     forbidden=self._forbidden_steps(context, slides=False))
+                if target in loose:
+                    routes = loose
+                    self.slide_failsafe = SLIDE_FAILSAFE_DECISIONS
             via = destination.get("path")
             hop = (f" via maps {'>'.join(str(m) for m in via)}"
                    if isinstance(via, list) and len(via) > 2 else "")
@@ -2247,12 +2260,12 @@ class MemoryPlanner:
                                f"{UNVERIFIED_WAITS} waits: tapping {step[5:]} to refresh "
                                "his terrain", "unstick", turn_only=True)
 
-    def _forbidden_steps(self, context):
+    def _forbidden_steps(self, context, slides=True):
         """{(tile, step)} blocked on this map and layer, for route searches."""
         actor = context.get("actor") or {}
         prefix = f"{context.get('map_id')}:{actor.get('layer')}:"
         forbidden = set()
-        remembered = () if self.slide_failsafe else self._slides()
+        remembered = () if (self.slide_failsafe or not slides) else self._slides()
         for key in list(self.blocked_moves) + list(remembered):
             if key.startswith(prefix):
                 x, y, action = key[len(prefix):].split(":")

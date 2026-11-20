@@ -729,6 +729,18 @@ class TestMemoryPlanner(unittest.TestCase):
         arrived = planner.decide(observation(), errand={"place": "shop", "anchor": here})
         self.assertEqual((arrived.action, arrived.intention), ("wait", "at_shop"))
 
+    def test_remembered_slides_never_seal_a_pocket_off_a_destination(self):
+        # Live map 16 (20 Nov): 107 remembered slides fenced the hero off
+        # every way to the Potos exit; he headed blindly at it for 15 min.
+        shop = {"map_id": 131, "layer": 1, "target": [1, 3], "face": "step_up"}
+        planner = MemoryPlanner()
+        planner.slides = {f"131:1:2:3:{step}" for step in
+                          ("step_left", "step_right", "step_up", "step_down")}
+        going = planner.decide(observation(), errand={"place": "shop", "anchor": shop})
+        self.assertEqual((going.action, going.intention), ("step_left", "go_to_shop"))
+        self.assertIn("go to learned shop", going.reason)
+        self.assertTrue(planner.slide_failsafe)
+
     @staticmethod
     def _edge(history, from_map, to_map, x, y, action):
         history.connection.execute(

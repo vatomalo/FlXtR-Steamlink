@@ -84,6 +84,15 @@ ADVANTAGES = (
     ("duel", 1, 3, False, "fast fists for one close enemy"),
     ("far", 8, 1, False, "the bow for range, sword and spear up close"),
     ("crowd", 10, 2, False, "Iaijutsu cuts through a crowd"),
+    # Late-added disciplines need situational reasons to be chosen, rather
+    # than remaining names the director almost never selects.
+    ("crowd", 12, 2, False, "Holy Water and Grand Cross punish a packed crowd"),
+    ("tough", 13, 2, True, "Energy Absorb can sustain the Necromancer"),
+    ("crowd", 13, 1, False, "a raised ally helps screen a crowd"),
+    ("crowd", 14, 4, False, "bombs and proximity mines control packed enemies"),
+    ("tough", 14, 1, False, "mines reward preparation against a hard target"),
+    ("duel", 15, 3, False, "Mind Control turns an ordinary enemy"),
+    ("crowd", 15, 2, True, "Sleep Flower and Balloon restrain a crowd"),
 )
 TOUGH_HP = 200                       # enemy max HP that counts as tough
 

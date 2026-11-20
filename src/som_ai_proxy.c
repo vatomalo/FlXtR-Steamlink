@@ -651,6 +651,10 @@ static int som_spell_affordable(const uint8_t *ram,unsigned spell);
 static unsigned spell_cursor[SOM_DISCIPLINE_COUNT+1u];
 static unsigned long x_press_frame;
 static int x_cycled;
+/* X was pressed with L2 (an L2+X move): its release is not a cast or an
+ * Iaijutsu, even when L2 lets go in the same frame (swordsman cast a saber
+ * after Whirlwind, 2026-11-20). */
+static int x_l2_chord;
 #define SOM_X_HOLD_FRAMES 30ul
 /* Where X's list starts: a caster's first two spells are on B and Y. */
 static unsigned som_x_spell_base(void){
@@ -740,6 +744,24 @@ static int som_issen_start(uint8_t *ram);
 #define SOM_PALM_COOLDOWN 120ul
 static unsigned long hundred_until,hundred_ready,palm_ready;
 static int som_hundred_start(uint8_t *ram);
+/* L2+X for the swordsman, rogue and archer (2026-11-20):
+ * Whirlwind (swordsman): a spin cutting every monster within the blast box
+ * around him. Shadowstep (rogue): Blink's hidden travel to just behind the
+ * nearest monster (seen from the hero); the next hit within
+ * SOM_BACKSTAB_FRAMES is a backstab. Volley (archer): three arrows in a
+ * cone, every monster up to SOM_VOLLEY_RANGE px ahead and within
+ * 16 + distance/3 px of the line. */
+#define SOM_DISC_ROGUE 9u
+#define SOM_DISC_ARCHER 11u
+#define SOM_WHIRL_COOLDOWN 240ul
+#define SOM_SHADOW_COOLDOWN 300ul
+#define SOM_SHADOW_RANGE 128
+#define SOM_SHADOW_BEHIND 24
+#define SOM_BACKSTAB_FRAMES 150ul
+#define SOM_VOLLEY_COOLDOWN 180ul
+#define SOM_VOLLEY_RANGE 128
+static unsigned long class_move_ready,backstab_until;
+static int som_class_move(uint8_t *ram);
 static void som_hundred_frame(uint8_t *ram);
 static void som_issen_cut(uint8_t *ram,int x,int y);
 /* Hold A (Circle) SOM_A_HOLD_FRAMES: Kawarimi. The tap's hop still fires on
@@ -961,6 +983,15 @@ static void som_combo_frame(void){
             if(sel==SOM_DISC_NINJUTSU&&weapon==6u&&!fuma.active)   /* Fuma: boomerang hit */
                 som_fuma_start(ram,i,combo_hp[i]-hp);
             som_perk_hit((uint8_t*)ram,i,combo_hp[i]-hp,hp);
+            if(sel==SOM_DISC_ROGUE&&frame_number<backstab_until){          /* Backstab */
+                uint8_t *m=(uint8_t*)ram+0xE600u+0x200u*i;
+                const unsigned bonus=12u+2u*disciplines.level[SOM_DISC_ROGUE];
+                const unsigned pending=m[0x1F1]+bonus;
+                m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+                backstab_until=0;
+                som_overlay_set(&overlay,"^Backstab!",SOM_MESSAGE_FRAMES/3u);
+                fprintf(stderr,"[som-ai] BACKSTAB: +%u on monster %u\n",bonus,i);
+            }
             if(sel==SOM_DISC_MARTIAL&&combo.hits&&combo.hits%3u==0u){   /* Rising Dragon */
                 uint8_t *m=(uint8_t*)ram+0xE600u+0x200u*i;
                 const unsigned bonus=8u+disciplines.level[SOM_DISC_MARTIAL];
@@ -1370,6 +1401,7 @@ static void som_input_poll(void){
         if(!(current&b_bit))taijutsu_want=SOM_NO_WEAPON;
         /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
         const uint16_t x_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        if((current&x_bit)&&(current&l2_bit))x_l2_chord=1;
         /* A: evade / jutsu for the disciplines with a dodge; the game's A
          * dash is gone for them until dash is re-added. Other classes keep
          * the native A. Field play only (menus keep A as cancel). */
@@ -1451,7 +1483,7 @@ static void som_input_poll(void){
                     som_overlay_set(&overlay,"^Iaijutsu|level 4: release X",SOM_MESSAGE_FRAMES/2u);
                 }
             }else if(wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
-                     !(current&(l2_bit|r2))&&!special_suppress){
+                     !(current&(l2_bit|r2))&&!special_suppress&&!x_l2_chord){
                 som_iai_start(x_cycled?SOM_IAI_HELD_LEVEL:SOM_IAI_LEVEL);
                 x_cycled=0;
             }
@@ -1467,9 +1499,17 @@ static void som_input_poll(void){
                 som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
             }
         }else if(wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
-                 !(current&(l2_bit|r2))&&!special_suppress){
+                 !(current&(l2_bit|r2))&&!special_suppress&&!x_l2_chord){
             if(!x_cycled)som_cast_spell(wram,som_current_spell());
             x_cycled=0;
+        }
+        /* L2+X: Whirlwind, Shadowstep or Volley. */
+        if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
+           (disciplines.selected==SOM_DISC_SWORD||disciplines.selected==SOM_DISC_ROGUE||
+            disciplines.selected==SOM_DISC_ARCHER)&&
+           (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
+            x_spell_blocked=1;
+            if(pressed&x_bit)som_class_move(wram);
         }
         /* L2+X: Hundred Fists for the monk. */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
@@ -1495,6 +1535,7 @@ static void som_input_poll(void){
             if((pressed&x_bit)&&som_shunshin_start(wram))
                 fprintf(stderr,"[som-ai] SHUNSHIN from L2+X\n");
         }
+        if(!(current&x_bit))x_l2_chord=0;
         /* Start opens Class Progress manually; retain L2+R2 as an alias.
          * While open, all pad input is consumed by the overlay. */
         const uint16_t class_chord=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
@@ -2796,6 +2837,79 @@ static void som_issen_cut(uint8_t *ram,int x,int y){
         som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
         fprintf(stderr,"[som-ai] ISSEN cut monster %u for %u\n",slot,damage);
     }
+}
+static void som_class_damage(uint8_t *ram,unsigned slot,unsigned damage){
+    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    const unsigned pending=m[0x1F1]+damage;
+    m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+    monster_hit_frame[slot]=frame_number;
+    som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
+}
+static int som_class_move(uint8_t *ram){
+    const unsigned d=disciplines.selected;
+    if(!ram||evade_active||blink_active||hundred_until)return 0;
+    const char *name=d==SOM_DISC_SWORD?"Whirlwind":d==SOM_DISC_ROGUE?"Shadowstep":"Volley";
+    if(frame_number<class_move_ready){
+        char text[40];snprintf(text,sizeof(text),"^%s|not ready",name);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);return 0;
+    }
+    if(!som_jutsu_free(ram))return 0;
+    uint8_t *hero=ram+0xE000u;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    unsigned hit=0;
+    if(d==SOM_DISC_SWORD){
+        hit=som_bun_blast(ram,hx,hy,14u+2u*disciplines.level[SOM_DISC_SWORD],familiar.slot);
+        for(unsigned slot=0;slot<3u;slot++)if(monster_hit_frame[slot]!=frame_number&&(int)slot!=familiar.slot){
+            const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+            if(som_bun_monster_alive(m)&&som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),
+                                                      hx,hy,SOM_BUN_BLAST_X,SOM_BUN_BLAST_Y))
+                monster_hit_frame[slot]=frame_number;
+        }
+        static const int ring[4][2]={{-20,0},{20,0},{0,-20},{0,20}};
+        for(unsigned k=0;k<4u;k++)som_bun_boom(bunshin_booms,hx+ring[k][0],hy+ring[k][1],1,frame_number);
+        class_move_ready=frame_number+SOM_WHIRL_COOLDOWN;
+    }else if(d==SOM_DISC_ROGUE){
+        int best=-1;long best_d=0;
+        for(unsigned slot=0;slot<3u;slot++){
+            if((int)slot==familiar.slot)continue;
+            const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+            if(!som_bun_monster_alive(m))continue;
+            const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
+            if(dist<=SOM_SHADOW_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
+        }
+        if(best<0){som_overlay_set(&overlay,"^Shadowstep|no target",SOM_MESSAGE_FRAMES/3u);return 0;}
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)best;
+        const int mx=(int)som_bun_u16(m+2),my=(int)som_bun_u16(m+4);
+        int bx=mx,by=my;
+        if(abs(mx-hx)>=abs(my-hy))bx+=mx>=hx?SOM_SHADOW_BEHIND:-SOM_SHADOW_BEHIND;
+        else by+=my>=hy?SOM_SHADOW_BEHIND:-SOM_SHADOW_BEHIND;
+        if(!som_bun_spot_open(ram,bx,by,som_hero_place(hero))){
+            som_overlay_set(&overlay,"^Shadowstep|no room behind it",SOM_MESSAGE_FRAMES/3u);return 0;
+        }
+        som_blink_go(ram,bx,by);
+        backstab_until=frame_number+SOM_BACKSTAB_FRAMES;
+        class_move_ready=frame_number+SOM_SHADOW_COOLDOWN;
+        hit=1;
+    }else{
+        const unsigned facing=hero[0x010];
+        int fx=0,fy=0;
+        if(facing==0x02u)fx=1;else if(facing==0x82u)fx=-1;else if(facing==0x01u)fy=1;else fy=-1;
+        for(unsigned slot=0;slot<3u;slot++){
+            if((int)slot==familiar.slot)continue;
+            const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+            if(!som_bun_monster_alive(m))continue;
+            const int ox=(int)som_bun_u16(m+2)-hx,oy=(int)som_bun_u16(m+4)-hy;
+            const int ahead=ox*fx+oy*fy,side=abs(fx?oy:ox);
+            if(ahead<=0||ahead>SOM_VOLLEY_RANGE||side>16+ahead/3)continue;
+            som_class_damage(ram,slot,10u+disciplines.level[SOM_DISC_ARCHER]);
+            hit++;
+        }
+        class_move_ready=frame_number+SOM_VOLLEY_COOLDOWN;
+    }
+    char text[48];snprintf(text,sizeof(text),"^%s!",name);
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] %s: %u target(s)\n",name,hit);
+    return 1;
 }
 /* L2+X (monk): Hundred Fists. */
 static int som_hundred_start(uint8_t *ram){

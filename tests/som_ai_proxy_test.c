@@ -1561,6 +1561,29 @@ int main(void){
             foe[0]=0;foe[0x1F1]=0;hundred_ready=0;
             disciplines.selected=keep;
         }
+        /* L2+X Whirlwind (swordsman) cuts what is around him; Volley
+         * (archer) hits what is ahead in the cone, not what is behind. */
+        {
+            const uint8_t keep=disciplines.selected;
+            uint8_t *foe2=ram+0xE600+0x200;
+            const uint16_t l2x=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;
+            foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x1F1]=0;foe[0x182]=50;
+            foe[2]=230;foe[3]=0;foe[4]=200;foe[5]=0;                   /* 30 px ahead */
+            foe2[0]=1;foe2[0x180]=7;foe2[0x190]=foe2[0x191]=0;foe2[0x1F1]=0;foe2[0x182]=50;
+            foe2[2]=100;foe2[3]=0;foe2[4]=200;foe2[5]=0;              /* 100 px behind */
+            disciplines.selected=SOM_DISC_SWORD;
+            mocked_buttons=l2x;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(foe[0x1F1]==14u+2u*disciplines.level[SOM_DISC_SWORD]&&foe2[0x1F1]==0);
+            foe[0x1F1]=0;class_move_ready=0;
+            disciplines.selected=SOM_DISC_ARCHER;
+            foe[2]=(uint8_t)300;foe[3]=1;foe[4]=220;                   /* 100 ahead, 20 off */
+            mocked_buttons=l2x;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(foe[0x1F1]==10u+disciplines.level[SOM_DISC_ARCHER]&&foe2[0x1F1]==0);
+            foe[0]=0;foe2[0]=0;foe[0x1F1]=foe2[0x1F1]=0;class_move_ready=0;
+            disciplines.selected=keep;
+        }
         /* AI "kawarimi": armed; nothing moves until a monster touches him.
          * Then he reappears 3 x 16 = 48 px away from it, the hit is
          * dropped, a log stands on his old spot, and he is untouchable for

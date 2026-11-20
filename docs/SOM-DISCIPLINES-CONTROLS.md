@@ -541,3 +541,14 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
   (14 + 2 x Martial level), every 2 s at most.
 - **Rising Dragon:** every third hit of a combo adds a strike (8 + level).
 - Not built: cartwheel into a kick (the cartwheel is the game's own pose).
+
+### Swordsman, Rogue and Archer on L2 + X (2026-11-20)
+
+- **Whirlwind (swordsman):** a spin cutting every monster in the blast box around him
+  (14 + 2 x Swordsmanship level). 4 s cooldown.
+- **Shadowstep (rogue):** Blink's hidden travel to 24 px behind the nearest monster
+  (within 128 px, the far side seen from the hero); the next hit within 2.5 s is a
+  **backstab** (+12 + 2 x Roguecraft level). 5 s cooldown.
+- **Volley (archer):** three arrows in a cone: every monster up to 128 px ahead and within
+  16 + distance/3 px of the line takes 10 + Archery level. 3 s cooldown.
+- An L2+X release is never read as a plain X release (no stray cast or Iaijutsu).

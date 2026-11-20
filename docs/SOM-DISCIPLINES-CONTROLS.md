@@ -396,7 +396,7 @@ Shunshin stopped by a wall, trail drawn.
 
 ### Jutsu buttons (2026-11-19)
 
-- **Hold A / Circle** (20 frames, any class with a dodge): the tap's hop still fires on
+- **Hold A / Circle** (20 frames, ninja only; Kawarimi is a ninja skill): the tap's hop still fires on
   the press; the held request then arms **Kawarimi no Jutsu** as soon as the hero is free
   (waits up to 90 frames, even if A is let go). Armed for 3 s, it fires when a monster
   touches or hits him. Log: `[som-ai] KAWARIMI from held A`.
@@ -592,3 +592,10 @@ the class weapon back after (`[grass] sword out`).
 
 Saved data: progress records and style files written with 12 classes still load (the new
 classes start at level 1); the style file is now `s2 <classes> ...`.
+
+### 2026-11-20 changes
+
+- Kawarimi (hold A, AI `kawarimi`) is a ninja skill only.
+- Samurai: A with a monster in grab reach grabs and throws it; otherwise A is the evade roll.
+- Swordsman: A is the cartwheel (like the monk and the rogue), no longer the evade roll.
+- The HUD weapon name is centred under the class title.

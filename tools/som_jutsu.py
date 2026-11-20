@@ -45,7 +45,8 @@ class JutsuTactics:
                 now >= self.ready_at["shunshin"]):
             self.ready_at["shunshin"] = now + SHUNSHIN_COOLDOWN_S
             return "shunshin", f"enemy {distance} px away: shadow clones on each side"
-        if (discipline in DODGE_CLASSES and distance <= kawarimi_px and
+        # Kawarimi is a ninja skill (player's design, 2026-11-20).
+        if (discipline == NINJA and distance <= kawarimi_px and
                 (guarding or hp_fraction < kawarimi_hp) and
                 now >= self.ready_at["kawarimi"]):
             self.ready_at["kawarimi"] = now + KAWARIMI_COOLDOWN_S

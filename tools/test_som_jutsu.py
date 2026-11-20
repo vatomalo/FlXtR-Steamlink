@@ -25,24 +25,25 @@ class JutsuTest(unittest.TestCase):
         self.assertIsNone(JutsuTactics(clock).decide(0, "sword", 60, 1.0, False))
 
     def test_kawarimi_before_a_hit_or_at_low_hp(self):
+        # Kawarimi is a ninja skill (2026-11-20).
         clock = Clock()
         j = JutsuTactics(clock)
-        self.assertIsNone(j.decide(0, "sword", 30, 1.0, False))     # no threat yet
-        self.assertIsNone(j.decide(0, "sword", 60, 1.0, True))      # too far
-        self.assertEqual(j.decide(0, "sword", 30, 1.0, True)[0], "kawarimi")
-        self.assertIsNone(j.decide(0, "sword", 30, 1.0, True))      # still armed
+        self.assertIsNone(j.decide(2, "boomerang", 30, 1.0, False))     # no threat yet
+        self.assertIsNone(j.decide(2, "boomerang", 60, 1.0, True))      # too far
+        self.assertEqual(j.decide(2, "boomerang", 30, 1.0, True)[0], "kawarimi")
+        self.assertIsNone(j.decide(2, "boomerang", 30, 1.0, True))      # still armed
         clock.t += 4.0
-        self.assertEqual(j.decide(1, "glove", 20, 0.3, False)[0], "kawarimi")
-        self.assertIsNone(JutsuTactics(clock).decide(4, "axe", 20, 0.3, True))  # no dodge
+        self.assertEqual(j.decide(2, "boomerang", 20, 0.3, False)[0], "kawarimi")
+        for other in (0, 1, 4, 10):                                     # not a ninja
+            self.assertIsNone(JutsuTactics(clock).decide(other, "sword", 20, 0.3, True))
 
     def test_evade_gambit_zero_never_casts_and_refusal_retries(self):
         clock = Clock()
-        self.assertIsNone(JutsuTactics(clock).decide(0, "sword", 20, 0.2, True, evade_weight=0))
+        self.assertIsNone(JutsuTactics(clock).decide(2, "boomerang", 20, 0.2, True, evade_weight=0))
         j = JutsuTactics(clock)
-        self.assertEqual(j.decide(0, "sword", 20, 0.2, True)[0], "kawarimi")
+        self.assertEqual(j.decide(2, "boomerang", 20, 0.2, True)[0], "kawarimi")
         j.refused("kawarimi")
-        self.assertEqual(j.decide(0, "sword", 20, 0.2, True)[0], "kawarimi")
-
+        self.assertEqual(j.decide(2, "boomerang", 20, 0.2, True)[0], "kawarimi")
 
 if __name__ == "__main__":
     unittest.main()

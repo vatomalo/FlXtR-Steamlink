@@ -1415,12 +1415,12 @@ int main(void){
         mocked_buttons=0;som_input_poll();
         memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);   /* open floor */
         ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */
-        /* Swordsman A: the plain evade, 3 px x 16 frames away from the
+        /* Samurai A: the plain evade, 3 px x 16 frames away from the
          * facing, untouchable for the move plus the grace frames; A, D-pad
          * and attacks hidden. No Kawarimi on A. */
         for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
         uint8_t *foe=ram+0xE600;
-        disciplines.selected=0;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
+        disciplines.selected=10;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
         hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
         ram[0xA8]=100;ram[0xA9]=0;ram[0xAA]=100;ram[0xAB]=0;            /* camera */
         ram[0xB0]=116;ram[0xB1]=0;ram[0xAC]=30;ram[0xAD]=0;ram[0xB4]=50;ram[0xB5]=1;
@@ -1493,6 +1493,8 @@ int main(void){
         {
             const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
             uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
+            const uint8_t keep_class=disciplines.selected,keep_weapon=hero[0x1E4];
+            disciplines.selected=SOM_DISC_NINJUTSU;hero[0x1E4]=1;      /* Kawarimi: ninja only */
             hero[2]=200;hero[3]=0;hero[0x01C]=0;
             mocked_buttons=a;som_input_poll();assert(evade_active);
             mocked_buttons=0;som_input_poll();
@@ -1508,6 +1510,30 @@ int main(void){
             kawarimi_armed_until=0;
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
             memcpy(ram+0xA8,camera,sizeof(camera));
+            /* Any other class: holding A arms nothing. */
+            disciplines.selected=11;                                   /* archer */
+            mocked_buttons=a;
+            for(unsigned f=0;f<60;f++){som_hop_step();som_evade_tick();frame_number++;som_input_poll();}
+            assert(!kawarimi_armed_until);
+            mocked_buttons=0;som_input_poll();
+            for(unsigned f=0;f<30;f++){som_hop_step();som_evade_tick();frame_number++;}
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            /* Samurai: A with a monster in grab reach grabs and throws it. */
+            disciplines.selected=SOM_DISC_BUSHIDO;throw_ready=0;
+            foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x182]=50;
+            foe[2]=212;foe[3]=0;foe[4]=200;foe[5]=0;
+            mocked_buttons=a;
+            for(unsigned f=0;f<60&&!throw_active;f++){
+                som_hop_step();som_evade_tick();frame_number++;som_input_poll();
+            }
+            assert(throw_active&&!kawarimi_armed_until);
+            mocked_buttons=0;som_input_poll();
+            for(unsigned f=0;f<90;f++){som_throw_frame(ram);frame_number++;}
+            foe[0]=0;foe[0x1F1]=0;throw_active=0;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            disciplines.selected=keep_class;hero[0x1E4]=keep_weapon;
         }
         /* Mage A: Blink step, the carried dodge with the hero hidden while
          * he moves and shown again where he lands. */
@@ -1677,7 +1703,7 @@ int main(void){
          * Then he reappears 3 x 16 = 48 px away from it, the hit is
          * dropped, a log stands on his old spot, and he is untouchable for
          * the move plus the grace frames. */
-        disciplines.selected=0;hero[2]=200;
+        disciplines.selected=2;hero[2]=200;
         assert(som_handle_command("kawarimi")&&!evade_active&&kawarimi_armed_until>frame_number);
         assert(!som_handle_command("kawarimi"));                     /* already armed */
         for(unsigned f=0;f<10;f++){som_hop_step();som_evade_tick();frame_number++;}
@@ -1718,8 +1744,8 @@ int main(void){
         hero[0x1F1]=9;som_hop_step();
         assert(evade_active&&!hero[0x1F1]&&som_bun_u16(hero+2)==200-48);
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        /* Dodge Mastery (Swordsmanship 10: rank 2, +4 frames): 60 px; off: 48. */
-        disciplines.level[0]=10;hero[2]=200;
+        /* Dodge Mastery (Ninjutsu 10: rank 2, +4 frames): 60 px; off: 48. */
+        disciplines.level[2]=10;hero[2]=200;
         assert(som_handle_command("kawarimi"));
         hero[0x1F1]=9;som_hop_step();
         assert(som_bun_u16(hero+2)==200-60);
@@ -1729,29 +1755,14 @@ int main(void){
         hero[0x1F1]=9;som_hop_step();
         assert(som_bun_u16(hero+2)==200-48);
         for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
-        perks_enabled=1;disciplines.level[0]=1;hero[0x1F1]=0;
-        /* Monk: 4 x 16 = 64 px (the cartwheel's reach); archer 3 x 18 away from a monster above,
-         * stopped short of a wall; rogue arms too. */
-        disciplines.selected=1;hero[2]=200;hero[4]=200;
-        assert(som_handle_command("kawarimi"));
-        hero[0x1F1]=9;som_hop_step();
-        assert(som_bun_u16(hero+2)==200-64);
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        disciplines.selected=11;hero[2]=200;hero[0x1F1]=0;
-        assert(som_handle_command("kawarimi"));
-        ram[0x1B800+4*3]=0x03;
-        for(unsigned c=0;c<128;c++)ram[0x10000+(240u>>4)*128u+c]=3;   /* wall at y 240 */
-        foe[0]=1;foe[2]=200;foe[4]=190;som_hop_step();foe[0]=0;
-        assert(evade_active);
-        assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)>200&&som_bun_u16(hero+4)+4<240);
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(!evade_active);
-        memset(ram+0x10000,0,0x10000);ram[0x1B800+4*3]=0;
-        disciplines.selected=9;hero[4]=200;
-        assert(som_handle_command("kawarimi"));
-        assert(kawarimi_armed_until&&!evade_active);
-        kawarimi_armed_until=0;kawarimi_log_start=0;
-        disciplines.selected=4;assert(!som_handle_command("kawarimi"));   /* no dodge: none */
+        perks_enabled=1;disciplines.level[2]=1;hero[0x1F1]=0;
+        /* Kawarimi is a ninja skill: monk, archer, rogue and the classes
+         * without a dodge are refused. */
+        for(unsigned c=0;c<4u;c++){
+            static const uint8_t others[4]={1,11,9,4};
+            disciplines.selected=others[c];hero[2]=200;hero[4]=200;hero[0x1F1]=0;
+            assert(!som_handle_command("kawarimi")&&!kawarimi_armed_until);
+        }
         /* Ninja with the sword: A is the plain evade; the AI's "shunshin"
          * puts a clone on each side across the facing (clone, ninja,
          * clone); no dash. Not with clones out, not with another weapon. */

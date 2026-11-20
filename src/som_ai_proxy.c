@@ -1491,6 +1491,15 @@ static void som_input_poll(void){
             const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
             a_press_frame=frame_number;a_hold_done=0;
             if(disciplines.selected==0u&&(current&r1_bit)){som_bash_start(wram);a_hold_done=1;}
+            /* Samurai: A with a monster in grab reach grabs and throws it
+             * (no Kawarimi: a ninja skill); otherwise A is the evade. */
+            else if(disciplines.selected==SOM_DISC_BUSHIDO&&
+                    som_bun_toucher(wram,(int)som_bun_u16(wram+0xE002),(int)som_bun_u16(wram+0xE004),
+                                    SOM_BUN_HERO_TOUCH_X+8,SOM_BUN_HERO_TOUCH_Y+8,familiar.slot)>=0&&
+                    som_throw_start(wram)){
+                a_hold_done=1;
+                fprintf(stderr,"[som-ai] THROW from A\n");
+            }
             else{
                 evade_dir_x=(current&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:
                             (current&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
@@ -1509,6 +1518,7 @@ static void som_input_poll(void){
         if(a_kawarimi_pending){
             if(!wram||ring_ai_enabled||kawarimi_armed_until||
                frame_number-a_kawarimi_since>SOM_A_HOLD_WAIT)a_kawarimi_pending=0;
+            else if(disciplines.selected!=SOM_DISC_NINJUTSU)a_kawarimi_pending=0;
             else if(som_kawarimi_arm(wram)){
                 a_kawarimi_pending=0;
                 fprintf(stderr,"[som-ai] KAWARIMI from held A\n");
@@ -2789,8 +2799,8 @@ static int som_evade_start(uint8_t *ram){
  * or hits him before the window closes. */
 static int som_kawarimi_arm(uint8_t *ram){
     if(!ram||evade_active||kawarimi_armed_until)return 0;
-    if(disciplines.selected>=SOM_DISCIPLINE_COUNT||!som_disc_has_dodge(disciplines.selected))
-        return 0;
+    /* Kawarimi is a ninja skill (player's design, 2026-11-20). */
+    if(disciplines.selected!=SOM_DISC_NINJUTSU)return 0;
     if(!som_jutsu_free(ram))return 0;
     const SomDodge dodge=som_disc_dodge(disciplines.selected,ram[0xE1E4]);
     if(!dodge.speed)return 0;
@@ -4971,8 +4981,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(name[0]){
                 if(st)snprintf(text,sizeof(text),"%s %s",name,st->name);
                 else snprintf(text,sizeof(text),"%s",name);
+                /* Centred under the class title. */
+                const int centre=hud_x+SOM_HUD_LABEL_DX+((int)strlen(class_title)*6-1)/2;
                 som_overlay_label(overlay_frame,width,height,pitch,pixel_format,text,
-                                  hud_x+SOM_HUD_LABEL_DX,hud_y+SOM_HUD_LABEL_DY+8,0,
+                                  centre,hud_y+SOM_HUD_LABEL_DY+8,1,
                                   som_overlay_color(pixel_format,255,214,96));
             }
         }

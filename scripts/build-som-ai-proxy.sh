@@ -36,8 +36,16 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
     build/som-ai/som_cartwheel_frames.bin
   echo "Staged animation pack: build/som-ai/som_cartwheel_frames.bin"
   echo "Install the pack beside the proxy as cores/experimental/som_cartwheel_frames.bin"
-  python3 tools/som_weapon_scale.py "$SOM_ROM_PATH" build/som-ai/som_weapon_scales.bin
-  echo "Staged weapon sizes: build/som-ai/som_weapon_scales.bin (install as cores/experimental/som_weapon_scales.bin)"
+  # Bushido sprite masks: a locally extracted SD3 dagger is optional.
+  # Donor images and the ROM are never committed or bundled.
+  dagger_args=()
+  if [[ -n "${SOM_DAGGER_PNG:-}" ]]; then
+    : "${SOM_DAGGER_HILT:?Set SOM_DAGGER_HILT=X,Y for the dagger PNG}"
+    : "${SOM_DAGGER_TIP:?Set SOM_DAGGER_TIP=X,Y for the dagger PNG}"
+    dagger_args=(--dagger-png "$SOM_DAGGER_PNG" --dagger-hilt "$SOM_DAGGER_HILT" --dagger-tip "$SOM_DAGGER_TIP")
+  fi
+  python3 tools/som_weapon_mask.py "$SOM_ROM_PATH" build/som-ai/som_weapon_masks.bin "${dagger_args[@]}"
+  echo "Staged Bushido mask art: build/som-ai/som_weapon_masks.bin (opt-in; not installed automatically)"
 else
   echo "Ukemi/flying-kick animated pack not staged: set SOM_ROM_PATH to generate it"
 fi

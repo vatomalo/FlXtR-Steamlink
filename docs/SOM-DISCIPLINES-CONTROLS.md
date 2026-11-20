@@ -603,3 +603,11 @@ classes start at level 1); the style file is now `s2 <classes> ...`.
   knock-down roll (reaction 0x0D, pose 0x8D, ~65 frames), played like the cartwheel
   (combat maps), with the hero turned to face away so the roll travels forward; his
   facing comes back when it ends. Elsewhere, or if the game refuses, a 54 px carried roll.
+
+### Lock-on targeting (2026-11-20)
+
+Tap **L1** (without B or Y in between) to lock onto the nearest monster within 160 px; a
+yellow "V" bobs over it. While locked the hero keeps facing it (before and after each game
+frame), so walking strafes around it and every attack goes its way. Tap L1 again to let go;
+the lock also drops when the monster dies, gets 220 px away, or the map changes. L1 + B still
+switches the weapon style. Player only (the AI does not use it). Log: `[som-ai] LOCK ...`.

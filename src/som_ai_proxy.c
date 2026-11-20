@@ -839,6 +839,20 @@ static int mine_x[SOM_MINES],mine_y[SOM_MINES];static unsigned mine_map[SOM_MINE
 static uint8_t mine_live[SOM_MINES];
 static uint8_t mind_palette[32];static int mind_slot=-1;
 static int som_class_x(uint8_t *ram);
+/* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
+ * style): tap L1 (without B or Y in between) to lock onto the nearest
+ * monster within SOM_LOCK_RANGE px, tap again to let go. While locked the
+ * hero keeps facing it, before and after the game's frame, so walking
+ * strafes around it and every attack goes its way; a marker floats over
+ * it. The lock drops when the monster dies, changes, or gets
+ * SOM_LOCK_DROP px away, and on a map change. Player only (not the AI). */
+#define SOM_LOCK_RANGE 160
+#define SOM_LOCK_DROP 220
+static int lock_slot=-1,l1_alone;
+static uint8_t lock_identity;
+static unsigned lock_map;
+static void som_lock_toggle(uint8_t *ram);
+static void som_lock_frame(uint8_t *ram);
 static void som_class_x_frame(uint8_t *ram);
 static void som_hundred_frame(uint8_t *ram);
 static void som_issen_cut(uint8_t *ram,int x,int y);
@@ -1426,6 +1440,11 @@ static void som_input_poll(void){
         const uint16_t l1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
         style_b_hidden=field&&(current&l1_bit)&&!ring_ai_enabled&&
             disciplines.selected<SOM_DISCIPLINE_COUNT;
+        if(pressed&l1_bit)l1_alone=1;
+        if((current&l1_bit)&&(current&(b_bit|y_bit)))l1_alone=0;      /* L1+B: a style */
+        if(wram&&!ring_ai_enabled&&l1_alone&&(last_physical_buttons&l1_bit)&&!(current&l1_bit)){
+            l1_alone=0;som_lock_toggle(wram);
+        }
         if(style_b_hidden&&(pressed&b_bit))som_style_cycle(-1);
         if(style_b_hidden&&(current&b_bit))b_weapon_blocked=1;
         /* Samurai's throw: R1 (block) + the D-pad away from the facing. */
@@ -2893,6 +2912,10 @@ static int som_kawarimi_check(uint8_t *ram){
  * Records the after-image trail. */
 static void som_hop_step(void){
     if(!backend_retro_get_memory_data)return;
+    if(lock_slot>=0){
+        uint8_t *locked=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(locked)som_lock_frame(locked);
+    }
     if(holy_until||bomb_at||mind_until||mine_live[0]||mine_live[1]||mine_live[2]){
         uint8_t *gear=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(gear)som_class_x_frame(gear);
@@ -3520,6 +3543,7 @@ static void som_style_frame(uint8_t *ram){
  * cut a heavy style adds past the game's reach. */
 static void som_style_after(uint8_t *ram){
     if(!ram)return;
+    if(lock_slot>=0)som_lock_frame(ram);
     uint8_t *hero=ram+0xE000u;
     unsigned index;
     const SomWeaponStyle *st=som_style_held(ram,&index);
@@ -4925,7 +4949,17 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
        som_general_label_at((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),
                             0,&general_x,&general_y))
         som_gen_label(&generals[0],general_text,sizeof(general_text));
-    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0])||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    int lock_x=-1,lock_y=-1;
+    if(!menu&&lock_slot>=0&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){
+        const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        const uint8_t *o=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
+        const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
+        lock_x=(int16_t)(som_bun_u16(o+2)-som_bun_u16(ram+cam));
+        lock_y=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))-o[0x45]-34;
+        if(lock_x<0||lock_x>=256||lock_y<0||lock_y>=224)lock_x=-1;
+    }
+    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
         return;
@@ -4947,6 +4981,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
     pitch=row;
     if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
+    if(lock_x>=0)                                 /* the lock-on marker, bobbing */
+        som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"V",
+                          lock_x,lock_y-(int)((frame_number/8u)&1u),1,
+                          som_overlay_color(pixel_format,255,220,64));
     if(general_text[0])
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,general_text,
                           general_x,general_y,1,
@@ -5699,4 +5737,51 @@ static void som_class_x_frame(uint8_t *ram){
         fprintf(stderr,"[som-ai] MINE went off: %u monster(s)\n",hit);
     }
     if(mind_until&&(frame_number>=mind_until||familiar.slot!=mind_slot))som_mind_release(ram);
+}
+
+/* ---- Lock-on targeting (see SOM_LOCK_RANGE) ------------------------------- */
+static void som_lock_release(const char *why){
+    if(lock_slot<0)return;
+    fprintf(stderr,"[som-ai] LOCK off (monster slot %d): %s\n",lock_slot+1,why);
+    lock_slot=-1;
+}
+static void som_lock_toggle(uint8_t *ram){
+    if(lock_slot>=0){
+        som_lock_release("let go");
+        som_overlay_set(&overlay,"^Lock off",SOM_MESSAGE_FRAMES/4u);
+        return;
+    }
+    const uint8_t *hero=ram+0xE000u;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    int best=-1;long best_d=0;
+    for(unsigned slot=0;slot<3u;slot++){
+        if((int)slot==familiar.slot)continue;
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        if(!som_bun_monster_alive(m))continue;
+        const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
+        if(dist<=SOM_LOCK_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
+    }
+    if(best<0){som_overlay_set(&overlay,"^Nothing to lock on",SOM_MESSAGE_FRAMES/4u);return;}
+    lock_slot=best;
+    lock_identity=ram[SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)best+0x180u];
+    lock_map=som_bun_u16(ram+0xDC);
+    som_overlay_set(&overlay,"^Locked on",SOM_MESSAGE_FRAMES/4u);
+    fprintf(stderr,"[som-ai] LOCK on monster slot %d (%ld px)\n",best+1,best_d);
+}
+static void som_lock_frame(uint8_t *ram){
+    if(lock_slot<0||!ram)return;
+    if(ring_ai_enabled){som_lock_release("the AI plays");return;}
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
+    if(som_bun_u16(ram+0xDC)!=lock_map){som_lock_release("map changed");return;}
+    if(!som_bun_monster_alive(m)||m[0x180]!=lock_identity||lock_slot==familiar.slot){
+        som_lock_release("target gone");return;
+    }
+    uint8_t *hero=ram+0xE000u;
+    if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return;
+    const int dx=(int)som_bun_u16(m+2)-(int)som_bun_u16(hero+2);
+    const int dy=(int)som_bun_u16(m+4)-(int)som_bun_u16(hero+4);
+    if(abs(dx)+abs(dy)>SOM_LOCK_DROP){som_lock_release("too far");return;}
+    /* Not during a dodge or a pose the game is playing on its own. */
+    if(evade_active||hero[0x01C]==0x40u||hero[0x01C]==0x30u)return;
+    hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
 }

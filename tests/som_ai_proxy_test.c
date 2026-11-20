@@ -1699,6 +1699,32 @@ int main(void){
             foe[0]=0;foe[0x1F1]=0;x_move_ready=0;
             disciplines.selected=keep;
         }
+        /* Lock-on: an L1 tap locks the nearest monster and he faces it
+         * every frame; L1+B is a style, not a tap; a second tap lets go;
+         * a dead target drops the lock. */
+        {
+            const uint16_t l1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;
+            foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x182]=50;
+            foe[2]=150;foe[3]=0;foe[4]=210;foe[5]=0;                   /* to the left */
+            mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(lock_slot==0);
+            som_hop_step();
+            assert(hero[0x010]==0x82);                                 /* faces it */
+            hero[0x010]=0x01;som_style_after(ram);assert(hero[0x010]==0x82);
+            mocked_buttons=l1;som_input_poll();
+            mocked_buttons=(uint16_t)(l1|(1u<<RETRO_DEVICE_ID_JOYPAD_B));som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(lock_slot==0);                                      /* L1+B: still locked */
+            mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(lock_slot<0);                                       /* tap: let go */
+            mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(lock_slot==0);
+            foe[0x191]=0x80;som_hop_step();                            /* it dies */
+            assert(lock_slot<0);
+            foe[0]=0;foe[0x191]=0;hero[0x010]=0x02;
+        }
         /* L2+X Whirlwind (swordsman) cuts what is around him; Volley
          * (archer) hits what is ahead in the cone, not what is behind. */
         {

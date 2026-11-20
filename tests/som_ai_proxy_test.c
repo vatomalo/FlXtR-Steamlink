@@ -2277,6 +2277,8 @@ int main(void){
                 mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
                 som_input_poll();mocked_buttons=0;som_input_poll();
                 assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&hop_dx>0);
+                /* Right: the rogue's frames mirrored, Ukemi's (the monk) not. */
+                assert(ukemi_draw.dir==(classes[c]==SOM_DISC_MARTIAL_ARTS?2u:3u));
                 for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
                 assert(!evade_active&&som_bun_u16(hero+2)>200&&hero[0x010]==0x02);
             }

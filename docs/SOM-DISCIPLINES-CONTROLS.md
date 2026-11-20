@@ -806,8 +806,9 @@ tier 0. (A held B keeps that press's weapon for charging.)
   he goes: the game's cartwheel only travels away from the facing, so it used to turn him
   round and he wheeled off backwards. Only a backward cartwheel is the game's own. Applies
   to the cartwheel classes and Ukemi's sides alike; the facing is kept after.
-- **Ukemi up/down** (the cannon-flight ball) is drawn at 75 % about the feet
-  (`SOM_UKEMI_SCALE_PCT`), so it rolls on the ground.
+- **Ukemi up/down** (the cannon-flight ball) is drawn smaller about the feet
+  (`SOM_UKEMI_SCALE_PCT`, 85 % since 2026-11-21), so it rolls on the ground. Ukemi's drawn
+  cartwheel is mirrored the other way from the cartwheel classes' (player: it faced wrong).
 
 ### Monk and Weapon Flow B chains with power attacks (2026-11-20)
 

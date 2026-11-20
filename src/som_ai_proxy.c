@@ -1061,7 +1061,7 @@ static int cartwheel_pack_tried;
 #define SOM_SIDE_CART_FRAMES 13u
 /* Ukemi's up/down tumble is the cannon-flight ball: drawn this size, about
  * the feet, so it rolls on the ground rather than flying (player, 2026-11-20). */
-#define SOM_UKEMI_SCALE_PCT 75
+#define SOM_UKEMI_SCALE_PCT 85      /* 75 was slightly too small (player) */
 static SomNpcWorkState ukemi_draw;
 static int ukemi_hid;
 static unsigned ukemi_map;
@@ -3381,7 +3381,10 @@ static int som_evade_start_raw(uint8_t *ram){
     const int backward=(dx>0&&facing_before==0x82u)||(dx<0&&facing_before==0x02u);
     const int forward_cart=(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class)&&dx&&!backward&&
         som_move_begin_draw(ram,dx,0,SOM_FORWARD_CART_KIND);
-    if(forward_cart)ukemi_draw.dir=dx<0?2u:3u;  /* the frames face the other way: mirrored */
+    /* The frames face the other way: mirrored for the cartwheel classes;
+     * Ukemi's cartwheel the other way round (player, 2026-11-21: Ukemi's
+     * faced the wrong direction). */
+    if(forward_cart)ukemi_draw.dir=(dx<0)!=(ukemi_class!=0)?2u:3u;
     /* A cartwheel to the side goes the game's own distance (about 25 px in
      * 25 frames), not the 54-64 px of the old hop (player: too far). */
     const int side_cart=dx&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class);

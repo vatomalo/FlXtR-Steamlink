@@ -811,3 +811,16 @@ tier 0. (A held B keeps that press's weapon for charging.)
   finisher. The spear (both classes' Y) never comes up between, only as the finisher.
 - A power step is a tap: the proxy holds B until the level is charged, then releases it, and
   the game plays its own power attack. 1.5 s without B starts the chain over.
+
+### Artificer portals (2026-11-20)
+
+**Hold X** half a second: portal A where the Artificer stands (blue ring); hold X again
+somewhere else on the same map: portal B (orange). Step into one and he comes out of the other
+(in smoke, Blink's travel); he has to leave both before the next trip. A third hold starts a new
+pair; changing maps closes them. 20 Steam per portal, travel free. **Tap X** is still the bomb
+(now thrown on release).
+
+### Casters talk and open chests (2026-11-20)
+
+With an NPC or a chest right in front, a caster's B goes to the game (talk, open), no spell and
+no swing; elsewhere B is the spell, never a punch.

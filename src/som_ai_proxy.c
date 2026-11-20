@@ -722,6 +722,18 @@ static int som_spell_affordable(const uint8_t *ram,unsigned spell);
 static unsigned spell_cursor[SOM_DISCIPLINE_COUNT+1u];
 static unsigned long x_press_frame;
 static int x_cycled;
+/* Artificer portals (player, 2026-11-20): hold X (SOM_PORTAL_HOLD_FRAMES)
+ * to place portal A where he stands, again for portal B; stepping into one
+ * takes him to the other (Blink's hidden travel, in smoke). A third hold
+ * starts a new pair; a map change closes them. Tap X stays the bomb. */
+#define SOM_PORTAL_HOLD_FRAMES 30ul
+#define SOM_PORTAL_ENTER_PX 10
+#define SOM_PORTAL_REARM_PX 24
+typedef struct { int count,x[2],y[2],armed; unsigned map,layer; } SomPortals;
+static SomPortals portals;
+static int portal_x_used;
+static int som_portal_place(uint8_t *ram);
+static int som_portal_place_raw(uint8_t *ram);
 /* An NPC to talk to or a chest to open right in front of the hero (both
  * are the game's attack press in Turbo): casters' B goes to the game then,
  * so they talk and open chests with no spell and no swing. NPCs: objects
@@ -1825,10 +1837,20 @@ static void som_input_poll(void){
                 if(pressed&x_bit)som_flykick_start(wram);
             }
         }else if(x_role>=SOM_X_HOLY_WATER){
-            /* Hunter, Necromancer, Artificer, Mentalist: X is the class move. */
+            /* Hunter, Necromancer, Artificer, Mentalist: X is the class move.
+             * Artificer: a tap (on release) is the bomb, a hold a portal. */
+            const int artificer=disciplines.selected==SOM_DISC_ARTIFICER;
             if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
                 x_spell_blocked=1;
-                if(pressed&x_bit)som_class_x(wram);
+                if(!artificer){if(pressed&x_bit)som_class_x(wram);}
+                else if(pressed&x_bit){x_press_frame=frame_number;portal_x_used=0;}
+                else if(!portal_x_used&&frame_number-x_press_frame>=SOM_PORTAL_HOLD_FRAMES){
+                    portal_x_used=1;som_portal_place(wram);
+                }
+            }else if(artificer&&wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
+                     !(current&(l2_bit|r2))&&!native_ring&&!special_suppress&&!x_l2_chord){
+                if(!portal_x_used)som_class_x(wram);
+                portal_x_used=0;
             }
         }else if(x_role==SOM_X_IAI){
             /* Bushido: release X for Iaijutsu, katana charge level 3; held
@@ -5424,6 +5446,43 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     (void)t0;
 #endif
 }
+static int som_portal_place_raw(uint8_t *ram){
+    if(!ram||disciplines.selected!=SOM_DISC_ARTIFICER||!som_jutsu_free(ram))return 0;
+    const uint8_t *hero=ram+0xE000u;
+    const unsigned map=som_bun_u16(ram+0xDCu),layer=(hero[0x0B]&0x80u)?1u:0u;
+    if(portals.count&&(portals.map!=map||portals.layer!=layer))portals.count=0;
+    if(portals.count>=2)portals.count=0;                 /* a third: a new pair */
+    const int i=portals.count;
+    portals.x[i]=(int)som_bun_u16(hero+2);portals.y[i]=(int)som_bun_u16(hero+4);
+    portals.map=map;portals.layer=layer;portals.count=i+1;portals.armed=0;
+    som_bun_boom(bunshin_booms,portals.x[i],portals.y[i],1,frame_number);
+    som_overlay_set(&overlay,i?"^Portal B|step in to travel":"^Portal A|hold X again for B",
+                    SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] PORTAL %c at %d,%d map %u\n",i?'B':'A',portals.x[i],portals.y[i],map);
+    return 1;
+}
+/* Each frame: a hero who steps into one portal comes out of the other. He
+ * must have left both first (no bouncing back and forth). */
+static void som_portal_frame(uint8_t *ram){
+    if(!ram||!portals.count)return;
+    const uint8_t *hero=ram+0xE000u;
+    if(som_bun_u16(ram+0xDCu)!=portals.map||ram[0xE000]!=1){portals.count=0;return;}
+    if(portals.count<2||blink_active||evade_active||ram[0xD0]!=0)return;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    int inside=-1,far=1;
+    for(int i=0;i<2;i++){
+        const int d=abs(hx-portals.x[i])>abs(hy-portals.y[i])?abs(hx-portals.x[i]):abs(hy-portals.y[i]);
+        if(d<=SOM_PORTAL_ENTER_PX)inside=i;
+        if(d<SOM_PORTAL_REARM_PX)far=0;
+    }
+    if(far){portals.armed=1;return;}
+    if(inside<0||!portals.armed||((hero[0x0B]&0x80u)?1u:0u)!=portals.layer)return;
+    const int o=1-inside;
+    portals.armed=0;
+    som_blink_go(ram,portals.x[o],portals.y[o]);
+    blink_is_swap=1;                              /* not a Blink: no cooldown */
+    fprintf(stderr,"[som-ai] PORTAL travel %c -> %c\n",inside?'B':'A',o?'B':'A');
+}
 /* The game's HUD lifted SOM_HUD_LIFT_PX (player, 2026-11-20: room below
  * for the class's weapon name and energy). In plain field play only: the
  * HP numbers are on BG3, whose vertical scroll the NMI takes from 7E:0040
@@ -5589,6 +5648,28 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                 som_overlay_label(overlay_frame,width,height,pitch,pixel_format,text,
                                   centre,hud_y+SOM_HUD_LABEL_DY+8,1,
                                   som_overlay_color(pixel_format,255,214,96));
+            }
+        }
+    }
+    /* Artificer portals: a ring at each (A blue, B orange). */
+    if(!menu&&portals.count&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){
+        const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+        const unsigned cam=portals.layer?0xACu:0xA8u;
+        static const int ring[][2]={{-7,0},{-6,-2},{-5,-3},{-3,-4},{0,-4},{3,-4},{5,-3},{6,-2},{7,0},
+                                    {6,2},{5,3},{3,4},{0,4},{-3,4},{-5,3},{-6,2}};
+        const int pulse=(int)((frame_number/6ul)%2ul);
+        for(int i=0;i<portals.count;i++){
+            const int cx=(int16_t)(portals.x[i]-(int)som_bun_u16(ram+cam));
+            const int cy=(int16_t)(portals.y[i]-(int)som_bun_u16(ram+cam+2u))-2;
+            const uint32_t ink=i?som_overlay_color(pixel_format,255,150,40):
+                                 som_overlay_color(pixel_format,80,200,255);
+            for(unsigned k=0;k<sizeof(ring)/sizeof(ring[0]);k++){
+                const int px=cx+ring[k][0]*(pulse?9:8)/8,py=cy+ring[k][1];
+                if(px<1||py<1||(unsigned)(px+2)*sx>=width||(unsigned)(py+2)*sy>=height)continue;
+                som_overlay_fill(overlay_frame,pitch,pixel_format,(unsigned)px*sx,(unsigned)py*sy,
+                                 2u*sx,sy,ink);
             }
         }
     }
@@ -5764,6 +5845,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;
     memset(&ukemi_draw,0,sizeof(ukemi_draw));ukemi_hid=0;ukemi_map=0;
     som_energy_init(&energy);
+    memset(&portals,0,sizeof(portals));portal_x_used=0;monk_glove_raised=-1;
     som_tk_reset(&telekinesis);telekinesis_ready=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
@@ -6166,6 +6248,7 @@ RETRO_API void retro_run(void){
         som_bash_tick();
         if(fuma.active)som_fuma_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(blink_active)som_blink_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        if(portals.count)som_portal_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(companion.active)som_companion_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(flykick.active&&backend_retro_get_memory_data)
             som_flykick_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
@@ -6666,5 +6749,11 @@ static int som_iai_start(unsigned level){
     if(!som_energy_pay(10u,0u,"iai"))return 0;
     const int ok=som_iai_start_raw(level);
     if(ok)som_energy_spend(10u,0u);
+    return ok;
+}
+static int som_portal_place(uint8_t *ram){
+    if(!som_energy_pay(20u,0u,"portal"))return 0;
+    const int ok=som_portal_place_raw(ram);
+    if(ok)som_energy_spend(20u,0u);
     return ok;
 }

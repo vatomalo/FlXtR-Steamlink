@@ -2262,6 +2262,31 @@ int main(void){
             memcpy(ram+0xA8,camera,sizeof(camera));
             cartwheel_pack=NULL;cartwheel_pack_size=0;
         }
+        /* Artificer portals: hold X places A, again B; stepping into A
+         * (after leaving both) travels to B; a tap stays the bomb. */
+        {
+            const uint16_t xb=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=SOM_DISC_ARTIFICER;portals.count=0;
+            hero[2]=100;hero[3]=0;hero[4]=100;hero[5]=0;hero[0x01C]=0;hero[0x060]=0;
+            mocked_buttons=xb;som_input_poll();
+            for(unsigned f=0;f<SOM_PORTAL_HOLD_FRAMES;f++){frame_number++;som_input_poll();}
+            assert(portals.count==1&&portals.x[0]==100);
+            mocked_buttons=0;som_input_poll();                        /* release: no bomb */
+            hero[2]=180;
+            mocked_buttons=xb;som_input_poll();
+            for(unsigned f=0;f<SOM_PORTAL_HOLD_FRAMES;f++){frame_number++;som_input_poll();}
+            mocked_buttons=0;som_input_poll();
+            assert(portals.count==2&&portals.x[1]==180);
+            som_portal_frame(ram);assert(!blink_active);              /* standing in B: not armed */
+            hero[2]=140;som_portal_frame(ram);assert(portals.armed);
+            hero[2]=104;som_portal_frame(ram);
+            assert(blink_active&&blink_tx==180&&blink_ty==100&&!portals.armed);
+            for(unsigned f=0;f<60;f++){som_blink_frame(ram);frame_number++;}
+            assert(!blink_active&&som_bun_u16(hero+2)==180);
+            portals.count=0;hero[2]=200;hero[4]=200;hero[0x0E]=0;
+            disciplines.selected=keep;
+        }
         /* The game's HUD lifted 10 px in field play: BG3 scroll (7E:0040)
          * and the portrait sprite; once only; undone for a dialog. */
         {

@@ -146,7 +146,10 @@ def main():
     try:
         deadline, stable, raw = time.monotonic() + args.timeout, 0, None
         while True:
-            raw = link.fetch_wram(False)
+            try:
+                raw = link.fetch_wram(False)
+            except OSError:            # no snapshot yet (game loading or restarting)
+                raw = None
             wram = WRAM(raw) if raw is not None else None
             target = args.map if args.map is not None else (map_id(wram) if wram else None)
             if wram is not None and field(wram) and map_id(wram) == target:

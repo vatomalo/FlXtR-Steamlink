@@ -46,6 +46,10 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
   fi
   python3 tools/som_weapon_mask.py "$SOM_ROM_PATH" build/som-ai/som_weapon_masks.bin "${dagger_args[@]}"
   echo "Staged Bushido mask art: build/som-ai/som_weapon_masks.bin (opt-in; not installed automatically)"
+  python3 tools/som_weapon_preview.py "$SOM_ROM_PATH" \
+    build/som-ai/som_weapon_masks.bin build/som-ai/som_weapon_preview.png
+  echo "Review first: build/som-ai/som_weapon_preview.png (Tanto / native Katana / Dai)"
+  echo "Missing frames listed in build/som-ai/som_weapon_preview.png.txt"
 else
   echo "Ukemi/flying-kick animated pack not staged: set SOM_ROM_PATH to generate it"
 fi

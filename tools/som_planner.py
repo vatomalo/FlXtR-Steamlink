@@ -1590,7 +1590,11 @@ class MemoryPlanner:
                 # whose arrival belongs to the destination's connected room.
                 return self._return_door(context, open_steps, f"leave disconnected room for {place}")
             if strict:
-                return PlannerDecision("wait", "no verified route to destination exit", "observe")
+                # No verified route (a map not learned yet): let the ordinary
+                # travel below steer toward the exit tile by tile, never wait
+                # here. It waited 260+ decisions on map 286, first visit,
+                # on a story trip (2026-11-20).
+                return None
             # Scanned collision islands can be disconnected when the agent
             # crossed an area before map learning was enabled. Keep a stable
             # heading toward the observed exit while checking every next tile.

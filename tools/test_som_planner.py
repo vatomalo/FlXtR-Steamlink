@@ -218,8 +218,10 @@ class TestMemoryPlanner(unittest.TestCase):
         decision = planner._travel(state["tile_context"],
             {"map_id":131,"layer":1,"target":[6,6]}, ["step_right"],
             "town", "go_to_destination", "at_destination", strict=True)
-        self.assertEqual(decision.action, "wait")
-        self.assertIn("no verified route", decision.reason)
+        # No greedy walk from the strict pass, and no endless wait either: it
+        # hands over (None) to the ordinary travel after combat, which
+        # checks every next tile (waited 260+ decisions on map 286).
+        self.assertIsNone(decision)
 
     def test_explicit_visit_skips_optional_fight_but_survival_still_wins(self):
         enemy = {"slot": 1, "active": True, "x_px": 64, "y_px": 56}

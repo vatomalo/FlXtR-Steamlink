@@ -24,6 +24,7 @@
 #include "som_songs.h"
 #include "som_combo.h"
 #include "som_bunshin.h"
+#include "som_telekinesis.h"
 #include "som_bunshin_draw.h"
 #include "som_xp.h"
 #include "som_progress.h"
@@ -838,6 +839,8 @@ static int bomb_x,bomb_y;static unsigned long bomb_at;
 static int mine_x[SOM_MINES],mine_y[SOM_MINES];static unsigned mine_map[SOM_MINES];
 static uint8_t mine_live[SOM_MINES];
 static uint8_t mind_palette[32];static int mind_slot=-1;
+static SomTelekinesis telekinesis={-1,0,0,0};
+static int som_telekinesis_start(uint8_t *ram);
 static int som_class_x(uint8_t *ram);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
  * style): tap L1 (without B or Y in between) to lock onto the nearest
@@ -1621,10 +1624,13 @@ static void som_input_poll(void){
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (disciplines.selected==SOM_DISC_SWORD||disciplines.selected==SOM_DISC_ROGUE||
             disciplines.selected==SOM_DISC_ARCHER||disciplines.selected==SOM_DISC_HUNTER||
-            disciplines.selected==SOM_DISC_ARTIFICER)&&
+            disciplines.selected==SOM_DISC_ARTIFICER||disciplines.selected==SOM_DISC_PSIONICS)&&
            (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
             x_spell_blocked=1;
-            if(pressed&x_bit)som_class_move(wram);
+            if(pressed&x_bit){
+                if(disciplines.selected==SOM_DISC_PSIONICS)som_telekinesis_start(wram);
+                else som_class_move(wram);
+            }
         }
         /* L2+X: Hundred Fists for the monk. */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
@@ -2918,6 +2924,10 @@ static void som_hop_step(void){
         uint8_t *locked=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(locked)som_lock_frame(locked);
     }
+    if(telekinesis.slot>=0){
+        uint8_t *tk_ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(tk_ram)som_tk_tick(&telekinesis,tk_ram,frame_number);
+    }
     if(holy_until||bomb_at||mind_until||mine_live[0]||mine_live[1]||mine_live[2]){
         uint8_t *gear=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(gear)som_class_x_frame(gear);
@@ -4121,7 +4131,7 @@ static int som_undo_spawn(void){
     int ok=backend_retro_unserialize(undo_state,undo_size);
     undo_ready=0;
     familiar.slot=familiar.target=-1;familiar_pending=0;   /* memory is pre-clone */
-    familiar_carry.valid=0;
+    familiar_carry.valid=0;som_tk_init(&telekinesis);
     unlink(familiar_file);
     fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
                       "[som-ai] UNDO failed to restore the snapshot\n");
@@ -4234,6 +4244,9 @@ static int som_handle_command(const char *command){
     }
     /* The AI's dodge: the same evade as the player's A. Kawarimi and
      * Shunshin are AI-only jutsu (not on any button yet). */
+    if(!strcmp(command,"telekinesis"))
+        return som_telekinesis_start(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strcmp(command,"evade"))
         return som_evade_start(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -5183,6 +5196,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;
+    som_tk_init(&telekinesis);
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
@@ -5385,7 +5399,7 @@ RETRO_API void retro_unload_game(void){
     weapon_gfx_verified=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
-    familiar_carry.valid=0;
+    familiar_carry.valid=0;som_tk_init(&telekinesis);
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
@@ -5619,6 +5633,20 @@ static void som_ahead(const uint8_t *hero,int distance,int *x,int *y){
     int dx=0,dy=0;
     if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;else if(facing==0x01u)dy=1;else dy=-1;
     *x=(int)som_bun_u16(hero+2)+dx*distance;*y=(int)som_bun_u16(hero+4)+dy*distance;
+}
+/* L2+X: draw the closest native treasure chest along traversable tiles. */
+static int som_telekinesis_start(uint8_t *ram){
+    if(disciplines.selected!=SOM_DISC_PSIONICS||!ram||!som_jutsu_free(ram))return 0;
+    if(!som_tk_start(&telekinesis,ram,frame_number,familiar.slot)){
+        som_overlay_set(&overlay,"^Telekinesis|no reachable chest",SOM_MESSAGE_FRAMES/3u);
+        return 0;
+    }
+    const uint8_t *o=ram+0xE600u+0x200u*(unsigned)telekinesis.slot;
+    som_bun_boom(bunshin_booms,(int)som_bun_u16(o+2),(int)som_bun_u16(o+4),1,frame_number);
+    som_overlay_set(&overlay,"^Telekinesis!",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] TELEKINESIS chest slot %d map %u\n",
+            telekinesis.slot+1,telekinesis.map);
+    return 1;
 }
 static void som_mind_release(uint8_t *ram){
     if(mind_slot<0)return;

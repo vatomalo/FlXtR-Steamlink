@@ -2205,6 +2205,9 @@ int main(void){
                 mocked_buttons=0;som_input_poll();
                 assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);  /* held for him */
                 special_stage=0;special_suppress=0;
+                ram[0xD0]=0x83;som_monk_glove(ram);                        /* the inn's save */
+                assert(hero[0x19C]==2&&monk_glove_raised<0);
+                ram[0xD0]=0;som_monk_glove(ram);assert(hero[0x19C]==SOM_MONK_GLOVE_LEVELS);
                 disciplines.selected=0;som_monk_glove(ram);
                 assert(hero[0x19C]==2&&monk_glove_raised<0);
                 disciplines.selected=1;taijutsu_step=0;

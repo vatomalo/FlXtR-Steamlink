@@ -3628,8 +3628,10 @@ static int som_special_start(unsigned which,unsigned stage){
 static int monk_glove_raised=-1;
 static void som_monk_glove(uint8_t *ram){
     if(!ram)return;
+    /* Plain field play only: menus, dialogs and the inn's save (events,
+     * 7E:00D0 set) see the learned level, so it is never saved raised. */
     const int monk_glove=disciplines.selected==SOM_DISC_MARTIAL_ARTS&&ram[0xE1E4]==0u&&
-                         ram[0xE000]==1u;
+                         ram[0xE000]==1u&&ram[0xE4]==1u&&ram[0xE6]==0x0Fu&&ram[0xD0]==0u;
     if(monk_glove){
         if(ram[0xE19C]<SOM_MONK_GLOVE_LEVELS){
             if(monk_glove_raised<0)monk_glove_raised=ram[0xE19C];
@@ -6256,6 +6258,8 @@ RETRO_API void retro_run(void){
         if(fuma.active)som_fuma_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(blink_active)som_blink_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(portals.count)som_portal_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        if(monk_glove_raised>=0||disciplines.selected==SOM_DISC_MARTIAL_ARTS)
+            som_monk_glove(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(companion.active)som_companion_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(flykick.active&&backend_retro_get_memory_data)
             som_flykick_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));

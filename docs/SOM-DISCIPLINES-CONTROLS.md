@@ -12,7 +12,8 @@
 | **L3 + B** | Legacy L1+B style-cycle shortcut, moved to L3. B is suppressed so it cannot accidentally attack or start a combo. |
 | **L3 + Y/X** | Native weapon/item or magic ring shortcut, formerly using L2. The proxy sends native L2+Y/X and does not trigger a class attack/spell on release. |
 | **L2 or R3 held alone for 1 s, release** | Start AI mode. A long R2 block no longer starts AI. |
-| **Start** | Class Progress menu, with L2+R2 still available as its alternate shortcut. |
+| **Start** | Party class editor (also inside the ring: for the ring's owner); L2+R2 still opens it in the field. |
+| **L2 + R1 / L2 + L1** | Next / previous class for the boy (all 16, wrapping). L1 alone still locks on. |
 
 Outside active field play, the base game's menu buttons remain unchanged.
 During the AI gambit menu, L1/R1 still turn pages and do not change styles.
@@ -797,7 +798,9 @@ tier 0. (A held B keeps that press's weapon for charging.)
 ### Evades by class (2026-11-20)
 
 - **Ukemi** (Martial Arts, Ninjutsu, Bushido): up/down the drawn tumble; left/right a cartwheel.
-- **Cartwheel** (Swordsmanship, Roguecraft).
+- **Cartwheel** (Swordsmanship, Roguecraft): the same directions as Ukemi since 2026-11-20
+  (left/right the cartwheel, up/down the drawn tumble, A alone back from the facing by the
+  same rule); the game's own cartwheel only to the side.
 - Every cartwheel **forward + A** is drawn facing forward (the game's cartwheel frames, the
   hero carried 64 px / Ukemi 54 px ahead); back + A or A alone is the game's own cartwheel
   away from the facing.
@@ -876,3 +879,14 @@ KATANA                    <- boy: class weapon or spell set; companions: their c
 
 The energy name (Ki, Chakra...) is no longer printed; it still appears in the "Not enough"
 message. A member without a class shows no panel.
+
+### The ring's party menu (2026-11-20)
+
+Turbo's ring has no Action Grid (strategy screen): its config ring, for every member, is
+Equip, Targeting, Status, Weapon/Magic Levels, Controller Settings, Window Edit (6 entries,
+`7E:180B`). **Controller Settings** (entry 4, which would only remap the SNES buttons under
+FlXtR's own layout) is taken over: its title bar reads PARTY CLASSES, and B on it opens the
+party class editor for the ring's owner (`7E:1808`: boy, girl or sprite). **Start** anywhere
+in the ring does the same. X in the editor still switches member; A closes it and the ring
+is still open underneath (the pad is held back from the game until every button is let go).
+The overlay font gained `*` (the class mark, blank before) and `&`.

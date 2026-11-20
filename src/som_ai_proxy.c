@@ -314,6 +314,18 @@ static void som_hero_palette_frame(uint8_t *ram){
 }
 static int som_menu_disciplines;
 static int som_manual_disciplines;
+/* After the menu closes, the game sees no button until all are let go (the
+ * closing A must not also close the ring under it). */
+static int menu_hold_until_release,menu_was_open;
+#define SOM_RING_PARTY_ENTRY 4u     /* Controller Settings */
+#define SOM_RING_CONFIG_ENTRIES 6u
+static int som_ring_open_idle(const uint8_t *ram){
+    return ram&&ram[0xE000]==1&&ram[0x7D]==1&&ram[0xD0]==0&&ram[0x1812]==0&&ram[0x1809]!=0x55u;
+}
+static int som_ring_on_party_entry(const uint8_t *ram){
+    return ram&&ram[0xE000]==1&&ram[0x7D]==1&&ram[0xD0]==0&&ram[0x1812]==0&&
+        ram[0x1809]==2u&&ram[0x180B]==SOM_RING_CONFIG_ENTRIES&&ram[0x180A]==SOM_RING_PARTY_ENTRY;
+}
 /* The Start menu's MUSIC page (src/som_jukebox.h): requests go to the Steam
  * Link's music bridge, its answer is read while the page is open. */
 #define SOM_JUKE_REQUEST "/tmp/flxtr-som-jukebox.req"
@@ -1172,6 +1184,19 @@ static void som_party_class_saved(void){
     fprintf(stderr,"[som-ai] PARTY %s class=%s (saved)\n",som_party_names[who%SOM_PARTY_MEMBERS],
             cls<SOM_DISCIPLINE_COUNT?som_discipline_names[cls]:"none");
 }
+static void som_class_selected(void);
+static void som_class_cycle(int dir){
+    const unsigned n=SOM_DISCIPLINE_COUNT,cur=disciplines.selected;
+    const unsigned next=cur>=n?(dir>0?0u:n-1u):(cur+n+(unsigned)(dir>0?1:n-1u))%n;
+    disciplines.selected=(uint8_t)next;
+    som_disc_save();
+    som_class_selected();
+    char text[64];
+    snprintf(text,sizeof(text),"^%s|Lv%u  L2+R1 next  L2+L1 back",som_discipline_titles[next],
+             (unsigned)disciplines.level[next]);
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] DISCIPLINE selected=%u by L2+%s (saved)\n",next,dir>0?"R1":"L1");
+}
 static void som_class_selected(void){
     class_supply_pending=disciplines.selected<SOM_DISCIPLINE_COUNT;
     class_equip_pending=class_supply_pending;
@@ -1511,7 +1536,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         if(bitmask)return (int16_t)remote;
         return id<16u&&(remote&(1u<<id))?1:0;
     }
-    if((ring_ai_enabled||som_manual_disciplines)&&port==0&&
+    if((ring_ai_enabled||som_manual_disciplines||menu_hold_until_release)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
         actual=0;                    /* the player's buttons drive the gambit menu */
     /* Bash: the game sees only A (the run), then nothing, then B (swing). */
@@ -1695,7 +1720,11 @@ static void som_input_poll(void){
         style_b_hidden=field&&(current&(l3_bit|b_bit))==(l3_bit|b_bit)&&
             !ring_ai_enabled&&!som_manual_disciplines&&
             disciplines.selected<SOM_DISCIPLINE_COUNT;
-        if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&(pressed&l1_bit))
+        /* L2 + R1 / L2 + L1: the next / previous class (player, 2026-11-20). */
+        if(wram&&field&&!ring_ai_enabled&&!som_manual_disciplines&&(current&l2_bit)&&
+           (pressed&(l1_bit|r1_bit))&&!special_stage&&!bash_stage)
+            som_class_cycle((pressed&r1_bit)?1:-1);
+        else if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&(pressed&l1_bit)&&!(current&l2_bit))
             som_lock_toggle(wram); /* immediate L1 tap, no B/Y dependency */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (pressed&r1_bit)&&!(current&(l2_bit|r2)))
@@ -1971,12 +2000,33 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] SHUNSHIN from L2+X\n");
         }
         if(!(current&x_bit))x_l2_chord=0;
+        /* The ring's Controller Settings (config ring entry 4; Turbo has no
+         * Action Grid: its config ring is Equip, Targeting, Status, Levels,
+         * Controller Settings, Window Edit, live 2026-11-20) opens the party
+         * class editor instead, for the ring's owner (7E:1808). The game
+         * never sees that B, and the ring is still open after A. */
+        uint8_t *ring_ram=som_live_wram();
+        const int ring_party=ring_ram&&!ring_ai_enabled&&!som_manual_disciplines&&(
+            ((pressed&b_bit)&&som_ring_on_party_entry(ring_ram))||
+            ((pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_START))&&som_ring_open_idle(ring_ram)));
+        if(ring_party){
+            som_manual_disciplines=1;
+            disciplines.open=1;
+            disciplines.who=(uint8_t)(ring_ram[0x1808]<SOM_PARTY_MEMBERS?ring_ram[0x1808]:0u);
+            {const unsigned cls=som_disc_member_class(&disciplines,disciplines.who);
+             disciplines.cursor=cls<SOM_DISCIPLINE_COUNT?cls:0u;}
+            switch_spoiled=1;menu_hold_until_release=1;
+            fprintf(stderr,"[som-ai] PARTY menu opened from the ring (%s)\n",
+                    som_party_names[disciplines.who]);
+        }
         /* Start opens Class Progress manually; retain L2+R2 as an alias.
          * While open, all pad input is consumed by the overlay. */
         const uint16_t class_chord=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                               (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
         const uint16_t class_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
-        if(!ring_ai_enabled && !som_manual_disciplines && som_overlay_field() &&
+        if(ring_party){
+            /* Opened from the ring this frame: that press is not a menu choice. */
+        }else if(!ring_ai_enabled && !som_manual_disciplines && som_overlay_field() &&
            ((pressed&class_start)||
             ((current&class_chord)==class_chord&&(pressed&class_chord)))){
             som_manual_disciplines=1;
@@ -2013,6 +2063,11 @@ static void som_input_poll(void){
             }else if(result==SOM_DISC_PARTY_SELECTED)som_party_class_saved();
         }
         if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
+        {   /* A closed menu: hold the pad back from the game until let go. */
+            if(menu_was_open&&!som_manual_disciplines)menu_hold_until_release=1;
+            menu_was_open=som_manual_disciplines;
+            if(menu_hold_until_release&&!som_manual_disciplines&&!current)menu_hold_until_release=0;
+        }
         if(recording)som_record_presses(pressed);
         last_physical_buttons=current;
         if(current){last_input_frame=frame_number;idle_started=0;}
@@ -3309,9 +3364,13 @@ static int som_evade_start_raw(uint8_t *ram){
     /* Ukemi classes: the game has no side-view somersault (the cannon
      * flight is the same ball every way), so left and right are the game's
      * own cartwheel; up and down the drawn tumble (player's call, 2026-11-20). */
+    /* The cartwheel classes (swordsman, rogue) take the same directions as
+     * Ukemi (player, 2026-11-20): left/right the cartwheel, up/down the
+     * drawn tumble, A alone back from the facing by the same rule. */
     const int ukemi_class=disciplines.selected==SOM_DISC_NINJUTSU||
                           disciplines.selected==SOM_DISC_BUSHIDO||
-                          disciplines.selected==SOM_DISC_MARTIAL_ARTS;    /* monk: Ukemi too */
+                          disciplines.selected==SOM_DISC_MARTIAL_ARTS||   /* monk: Ukemi too */
+                          dodge.cartwheel==SOM_REACT_CARTWHEEL;
     /* Every cartwheel (swordsman, rogue, Ukemi's sides), forward + A: the
      * game's cartwheel goes away from the facing, so forward it is drawn
      * facing forward instead (he dashes ahead facing where he goes; player,
@@ -3329,7 +3388,7 @@ static int som_evade_start_raw(uint8_t *ram){
         evade_frames=hop_frames_left+SOM_DODGE_GRACE;
     }
     const unsigned side_move=hop_frames_left;
-    cartwheel_native=!forward_cart&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
+    cartwheel_native=!forward_cart&&ukemi_class&&dx&&
         som_cartwheel_request(ram,dx,dy,SOM_REACT_CARTWHEEL);
     if(ukemi_class&&!dx&&!som_ukemi_begin_draw(ram,dx,dy))
         fprintf(stderr,"[som-ai] UKEMI pack missing: rebuild som_cartwheel_frames.bin (pose 34, kinds 0xC0+)\\n");
@@ -5987,7 +6046,11 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         lock_y=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))-o[0x45]-34;
         if(lock_x<0||lock_x>=256||lock_y<0||lock_y>=224)lock_x=-1;
     }
-    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+    const int ring_title=!menu&&backend_retro_get_memory_data&&
+        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE&&
+        som_ring_on_party_entry((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0&&
+        !ring_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
         return;
@@ -6054,6 +6117,18 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(class_title)som_party_panels(overlay_frame,width,height,pitch,
         (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    /* The ring's Controller Settings is the party class editor: its title
+     * bar says so (bar inside 0,0,88 at y 15-30, title from x 18, measured
+     * on a Turbo screenshot 2026-11-20). */
+    if(ring_title){
+        const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+        if(200u*sx<width&&31u*sy<height){
+            som_overlay_fill(overlay_frame,pitch,pixel_format,16u*sx,15u*sy,184u*sx,15u*sy,
+                             som_overlay_color(pixel_format,0,0,88));
+            som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"Party Classes",
+                              19,19,0,som_overlay_color(pixel_format,255,255,255));
+        }
+    }
     /* Artificer portals: a ring at each (A blue, B orange). */
     if(!menu&&portals.count&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){
@@ -6237,7 +6312,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
-    som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
+    som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;menu_hold_until_release=0;menu_was_open=0;
     som_disc_load();
     som_styles_load();style_atk_active=0;style_carry=0;style_cut_pending=0;style_swing_prev=0;
     style_dirty=0;style_b_hidden=0;throw_active=0;throw_slot=-1;throw_ready=0;

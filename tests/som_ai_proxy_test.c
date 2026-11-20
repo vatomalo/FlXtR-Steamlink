@@ -85,6 +85,7 @@ static void reset_proxy(void){
     pressed=100;
     memset(&overlay,0,sizeof(overlay));
     switch_holding=switch_spoiled=0;
+    menu_hold_until_release=menu_was_open=0;
 }
 int main(void){
     energy_free=1;              /* moves cost nothing here; the cost test turns it off */
@@ -153,9 +154,13 @@ int main(void){
     mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;mocked_wram[0xD0]=0x82;
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
     assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    /* The ring open: Start opens the party class editor (player, 2026-11-20). */
     mocked_wram[0xD0]=0;mocked_wram[0x7D]=1;
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
-    assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
+    assert(som_manual_disciplines&&disciplines.who==0u);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==0);
+    som_manual_disciplines=0;disciplines.open=0;menu_hold_until_release=menu_was_open=0;
+    mocked_buttons=0;som_input_poll();mocked_wram[0x7D]=0;
     backend_retro_get_memory_data=NULL;                      /* unreadable */
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
     assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
@@ -1680,6 +1685,24 @@ int main(void){
             for(unsigned f=0;f<80u;f++){
                 som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
             }
+            /* The cartwheel classes take Ukemi's directions: down + A is the
+             * tumble, not the game's cartwheel (player, 2026-11-20). */
+            {
+                const unsigned was=disciplines.selected;
+                disciplines.selected=SOM_DISC_SWORD;
+                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;
+                hero[0x010]=0x01;hero[0x01C]=0;hero[0x011]=0;
+                hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
+                mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));
+                som_input_poll();mocked_buttons=0;som_input_poll();
+                assert(evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF);
+                assert(hop_dx==0&&hop_dy==4);
+                for(unsigned f=0;f<40u;f++){
+                    som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
+                }
+                assert(!evade_active&&som_bun_u16(hero+4u)==200u+64u);
+                disciplines.selected=(uint8_t)was;
+            }
             hero[0x1E5]=0xFF;
             ram[0xED]=keep_ed;disciplines.selected=keep;
         }
@@ -2692,6 +2715,68 @@ int main(void){
         som_disc_line(&disciplines,0,line);assert(!strncmp(line,"BOY CLASS",9));
         assert(strlen(line)<=32u);
         som_disc_init(&disciplines);memset(member_pal_have,0,sizeof(member_pal_have));
+    }
+    /* L2+R1 / L2+L1 cycle the boy's class; the ring's Controller Settings
+     * (config entry 4) and Start in the ring open the party class editor for
+     * the ring's owner; the closing A never reaches the game. */
+    {
+        backend_retro_get_memory_data=mocked_memory_data;
+        backend_retro_get_memory_size=mocked_memory_size;
+        memset(mocked_wram,0,sizeof(mocked_wram));
+        mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
+        som_disc_init(&disciplines);disciplines.selected=SOM_DISC_BUSHIDO;
+        disc_file="/nonexistent/flxtr-disciplines";
+        ring_ai_enabled=0;som_manual_disciplines=0;special_stage=bash_stage=0;
+        on_turbo=1;test_enabled=1;menu_hold_until_release=menu_was_open=0;
+        physical_state=mocked_input_mask;pressed=100;
+        const uint16_t l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+        const uint16_t l1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
+        const uint16_t r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        const uint16_t b=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+        const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+        const uint16_t start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+        mocked_buttons=0;last_physical_buttons=0;som_input_poll();
+        const int lock_before=lock_slot;
+        mocked_buttons=l2;som_input_poll();
+        mocked_buttons=l2|r1;som_input_poll();
+        assert(disciplines.selected==SOM_DISC_BUSHIDO+1u);         /* next */
+        mocked_buttons=l2;som_input_poll();
+        mocked_buttons=l2|l1;som_input_poll();
+        mocked_buttons=l2;som_input_poll();
+        mocked_buttons=l2|l1;som_input_poll();
+        assert(disciplines.selected==SOM_DISC_BUSHIDO-1u);         /* back twice */
+        assert(lock_slot==lock_before);                            /* no lock-on toggle */
+        disciplines.selected=0;mocked_buttons=l2;som_input_poll();
+        mocked_buttons=l2|l1;som_input_poll();
+        assert(disciplines.selected==SOM_DISCIPLINE_COUNT-1u);     /* wraps */
+        mocked_buttons=0;som_input_poll();
+        /* The girl's ring, config category, cursor on Controller Settings. */
+        mocked_wram[0x7D]=1;mocked_wram[0x1808]=1;mocked_wram[0x1809]=2;
+        mocked_wram[0x180A]=SOM_RING_PARTY_ENTRY;mocked_wram[0x180B]=SOM_RING_CONFIG_ENTRIES;
+        mocked_buttons=b;som_input_poll();
+        assert(som_manual_disciplines&&disciplines.open&&disciplines.who==1u);
+        assert(disciplines.cursor==disciplines.party[0]);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+        mocked_buttons=0;som_input_poll();
+        mocked_buttons=a;som_input_poll();                         /* close */
+        assert(!som_manual_disciplines);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+        som_input_poll();                                          /* still held */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+        mocked_buttons=0;som_input_poll();
+        mocked_buttons=a;som_input_poll();                         /* a fresh A: the game's */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+        mocked_buttons=0;som_input_poll();
+        mocked_wram[0x180A]=2;                                     /* Status: the game's */
+        mocked_buttons=b;som_input_poll();
+        assert(!som_manual_disciplines);
+        mocked_buttons=0;som_input_poll();
+        mocked_wram[0x1808]=2;mocked_buttons=start;som_input_poll();   /* Start in the ring */
+        assert(som_manual_disciplines&&disciplines.who==2u);
+        som_manual_disciplines=0;disciplines.open=0;mocked_buttons=0;som_input_poll();
+        som_input_poll();
+        memset(mocked_wram,0,sizeof(mocked_wram));som_disc_init(&disciplines);
+        menu_hold_until_release=menu_was_open=0;
     }
     /* Companion class moves (2026-11-20): the girl (Cleric) heals the
      * hurt boy, the sprite (Mage) bolts the monster; a Ninja girl dashes to

@@ -1535,26 +1535,29 @@ int main(void){
             memcpy(ram+0xA8,camera,sizeof(camera));
             disciplines.selected=keep_class;hero[0x1E4]=keep_weapon;
         }
-        /* Samurai A on a combat map: Ukemi asks the game for its roll
-         * (reaction 0x0D, pose 0x8D), turning him to face away so the
-         * roll (away from the facing) goes forward; the facing comes back
-         * when it ends. */
+        /* Samurai A on a combat map: Ukemi is the game's cartwheel (reaction
+         * 0x13); with no direction it goes back, with forward held it goes
+         * forward (he is turned round for it) and faces forward again after. */
         {
             const uint8_t keep=disciplines.selected,keep_ed=ram[0xED];
             disciplines.selected=SOM_DISC_BUSHIDO;
             for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;   /* nobody to grab */
             ram[0xED]|=0x80u;
-            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
-            hero[0x011]=0;hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
-            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
-            mocked_buttons=0;som_input_poll();
-            assert(evade_active&&cartwheel_native&&hero[0x1E5]==0x0D&&hero[0x010]==0x82);
-            hero[0x01C]=0x40;hero[0x011]=0x8D;                       /* the game plays it */
-            for(unsigned f=0;f<SOM_UKEMI_FRAMES+20u;f++){
-                if(f==60u)hero[0x01C]=0;                             /* pose over */
-                som_hop_step();som_evade_tick();frame_number++;
+            for(unsigned forward=0;forward<2u;forward++){
+                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+                hero[0x011]=0;hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
+                const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+                mocked_buttons=(uint16_t)(a|(forward?1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT:0u));
+                som_input_poll();mocked_buttons=0;som_input_poll();
+                assert(evade_active&&cartwheel_native&&hero[0x1E5]==0x13);
+                assert(hero[0x010]==(forward?0x82:0x02));             /* turned for forward */
+                hero[0x01C]=0x40;hero[0x011]=0x93;                      /* the game plays it */
+                for(unsigned f=0;f<SOM_CARTWHEEL_FRAMES+20u;f++){
+                    if(f==25u)hero[0x01C]=0;                            /* pose over */
+                    som_hop_step();som_evade_tick();frame_number++;
+                }
+                assert(!evade_active&&hero[0x010]==0x02);
             }
-            assert(!evade_active&&hero[0x010]==0x02);
             hero[0x01C]=0;hero[0x011]=0;hero[0x1E5]=0xFF;ram[0xED]=keep_ed;
             disciplines.selected=keep;
         }
@@ -1812,8 +1815,8 @@ int main(void){
             disciplines.selected=others[c];hero[2]=200;hero[4]=200;hero[0x1F1]=0;
             assert(!som_handle_command("kawarimi")&&!kawarimi_armed_until);
         }
-        /* Ninja with the sword: A is Ukemi, a roll forward (here the hop
-         * fallback, 54 px, facing kept); the AI's "shunshin"
+        /* Ninja with the sword: A is Ukemi, back with no direction (here
+         * the hop fallback, 54 px, facing kept); the AI's "shunshin"
          * puts a clone on each side across the facing (clone, ninja,
          * clone); no dash. Not with clones out, not with another weapon. */
         disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;hero[2]=200;hero[4]=200;
@@ -1821,7 +1824,7 @@ int main(void){
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         assert(evade_active&&!som_bun_alive(&bunshin));
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(!evade_active&&som_bun_u16(hero+2)==200+54&&hero[0x010]==0x02);
+        assert(!evade_active&&som_bun_u16(hero+2)==200-54&&hero[0x010]==0x02);
         hero[2]=200;hero[0x1E4]=6;assert(!som_handle_command("shunshin"));hero[0x1E4]=1;
         assert(som_handle_command("shunshin"));
         assert(!evade_active&&!kawarimi_armed_until&&som_bun_alive(&bunshin)==2);

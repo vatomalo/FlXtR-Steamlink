@@ -2804,7 +2804,9 @@ static int som_evade_start(uint8_t *ram){
         cartwheel_fallback=move;hop_frames_left=0;
         evade_frames=(native_code==SOM_REACT_UKEMI?SOM_UKEMI_FRAMES:SOM_CARTWHEEL_FRAMES)+
                      (unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES)+SOM_DODGE_GRACE;
-        if(native_code==SOM_REACT_UKEMI)native_restore_facing=(int)facing_before;
+        /* Steering it (forward + A: the cartwheel travels away from the
+         * facing) turned him round: he faces the old way again after. */
+        if(hero[0x010]!=facing_before)native_restore_facing=(int)facing_before;
     }
     hero[0x006]=hero[0x007]=0;
     evade_hp=som_word(hero+0x182);

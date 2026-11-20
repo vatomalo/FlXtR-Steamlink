@@ -599,10 +599,11 @@ classes start at level 1); the style file is now `s2 <classes> ...`.
 - Samurai: A with a monster in grab reach grabs and throws it; otherwise A is the evade roll.
 - Swordsman: A is the cartwheel (like the monk and the rogue), no longer the evade roll.
 - The HUD weapon name is centred under the class title.
-- Ninja (with the sword) and Samurai: A is **Ukemi**, a forward roll: the game's own
-  knock-down roll (reaction 0x0D, pose 0x8D, ~65 frames), played like the cartwheel
-  (combat maps), with the hero turned to face away so the roll travels forward; his
-  facing comes back when it ends. Elsewhere, or if the game refuses, a 54 px carried roll.
+- Ninja (with the sword) and Samurai: A is **Ukemi**, the game's cartwheel (reaction 0x13,
+  pose 0x93) like the swordsman, monk and rogue: the direction held picks the way (forward
+  + A: a jump forward; back or none: back). Any cartwheel that turned him round to steer it
+  gives his facing back when it ends. Elsewhere, or if the game refuses, a 54 px carried roll.
+  (The knock-down roll, pose 0x8D, was tried first: it is the hurt animation.)
 
 ### Lock-on targeting (2026-11-20)
 

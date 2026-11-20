@@ -1917,38 +1917,45 @@ int main(void){
             assert(lock_slot<0);
             foe[0]=0;foe[0x191]=0;hero[0x010]=0x02;
         }
-        /* Scaled weapon art: the Dai Katana (200 %) blanks the native weapon
-         * tiles (a copy is kept) and draws the pack's frame for the hero's
-         * frame, mirrored for a left facing; the Katana (100 %) puts the
-         * native tiles back. */
+        /* Masked Bushido weapon art: a valid Dai Katana mask hides only the
+         * native effects tiles while it draws, mirrors with the actor, and
+         * switching to Katana restores the exact previous bytes. No masks
+         * or ROM patches are enabled unless the marker file exists. */
         {
-            char scale_path[]="/tmp/flxtr-weapon-scale-test-XXXXXX";
-            const int fd=mkstemp(scale_path);assert(fd>=0);
-            uint8_t pack[10+44+6+1];memset(pack,0,sizeof(pack));
+            char mask_path[]="/tmp/flxtr-weapon-mask-test-XXXXXX";
+            const int fd=mkstemp(mask_path);assert(fd>=0);
+            uint8_t pack[10+44+6];memset(pack,0,sizeof(pack));
             memcpy(pack,"SOMWORK1",8);pack[8]=1;
-            pack[10]=0xD3;pack[11]=14;pack[12]=10;pack[13]=1;      /* 200 %, row 14, frame 10 */
-            pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=16;          /* one 1x1 blade pixel */
+            pack[10]=0xD5;pack[11]=14;pack[12]=10;pack[13]=1;
+            pack[14]=0x1F;                       /* mask palette #1 red */
+            pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=1;
             assert(write(fd,pack,sizeof(pack))==(ssize_t)sizeof(pack));close(fd);
-            weapon_scale_file=scale_path;weapon_scale_tried=0;
-            weapon_scale_on_file=scale_path;weapon_scale_on_checked=0;   /* sizes on */
-            const uint8_t keep=disciplines.selected,keep_style=styles.selected[SOM_DISC_BUSHIDO];
-            disciplines.selected=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=2;   /* Dai Katana */
+            weapon_mask_file=mask_path;weapon_mask_tried=0;
+            weapon_mask_on_file=mask_path;weapon_mask_on_checked=0;
+            const uint8_t keep=disciplines.selected,old=styles.selected[SOM_DISC_BUSHIDO];
+            disciplines.selected=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_HEAVY;
             hero[0x1E4]=1;hero[0x1E3]=14;hero[0x026]=20;hero[0x028]=0x40;
             for(unsigned i=0;i<0x800;i++)ram[0x2000+i]=(uint8_t)(i*7u+1u);
-            som_weapon_scale_frame(ram);
+            som_weapon_mask_frame(ram);
             assert(weapon_tiles_hidden&&ram[0x2000]==0&&ram[0x27FF]==0);
-            som_weapon_scale_pick(ram);
-            assert(weapon_scaled.active&&weapon_scaled.entry.weapon==14u&&weapon_scaled.dir==3u);
-            hero[0x026]=22;som_weapon_scale_pick(ram);assert(!weapon_scaled.active);   /* no art */
-            styles.selected[SOM_DISC_BUSHIDO]=1;                    /* Katana: native art */
-            som_weapon_scale_frame(ram);
+            som_weapon_mask_pick(ram);
+            assert(weapon_masked.active&&weapon_masked.entry.weapon==14u&&weapon_masked.dir==3u);
+            hero[0x026]=22;som_weapon_mask_pick(ram);
+            assert(!weapon_masked.active&&weapon_mask_faulted);
+            /* A later frame must restore native art and leave the mask
+             * disabled rather than repeatedly exposing a blank weapon. */
+            som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
-            som_weapon_scale_pick(ram);assert(!weapon_scaled.active);
-            unlink(scale_path);weapon_scale_file=SOM_WEAPON_SCALE_FILE;weapon_scale_tried=0;
-            weapon_scale_on_file=SOM_WEAPON_SCALE_ON_FILE;weapon_scale_on_checked=0;
-            free(weapon_scale_pack);weapon_scale_pack=NULL;weapon_scale_pack_size=0;
-            free(weapon_scale_index);weapon_scale_index=NULL;
-            disciplines.selected=keep;styles.selected[SOM_DISC_BUSHIDO]=keep_style;
+            styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;
+            som_weapon_mask_frame(ram);
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            som_weapon_mask_pick(ram);assert(!weapon_masked.active);
+            unlink(mask_path);weapon_mask_file=SOM_WEAPON_MASK_FILE;weapon_mask_tried=0;
+            weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;weapon_mask_on_checked=0;
+            free(weapon_mask_pack);weapon_mask_pack=NULL;weapon_mask_pack_size=0;
+            free(weapon_mask_index);weapon_mask_index=NULL;
+            weapon_mask_faulted=0;
+            disciplines.selected=keep;styles.selected[SOM_DISC_BUSHIDO]=old;
         }
         /* L2+X Whirlwind (swordsman) cuts what is around him; Volley
          * (archer) hits what is ahead in the cone, not what is behind. */

@@ -54,6 +54,7 @@ typedef struct {
     int own_palette;                 /* colours 1-15 straight from the object's live palette */
     int lift;                        /* px drawn above the object (a jump the game does not know) */
     int fixed,wx,wy;                 /* fixed: drawn at world (wx, wy), not at the object */
+    int scale_pct;                   /* 0 or 100: as is; else shrunk about the foot point */
     unsigned profile;                /* som_class_palette profile for colours 1-15, 0 = none */
     int no_rest;                     /* loop the frames without the resting pose (a walk) */
 } SomNpcWorkState;
@@ -274,6 +275,26 @@ static inline int som_npc_work_draw(const SomNpcWorkState *s,const uint8_t *wram
                                      ((c>>10)&31u)*255u/31u);
     }
     int drawn=0;
+    const int scale=s->scale_pct>0&&s->scale_pct<100?s->scale_pct:100;
+    if(scale<100){
+        /* Each output pixel samples the source (nearest): the frame shrinks
+         * about the foot point (0, 0), so it stays on the ground. */
+        const int x0=(dx*scale)/100-1,x1=((dx+w)*scale+99)/100+1;
+        const int y0=(dy*scale)/100-1,y1=((dy+h)*scale+99)/100+1;
+        for(int qy=y0;qy<y1;qy++)for(int qx=x0;qx<x1;qx++){
+            const int ax=qx*100+50,ay=qy*100+50;
+            const int sxp=(ax>=0?ax/scale:-((-ax+scale-1)/scale))-dx;
+            const int syp=(ay>=0?ay/scale:-((-ay+scale-1)/scale))-dy;
+            if(sxp<0||syp<0||sxp>=w||syp>=h)continue;
+            const unsigned c=px[syp*w+sxp];
+            if(!c||c>20u)continue;
+            const int ox=fx+(mirror?-qx-1:qx),oy=fy+qy;
+            if(ox<0||oy<0||ox>=base_w||oy>=base_h)continue;
+            som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,colours[c]);
+            drawn=1;
+        }
+        return drawn;
+    }
     for(int y=0;y<h;y++)for(int x=0;x<w;x++){
         const unsigned c=px[y*w+x];
         if(!c||c>20u)continue;

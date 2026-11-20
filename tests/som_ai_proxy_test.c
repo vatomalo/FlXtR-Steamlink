@@ -1685,24 +1685,6 @@ int main(void){
             for(unsigned f=0;f<80u;f++){
                 som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
             }
-            /* The cartwheel classes take Ukemi's directions: down + A is the
-             * tumble, not the game's cartwheel (player, 2026-11-20). */
-            {
-                const unsigned was=disciplines.selected;
-                disciplines.selected=SOM_DISC_SWORD;
-                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;
-                hero[0x010]=0x01;hero[0x01C]=0;hero[0x011]=0;
-                hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
-                mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));
-                som_input_poll();mocked_buttons=0;som_input_poll();
-                assert(evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF);
-                assert(hop_dx==0&&hop_dy==4);
-                for(unsigned f=0;f<40u;f++){
-                    som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
-                }
-                assert(!evade_active&&som_bun_u16(hero+4u)==200u+64u);
-                disciplines.selected=(uint8_t)was;
-            }
             hero[0x1E5]=0xFF;
             ram[0xED]=keep_ed;disciplines.selected=keep;
         }
@@ -2269,6 +2251,21 @@ int main(void){
             for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
             assert(!evade_active&&!ukemi_draw.active&&!(hero[0x0E]&0x80u));
             assert(som_bun_u16(hero+2)==200+26&&hero[0x010]==0x02);
+            /* Facing up, right + A: drawn facing where he goes (the game's
+             * cartwheel would turn him round); the facing is kept. Facing
+             * right, left + A (backward): the game's own, never drawn. */
+            hero[2]=200;hero[3]=0;hero[0x010]=0x00;hero[0x0E]=0;hero[0x1E5]=0xFF;
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+            som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==3u&&hop_dx==2);
+            for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
+            assert(!evade_active&&som_bun_u16(hero+2)==200+26&&hero[0x010]==0x00);
+            hero[2]=200;hero[3]=0;hero[0x010]=0x02;hero[0x0E]=0;hero[0x1E5]=0xFF;
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT));
+            som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(evade_active&&!ukemi_draw.active);
+            for(unsigned f=0;f<60u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
+            hero[0x1E5]=0xFF;hero[0x010]=0x02;
             /* Every cartwheel: the rogue, and the monk's Ukemi to the side
              * (the monk tumbles now, Ukemi like the ninja and samurai). */
             assert(!strcmp(som_disc_dodge(1,0).name,"Ukemi"));

@@ -798,12 +798,16 @@ tier 0. (A held B keeps that press's weapon for charging.)
 ### Evades by class (2026-11-20)
 
 - **Ukemi** (Martial Arts, Ninjutsu, Bushido): up/down the drawn tumble; left/right a cartwheel.
-- **Cartwheel** (Swordsmanship, Roguecraft): the same directions as Ukemi since 2026-11-20
-  (left/right the cartwheel, up/down the drawn tumble, A alone back from the facing by the
-  same rule); the game's own cartwheel only to the side.
+- **Cartwheel** (Swordsmanship, Roguecraft).
 - Every cartwheel **forward + A** is drawn facing forward (the game's cartwheel frames, the
   hero carried 64 px / Ukemi 54 px ahead); back + A or A alone is the game's own cartwheel
   away from the facing.
+- **Left/right + A while facing up or down** (2026-11-20) is drawn the same way, facing where
+  he goes: the game's cartwheel only travels away from the facing, so it used to turn him
+  round and he wheeled off backwards. Only a backward cartwheel is the game's own. Applies
+  to the cartwheel classes and Ukemi's sides alike; the facing is kept after.
+- **Ukemi up/down** (the cannon-flight ball) is drawn at 75 % about the feet
+  (`SOM_UKEMI_SCALE_PCT`), so it rolls on the ground.
 
 ### Monk and Weapon Flow B chains with power attacks (2026-11-20)
 

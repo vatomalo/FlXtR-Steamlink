@@ -1059,6 +1059,9 @@ static int cartwheel_pack_tried;
 #define SOM_FORWARD_CART_KIND 0xC8u   /* the game's cartwheel, drawn facing forward */
 #define SOM_SIDE_CART_SPEED 2u        /* side cartwheels: 2 px x 13 frames = 26 px */
 #define SOM_SIDE_CART_FRAMES 13u
+/* Ukemi's up/down tumble is the cannon-flight ball: drawn this size, about
+ * the feet, so it rolls on the ground rather than flying (player, 2026-11-20). */
+#define SOM_UKEMI_SCALE_PCT 75
 static SomNpcWorkState ukemi_draw;
 static int ukemi_hid;
 static unsigned ukemi_map;
@@ -3364,19 +3367,19 @@ static int som_evade_start_raw(uint8_t *ram){
     /* Ukemi classes: the game has no side-view somersault (the cannon
      * flight is the same ball every way), so left and right are the game's
      * own cartwheel; up and down the drawn tumble (player's call, 2026-11-20). */
-    /* The cartwheel classes (swordsman, rogue) take the same directions as
-     * Ukemi (player, 2026-11-20): left/right the cartwheel, up/down the
-     * drawn tumble, A alone back from the facing by the same rule. */
     const int ukemi_class=disciplines.selected==SOM_DISC_NINJUTSU||
                           disciplines.selected==SOM_DISC_BUSHIDO||
-                          disciplines.selected==SOM_DISC_MARTIAL_ARTS||   /* monk: Ukemi too */
-                          dodge.cartwheel==SOM_REACT_CARTWHEEL;
+                          disciplines.selected==SOM_DISC_MARTIAL_ARTS;    /* monk: Ukemi too */
     /* Every cartwheel (swordsman, rogue, Ukemi's sides), forward + A: the
      * game's cartwheel goes away from the facing, so forward it is drawn
      * facing forward instead (he dashes ahead facing where he goes; player,
      * 2026-11-20). */
-    const int forward_cart=(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class)&&dx&&
-        ((dx>0&&facing_before==0x02u)||(dx<0&&facing_before==0x82u))&&
+    /* Left/right while facing up or down too (player, 2026-11-20: "left
+     * and right mirrored opposite"): the game's cartwheel only travels away
+     * from the facing, so it turned him round and he wheeled away with his
+     * back to where he went. Only a backward cartwheel is the game's own. */
+    const int backward=(dx>0&&facing_before==0x82u)||(dx<0&&facing_before==0x02u);
+    const int forward_cart=(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class)&&dx&&!backward&&
         som_move_begin_draw(ram,dx,0,SOM_FORWARD_CART_KIND);
     if(forward_cart)ukemi_draw.dir=dx<0?2u:3u;  /* the frames face the other way: mirrored */
     /* A cartwheel to the side goes the game's own distance (about 25 px in
@@ -3388,10 +3391,13 @@ static int som_evade_start_raw(uint8_t *ram){
         evade_frames=hop_frames_left+SOM_DODGE_GRACE;
     }
     const unsigned side_move=hop_frames_left;
-    cartwheel_native=!forward_cart&&ukemi_class&&dx&&
+    cartwheel_native=!forward_cart&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
         som_cartwheel_request(ram,dx,dy,SOM_REACT_CARTWHEEL);
-    if(ukemi_class&&!dx&&!som_ukemi_begin_draw(ram,dx,dy))
-        fprintf(stderr,"[som-ai] UKEMI pack missing: rebuild som_cartwheel_frames.bin (pose 34, kinds 0xC0+)\\n");
+    if(ukemi_class&&!dx){
+        if(som_ukemi_begin_draw(ram,dx,dy))
+            ukemi_draw.scale_pct=SOM_UKEMI_SCALE_PCT;     /* a ball on the floor */
+        else fprintf(stderr,"[som-ai] UKEMI pack missing: rebuild som_cartwheel_frames.bin (pose 34, kinds 0xC0+)\n");
+    }
     native_restore_facing=-1;
     if(cartwheel_native){
         native_code=SOM_REACT_CARTWHEEL;

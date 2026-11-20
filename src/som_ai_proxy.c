@@ -891,10 +891,10 @@ static void som_load_pack_file(const char *path,const char *what,uint8_t **pack,
 static uint8_t *cartwheel_pack;
 static size_t cartwheel_pack_size;
 static int cartwheel_pack_tried;
-/* Ukemi has its own forward somersault art (kinds 0x83..0x85) in the
- * same ROM-derived pack as the flying kick. The native 0x93 cartwheel is
- * kept for monks/rogues but Ninja/Samurai use collision-aware movement. */
-#define SOM_UKEMI_DRAW_KIND 0x83u
+/* Ukemi is the hero's own six SNES cannon-flight somersault poses
+ * (pose script 34, kinds 0xC0..0xC2). Ninja/Samurai use collision-aware
+ * movement; monks and rogues retain the native 0x93 cartwheel. */
+#define SOM_UKEMI_DRAW_KIND 0xC0u
 static SomNpcWorkState ukemi_draw;
 static int ukemi_hid;
 static unsigned ukemi_map;
@@ -2902,8 +2902,9 @@ static int som_evade_start(uint8_t *ram){
     const unsigned facing_before=hero[0x010];
     cartwheel_native=dodge.cartwheel==SOM_REACT_CARTWHEEL&&
         som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
-    if(dodge.cartwheel==SOM_REACT_UKEMI&&!som_ukemi_begin_draw(ram,dx,dy))
-        fprintf(stderr,"[som-ai] UKEMI pack missing: use som_cartwheel_frames.bin with 0x83 frames\\n");
+    if((disciplines.selected==SOM_DISC_NINJUTSU||
+        disciplines.selected==SOM_DISC_BUSHIDO)&&!som_ukemi_begin_draw(ram,dx,dy))
+        fprintf(stderr,"[som-ai] UKEMI pack missing: rebuild som_cartwheel_frames.bin (pose 34, kinds 0xC0+)\\n");
     native_restore_facing=-1;
     if(cartwheel_native){
         native_code=(unsigned)dodge.cartwheel;

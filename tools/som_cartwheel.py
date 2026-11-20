@@ -27,8 +27,10 @@ import som_villager_work as V
 
 KIND_BASE = 0x80
 WEAPON = 0xFE
-UKEMI_KIND_BASE = 0x83
+UKEMI_KIND_BASE = 0xC0
 UKEMI_WEAPON = 0xFA
+UKEMI_POSE = 34  # cannon-flight tuck, somersault, and landing frames
+UKEMI_STEPS = 6
 HEROES = ("boy", "girl", "sprite")
 TURNS = (0, 1, 2, 3, 0)         # quarter turns clockwise per step
 TICKS = 1                       # one actor tick (5 frames) per step
@@ -84,22 +86,15 @@ def cartwheel(gfx, hero, source="down"):
     return [(rotate(still, t, pivot), TICKS) for t in TURNS]
 
 
-def somersault(gfx, hero, source="side"):
-    """Five poses of an Ukemi tumble from the hero's side silhouette.
-
-    It rolls the head beneath the torso rather than playing the native
-    sideways cartwheel. Translation and collision are handled by the proxy.
+def somersault(gfx, hero, direction):
+    """The six genuine SNES hero somersault poses from the cannon-flight
+    animation (pose script 34), not rotating a static standing frame.
+    Collision-safe translation is controlled by the proxy.
     """
-    still = gfx.render(hero, V.standing(gfx, hero, source), size=V.CELL, origin=V.ORIGIN)
-    pivot = body_centre(still)
-    frames = []
-    for turn, rise in zip(TURNS, (0, 3, 7, 3, 0)):
-        image = rotate(still, turn, pivot)
-        if rise:
-            image = [image[y + rise] if y + rise < len(image) else [0] * len(image)
-                     for y in range(len(image))]
-        frames.append((image, TICKS))
-    return frames
+    frames = gfx.script(None, UKEMI_POSE, direction, attack=False)[:UKEMI_STEPS]
+    return [(gfx.render(hero, gfx.pieces(hero, None, frame, flags),
+                        size=V.CELL, origin=V.ORIGIN), 1)
+            for flags, frame, _ in frames]
 
 
 def flying_kick(gfx, hero, frame_ids):
@@ -170,8 +165,8 @@ def pack(gfx):
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
             entries += 1
-        for facing in range(3):
-            frames = somersault(gfx, hero)
+        for facing, direction in enumerate(V.FACINGS):
+            frames = somersault(gfx, hero, direction)
             out += struct.pack("<4B20H", UKEMI_KIND_BASE + i, UKEMI_WEAPON, facing,
                                len(frames), *colours)
             for image, ticks in frames:

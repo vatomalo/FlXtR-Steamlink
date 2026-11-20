@@ -1274,6 +1274,49 @@ int main(void){
         on_turbo=1;special_stage=special_suppress=0;
         physical_state=mocked_input_mask;mocked_buttons=0;last_physical_buttons=0;
         som_input_poll();
+        /* New physical controller: R2 is native R guard; R1 is an
+         * edge-triggered style cycle and never reaches the SNES core.
+         * Per-button and bitmask reads must agree. */
+        som_styles_init(&styles);
+        assert(som_custom_weapon_name(&styles,SOM_DISC_BUSHIDO,0u)[0]=='K');
+        assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_BUSHIDO,0u),"Katana"));
+        assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_BUSHIDO,1u),"Yumi"));
+        assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_ARTIFICER,1u),"Crossbow"));
+        assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_FLOW,2u),"War Bow"));
+        const uint16_t guard_r2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
+        const uint16_t style_r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        const uint16_t native_r=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        mocked_buttons=guard_r2;som_input_poll();
+        assert(som_guarding());
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2)==0);
+        assert((uint16_t)som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==native_r);
+        physical_state=mocked_input;pressed=RETRO_DEVICE_ID_JOYPAD_R2;
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2)==0);
+        pressed=100;physical_state=mocked_input_mask;
+        mocked_buttons=0;som_input_poll();assert(!som_guarding());
+        for(unsigned i=0;i<3u;i++){
+            mocked_buttons=style_r1;som_input_poll();
+            assert(styles.selected[0]==(i==0u?2u:i==1u?0u:1u));
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+            som_input_poll(); /* holding R1 must not cycle again */
+            assert(styles.selected[0]==(i==0u?2u:i==1u?0u:1u));
+            mocked_buttons=0;som_input_poll();
+        }
+        /* Old L1+B style shortcut is moved to L3+B. Its B is hidden,
+         * and pressing L1 alone does not send an unrelated native L. */
+        const uint16_t l3=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L3);
+        mocked_buttons=(uint16_t)(l3|(1u<<RETRO_DEVICE_ID_JOYPAD_B));som_input_poll();
+        assert(styles.selected[0]==2u&&b_weapon_blocked);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        mocked_buttons=0;som_input_poll();
+        /* L3+X is native L2+X without firing a spell on release. */
+        mocked_buttons=(uint16_t)(l3|(1u<<RETRO_DEVICE_ID_JOYPAD_X));som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==1);
+        mocked_buttons=0;som_input_poll();
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
         som_input_poll();                           /* Y: axe now, swing as B */
         assert(hero[0x1E4]==2&&y_weapon_swap&&!y_weapon_blocked);

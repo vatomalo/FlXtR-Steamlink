@@ -1534,6 +1534,33 @@ int main(void){
             memcpy(ram+0xA8,camera,sizeof(camera));
             disciplines.selected=keep;
         }
+        /* Monk Hundred Fists (L2+X): the game sees B on and off, the monster
+         * in front takes damage every tick, and it ends on time. */
+        {
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=SOM_DISC_MARTIAL;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;
+            foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x1F1]=0;
+            foe[2]=218;foe[3]=0;foe[4]=200;foe[5]=0;foe[0x182]=50;foe[0x183]=0;
+            mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
+            som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(hundred_until);
+            int presses=0,released=0;
+            for(unsigned f=0;f<SOM_HUNDRED_FRAMES+2u;f++){
+                som_hop_step();
+                if(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B))presses++;
+                else released++;
+                frame_number++;
+            }
+            assert(presses>10&&released>10);
+            assert(foe[0x1F1]>=(SOM_HUNDRED_FRAMES/SOM_HUNDRED_TICK-1u)*
+                   (3u+disciplines.level[SOM_DISC_MARTIAL]/2u));
+            assert(!hundred_until);
+            foe[0]=0;foe[0x1F1]=0;hundred_ready=0;
+            disciplines.selected=keep;
+        }
         /* AI "kawarimi": armed; nothing moves until a monster touches him.
          * Then he reappears 3 x 16 = 48 px away from it, the hit is
          * dropped, a log stands on his old spot, and he is untouchable for

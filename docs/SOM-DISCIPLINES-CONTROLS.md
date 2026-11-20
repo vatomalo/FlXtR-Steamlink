@@ -532,3 +532,12 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
   answered with a cut on the attacker (20 + 2 x Bushido level), on the Iaijutsu cooldown.
   Log `[som-ai] IAI COUNTER ...`.
 - **Zanshin:** a kill readies Iaijutsu at once, so kills chain.
+
+### Martial Arts kit (2026-11-20)
+
+- **Hundred Fists (L2 + X):** for 1 s the game sees B every 4 frames (his own punches)
+  and every 8 frames each monster just in front takes 3 + level/2 more. 5 s cooldown.
+- **Counter palm (guard with R1):** a hit on the guard is parried and answered
+  (14 + 2 x Martial level), every 2 s at most.
+- **Rising Dragon:** every third hit of a combo adds a strike (8 + level).
+- Not built: cartwheel into a kick (the cartwheel is the game's own pose).

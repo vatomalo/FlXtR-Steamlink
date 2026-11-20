@@ -727,6 +727,20 @@ static int issen_active;
 static unsigned issen_hit;
 static unsigned long issen_ready;
 static int som_issen_start(uint8_t *ram);
+/* Martial Arts kit (2026-11-20). Hundred Fists (L2+X): for
+ * SOM_HUNDRED_FRAMES the game sees B every 4 frames (his own punches) and
+ * every SOM_HUNDRED_TICK frames each monster in front takes a little more;
+ * the D-pad is held still. Counter palm: like the samurai's Iai counter on
+ * its own cooldown. Rising Dragon: every third combo hit adds a strike. */
+#define SOM_HUNDRED_FRAMES 60ul
+#define SOM_HUNDRED_TICK 8ul
+#define SOM_HUNDRED_COOLDOWN 300ul
+#define SOM_HUNDRED_AHEAD 18
+#define SOM_HUNDRED_REACH 22
+#define SOM_PALM_COOLDOWN 120ul
+static unsigned long hundred_until,hundred_ready,palm_ready;
+static int som_hundred_start(uint8_t *ram);
+static void som_hundred_frame(uint8_t *ram);
 static void som_issen_cut(uint8_t *ram,int x,int y);
 /* Hold A (Circle) SOM_A_HOLD_FRAMES: Kawarimi. The tap's hop still fires on
  * the press; the held request waits up to SOM_A_HOLD_WAIT frames for the
@@ -947,6 +961,15 @@ static void som_combo_frame(void){
             if(sel==SOM_DISC_NINJUTSU&&weapon==6u&&!fuma.active)   /* Fuma: boomerang hit */
                 som_fuma_start(ram,i,combo_hp[i]-hp);
             som_perk_hit((uint8_t*)ram,i,combo_hp[i]-hp,hp);
+            if(sel==SOM_DISC_MARTIAL&&combo.hits&&combo.hits%3u==0u){   /* Rising Dragon */
+                uint8_t *m=(uint8_t*)ram+0xE600u+0x200u*i;
+                const unsigned bonus=8u+disciplines.level[SOM_DISC_MARTIAL];
+                const unsigned pending=m[0x1F1]+bonus;
+                m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+                som_overlay_set(&overlay,"^Rising Dragon!",SOM_MESSAGE_FRAMES/3u);
+                fprintf(stderr,"[som-ai] RISING DRAGON: hit %u, +%u on monster %u\n",
+                        combo.hits,bonus,i);
+            }
             if(combo.mixes!=mixes_before)
                 som_xp_give(SOM_DISC_FLOW,SOM_XP_FLOW,e[0x180],SOM_XPK_FLOW,"weapon switch hit");
             if(som_combo_effective_level())
@@ -1029,23 +1052,28 @@ static void som_perks_frame(uint8_t *ram){
                     perk_hero_hp_prev-hp,perk_hero_hp_prev-hp-back);
         }
     }
-    if(disciplines.selected==SOM_DISC_BUSHIDO&&som_guarding()&&frame_number>=iai_ready&&
+    const int samurai=disciplines.selected==SOM_DISC_BUSHIDO;
+    const int monk=disciplines.selected==SOM_DISC_MARTIAL;
+    if((samurai||monk)&&som_guarding()&&frame_number>=(samurai?iai_ready:palm_ready)&&
        (hero[0x059]||hero[0x1F1]||hero[0x1F2])){
         const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,
                                       familiar.slot);
         if(foe>=0){
             uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)foe;
-            const unsigned damage=20u+2u*disciplines.level[SOM_DISC_BUSHIDO];
+            const unsigned damage=samurai?20u+2u*disciplines.level[SOM_DISC_BUSHIDO]:
+                                          14u+2u*disciplines.level[SOM_DISC_MARTIAL];
             const unsigned pending=m[0x1F1]+damage;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
             hero[0x059]=0;hero[0x1F1]=hero[0x1F2]=0;     /* the hit is parried */
             if(hurt){hero[0x182]=(uint8_t)perk_hero_hp_prev;hero[0x183]=(uint8_t)(perk_hero_hp_prev>>8);
                      now_hp=perk_hero_hp_prev;}
             monster_hit_frame[foe]=frame_number;
-            iai_ready=frame_number+SOM_IAI_COOLDOWN_FRAMES;
+            if(samurai)iai_ready=frame_number+SOM_IAI_COOLDOWN_FRAMES;
+            else palm_ready=frame_number+SOM_PALM_COOLDOWN;
             som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
-            som_overlay_set(&overlay,"^Iai counter!",SOM_MESSAGE_FRAMES/3u);
-            fprintf(stderr,"[som-ai] IAI COUNTER: parried, cut monster %d for %u\n",foe,damage);
+            som_overlay_set(&overlay,samurai?"^Iai counter!":"^Counter palm!",SOM_MESSAGE_FRAMES/3u);
+            fprintf(stderr,"[som-ai] %s: parried, hit monster %d for %u\n",
+                    samurai?"IAI COUNTER":"COUNTER PALM",foe,damage);
         }
     }
     const int counter=som_perk(SOM_EFFECT_GUARD_COUNTER);
@@ -1133,6 +1161,11 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
         actual=0;                    /* the player's buttons drive the gambit menu */
     /* Bash: the game sees only A (the run), then nothing, then B (swing). */
+    if(hundred_until&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        const uint16_t want=(uint16_t)(((frame_number/4ul)&1ul)?1u<<RETRO_DEVICE_ID_JOYPAD_B:0u);
+        if(bitmask)return (int16_t)want;
+        return id<16u&&(want&(1u<<id))?1:0;
+    }
     if(bash_stage&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         const uint16_t want=(uint16_t)(bash_stage==SOM_BASH_LUNGE?1u<<RETRO_DEVICE_ID_JOYPAD_A:
                                        bash_stage==SOM_BASH_STRIKE?1u<<RETRO_DEVICE_ID_JOYPAD_B:0u);
@@ -1437,6 +1470,13 @@ static void som_input_poll(void){
                  !(current&(l2_bit|r2))&&!special_suppress){
             if(!x_cycled)som_cast_spell(wram,som_current_spell());
             x_cycled=0;
+        }
+        /* L2+X: Hundred Fists for the monk. */
+        if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
+           disciplines.selected==SOM_DISC_MARTIAL&&
+           (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
+            x_spell_blocked=1;
+            if(pressed&x_bit)som_hundred_start(wram);
         }
         /* L2+X: Issen for the samurai (the game never sees that X). */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
@@ -2696,6 +2736,10 @@ static int som_kawarimi_check(uint8_t *ram){
  * Records the after-image trail. */
 static void som_hop_step(void){
     if(!backend_retro_get_memory_data)return;
+    if(hundred_until){
+        uint8_t *fists=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(fists)som_hundred_frame(fists);
+    }
     if(kawarimi_armed_until){
         uint8_t *armed=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(armed)som_kawarimi_check(armed);
@@ -2751,6 +2795,42 @@ static void som_issen_cut(uint8_t *ram,int x,int y){
         issen_hit|=1u<<slot;monster_hit_frame[slot]=frame_number;
         som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
         fprintf(stderr,"[som-ai] ISSEN cut monster %u for %u\n",slot,damage);
+    }
+}
+/* L2+X (monk): Hundred Fists. */
+static int som_hundred_start(uint8_t *ram){
+    if(!ram||disciplines.selected!=SOM_DISC_MARTIAL||hundred_until||evade_active)return 0;
+    if(frame_number<hundred_ready){
+        som_overlay_set(&overlay,"^Hundred Fists|not ready",SOM_MESSAGE_FRAMES/3u);return 0;
+    }
+    if(!som_jutsu_free(ram))return 0;
+    hundred_until=frame_number+SOM_HUNDRED_FRAMES;
+    hundred_ready=frame_number+SOM_HUNDRED_COOLDOWN;
+    som_overlay_set(&overlay,"^Hundred Fists!",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] HUNDRED FISTS\n");
+    return 1;
+}
+static void som_hundred_frame(uint8_t *ram){
+    uint8_t *hero=ram+0xE000u;
+    if(frame_number>=hundred_until||hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
+        hundred_until=0;return;
+    }
+    if((hundred_until-frame_number)%SOM_HUNDRED_TICK)return;
+    const unsigned facing=hero[0x010];
+    int dx=0,dy=0;
+    if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;else if(facing==0x01u)dy=1;else dy=-1;
+    const int fx=(int)som_bun_u16(hero+2)+dx*SOM_HUNDRED_AHEAD,
+              fy=(int)som_bun_u16(hero+4)+dy*SOM_HUNDRED_AHEAD;
+    for(unsigned slot=0;slot<3u;slot++){
+        if((int)slot==familiar.slot)continue;
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        if(!som_bun_monster_alive(m)||
+           !som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),fx,fy,
+                         SOM_HUNDRED_REACH,SOM_HUNDRED_REACH))continue;
+        const unsigned damage=3u+disciplines.level[SOM_DISC_MARTIAL]/2u;
+        const unsigned pending=m[0x1F1]+damage;
+        m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+        monster_hit_frame[slot]=frame_number;
     }
 }
 /* L2+X (samurai): Issen, the dash-cut. */

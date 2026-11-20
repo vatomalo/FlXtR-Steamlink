@@ -39,6 +39,9 @@ typedef struct {
     uint8_t weapon;
     int8_t reach_bonus;
     uint8_t speed_pct,power_pct;
+    /* Drawn size (2026-11-20): the weapon art scaled about the hilt, from
+     * tools/som_weapon_scale.py's pack; 0 = the game's own art (100 %). */
+    uint8_t scale_pct;
 } SomWeaponStyle;
 
 enum {SOM_STYLE_FAST,SOM_STYLE_BALANCED,SOM_STYLE_HEAVY};
@@ -46,35 +49,35 @@ enum {SOM_STYLE_FAST,SOM_STYLE_BALANCED,SOM_STYLE_HEAVY};
 /* Per class: fast, balanced, heavy (all on the class's B weapon). */
 static const SomWeaponStyle som_weapon_styles[SOM_STYLE_COUNT]={
     /* Swordsmanship: sword */
-    {"Rapier",1,0,150,75},{"Longsword",1,0,100,100},{"Claymore",1,16,70,135},
+    {"Rapier",1,0,150,75,75},{"Longsword",1,0,100,100,150},{"Claymore",1,16,70,135,200},
     /* Martial Arts: glove */
-    {"Hand Wraps",0,0,160,70},{"Cestus",0,0,100,100},{"Tiger Claws",0,10,75,130},
+    {"Hand Wraps",0,0,160,70,0},{"Cestus",0,0,100,100,0},{"Tiger Claws",0,10,75,130,0},
     /* Ninjutsu: sword */
-    {"Kunai",1,0,165,65},{"Ninjato",1,0,100,100},{"Kusarigama",1,22,70,120},
+    {"Kunai",1,0,165,65,55},{"Ninjato",1,0,100,100,0},{"Kusarigama",1,22,70,120,0},
     /* Magic: bare hands (casters hold no weapon) */
-    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
+    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
     /* Divine Arts: spear */
-    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
+    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
     /* Dark Arts: whip */
-    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
+    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
     /* Summoning: boomerang */
-    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
+    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
     /* Support & Dance: whip */
-    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
+    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
     /* Weapon Flow: sword */
-    {"Gladius",1,0,145,80},{"Arming Sword",1,0,100,100},{"Bastard Sword",1,14,75,130},
+    {"Gladius",1,0,145,80,75},{"Arming Sword",1,0,100,100,0},{"Bastard Sword",1,14,75,130,150},
     /* Roguecraft: sword */
-    {"Dagger",1,0,165,65},{"Cutlass",1,0,100,100},{"Estoc",1,12,85,115},
+    {"Dagger",1,0,165,65,55},{"Cutlass",1,0,100,100,0},{"Estoc",1,12,85,115,150},
     /* Bushido: sword */
-    {"Tanto",1,0,160,70},{"Katana",1,0,100,100},{"Dai Katana",1,20,70,135},
+    {"Tanto",1,0,160,70,55},{"Katana",1,0,100,100,0},{"Dai Katana",1,20,70,135,200},
     /* Archery: bow */
-    {"Shortbow",5,0,150,75},{"Recurve Bow",5,0,100,100},{"Longbow",5,0,70,135},
+    {"Shortbow",5,0,150,75,0},{"Recurve Bow",5,0,100,100,0},{"Longbow",5,0,70,135,0},
     /* Vampire Hunting: whip */
-    {"Leather Lash",4,0,150,75},{"Chain Whip",4,0,100,100},{"Thorn Flail",4,0,70,135},
+    {"Leather Lash",4,0,150,75,0},{"Chain Whip",4,0,100,100,0},{"Thorn Flail",4,0,70,135,0},
     /* Necromancy, Artifice, Psionics: bare hands / hammer / bare hands */
-    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
-    {"Tack Hammer",2,0,145,80},{"Forge Hammer",2,0,100,100},{"Sledge",2,14,70,135},
-    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
+    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Tack Hammer",2,0,145,80,0},{"Forge Hammer",2,0,100,100,0},{"Sledge",2,14,70,135,0},
+    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
 };
 
 typedef struct {

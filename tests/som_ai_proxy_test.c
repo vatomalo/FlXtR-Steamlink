@@ -1801,6 +1801,37 @@ int main(void){
             assert(lock_slot<0);
             foe[0]=0;foe[0x191]=0;hero[0x010]=0x02;
         }
+        /* Scaled weapon art: the Dai Katana (200 %) blanks the native weapon
+         * tiles (a copy is kept) and draws the pack's frame for the hero's
+         * frame, mirrored for a left facing; the Katana (100 %) puts the
+         * native tiles back. */
+        {
+            char scale_path[]="/tmp/flxtr-weapon-scale-test-XXXXXX";
+            const int fd=mkstemp(scale_path);assert(fd>=0);
+            uint8_t pack[10+44+6+1];memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            pack[10]=0xD3;pack[11]=14;pack[12]=10;pack[13]=1;      /* 200 %, row 14, frame 10 */
+            pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=16;          /* one 1x1 blade pixel */
+            assert(write(fd,pack,sizeof(pack))==(ssize_t)sizeof(pack));close(fd);
+            weapon_scale_file=scale_path;weapon_scale_tried=0;
+            const uint8_t keep=disciplines.selected,keep_style=styles.selected[SOM_DISC_BUSHIDO];
+            disciplines.selected=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=2;   /* Dai Katana */
+            hero[0x1E4]=1;hero[0x1E3]=14;hero[0x026]=20;hero[0x028]=0x40;
+            for(unsigned i=0;i<0x800;i++)ram[0x2000+i]=(uint8_t)(i*7u+1u);
+            som_weapon_scale_frame(ram);
+            assert(weapon_tiles_hidden&&ram[0x2000]==0&&ram[0x27FF]==0);
+            som_weapon_scale_pick(ram);
+            assert(weapon_scaled.active&&weapon_scaled.entry.weapon==14u&&weapon_scaled.dir==3u);
+            hero[0x026]=22;som_weapon_scale_pick(ram);assert(!weapon_scaled.active);   /* no art */
+            styles.selected[SOM_DISC_BUSHIDO]=1;                    /* Katana: native art */
+            som_weapon_scale_frame(ram);
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            som_weapon_scale_pick(ram);assert(!weapon_scaled.active);
+            unlink(scale_path);weapon_scale_file=SOM_WEAPON_SCALE_FILE;weapon_scale_tried=0;
+            free(weapon_scale_pack);weapon_scale_pack=NULL;weapon_scale_pack_size=0;
+            free(weapon_scale_index);weapon_scale_index=NULL;
+            disciplines.selected=keep;styles.selected[SOM_DISC_BUSHIDO]=keep_style;
+        }
         /* L2+X Whirlwind (swordsman) cuts what is around him; Volley
          * (archer) hits what is ahead in the cone, not what is behind. */
         {

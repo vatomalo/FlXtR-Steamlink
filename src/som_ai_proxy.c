@@ -869,6 +869,23 @@ static SomTelekinesis telekinesis={.slot=-1};
 static unsigned long telekinesis_ready;
 static int som_telekinesis_cast(uint8_t *ram);
 static int som_class_x(uint8_t *ram);
+/* Scaled weapon art (2026-11-20): a style with scale_pct draws its weapon
+ * from tools/som_weapon_scale.py's pack (kinds 0xD0 + scale index, weapon =
+ * row, facing = frame) at the hero's frame (+0x26 / 2, mirrored by +0x28
+ * bit 6) while the native weapon tiles in 7E:2000 are blanked (a copy is
+ * kept and put back when the style or weapon changes). */
+#define SOM_WEAPON_SCALE_FILE "/home/apps/retroarch/cores/experimental/som_weapon_scales.bin"
+static const char *weapon_scale_file=SOM_WEAPON_SCALE_FILE;
+static const unsigned som_weapon_scale_steps[4]={55u,75u,150u,200u};
+static uint8_t *weapon_scale_pack;
+static size_t weapon_scale_pack_size;
+static int weapon_scale_tried;
+static uint32_t *weapon_scale_index;          /* [4][72][256]: offset + 1, 0 = none */
+static uint8_t weapon_native_tiles[0x800];
+static int weapon_tiles_hidden;
+static SomNpcWorkState weapon_scaled;
+static void som_weapon_scale_frame(uint8_t *ram);
+static void som_weapon_scale_pick(const uint8_t *ram);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
  * style): tap L1 to lock onto the nearest
  * monster within SOM_LOCK_RANGE px, tap again to let go. While locked the
@@ -2157,7 +2174,9 @@ static int som_weapon_gfx_matches(const uint8_t *ram){
     return hero[0x068]==m.type&&ram[0xD030]==m.graphics&&
         som_word(hero+0x065)==m.f065&&som_word(hero+0x06A)==m.f06a&&
         som_word(hero+0x07E)==m.f07e&&som_word(hero+0x02A)==m.f02a&&
-        memcmp(ram+SOM_WEAPON_BUF,m.tiles,sizeof(m.tiles))==0;
+        /* A scaled style blanks the buffer: its saved copy is the game's art. */
+        memcmp(weapon_tiles_hidden?weapon_native_tiles:ram+SOM_WEAPON_BUF,m.tiles,
+               sizeof(m.tiles))==0;
 }
 static int som_field_idle(const uint8_t *ram){
     return ram&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&
@@ -3067,6 +3086,10 @@ static void som_hop_step(void){
         uint8_t *locked=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(locked)som_lock_frame(locked);
     }
+    {
+        uint8_t *art=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(art)som_weapon_scale_frame(art);
+    }
     if(holy_until||bomb_at||mind_until||telekinesis.slot>=0||
        mine_live[0]||mine_live[1]||mine_live[2]){
         uint8_t *gear=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
@@ -3670,7 +3693,7 @@ static void som_style_frame(uint8_t *ram){
         const unsigned slot=som_class_arm_slot(cls,hero[0x1E4]);
         if(slot>0u&&slot<3u&&som_class_arms[cls][slot].grade<=8u){
             arm=(SomWeaponStyle){som_weapon_types[hero[0x1E4]],hero[0x1E4],0,100,
-                                 som_class_arms[cls][slot].power_pct};
+                                 som_class_arms[cls][slot].power_pct,0};
             arm_level=disciplines.level[cls]<SOM_STYLE_MAX_LEVEL?disciplines.level[cls]:
                       SOM_STYLE_MAX_LEVEL;
             st=&arm;
@@ -5134,7 +5157,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||flykick.active||ukemi_draw.active||companion.draw.active||
+    if(backend_retro_get_memory_data)
+        som_weapon_scale_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    const int worker=(npc_work.active||flykick.active||weapon_scaled.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -5194,6 +5219,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
+            if(weapon_scaled.active)
+                som_npc_work_draw(&weapon_scaled,ram,frame_number,overlay_frame,width,height,
+                                  pitch,pixel_format);
             if(ukemi_draw.active)
                 som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
@@ -6042,4 +6070,86 @@ static void som_lock_frame(uint8_t *ram){
     /* Not during a dodge or a pose the game is playing on its own. */
     if(evade_active||hero[0x01C]==0x40u||hero[0x01C]==0x30u)return;
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
+}
+
+/* ---- Scaled weapon art (see SOM_WEAPON_SCALE_FILE) ------------------------ */
+static void som_weapon_scale_load(void){
+    if(weapon_scale_tried)return;
+    weapon_scale_tried=1;
+    som_load_pack_file(weapon_scale_file,"Weapon sizes",&weapon_scale_pack,&weapon_scale_pack_size);
+    if(!weapon_scale_pack)return;
+    weapon_scale_index=calloc(4u*72u*256u,sizeof(*weapon_scale_index));
+    if(!weapon_scale_index)return;
+    const uint8_t *p=weapon_scale_pack+10,*end=weapon_scale_pack+weapon_scale_pack_size;
+    const unsigned entries=weapon_scale_pack[8]|(unsigned)weapon_scale_pack[9]<<8;
+    unsigned indexed=0;
+    for(unsigned e=0;e<entries&&end-p>=44;e++){
+        const uint8_t *q=p+44;
+        for(unsigned f=0;f<p[3];f++)if(!(q=som_work_next_frame(q,end)))return;
+        if(p[0]>=0xD0u&&p[0]<0xD4u&&p[1]<72u&&p[3])
+            weapon_scale_index[((p[0]-0xD0u)*72u+p[1])*256u+p[2]]=(uint32_t)(p-weapon_scale_pack)+1u,indexed++;
+        p=q;
+    }
+    fprintf(stderr,"[som-ai] WEAPON sizes: %u frames indexed\n",indexed);
+}
+/* The scale step of the held style (index into som_weapon_scale_steps), -1 none. */
+static int som_weapon_scale_step(const uint8_t *ram){
+    unsigned index;
+    const SomWeaponStyle *st=som_style_held(ram,&index);
+    if(!st||!st->scale_pct||st->scale_pct==100u)return -1;
+    for(unsigned i=0;i<4u;i++)if(som_weapon_scale_steps[i]==st->scale_pct)return (int)i;
+    return -1;
+}
+static int som_weapon_scale_entry(unsigned step,unsigned row,unsigned frame,SomWorkEntry *out){
+    if(!weapon_scale_index||step>3u||row>=72u||frame>255u)return 0;
+    const uint32_t at=weapon_scale_index[(step*72u+row)*256u+frame];
+    if(!at)return 0;
+    const uint8_t *p=weapon_scale_pack+at-1u;
+    out->kind=p[0];out->weapon=p[1];out->facing=p[2];out->frames=p[3];
+    for(unsigned i=0;i<20u;i++)out->colours[i]=(uint16_t)(p[4+2*i]|p[5+2*i]<<8);
+    out->first=p+44;
+    return 1;
+}
+/* Does the pack hold this row at this step at all? (any of its frames) */
+static int som_weapon_scale_has_row(unsigned step,unsigned row){
+    if(!weapon_scale_index||step>3u||row>=72u)return 0;
+    const uint32_t *r=weapon_scale_index+(step*72u+row)*256u;
+    for(unsigned f=0;f<256u;f++)if(r[f])return 1;
+    return 0;
+}
+/* Before each game frame: blank the native weapon tiles while a scaled
+ * style is held (keeping a copy), put them back when it is not. */
+static void som_weapon_scale_frame(uint8_t *ram){
+    som_weapon_scale_load();
+    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F;
+    const int step=field?som_weapon_scale_step(ram):-1;
+    uint8_t *tiles=ram+SOM_WEAPON_BUF;
+    const int want=step>=0&&som_weapon_scale_has_row((unsigned)step,ram[0xE1E3]);
+    int blank=1;
+    for(unsigned i=0;i<sizeof(weapon_native_tiles);i++)if(tiles[i]){blank=0;break;}
+    if(want){
+        if(!blank){                                  /* fresh art (equip, refresh) */
+            memcpy(weapon_native_tiles,tiles,sizeof(weapon_native_tiles));
+            memset(tiles,0,sizeof(weapon_native_tiles));
+            if(!weapon_tiles_hidden)
+                fprintf(stderr,"[som-ai] WEAPON drawn at %u%%\n",som_weapon_scale_steps[step]);
+        }
+        weapon_tiles_hidden=1;
+    }else if(weapon_tiles_hidden){
+        if(blank)memcpy(tiles,weapon_native_tiles,sizeof(weapon_native_tiles));
+        weapon_tiles_hidden=0;
+    }
+}
+/* At video time: the scaled frame for the frame the game just drew. */
+static void som_weapon_scale_pick(const uint8_t *ram){
+    weapon_scaled.active=0;
+    if(!ram||!weapon_tiles_hidden)return;
+    const int step=som_weapon_scale_step(ram);
+    SomWorkEntry entry;
+    if(step<0||!som_weapon_scale_entry((unsigned)step,ram[0xE1E3],ram[0xE026]>>1,&entry))return;
+    memset(&weapon_scaled,0,sizeof(weapon_scaled));
+    weapon_scaled.active=1;weapon_scaled.slot=0;weapon_scaled.kind=ram[0xE180];
+    weapon_scaled.dir=(ram[0xE028]&0x40u)?3u:2u;
+    weapon_scaled.entry=entry;weapon_scaled.start=frame_number;weapon_scaled.length=2u;
+    weapon_scaled.own_palette=1;
 }

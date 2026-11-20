@@ -36,6 +36,8 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
     build/som-ai/som_cartwheel_frames.bin
   echo "Staged animation pack: build/som-ai/som_cartwheel_frames.bin"
   echo "Install the pack beside the proxy as cores/experimental/som_cartwheel_frames.bin"
+  python3 tools/som_weapon_scale.py "$SOM_ROM_PATH" build/som-ai/som_weapon_scales.bin
+  echo "Staged weapon sizes: build/som-ai/som_weapon_scales.bin (install as cores/experimental/som_weapon_scales.bin)"
 else
   echo "Ukemi/flying-kick animated pack not staged: set SOM_ROM_PATH to generate it"
 fi

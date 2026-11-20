@@ -29,6 +29,7 @@ class WeaponStyle:
     reach_bonus: int
     speed_pct: int
     power_pct: int
+    scale_pct: int = 0          # drawn size (tools/som_weapon_scale.py); 0 = 100 %
 
     @property
     def weapon(self):
@@ -38,17 +39,17 @@ class WeaponStyle:
 _S = WeaponStyle
 # Per class, in CLASSES order: fast, balanced, heavy.
 STYLES = (
-    _S("Rapier", 1, 0, 150, 75), _S("Longsword", 1, 0, 100, 100), _S("Claymore", 1, 16, 70, 135),
+    _S("Rapier", 1, 0, 150, 75, 75), _S("Longsword", 1, 0, 100, 100, 150), _S("Claymore", 1, 16, 70, 135, 200),
     _S("Hand Wraps", 0, 0, 160, 70), _S("Cestus", 0, 0, 100, 100), _S("Tiger Claws", 0, 10, 75, 130),
-    _S("Kunai", 1, 0, 165, 65), _S("Ninjato", 1, 0, 100, 100), _S("Kusarigama", 1, 22, 70, 120),
+    _S("Kunai", 1, 0, 165, 65, 55), _S("Ninjato", 1, 0, 100, 100), _S("Kusarigama", 1, 22, 70, 120),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
-    _S("Gladius", 1, 0, 145, 80), _S("Arming Sword", 1, 0, 100, 100), _S("Bastard Sword", 1, 14, 75, 130),
-    _S("Dagger", 1, 0, 165, 65), _S("Cutlass", 1, 0, 100, 100), _S("Estoc", 1, 12, 85, 115),
-    _S("Tanto", 1, 0, 160, 70), _S("Katana", 1, 0, 100, 100), _S("Dai Katana", 1, 20, 70, 135),
+    _S("Gladius", 1, 0, 145, 80, 75), _S("Arming Sword", 1, 0, 100, 100), _S("Bastard Sword", 1, 14, 75, 130, 150),
+    _S("Dagger", 1, 0, 165, 65, 55), _S("Cutlass", 1, 0, 100, 100), _S("Estoc", 1, 12, 85, 115, 150),
+    _S("Tanto", 1, 0, 160, 70, 55), _S("Katana", 1, 0, 100, 100), _S("Dai Katana", 1, 20, 70, 135, 200),
     _S("Shortbow", 5, 0, 150, 75), _S("Recurve Bow", 5, 0, 100, 100), _S("Longbow", 5, 0, 70, 135),
     _S("Leather Lash", 4, 0, 150, 75), _S("Chain Whip", 4, 0, 100, 100), _S("Thorn Flail", 4, 0, 70, 135),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),

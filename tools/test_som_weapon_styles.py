@@ -10,8 +10,9 @@ HEADER = pathlib.Path(__file__).resolve().parent.parent / "src" / "som_weapon_st
 class TestWeaponStyles(unittest.TestCase):
     def test_table_matches_the_c_header(self):
         text = HEADER.read_text()
-        rows = re.findall(r'\{"([^"]+)",(\d+),(-?\d+),(\d+),(\d+)\}', text)
-        c = [ws.WeaponStyle(n, int(w), int(r), int(s), int(p)) for n, w, r, s, p in rows]
+        rows = re.findall(r'\{"([^"]+)",(\d+),(-?\d+),(\d+),(\d+),(\d+)\}', text)
+        c = [ws.WeaponStyle(n, int(w), int(r), int(s), int(p), int(k))
+             for n, w, r, s, p, k in rows]
         self.assertEqual(tuple(c), ws.STYLES)
         self.assertIn(f"#define SOM_STYLE_MAX_LEVEL {ws.MAX_LEVEL}u", text)
         self.assertIn(f"#define SOM_STYLES_PER_CLASS {ws.STYLES_PER_CLASS}u", text)

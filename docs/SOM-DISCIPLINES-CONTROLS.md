@@ -671,3 +671,14 @@ The page writes one request line to `/tmp/flxtr-som-jukebox.req`; the Steam Link
 bridge (`tools/som_music_bridge.py`, uses FlXtR's `tools/music.py`) answers in
 `/tmp/flxtr-som-jukebox.list` and mixes the track into the game's audio like the covers.
 While the jukebox plays, the game's song changes are ignored.
+
+### Weapon sizes per style (2026-11-20)
+
+A style's `scale_pct` draws the weapon art scaled about the hilt: Kunai, Dagger and Tanto
+55 %, Rapier and Gladius 75 %, Longsword, Estoc and Bastard Sword 150 %, Claymore and Dai
+Katana 200 % (balanced styles and the rest: the game's own art). `tools/som_weapon_scale.py`
+renders every swing frame's weapon pieces (blade, arc, flashes) from the ROM for the class
+swords' grades (2-5) and scales them with nearest-neighbour; `scripts/build-som-ai-proxy.sh`
+stages it with `SOM_ROM_PATH` as `som_weapon_scales.bin` (beside the proxy). While a scaled
+style is held the proxy blanks the native weapon tiles in 7E:2000 (keeping a copy) and draws
+the pack frame for the hero's frame (+0x26 / 2), mirrored for left facings (+0x28 bit 6).

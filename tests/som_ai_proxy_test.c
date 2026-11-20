@@ -1535,31 +1535,29 @@ int main(void){
             memcpy(ram+0xA8,camera,sizeof(camera));
             disciplines.selected=keep_class;hero[0x1E4]=keep_weapon;
         }
-        /* Samurai A on a combat map: Ukemi is the game's cartwheel (reaction
-         * 0x13); with no direction it goes back, with forward held it goes
-         * forward (he is turned round for it) and faces forward again after. */
+        /* Samurai A: Ukemi tumbles a collision-checked 54 px without
+         * relying on the unreliable native 0x93 cartwheel reaction. */
         {
             const uint8_t keep=disciplines.selected,keep_ed=ram[0xED];
             disciplines.selected=SOM_DISC_BUSHIDO;
-            for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;   /* nobody to grab */
+            for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
             ram[0xED]|=0x80u;
             for(unsigned forward=0;forward<2u;forward++){
-                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
-                hero[0x011]=0;hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
+                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;
+                hero[0x010]=0x02;hero[0x01C]=0;hero[0x011]=0;
+                hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x1E5]=0xFF;
                 const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
                 mocked_buttons=(uint16_t)(a|(forward?1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT:0u));
                 som_input_poll();mocked_buttons=0;som_input_poll();
-                assert(evade_active&&cartwheel_native&&hero[0x1E5]==0x13);
-                assert(hero[0x010]==(forward?0x82:0x02));             /* turned for forward */
-                hero[0x01C]=0x40;hero[0x011]=0x93;                      /* the game plays it */
-                for(unsigned f=0;f<SOM_CARTWHEEL_FRAMES+20u;f++){
-                    if(f==25u)hero[0x01C]=0;                            /* pose over */
-                    som_hop_step();som_evade_tick();frame_number++;
+                assert(evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF);
+                assert(hop_dx==(forward?3:-3));
+                for(unsigned f=0;f<40u;f++){
+                    som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
                 }
                 assert(!evade_active&&hero[0x010]==0x02);
+                assert(som_bun_u16(hero+2u)==(unsigned)(200+(forward?54:-54)));
             }
-            hero[0x01C]=0;hero[0x011]=0;hero[0x1E5]=0xFF;ram[0xED]=keep_ed;
-            disciplines.selected=keep;
+            ram[0xED]=keep_ed;disciplines.selected=keep;
         }
         /* Mage A: Blink step, the carried dodge with the hero hidden while
          * he moves and shown again where he lands. */

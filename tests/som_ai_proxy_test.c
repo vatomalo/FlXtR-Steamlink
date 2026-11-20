@@ -235,12 +235,28 @@ int main(void){
 
     /* Taijutsu: glove, glove, sword, then again; a pause restarts it. */
     frame_number=1000;taijutsu_last=0;taijutsu_step=0;
+    const uint8_t keep_chain_class=disciplines.selected;
+    disciplines.selected=SOM_DISC_NINJUTSU;
     assert(som_taijutsu_peek()==0u);som_taijutsu_advance();
     assert(som_taijutsu_peek()==0u);som_taijutsu_advance();
     assert(som_taijutsu_peek()==1u);som_taijutsu_advance();
     assert(som_taijutsu_peek()==0u);som_taijutsu_advance();
     frame_number+=SOM_TAIJUTSU_RESET+1ul;
     assert(som_taijutsu_peek()==0u&&taijutsu_step==0u);
+    /* Weapon Flow's B flows through other weapons: sword, axe, whip, javelin. */
+    disciplines.selected=SOM_DISC_WEAPON_FLOW;taijutsu_step=0;taijutsu_last=frame_number;
+    {
+        static const unsigned flow[]={1,2,4,7,1};
+        for(unsigned k=0;k<5u;k++){assert(som_taijutsu_peek()==flow[k]);som_taijutsu_advance();}
+    }
+    disciplines.selected=SOM_DISC_SWORD;
+    assert(som_taijutsu_peek()==SOM_NO_WEAPON);                  /* no chain */
+    disciplines.selected=keep_chain_class;taijutsu_step=0;
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
+    for(unsigned i=0;i<8;i++)mocked_wram[0xCC54+i]=0xFF;
+    som_class_supply(mocked_wram,SOM_DISC_WEAPON_FLOW);
+    assert(mocked_wram[0xCC56]==0&&mocked_wram[0xCC58]==0&&mocked_wram[0xCC5B]==0); /* axe whip javelin */
     /* Styles: Samurai's three swords; style commands need a class. */
     {
         unsigned index;

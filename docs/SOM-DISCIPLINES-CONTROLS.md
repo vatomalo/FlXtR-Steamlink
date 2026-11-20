@@ -737,3 +737,10 @@ pips under the class and weapon names.
 | Shield bash | 5 | 0 |
 
 Releasing a bound familiar or mind (X again) is free.
+
+### Weapon Flow's B chain (2026-11-20)
+
+Like Ninjutsu's Taijutsu, Weapon Flow's B flows through weapons beyond its own three (sword
+B, spear Y, bow X): each B press is the next of **sword, axe, whip, javelin**, then round
+again; 1.5 s without B starts over. Selecting the class grants a missing chain weapon at
+tier 0. (A held B keeps that press's weapon for charging.)

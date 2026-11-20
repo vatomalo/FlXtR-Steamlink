@@ -46,6 +46,10 @@ MARTIAL_ARTS = 1                              # X = flying kick
 # never turns monk for fists (player, 2026-11-19).
 NINJUTSU = 2
 TAIJUTSU_WEAPONS = ("glove", "sword")
+# The proxy's B chains (som_b_chain): the weapons B may put in hand per class.
+# Weapon Flow flows through weapons beyond its own three (player, 2026-11-20).
+WEAPON_FLOW = 8
+B_CHAIN_WEAPONS = {NINJUTSU: TAIJUTSU_WEAPONS, WEAPON_FLOW: ("sword", "axe", "whip", "javelin")}
 # Right after the director switches, the game's saved class may still show
 # the old one for a moment: no player pick is read from it meanwhile.
 ADOPT_SETTLE_S = 3.0

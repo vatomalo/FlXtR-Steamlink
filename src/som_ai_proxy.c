@@ -1116,12 +1116,26 @@ static unsigned long iai_ready;           /* Bushido: next frame Iaijutsu may st
 static unsigned taijutsu_step,taijutsu_want=SOM_NO_WEAPON;
 static int taijutsu_counted;
 static unsigned long taijutsu_last;
+/* The B chains, by class: Ninjutsu's Taijutsu, and Weapon Flow's flow
+ * through weapons beyond its own three (player, 2026-11-20): sword, axe,
+ * whip, javelin. Weapon types: 0 glove 1 sword 2 axe 3 spear 4 whip 5 bow
+ * 6 boomerang 7 javelin. */
+static const uint8_t som_chain_ninjutsu[]={0,0,1};
+static const uint8_t som_chain_flow[]={1,2,4,7};
+static unsigned som_b_chain(unsigned cls,const uint8_t **steps){
+    if(cls==SOM_DISC_NINJUTSU){*steps=som_chain_ninjutsu;return sizeof(som_chain_ninjutsu);}
+    if(cls==SOM_DISC_WEAPON_FLOW){*steps=som_chain_flow;return sizeof(som_chain_flow);}
+    *steps=NULL;return 0;
+}
 static unsigned som_taijutsu_peek(void){
-    if(frame_number-taijutsu_last>SOM_TAIJUTSU_RESET)taijutsu_step=0;
-    return taijutsu_step<SOM_TAIJUTSU_PUNCHES?0u:1u;   /* glove, glove, sword */
+    const uint8_t *steps;const unsigned n=som_b_chain(disciplines.selected,&steps);
+    if(!n)return SOM_NO_WEAPON;
+    if(frame_number-taijutsu_last>SOM_TAIJUTSU_RESET||taijutsu_step>=n)taijutsu_step=0;
+    return steps[taijutsu_step];
 }
 static void som_taijutsu_advance(void){
-    taijutsu_step=(taijutsu_step+1u)%(SOM_TAIJUTSU_PUNCHES+1u);
+    const uint8_t *steps;const unsigned n=som_b_chain(disciplines.selected,&steps);
+    taijutsu_step=n?(taijutsu_step+1u)%n:0u;
     taijutsu_last=frame_number;
 }
 static SomStyles styles;
@@ -1623,7 +1637,9 @@ static void som_input_poll(void){
             const SomWeaponStyle *b_style=som_style_of(&styles,disciplines.selected,NULL);
             const int style_weapon=!which&&b_style&&b_style->weapon!=want;
             if(style_weapon)want=b_style->weapon;
-            if(!which&&!style_weapon&&disciplines.selected==SOM_DISC_NINJUTSU){
+            const uint8_t *chain_steps;
+            const int chained=som_b_chain(disciplines.selected,&chain_steps)>0;
+            if(!which&&!style_weapon&&chained){
                 /* Taijutsu: the chain's weapon is chosen on the press and
                  * kept while B stays held (a held B may be charging). */
                 if((pressed&b_bit)||taijutsu_want==SOM_NO_WEAPON){
@@ -1642,10 +1658,11 @@ static void som_input_poll(void){
             /* B with a weapon that cannot be switched directly keeps the
              * held weapon rather than leaving the hero unable to attack. */
             /* The swing this press lets through is the chain's: next step. */
-            if(!which&&disciplines.selected==SOM_DISC_NINJUTSU&&result==SOM_EQUIP_OK&&
+            if(!which&&chained&&!style_weapon&&result==SOM_EQUIP_OK&&
                taijutsu_want!=SOM_NO_WEAPON&&!taijutsu_counted){
                 som_taijutsu_advance();taijutsu_counted=1;
-                fprintf(stderr,"[som-ai] TAIJUTSU %s\n",som_weapon_types[taijutsu_want]);
+                fprintf(stderr,"[som-ai] %s %s\n",disciplines.selected==SOM_DISC_NINJUTSU?
+                        "TAIJUTSU":"WEAPON FLOW",som_weapon_types[taijutsu_want]);
             }
         }
         if(!(current&b_bit))taijutsu_want=SOM_NO_WEAPON;
@@ -3598,6 +3615,14 @@ static unsigned som_class_supply(uint8_t *ram,unsigned discipline){
             fprintf(stderr,"[som-ai] CLASS granted missing %s tier 0\n",som_weapon_types[type]);
         }
     }
+    {                                               /* the B chain's weapons (Weapon Flow) */
+        const uint8_t *steps;const unsigned n=som_b_chain(discipline,&steps);
+        for(unsigned k=0;k<n;k++)
+            if(steps[k]<8u&&ram[0xCC54u+steps[k]]==0xFF){
+                ram[0xCC54u+steps[k]]=0;given++;
+                fprintf(stderr,"[som-ai] CLASS granted missing %s tier 0\n",som_weapon_types[steps[k]]);
+            }
+    }
     for(unsigned i=0;i<3;i++){
         /* the third: Ninjutsu's glove for Taijutsu */
         unsigned type=i<2u?som_disc_weapons[discipline][i]:
@@ -4440,7 +4465,7 @@ static int som_undo_spawn(void){
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
     if(action==SOM_ACT_ATTACK)som_combo_swing(0);
-    if(action==SOM_ACT_ATTACK&&disciplines.selected==SOM_DISC_NINJUTSU&&
+    if(action==SOM_ACT_ATTACK&&som_taijutsu_peek()!=SOM_NO_WEAPON&&
        backend_retro_get_memory_data){
         uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         const unsigned want=som_taijutsu_peek();

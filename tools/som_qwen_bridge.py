@@ -54,7 +54,7 @@ from som_critic_link import (FINISHER_COOLDOWN_SCALE, critic_coach, critic_tags,
                              nudge_style, read_critic)
 from som_class_arts import KICK_COOLDOWN_S, FlyingKickTactics, IaiTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
-from som_class_director import NINJUTSU as NINJUTSU_CLASS, TAIJUTSU_WEAPONS
+from som_class_director import B_CHAIN_WEAPONS
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
 from som_movement import MovementAck
@@ -2234,10 +2234,10 @@ def main() -> int:
                         gaps = [gap for gap, _ in near]
                         foe_type = near[0][1] if near else None
                         primary, secondary = CLASS_WEAPONS[class_director.current]
-                        # Taijutsu: the proxy swaps glove and sword on B
-                        # itself; either one in hand is the ninja's B.
-                        b_held = (primary if class_director.current == NINJUTSU_CLASS and
-                                  held in TAIJUTSU_WEAPONS else held)
+                        # B chains (Taijutsu, Weapon Flow): the proxy swaps
+                        # the weapon on B itself; any of the chain's is B.
+                        b_held = (primary if held in B_CHAIN_WEAPONS.get(
+                            class_director.current, ()) else held)
                         swap = weapon_tactics.decide(primary, secondary, b_held,
                                                      min(gaps) if gaps else None,
                                                      hp / max_hp if max_hp else 1.0, levels,

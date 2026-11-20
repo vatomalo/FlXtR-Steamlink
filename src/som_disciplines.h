@@ -185,6 +185,23 @@ static inline int som_hud_portrait(const uint8_t *ram,int *x,int *y){
     }
     return 0;
 }
+/* A party member's HUD portrait (who 0 boy, 1 girl, 2 sprite): tile
+ * 0x1E8 + 2*who in palette who + 1 (live OAM 2026-11-20: x 8, 88, 168,
+ * y 199 before the lift). The boy alone sits in the middle. */
+static inline int som_hud_member_portrait(const uint8_t *ram,unsigned who,int *x,int *y){
+    if(!ram||who>2u)return 0;
+    for(unsigned i=0;i<128u;i++){
+        const uint8_t *e=ram+0x0800u+4u*i;
+        const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
+        if(e[1]<160u||e[1]>=0xE0u||((e[3]>>1)&7u)!=who+1u||tile<0x1E8u||tile>0x1EFu)continue;
+        const unsigned hb=(ram[0x0A00u+i/4u]>>(2u*(i%4u)))&3u;
+        if(hb&2u)continue;
+        int px=(int)(e[0]|((hb&1u)<<8));if(px>=256)px-=512;
+        *x=px;*y=(int)e[1];
+        return 1;
+    }
+    return 0;
+}
 /* The class title sits right of the portrait, under the HP numbers. */
 #define SOM_HUD_LABEL_DX 18
 #define SOM_HUD_LABEL_DY 9

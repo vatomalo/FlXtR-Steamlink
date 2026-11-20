@@ -842,6 +842,37 @@ clears it. Defaults: the girl **Divine Arts** (Cleric, she heals), the sprite **
 - A companion not yet in the party (no HP) keeps that palette untouched.
 - Saved in `som_ai_disciplines` as a trailing `p <girl> <sprite>`; older files load with
   the defaults.
-- **Not yet:** class weapons and moves for the companions. The game's ally AI still
-  fights them with their own equipment (the direct equip writes the boy's weapon art
-  buffer only).
+- **Class weapons** (since the next change the same day): each companion is handed her
+  class's B weapon (casters: bare hands) once per class choice and session; missing class
+  weapons are granted at tier 0; the ring can change it afterwards. The weapon switch is
+  the game's `$C0:EA41` for her actor: her effect-tile buffer 7E:2000 + who*0x1000, her
+  `D030 + who*0x40`, and Turbo's per-hero plane converters (boy masked `$C1:C5D1`, girl
+  xor `$C1:C731`, sprite inverted `$C1:C8A9`), checked byte for byte against all three
+  live buffers. Her model must first rebuild what the game loaded for her, else refused.
+  A weapon another member holds is shared; `$CC54+type` bits 6-7 keep one holder (1 boy,
+  2 girl, 3 sprite).
+- **Class moves** (`src/som_ally_moves.h`): the game's ally AI still walks and swings
+  for them; the proxy adds the class technique when it fits, from the companion's own
+  energy and AP (never the boy's bar), 4 s apart: Whirlwind, Hundred Fists, Shunshin,
+  Arcane Bolt, Holy Light (heals the most hurt member under 60 %), Shadow Bolt, Spirit
+  Lash, Healing Waltz, Flow Chain, Shadowstep, Issen, Volley, Grand Cross, Soul Drain,
+  Bomb, Mind Blast. Damage goes through the monster's pending-damage byte, heals through
+  the hero's queued heal +0x1F3; no kill credit for the boy's perks. Ranged and caster
+  classes also take their class evade (1 AP) when a monster comes within 18 px; melee
+  classes only under 40 % HP, since the game's AI must stand close to hit.
+- Tool/AI command `ally_class_<1|2>_<class>` sets the girl's or sprite's class.
+
+### Party panels, Seiken Densetsu 3 style (2026-11-20)
+
+Each member with a class gets a panel in their own HUD column, under their portrait
+(found as HUD tile 0x1E8 + 2*who in palette who + 1):
+
+```
+[portrait] 164/175        <- the game's HP
+           SAMURAI        <- class
+KATANA                    <- boy: class weapon or spell set; companions: their class move
+[==== energy ====] ....   <- class energy bar + 4 AP pips (no text: the column is 78 px)
+```
+
+The energy name (Ki, Chakra...) is no longer printed; it still appears in the "Not enough"
+message. A member without a class shows no panel.

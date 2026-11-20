@@ -2693,6 +2693,49 @@ int main(void){
         assert(strlen(line)<=32u);
         som_disc_init(&disciplines);memset(member_pal_have,0,sizeof(member_pal_have));
     }
+    /* Companion class moves (2026-11-20): the girl (Cleric) heals the
+     * hurt boy, the sprite (Mage) bolts the monster; a Ninja girl dashes to
+     * the monster's far side and cuts on arrival. Weapon holder bits. */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));
+        ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xC1]=0x04;ram[0xC3]=0x04;   /* 1024 x 1024 map */
+        const unsigned px[3]={200,220,240};
+        for(unsigned who=0;who<3;who++){
+            uint8_t *o=ram+0xE000+0x200*who;
+            o[0]=1;o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who?100:30;  /* the boy at 30 % */
+        }
+        uint8_t *m=ram+0xE600;m[0]=1;som_put_word(m+2,240+50);m[4]=200;        /* 50 px from the sprite */
+        som_disc_init(&disciplines);familiar.slot=-1;ally_tech_ready=0;
+        const unsigned long saved_frame=frame_number;frame_number=1000;
+        som_ally_tech_frame(ram);
+        assert(ram[0xE1F3]>0);                                    /* the boy healed */
+        assert(m[0x1F1]>0);                                       /* the monster hit */
+        const uint8_t heal=ram[0xE1F3],hurt=m[0x1F1];
+        frame_number++;som_ally_tech_frame(ram);
+        assert(ram[0xE1F3]==heal&&m[0x1F1]==hurt);                /* cooldown */
+        assert(ally_tech[0].en.energy[4]<som_energy_max(1));      /* her own energy paid */
+        /* A Ninja girl: dash past the monster, cut once there. */
+        disciplines.party[0]=SOM_DISC_NINJUTSU;disciplines.party[1]=SOM_DISCIPLINE_NONE;
+        ally_tech_ready=0;m[0x1F1]=0;som_put_word(m+2,220+60);
+        for(unsigned i=0;i<20;i++){frame_number++;som_ally_tech_frame(ram);}
+        assert(!ally_tech[0].dashing);
+        assert(som_bun_u16(ram+0xE202)==220+60+20);               /* the far side */
+        assert(m[0x1F1]>0&&!(ram[0xE20E]&0x80));                  /* cut, seen again */
+        /* Dead or not joined: nothing. */
+        ally_tech_ready=0;m[0x1F1]=0;ram[0xE382]=0;ram[0xE383]=0;
+        for(unsigned i=0;i<5;i++){frame_number++;som_ally_tech_frame(ram);}
+        assert(m[0x1F1]==0);
+        frame_number=saved_frame;som_disc_init(&disciplines);ally_tech_ready=0;
+        /* One holder per weapon: 1 boy, 2 girl, 3 sprite in bits 6-7. */
+        uint8_t owned[8]={0x05,0x02,0xFF,0,0,0,0,0};
+        som_weapon_hold(owned,0,1);assert(owned[0]==0x85);
+        som_weapon_hold(owned,0,0);assert(owned[0]==0x85);       /* hers: not taken */
+        som_weapon_release(owned,0,0);assert(owned[0]==0x85);    /* not his to drop */
+        som_weapon_release(owned,0,1);assert(owned[0]==0x05);
+        som_weapon_hold(owned,2,2);assert(owned[2]==0xFF);       /* not owned */
+        som_weapon_hold(owned,1,2);assert(owned[1]==0xC2);
+    }
     /* The playing song (7E:1E05) is announced once per change. */
     {
         static uint8_t ram[SOM_WRAM_SIZE];

@@ -109,7 +109,7 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
                     "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
-                    "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap"} | \
+                    "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap", "telekinesis"} | \
     {f"class_{n}" for n in range(16)} | {f"special_{n}" for n in range(1, 9)}
 # Blink to a tile (proxy som_blink_start checks range and open ground).
 BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")

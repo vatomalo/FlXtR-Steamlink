@@ -169,13 +169,21 @@ class Quest:
             self._save_adjustment(adjust)
             return
         adjust["failures"] = adjust.get("failures", 0) + 1
-        if map_id is not None:
+        # Only a map with monsters is somewhere to level up: a failure
+        # noticed in the inn house (map 259) made him "hunt" there for 30
+        # minutes (2026-11-20).
+        if map_id is not None and self.monsters.get(map_id):
             adjust["failed_on"] = map_id
         self.log(f"[quest] story trip {outcome} on map {map_id} before arriving "
                  f"({adjust['failures']}/{STORY_FAILURES})")
         if adjust["failures"] >= STORY_FAILURES and isinstance(hero, int):
             floor = max(adjust.get("floor") or 0, hero + 1)
             adjust.update(floor=floor, failures=0, grind_map=adjust.get("failed_on"))
+            if adjust["grind_map"] is None:
+                self.log("[quest] adjusting skipped: no failure on a map with monsters yet")
+                adjust.pop("floor", None)
+                self._save_adjustment(adjust)
+                return
             self.log(f"[quest] adjusting: {STORY_FAILURES} story trips in a row ended "
                      f"early; level up to {floor} on map {adjust['grind_map']} "
                      f"before the story again (hero level {hero})")
@@ -194,7 +202,9 @@ class Quest:
             self._save_adjustment(adjust)
             return None
         grind = adjust.get("grind_map")
-        if grind is None or not (grind == self.here or reachable(grind)):
+        if not self.monsters.get(grind):
+            grind = adjust.get("failed_on")
+        if not self.monsters.get(grind) or not (grind == self.here or reachable(grind)):
             return None
         return grind, (f"level up first: story trips kept failing on the way; hero "
                        f"{hero} < learned floor {floor}, hunting map {grind}")

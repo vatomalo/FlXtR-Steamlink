@@ -29,7 +29,7 @@ DATA = {
         {"map": 310, "id": 0x5B, "flag": 0x17, "min": 5, "max": 5, "x": 1, "y": 1, "level": 10},
         {"map": 400, "id": 0x60, "flag": 0x28, "min": 0, "max": 15, "x": 1, "y": 1, "level": 23},
     ],
-    "monsters": {"16": [1, 2, 3, 5], "30": [8, 8, 9, 10], "31": [7, 7, 8], "50": [20, 21]},
+    "monsters": {"16": [1, 2, 3, 5], "23": [1, 2, 4], "30": [8, 8, 9, 10], "31": [7, 7, 8], "50": [20, 21]},
 }
 
 
@@ -113,6 +113,12 @@ class QuestTest(unittest.TestCase):
         quest.story_outcome("retreated", 11, 23)
         self.assertEqual(quest.choose(summary(12, 131), reachable)[0], 23)
         self.assertEqual(quest.adjustment()["floor"], 13)
+        # A failure noticed in a map without monsters (the inn house) is
+        # never a place to level up: the last field map stays the target.
+        quest.story_outcome("died", 11, 259)
+        quest.story_outcome("died", 11, 259)
+        self.assertEqual(quest.adjustment()["grind_map"], 23)
+        self.assertEqual(quest.choose(summary(12, 131), reachable)[0], 23)
         # An arrival clears the count (the floor stays until it is reached).
         quest.story_outcome("retreated", 11, 23)
         quest.story_outcome("arrived", 11, 287)

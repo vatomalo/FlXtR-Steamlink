@@ -119,6 +119,16 @@ class PlayLoopTest(unittest.TestCase):
         self.assertTrue(any("save unavailable" in line for line in self.logs))
         self.assertTrue(any("HP already full" in line for line in self.logs))
 
+    def test_full_hp_moves_on_even_when_the_inn_is_unavailable(self):
+        # The stay healed him, then the save prompt failed: the inn is off,
+        # but at full HP there is nothing to wait for.
+        play = self.make(inn_saves=True)
+        play._enter("inn", "test")
+        self.assertNotEqual(play.goal(summary(), False, False, False, ALL), "await_inn_setup")
+        self.assertEqual(play.phase, "hunt")
+        play._enter("inn", "test")
+        self.assertEqual(play.goal(summary(hp=50), False, False, False, ALL), "await_inn_setup")
+
     def test_inn_saves_so_missing_taught_save_hands_back_to_hunting(self):
         # Full HP skipped the inn, then the hero waited in the save phase
         # forever for a taught save (2026-11-18); the inn saves on each stay.

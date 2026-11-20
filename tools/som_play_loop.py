@@ -167,13 +167,16 @@ class PlayLoop:
                 self._enter("inn", "nothing (more) to buy")
                 continue
             if phase == "inn":
+                # Full HP first: an inn stay that healed him but then failed
+                # at the save prompt left him waiting for the inn at 146/146
+                # HP, wandering the Potos exit (2026-11-20).
+                if max_hp and hp >= max_hp:
+                    self._enter("save", "HP already full; no rest needed")
+                    continue
                 if not inn_ready:
                     self._warn_once("no_inn", "[loop] inn unavailable; committed "
                                     "return objective remains active")
                     return "await_inn_setup"
-                if max_hp and hp >= max_hp:
-                    self._enter("save", "HP already full; no rest needed")
-                    continue
                 return "go_to_inn"
             if phase == "save":
                 if not save_ready and self.inn_saves:

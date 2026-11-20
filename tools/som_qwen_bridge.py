@@ -1065,6 +1065,7 @@ def load_rom_exits(host, cache=ROM_TABLE_CACHE):
         return None
 
 
+INN_RETRY_S = 300.0
 QUEST_TABLE_CACHE = Path.home() / ".local/state/flxtr/som-quest.json"
 
 
@@ -1360,7 +1361,9 @@ def main() -> int:
 
     def gambit(index):
         return gambits[index] > 0
-    inn_disabled = False
+    # A failed inn macro rests the inn for INN_RETRY_S, not for the whole run:
+    # one missed save prompt left the hero waiting at full HP (2026-11-20).
+    inn_disabled_until = 0.0
     inn_lookalikes = set()
     surveyed_map, surveys_due = None, 0
     shop_disabled = False
@@ -1952,7 +1955,7 @@ def main() -> int:
                     loop_goal = play_loop.goal(
                         summary, shop_offer is not None,
                         isinstance(inn_anchor, dict) and bool(inn_anchor.get("face")) and
-                        not inn_disabled and gambit(GAMBIT_INN),
+                        time.monotonic() >= inn_disabled_until and gambit(GAMBIT_INN),
                         isinstance(save_point, dict) and save_point.get("taught") and
                         not save_disabled and gambit(GAMBIT_SAVE), reachable)
                     planner.no_retreat = (play_loop.cornered(summary, reachable) or
@@ -1994,6 +1997,13 @@ def main() -> int:
                                       flush=True)
                     auto_errand = None
                 errand = goal_errand or auto_errand
+                # A story trip walks past monsters (fighting back when hit,
+                # above half HP): detours to fight on map 16 got him poisoned
+                # by a Lullabud and sent home every trip (2026-11-20).
+                if (play_loop is not None and play_loop.state.get("target_story") and
+                        isinstance(errand, dict) and isinstance(errand.get("anchor"), dict) and
+                        errand["anchor"].get("map_id") == play_loop.state.get("target")):
+                    errand = dict(errand, avoid_fights=True)
                 if args.visit_map is not None and current_map != args.visit_map:
                     errand = {"place": f"map {args.visit_map}", "anchor": {"map_id": args.visit_map},
                               "avoid_fights": True}
@@ -2376,7 +2386,7 @@ def main() -> int:
                         announce("AI: shopping failed|see log")
                     previous = "wait"
                     continue
-                if (link and not inn_disabled and history is not None and
+                if (link and time.monotonic() >= inn_disabled_until and history is not None and
                         decision.intention == "recover_at_inn"):
                     anchor = current_inn
                     if (isinstance(anchor, dict) and anchor.get("taught") and
@@ -2402,8 +2412,8 @@ def main() -> int:
                         except MacroFailed as exc:
                             if play_loop is not None:
                                 play_loop.inn_failed(str(exc))
-                            inn_disabled = True
-                            print(f"[inn] disabled for this run: {exc}", flush=True)
+                            inn_disabled_until = time.monotonic() + INN_RETRY_S
+                            print(f"[inn] resting the inn for {INN_RETRY_S:.0f} s: {exc}", flush=True)
                             announce("AI: inn failed|see log")
                         previous = "wait"
                         continue

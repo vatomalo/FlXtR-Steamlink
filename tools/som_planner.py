@@ -47,6 +47,11 @@ DEAD_END_COST = 6
 # Long-range weapons back away from an enemy closer than this, at most
 # KITE_STEPS steps in a row before shooting anyway.
 KEEP_DISTANCE_PX = 44
+# Long-range weapons walk to a firing spot, not to the monster (player:
+# "it will never understand long range weapons", 2026-11-20): a known open
+# tile on the monster's row or column, FIRE_TILES away, with no wall in the
+# line of fire, reached by the learned map.
+FIRE_TILES = (3, 4)
 LINE_UP_MAX_PX = 40         # longest sidestep onto the enemy's line
 KITE_STEPS = 4
 # Decisions to ignore an enemy whose straight line and known routes are walled.
@@ -1094,6 +1099,9 @@ class MemoryPlanner:
             lined = self._line_up(enemy, held, dx, dy, reach, nearest, open_steps)
             if lined is not None:
                 return lined
+            spot = self._firing_spot(context, enemy, dx, dy, held, reach, nearest, open_steps)
+            if spot is not None:
+                return spot
         # Follow the learned map first. Taking the straight-line step whenever
         # its first tile was open, and the map route only when it was not,
         # sent the hero up into a dead end and back down, over and over.
@@ -1186,6 +1194,52 @@ class MemoryPlanner:
         return PlannerDecision(action, f"keep distance from enemy {enemy['slot']} "
                                f"({distance} px, {held} wants {KEEP_DISTANCE_PX}+)",
                                "kite_enemy")
+
+    def _firing_spot(self, context, enemy, dx, dy, held, reach, nearest, open_steps):
+        """First step toward the nearest (by the learned map) firing spot for
+        a long-range weapon, or None (already on one, or none known)."""
+        size = tuple(context["map_size_tiles"])
+        origin = tuple(context["actor_tile"])
+        target = (origin[0] + round(dx / 16), origin[1] + round(dy / 16))
+        cells = dict(self._known_cells(context["map_id"], context["actor"]["layer"]))
+        cells[origin] = "open"
+        walkable = ("open", "pass", "h1", "h2")
+        spots = []
+        for tiles in FIRE_TILES:
+            px = tiles * 16
+            if not (max(nearest, KEEP_DISTANCE_PX - 8) < px <= reach):
+                continue
+            for ux, uy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                spot = ((target[0] + ux * tiles) % size[0], (target[1] + uy * tiles) % size[1])
+                if cells.get(spot) not in walkable:
+                    continue
+                clear = all(cells.get(((target[0] + ux * k) % size[0],
+                                       (target[1] + uy * k) % size[1])) != "blocked"
+                            for k in range(1, tiles))
+                if clear:
+                    spots.append(spot)
+        if not spots:
+            return None
+        if origin in spots:
+            return None                   # here: turn and shoot (strike logic)
+        routes = self._routes(origin, cells, size, context["actor"].get("floor_height"),
+                              forbidden=self._forbidden_steps(context))
+        best = None
+        for spot in spots:
+            if spot not in routes:
+                continue
+            first, steps = routes[spot]
+            if first is None or first not in open_steps:
+                continue
+            if best is None or steps < best[0]:
+                best = (steps, first, spot)
+        if best is None:
+            return None
+        steps, first, spot = best
+        return PlannerDecision(first, f"move to a firing spot for the {held}: tile "
+                               f"{spot[0]},{spot[1]}, {abs(spot[0] - target[0]) + abs(spot[1] - target[1])} "
+                               f"tiles in line with enemy {enemy['slot']} ({steps} steps)",
+                               "engage_enemy", steps, routes.straight(spot))
 
     @staticmethod
     def _line_up(enemy, held, dx, dy, reach, nearest, open_steps):

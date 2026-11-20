@@ -264,6 +264,34 @@ class TestMemoryPlanner(unittest.TestCase):
             self.assertEqual("line up" in decision.reason, held in LONG_RANGE,
                              (held, decision.reason))
 
+    def test_long_range_weapon_walks_to_a_firing_spot_not_the_monster(self):
+        # Bow, monster 2 tiles right and 3 down (not on a line, too far off
+        # to sidestep): head for a tile 3-4 tiles out on its row or column,
+        # never at it; a wall in the line of fire rules a spot out.
+        planner = MemoryPlanner()
+        for x in range(16):
+            for y in range(16):
+                planner.local_cells[(131, 1, x, y)] = "open"
+        context = {"map_id": 131, "actor": {"layer": 1, "floor_height": 0},
+                   "actor_tile": [5, 5], "map_size_tiles": [16, 16]}
+        steps = ["step_up", "step_down", "step_left", "step_right"]
+        enemy = {"slot": 1}
+        decision = planner._firing_spot(context, enemy, 32, 48, "bow", 70, 0, steps)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.intention, "engage_enemy")
+        self.assertIn("firing spot", decision.reason)
+        # The monster is at 7,8: the nearest spot is 7,5 (3 above it), two steps right.
+        self.assertEqual(decision.action, "step_right", decision.reason)
+        self.assertIn("tile 7,5", decision.reason)
+        # Standing on a spot already: nothing to walk to (turn and shoot).
+        context["actor_tile"] = [7, 5]
+        self.assertIsNone(planner._firing_spot(context, enemy, 0, 48, "bow", 70, 0, steps))
+        # A wall between 7,5 and the monster: that spot is out.
+        context["actor_tile"] = [5, 5]
+        planner.local_cells[(131, 1, 7, 6)] = "blocked"
+        decision = planner._firing_spot(context, enemy, 32, 48, "bow", 70, 0, steps)
+        self.assertNotIn("tile 7,5", decision.reason)
+
     def test_long_range_weapon_keeps_its_distance(self):
         # Bow, enemy 20 px right and recharging: step away (left), not guard.
         planner = MemoryPlanner()

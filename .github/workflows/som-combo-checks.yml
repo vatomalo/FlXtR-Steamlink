@@ -5,6 +5,7 @@ on:
       - feature/som-disciplines-controls-20261114
       - fix/som-ai-brain-20261119
       - fix/android-npc-memory-build-output-20261119
+      - fix/som-summon-ukemi-telekinesis-balance-20261120
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,6 +19,10 @@ jobs:
           make test-som-ai-proxy test-som-ai-player2 test-som-combo test-som-songs test-som-net-pad
           cc -std=c11 -Wall -Wextra -Werror -Isrc tests/som_disciplines_test.c -o /tmp/som-disciplines-test
           /tmp/som-disciplines-test
+          cc -std=c11 -Wall -Wextra -Werror -Isrc tests/som_telekinesis_test.c -o /tmp/som-telekinesis-test
+          /tmp/som-telekinesis-test
+          cc -std=c11 -Wall -Wextra -Werror -Isrc tests/som_familiar_gfx_test.c -o /tmp/som-familiar-gfx-test
+          /tmp/som-familiar-gfx-test
       - name: Python tests (AI bridge, planner, soundtrack, headless harness; no ROM)
         run: |
           PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py'

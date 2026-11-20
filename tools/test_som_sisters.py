@@ -15,8 +15,9 @@ class SisterTest(unittest.TestCase):
         return pick[0]
 
     def test_each_situation_has_its_sister(self):
-        d, now = self.director()
-        self.assertIsNone(d.choose("balanced", {}, 0, enemies=1, nearest=120))  # far: Ninjutsu
+        d, now = self.director(current=9)  # Rogue can borrow Monks fists
+        self.assertEqual(d.choose("balanced", {}, 0, enemies=1, nearest=120)[0], 2)  # far: Ninjutsu
+        d.home = None  # examine independent combat situations
         pick = d.choose("balanced", {}, 0, enemies=1, nearest=30)
         self.assertEqual(pick[0], 1)                                           # duel: Martial Arts
         self.switch(d, pick)
@@ -29,12 +30,17 @@ class SisterTest(unittest.TestCase):
                                   nearest=30)[0], 9)                          # hurt: Roguecraft
 
     def test_back_home_when_the_fight_is_over(self):
-        d, now = self.director()
+        d, now = self.director(current=9)
         self.switch(d, d.choose("balanced", {}, 0, enemies=1, nearest=30))
         now[0] += 1
         pick = d.choose("balanced", {}, 0, enemies=0)
-        self.assertEqual(pick[0], 2)
-        self.assertIn("back to Ninjutsu", pick[1])
+        self.assertEqual(pick[0], 9)
+        self.assertIn("back to Roguecraft", pick[1])
+
+    def test_ninja_keeps_taijutsu_instead_of_switching_to_monk(self):
+        d, _ = self.director(current=2)
+        self.assertIsNone(d.choose("balanced", {}, 0, enemies=1, nearest=30))
+        self.assertIsNone(d.home)
 
     def test_other_classes_keep_the_old_rules(self):
         d, _ = self.director(current=3)                 # Magic, picked by the player

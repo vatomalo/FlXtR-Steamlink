@@ -506,3 +506,19 @@ duplicate events. `FLXTR_SOM_PERKS=0` (read at game load) turns every effect off
 
 Unlocks log `[som-ai] PERK unlocked: <name>`. The Shunshin follow-up synergy is not built
 (the table supports it; see the test `Shadow Strike` row).
+
+### Casters trade weapons for spells (2026-11-20)
+
+Magic, Divine Arts, Dark Arts, Summoning and Support & Dance (`som_disc_caster`):
+**B** casts the class's first spell, **Y** the second, **X** the rest of the list
+(tap: cast, hold: next). The game never sees those B/Y presses. With too little MP
+for the B spell, B is the game's weapon swing again, so he can always attack.
+Log: `[som-ai] CASTER B|Y: <spell>`.
+
+| Class | B | Y | X |
+|---|---|---|---|
+| Magic | Fire Ball | Freeze | Thunderbolt, Earth Slide, Gem Missile, ... |
+| Divine Arts | Lucent Beam | Cure Water | Remedy, Lucid Barrier, Light Saber, Wall |
+| Dark Arts | Dark Force | Energy Absorb | Evil Gate, Dispel Magic, Magic Absorb, Change Form |
+| Summoning | Burst | Sleep Flower | Lunar Magic, Moon Energy |
+| Support & Dance | Speed Down | Cure Water | Speed Up, Defender, Silence, Balloon |

@@ -36,14 +36,17 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     {0x0C, 0x06, 0x12, 0x1E, 0xFF},
     /* Magic: the attack spells of every spirit */
     {0x0C, 0x06, 0x13, 0x00, 0x01, 0x0D, 0x0E, 0x11, 0x07, 0x1F, 0x28, 0xFF},
-    /* Divine Arts: healing and light */
-    {0x0B, 0x0A, 0x28, 0x29, 0x27, 0x22, 0xFF},
+    /* Divine Arts: B Lucent Beam, Y Cure Water, X the rest */
+    {0x28, 0x0B, 0x0A, 0x29, 0x27, 0x22, 0xFF},
     /* Dark Arts: shade and draining */
-    {0x25, 0x24, 0x26, 0x08, 0x19, 0x18, 0xFF},
+    /* B Dark Force, Y Energy Absorb, X the rest */
+    {0x25, 0x08, 0x24, 0x26, 0x19, 0x18, 0xFF},
     /* Summoning: moon and forest */
-    {0x1A, 0x1D, 0x1E, 0x1F, 0xFF},
+    /* B Burst, Y Sleep Flower, X Lunar Magic and Moon Energy */
+    {0x1F, 0x1E, 0x1A, 0x1D, 0xFF},
     /* Support & Dance: buffs and hexes */
-    {0x04, 0x05, 0x0B, 0x02, 0x14, 0x16, 0xFF},
+    /* B Speed Down, Y Cure Water, X the rest */
+    {0x02, 0x0B, 0x04, 0x05, 0x14, 0x16, 0xFF},
     /* Weapon Flow: no magic, X is the third weapon (som_disc_third_weapon) */
     {0xFF},
     /* Roguecraft: hexes */
@@ -53,6 +56,17 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     /* Archery: wind and stone shots */
     {0x12, 0x13, 0x01, 0xFF},
 };
+
+/* Casters (Magic, Divine Arts, Dark Arts, Summoning, Support & Dance) trade
+ * their weapons for spells: B casts the first spell of their list, Y the
+ * second, X the rest (tap: cast, hold: next). With too little MP for the
+ * B spell, B stays the game's weapon swing so he can always attack. */
+#define SOM_CASTER_FIRST 3u
+#define SOM_CASTER_LAST 7u
+#define SOM_CASTER_BUTTON_SPELLS 2u
+static inline int som_disc_caster(unsigned discipline) {
+    return discipline >= SOM_CASTER_FIRST && discipline <= SOM_CASTER_LAST;
+}
 
 static inline const char *som_spell_label(unsigned spell) {
     return spell < SOM_SPELL_COUNT ? som_spell_names[spell] : "spell";

@@ -644,6 +644,7 @@ static int som_equip_weapon_direct(uint8_t *ram,unsigned type);
 #define SOM_EQUIP_BUSY 0                /* hero mid-action: retry later */
 #define SOM_EQUIP_REFUSED (-1)          /* will not work: use the ring */
 static int som_cast_spell(uint8_t *ram,unsigned spell);
+static int som_spell_affordable(const uint8_t *ram,unsigned spell);
 #define SOM_SPELL_FIRE_BALL 0x0Cu
 /* X casts the current spell of the chosen discipline (som_magic.h); holding
  * X steps to the next one. One cursor per discipline (+1: no discipline). */
@@ -651,15 +652,23 @@ static unsigned spell_cursor[SOM_DISCIPLINE_COUNT+1u];
 static unsigned long x_press_frame;
 static int x_cycled;
 #define SOM_X_HOLD_FRAMES 30ul
+/* Where X's list starts: a caster's first two spells are on B and Y. */
+static unsigned som_x_spell_base(void){
+    const unsigned n=som_class_spell_count(disciplines.selected);
+    return disciplines.selected<SOM_DISCIPLINE_COUNT&&som_disc_caster(disciplines.selected)&&
+           n>SOM_CASTER_BUTTON_SPELLS?SOM_CASTER_BUTTON_SPELLS:0u;
+}
 static unsigned som_current_spell(void){
     const unsigned d=disciplines.selected<SOM_DISCIPLINE_COUNT?disciplines.selected:SOM_DISCIPLINE_COUNT;
-    return som_class_spell(disciplines.selected,spell_cursor[d]);
+    const unsigned base=som_x_spell_base(),n=som_class_spell_count(disciplines.selected);
+    return som_class_spell(disciplines.selected,
+                           n>base?base+spell_cursor[d]%(n-base):spell_cursor[d]);
 }
 static void som_next_spell(void){
     const unsigned d=disciplines.selected<SOM_DISCIPLINE_COUNT?disciplines.selected:SOM_DISCIPLINE_COUNT;
-    const unsigned n=som_class_spell_count(disciplines.selected);
-    if(!n)return;                         /* Bushido / Weapon Flow: no spells */
-    spell_cursor[d]=(spell_cursor[d]+1u)%n;
+    const unsigned n=som_class_spell_count(disciplines.selected),base=som_x_spell_base();
+    if(n<=base)return;                    /* Bushido / Weapon Flow: no spells */
+    spell_cursor[d]=(spell_cursor[d]+1u)%(n-base);
 }
 /* Seals: D-pad presses counted while R2 is held (som_magic.h). */
 static unsigned seal_count;
@@ -1243,7 +1252,23 @@ static void som_input_poll(void){
            (current&(1u<<RETRO_DEVICE_ID_JOYPAD_R))&&(pressed&dpad)&&
            som_throw_back_pressed(wram,pressed))
             som_throw_start(wram);
-        if(wram&&!style_b_hidden&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
+        /* Casters: B casts the first spell of the class, Y the second; the
+         * game sees neither. B with too little MP stays the weapon swing. */
+        const int caster=wram&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
+            som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines;
+        if(caster&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
+            const unsigned which=(current&y_bit)?1u:0u;
+            const unsigned spell=som_class_spell(disciplines.selected,which);
+            if(which||som_spell_affordable(wram,spell)){
+                if(which)y_weapon_blocked=1;else b_weapon_blocked=1;
+                if(pressed&(which?y_bit:b_bit)){
+                    if(som_cast_spell(wram,spell))
+                        fprintf(stderr,"[som-ai] CASTER %s: %s\n",which?"Y":"B",
+                                som_spell_label(spell));
+                }
+            }
+        }
+        if(wram&&!caster&&!style_b_hidden&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
             unsigned want=som_disc_weapons[disciplines.selected][which];
             if(!which&&disciplines.selected==SOM_DISC_NINJUTSU){
@@ -1902,6 +1927,12 @@ static int som_cast_target(const uint8_t *ram){
         if(best<0||distance<best_distance){best=(int)slot;best_distance=distance;}
     }
     return best;
+}
+/* Enough MP for the spell (ROM row byte 15 = cost)? */
+static int som_spell_affordable(const uint8_t *ram,unsigned spell){
+    if(!ram||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
+    const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
+    return row&&ram[0xE186]>=row[15];
 }
 static int som_cast_spell(uint8_t *ram,unsigned spell){
     if(!ram||spell>=SOM_SPELL_COUNT||!som_rom)return 0;

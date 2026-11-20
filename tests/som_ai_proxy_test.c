@@ -1791,6 +1791,34 @@ int main(void){
         hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
         rom[0x102AD0+0x08*64+8]=0x40;           /* undecoded target kind */
         assert(!som_cast_spell(ram,0x08)&&hero[0x170]==0);
+        /* Casters trade weapons for spells: Mage B = Fire Ball, Y = Freeze,
+         * X starts at the third spell; B without the MP is the weapon swing. */
+        {
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=3;
+            rom[0x102AD0+0x06*64+8]=0x81;rom[0x102AD0+0x06*64+15]=2;     /* Freeze */
+            hero[0x186]=5;hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+            som_input_poll();
+            assert(hero[0x170]==0x0C);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+            mocked_buttons=0;som_input_poll();
+            hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+            som_input_poll();
+            assert(hero[0x170]==0x06);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+            mocked_buttons=0;som_input_poll();
+            assert(som_current_spell()==som_class_spell(3,2));       /* X: the rest */
+            hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;hero[0x186]=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+            som_input_poll();
+            assert(hero[0x170]==0);                                  /* no MP: */
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1); /* swing */
+            mocked_buttons=0;som_input_poll();
+            hero[0x186]=5;hero[0x01C]=0;hero[0x060]=0;
+            disciplines.selected=keep;
+        }
         /* Holding X steps to the next Ninjutsu spell instead of casting. */
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
         som_input_poll();

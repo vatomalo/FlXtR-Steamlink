@@ -672,16 +672,65 @@ bridge (`tools/som_music_bridge.py`, uses FlXtR's `tools/music.py`) answers in
 `/tmp/flxtr-som-jukebox.list` and mixes the track into the game's audio like the covers.
 While the jukebox plays, the game's song changes are ignored.
 
-### Weapon sizes per style (2026-11-20)
+### Bushido weapon masks and SD3 dagger import (experimental, 20 November 2026)
 
-A style's `scale_pct` draws the weapon art scaled about the hilt: Kunai, Dagger and Tanto
-55 %, Rapier and Gladius 75 %, Longsword, Estoc and Bastard Sword 150 %, Claymore and Dai
-Katana 200 % (balanced styles and the rest: the game's own art). `tools/som_weapon_scale.py`
-renders every swing frame's weapon pieces (blade, arc, flashes) from the ROM for the class
-swords' grades (2-5) and scales them with nearest-neighbour; `scripts/build-som-ai-proxy.sh`
-stages it with `SOM_ROM_PATH` as `som_weapon_scales.bin` (beside the proxy). While a scaled
-style is held the proxy blanks the native weapon tiles in 7E:2000 (keeping a copy) and draws
-the pack frame for the hero's frame (+0x26 / 2), mirrored for left facings (+0x28 bit 6).
+The old all-pixel 55%/150%/200% scaled-art renderer was replaced on the
+`feature/som-bushido-blade-masks-20261120` branch. `scale_pct` remains
+in the style data for existing balancing/configuration compatibility, but
+the proxy **does not scale the entire weapon** any more.
+
+The first pilot is Bushido (Samurai) only:
+
+- **Tanto:** shortened native sword silhouette, optionally replaced with a
+  user-extracted Seiken Densetsu 3 dagger PNG. The PNG must have a transparent
+  background and be cropped to just the dagger.
+- **Katana:** untouched native Secret of Mana weapon art and animations.
+- **Dai Katana:** extended solid blade with a reconstructed narrow tip, **not**
+  a doubled hilt, thick pixel resize, or scaled attack trail.
+- The runtime draws palette indices 1..5 opaque; separate FX indices 6..10
+  have 25% translucency on the post-core frame, including RGB565, 1555, 8888.
+- Native game/hero palettes and attack scripts remain unchanged. The proxy
+  restores native weapon tiles if a style is off, its frame is missing, or the
+  user has not opted in. **This is still experimental:** animation alignment
+  needs comparison with live recorded Steam Link frames before deployment.
+
+Local build with a ROM already available on SkyLoft:
+
+```sh
+SOM_ROM_PATH="/path/to/Secret of Mana, Turbo.smc" bash scripts/build-som-ai-proxy.sh
+```
+
+Optionally include a locally extracted dagger image. The `X,Y` points are
+pixels relative to the **cropped transparent image**, on the grip and blade
+tip respectively:
+
+```sh
+SOM_ROM_PATH="/path/to/Secret of Mana, Turbo.smc" \\
+SOM_DAGGER_PNG="/path/to/my-extracted-sd3-dagger.png" \\
+SOM_DAGGER_HILT="4,13" SOM_DAGGER_TIP="23,3" \\
+bash scripts/build-som-ai-proxy.sh
+```
+
+*Replace those illustrative coordinates with pixels from your actual PNG.*
+The project does not distribute donor graphics or game ROMs.
+
+Review `build/som-ai/som_weapon_preview.png` plus its `.txt` report before
+installing anything. The contact sheet places Tanto, native Katana and Dai
+Katana in three rows, with native swing frames in columns and a red marker
+on any missing/unsafe mask that falls back to the original weapon. It can
+also be regenerated directly:
+
+```sh
+python3 tools/som_weapon_preview.py "$SOM_ROM_PATH" \\
+  build/som-ai/som_weapon_masks.bin build/som-ai/som_weapon_preview.png
+```
+
+When happy with the preview, place `som_weapon_masks.bin` in the
+Steam Link's `/home/apps/retroarch/cores/experimental/` folder and
+explicitly create the marker `som_ai_weapon_masks_on` to opt in.
+Keep RetroArch/Secret of Mana closed for the install, retain the earlier
+core and pack for immediate rollback. Neither the build script nor CI
+installs or enables the feature automatically.
 
 ### Casters' spell sets and class spell names (2026-11-20)
 

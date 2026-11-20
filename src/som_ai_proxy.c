@@ -891,6 +891,13 @@ static void som_load_pack_file(const char *path,const char *what,uint8_t **pack,
 static uint8_t *cartwheel_pack;
 static size_t cartwheel_pack_size;
 static int cartwheel_pack_tried;
+/* Ukemi has its own forward somersault art (kinds 0x83..0x85) in the
+ * same ROM-derived pack as the flying kick. The native 0x93 cartwheel is
+ * kept for monks/rogues but Ninja/Samurai use collision-aware movement. */
+#define SOM_UKEMI_DRAW_KIND 0x83u
+static SomNpcWorkState ukemi_draw;
+static int ukemi_hid;
+static unsigned ukemi_map;
 #define SOM_FLYKICK_LIFT 12             /* px at the top of the jump */
 #define SOM_FLYKICK_KIND 0x90u
 static int bash_kick,flykick_from_ai;
@@ -2747,6 +2754,46 @@ static int native_restore_facing=-1;
 #define SOM_UKEMI_FRAMES 70u                 /* 65 of pose + tick latency */
 /* Asks the game for its cartwheel toward (dx, dy): it goes away from the
  * facing, so a sideways one turns the hero to face the other way first. */
+/* Native Ukemi pose is not reliably accepted outside the hit-reaction
+ * handler. Draw the real tumble on the frontend frame instead of asking
+ * the ROM to play the unrelated sideways cartwheel. */
+static void som_ukemi_end(uint8_t *ram){
+    if(!ukemi_draw.active)return;
+    if(ram&&ukemi_hid&&som_bun_u16(ram+0xDCu)==ukemi_map&&ram[0xE000u]==1u)
+        ram[0xE00Eu]&=(uint8_t)~0x80u;
+    ukemi_draw.active=0;ukemi_hid=0;
+}
+static int som_ukemi_begin_draw(uint8_t *ram,int dx,int dy){
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",
+                           &cartwheel_pack,&cartwheel_pack_size);
+    }
+    const uint8_t *hero=ram+0xE000u;
+    const unsigned id=hero[0x180u];
+    if(!cartwheel_pack||id<0x80u||id>0x82u)return 0;
+    const unsigned facing=dx?2u:(dy>0?1u:0u);
+    SomWorkEntry entry;
+    if(!som_work_find(cartwheel_pack,cartwheel_pack_size,
+                      SOM_UKEMI_DRAW_KIND+id-0x80u,facing,&entry))return 0;
+    memset(&ukemi_draw,0,sizeof(ukemi_draw));
+    ukemi_draw.active=1;ukemi_draw.slot=0;ukemi_draw.kind=id;
+    ukemi_draw.dir=dx<0?3u:dx>0?2u:dy>0?1u:0u;
+    ukemi_draw.entry=entry;ukemi_draw.start=frame_number;
+    ukemi_draw.length=som_work_swing_frames(&entry);
+    ukemi_draw.own_palette=1;
+    ukemi_hid=!(hero[0x0Eu]&0x80u);
+    hero[0x0Eu]|=0x80u;
+    ukemi_map=som_bun_u16(ram+0xDCu);
+    return 1;
+}
+static void som_ukemi_frame(uint8_t *ram){
+    if(!ukemi_draw.active)return;
+    if(!ram||!evade_active||ram[0xE000u]!=1u||
+       som_bun_u16(ram+0xDCu)!=ukemi_map||
+       frame_number-ukemi_draw.start>=ukemi_draw.length)
+        som_ukemi_end(ram);
+}
 static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
     uint8_t *hero=ram+0xE000u;
     if(!(ram[0xED]&0x80u)||hero[0x1E5]!=0xFFu||hero[0x01C]==0x40u)return 0;
@@ -2810,7 +2857,10 @@ static int som_evade_start(uint8_t *ram){
     hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
     evade_frames=move+SOM_DODGE_GRACE;
     const unsigned facing_before=hero[0x010];
-    cartwheel_native=dodge.cartwheel&&som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
+    cartwheel_native=dodge.cartwheel==SOM_REACT_CARTWHEEL&&
+        som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
+    if(dodge.cartwheel==SOM_REACT_UKEMI&&!som_ukemi_begin_draw(ram,dx,dy))
+        fprintf(stderr,"[som-ai] UKEMI pack missing: use som_cartwheel_frames.bin with 0x83 frames\\n");
     native_restore_facing=-1;
     if(cartwheel_native){
         native_code=(unsigned)dodge.cartwheel;
@@ -3197,6 +3247,7 @@ static void som_evade_tick(void){
         return;
     som_evade_blink_end(ram);
     if(native_restore_facing>=0){ram[0xE010]=(uint8_t)native_restore_facing;native_restore_facing=-1;}
+    som_ukemi_end(ram);
     evade_active=0;hop_frames_left=0;cartwheel_native=0;issen_active=0;
 }
 /* After-images of the dodge, 4 and 8 frames behind, on even frames only
@@ -4970,7 +5021,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||flykick.active||companion.draw.active||
+    const int worker=(npc_work.active||flykick.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -5029,6 +5080,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                   pixel_format);
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+            if(ukemi_draw.active)
+                som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
             if(fuma.active&&frame_number>=fuma.start)
                 som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,
@@ -5211,6 +5265,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;
+    memset(&ukemi_draw,0,sizeof(ukemi_draw));ukemi_hid=0;ukemi_map=0;
     som_tk_reset(&telekinesis);telekinesis_ready=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
@@ -5607,6 +5662,8 @@ RETRO_API void retro_run(void){
             som_flykick_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     }
     if(test_enabled&&on_turbo)som_hop_step();
+    if(test_enabled&&on_turbo&&ukemi_draw.active&&backend_retro_get_memory_data)
+        som_ukemi_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo){
         const uint64_t t=PERF_NOW();
         som_music_pump();

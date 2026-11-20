@@ -40,7 +40,7 @@ int main(void){
     som_familiar_reapply(&c,ram,vram);
     assert(ram[0xDF00u+5u*32u]==0x91u);
     /* Periodic state sync must retain art, not replace with a foreign buffer. */
-    ram[0x5000u]=0;ram[0xE682u]=14;
+    ram[0x5000u]=0;ram[0xE782u]=14; /* actor +0x182: current HP */
     som_familiar_update_object(&c,ram,0);
     assert(c.tiles[0]==0x4Au&&c.object[0x182u]==14);
     puts("som familiar art: ok");

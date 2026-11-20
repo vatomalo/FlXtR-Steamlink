@@ -2347,6 +2347,28 @@ int main(void){
             assert(hero[0x170]==0);                                  /* no MP: */
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0); /* no punch */
             mocked_buttons=0;som_input_poll();
+            /* An NPC or a chest right in front: B goes to the game (talk,
+             * open), no spell. */
+            {
+                uint8_t keep_obj[0x200];memcpy(keep_obj,ram+0xE600,sizeof(keep_obj));
+                uint8_t *o=ram+0xE600;memset(o,0,0x200);
+                o[0]=1;o[0x0B]=hero[0x0B];o[0x180]=0x90;o[0x3E]=0x21;           /* an NPC */
+                const unsigned px=som_bun_u16(hero+2)+16u,py=som_bun_u16(hero+4);
+                o[2]=(uint8_t)px;o[3]=(uint8_t)(px>>8);o[4]=(uint8_t)py;o[5]=(uint8_t)(py>>8);
+                hero[0x010]=0x02;hero[0x186]=5;hero[0x170]=0;
+                mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+                assert(hero[0x170]==0);                                    /* no spell */
+                mocked_buttons=0;som_input_poll();
+                o[0x180]=0x56;o[0x3E]=0;                                   /* a chest */
+                mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+                mocked_buttons=0;som_input_poll();
+                hero[0x010]=0x82;                                          /* behind him: no */
+                assert(!som_interact_ahead(ram));
+                hero[0x010]=0x02;hero[0x186]=0;
+                memcpy(ram+0xE600,keep_obj,sizeof(keep_obj));
+            }
             hero[0x186]=5;hero[0x01C]=0;hero[0x060]=0;
             disciplines.selected=keep;
         }

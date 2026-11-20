@@ -720,6 +720,32 @@ static int som_spell_affordable(const uint8_t *ram,unsigned spell);
 static unsigned spell_cursor[SOM_DISCIPLINE_COUNT+1u];
 static unsigned long x_press_frame;
 static int x_cycled;
+/* An NPC to talk to or a chest to open right in front of the hero (both
+ * are the game's attack press in Turbo): casters' B goes to the game then,
+ * so they talk and open chests with no spell and no swing. NPCs: objects
+ * from 7E:E600 with identity >= 0x80 and an event (tools/som_dialogue.py);
+ * chests: identity 0x56. */
+static int som_interact_ahead(const uint8_t *ram){
+    if(!ram)return 0;
+    const uint8_t *hero=ram+0xE000u;
+    const int hx=(int)(hero[2]|hero[3]<<8),hy=(int)(hero[4]|hero[5]<<8);
+    const unsigned facing=hero[0x010];
+    int fx=0,fy=0;
+    if(facing==0x02u)fx=1;else if(facing==0x82u)fx=-1;else if(facing==0x01u)fy=1;else fy=-1;
+    for(unsigned slot=3u;slot<12u;slot++){
+        const uint8_t *o=ram+0xE000u+0x200u*slot;
+        if(o[0]!=1u||((o[0x0B]^hero[0x0B])&0x80u))continue;
+        const unsigned event=(unsigned)(o[0x3E]|o[0x3F]<<8)&0xFFFu;
+        const unsigned status=(unsigned)o[0x190]|(unsigned)o[0x191]<<8;
+        const int npc=o[0x180]>=0x80u&&event>0u&&event<0x800u;
+        const int chest=o[0x180]==0x56u&&!(status&0x8000u);
+        if(!npc&&!chest)continue;
+        const int dx=(int)(o[2]|o[3]<<8)-hx,dy=(int)(o[4]|o[5]<<8)-hy;
+        const int along=dx*fx+dy*fy,across=fx?dy:dx;
+        if(along>=0&&along<=28&&across>=-14&&across<=14)return 1;
+    }
+    return 0;
+}
 /* FlXtR's own MP (each class's energy: Chakra, Chi, Ki...) and AP (the
  * evade pips), src/som_energy.h. energy_free: tests and no-cost runs. */
 static SomEnergy energy;
@@ -1615,7 +1641,8 @@ static void som_input_poll(void){
         const int caster=wram&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
             som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines&&
             !native_ring;
-        if(caster&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
+        const int caster_talk=caster&&(current&b_bit)&&!(current&y_bit)&&som_interact_ahead(wram);
+        if(caster&&!caster_talk&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
             const unsigned spell=som_caster_spell(disciplines.selected,which);
             if(!which&&!som_spell_affordable(wram,spell)){
@@ -4492,7 +4519,8 @@ static void som_start_action(SomAction action){
     /* A caster's attack is its B spell, never a punch with the decorative
      * glove (AI too). */
     if(action==SOM_ACT_ATTACK&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
-       som_disc_caster(disciplines.selected)&&backend_retro_get_memory_data){
+       som_disc_caster(disciplines.selected)&&backend_retro_get_memory_data&&
+       !som_interact_ahead((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM))){
         uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         const unsigned spell=som_caster_spell(disciplines.selected,0);
         if(ram&&som_spell_affordable(ram,spell)&&som_cast_spell(ram,spell))

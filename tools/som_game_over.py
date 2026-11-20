@@ -124,11 +124,13 @@ LOAD_SETTLE_S = 1.0        # the screen must be unchanged this long before a pre
 LOAD_REPEAT_S = 3.0        # the same screen again only after this (a dropped press)
 LOAD_PASSIVE_S = 6.0       # screens the game advances itself: only if stuck this long
 LOAD_PRESS_GAP_S = 1.2     # at least this long between presses
-LOAD_MAX_PRESSES = 12      # twice what the player needed; then stop and say so
+LOAD_MAX_PRESSES = 24      # live loads took 4-11 presses and one gave up at 12
+                           # (2026-11-20): twice the worst seen; then stop and say so
 # Death animation (event D0 0x81/0x82) and map fades (transition with E4 set)
 # advanced without a press in the recording.
 PASSIVE_EVENTS = (0x81, 0x82)
-LOAD_WINDOW_S = 120.0      # a death this long ago no longer authorizes presses
+LOAD_WINDOW_S = 180.0      # a death this long ago no longer authorizes presses
+                           # (room for 24 presses on slow repeated screens)
 
 
 class GameOverLoad:

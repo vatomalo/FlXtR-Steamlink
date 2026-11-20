@@ -152,5 +152,5 @@ class GameOverLoadTest(unittest.TestCase):
         clock = Clock()
         load = GameOverLoad(clock)
         results = self.play(load, clock, [("field", 0, FakeScreen("field"), 1),
-                                          ("event", 0, FakeScreen("event", 0x83), 60)])
+                                          ("event", 0, FakeScreen("event", 0x83), 120)])
         self.assertEqual(results, ["confirm"] * LOAD_MAX_PRESSES + ["stuck"])

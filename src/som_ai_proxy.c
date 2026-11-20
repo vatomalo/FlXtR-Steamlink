@@ -4613,9 +4613,16 @@ static void som_start_action(SomAction action){
         return;
     }
     if(action==SOM_ACT_ATTACK)som_combo_swing(0);
-    if(action==SOM_ACT_ATTACK&&som_taijutsu_peek()!=SOM_NO_WEAPON&&
-       backend_retro_get_memory_data){
-        uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    /* The AI's attack runs the class's B chain only in a fight (a monster
+     * within 80 px): cutting grass it keeps the sword it took out (the
+     * chain swapped it for the ninja's glove, which cuts nothing, 3 misses
+     * per patch, 2026-11-20). */
+    uint8_t *chain_ram=backend_retro_get_memory_data?
+        (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+    if(action==SOM_ACT_ATTACK&&som_taijutsu_peek()!=SOM_NO_WEAPON&&chain_ram&&
+       som_bun_toucher(chain_ram,(int)som_bun_u16(chain_ram+0xE002),(int)som_bun_u16(chain_ram+0xE004),
+                       80,80,familiar.slot)>=0){
+        uint8_t *ram=chain_ram;
         const unsigned want=som_taijutsu_peek();
         if(ram&&som_equip_weapon_direct(ram,want)==SOM_EQUIP_OK){
             som_taijutsu_advance();

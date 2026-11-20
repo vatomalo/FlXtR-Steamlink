@@ -2262,6 +2262,25 @@ int main(void){
             memcpy(ram+0xA8,camera,sizeof(camera));
             cartwheel_pack=NULL;cartwheel_pack_size=0;
         }
+        /* The AI's attack runs the ninja's chain only in a fight: cutting
+         * grass (no monster within 80 px) the sword stays in hand. */
+        {
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=SOM_DISC_NINJUTSU;taijutsu_step=0;taijutsu_last=frame_number;
+            for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
+            hero[0x1E4]=1;hero[0x01C]=0;hero[0x060]=0;hero[0x1ED]=0;
+            som_start_action(SOM_ACT_ATTACK);
+            assert(hero[0x1E4]==1&&taijutsu_step==0u);                  /* sword kept */
+            active_action=SOM_ACT_NONE;armed=0;
+            foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x1F1]=0;
+            foe[2]=(uint8_t)(hero[2]+30);foe[3]=hero[3];foe[4]=hero[4];foe[5]=hero[5];
+            const uint8_t keep_glove=ram[0xCC54];ram[0xCC54]=0;              /* glove owned */
+            som_start_action(SOM_ACT_ATTACK);
+            assert(taijutsu_step==1u);                                  /* chain: a punch */
+            active_action=SOM_ACT_NONE;armed=0;foe[0]=0;taijutsu_step=0;hero[0x1E4]=1;
+            ram[0xCC54]=keep_glove;
+            disciplines.selected=keep;
+        }
         /* Artificer portals: hold X places A, again B; stepping into A
          * (after leaving both) travels to B; a tap stays the bomb. */
         {

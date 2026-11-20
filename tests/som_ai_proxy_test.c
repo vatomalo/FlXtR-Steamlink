@@ -1940,7 +1940,12 @@ int main(void){
             assert(weapon_tiles_hidden&&ram[0x2000]==0&&ram[0x27FF]==0);
             som_weapon_mask_pick(ram);
             assert(weapon_masked.active&&weapon_masked.entry.weapon==14u&&weapon_masked.dir==3u);
-            hero[0x026]=22;som_weapon_mask_pick(ram);assert(!weapon_masked.active);
+            hero[0x026]=22;som_weapon_mask_pick(ram);
+            assert(!weapon_masked.active&&weapon_mask_faulted);
+            /* A later frame must restore native art and leave the mask
+             * disabled rather than repeatedly exposing a blank weapon. */
+            som_weapon_mask_frame(ram);
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
             styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;
             som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
@@ -1949,6 +1954,7 @@ int main(void){
             weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;weapon_mask_on_checked=0;
             free(weapon_mask_pack);weapon_mask_pack=NULL;weapon_mask_pack_size=0;
             free(weapon_mask_index);weapon_mask_index=NULL;
+            weapon_mask_faulted=0;
             disciplines.selected=keep;styles.selected[SOM_DISC_BUSHIDO]=old;
         }
         /* L2+X Whirlwind (swordsman) cuts what is around him; Volley

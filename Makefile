@@ -102,6 +102,13 @@ test-som-telekinesis:
 
 .PHONY: test-som-telekinesis
 
+test-som-familiar-art:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_familiar_art_test.c -o build/som-familiar-art-test
+	./build/som-familiar-art-test
+
+.PHONY: test-som-familiar-art
+
 test-rom-core-category:
 	mkdir -p build
 	$(CC) $(CFLAGS) tests/rom_core_category_test.c -o build/rom-core-category-test

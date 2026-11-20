@@ -27,6 +27,8 @@ import som_villager_work as V
 
 KIND_BASE = 0x80
 WEAPON = 0xFE
+UKEMI_KIND_BASE = 0x83
+UKEMI_WEAPON = 0xFA
 HEROES = ("boy", "girl", "sprite")
 TURNS = (0, 1, 2, 3, 0)         # quarter turns clockwise per step
 TICKS = 1                       # one actor tick (5 frames) per step
@@ -49,14 +51,6 @@ COMPANION_BODY = "girl"
 COMPANION_HEAD = 0x8C
 COMPANION_WALK = 0xB0
 COMPANION_SWING = 0xB1
-# Ukemi (ninja and samurai dodge, 2026-11-20): the hero's own somersault,
-# ordinary pose script 34 (the cannon flight's tuck, ball and flip: frames
-# 24, 140, 139, 249, 0, 240), kinds 0xC0 + hero, weapon 0xFA. The script is
-# the same for every facing; one actor tick per step so it fits the dodge.
-UKEMI_KIND_BASE = 0xC0
-UKEMI_WEAPON = 0xFA
-UKEMI_POSE = 34
-UKEMI_STEPS = 6
 
 
 def rotate(image, turns, pivot):
@@ -90,16 +84,27 @@ def cartwheel(gfx, hero, source="down"):
     return [(rotate(still, t, pivot), TICKS) for t in TURNS]
 
 
+def somersault(gfx, hero, source="side"):
+    """Five poses of an Ukemi tumble from the hero's side silhouette.
+
+    It rolls the head beneath the torso rather than playing the native
+    sideways cartwheel. Translation and collision are handled by the proxy.
+    """
+    still = gfx.render(hero, V.standing(gfx, hero, source), size=V.CELL, origin=V.ORIGIN)
+    pivot = body_centre(still)
+    frames = []
+    for turn, rise in zip(TURNS, (0, 3, 7, 3, 0)):
+        image = rotate(still, turn, pivot)
+        if rise:
+            image = [image[y + rise] if y + rise < len(image) else [0] * len(image)
+                     for y in range(len(image))]
+        frames.append((image, TICKS))
+    return frames
+
+
 def flying_kick(gfx, hero, frame_ids):
     return [(gfx.render(hero, gfx.pieces(hero, None, f), size=V.CELL, origin=V.ORIGIN), t)
             for f, t in zip(frame_ids, KICK_TICKS)]
-
-
-def somersault(gfx, hero, direction):
-    """[(image, ticks)] of the hero's somersault (pose script UKEMI_POSE)."""
-    steps = gfx.script(None, UKEMI_POSE, direction, attack=False)[:UKEMI_STEPS]
-    return [(gfx.render(hero, gfx.pieces(hero, None, frame, flags), size=V.CELL,
-                        origin=V.ORIGIN), 1) for flags, frame, _ in steps]
 
 
 def sword_swing(gfx, hero, direction, row=SWORD_ROW):
@@ -165,18 +170,18 @@ def pack(gfx):
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
             entries += 1
-        for facing, frame_ids in KICK_FRAMES.items():
-            frames = flying_kick(gfx, hero, frame_ids)
-            out += struct.pack("<4B20H", KICK_KIND_BASE + i, KICK_WEAPON, facing, len(frames),
-                               *colours)
+        for facing in range(3):
+            frames = somersault(gfx, hero)
+            out += struct.pack("<4B20H", UKEMI_KIND_BASE + i, UKEMI_WEAPON, facing,
+                               len(frames), *colours)
             for image, ticks in frames:
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
             entries += 1
-        for facing, direction in enumerate(V.FACINGS):
-            frames = somersault(gfx, hero, direction)
-            out += struct.pack("<4B20H", UKEMI_KIND_BASE + i, UKEMI_WEAPON, facing,
-                               len(frames), *colours)
+        for facing, frame_ids in KICK_FRAMES.items():
+            frames = flying_kick(gfx, hero, frame_ids)
+            out += struct.pack("<4B20H", KICK_KIND_BASE + i, KICK_WEAPON, facing, len(frames),
+                               *colours)
             for image, ticks in frames:
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data

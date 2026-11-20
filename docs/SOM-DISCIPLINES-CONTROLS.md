@@ -1,5 +1,32 @@
 # SoM enhanced combat: disciplines, controls, and evade discovery
 
+## Current controller layout (20 November 2026, supersedes earlier layouts)
+
+| Physical input | Current behavior in active field play |
+| --- | --- |
+| **R2 (hold)** | **Block / guard**. The proxy presents native SNES R to the ROM. Samurai Iai parry and Monk Counter Palm/Tiger Drop use the same guard. Samurai R2 + backward D-pad throws; Swordsman R2 + A bashes. |
+| **L2 + D-pad signs, then B/Y** | Seals, charged specials and their level selection, moved from R2. L2+B is primary level 1 by default, L2+Y is secondary level 2. |
+| **L2 + X** | Existing discipline moves (Issen, Hundred Fists, Whirlwind, Telekinesis, etc.) remain in place; not a style switch. |
+| **L1 (tap)** | Toggle enemy lock-on. Only targeting, independent of B/Y. Native L1 is suppressed during active field play so it cannot open the wrong ring. |
+| **R1 (tap)** | Cycle the currently selected class's **three FlXtR weapon styles** (fast -> balanced -> heavy -> fast). Native R1 no longer blocks. |
+| **L3 + B** | Legacy L1+B style-cycle shortcut, moved to L3. B is suppressed so it cannot accidentally attack or start a combo. |
+| **L3 + Y/X** | Native weapon/item or magic ring shortcut, formerly using L2. The proxy sends native L2+Y/X and does not trigger a class attack/spell on release. |
+| **L2 or R3 held alone for 1 s, release** | Start AI mode. A long R2 block no longer starts AI. |
+| **Start** | Class Progress menu, with L2+R2 still available as its alternate shortcut. |
+
+Outside active field play, the base game's menu buttons remain unchanged.
+During the AI gambit menu, L1/R1 still turn pages and do not change styles.
+
+**Weapon names:** the custom HUD under the class title shows **only FlXtR's
+own weapon/style names**: `Katana`, `Dai Katana`, `Yumi`, `Crossbow`, etc.
+It no longer displays compound vanilla names like `Masamune Katana`.
+Native in-ROM inventory/ring names are unchanged, since modifying them
+requires separate ROM text patching and validation.
+
+Previous controller descriptions below are historical and may refer to
+the old R1 block, R2 seals, and L1+B style bindings.
+
+
 Development branch: `feature/som-disciplines-controls-20261114`, based on the **working** familiar branch `feature/som-familiars-working-20261114` (commit `595d57e`). Do not merge older `clone_familiar_visual` experiments over `som_familiar.h`.
 
 ## Direct weapon switching and X/Triangle Fire Ball (14 November 2026, evening)
@@ -238,10 +265,10 @@ be added as disciplines first. Every other discipline has no dodge roll.
   name shown). Hostile spells (row byte 8 = 0x81) target the nearest live monster; ally
   (0x01) and self (0x00) spells target the boy (target 1). MP cost comes from the ROM;
   the boy starts with 0 MP, so use "Infinite MP (test)" until he has some.
-- **Seals** (charge levels without holding): hold **R2**, tap the D-pad once per seal
+- **Seals** (charge levels without holding): hold **L2**, tap the D-pad once per seal
   (Tiger/Boar/Dog/Ram; the D-pad does not move the hero meanwhile), then **B** (primary)
   or **Y** (secondary). Level = number of seals, capped at the weapon's learned level
-  (`+0x19C`). No seals keeps R2+B = 1, R2+Y = 2. Once the swing ends the proxy sets the
+  (`+0x19C`). No seals keeps L2+B = 1, L2+Y = 2. Once the swing ends the proxy sets the
   gauge word `+0x01A` = stage<<8 | 44 and `+0x19B` (som-decomp rom-combat.md 11.3),
   then releases B.
 - **Evade**: **A** (R1+A too) plays the native back-roll pose 0x8D (55 px away from the facing,
@@ -341,7 +368,7 @@ stack 13 %, state_guard 7 %). Changes:
   charges straight to the level (capped at what it learned, via `som_special_start`) and
   fires as the game's own power attack. Manual play only. Replaces the old fixed
   4-hit level-1 finisher.
-- **Swordsman R1+A bash**: the game's own run (A held, 3 px/frame, stops at walls) for up
+- **Swordsman R2+A bash**: the game's own run (A held, 3 px/frame, stops at walls) for up
   to 14 frames (~42 px) or until a monster is within 22 px, one frame of release, then
   the game's own sword swing (B) with the run gauge `E1ED` cleared so it hits at full.
   R1/D-pad/Y/X are hidden from the game meanwhile. Refused while `E1ED` is still loading.
@@ -528,7 +555,7 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
 - **Issen (L2 + X):** a straight dash-cut along the facing, 6 px x 14 frames (~84 px),
   untouchable like the dodge; every monster passed is cut once (16 + 2 x Bushido level).
   4 s cooldown. Log `[som-ai] ISSEN ...`.
-- **Iai counter (guard with R1):** a hit landing on the guard is parried (no damage) and
+- **Iai counter (guard with R2):** a hit landing on the guard is parried (no damage) and
   answered with a cut on the attacker (20 + 2 x Bushido level), on the Iaijutsu cooldown.
   Log `[som-ai] IAI COUNTER ...`.
 - **Zanshin:** a kill readies Iaijutsu at once, so kills chain.
@@ -537,7 +564,7 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
 
 - **Hundred Fists (L2 + X):** for 1 s the game sees B every 4 frames (his own punches)
   and every 8 frames each monster just in front takes 3 + level/2 more. 5 s cooldown.
-- **Counter palm (guard with R1):** a hit on the guard is parried and answered
+- **Counter palm (guard with R2):** a hit on the guard is parried and answered
   (14 + 2 x Martial level), every 2 s at most.
 - **Rising Dragon:** every third hit of a combo adds a strike (8 + level).
 - Not built: cartwheel into a kick (the cartwheel is the game's own pose).
@@ -588,7 +615,7 @@ the class weapon back after (`[grass] sword out`).
 | 12 | Vampire Hunting (Hunter) | whip (Morning Star) / thrown cross (Silver Boomerang) | **Holy Water**: a flask 40 px ahead burns 1.5 s, every monster on it takes 5 + level every 15 frames (4 s) | **Grand Cross**: every monster within 128 px takes 20 + 3 x level (20 s) | Backflip (56 px) |
 | 13 | Necromancy (Necromancer) | casts Energy Absorb / Evil Gate (bare hands) | **Raise Dead**: within 10 s of a kill, a monster rises as his familiar (15 s) | - | native |
 | 14 | Artifice (Artificer) | hammer (Werebuster) / crossbow (Great Bow) | **Bomb**: set 24 px ahead, goes off after 1 s (18 + 2 x level, blast box) (3 s) | **Mine**: up to 3 where he stands, a monster stepping near sets one off (24 + 2 x level) | Evade |
-| 15 | Psionics (Mentalist) | casts Sleep Flower / Balloon (bare hands) | **Mind Control**: the nearest monster within 96 px (no bosses) fights for him for 20 s, then is let go (30 s) | - | native |
+| 15 | Psionics (Mentalist) | casts Sleep Flower / Balloon (bare hands) | **Mind Control** on X (nearest ordinary enemy in 96 px, 20 s, 30 s cooldown). **Telekinesis** on L2+X pulls a native dropped treasure chest (monster type 0x56, slots 3..5) from up to 160 px to interaction distance, with wall checks and 4 s cooldown. | - | native |
 
 Saved data: progress records and style files written with 12 classes still load (the new
 classes start at level 1); the style file is now `s2 <classes> ...`.
@@ -599,16 +626,33 @@ classes start at level 1); the style file is now `s2 <classes> ...`.
 - Samurai: A with a monster in grab reach grabs and throws it; otherwise A is the evade roll.
 - Swordsman: A is the cartwheel (like the monk and the rogue), no longer the evade roll.
 - The HUD weapon name is centred under the class title.
-- Ninja (with the sword) and Samurai: A is **Ukemi**, a 54 px roll (the direction held
-  picks the way, back with none) drawn as the hero's own somersault: pose script 34, the
-  cannon flight's tuck, ball and flip (frames 24, 140, 139, 249, 0, 240), packed by
-  tools/som_cartwheel.py as kinds 0xC0 + hero; the hero is hidden while it plays. (Tried
-  first: the knock-down roll, pose 0x8D, which is the hurt animation, then the cartwheel.)
+- Ninja (with sword) and Samurai: A is **Ukemi**, the ROM-derived somersault
+  frame overlay (kind 0x83..0x85) accompanying a collision-checked 54 px
+  carried dodge. The direction held chooses travel; with no direction it rolls
+  back relative to the current facing. The native 0x93 cartwheel is not used
+  for Ukemi. Install the regenerated som_cartwheel_frames.bin to see it.
 
 ### Lock-on targeting (2026-11-20)
 
 Tap **L1** (without B or Y in between) to lock onto the nearest monster within 160 px; a
 yellow "V" bobs over it. While locked the hero keeps facing it (before and after each game
 frame), so walking strafes around it and every attack goes its way. Tap L1 again to let go;
-the lock also drops when the monster dies, gets 220 px away, or the map changes. L1 + B still
-switches the weapon style. Player only (the AI does not use it). Log: `[som-ai] LOCK ...`.
+the lock also drops when the monster dies, gets 220 px away, or the map changes. R1 taps now cycle the styles; L3+B is the legacy shortcut. Player only (the AI does not use it). Log: `[som-ai] LOCK ...`.
+
+### Summon graphics, Ukemi and Mentalist telekinesis (20 November 2026)
+
+- **Summons/familiars** keep the current map's actor-specific sprite slots and palettes. The live monster's VRAM art is captured **before** cloning; when it follows between maps the art is remapped into the destination's native OBJ tiles. A reused slot never writes the source map's raw VRAM tile numbers into other actors' artwork, and shared palettes are not repainted. Periodic familiar-state saves preserve the captured art rather than replacing it with foreign-map upload buffers. Legacy `som_summon.bin` packages are supported through the slot-local tile buffer, but do not contain a complete original VRAM snapshot and still require visual confirmation on hardware.
+- **Ukemi** is a somersault with ROM-derived hero frames (kind `0x83` boy, `0x84` girl, `0x85` sprite) generated by `tools/som_cartwheel.py`. Ninja/Samurai **A** still moves a collision-checked 3 px x 18 frames, but the proxy draws the tumble and temporarily hides the normal hero sprite instead of relying on the game accepting reaction `0x13`. The Monk, Rogue and Swordsman still use the native cartwheel on combat maps. Regenerate the frame pack to see the new animation.
+- **Mentalist (Psionics):** **X** continues to mind-control the nearest ordinary monster. **L2+X** (or AI command `telekinesis` / `pull_chest`) acquires the nearest active native dropped treasure chest (monster type 0x56), on the same floor and within 160 px and pulls it at 3 px/frame toward the hero until 28 px away. Four seconds cooldown, maximum 90 frames, map/event/collision/actor-identity guards. Loot and traps still use the original game's chest-opening logic. Static dungeon/event chests, crystal orbs, other props and NPCs are deliberately excluded until their actor types are verified.
+
+To stage a fresh Steam Link ROM-derived move pack while building the experimental proxy:
+
+```sh
+SOM_ROM_PATH="/path/to/your/Secret of Mana, Turbo.smc" scripts/build-som-ai-proxy.sh
+# Stage/copy build/som-ai/som_ai_proxy_libretro.so and
+# build/som-ai/som_cartwheel_frames.bin to Steam Link
+# /home/apps/retroarch/cores/experimental/
+```
+
+The ROM is only read for frame extraction and is never bundled. Unit targets:
+`make test-som-telekinesis test-som-familiar-art test-som-ai-proxy test-som-raid`.

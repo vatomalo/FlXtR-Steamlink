@@ -99,6 +99,36 @@ static inline const SomWeaponStyle *som_style_of(const SomStyles *s,unsigned cls
     if(index)*index=i;
     return &som_weapon_styles[i];
 }
+/* Display-only names owned by FlXtR, never the vanilla ROM's forge-name
+ * strings. Index 0 is the B weapon (its selected style is dynamic),
+ * 1 is Y, 2 is the optional third X weapon. */
+static const char *const som_class_extra_weapon_names[SOM_DISCIPLINE_COUNT][2]={
+    {"War Axe",""},        /* Swordsmanship */
+    {"Monk Spear",""},     /* Martial Arts */
+    {"Chakram",""},        /* Ninjutsu */
+    {"Bare Hands",""},     /* Magic */
+    {"Bare Hands",""},     /* Divine Arts */
+    {"Bare Hands",""},     /* Dark Arts */
+    {"Bare Hands",""},     /* Summoning */
+    {"Bare Hands",""},     /* Support & Dance */
+    {"War Spear","War Bow"}, /* Weapon Flow: Y and X */
+    {"Rogue Bow",""},      /* Roguecraft */
+    {"Yumi",""},           /* Bushido */
+    {"Javelin",""},        /* Archery */
+    {"Silver Cross",""},   /* Vampire Hunting */
+    {"Bare Hands",""},     /* Necromancy */
+    {"Crossbow",""},       /* Artifice */
+    {"Bare Hands",""},     /* Psionics */
+};
+static inline const char *som_custom_weapon_name(const SomStyles *styles,
+                                                  unsigned cls,unsigned slot){
+    if(!styles||cls>=SOM_DISCIPLINE_COUNT||slot>2u)return "";
+    if(slot==0u){
+        const SomWeaponStyle *style=som_style_of(styles,cls,NULL);
+        return style?style->name:"";
+    }
+    return som_class_extra_weapon_names[cls][slot-1u];
+}
 static inline uint32_t som_style_next_xp(unsigned level){
     return 150u+100u*(level?level-1u:0u);
 }

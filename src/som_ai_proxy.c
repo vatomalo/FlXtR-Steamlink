@@ -32,6 +32,7 @@
 #include "som_progress.h"
 #include "som_perks.h"
 #include "som_weapon_styles.h"
+#include "som_weapon_mask.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include <time.h>
@@ -907,29 +908,23 @@ static int som_telekinesis_cast(uint8_t *ram);
 static int som_telekinesis_cast_raw(uint8_t *ram);
 static int som_class_x(uint8_t *ram);
 static int som_class_x_raw(uint8_t *ram);
-/* Scaled weapon art (2026-11-20): a style with scale_pct draws its weapon
- * from tools/som_weapon_scale.py's pack (kinds 0xD0 + scale index, weapon =
- * row, facing = frame) at the hero's frame (+0x26 / 2, mirrored by +0x28
- * bit 6) while the native weapon tiles in 7E:2000 are blanked (a copy is
- * kept and put back when the style or weapon changes). */
-#define SOM_WEAPON_SCALE_FILE "/home/apps/retroarch/cores/experimental/som_weapon_scales.bin"
-static const char *weapon_scale_file=SOM_WEAPON_SCALE_FILE;
-/* Off unless this file exists (2026-11-20: frames incomplete and misplaced
- * live; the art stays the game's own until that is fixed). */
-#define SOM_WEAPON_SCALE_ON_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_sizes_on"
-static const char *weapon_scale_on_file=SOM_WEAPON_SCALE_ON_FILE;
-static int weapon_scale_on;
-static unsigned long weapon_scale_on_checked;
-static const unsigned som_weapon_scale_steps[4]={55u,75u,150u,200u};
-static uint8_t *weapon_scale_pack;
-static size_t weapon_scale_pack_size;
-static int weapon_scale_tried;
-static uint32_t *weapon_scale_index;          /* [4][72][256]: offset + 1, 0 = none */
+/* Opt-in imported dagger / masked Bushido blades. Katana keeps native art.
+ * Mask pack is generated from user's ROM and optional SD3 dagger PNG, with
+ * separate opaque blade and quarter-opacity slash-effect pixels. */
+#define SOM_WEAPON_MASK_FILE "/home/apps/retroarch/cores/experimental/som_weapon_masks.bin"
+#define SOM_WEAPON_MASK_ON_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_masks_on"
+static const char *weapon_mask_file=SOM_WEAPON_MASK_FILE;
+static const char *weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;
+static unsigned long weapon_mask_on_checked;
+static int weapon_mask_on,weapon_mask_tried;
+static uint8_t *weapon_mask_pack;
+static size_t weapon_mask_pack_size;
+static uint32_t *weapon_mask_index;    /* [2][72][256], byte offsets + 1 */
 static uint8_t weapon_native_tiles[0x800];
 static int weapon_tiles_hidden;
-static SomNpcWorkState weapon_scaled;
-static void som_weapon_scale_frame(uint8_t *ram);
-static void som_weapon_scale_pick(const uint8_t *ram);
+static SomNpcWorkState weapon_masked;
+static void som_weapon_mask_frame(uint8_t *ram);
+static void som_weapon_mask_pick(const uint8_t *ram);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
  * style): tap L1 to lock onto the nearest
  * monster within SOM_LOCK_RANGE px, tap again to let go. While locked the
@@ -3248,7 +3243,7 @@ static void som_hop_step(void){
     }
     {
         uint8_t *art=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-        if(art)som_weapon_scale_frame(art);
+        if(art)som_weapon_mask_frame(art);
     }
     if(holy_until||bomb_at||mind_until||telekinesis.slot>=0||
        mine_live[0]||mine_live[1]||mine_live[2]){
@@ -5391,8 +5386,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
     if(backend_retro_get_memory_data)
-        som_weapon_scale_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    const int worker=(npc_work.active||flykick.active||weapon_scaled.active||ukemi_draw.active||companion.draw.active||
+        som_weapon_mask_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    const int worker=(npc_work.active||flykick.active||weapon_masked.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -5452,9 +5447,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
-            if(weapon_scaled.active)
-                som_npc_work_draw(&weapon_scaled,ram,frame_number,overlay_frame,width,height,
-                                  pitch,pixel_format);
+            if(weapon_masked.active)
+                som_weapon_mask_draw(&weapon_masked,ram,overlay_frame,width,height,
+                                     pitch,pixel_format);
             if(ukemi_draw.active)
                 som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
@@ -6371,72 +6366,78 @@ static void som_lock_frame(uint8_t *ram){
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
 }
 
-/* ---- Scaled weapon art (see SOM_WEAPON_SCALE_FILE) ------------------------ */
-static void som_weapon_scale_load(void){
-    if(weapon_scale_tried)return;
-    weapon_scale_tried=1;
-    som_load_pack_file(weapon_scale_file,"Weapon sizes",&weapon_scale_pack,&weapon_scale_pack_size);
-    if(!weapon_scale_pack)return;
-    weapon_scale_index=calloc(4u*72u*256u,sizeof(*weapon_scale_index));
-    if(!weapon_scale_index)return;
-    const uint8_t *p=weapon_scale_pack+10,*end=weapon_scale_pack+weapon_scale_pack_size;
-    const unsigned entries=weapon_scale_pack[8]|(unsigned)weapon_scale_pack[9]<<8;
-    unsigned indexed=0;
-    for(unsigned e=0;e<entries&&end-p>=44;e++){
-        const uint8_t *q=p+44;
-        for(unsigned f=0;f<p[3];f++)if(!(q=som_work_next_frame(q,end)))return;
-        if(p[0]>=0xD0u&&p[0]<0xD4u&&p[1]<72u&&p[3])
-            weapon_scale_index[((p[0]-0xD0u)*72u+p[1])*256u+p[2]]=(uint32_t)(p-weapon_scale_pack)+1u,indexed++;
-        p=q;
+/* ---- Bushido per-frame blade masks (the native Katana is unchanged) ---- */
+static void som_weapon_mask_load(void){
+    if(weapon_mask_tried)return;
+    weapon_mask_tried=1;
+    som_load_pack_file(weapon_mask_file,"Bushido weapon masks",
+                       &weapon_mask_pack,&weapon_mask_pack_size);
+    if(!weapon_mask_pack||weapon_mask_pack_size<10u||
+       memcmp(weapon_mask_pack,"SOMWORK1",8u))return;
+    weapon_mask_index=calloc(2u*72u*256u,sizeof(*weapon_mask_index));
+    if(!weapon_mask_index)return;
+    const uint8_t *p=weapon_mask_pack+10u,*end=weapon_mask_pack+weapon_mask_pack_size;
+    const unsigned entries=weapon_mask_pack[8]|(unsigned)weapon_mask_pack[9]<<8;
+    unsigned count=0;
+    for(unsigned e=0;e<entries;e++){
+        if(end-p<44)goto malformed;
+        const uint8_t *next=p+44u;
+        for(unsigned frame=0;frame<p[3];frame++){
+            next=som_work_next_frame(next,end);
+            if(!next)goto malformed;
+        }
+        if(p[0]>=0xD4u&&p[0]<=0xD5u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
+            weapon_mask_index[((p[0]-0xD4u)*72u+p[1])*256u+p[2]]=
+                (uint32_t)(p-weapon_mask_pack)+1u;
+            count++;
+        }
+        p=next;
     }
-    fprintf(stderr,"[som-ai] WEAPON sizes: %u frames indexed\n",indexed);
+    fprintf(stderr,"[som-ai] Bushido: indexed %u masked weapon frames\\n",count);
+    return;
+malformed:
+    free(weapon_mask_index);weapon_mask_index=NULL;
+    fprintf(stderr,"[som-ai] Bushido: malformed mask pack ignored\\n");
 }
-/* The scale step of the held style (index into som_weapon_scale_steps), -1 none. */
-static int som_weapon_scale_step(const uint8_t *ram){
-    if(!weapon_scale_on_checked||frame_number-weapon_scale_on_checked>=120ul){
-        weapon_scale_on_checked=frame_number?frame_number:1ul;
-        weapon_scale_on=access(weapon_scale_on_file,F_OK)==0;
+/* -1 = native sword; 0 = Tanto; 1 = Dai Katana. No other class changes. */
+static int som_weapon_mask_mode(const uint8_t *ram){
+    if(!weapon_mask_on_checked||frame_number-weapon_mask_on_checked>=120ul){
+        weapon_mask_on_checked=frame_number?frame_number:1ul;
+        weapon_mask_on=access(weapon_mask_on_file,F_OK)==0;
     }
-    if(!weapon_scale_on)return -1;
-    unsigned index;
-    const SomWeaponStyle *st=som_style_held(ram,&index);
-    if(!st||!st->scale_pct||st->scale_pct==100u)return -1;
-    for(unsigned i=0;i<4u;i++)if(som_weapon_scale_steps[i]==st->scale_pct)return (int)i;
-    return -1;
+    if(!weapon_mask_on||disciplines.selected!=SOM_DISC_BUSHIDO||
+       ram[0xE1E4]!=1u)return -1;
+    const unsigned style=styles.selected[SOM_DISC_BUSHIDO]%SOM_STYLES_PER_CLASS;
+    return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
 }
-static int som_weapon_scale_entry(unsigned step,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_scale_index||step>3u||row>=72u||frame>255u)return 0;
-    const uint32_t at=weapon_scale_index[(step*72u+row)*256u+frame];
+static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
+    if(!weapon_mask_index||mode>1u||row<9u||row>=18u||frame>255u)return 0;
+    const uint32_t at=weapon_mask_index[(mode*72u+row)*256u+frame];
     if(!at)return 0;
-    const uint8_t *p=weapon_scale_pack+at-1u;
+    const uint8_t *p=weapon_mask_pack+at-1u;
     out->kind=p[0];out->weapon=p[1];out->facing=p[2];out->frames=p[3];
-    for(unsigned i=0;i<20u;i++)out->colours[i]=(uint16_t)(p[4+2*i]|p[5+2*i]<<8);
-    out->first=p+44;
+    for(unsigned i=0;i<20u;i++)out->colours[i]=(uint16_t)(p[4+2u*i]|p[5+2u*i]<<8);
+    out->first=p+44u;
     return 1;
 }
-/* Does the pack hold this row at this step at all? (any of its frames) */
-static int som_weapon_scale_has_row(unsigned step,unsigned row){
-    if(!weapon_scale_index||step>3u||row>=72u)return 0;
-    const uint32_t *r=weapon_scale_index+(step*72u+row)*256u;
-    for(unsigned f=0;f<256u;f++)if(r[f])return 1;
-    return 0;
-}
-/* Before each game frame: blank the native weapon tiles while a scaled
- * style is held (keeping a copy), put them back when it is not. */
-static void som_weapon_scale_frame(uint8_t *ram){
-    som_weapon_scale_load();
-    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F;
-    const int step=field?som_weapon_scale_step(ram):-1;
+/* Hide native effects only when a matching mask exists for the current
+ * sword row and animation frame. On a missing mask, restore the original
+ * effect tiles byte-for-byte, rather than showing an invisible weapon. */
+static void som_weapon_mask_frame(uint8_t *ram){
+    if(!ram)return;
+    som_weapon_mask_load();
+    const int field=ram[0xE000u]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
+    const int mode=field?som_weapon_mask_mode(ram):-1;
+    SomWorkEntry entry;
+    const int want=mode>=0&&som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
+                                                  ram[0xE026u]>>1,&entry);
     uint8_t *tiles=ram+SOM_WEAPON_BUF;
-    const int want=step>=0&&som_weapon_scale_has_row((unsigned)step,ram[0xE1E3]);
     int blank=1;
     for(unsigned i=0;i<sizeof(weapon_native_tiles);i++)if(tiles[i]){blank=0;break;}
     if(want){
-        if(!blank){                                  /* fresh art (equip, refresh) */
+        if(!blank){
             memcpy(weapon_native_tiles,tiles,sizeof(weapon_native_tiles));
             memset(tiles,0,sizeof(weapon_native_tiles));
-            if(!weapon_tiles_hidden)
-                fprintf(stderr,"[som-ai] WEAPON drawn at %u%%\n",som_weapon_scale_steps[step]);
         }
         weapon_tiles_hidden=1;
     }else if(weapon_tiles_hidden){
@@ -6444,18 +6445,19 @@ static void som_weapon_scale_frame(uint8_t *ram){
         weapon_tiles_hidden=0;
     }
 }
-/* At video time: the scaled frame for the frame the game just drew. */
-static void som_weapon_scale_pick(const uint8_t *ram){
-    weapon_scaled.active=0;
+/* The runtime image is composited using the mask-specific alpha-aware
+ * renderer, keeping original hero animation and camera coordinates. */
+static void som_weapon_mask_pick(const uint8_t *ram){
+    weapon_masked.active=0;
     if(!ram||!weapon_tiles_hidden)return;
-    const int step=som_weapon_scale_step(ram);
+    const int mode=som_weapon_mask_mode(ram);
     SomWorkEntry entry;
-    if(step<0||!som_weapon_scale_entry((unsigned)step,ram[0xE1E3],ram[0xE026]>>1,&entry))return;
-    memset(&weapon_scaled,0,sizeof(weapon_scaled));
-    weapon_scaled.active=1;weapon_scaled.slot=0;weapon_scaled.kind=ram[0xE180];
-    weapon_scaled.dir=(ram[0xE028]&0x40u)?3u:2u;
-    weapon_scaled.entry=entry;weapon_scaled.start=frame_number;weapon_scaled.length=2u;
-    weapon_scaled.own_palette=1;
+    if(mode<0||!som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
+                                      ram[0xE026u]>>1,&entry))return;
+    memset(&weapon_masked,0,sizeof(weapon_masked));
+    weapon_masked.active=1;weapon_masked.slot=0;weapon_masked.kind=ram[0xE180u];
+    weapon_masked.dir=(ram[0xE028u]&0x40u)?3u:2u;
+    weapon_masked.entry=entry;weapon_masked.start=frame_number;weapon_masked.length=2u;
 }
 
 /* ---- Costs (FlXtR MP/AP): each technique is paid only when it goes off. ---- */

@@ -93,6 +93,31 @@ class QuestTest(unittest.TestCase):
         # No door reachable: the next boss that is.
         self.assertEqual(quest.choose(summary(10, 131), lambda m: m == 400)[0], 400)
 
+    def test_failed_story_trips_raise_a_level_floor_and_level_up_first(self):
+        quest = self.quest(weights=(5, 0))
+        logs = []
+        quest.log = logs.append
+        reachable = lambda m: True
+        self.assertEqual(quest.choose(summary(11, 131), reachable)[0], 290)
+        quest.story_outcome("retreated", 10, 16)             # raw level 10 = level 11
+        self.assertEqual(quest.choose(summary(11, 131), reachable)[0], 290)   # one is chance
+        quest.story_outcome("died", 10, 16)
+        target, why = quest.choose(summary(11, 131), reachable)
+        self.assertEqual(target, 16)
+        self.assertIn("level up first", why)
+        self.assertTrue(any("adjusting" in line and "level up to 12" in line for line in logs))
+        # Reaching the floor sends him back to the story; failing again raises it.
+        self.assertEqual(quest.choose(summary(12, 131), reachable)[0], 290)
+        self.assertTrue(any("back to the story" in line for line in logs))
+        quest.story_outcome("retreated", 11, 23)
+        quest.story_outcome("retreated", 11, 23)
+        self.assertEqual(quest.choose(summary(12, 131), reachable)[0], 23)
+        self.assertEqual(quest.adjustment()["floor"], 13)
+        # An arrival clears the count (the floor stays until it is reached).
+        quest.story_outcome("retreated", 11, 23)
+        quest.story_outcome("arrived", 11, 287)
+        self.assertEqual(quest.adjustment()["failures"], 0)
+
     def test_both_weights_off_leaves_it_to_exploring(self):
         self.assertIsNone(self.quest(weights=(0, 0)).choose(summary(10), lambda m: True))
 

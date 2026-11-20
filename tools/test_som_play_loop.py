@@ -80,6 +80,31 @@ class PlayLoopTest(unittest.TestCase):
         self.assertNotEqual(play.goal(summary(hp=45, gold=150, map_id=16), True, True, True,
                                       ALL), "hunt_map_287")
 
+    def test_story_trip_outcomes_reach_the_quest(self):
+        class Quest:
+            def __init__(self): self.outcomes = []
+            def choose(self, summary, reachable):
+                return (287, "story: boss 0x59 ... from map 287")
+            def story_outcome(self, outcome, raw_level=None, map_id=None):
+                self.outcomes.append((outcome, raw_level, map_id))
+        quest = Quest()
+        play = self.make(quest=quest)
+        def at(map_id, hp=146):
+            return dict(summary(hp=hp, max_hp=146, map_id=map_id), level=10)
+        play.goal(at(131), True, True, True, ALL)
+        play.goal(at(16, hp=60), True, True, True, ALL)       # below half: retreat
+        self.assertEqual(quest.outcomes, [("retreated", 10, 16)])
+        play._enter("hunt", "test")
+        play.goal(at(23), True, True, True, ALL)
+        play.died(None, 10)                                   # died on the way
+        self.assertEqual(quest.outcomes[-1], ("died", 10, 23))
+        self.assertEqual(play.phase, "hunt")
+        play.goal(at(131), True, True, True, ALL)
+        play.goal(at(287), True, True, True, ALL)
+        self.assertEqual(quest.outcomes[-1], ("arrived", 10, 287))
+        play.died(None, 10)                                   # after arriving: not a trip failure
+        self.assertEqual(quest.outcomes[-1], ("arrived", 10, 287))
+
     def test_no_hunting_memory_hunts_here(self):
         play = self.make(rewards=())
         self.assertEqual(play.goal(summary(), False, True, True, ALL), "hunt_here")

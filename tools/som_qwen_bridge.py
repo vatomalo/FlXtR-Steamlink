@@ -1717,6 +1717,10 @@ def main() -> int:
                         continue
                     announce("AI: back from the last save" if kind == "loaded"
                              else "AI: could not load|please Continue by hand")
+                    if kind == "loaded" and play_loop is not None:
+                        hero = (observation.get("party") or [{}])[0] \
+                            if isinstance(observation, dict) else {}
+                        play_loop.died(None, hero.get("level"))
             # Ordinary KO in Turbo auto-respawns the hero but can leave an
             # event/dialogue awaiting one or more B presses. Only a witnessed
             # dead -> transition -> alive/event sequence authorizes confirms.

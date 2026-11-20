@@ -38,6 +38,13 @@ FLAG_BASE = 0x7ECF00
 BEHIND_LEVELS = 6                # a boss this far below the hero is behind him
 GRIND_BELOW, GRIND_ABOVE = 1, 4  # monster levels around the hero worth grinding
 DYING = 0xF9                     # a monster slot's identity while it dies
+# Self-adjusting level-up (2026-11-20): Turbo's monsters hit far above their
+# ROM levels (level 1-5 Mushbooms and Lullabuds on map 16 took 20+ HP from a
+# level 11 hero), so the boss-level gate cannot see that the way is too hard.
+# STORY_FAILURES story trips in a row that end in a retreat or a death before
+# arriving raise a level floor by one; until the hero reaches it, trips go
+# to level up on the map where the last story trip failed.
+STORY_FAILURES = 2
 
 
 def _bank_c8(offset):
@@ -101,6 +108,7 @@ class Quest:
         self.boss_slots = {}              # monster slot -> (boss id, map)
         self.last = None
         self.here = None                  # map of the latest choice
+        self.hero_level = None            # 1-based, from the latest choice
 
     # Inputs each decision ------------------------------------------------
     def update(self, wram=None, weights=None, observation=None):
@@ -140,6 +148,56 @@ class Quest:
     def defeated(self):
         value = self.history.get_agent_state("bosses_defeated") if self.history else None
         return set(value) if isinstance(value, list) else set()
+
+    # Self-adjustment --------------------------------------------------------
+    def adjustment(self):
+        value = self.history.get_agent_state("quest_adjust") if self.history else None
+        return value if isinstance(value, dict) else {"failures": 0}
+
+    def _save_adjustment(self, value):
+        if self.history is not None:
+            self.history.set_agent_state("quest_adjust", value)
+
+    def story_outcome(self, outcome, raw_level=None, map_id=None):
+        """A story trip ended: "arrived", "retreated" (low HP) or "died"."""
+        adjust = self.adjustment()
+        hero = (raw_level + 1) if isinstance(raw_level, int) else self.hero_level
+        if outcome == "arrived":
+            if adjust.get("failures"):
+                self.log("[quest] story trip arrived; failure count reset")
+            adjust["failures"] = 0
+            self._save_adjustment(adjust)
+            return
+        adjust["failures"] = adjust.get("failures", 0) + 1
+        if map_id is not None:
+            adjust["failed_on"] = map_id
+        self.log(f"[quest] story trip {outcome} on map {map_id} before arriving "
+                 f"({adjust['failures']}/{STORY_FAILURES})")
+        if adjust["failures"] >= STORY_FAILURES and isinstance(hero, int):
+            floor = max(adjust.get("floor") or 0, hero + 1)
+            adjust.update(floor=floor, failures=0, grind_map=adjust.get("failed_on"))
+            self.log(f"[quest] adjusting: {STORY_FAILURES} story trips in a row ended "
+                     f"early; level up to {floor} on map {adjust['grind_map']} "
+                     f"before the story again (hero level {hero})")
+        self._save_adjustment(adjust)
+
+    def _level_floor(self, hero, reachable):
+        """(map, reason) to level up on while below the learned floor, or None."""
+        adjust = self.adjustment()
+        floor = adjust.get("floor")
+        if not floor:
+            return None
+        if hero >= floor:
+            self.log(f"[quest] reached level {hero} (floor {floor}); back to the story")
+            adjust.pop("floor", None)
+            adjust.pop("grind_map", None)
+            self._save_adjustment(adjust)
+            return None
+        grind = adjust.get("grind_map")
+        if grind is None or not (grind == self.here or reachable(grind)):
+            return None
+        return grind, (f"level up first: story trips kept failing on the way; hero "
+                       f"{hero} < learned floor {floor}, hunting map {grind}")
 
     # Choice -----------------------------------------------------------------
     def _blocked_maps(self):
@@ -209,7 +267,10 @@ class Quest:
         raw = summary.get("level")
         hero = (raw + 1) if isinstance(raw, int) else 1   # +0x181 is 0-based
         here = summary.get("map_id")
-        self.here = here
+        self.here, self.hero_level = here, hero
+        floor = self._level_floor(hero, reachable) if story_w else None
+        if floor is not None:
+            return self._pick(*floor)
         boss = self.story_boss(hero, reachable) if story_w else None
         if boss is not None:
             gate = boss["level"] + max(0, level_w - 2)

@@ -85,6 +85,7 @@ class PlayLoop:
         self.warned = set()
         self.frontier = Frontier(history, log) if history is not None else None
         self.quest = quest            # som_quest.Quest: story / level-up trips first
+        self.last_here = None         # the last field map goal() saw (deaths)
         # The durable objective survives game resets and tactical interruptions.
         # Phase is persisted; the short-term tactical decision is not.
 
@@ -116,6 +117,8 @@ class PlayLoop:
         go_to_inn or go_to_save. Advances the phase when its work is done."""
         hp, max_hp = summary.get("hp") or 0, summary.get("max_hp") or 0
         gold, here = summary.get("gold"), summary.get("map_id")
+        if here is not None:
+            self.last_here = here
         if self.cornered(summary, reachable):
             # No way out to the inn/shop from here (boss arena, story pit):
             # fight where we are; the phase resumes once a route exists.
@@ -146,6 +149,8 @@ class PlayLoop:
                 story = bool(self.state.get("target_story")) and not self.fixed_hunt_map
                 leave = max(self.leave_fraction, STORY_LEAVE) if story else self.leave_fraction
                 if max_hp and hp < max_hp * leave:
+                    if story and not self.state.get("arrived"):
+                        self._story_outcome("retreated", summary)
                     self._enter("shop", f"HP {hp}/{max_hp}, earned {earned} GP")
                     continue
                 if earned >= self.trip_gold and not story:
@@ -224,8 +229,24 @@ class PlayLoop:
         target = self.state["target"]
         if target is not None and here == target and not self.state.get("arrived"):
             self.state["arrived"] = True
+            if self.state.get("target_story"):
+                self._story_outcome("arrived", summary)
             self._save_state()
         return target
+
+    def _story_outcome(self, outcome, summary):
+        if self.quest is not None and hasattr(self.quest, "story_outcome"):
+            self.quest.story_outcome(outcome, summary.get("level"), summary.get("map_id"))
+
+    def died(self, map_id=None, raw_level=None):
+        """Game over and reload: a story trip under way failed; the next
+        trip is chosen afresh (the quest may now want levelling first)."""
+        if (self.state.get("phase") == "hunt" and self.state.get("target_story") and
+                not self.state.get("arrived")):
+            self._story_outcome("died", {"level": raw_level,
+                                         "map_id": map_id if map_id is not None
+                                         else self.last_here})
+        self._enter("hunt", "died; the last save is loaded")
 
     @staticmethod
     def cornered(summary, reachable):

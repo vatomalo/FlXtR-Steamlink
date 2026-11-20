@@ -4185,7 +4185,7 @@ static int som_undo_spawn(void){
     undo_ready=0;
     familiar.slot=familiar.target=-1;familiar_pending=0;   /* memory is pre-clone */
     familiar_carry.valid=0;last_clone_source=-1;som_tk_init(&telekinesis);
-    som_ukemi_endbackend_retro_get_memory_data?
+    som_ukemi_end(backend_retro_get_memory_data?
         (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     unlink(familiar_file);
     fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
@@ -5459,7 +5459,7 @@ RETRO_API void retro_unload_game(void){
     unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     familiar_carry.valid=0;last_clone_source=-1;som_tk_init(&telekinesis);
-    som_ukemi_endbackend_retro_get_memory_data?
+    som_ukemi_end(backend_retro_get_memory_data?
         (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
@@ -5476,7 +5476,7 @@ static void som_familiar_publish(void){
 }
 static void som_familiar_bind(void){
     if(!familiar_pending||last_clone_target<0)return;
-    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     familiar_pending=0;
     familiar.slot=last_clone_target;familiar.target=-1;familiar.last_strike=0;
     familiar.map=ram?(unsigned)(ram[0xDC]|ram[0xDD]<<8):0;

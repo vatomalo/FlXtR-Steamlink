@@ -1186,6 +1186,37 @@ HERB_REFUSED_S = 300.0       # after an unconfirmed use (sent, nothing changed)
 herb_last_refused = False     # direct_herb sent use_herb and nothing changed
 
 
+def npc_in_front(wram):
+    """True with an NPC (identity >= 0x80 with an event) or the travelling
+    merchant right in front of the hero, where an attack press talks instead
+    (Turbo). Same box as the proxy's som_interact_ahead."""
+    if wram is None:
+        return False
+    hx, hy = wram.u16(0x7EE002), wram.u16(0x7EE004)
+    facing = wram.u8(0x7EE010)
+    fx, fy = {0x02: (1, 0), 0x82: (-1, 0), 0x01: (0, 1)}.get(facing, (0, -1))
+    layer = wram.u8(0x7EE00B) & 0x80
+    for slot in range(3, 12):
+        base = 0x7EE000 + 0x200 * slot
+        if wram.u8(base) != 1 or (wram.u8(base + 0x0B) & 0x80) != layer:
+            continue
+        event = wram.u16(base + 0x3E) & 0xFFF
+        if not (wram.u8(base + 0x180) >= 0x80 and 0 < event < 0x800):
+            continue
+        dx, dy = wram.u16(base + 2) - hx, wram.u16(base + 4) - hy
+        along, across = dx * fx + dy * fy, (dy if fx else dx)
+        if 0 <= along <= 28 and -14 <= across <= 14:
+            return True
+    return False
+
+
+def npc_open_steps(planner, observation):
+    try:
+        return planner._passable_steps(observation.get("tile_context") or {})
+    except Exception:  # noqa: BLE001 - no verified tiles: wait instead
+        return ()
+
+
 def direct_herb(link, raw, timeout=1.5):
     """Medical Herb without the ring (proxy use_herb): poison cleared and one
     Herb gone. Lullabud poison cost 2-3 HP a second on map 16 and killed him
@@ -2117,6 +2148,18 @@ def main() -> int:
                 if (args.visit_map == current_map and decision.intention in
                         ("explore_frontier", "leave_room", "replan", "stuck")):
                     decision = PlannerDecision("wait", "at requested visit map", "visit_map")
+                # An attack press facing an NPC talks to it: a swing at grass
+                # beside the travelling merchant opened his Save/Buy/Sell menu,
+                # which no cancel leaves (map 28, 2026-11-20). Step aside.
+                if (decision.action in ("attack", "charge") and raw is not None and
+                        npc_in_front(WRAM(raw))):
+                    side = [step for step in (("step_up", "step_down") if
+                                              WRAM(raw).u8(0x7EE010) in (0x02, 0x82)
+                                              else ("step_left", "step_right"))
+                            if step in npc_open_steps(planner, observation)]
+                    decision = PlannerDecision(side[0] if side else "wait",
+                                               "an NPC stands in front: no swing (it would "
+                                               "talk); stepping aside", "replan")
                 if (npc_dialogue is not None and not args.no_npc_talk and gambit(GAMBIT_TALK) and
                         (gambits[GAMBIT_TALK] > gambits[GAMBIT_FIGHT] or
                          not enemy_within(observation, DASH_ENEMY_PX)) and

@@ -494,3 +494,25 @@ class LoopMessageTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NpcInFrontTest(unittest.TestCase):
+    """An attack press facing an NPC talks: the bridge holds the swing."""
+
+    def test_npc_right_in_front_only(self):
+        from som_qwen_bridge import npc_in_front
+        from som_memory import WRAM
+        data = bytearray(0x20000)
+        def put16(addr, value):
+            data[addr & 0x1FFFF] = value & 0xFF
+            data[(addr + 1) & 0x1FFFF] = value >> 8
+        put16(0x7EE002, 500); put16(0x7EE004, 300)
+        data[0xE010] = 0x02                                  # facing right
+        base = 0xE600
+        data[base] = 1; data[base + 0x180] = 0x99; put16(0x7E0000 + base + 0x3E, 0x1D7)
+        put16(0x7E0000 + base + 2, 516); put16(0x7E0000 + base + 4, 302)
+        self.assertTrue(npc_in_front(WRAM(bytes(data))))
+        data[0xE010] = 0x82                                  # facing away
+        self.assertFalse(npc_in_front(WRAM(bytes(data))))
+        data[0xE010] = 0x02; data[base + 0x180] = 0x1F       # a monster: swing
+        self.assertFalse(npc_in_front(WRAM(bytes(data))))

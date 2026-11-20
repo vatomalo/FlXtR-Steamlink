@@ -2770,7 +2770,7 @@ static int som_ukemi_begin_draw(uint8_t *ram,int dx,int dy){
         som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",
                            &cartwheel_pack,&cartwheel_pack_size);
     }
-    const uint8_t *hero=ram+0xE000u;
+    uint8_t *hero=ram+0xE000u;
     const unsigned id=hero[0x180u];
     if(!cartwheel_pack||id<0x80u||id>0x82u)return 0;
     const unsigned facing=dx?2u:(dy>0?1u:0u);

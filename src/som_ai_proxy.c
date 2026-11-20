@@ -1936,7 +1936,7 @@ static const uint8_t som_slot_fields[]={0x6C,0x6E,0x86,0x8A,0x92,0x96,0x9A,0x9E,
     0xAA,0xAE,0xB2,0xB6,0xD2,0xD6,0xDA,0xF8,0xFA};   /* 16-bit fields */
 #define SOM_CLONE_WAIT_FRAMES 600ul           /* slots refill ~3 s after a kill */
 static unsigned long clone_pending_until;
-static int clone_no_slot,last_clone_target=-1;
+static int clone_no_slot,last_clone_target=-1,last_clone_source=-1;
 /* Familiar (src/som_familiar.h): a clone bound to fight for the hero. Its
  * monster slot (1..3) is published for the SkyLoft bridge, which must not
  * attack it. */
@@ -4057,7 +4057,7 @@ static int som_clone_enemy(void){
            SOM_MONSTER_PALETTE_SIZE);
     uint16_t x=(uint16_t)(to[2]|to[3]<<8);x=(uint16_t)(x+32u);
     to[2]=(uint8_t)x;to[3]=(uint8_t)(x>>8);
-    last_clone_target=target;
+    last_clone_target=target;last_clone_source=source;
     fprintf(stderr,"[som-ai] SPAWN copied monster id %u from 7E%04X to 7E%04X; undo with undo_spawn\n",
         (unsigned)from[0x180],SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE,
         SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE);
@@ -4184,8 +4184,8 @@ static int som_undo_spawn(void){
     int ok=backend_retro_unserialize(undo_state,undo_size);
     undo_ready=0;
     familiar.slot=familiar.target=-1;familiar_pending=0;   /* memory is pre-clone */
-    familiar_carry.valid=0;som_tk_init(&telekinesis);
-    som_ukemi_end(backend_retro_get_memory_data?
+    familiar_carry.valid=0;last_clone_source=-1;som_tk_init(&telekinesis);
+    som_ukemi_endbackend_retro_get_memory_data?
         (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     unlink(familiar_file);
     fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
@@ -5272,6 +5272,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
+    last_clone_source=-1;
     som_disc_load();
     som_styles_load();style_atk_active=0;style_carry=0;style_cut_pending=0;style_swing_prev=0;
     style_dirty=0;style_b_hidden=0;throw_active=0;throw_slot=-1;throw_ready=0;
@@ -5457,8 +5458,8 @@ RETRO_API void retro_unload_game(void){
     weapon_gfx_verified=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
-    familiar_carry.valid=0;som_tk_init(&telekinesis);
-    som_ukemi_end(backend_retro_get_memory_data?
+    familiar_carry.valid=0;last_clone_source=-1;som_tk_init(&telekinesis);
+    som_ukemi_endbackend_retro_get_memory_data?
         (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
@@ -5482,14 +5483,33 @@ static void som_familiar_bind(void){
     if(ram){
         som_familiar_tint((uint8_t*)ram+SOM_MONSTER_PALETTE+
                           (unsigned)familiar.slot*SOM_MONSTER_PALETTE_SIZE);
+        familiar_carry.has_vram=0;  /* prevent a previous summon leaking its capture */
         som_familiar_save(&familiar_carry,ram,familiar.slot);
-        uint8_t *vram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
-        if(vram&&backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=0x10000){
-            som_familiar_capture_vram(&familiar_carry,ram,vram,
-                ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE,familiar.map);
-            fprintf(stderr,"[som-ai] FAMILIAR sprite captured: %u tiles, palette 7E%04X\n",
-                    familiar_carry.tile_count,familiar_carry.palette_address);
+        uint8_t *vram=som_vram();
+        if(vram){
+            /* Capture SOURCE decoded VRAM instead of stale cloned-slot tiles.
+             * The destination already has its own WRAM graphic buffer. */
+            int source=familiar.slot;
+            if(last_clone_source>=0&&last_clone_source<3){
+                const uint8_t *old=ram+SOM_MONSTER_BASE+
+                                   (unsigned)last_clone_source*SOM_OBJECT_SIZE;
+                if(som_monster_live(old))source=last_clone_source;
+            }
+            const uint8_t *from=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
+            uint8_t *to=ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE;
+            som_familiar_capture_vram(&familiar_carry,ram,vram,from,familiar.map);
+            familiar_carry.active_shift=(int)((unsigned)to[0x8A]|
+                           ((unsigned)(to[0x8B]&1u)<<8))-(int)familiar_carry.captured_base;
+            familiar_carry.active_palette=(to[0x8B]>>1)&7u;
+            if(familiar_carry.active_palette>=5u&&familiar_carry.active_palette<=7u){
+                memcpy(familiar_carry.sprite_palette,
+                       ram+0xDF00u+32u*familiar_carry.active_palette,32u);
+                som_familiar_reapply(&familiar_carry,ram,vram,familiar.slot);
+            }else familiar_carry.has_vram=0;
+            fprintf(stderr,"[som-ai] FAMILIAR sprite captured from slot %d: %u tiles, target palette %u\n",
+                    source+1,familiar_carry.tile_count,familiar_carry.active_palette);
         }
+        last_clone_source=-1;
     }
     som_familiar_publish();
     som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
@@ -5508,6 +5528,7 @@ static int som_summon_boss(void){
     FILE *in=fopen(summon_file,"rb");
     if(!in){fprintf(stderr,"[som-ai] SUMMON refused: no %s\n",summon_file);return 0;}
     static SomFamiliarCarry loaded;
+    memset(&loaded,0,sizeof(loaded)); /* legacy package has no VRAM capture */
     size_t got=fread(loaded.object,1,sizeof(loaded.object),in);
     got+=fread(loaded.tiles,1,sizeof(loaded.tiles),in);
     got+=fread(loaded.palette,1,sizeof(loaded.palette),in);
@@ -5558,10 +5579,12 @@ static void som_familiar_frame(void){
         som_xp_give(SOM_DISC_SUMMONING,SOM_XP_FAMILIAR,
                     ram[0xE600u+0x200u*(unsigned)familiar.target+0x180u],SOM_XPK_FAMILIAR,
                     "familiar strike");
-    if(state==SOM_FAMILIAR_HERE&&familiar.map!=familiar_carry.home_map)
-        som_familiar_reapply(&familiar_carry,ram,som_vram());      /* keep it drawn */
+    if(state==SOM_FAMILIAR_HERE&&familiar_carry.has_vram)
+        som_familiar_reapply(&familiar_carry,ram,som_vram(),familiar.slot);
     if(state==SOM_FAMILIAR_HERE){
-        if(frame_number%60u==0)som_familiar_save(&familiar_carry,ram,familiar.slot);
+        /* Do not replace the source sprite layout with its relocated version. */
+        if(frame_number%60u==0&&!familiar_carry.has_vram)
+            som_familiar_save(&familiar_carry,ram,familiar.slot);
         return;
     }
     som_familiar_publish();
@@ -5773,7 +5796,7 @@ static int som_class_x(uint8_t *ram){
         if(best<0){som_overlay_set(&overlay,"^Mind Control|no mind near",SOM_MESSAGE_FRAMES/3u);return 0;}
         memcpy(mind_palette,ram+SOM_MONSTER_PALETTE+(unsigned)best*SOM_MONSTER_PALETTE_SIZE,
                SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
-        familiar_pending=1;last_clone_target=best;
+        familiar_pending=1;last_clone_target=best;last_clone_source=best;
         som_familiar_bind();
         mind_slot=best;mind_until=frame_number+SOM_MIND_FRAMES;
         x_move_ready=frame_number+SOM_MIND_COOLDOWN;

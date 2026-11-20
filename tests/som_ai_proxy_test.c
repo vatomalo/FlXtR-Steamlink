@@ -175,6 +175,32 @@ int main(void){
     mocked_buttons=0;som_input_poll();
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
     assert(!som_manual_disciplines&&!disciplines.open);
+    mocked_buttons=0;som_input_poll();
+    /* The menu, then R1: the MUSIC page. Down, B tunes the radio station (a
+     * request line for the Steam Link's music bridge); A closes the menu. */
+    {
+        char juke_req[]="/tmp/flxtr-juke-req-test-XXXXXX";
+        const int fd=mkstemp(juke_req);assert(fd>=0);close(fd);
+        juke_request_file=juke_req;juke_list_file="/nonexistent/flxtr-juke-list";
+        mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R2));
+        som_input_poll();mocked_buttons=0;som_input_poll();
+        assert(som_manual_disciplines&&disciplines.open);
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(jukebox.open&&!disciplines.open);
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+        mocked_buttons=0;som_input_poll();
+        FILE *sent=fopen(juke_req,"r");char got[64]={0};
+        assert(sent&&fgets(got,sizeof(got),sent));fclose(sent);
+        assert(!strcmp(got,"radio 6\n"));
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(!som_manual_disciplines&&!jukebox.open&&!disciplines.open);
+        unlink(juke_req);juke_request_file=SOM_JUKE_REQUEST;juke_list_file=SOM_JUKE_LIST;
+    }
     mocked_buttons=0;
     /* Start is the new manual Class Progress shortcut. */
     som_manual_disciplines=0;disciplines.open=0;last_physical_buttons=0;

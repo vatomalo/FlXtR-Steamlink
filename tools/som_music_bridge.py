@@ -102,6 +102,36 @@ def mix_rate(path):
 
 
 PCM_CACHE_BUDGET = 1500 * 1024 * 1024   # decoded arrangements kept on disk
+# Jukebox (player's request, 2026-11-20): FlXtR's R2 music menu inside the
+# game. The proxy's MUSIC page writes one request line to JUKEBOX_REQUEST
+# ("radio N", "search TEXT", "play K", "next", "stop"); the bridge answers in
+# JUKEBOX_LIST (line 1 status, line 2 what plays, then one title per row).
+# While the jukebox plays, the game's song changes are ignored; "stop"
+# hands the music back to the soundtrack covers. Radio stations are FlXtR's
+# MTV genre queries (src/mtv_preferences.h); a track plays through once and
+# the next one follows (decoded ahead while the current one plays).
+JUKEBOX_REQUEST = Path("/tmp/flxtr-som-jukebox.req")
+JUKEBOX_LIST = Path("/tmp/flxtr-som-jukebox.list")
+JUKEBOX_ROWS = 60
+RADIO_STATIONS = (
+    ("MIX", "official music videos 80s 90s pop rock"),
+    ("POP", "official pop music videos"), ("ROCK", "official rock music videos"),
+    ("HIP HOP", "official hip hop music videos"),
+    ("ELECTRONIC", "official electronic dance music videos"),
+    ("METAL", "official metal music videos"), ("JAZZ", "official jazz music videos"),
+    ("COUNTRY", "official country music videos"),
+    ("R&B / SOUL", "official R&B soul music videos"), ("K-POP", "official k-pop music videos"),
+    ("ANIME", "official anime music videos"), ("VGM REMIX", "video game anime soundtrack remix"),
+    ("KARAOKE", "karaoke instrumental backing track"), ("ENKA", "official enka music videos"),
+    ("CITY POP", "official city pop music videos"),
+    ("LATIN", "official latin salsa bachata reggaeton music videos"),
+)
+
+
+def ascii_title(text, limit=60):
+    """Row text the proxy's 5x7 font can draw."""
+    words = " ".join((text or "").split())
+    return "".join(c if 32 <= ord(c) < 127 else "?" for c in words)[:limit]
 MIN_PCM_SECONDS = 5
 
 
@@ -118,6 +148,13 @@ class MusicBridge:
         # while the next one decodes.
         self.mix_control, self.rate_file = mix_control, rate_file
         self.pending = None   # (index, genre, ident, final path, part path)
+        # Jukebox: rows [(kind, ident, title, channel)], mode "radio"/"search",
+        # the row playing (or waiting for its decode), when it ends.
+        self.juke_on, self.juke_rows, self.juke_mode = False, [], None
+        self.juke_station, self.juke_playing, self.juke_until = 0, None, 0.0
+        self.juke_status, self.juke_now = "MUSIC: SEARCH OR RADIO", ""
+        self.juke_mtime = None
+        self.juke_request, self.juke_list = JUKEBOX_REQUEST, JUKEBOX_LIST
         self.current, self.child, self.music = None, None, None
         self.started, self.quick_failures, self.gave_up = 0.0, 0, False
         try:
@@ -152,6 +189,9 @@ class MusicBridge:
             pending[4].unlink(missing_ok=True)       # an unfinished decode
 
     def apply(self, index):
+        if self.juke_on:
+            self.juke_last_song = index        # the covers resume from it on "stop"
+            return
         if index in CUES:
             LOG.info("cue 0x%02X, keep current background track", index)
             return
@@ -276,6 +316,13 @@ class MusicBridge:
             return
         part.replace(final)
         self.prune_cache(keep=final)
+        if index == "juke":
+            if self.juke_on and self.juke_playing is not None and \
+                    self.juke_rows[self.juke_playing][1] == ident:
+                self.juke_start(final)
+            return
+        if index == "ahead":
+            return
         if self.current == (index, genre):
             self.set_control(final)
             LOG.info("PLAY 0x%02X %s [%s] YouTube ID %s (decoded, %d s)", index,
@@ -313,6 +360,158 @@ class MusicBridge:
         if self.mix_control:
             self.finish_decode(child.returncode)
         return child.returncode
+
+    # Jukebox ----------------------------------------------------------------
+    def juke_write(self):
+        lines = [ascii_title(self.juke_status), ascii_title(self.juke_now)]
+        lines += [ascii_title(f"{r[2]} - {r[3]}" if r[3] else r[2]) for r in self.juke_rows]
+        try:
+            tmp = Path(str(self.juke_list) + ".next")
+            tmp.write_text("\n".join(lines) + "\n")
+            tmp.replace(self.juke_list)
+        except OSError:
+            pass
+
+    def juke_seconds(self, path):
+        try:
+            return path.stat().st_size / 4 / mix_rate(self.rate_file)
+        except OSError:
+            return 0.0
+
+    def juke_start(self, final, now=None):
+        now = time.monotonic() if now is None else now
+        os.utime(final)
+        self.set_control(final)
+        self.juke_until = now + max(MIN_PCM_SECONDS, self.juke_seconds(final))
+        row = self.juke_rows[self.juke_playing]
+        self.juke_now = f"> {row[2]}"
+        self.juke_status = (f"RADIO {RADIO_STATIONS[self.juke_station][0]}"
+                            if self.juke_mode == "radio" else "PLAYING")
+        LOG.info("JUKEBOX play %s (%s, %.0f s)", row[2], row[1], self.juke_until - now)
+        self.juke_write()
+        self.juke_ahead()
+
+    def juke_decode(self, ident, tag):
+        final = self.pcm_path(ident)
+        part = final.with_suffix(".part")
+        self.get_music().resolve("video", ident)
+        final.parent.mkdir(parents=True, exist_ok=True)
+        self.pending = (tag, None, ident, final, part)
+        self.child = subprocess.Popen(
+            [self.player, "--pcm", str(mix_rate(self.rate_file)), str(part),
+             str(self.cache / "stream.txt")],
+            start_new_session=True, preexec_fn=lambda: os.nice(19))
+        self.started = time.monotonic()
+
+    def juke_ahead(self):
+        """Decode the next row while this one plays (no other decode running)."""
+        if self.child is not None or self.juke_playing is None or self.dry_run:
+            return
+        following = self.juke_playing + 1
+        if following < len(self.juke_rows) and self.juke_rows[following][0] == "video":
+            ident = self.juke_rows[following][1]
+            if not self.pcm_path(ident).is_file():
+                try:
+                    self.juke_decode(ident, "ahead")
+                except Exception as exc:
+                    LOG.warning("jukebox look-ahead failed: %s", type(exc).__name__)
+
+    def juke_play(self, k, now=None):
+        if not 0 <= k < len(self.juke_rows):
+            if self.juke_mode == "radio":
+                return self.juke_tune(self.juke_station, now)
+            self.juke_status = "END OF LIST"
+            self.juke_write()
+            return
+        kind, ident = self.juke_rows[k][:2]
+        if kind != "video" or not VIDEO.fullmatch(ident):
+            return self.juke_play(k + 1, now)
+        self.juke_on, self.juke_playing, self.juke_until = True, k, 0.0
+        final = self.pcm_path(ident)
+        if self.dry_run:
+            LOG.info("DRY RUN jukebox play %s", ident)
+            return
+        if final.is_file():
+            self.juke_start(final, now)
+            return
+        if not (self.pending and self.pending[2] == ident and self.child):
+            self.stop()
+            try:
+                self.juke_decode(ident, "juke")
+            except Exception as exc:
+                LOG.warning("jukebox playback failed: %s", type(exc).__name__)
+                self.juke_status = "COULD NOT PLAY THAT ONE"
+                self.juke_write()
+                return
+        else:
+            self.pending = ("juke",) + self.pending[1:]
+        self.juke_now = f"LOADING {self.juke_rows[k][2]}"
+        self.juke_write()
+
+    def juke_tune(self, station, now=None):
+        station %= len(RADIO_STATIONS)
+        self.juke_station, self.juke_mode = station, "radio"
+        try:
+            rows = self.get_music().radio_tracks(RADIO_STATIONS[station][1])
+        except Exception as exc:
+            self.juke_status = f"RADIO FAILED: {type(exc).__name__}"
+            self.juke_write()
+            return
+        self.juke_rows = [r for r in rows if len(r) == 4][:JUKEBOX_ROWS]
+        self.juke_status = f"RADIO {RADIO_STATIONS[station][0]}"
+        self.juke_play(0, now)
+
+    def juke_search(self, text):
+        self.juke_mode = "search"
+        try:
+            rows = self.get_music().search(text)
+        except Exception as exc:
+            self.juke_status = f"SEARCH FAILED: {type(exc).__name__}"
+            self.juke_write()
+            return
+        self.juke_rows = [r for r in rows if len(r) == 4][:JUKEBOX_ROWS]
+        self.juke_status = f"SEARCH: {text}" if self.juke_rows else f"NOTHING FOR: {text}"
+        self.juke_write()
+
+    def juke_stop(self):
+        self.juke_on, self.juke_playing, self.juke_now = False, None, ""
+        self.stop()
+        if self.mix_control:
+            self.set_control(None)
+        self.juke_status = "GAME MUSIC"
+        self.juke_write()
+        last, self.current = getattr(self, "juke_last_song", None), None
+        if last is not None:
+            self.apply(last)                       # the covers come back
+
+    def juke_request_line(self, text, now=None):
+        command, _, rest = text.strip().partition(" ")
+        if command == "radio" and rest.strip().isdigit():
+            self.juke_tune(int(rest), now)
+        elif command == "search" and rest.strip():
+            self.juke_search(rest.strip()[:120])
+        elif command == "play" and rest.strip().isdigit():
+            self.juke_play(int(rest), now)
+        elif command == "next" and self.juke_playing is not None:
+            self.juke_play(self.juke_playing + 1, now)
+        elif command == "stop":
+            self.juke_stop()
+
+    def poll_jukebox(self, now=None):
+        now = time.monotonic() if now is None else now
+        try:
+            mtime = self.juke_request.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        if mtime is not None and mtime != self.juke_mtime:
+            self.juke_mtime = mtime
+            try:
+                text = self.juke_request.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            self.juke_request_line(text.splitlines()[0] if text else "", now)
+        if self.juke_on and self.juke_until and now >= self.juke_until:
+            self.juke_play(self.juke_playing + 1, now)
 
     def line(self, text):
         index = parse_song(text)
@@ -363,6 +562,8 @@ def tail(path, bridge, from_start=False, alive=None, som_wait=None, clock=time.m
                 LOG.info("not Secret of Mana through the AI core: stop")
                 return "not-som"
             bridge.poll_genre()
+            if hasattr(bridge, "poll_jukebox"):
+                bridge.poll_jukebox()
             time.sleep(.25)
             if stream.tell() > path.stat().st_size:
                 stream.seek(0)

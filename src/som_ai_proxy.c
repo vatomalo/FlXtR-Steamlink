@@ -26,6 +26,7 @@
 #include "som_bunshin.h"
 #include "som_telekinesis.h"
 #include "som_bunshin_draw.h"
+#include "som_jukebox.h"
 #include "som_xp.h"
 #include "som_progress.h"
 #include "som_perks.h"
@@ -281,6 +282,31 @@ static void som_hero_palette_frame(uint8_t *ram){
 }
 static int som_menu_disciplines;
 static int som_manual_disciplines;
+/* The Start menu's MUSIC page (src/som_jukebox.h): requests go to the Steam
+ * Link's music bridge, its answer is read while the page is open. */
+#define SOM_JUKE_REQUEST "/tmp/flxtr-som-jukebox.req"
+#define SOM_JUKE_LIST "/tmp/flxtr-som-jukebox.list"
+static const char *juke_request_file=SOM_JUKE_REQUEST,*juke_list_file=SOM_JUKE_LIST;
+static SomJukebox jukebox;
+static int jukebox_ready;
+static void som_juke_send(const char *line){
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",juke_request_file);
+    FILE *out=fopen(temp,"w");
+    if(!out)return;
+    const int ok=fprintf(out,"%s\n",line)>0;
+    if(fclose(out)!=0||!ok){unlink(temp);return;}
+    rename(temp,juke_request_file);
+    fprintf(stderr,"[som-ai] MUSIC request: %s\n",line);
+}
+static void som_juke_refresh(void){
+    FILE *in=fopen(juke_list_file,"r");
+    if(!in)return;
+    static char text[SOM_JUKE_ROWS*SOM_JUKE_TEXT+256];
+    const size_t n=fread(text,1,sizeof(text)-1u,in);
+    fclose(in);
+    text[n]=0;
+    som_juke_load(&jukebox,text);
+}
 static void som_music_genre_load(void){
     FILE *in=fopen(music_genre_file,"r");
     unsigned genre=0;
@@ -1726,6 +1752,21 @@ static void som_input_poll(void){
             switch_spoiled=1;
             som_overlay_set(&overlay,"DISCIPLINES|A:close B:select",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] MANUAL DISCIPLINES opened\n");
+        }else if(som_manual_disciplines && pressed &&
+                 (pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R)))&&
+                 !jukebox.typing){
+            /* L1/R1: CLASSES <-> MUSIC. */
+            if(!jukebox_ready){som_juke_init(&jukebox);jukebox_ready=1;}
+            jukebox.open=!jukebox.open;
+            disciplines.open=!jukebox.open;
+            if(jukebox.open)som_juke_refresh();
+        }else if(som_manual_disciplines && pressed && jukebox.open){
+            char request[160];
+            if(!jukebox.typing&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A))){
+                jukebox.open=0;disciplines.open=0;som_manual_disciplines=0;
+                fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
+            }else if(som_juke_press(&jukebox,pressed,request,sizeof(request)))
+                som_juke_send(request);
         }else if(som_manual_disciplines && pressed){
             int result=som_disc_press(&disciplines,pressed);
             if(result==SOM_DISC_CLOSED){
@@ -1738,6 +1779,7 @@ static void som_input_poll(void){
                         (unsigned)disciplines.selected);
             }
         }
+        if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
         if(recording)som_record_presses(pressed);
         last_physical_buttons=current;
         if(current){last_input_frame=frame_number;idle_started=0;}
@@ -5024,6 +5066,32 @@ static int som_general_label_at(const uint8_t *ram,unsigned i,int *x,int *y){
     return *x>=0&&*x<256&&*y>=0&&*y<224;
 }
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch);
+/* The MUSIC page, drawn like the CLASSES page. */
+static void som_juke_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    const unsigned bw=200u*sx,bh=(SOM_JUKE_LINES*10u+8u)*sy;
+    if(!pixels||bw+12u*sx>width||bh+12u*sy>height)return;
+    const unsigned x0=6u*sx,y0=6u*sy;
+    som_overlay_fill(pixels,pitch,format,x0,y0,bw,bh,som_overlay_color(format,245,245,255));
+    som_overlay_fill(pixels,pitch,format,x0+sx,y0+sy,bw-2u*sx,bh-2u*sy,
+                     som_overlay_color(format,30,18,60));
+    char out[33];
+    for(unsigned line=0;line<SOM_JUKE_LINES;line++){
+        if(!som_juke_line(&jukebox,line,out))break;
+        const uint32_t ink=line==1u?som_overlay_color(format,255,214,96):
+                           som_overlay_color(format,255,255,255);
+        for(unsigned i=0;out[i];i++){
+            const unsigned char c=(unsigned char)out[i];
+            if(c<32u||c>126u)continue;
+            const uint8_t *glyph=som_overlay_font[c-32u];
+            for(unsigned row=0;row<7u;row++)for(unsigned col=0;col<5u;col++){
+                if(!(glyph[row]&(0x10u>>col)))continue;
+                som_overlay_fill(pixels,pitch,format,x0+(5u+i*6u+col)*sx,
+                                 y0+(4u+line*10u+row)*sy,sx,sy,ink);
+            }
+        }
+    }
+}
 static uint64_t perf_video_us;
 static void som_frontend_video(const void *data,unsigned width,unsigned height,size_t pitch){
     const uint64_t t0=PERF_NOW();
@@ -5174,7 +5242,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         overlay.frames_left--;
     }
     if(menu){
-        if(som_manual_disciplines||som_menu_disciplines)
+        if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
+        else if(som_manual_disciplines||som_menu_disciplines)
             som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines);
         else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
     }

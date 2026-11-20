@@ -656,3 +656,18 @@ SOM_ROM_PATH="/path/to/your/Secret of Mana, Turbo.smc" scripts/build-som-ai-prox
 
 The ROM is only read for frame extraction and is never bundled. Unit targets:
 `make test-som-telekinesis test-som-familiar-art test-som-ai-proxy test-som-raid`.
+
+### MUSIC page: FlXtR's R2 music menu in the game (2026-11-20)
+
+Start opens the menu; **L1/R1** switch between CLASSES and **MUSIC**. On MUSIC:
+- **Search**: B opens the on-screen keyboard (D-pad moves, B types, Y deletes, X searches,
+  A goes back); results fill the list.
+- **Radio**: Left/Right pick one of FlXtR's 16 MTV genre stations, B tunes it: a fresh
+  shuffled list that plays track after track (the next one decodes while one plays).
+- **Stop**: the game's soundtrack covers come back.
+- A result row + B plays it; X skips to the next track; A closes the menu.
+
+The page writes one request line to `/tmp/flxtr-som-jukebox.req`; the Steam Link's music
+bridge (`tools/som_music_bridge.py`, uses FlXtR's `tools/music.py`) answers in
+`/tmp/flxtr-som-jukebox.list` and mixes the track into the game's audio like the covers.
+While the jukebox plays, the game's song changes are ignored.

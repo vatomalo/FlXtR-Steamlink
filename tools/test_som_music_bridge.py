@@ -229,3 +229,78 @@ class SomMusicTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeMusic:
+    def __init__(self):
+        self.radio_queries, self.searches = [], []
+
+    def radio_tracks(self, query):
+        self.radio_queries.append(query)
+        return [("video", f"radio{n:06d}", f"Radio song {n}", "Band") for n in range(3)]
+
+    def search(self, text):
+        self.searches.append(text)
+        return [("video", f"found{n:06d}", f"Found {n}", "") for n in range(2)]
+
+    def resolve(self, kind, value):
+        pass
+
+
+class JukeboxTests(unittest.TestCase):
+    """The in-game music page: radio, search, play, next, stop."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        (root / "rate").write_text("32040\n")
+        genre = root / "genre"
+        genre.write_text("0\n")
+        self.b = MusicBridge({0x07: "Close Your Eyelids"}, genre, root / "cache", "false",
+                             mix_control=root / "control", rate_file=root / "rate")
+        self.b.music = FakeMusic()
+        self.b.juke_request, self.b.juke_list = root / "req", root / "list"
+        for ident in [f"radio{n:06d}" for n in range(3)] + [f"found{n:06d}" for n in range(2)]:
+            path = self.b.pcm_path(ident)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\0" * (4 * 32040 * 10))         # 10 s decoded
+        self.root = root
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def control(self):
+        return (self.root / "control").read_text().strip() if (self.root / "control").exists() else None
+
+    def test_radio_plays_through_and_songs_wait(self):
+        self.b.juke_request_line("radio 6", now=100.0)              # JAZZ
+        self.assertEqual(self.b.music.radio_queries, ["official jazz music videos"])
+        self.assertTrue(self.control().endswith("radio000000-32040.raw"))
+        listing = (self.root / "list").read_text().splitlines()
+        self.assertEqual(listing[0], "RADIO JAZZ")
+        self.assertEqual(listing[1], "> Radio song 0")
+        self.assertEqual(listing[2], "Radio song 0 - Band")
+        self.b.apply(0x07)                                          # a game song: ignored
+        self.assertTrue(self.control().endswith("radio000000-32040.raw"))
+        self.b.poll_jukebox(now=111.0)                              # the track ended
+        self.assertTrue(self.control().endswith("radio000001-32040.raw"))
+        self.b.juke_request_line("next", now=112.0)
+        self.assertTrue(self.control().endswith("radio000002-32040.raw"))
+        self.b.juke_request_line("next", now=113.0)                 # end: tune again
+        self.assertEqual(len(self.b.music.radio_queries), 2)
+
+    def test_search_then_play_then_stop(self):
+        (self.root / "req").write_text("search secret of mana\n")
+        self.b.poll_jukebox(now=50.0)
+        self.assertEqual(self.b.music.searches, ["secret of mana"])
+        self.assertIsNone(self.control())                           # nothing plays yet
+        self.assertEqual((self.root / "list").read_text().splitlines()[0],
+                         "SEARCH: secret of mana")
+        self.b.juke_request_line("play 1", now=51.0)
+        self.assertTrue(self.control().endswith("found000001-32040.raw"))
+        self.b.juke_request_line("stop", now=52.0)
+        self.assertFalse(self.b.juke_on)
+        self.assertEqual((self.root / "list").read_text().splitlines()[0], "GAME MUSIC")
+
+    def test_titles_are_drawable(self):
+        self.assertEqual(bridge.ascii_title("Café  Ｊazz\tnight"), "Caf? ?azz night")

@@ -60,6 +60,13 @@ test-som-songs:
 
 .PHONY: test-som-songs
 
+test-som-jukebox:
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/som_jukebox_test.c -o build/som-jukebox-test
+	./build/som-jukebox-test
+
+.PHONY: test-som-jukebox
+
 test-som-weapon-styles:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_weapon_styles_test.c -o build/som-weapon-styles-test

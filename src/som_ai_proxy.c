@@ -24,6 +24,7 @@
 #include "som_songs.h"
 #include "som_combo.h"
 #include "som_bunshin.h"
+#include "som_telekinesis.h"
 #include "som_bunshin_draw.h"
 #include "som_xp.h"
 #include "som_progress.h"
@@ -838,6 +839,8 @@ static int bomb_x,bomb_y;static unsigned long bomb_at;
 static int mine_x[SOM_MINES],mine_y[SOM_MINES];static unsigned mine_map[SOM_MINES];
 static uint8_t mine_live[SOM_MINES];
 static uint8_t mind_palette[32];static int mind_slot=-1;
+static SomTelekinesis telekinesis={-1,0,0,0};
+static int som_telekinesis_start(uint8_t *ram);
 static int som_class_x(uint8_t *ram);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
  * style): tap L1 (without B or Y in between) to lock onto the nearest
@@ -892,6 +895,12 @@ static int cartwheel_pack_tried;
 static int bash_kick,flykick_from_ai;
 static SomNpcWorkState flykick;
 static int flykick_hid;
+/* A reliable ROM-derived cartwheel animation for Ninja/Samurai Ukemi.
+ * It uses the same SOMWORK1 pack as Flying Kick when the native hit
+ * reaction refuses to play. While drawn, only the hero sprite is hidden. */
+static SomNpcWorkState ukemi_draw;
+static int ukemi_hid;
+static unsigned ukemi_map;
 static int som_flykick_start(uint8_t *ram);
 /* Fuma (Ninjutsu, boomerang): when the hero's boomerang hits a monster, a
  * shadow clone appears in smoke beside it, on the hero's side, swings the
@@ -1621,10 +1630,13 @@ static void som_input_poll(void){
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (disciplines.selected==SOM_DISC_SWORD||disciplines.selected==SOM_DISC_ROGUE||
             disciplines.selected==SOM_DISC_ARCHER||disciplines.selected==SOM_DISC_HUNTER||
-            disciplines.selected==SOM_DISC_ARTIFICER)&&
+            disciplines.selected==SOM_DISC_ARTIFICER||disciplines.selected==SOM_DISC_PSIONICS)&&
            (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
             x_spell_blocked=1;
-            if(pressed&x_bit)som_class_move(wram);
+            if(pressed&x_bit){
+                if(disciplines.selected==SOM_DISC_PSIONICS)som_telekinesis_start(wram);
+                else som_class_move(wram);
+            }
         }
         /* L2+X: Hundred Fists for the monk. */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
@@ -1924,7 +1936,7 @@ static const uint8_t som_slot_fields[]={0x6C,0x6E,0x86,0x8A,0x92,0x96,0x9A,0x9E,
     0xAA,0xAE,0xB2,0xB6,0xD2,0xD6,0xDA,0xF8,0xFA};   /* 16-bit fields */
 #define SOM_CLONE_WAIT_FRAMES 600ul           /* slots refill ~3 s after a kill */
 static unsigned long clone_pending_until;
-static int clone_no_slot,last_clone_target=-1;
+static int clone_no_slot,last_clone_target=-1,last_clone_source=-1;
 /* Familiar (src/som_familiar.h): a clone bound to fight for the hero. Its
  * monster slot (1..3) is published for the SkyLoft bridge, which must not
  * attack it. */
@@ -2743,6 +2755,41 @@ static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
     hero[0x1E5]=(uint8_t)code;
     return 1;
 }
+/* The native miss reaction does not consistently play outside monster hits.
+ * Ninja/Samurai instead use the pre-rendered, ROM-derived cartwheel frames
+ * (tools/som_cartwheel.py, kinds 0x80..0x82) and a collision-safe carried hop.
+ * This animates Ukemi even when the native combat reaction is suppressed. */
+static void som_ukemi_end(uint8_t *ram){
+    if(!ukemi_draw.active)return;
+    if(ram&&ukemi_hid&&ram[0xE000]==1u&&
+       som_bun_u16(ram+0xDC)==ukemi_map)
+        ram[0xE00E]&=(uint8_t)~0x80u;
+    ukemi_draw.active=0;ukemi_hid=0;
+}
+static int som_ukemi_begin(uint8_t *ram,int dx,int dy){
+    if(!ram)return 0;
+    const unsigned id=ram[0xE180];
+    if(id<0x80u||id>0x82u)return 0;
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",
+                           &cartwheel_pack,&cartwheel_pack_size);
+    }
+    const unsigned facing=dx?2u:dy>0?1u:0u;
+    SomWorkEntry entry;
+    if(!som_work_find(cartwheel_pack,cartwheel_pack_size,id,facing,&entry))return 0;
+    som_ukemi_end(ram);
+    memset(&ukemi_draw,0,sizeof(ukemi_draw));
+    ukemi_draw.active=1;ukemi_draw.slot=0;ukemi_draw.kind=id;
+    ukemi_draw.dir=dx<0?3u:dx>0?2u:dy>0?1u:0u;
+    ukemi_draw.start=frame_number;ukemi_draw.entry=entry;
+    ukemi_draw.length=som_work_swing_frames(&entry);
+    ukemi_draw.own_palette=1;
+    ukemi_hid=!(ram[0xE00E]&0x80u);
+    ram[0xE00E]|=0x80u;
+    ukemi_map=som_bun_u16(ram+0xDC);
+    return 1;
+}
 /* The camera follows a dodge. The game scrolls only by the hero's own
  * walking steps, so a hero carried by the proxy left it behind (offline
  * replay of a field state, 2026-11-18: 48 px hop, camera A8 unmoved). Each
@@ -2797,7 +2844,11 @@ static int som_evade_start(uint8_t *ram){
     hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
     evade_frames=move+SOM_DODGE_GRACE;
     const unsigned facing_before=hero[0x010];
-    cartwheel_native=dodge.cartwheel&&som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
+    const int drawn_ukemi=(disciplines.selected==SOM_DISC_NINJUTSU||
+                           disciplines.selected==SOM_DISC_BUSHIDO)&&
+                           som_ukemi_begin(ram,dx,dy);
+    cartwheel_native=!drawn_ukemi&&dodge.cartwheel&&
+                     som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
     native_restore_facing=-1;
     if(cartwheel_native){
         native_code=(unsigned)dodge.cartwheel;
@@ -2914,9 +2965,20 @@ static int som_kawarimi_check(uint8_t *ram){
  * Records the after-image trail. */
 static void som_hop_step(void){
     if(!backend_retro_get_memory_data)return;
+    if(ukemi_draw.active){
+        uint8_t *r=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(!r||!som_tk_field(r)||som_bun_u16(r+0xDC)!=ukemi_map||
+           !evade_active||frame_number-ukemi_draw.start>=ukemi_draw.length)
+            som_ukemi_end(r);
+        else r[0xE00E]|=0x80u;
+    }
     if(lock_slot>=0){
         uint8_t *locked=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(locked)som_lock_frame(locked);
+    }
+    if(telekinesis.slot>=0){
+        uint8_t *tk_ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(tk_ram)som_tk_tick(&telekinesis,tk_ram,frame_number);
     }
     if(holy_until||bomb_at||mind_until||mine_live[0]||mine_live[1]||mine_live[2]){
         uint8_t *gear=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
@@ -3182,6 +3244,7 @@ static void som_evade_tick(void){
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
     som_evade_blink_end(ram);
+    som_ukemi_end(ram);
     if(native_restore_facing>=0){ram[0xE010]=(uint8_t)native_restore_facing;native_restore_facing=-1;}
     evade_active=0;hop_frames_left=0;cartwheel_native=0;issen_active=0;
 }
@@ -3994,7 +4057,7 @@ static int som_clone_enemy(void){
            SOM_MONSTER_PALETTE_SIZE);
     uint16_t x=(uint16_t)(to[2]|to[3]<<8);x=(uint16_t)(x+32u);
     to[2]=(uint8_t)x;to[3]=(uint8_t)(x>>8);
-    last_clone_target=target;
+    last_clone_target=target;last_clone_source=source;
     fprintf(stderr,"[som-ai] SPAWN copied monster id %u from 7E%04X to 7E%04X; undo with undo_spawn\n",
         (unsigned)from[0x180],SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE,
         SOM_MONSTER_BASE+(unsigned)target*SOM_OBJECT_SIZE);
@@ -4121,7 +4184,9 @@ static int som_undo_spawn(void){
     int ok=backend_retro_unserialize(undo_state,undo_size);
     undo_ready=0;
     familiar.slot=familiar.target=-1;familiar_pending=0;   /* memory is pre-clone */
-    familiar_carry.valid=0;
+    familiar_carry.valid=0;last_clone_source=-1;som_tk_init(&telekinesis);
+    som_ukemi_end(backend_retro_get_memory_data?
+        (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     unlink(familiar_file);
     fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
                       "[som-ai] UNDO failed to restore the snapshot\n");
@@ -4234,6 +4299,9 @@ static int som_handle_command(const char *command){
     }
     /* The AI's dodge: the same evade as the player's A. Kawarimi and
      * Shunshin are AI-only jutsu (not on any button yet). */
+    if(!strcmp(command,"telekinesis"))
+        return som_telekinesis_start(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strcmp(command,"evade"))
         return som_evade_start(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -4942,7 +5010,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||flykick.active||companion.draw.active||
+    const int worker=(npc_work.active||flykick.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -5001,6 +5069,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                   pixel_format);
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+            if(ukemi_draw.active)
+                som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
             if(fuma.active&&frame_number>=fuma.start)
                 som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,
@@ -5183,6 +5254,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;
+    som_tk_init(&telekinesis);ukemi_draw.active=0;ukemi_hid=0;ukemi_map=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
@@ -5200,6 +5272,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
+    last_clone_source=-1;
     som_disc_load();
     som_styles_load();style_atk_active=0;style_carry=0;style_cut_pending=0;style_swing_prev=0;
     style_dirty=0;style_b_hidden=0;throw_active=0;throw_slot=-1;throw_ready=0;
@@ -5385,7 +5458,9 @@ RETRO_API void retro_unload_game(void){
     weapon_gfx_verified=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
-    familiar_carry.valid=0;
+    familiar_carry.valid=0;last_clone_source=-1;som_tk_init(&telekinesis);
+    som_ukemi_end(backend_retro_get_memory_data?
+        (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
@@ -5401,21 +5476,40 @@ static void som_familiar_publish(void){
 }
 static void som_familiar_bind(void){
     if(!familiar_pending||last_clone_target<0)return;
-    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     familiar_pending=0;
     familiar.slot=last_clone_target;familiar.target=-1;familiar.last_strike=0;
     familiar.map=ram?(unsigned)(ram[0xDC]|ram[0xDD]<<8):0;
     if(ram){
         som_familiar_tint((uint8_t*)ram+SOM_MONSTER_PALETTE+
                           (unsigned)familiar.slot*SOM_MONSTER_PALETTE_SIZE);
+        familiar_carry.has_vram=0;  /* prevent a previous summon leaking its capture */
         som_familiar_save(&familiar_carry,ram,familiar.slot);
-        uint8_t *vram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
-        if(vram&&backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=0x10000){
-            som_familiar_capture_vram(&familiar_carry,ram,vram,
-                ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE,familiar.map);
-            fprintf(stderr,"[som-ai] FAMILIAR sprite captured: %u tiles, palette 7E%04X\n",
-                    familiar_carry.tile_count,familiar_carry.palette_address);
+        uint8_t *vram=som_vram();
+        if(vram){
+            /* Capture SOURCE decoded VRAM instead of stale cloned-slot tiles.
+             * The destination already has its own WRAM graphic buffer. */
+            int source=familiar.slot;
+            if(last_clone_source>=0&&last_clone_source<3){
+                const uint8_t *old=ram+SOM_MONSTER_BASE+
+                                   (unsigned)last_clone_source*SOM_OBJECT_SIZE;
+                if(som_monster_live(old))source=last_clone_source;
+            }
+            const uint8_t *from=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
+            uint8_t *to=ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE;
+            som_familiar_capture_vram(&familiar_carry,ram,vram,from,familiar.map);
+            familiar_carry.active_shift=(int)((unsigned)to[0x8A]|
+                           ((unsigned)(to[0x8B]&1u)<<8))-(int)familiar_carry.captured_base;
+            familiar_carry.active_palette=(to[0x8B]>>1)&7u;
+            if(familiar_carry.active_palette>=5u&&familiar_carry.active_palette<=7u){
+                memcpy(familiar_carry.sprite_palette,
+                       ram+0xDF00u+32u*familiar_carry.active_palette,32u);
+                som_familiar_reapply(&familiar_carry,ram,vram,familiar.slot);
+            }else familiar_carry.has_vram=0;
+            fprintf(stderr,"[som-ai] FAMILIAR sprite captured from slot %d: %u tiles, target palette %u\n",
+                    source+1,familiar_carry.tile_count,familiar_carry.active_palette);
         }
+        last_clone_source=-1;
     }
     som_familiar_publish();
     som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
@@ -5434,6 +5528,7 @@ static int som_summon_boss(void){
     FILE *in=fopen(summon_file,"rb");
     if(!in){fprintf(stderr,"[som-ai] SUMMON refused: no %s\n",summon_file);return 0;}
     static SomFamiliarCarry loaded;
+    memset(&loaded,0,sizeof(loaded)); /* legacy package has no VRAM capture */
     size_t got=fread(loaded.object,1,sizeof(loaded.object),in);
     got+=fread(loaded.tiles,1,sizeof(loaded.tiles),in);
     got+=fread(loaded.palette,1,sizeof(loaded.palette),in);
@@ -5484,10 +5579,12 @@ static void som_familiar_frame(void){
         som_xp_give(SOM_DISC_SUMMONING,SOM_XP_FAMILIAR,
                     ram[0xE600u+0x200u*(unsigned)familiar.target+0x180u],SOM_XPK_FAMILIAR,
                     "familiar strike");
-    if(state==SOM_FAMILIAR_HERE&&familiar.map!=familiar_carry.home_map)
-        som_familiar_reapply(&familiar_carry,ram,som_vram());      /* keep it drawn */
+    if(state==SOM_FAMILIAR_HERE&&familiar_carry.has_vram)
+        som_familiar_reapply(&familiar_carry,ram,som_vram(),familiar.slot);
     if(state==SOM_FAMILIAR_HERE){
-        if(frame_number%60u==0)som_familiar_save(&familiar_carry,ram,familiar.slot);
+        /* Do not replace the source sprite layout with its relocated version. */
+        if(frame_number%60u==0&&!familiar_carry.has_vram)
+            som_familiar_save(&familiar_carry,ram,familiar.slot);
         return;
     }
     som_familiar_publish();
@@ -5620,6 +5717,20 @@ static void som_ahead(const uint8_t *hero,int distance,int *x,int *y){
     if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;else if(facing==0x01u)dy=1;else dy=-1;
     *x=(int)som_bun_u16(hero+2)+dx*distance;*y=(int)som_bun_u16(hero+4)+dy*distance;
 }
+/* L2+X: draw the closest native treasure chest along traversable tiles. */
+static int som_telekinesis_start(uint8_t *ram){
+    if(disciplines.selected!=SOM_DISC_PSIONICS||!ram||!som_jutsu_free(ram))return 0;
+    if(!som_tk_start(&telekinesis,ram,frame_number,familiar.slot)){
+        som_overlay_set(&overlay,"^Telekinesis|no reachable chest",SOM_MESSAGE_FRAMES/3u);
+        return 0;
+    }
+    const uint8_t *o=ram+0xE600u+0x200u*(unsigned)telekinesis.slot;
+    som_bun_boom(bunshin_booms,(int)som_bun_u16(o+2),(int)som_bun_u16(o+4),1,frame_number);
+    som_overlay_set(&overlay,"^Telekinesis!",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] TELEKINESIS chest slot %d map %u\n",
+            telekinesis.slot+1,telekinesis.map);
+    return 1;
+}
 static void som_mind_release(uint8_t *ram){
     if(mind_slot<0)return;
     if(ram&&familiar.slot==mind_slot){
@@ -5685,7 +5796,7 @@ static int som_class_x(uint8_t *ram){
         if(best<0){som_overlay_set(&overlay,"^Mind Control|no mind near",SOM_MESSAGE_FRAMES/3u);return 0;}
         memcpy(mind_palette,ram+SOM_MONSTER_PALETTE+(unsigned)best*SOM_MONSTER_PALETTE_SIZE,
                SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
-        familiar_pending=1;last_clone_target=best;
+        familiar_pending=1;last_clone_target=best;last_clone_source=best;
         som_familiar_bind();
         mind_slot=best;mind_until=frame_number+SOM_MIND_FRAMES;
         x_move_ready=frame_number+SOM_MIND_COOLDOWN;

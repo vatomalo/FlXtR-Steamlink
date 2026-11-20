@@ -84,6 +84,11 @@ ADVANTAGES = (
     ("duel", 1, 3, False, "fast fists for one close enemy"),
     ("far", 8, 1, False, "the bow for range, sword and spear up close"),
     ("crowd", 10, 2, False, "Iaijutsu cuts through a crowd"),
+    # New classes deserve tactical reasons to be chosen, not just their names.
+    ("crowd", 12, 2, False, "Grand Cross catches nearby enemies"),
+    ("duel", 13, 1, True, "Energy Absorb can sustain the necromancer"),
+    ("crowd", 14, 3, False, "mines and delayed bombs control space"),
+    ("crowd", 15, 3, False, "mind control turns an enemy against the crowd"),
 )
 TOUGH_HP = 200                       # enemy max HP that counts as tough
 

@@ -148,6 +148,10 @@ typedef struct {
     uint8_t tile_data[SOM_FAMILIAR_MAX_TILES][32];
     unsigned palette_address;          /* WRAM CGRAM shadow address */
     uint8_t sprite_palette[0x20];
+    /* Captured from the LIVE source sprite, not the just-cloned destination. */
+    unsigned captured_base;
+    int active_shift;               /* live slot tile base - source capture base */
+    unsigned active_palette;        /* actual OBJ palette of the live slot */
 } SomFamiliarCarry;
 
 /* Palette address of an object's sprites in the CGRAM shadow (7E:DE00). */
@@ -163,6 +167,9 @@ static inline void som_familiar_capture_vram(SomFamiliarCarry *c, const uint8_t 
                                              unsigned map) {
     c->has_vram = 0;
     c->tile_count = 0;
+    c->captured_base=(unsigned)object[0x8A] | ((unsigned)(object[0x8B]&1u)<<8);
+    c->active_shift=0;
+    c->active_palette=(object[0x8B]>>1)&7u;
     if (!vram) return;
     for (unsigned f = 0; f < sizeof(som_familiar_tile_fields); f++) {
         const unsigned v = som_fam_u16(object + som_familiar_tile_fields[f]);
@@ -186,18 +193,25 @@ static inline void som_familiar_capture_vram(SomFamiliarCarry *c, const uint8_t 
     c->has_vram = c->tile_count > 0;
 }
 
-/* Write the captured tiles and palette back (away from the home map the
- * game may overwrite them, so this runs every frame there). */
-static inline void som_familiar_reapply(const SomFamiliarCarry *c, uint8_t *ram, uint8_t *vram) {
-    if (!c->has_vram || !vram) return;
-    for (unsigned i = 0; i < c->tile_count; i++)
-        memcpy(vram + SOM_FAMILIAR_OBJ_VRAM + c->tile_id[i] * 32u, c->tile_data[i], 32);
-    memcpy(ram + c->palette_address, c->sprite_palette, sizeof(c->sprite_palette));
-    /* And the working palette the game sends to the screen: 7E:0700 +
-     * sprite palette * 32 (the shadow above is at 7E:DE00 + (128+p*16)*2). */
-    const unsigned sprite_palette = (c->palette_address - 0xDF00u) / 32u;
-    if (sprite_palette < 8u)
-        memcpy(ram + 0x0700u + sprite_palette * 32u, c->sprite_palette, sizeof(c->sprite_palette));
+/* Reapply only into the current familiar's DESTINATION graphics range.
+ * Old code wrote the source map's absolute VRAM tile numbers and palette,
+ * corrupting unrelated sprites after a map/slot change. The mapped range
+ * uses the same native slot tile base as its copied 0x1000 graphic buffer. */
+static inline void som_familiar_reapply(const SomFamiliarCarry *c,uint8_t *ram,
+                                        uint8_t *vram,int slot){
+    if(!c||!c->has_vram||!ram||!vram||slot<0||slot>=3||
+       c->active_palette<5u||c->active_palette>7u)return;
+    for(unsigned i=0;i<c->tile_count;i++){
+        const int id=(int)c->tile_id[i]+c->active_shift;
+        if(id<0||id>=512)return;    /* fail closed; never write outside OBJ VRAM */
+    }
+    for(unsigned i=0;i<c->tile_count;i++){
+        const unsigned id=(unsigned)((int)c->tile_id[i]+c->active_shift);
+        memcpy(vram+SOM_FAMILIAR_OBJ_VRAM+id*32u,c->tile_data[i],32u);
+    }
+    const unsigned palette=0xDF00u+c->active_palette*32u;
+    memcpy(ram+palette,c->sprite_palette,32u);
+    memcpy(ram+0x0700u+c->active_palette*32u,c->sprite_palette,32u);
 }
 
 /* Object fields that belong to a monster slot (VRAM tiles/addresses,
@@ -216,37 +230,85 @@ static inline void som_familiar_save(SomFamiliarCarry *c, const uint8_t *ram, in
 /* Put a carried familiar into the first empty monster slot next to the
  * hero; returns the slot or -1 (no empty slot yet). Occupied slots, which
  * in towns hold villagers, are never touched. */
-static inline int som_familiar_restore(const SomFamiliarCarry *c, uint8_t *ram, uint8_t *vram) {
-    if (!c->valid) return -1;
-    for (int slot = 0; slot < 3; slot++) {
-        uint8_t *to = ram + SOM_FAMILIAR_MONSTER_BASE + (unsigned)slot * SOM_FAMILIAR_OBJECT;
-        if (to[0] == 1) continue;
-        if (c->has_vram && vram) {
-            /* Home layout: its own tile numbers and palette, with its tiles. */
-            memcpy(to, c->object, SOM_FAMILIAR_OBJECT);
-            som_familiar_reapply(c, ram, vram);
-            som_fam_put16(to + 2, som_fam_u16(ram + 0xE002) + 24u);
-            som_fam_put16(to + 4, som_fam_u16(ram + 0xE004));
-            to[0x1F1] = 0;
-            som_fam_put16(to + 0x182, som_fam_u16(to + 0x184));
-            return slot;
+/* A captured monster must inherit the destination's tile bank and palette.
+ * The native empty slot supplies them; if it has not been initialized yet,
+ * leave the summon pending instead of drawing random tiles over other actors. */
+static inline int som_familiar_restore(SomFamiliarCarry *c,uint8_t *ram,uint8_t *vram){
+    if(!c||!c->valid||!ram)return -1;
+    static const uint8_t slot_pointers[]={0x6C,0x6E,0x86,0xD2,0xD6,0xDA,0xF8,0xFA};
+    for(int slot=0;slot<3;slot++){
+        uint8_t *to=ram+SOM_FAMILIAR_MONSTER_BASE+(unsigned)slot*SOM_FAMILIAR_OBJECT;
+        if(to[0]==1u)continue;
+        const unsigned dst_base=(unsigned)to[0x8A]|((unsigned)(to[0x8B]&1u)<<8);
+        const unsigned src_base=(unsigned)c->object[0x8A]|
+                                ((unsigned)(c->object[0x8B]&1u)<<8);
+        const unsigned palette=(to[0x8B]>>1)&7u;
+        if(c->has_vram){
+            if(!vram||!dst_base||palette<5u||palette>7u)continue;
+            /* Another actor already uses this palette: don't recolour it. */
+            int busy=0;
+            for(unsigned actor=0;actor<12u;actor++){
+                if(actor==(unsigned)slot+3u)continue;
+                const uint8_t *other=ram+0xE000u+actor*0x200u;
+                if(other[0]==1u&&((other[0x8B]>>1)&7u)==palette){busy=1;break;}
+            }
+            if(busy)continue;
+            const int visual_shift=(int)dst_base-(int)src_base;
+            const int capture_shift=(int)dst_base-(int)c->captured_base;
+            int valid=1;
+            for(unsigned i=0;i<c->tile_count&&valid;i++){
+                const int id=(int)c->tile_id[i]+capture_shift;
+                if(id<0||id>=512)valid=0;
+            }
+            for(unsigned i=0;i<sizeof(som_familiar_tile_fields)&&valid;i++){
+                const unsigned off=som_familiar_tile_fields[i];
+                const unsigned v=(unsigned)c->object[off]|
+                                 ((unsigned)(c->object[off+1u]&1u)<<8);
+                if(v){const int id=(int)v+visual_shift;if(id<0||id>=512)valid=0;}
+            }
+            if(!valid)continue;
         }
-        uint8_t keep[sizeof(som_familiar_slot_fields)][2];
-        for (unsigned i = 0; i < sizeof(som_familiar_slot_fields); i++) {
-            keep[i][0] = to[som_familiar_slot_fields[i]];
-            keep[i][1] = to[som_familiar_slot_fields[i] + 1];
+        uint8_t template[SOM_FAMILIAR_OBJECT];
+        memcpy(template,to,sizeof(template));
+        memcpy(to,c->object,SOM_FAMILIAR_OBJECT);
+        for(unsigned i=0;i<sizeof(slot_pointers);i++){
+            const unsigned off=slot_pointers[i];
+            to[off]=template[off];to[off+1u]=template[off+1u];
         }
-        memcpy(to, c->object, SOM_FAMILIAR_OBJECT);
-        for (unsigned i = 0; i < sizeof(som_familiar_slot_fields); i++) {
-            to[som_familiar_slot_fields[i]] = keep[i][0];
-            to[som_familiar_slot_fields[i] + 1] = keep[i][1];
+        if(c->has_vram){
+            /* The source pose is relocated into the new slot's tile range,
+             * while every OAM piece inherits that slot's palette. */
+            const int shift=(int)dst_base-(int)src_base;
+            for(unsigned i=0;i<sizeof(som_familiar_tile_fields);i++){
+                const unsigned off=som_familiar_tile_fields[i];
+                const unsigned original=(unsigned)c->object[off]|
+                                        ((unsigned)(c->object[off+1u]&1u)<<8);
+                if(!original){to[off]=to[off+1u]=0;continue;}
+                const unsigned id=(unsigned)((int)original+shift);
+                to[off]=(uint8_t)id;
+                to[off+1u]=(uint8_t)((c->object[off+1u]&0xF0u)|
+                                     ((palette&7u)<<1)|((id>>8)&1u));
+            }
+            c->active_shift=(int)dst_base-(int)c->captured_base;
+            c->active_palette=palette;
+        }else{
+            /* Old summon.bin packages have only WRAM graphics. Preserve the
+             * destination slot's native OAM/palette fields as before. */
+            for(unsigned i=0;i<sizeof(som_familiar_slot_fields);i++){
+                const unsigned off=som_familiar_slot_fields[i];
+                to[off]=template[off];to[off+1u]=template[off+1u];
+            }
         }
-        memcpy(ram + 0x5000u + (unsigned)slot * 0x1000u, c->tiles, sizeof(c->tiles));
-        memcpy(ram + 0xDFA0u + (unsigned)slot * 0x20u, c->palette, sizeof(c->palette));
-        som_fam_put16(to + 2, som_fam_u16(ram + 0xE002) + 24u);
-        som_fam_put16(to + 4, som_fam_u16(ram + 0xE004));
-        to[0x1F1] = 0;
-        som_fam_put16(to + 0x182, som_fam_u16(to + 0x184));
+        memcpy(ram+0x5000u+(unsigned)slot*0x1000u,c->tiles,sizeof(c->tiles));
+        if(palette>=5u&&palette<=7u){
+            memcpy(ram+0xDF00u+palette*32u,c->palette,32u);
+            memcpy(ram+0x0700u+palette*32u,c->palette,32u);
+        }
+        if(c->has_vram)som_familiar_reapply(c,ram,vram,slot);
+        som_fam_put16(to+2,som_fam_u16(ram+0xE002)+24u);
+        som_fam_put16(to+4,som_fam_u16(ram+0xE004));
+        to[0x1F1]=0;
+        som_fam_put16(to+0x182,som_fam_u16(to+0x184));
         return slot;
     }
     return -1;

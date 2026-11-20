@@ -1068,6 +1068,8 @@ def load_rom_exits(host, cache=ROM_TABLE_CACHE):
 
 
 INN_RETRY_S = 300.0
+GUARD_CHECK_S = 1.0         # a guard is judged by the HP this long after it
+GUARD_MEMORY = 3            # guards remembered per enemy type
 HERB_RETRY_S = 5.0          # between Medical Herb attempts
 QUEST_TABLE_CACHE = Path.home() / ".local/state/flxtr/som-quest.json"
 
@@ -1160,6 +1162,15 @@ def direct_candy(link, raw, timeout=1.5):
         pass
     print("[candy] direct use not confirmed; using the ring", flush=True)
     return False
+
+
+def guard_failing(evade_weight, can_dodge, low_hp, recent):
+    """Evade instead of guarding, whatever the weights: below half HP, or
+    when most recent guards against this monster type still lost HP
+    (recent: [lost HP?], newest last)."""
+    if not evade_weight or not can_dodge:
+        return False
+    return bool(low_hp or (len(recent) >= 2 and sum(recent) * 3 >= len(recent) * 2))
 
 
 def poisoned(observation):
@@ -1402,6 +1413,8 @@ def main() -> int:
     # one missed save prompt left the hero waiting at full HP (2026-11-20).
     inn_disabled_until = 0.0
     herb_retry_at = 0.0
+    guard_watch = None          # (when, hp, enemy) of the last guard, for GUARD_CHECK_S
+    guard_results = {}          # enemy identity -> [lost HP?] of recent guards
     inn_lookalikes = set()
     surveyed_map, surveys_due = None, 0
     shop_disabled = False
@@ -2310,16 +2323,43 @@ def main() -> int:
                 # dropped when guarding is 0. Equal weights (the default 2/2
                 # never evaded once, 16 Nov): som_trials learns per enemy type
                 # which of the two costs less HP.
+                hero_hp_now = ((observation.get("party") or [{}])[0].get("hp")
+                               if isinstance(observation, dict) else None)
+                if guard_watch is not None and time.monotonic() - guard_watch[0] >= GUARD_CHECK_S:
+                    _, hp_then, foe_id = guard_watch
+                    guard_watch = None
+                    if isinstance(hp_then, int) and isinstance(hero_hp_now, int):
+                        record = guard_results.setdefault(foe_id, [])
+                        record.append(hero_hp_now < hp_then)
+                        del record[:-GUARD_MEMORY]
                 if link and decision.action == "block":
+                    foe = min((e for e in observation.get("enemy_slots", [])
+                               if e.get("active") and not e.get("familiar") and
+                               isinstance(e.get("x_px"), int)),
+                              key=lambda e: abs(e["x_px"] - (context.get("actor") or {})
+                                                .get("x_px", 0)), default=None)
+                    foe_id = (foe or {}).get("identity")
                     evade_now = style["evade"] > style["guard"]
-                    if (style["evade"] == style["guard"] and style["evade"] and
+                    if (abs(style["evade"] - style["guard"]) <= 1 and style["evade"] and
                             trials is not None and class_director.current in DODGE_CLASSES):
-                        foe = min((e for e in observation.get("enemy_slots", [])
-                                   if e.get("active") and not e.get("familiar") and
-                                   isinstance(e.get("x_px"), int)),
-                                  key=lambda e: abs(e["x_px"] - (context.get("actor") or {})
-                                                    .get("x_px", 0)), default=None)
-                        evade_now = bool(trials.value("evade", (foe or {}).get("identity")))
+                        evade_now = bool(trials.value("evade", foe_id))
+                    # Guarding that does not work: the guard weight (5) beat the
+                    # evade weight (4) so he never evaded once while taking 131
+                    # hits in 6 h (2026-11-20). Evade when guarding lost HP in
+                    # most recent tries against this monster, or below half HP.
+                    hero = (observation.get("party") or [{}])[0]
+                    low = bool(hero.get("max_hp")) and (hero.get("hp") or 0) * 2 < hero["max_hp"]
+                    failed = guard_results.get(foe_id, [])
+                    if guard_failing(style["evade"], class_director.current in DODGE_CLASSES,
+                                     low, failed):
+                        if not evade_now:
+                            print(f"[combat] guarding fails vs enemy "
+                                  f"{foe_id if foe_id is not None else '?'} "
+                                  f"({sum(failed)}/{len(failed)} lost HP{', low HP' if low else ''})"
+                                  f": evading", flush=True)
+                        evade_now = True
+                    if not evade_now:
+                        guard_watch = (time.monotonic(), hero_hp_now, foe_id)
                     if evade_now and class_director.current in DODGE_CLASSES:
                         try:
                             link.send_control("evade")

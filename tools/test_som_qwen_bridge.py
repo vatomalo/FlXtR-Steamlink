@@ -409,6 +409,17 @@ class TestRemoteLink(unittest.TestCase):
         nothing = Link(image(6, 40))
         self.assertFalse(bridge.direct_candy(nothing, image(6, 40), timeout=0.3))  # not confirmed
 
+    def test_evade_when_guarding_keeps_failing_or_hp_is_low(self):
+        import som_qwen_bridge as bridge
+        self.assertFalse(bridge.guard_failing(4, True, False, []))
+        self.assertFalse(bridge.guard_failing(4, True, False, [True]))          # one is chance
+        self.assertTrue(bridge.guard_failing(4, True, False, [True, True]))
+        self.assertTrue(bridge.guard_failing(4, True, False, [False, True, True]))
+        self.assertFalse(bridge.guard_failing(4, True, False, [True, False, False]))
+        self.assertTrue(bridge.guard_failing(4, True, True, []))                # low HP
+        self.assertFalse(bridge.guard_failing(0, True, True, [True, True]))     # evade off
+        self.assertFalse(bridge.guard_failing(4, False, True, [True, True]))    # no dodge
+
     def test_medical_herb_cures_poison_and_is_confirmed(self):
         import som_qwen_bridge as bridge
         def image(herbs, poisoned):

@@ -14,7 +14,8 @@ from dataclasses import dataclass
 WEAPON_TYPES = ("glove", "sword", "axe", "spear", "whip", "bow", "boomerang", "javelin")
 CLASSES = ("Swordsmanship", "Martial Arts", "Ninjutsu", "Magic", "Divine Arts",
            "Dark Arts", "Summoning", "Support & Dance", "Weapon Flow",
-           "Roguecraft", "Bushido", "Archery")
+           "Roguecraft", "Bushido", "Archery",
+           "Vampire Hunting", "Necromancy", "Artifice", "Psionics")
 STYLES_PER_CLASS = 3
 FAST, BALANCED, HEAVY = range(STYLES_PER_CLASS)
 DEFAULT_STYLE = BALANCED
@@ -49,6 +50,10 @@ STYLES = (
     _S("Dagger", 1, 0, 165, 65), _S("Cutlass", 1, 0, 100, 100), _S("Estoc", 1, 12, 85, 115),
     _S("Tanto", 1, 0, 160, 70), _S("Katana", 1, 0, 100, 100), _S("Dai Katana", 1, 20, 70, 135),
     _S("Shortbow", 5, 0, 150, 75), _S("Recurve Bow", 5, 0, 100, 100), _S("Longbow", 5, 0, 70, 135),
+    _S("Leather Lash", 4, 0, 150, 75), _S("Chain Whip", 4, 0, 100, 100), _S("Thorn Flail", 4, 0, 70, 135),
+    _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
+    _S("Tack Hammer", 2, 0, 145, 80), _S("Forge Hammer", 2, 0, 100, 100), _S("Sledge", 2, 14, 70, 135),
+    _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
 )
 del _S
 

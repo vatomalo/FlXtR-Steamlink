@@ -30,7 +30,7 @@ class TestWeaponStyles(unittest.TestCase):
         self.assertEqual([s.name for s in ws.class_styles(10)],
                          ["Tanto", "Katana", "Dai Katana"])
         self.assertEqual(ws.style(10).weapon, "sword")
-        self.assertIsNone(ws.style(12))
+        self.assertIsNone(ws.style(len(ws.CLASSES)))
         katana = ws.style(10)
         self.assertEqual(ws.attack(katana, 1, 3, 99), 3)
         self.assertEqual(ws.attack(katana, ws.MAX_LEVEL, 3, 99), 99)

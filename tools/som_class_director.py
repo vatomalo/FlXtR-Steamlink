@@ -27,14 +27,16 @@ import itertools
 
 NAMES = ("Swordsmanship", "Martial Arts", "Ninjutsu", "Magic", "Divine Arts",
          "Dark Arts", "Summoning", "Support & Dance", "Weapon Flow",
-         "Roguecraft", "Bushido", "Archery")
+         "Roguecraft", "Bushido", "Archery",
+         "Vampire Hunting", "Necromancy", "Artifice", "Psionics")
 
 # (B weapon, Y weapon) per class, as som_disc_weapons in som_ai_proxy.c.
 # Casters (Magic .. Support & Dance) hold no weapon: bare hands, B/Y cast.
 WEAPONS = (("sword", "axe"), ("glove", "spear"), ("sword", "boomerang"),
            ("glove", "glove"), ("glove", "glove"), ("glove", "glove"),
            ("glove", "glove"), ("glove", "glove"), ("sword", "spear"),
-           ("sword", "bow"), ("sword", "bow"), ("bow", "javelin"))
+           ("sword", "bow"), ("sword", "bow"), ("bow", "javelin"),
+           ("whip", "boomerang"), ("glove", "glove"), ("axe", "bow"), ("glove", "glove"))
 
 # Weapon Flow's third weapon (X; som_disc_third_weapon in som_disciplines.h).
 THIRD_WEAPONS = {8: "bow"}
@@ -48,12 +50,12 @@ TAIJUTSU_WEAPONS = ("glove", "sword")
 # the old one for a moment: no player pick is read from it meanwhile.
 ADOPT_SETTLE_S = 3.0
 SWORD_CLASSES = tuple(i for i, (b, _) in enumerate(WEAPONS) if b == "sword")
-DODGE_CLASSES = (0, 1, 2, 3, 9, 10, 11)       # som_disc_has_dodge (3: Blink step)
-ATTACK_MAGIC = (2, 3, 4, 5, 6, 7, 9, 11)      # classes with a hostile spell (som_magic.h)
+DODGE_CLASSES = (0, 1, 2, 3, 9, 10, 11, 12, 14)  # som_disc_has_dodge (3: Blink step)
+ATTACK_MAGIC = (2, 3, 4, 5, 6, 7, 9, 11, 13, 15)  # classes with a hostile spell (som_magic.h)
 # Classes whose X spells are self buffs worth casting as a fight starts:
 # Swordsmanship's sabers, Martial Arts' body buffs, Support & Dance.
 BUFF_CLASSES = (0, 1, 7)
-NO_MAGIC = (8, 10)                            # Weapon Flow, Bushido: X is not a spell
+NO_MAGIC = (8, 10, 12, 14)        # Weapon Flow, Bushido, Hunter, Artificer: X is not a spell
 HEALERS = (4, 7)                              # Cure Water in their spell list
 
 # Build -> class bonus (som_build.classify names).
@@ -90,6 +92,8 @@ LINES = {
     3: "Mana, burn bright!", 4: "Light, mend us!", 5: "Darkness, feed on them!",
     6: "Spirits, answer my call!", 7: "Dance with me!", 8: "Every blade, one flow!",
     9: "They won't see me coming.", 10: "One cut, one life.", 11: "Steady... loose!",
+    12: "The night is mine to hunt!", 13: "Rise and serve!", 14: "Built it myself!",
+    15: "Your mind is mine.",
 }
 
 # Hysteresis: situations change every fight, so a new class must beat the

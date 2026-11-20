@@ -69,6 +69,12 @@ static const SomWeaponStyle som_weapon_styles[SOM_STYLE_COUNT]={
     {"Tanto",1,0,160,70},{"Katana",1,0,100,100},{"Dai Katana",1,20,70,135},
     /* Archery: bow */
     {"Shortbow",5,0,150,75},{"Recurve Bow",5,0,100,100},{"Longbow",5,0,70,135},
+    /* Vampire Hunting: whip */
+    {"Leather Lash",4,0,150,75},{"Chain Whip",4,0,100,100},{"Thorn Flail",4,0,70,135},
+    /* Necromancy, Artifice, Psionics: bare hands / hammer / bare hands */
+    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
+    {"Tack Hammer",2,0,145,80},{"Forge Hammer",2,0,100,100},{"Sledge",2,14,70,135},
+    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
 };
 
 typedef struct {
@@ -148,10 +154,12 @@ static inline int som_style_in_cut(int dx,int dy,unsigned facing,int reach,int b
     if(side<0)side=-side;
     return bonus>0&&ahead>reach&&ahead<=reach+bonus&&side<=SOM_STYLE_CUT_SIDE_PX;
 }
-/* File line: "s1 <sel x12> <level xp> x36". */
+/* File line: "s2 <classes> <sel x classes> <level xp> x classes*3"; "s1"
+ * files are the 12-class layout (the classes added later start fresh). */
+#define SOM_STYLES_V1_CLASSES 12u
 static inline int som_styles_format(const SomStyles *s,char *out,size_t size){
     size_t n=0;
-    int w=snprintf(out,size,"s1");
+    int w=snprintf(out,size,"s2 %u",(unsigned)SOM_DISCIPLINE_COUNT);
     if(w<0||(size_t)w>=size)return 0;
     n=(size_t)w;
     for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++){
@@ -168,14 +176,21 @@ static inline int som_styles_format(const SomStyles *s,char *out,size_t size){
 }
 static inline int som_styles_parse(SomStyles *s,const char *text){
     SomStyles loaded;som_styles_init(&loaded);
-    if(!text||strncmp(text,"s1",2))return 0;
+    if(!text)return 0;
+    unsigned classes=0;
     const char *p=text+2;
-    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++){
+    if(!strncmp(text,"s1",2))classes=SOM_STYLES_V1_CLASSES;
+    else if(!strncmp(text,"s2",2)){
+        int used=0;
+        if(sscanf(p," %u%n",&classes,&used)!=1||!classes||classes>SOM_DISCIPLINE_COUNT)return 0;
+        p+=used;
+    }else return 0;
+    for(unsigned i=0;i<classes;i++){
         unsigned v;int used=0;
         if(sscanf(p," %u%n",&v,&used)!=1||v>=SOM_STYLES_PER_CLASS)return 0;
         loaded.selected[i]=(uint8_t)v;p+=used;
     }
-    for(unsigned i=0;i<SOM_STYLE_COUNT;i++){
+    for(unsigned i=0;i<classes*SOM_STYLES_PER_CLASS;i++){
         unsigned level;unsigned long xp;int used=0;
         if(sscanf(p," %u %lu%n",&level,&xp,&used)!=2||level<1u||level>SOM_STYLE_MAX_LEVEL)
             return 0;

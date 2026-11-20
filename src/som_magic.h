@@ -55,6 +55,14 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     {0xFF},
     /* Archery: wind and stone shots */
     {0x12, 0x13, 0x01, 0xFF},
+    /* Vampire Hunting: no magic, X is holy water (som_disc_x_role) */
+    {0xFF},
+    /* Necromancy: B Energy Absorb, Y Evil Gate; X raises the dead */
+    {0x08, 0x24, 0xFF},
+    /* Artifice: no magic, X is a bomb */
+    {0xFF},
+    /* Psionics: B Sleep Flower, Y Balloon; X takes over a mind */
+    {0x1E, 0x16, 0xFF},
 };
 
 /* Casters (Magic, Divine Arts, Dark Arts, Summoning, Support & Dance) trade
@@ -65,7 +73,8 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
 #define SOM_CASTER_LAST 7u
 #define SOM_CASTER_BUTTON_SPELLS 2u
 static inline int som_disc_caster(unsigned discipline) {
-    return discipline >= SOM_CASTER_FIRST && discipline <= SOM_CASTER_LAST;
+    return (discipline >= SOM_CASTER_FIRST && discipline <= SOM_CASTER_LAST) ||
+           discipline == 13u || discipline == 15u;     /* Necromancy, Psionics */
 }
 
 static inline const char *som_spell_label(unsigned spell) {

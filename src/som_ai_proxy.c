@@ -597,6 +597,10 @@ static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {1,5},   /* Roguecraft: sword, bow */
     {1,5},   /* Bushido: katana (sword), yumi (bow) */
     {5,7},   /* Archery: bow, javelin */
+    {4,6},   /* Vampire Hunting: whip, boomerang (the thrown cross) */
+    {0,0},   /* Necromancy: bare hands */
+    {2,5},   /* Artifice: hammer (axe), crossbow (bow) */
+    {0,0},   /* Psionics: bare hands */
 };
 /* Each class's weapons are real game weapons at a fixed forge grade (their
  * art and name), with stats set by the class, not by the grade (player's
@@ -620,6 +624,10 @@ static const SomClassArm som_class_arms[SOM_DISCIPLINE_COUNT][3]={
     {{2,100},{2, 95},{0xFF,0}},   /* Rogue: Kusanagi, Longbow */
     {{5,110},{6, 85},{0xFF,0}},   /* Samurai: Masamune, Wingbow */
     {{8,115},{8,110},{0xFF,0}},   /* Archer: Garuda Buster, Valkyrian */
+    {{5,110},{2,100},{0xFF,0}},   /* Hunter: Morning Star, Silver Boomerang */
+    {{4, 70},{4, 70},{0xFF,0}},   /* Necromancer: bare hands */
+    {{5,100},{3, 95},{0xFF,0}},   /* Artificer: Werebuster, Great Bow */
+    {{4, 70},{4, 70},{0xFF,0}},   /* Mentalist: bare hands */
 };
 /* The class's grade for weapon `type` (B, then Y, then X), else 0xFF. */
 static unsigned som_class_arm_slot(unsigned cls,unsigned type){
@@ -797,6 +805,41 @@ static int som_hundred_start(uint8_t *ram);
 #define SOM_VOLLEY_RANGE 128
 static unsigned long class_move_ready,backstab_until;
 static int som_class_move(uint8_t *ram);
+/* New classes' X (2026-11-20). Hunter: holy water, a flask that lands
+ * SOM_HOLY_AHEAD px ahead and burns for SOM_HOLY_FRAMES, hurting every
+ * monster on the fire each SOM_HOLY_TICK; L2+X Grand Cross hits every
+ * monster within SOM_CROSS_RANGE. Necromancer: raise the dead, a familiar
+ * cloned from a monster (the game's own clone_enemy) right after a kill.
+ * Artificer: a bomb set SOM_BOMB_AHEAD px ahead that goes off after
+ * SOM_BOMB_FUSE; L2+X lays a mine (up to SOM_MINES) that a monster sets
+ * off. Mentalist: the nearest monster fights for him for
+ * SOM_MIND_FRAMES (its slot becomes the familiar; then it is let go). */
+#define SOM_HOLY_AHEAD 40
+#define SOM_HOLY_FRAMES 90ul
+#define SOM_HOLY_TICK 15ul
+#define SOM_HOLY_REACH 24
+#define SOM_HOLY_COOLDOWN 240ul
+#define SOM_CROSS_RANGE 128
+#define SOM_CROSS_COOLDOWN 1200ul
+#define SOM_RAISE_WINDOW 600ul
+#define SOM_RAISE_COOLDOWN 900ul
+#define SOM_BOMB_AHEAD 24
+#define SOM_BOMB_FUSE 60ul
+#define SOM_BOMB_COOLDOWN 180ul
+#define SOM_MINES 3u
+#define SOM_MINE_TRIGGER 16
+#define SOM_MINE_COOLDOWN 120ul
+#define SOM_MIND_FRAMES 1200ul
+#define SOM_MIND_RANGE 96
+#define SOM_MIND_COOLDOWN 1800ul
+static int holy_x,holy_y;
+static unsigned long holy_until,x_move_ready,last_kill_frame,mind_until;
+static int bomb_x,bomb_y;static unsigned long bomb_at;
+static int mine_x[SOM_MINES],mine_y[SOM_MINES];static unsigned mine_map[SOM_MINES];
+static uint8_t mine_live[SOM_MINES];
+static uint8_t mind_palette[32];static int mind_slot=-1;
+static int som_class_x(uint8_t *ram);
+static void som_class_x_frame(uint8_t *ram);
 static void som_hundred_frame(uint8_t *ram);
 static void som_issen_cut(uint8_t *ram,int x,int y);
 /* Hold A (Circle) SOM_A_HOLD_FRAMES: Kawarimi. The tap's hop still fires on
@@ -1180,6 +1223,7 @@ static void som_perks_frame(uint8_t *ram){
             }
             monster_hit_frame[slot]=0;
         }
+        if(perk_monster_live[slot]&&!live&&(int)slot!=familiar.slot)last_kill_frame=frame_number;
         perk_monster_live[slot]=(uint8_t)live;
     }
     perk_hero_hp_prev=now_hp;
@@ -1507,6 +1551,12 @@ static void som_input_poll(void){
                 x_spell_blocked=1;
                 if(pressed&x_bit)som_flykick_start(wram);
             }
+        }else if(x_role>=SOM_X_HOLY_WATER){
+            /* Hunter, Necromancer, Artificer, Mentalist: X is the class move. */
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+                x_spell_blocked=1;
+                if(pressed&x_bit)som_class_x(wram);
+            }
         }else if(x_role==SOM_X_IAI){
             /* Bushido: release X for Iaijutsu, katana charge level 3; held
              * SOM_X_HOLD_FRAMES or longer, level 4. No spells. */
@@ -1541,7 +1591,8 @@ static void som_input_poll(void){
         /* L2+X: Whirlwind, Shadowstep or Volley. */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (disciplines.selected==SOM_DISC_SWORD||disciplines.selected==SOM_DISC_ROGUE||
-            disciplines.selected==SOM_DISC_ARCHER)&&
+            disciplines.selected==SOM_DISC_ARCHER||disciplines.selected==SOM_DISC_HUNTER||
+            disciplines.selected==SOM_DISC_ARTIFICER)&&
            (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
             x_spell_blocked=1;
             if(pressed&x_bit)som_class_move(wram);
@@ -1867,6 +1918,7 @@ static const char *summon_file=SOM_SUMMON_FILE;
 static const char *summon_anyone_file=SOM_SUMMON_ANYONE_FILE;
 static int som_summon_allowed(const uint8_t *ram){
     if(access(summon_anyone_file,F_OK)==0)return 1;
+    if(disciplines.selected==SOM_DISC_SUMMONING||disciplines.selected==SOM_DISC_NECRO)return 1;
     return ram&&som_familiar_summoner(ram+0xE000);
 }
 static int som_summon_boss(void);
@@ -2819,6 +2871,10 @@ static int som_kawarimi_check(uint8_t *ram){
  * Records the after-image trail. */
 static void som_hop_step(void){
     if(!backend_retro_get_memory_data)return;
+    if(holy_until||bomb_at||mind_until||mine_live[0]||mine_live[1]||mine_live[2]){
+        uint8_t *gear=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(gear)som_class_x_frame(gear);
+    }
     if(hundred_until){
         uint8_t *fists=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(fists)som_hundred_frame(fists);
@@ -2899,7 +2955,25 @@ static void som_class_damage(uint8_t *ram,unsigned slot,unsigned damage){
 static int som_class_move(uint8_t *ram){
     const unsigned d=disciplines.selected;
     if(!ram||evade_active||blink_active||hundred_until)return 0;
-    const char *name=d==SOM_DISC_SWORD?"Whirlwind":d==SOM_DISC_ROGUE?"Shadowstep":"Volley";
+    const char *name=d==SOM_DISC_SWORD?"Whirlwind":d==SOM_DISC_ROGUE?"Shadowstep":
+                     d==SOM_DISC_HUNTER?"Grand Cross":d==SOM_DISC_ARTIFICER?"Mine":"Volley";
+    if(d==SOM_DISC_ARTIFICER){                 /* a mine where he stands */
+        uint8_t *hero=ram+0xE000u;
+        unsigned free_slot=SOM_MINES;
+        for(unsigned i=0;i<SOM_MINES;i++)if(!mine_live[i]){free_slot=i;break;}
+        if(free_slot==SOM_MINES||frame_number<class_move_ready){
+            som_overlay_set(&overlay,free_slot==SOM_MINES?"^Mines|all set":"^Mine|not ready",
+                            SOM_MESSAGE_FRAMES/3u);
+            return 0;
+        }
+        mine_x[free_slot]=(int)som_bun_u16(hero+2);mine_y[free_slot]=(int)som_bun_u16(hero+4);
+        mine_map[free_slot]=som_bun_u16(ram+0xDC);mine_live[free_slot]=1;
+        class_move_ready=frame_number+SOM_MINE_COOLDOWN;
+        som_bun_boom(bunshin_booms,mine_x[free_slot],mine_y[free_slot],1,frame_number);
+        som_overlay_set(&overlay,"^Mine set",SOM_MESSAGE_FRAMES/3u);
+        fprintf(stderr,"[som-ai] MINE set at %d,%d\n",mine_x[free_slot],mine_y[free_slot]);
+        return 1;
+    }
     if(frame_number<class_move_ready){
         char text[40];snprintf(text,sizeof(text),"^%s|not ready",name);
         som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);return 0;
@@ -2919,6 +2993,21 @@ static int som_class_move(uint8_t *ram){
         static const int ring[4][2]={{-20,0},{20,0},{0,-20},{0,20}};
         for(unsigned k=0;k<4u;k++)som_bun_boom(bunshin_booms,hx+ring[k][0],hy+ring[k][1],1,frame_number);
         class_move_ready=frame_number+SOM_WHIRL_COOLDOWN;
+    }else if(d==SOM_DISC_HUNTER){              /* Grand Cross: all around */
+        for(unsigned slot=0;slot<3u;slot++){
+            if((int)slot==familiar.slot)continue;
+            const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+            if(!som_bun_monster_alive(m)||
+               !som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),hx,hy,
+                             SOM_CROSS_RANGE,SOM_CROSS_RANGE))continue;
+            som_class_damage(ram,slot,20u+3u*disciplines.level[SOM_DISC_HUNTER]);
+            hit++;
+        }
+        for(int k=-2;k<=2;k++){
+            som_bun_boom(bunshin_booms,hx+k*24,hy,0,frame_number);
+            if(k)som_bun_boom(bunshin_booms,hx,hy+k*24,0,frame_number);
+        }
+        class_move_ready=frame_number+SOM_CROSS_COOLDOWN;
     }else if(d==SOM_DISC_ROGUE){
         int best=-1;long best_d=0;
         for(unsigned slot=0;slot<3u;slot++){
@@ -3217,7 +3306,7 @@ static int style_swing_prev,style_cut_pending;
 static uint16_t style_cut_hp[3];
 static uint8_t style_cut_id[3];
 static void som_styles_save(void){
-    char line[600],temp[300];
+    char line[1400],temp[300];
     if(!som_styles_format(&styles,line,sizeof(line)))return;
     snprintf(temp,sizeof(temp),"%s.tmp",style_file);
     FILE *out=fopen(temp,"w");
@@ -3231,7 +3320,7 @@ static void som_styles_load(void){
     som_styles_init(&styles);
     FILE *in=fopen(style_file,"r");
     if(!in)return;
-    char line[600];
+    char line[1400];
     if(fgets(line,sizeof(line),in)&&!som_styles_parse(&styles,line)){
         som_styles_init(&styles);
         fprintf(stderr,"[som-ai] STYLES file unreadable; starting fresh\n");
@@ -5456,4 +5545,132 @@ RETRO_API void retro_run(void){
     }
     som_perf_frame_end(perf_t0,perf_core_us);
     frame_number++;
+}
+
+/* ---- New classes' X moves (see SOM_HOLY_AHEAD) ---------------------------- */
+static void som_ahead(const uint8_t *hero,int distance,int *x,int *y){
+    const unsigned facing=hero[0x010];
+    int dx=0,dy=0;
+    if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;else if(facing==0x01u)dy=1;else dy=-1;
+    *x=(int)som_bun_u16(hero+2)+dx*distance;*y=(int)som_bun_u16(hero+4)+dy*distance;
+}
+static void som_mind_release(uint8_t *ram){
+    if(mind_slot<0)return;
+    if(ram&&familiar.slot==mind_slot){
+        memcpy(ram+SOM_MONSTER_PALETTE+(unsigned)mind_slot*SOM_MONSTER_PALETTE_SIZE,mind_palette,
+               SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
+        familiar.slot=familiar.target=-1;familiar_carry.valid=0;
+        som_familiar_publish();
+        som_overlay_set(&overlay,"^The mind is free again",SOM_MESSAGE_FRAMES/2u);
+    }
+    fprintf(stderr,"[som-ai] MIND CONTROL ends (monster slot %d)\n",mind_slot+1);
+    mind_slot=-1;mind_until=0;
+}
+static int som_class_x(uint8_t *ram){
+    const unsigned d=disciplines.selected;
+    if(!ram||d>=SOM_DISCIPLINE_COUNT)return 0;
+    if(frame_number<x_move_ready){
+        som_overlay_set(&overlay,"^Not ready",SOM_MESSAGE_FRAMES/3u);return 0;
+    }
+    if(!som_jutsu_free(ram))return 0;
+    uint8_t *hero=ram+0xE000u;
+    if(d==SOM_DISC_HUNTER){
+        som_ahead(hero,SOM_HOLY_AHEAD,&holy_x,&holy_y);
+        holy_until=frame_number+SOM_HOLY_FRAMES;x_move_ready=frame_number+SOM_HOLY_COOLDOWN;
+        som_bun_boom(bunshin_booms,holy_x,holy_y,0,frame_number);
+        som_overlay_set(&overlay,"^Holy Water!",SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] HOLY WATER at %d,%d\n",holy_x,holy_y);
+        return 1;
+    }
+    if(d==SOM_DISC_ARTIFICER){
+        if(bomb_at){som_overlay_set(&overlay,"^Bomb|already set",SOM_MESSAGE_FRAMES/3u);return 0;}
+        som_ahead(hero,SOM_BOMB_AHEAD,&bomb_x,&bomb_y);
+        bomb_at=frame_number+SOM_BOMB_FUSE;x_move_ready=frame_number+SOM_BOMB_COOLDOWN;
+        som_bun_boom(bunshin_booms,bomb_x,bomb_y,1,frame_number);
+        som_overlay_set(&overlay,"^Bomb!|1 s fuse",SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] BOMB set at %d,%d\n",bomb_x,bomb_y);
+        return 1;
+    }
+    if(familiar.slot>=0||familiar_carry.valid){
+        som_overlay_set(&overlay,"^One ally at a time",SOM_MESSAGE_FRAMES/3u);return 0;
+    }
+    if(d==SOM_DISC_NECRO){
+        if(!last_kill_frame||frame_number-last_kill_frame>SOM_RAISE_WINDOW){
+            som_overlay_set(&overlay,"^Raise Dead|no fresh corpse",SOM_MESSAGE_FRAMES/3u);return 0;
+        }
+        familiar_pending=1;
+        x_move_ready=frame_number+SOM_RAISE_COOLDOWN;
+        som_overlay_set(&overlay,"^Rise!",SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] RAISE DEAD\n");
+        if(som_clone_enemy()){som_familiar_bind();return 1;}
+        if(clone_no_slot){clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;return 1;}
+        familiar_pending=0;
+        return 0;
+    }
+    if(d==SOM_DISC_PSIONICS){
+        const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+        int best=-1;long best_d=0;
+        for(unsigned slot=0;slot<3u;slot++){
+            const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+            if(!som_bun_monster_alive(m)||m[0x180]>=0x57u)continue;     /* no bosses */
+            const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
+            if(dist<=SOM_MIND_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
+        }
+        if(best<0){som_overlay_set(&overlay,"^Mind Control|no mind near",SOM_MESSAGE_FRAMES/3u);return 0;}
+        memcpy(mind_palette,ram+SOM_MONSTER_PALETTE+(unsigned)best*SOM_MONSTER_PALETTE_SIZE,
+               SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
+        familiar_pending=1;last_clone_target=best;
+        som_familiar_bind();
+        mind_slot=best;mind_until=frame_number+SOM_MIND_FRAMES;
+        x_move_ready=frame_number+SOM_MIND_COOLDOWN;
+        som_overlay_set(&overlay,"^Mind Control!|it fights for you",SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] MIND CONTROL: monster slot %d for %lu frames\n",best+1,SOM_MIND_FRAMES);
+        return 1;
+    }
+    return 0;
+}
+static void som_class_x_frame(uint8_t *ram){
+    const unsigned map=som_bun_u16(ram+0xDC);
+    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    if(holy_until){
+        if(frame_number>=holy_until||!field)holy_until=0;
+        else if(!((holy_until-frame_number)%SOM_HOLY_TICK)){
+            som_bun_boom(bunshin_booms,holy_x,holy_y,0,frame_number);
+            for(unsigned slot=0;slot<3u;slot++){
+                if((int)slot==familiar.slot)continue;
+                const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+                if(som_bun_monster_alive(m)&&
+                   som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),holy_x,holy_y,
+                                SOM_HOLY_REACH,SOM_HOLY_REACH))
+                    som_class_damage(ram,slot,5u+disciplines.level[SOM_DISC_HUNTER]);
+            }
+        }
+    }
+    if(bomb_at&&frame_number>=bomb_at){
+        bomb_at=0;
+        if(field){
+            const unsigned hit=som_bun_blast(ram,bomb_x,bomb_y,
+                                             18u+2u*disciplines.level[SOM_DISC_ARTIFICER],familiar.slot);
+            som_bun_boom(bunshin_booms,bomb_x,bomb_y,0,frame_number);
+            som_bun_boom(bunshin_booms,bomb_x-12,bomb_y-8,0,frame_number);
+            som_bun_boom(bunshin_booms,bomb_x+12,bomb_y+8,0,frame_number);
+            fprintf(stderr,"[som-ai] BOMB went off: %u monster(s)\n",hit);
+        }
+    }
+    for(unsigned i=0;i<SOM_MINES;i++){
+        if(!mine_live[i])continue;
+        if(mine_map[i]!=map){mine_live[i]=0;continue;}          /* left behind */
+        if(!field)continue;
+        if(som_bun_toucher(ram,mine_x[i],mine_y[i],SOM_MINE_TRIGGER,SOM_MINE_TRIGGER,
+                           familiar.slot)<0){
+            if(!(frame_number%60ul))som_bun_boom(bunshin_booms,mine_x[i],mine_y[i],1,frame_number);
+            continue;
+        }
+        const unsigned hit=som_bun_blast(ram,mine_x[i],mine_y[i],
+                                         24u+2u*disciplines.level[SOM_DISC_ARTIFICER],familiar.slot);
+        som_bun_boom(bunshin_booms,mine_x[i],mine_y[i],0,frame_number);
+        mine_live[i]=0;
+        fprintf(stderr,"[som-ai] MINE went off: %u monster(s)\n",hit);
+    }
+    if(mind_until&&(frame_number>=mind_until||familiar.slot!=mind_slot))som_mind_release(ram);
 }

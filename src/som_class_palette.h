@@ -21,6 +21,10 @@ enum SomPaletteProfile {
     SOM_PAL_DARK_CRIMSON,
     SOM_PAL_DANCER_ROSE,
     SOM_PAL_FLOW_TEAL,
+    SOM_PAL_HUNTER_LEATHER,
+    SOM_PAL_NECRO_BONE,
+    SOM_PAL_ARTIFICER_BRASS,
+    SOM_PAL_PSION_VIOLET,
     SOM_PAL_PROFILE_COUNT
 };
 
@@ -75,6 +79,22 @@ static inline uint16_t som_pal_color(uint16_t source, unsigned profile) {
         break;
     case SOM_PAL_DANCER_ROSE:           /* rose and blush */
         nr=lum;ng=lum*14u/31u;nb=lum*21u/31u;
+        break;
+    case SOM_PAL_HUNTER_LEATHER:        /* dark leather and crimson */
+        if(lum>20u){nr=lum*27u/31u;ng=lum*12u/31u;nb=lum*10u/31u;}
+        else {nr=lum*17u/31u;ng=lum*11u/31u;nb=lum*7u/31u;}
+        break;
+    case SOM_PAL_NECRO_BONE:            /* bone white and grave green */
+        if(lum>20u){nr=lum*27u/31u;ng=lum*28u/31u;nb=lum*22u/31u;}
+        else {nr=lum*9u/31u;ng=lum*15u/31u;nb=lum*10u/31u;}
+        break;
+    case SOM_PAL_ARTIFICER_BRASS:       /* brass and copper */
+        if(lum>20u){nr=lum;ng=lum*24u/31u;nb=lum*9u/31u;}
+        else {nr=lum*25u/31u;ng=lum*14u/31u;nb=lum*7u/31u;}
+        break;
+    case SOM_PAL_PSION_VIOLET:          /* pale violet and cyan */
+        if(lum>20u){nr=lum*20u/31u;ng=lum*27u/31u;nb=lum;}
+        else {nr=lum*19u/31u;ng=lum*9u/31u;nb=lum*27u/31u;}
         break;
     case SOM_PAL_FLOW_TEAL:             /* teal with silver */
         if(lum>22u){nr=lum*25u/31u;ng=lum*29u/31u;nb=lum*29u/31u;}

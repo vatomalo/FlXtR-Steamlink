@@ -580,3 +580,15 @@ plain row at class level 8, times the class's power share (`som_class_arms`).
 The pinned grade replaces whatever grade the weapon had (orb forging no longer changes
 what a class weapon hits for). Grass: the AI already takes the sword out to cut and puts
 the class weapon back after (`[grass] sword out`).
+
+### Four new classes (2026-11-20)
+
+| # | Class (title) | B / Y | X | L2 + X | A |
+|---|---|---|---|---|---|
+| 12 | Vampire Hunting (Hunter) | whip (Morning Star) / thrown cross (Silver Boomerang) | **Holy Water**: a flask 40 px ahead burns 1.5 s, every monster on it takes 5 + level every 15 frames (4 s) | **Grand Cross**: every monster within 128 px takes 20 + 3 x level (20 s) | Backflip (56 px) |
+| 13 | Necromancy (Necromancer) | casts Energy Absorb / Evil Gate (bare hands) | **Raise Dead**: within 10 s of a kill, a monster rises as his familiar (15 s) | - | native |
+| 14 | Artifice (Artificer) | hammer (Werebuster) / crossbow (Great Bow) | **Bomb**: set 24 px ahead, goes off after 1 s (18 + 2 x level, blast box) (3 s) | **Mine**: up to 3 where he stands, a monster stepping near sets one off (24 + 2 x level) | Evade |
+| 15 | Psionics (Mentalist) | casts Sleep Flower / Balloon (bare hands) | **Mind Control**: the nearest monster within 96 px (no bosses) fights for him for 20 s, then is let go (30 s) | - | native |
+
+Saved data: progress records and style files written with 12 classes still load (the new
+classes start at level 1); the style file is now `s2 <classes> ...`.

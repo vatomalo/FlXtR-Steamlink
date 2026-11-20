@@ -1579,6 +1579,77 @@ int main(void){
             foe[0]=0;foe[0x1F1]=0;hundred_ready=0;
             disciplines.selected=keep;
         }
+        /* Records written with 12 classes still load: the new ones start at
+         * level 1 (progress "d" lines, styles "s1" lines). */
+        {
+            SomProgress p;memset(&p,0,sizeof(p));
+            for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++)p.level[i]=(uint16_t)(i+2u);
+            p.selected=SOM_DISCIPLINE_NONE;
+            char text[SOM_PROG_TEXT_MAX];size_t n=som_prog_format(&p,text,sizeof(text));
+            assert(n);
+            char old[SOM_PROG_TEXT_MAX];size_t m=0;
+            for(const char *line=text;*line;){
+                const char *end=strchr(line,'\n');const size_t len=(size_t)(end-line)+1u;
+                unsigned i=0;
+                const int newer=sscanf(line,"d %u",&i)==1&&i>=12u;
+                if(!newer&&strncmp(line,"sum ",4)){memcpy(old+m,line,len);m+=len;}
+                line=end+1;
+            }
+            m+=(size_t)snprintf(old+m,sizeof(old)-m,"sum %016llx\n",
+                                (unsigned long long)som_prog_hash((const uint8_t*)old,m));
+            SomProgress q;
+            assert(som_prog_parse(old,m,&q)==SOM_PROG_OK);
+            assert(q.level[11]==13u&&q.level[12]==1u&&q.level[15]==1u);
+            SomStyles st;
+            char line[1400];
+            strcpy(line,"s1");
+            for(unsigned i=0;i<12u;i++)strcat(line," 2");
+            for(unsigned i=0;i<36u;i++)strcat(line," 3 7");
+            assert(som_styles_parse(&st,line)&&st.selected[11]==2u&&st.level[35]==3u);
+            assert(st.selected[12]==SOM_STYLE_DEFAULT&&st.level[36]==1u);
+            assert(som_styles_format(&st,line,sizeof(line)));
+            SomStyles again;assert(som_styles_parse(&again,line)&&!memcmp(&again,&st,sizeof(st)));
+        }
+        /* Hunter X: holy water burns what stands in it; Artificer X: a bomb
+         * goes off after its fuse; L2+X: a mine a monster sets off;
+         * Mentalist X: the nearest monster becomes the familiar, then is
+         * let go. */
+        {
+            const uint8_t keep=disciplines.selected;
+            const uint16_t x=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;
+            foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x1F1]=0;foe[0x182]=50;
+            foe[2]=240;foe[3]=0;foe[4]=200;foe[5]=0;                   /* 40 px ahead */
+            disciplines.selected=SOM_DISC_HUNTER;
+            mocked_buttons=x;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(holy_until);
+            for(unsigned f=0;f<SOM_HOLY_FRAMES+2u;f++){som_hop_step();frame_number++;}
+            assert(foe[0x1F1]>=(SOM_HOLY_FRAMES/SOM_HOLY_TICK-1u)*(5u+disciplines.level[SOM_DISC_HUNTER]));
+            foe[0x1F1]=0;x_move_ready=0;
+            disciplines.selected=SOM_DISC_ARTIFICER;
+            foe[2]=224;                                                 /* 24 px ahead */
+            mocked_buttons=x;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(bomb_at&&foe[0x1F1]==0);
+            for(unsigned f=0;f<SOM_BOMB_FUSE+2u;f++){som_hop_step();frame_number++;}
+            assert(!bomb_at&&foe[0x1F1]==18u+2u*disciplines.level[SOM_DISC_ARTIFICER]);
+            foe[0x1F1]=0;
+            mocked_buttons=(uint16_t)(x|(1u<<RETRO_DEVICE_ID_JOYPAD_L2));som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(mine_live[0]);
+            foe[2]=200;                                                 /* steps on it */
+            som_hop_step();frame_number++;
+            assert(!mine_live[0]&&foe[0x1F1]==24u+2u*disciplines.level[SOM_DISC_ARTIFICER]);
+            foe[0x1F1]=0;class_move_ready=0;x_move_ready=0;
+            disciplines.selected=SOM_DISC_PSIONICS;
+            foe[2]=240;
+            mocked_buttons=x;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(familiar.slot==0&&mind_slot==0&&mind_until);
+            frame_number=mind_until;som_hop_step();
+            assert(familiar.slot<0&&mind_slot<0&&!familiar_carry.valid);
+            foe[0]=0;foe[0x1F1]=0;x_move_ready=0;
+            disciplines.selected=keep;
+        }
         /* L2+X Whirlwind (swordsman) cuts what is around him; Volley
          * (archer) hits what is ahead in the cone, not what is behind. */
         {
@@ -1827,7 +1898,7 @@ int main(void){
         }
         /* AI commands: class choice and casts within the class. */
         assert(som_handle_command("class_3")&&disciplines.selected==3);
-        assert(!som_handle_command("class_12")&&!som_handle_command("class_x"));
+        assert(!som_handle_command("class_16")&&!som_handle_command("class_x"));
         assert(som_handle_command("class_0")&&disciplines.selected==0);
 
         /* X/Triangle: Fire Ball at the nearest live, on-screen monster. */

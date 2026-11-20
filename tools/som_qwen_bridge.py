@@ -110,7 +110,7 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "equip_bow", "equip_boomerang", "equip_javelin",
                     "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
                     "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap"} | \
-    {f"class_{n}" for n in range(12)} | {f"special_{n}" for n in range(1, 9)}
+    {f"class_{n}" for n in range(16)} | {f"special_{n}" for n in range(1, 9)}
 # Blink to a tile (proxy som_blink_start checks range and open ground).
 BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")
 # A Fuma throw's hit plus the clone's smoke take ~40 frames: swap then.

@@ -26,6 +26,7 @@
 #define SOM_PROG_MATCH_BYTES 0x40u       /* SRAM slot+4 vs WRAM 7E:CC01 */
 #define SOM_PROG_TEXT_MAX 1024u
 #define SOM_PROG_TRAILER_MAGIC "SOMPROG2"
+#define SOM_PROG_V1_CLASSES 12u     /* classes a record had before 2026-11-20 */
 
 typedef struct {
     uint64_t owner;          /* fingerprint of the save block, 0 = none yet */
@@ -128,7 +129,12 @@ static inline int som_prog_parse(const char *text,size_t len,SomProgress *p){
     }
     if((seen&31)!=31||slot>SOM_PROG_SLOTS||
        (selected>=SOM_DISCIPLINE_COUNT&&selected!=SOM_DISCIPLINE_NONE))return SOM_PROG_CORRUPT;
-    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++)if(!q.level[i])return SOM_PROG_CORRUPT;
+    /* Records from before a class was added lack it: it starts at level 1. */
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++)
+        if(!q.level[i]){
+            if(i<SOM_PROG_V1_CLASSES)return SOM_PROG_CORRUPT;
+            q.level[i]=1u;
+        }
     q.owner=owner;q.slot=slot;q.rom=rom;q.selected=(uint8_t)selected;
     *p=q;
     return SOM_PROG_OK;

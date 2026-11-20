@@ -11,19 +11,28 @@
 #include "som_overlay.h"
 #include "som_class_palette.h"
 
-#define SOM_DISCIPLINE_COUNT 12u
+#define SOM_DISCIPLINE_COUNT 16u
 #define SOM_DISCIPLINE_NONE 255u
 static const char *const som_discipline_names[SOM_DISCIPLINE_COUNT]={
     "Swordsmanship","Martial Arts","Ninjutsu","Magic","Divine Arts",
     "Dark Arts","Summoning","Support & Dance","Weapon Flow",
-    "Roguecraft","Bushido","Archery"
+    "Roguecraft","Bushido","Archery",
+    "Vampire Hunting","Necromancy","Artifice","Psionics"
 };
+/* The classes added 2026-11-20 (player's ideas): a whip-and-cross vampire
+ * hunter, a corpse-raising necromancer, a bomb-and-mine artificer and a
+ * mind-controlling mentalist. */
+#define SOM_DISC_HUNTER 12u
+#define SOM_DISC_NECRO 13u
+#define SOM_DISC_ARTIFICER 14u
+#define SOM_DISC_PSIONICS 15u
 /* Who gets the dodge roll (the game's somersault; planned, see
  * docs/SOM-DISCIPLINES-CONTROLS.md): swordsman, monk, ninja, rogue,
  * samurai and archer only. */
 static inline int som_disc_has_dodge(unsigned discipline){
     switch(discipline){
-    case 0: case 1: case 2: case 3: case 9: case 10: case 11: return 1;   /* 3: Blink step */
+    case 0: case 1: case 2: case 3: case 9: case 10: case 11: case 12: case 14:
+        return 1;                                   /* 3: Blink step */
     default: return 0;
     }
 }
@@ -33,7 +42,8 @@ static inline int som_disc_has_dodge(unsigned discipline){
  * per SOM_IAI_COOLDOWN_FRAMES; Martial Arts (monk): X is the flying kick,
  * a run and a kick (som_ai_proxy.c som_flykick_start); Weapon Flow (weaponsmaster) has no magic:
  * X attacks with a third weapon, som_disc_third_weapon. */
-enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON, SOM_X_FLYING_KICK};
+enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON, SOM_X_FLYING_KICK,
+      SOM_X_HOLY_WATER, SOM_X_RAISE_DEAD, SOM_X_BOMB, SOM_X_MIND_CONTROL};
 #define SOM_DISC_MARTIAL_ARTS 1u
 #define SOM_DISC_WEAPON_FLOW 8u
 #define SOM_DISC_BUSHIDO 10u
@@ -42,7 +52,9 @@ enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON, SOM_X_FLYING_KICK};
 #define SOM_IAI_COOLDOWN_FRAMES 180ul        /* 3 s */
 #define SOM_NO_WEAPON 0xFFu
 static inline unsigned som_disc_x_role(unsigned discipline){
-    return discipline==SOM_DISC_BUSHIDO?SOM_X_IAI:
+    return discipline==12u?SOM_X_HOLY_WATER:discipline==13u?SOM_X_RAISE_DEAD:
+           discipline==14u?SOM_X_BOMB:discipline==15u?SOM_X_MIND_CONTROL:
+           discipline==SOM_DISC_BUSHIDO?SOM_X_IAI:
            discipline==SOM_DISC_MARTIAL_ARTS?SOM_X_FLYING_KICK:
            discipline==SOM_DISC_WEAPON_FLOW?SOM_X_THIRD_WEAPON:SOM_X_SPELLS;
 }
@@ -85,6 +97,8 @@ static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
     case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
     case 2: d.speed=3u;d.frames=16u;d.name="Evade";break;                 /* 48 px */
     case 3: d.speed=8u;d.frames=6u;d.name="Blink step";break;            /* mage: 48 px, hidden */
+    case 12: d.speed=4u;d.frames=14u;d.name="Backflip";break;            /* hunter: 56 px back */
+    case 14: d.speed=3u;d.frames=16u;d.name="Evade";break;               /* artificer: 48 px */
     default:break;
     }
     return d;
@@ -113,13 +127,18 @@ static inline unsigned som_disc_visual_profile(const SomDisciplines *d){
     case 9: return SOM_PAL_ROGUE_SHADOW;
     case 10: return SOM_PAL_SAMURAI_INDIGO;
     case 11: return SOM_PAL_ARCHER_FOREST;
+    case 12: return SOM_PAL_HUNTER_LEATHER;
+    case 13: return SOM_PAL_NECRO_BONE;
+    case 14: return SOM_PAL_ARTIFICER_BRASS;
+    case 15: return SOM_PAL_PSION_VIOLET;
     default:return SOM_PAL_ORIGINAL;
     }
 }
 /* Short class title shown under the hero on the field; NULL with no class. */
 static const char *const som_discipline_titles[SOM_DISCIPLINE_COUNT]={
     "Swordsman","Monk","Ninja","Mage","Cleric","Warlock",
-    "Summoner","Dancer","Weaponmaster","Rogue","Samurai","Archer"
+    "Summoner","Dancer","Weaponmaster","Rogue","Samurai","Archer",
+    "Hunter","Necromancer","Artificer","Mentalist"
 };
 static inline const char *som_disc_title(const SomDisciplines *d){
     return d&&d->selected<SOM_DISCIPLINE_COUNT?som_discipline_titles[d->selected]:NULL;

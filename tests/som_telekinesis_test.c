@@ -17,7 +17,7 @@ static void setup(void){
     /* Flat, walkable tile attributes are all zero. */
 }
 static void chest(unsigned slot,unsigned x,unsigned y){
-    uint8_t *o=actor(slot);o[0]=1;o[0x180u]=0xA0u;
+    uint8_t *o=actor(slot);o[0]=1;o[0x180u]=SOM_TK_CHEST_ID;
     o[0x181u]=3u;o[0x1B1u]=0x80u;o[0x1FBu]=0x10u;
     put16(0xE000u+0x200u*slot+2u,x);
     put16(0xE000u+0x200u*slot+4u,y);
@@ -38,14 +38,14 @@ int main(void){
     }
     assert(completed&&t.slot==-1);
     assert(som_bun_u16(actor(4)+2u)>=172u);
-    assert(actor(4)[0x181u]==3u&&actor(4)[0x1B1u]==0x80u);
+    assert(actor(4)[0x180u]==SOM_TK_CHEST_ID&&actor(4)[0x181u]==3u);
     assert(actor(4)[0x1FBu]==0x10u);
     assert(som_bun_u16(actor(3)+2u)==198u);
 
-    /* Native opened chests cannot be selected, and actor identity is checked. */
-    setup();chest(4,120u,100u);actor(4)[0x181u]=0xFFu;
+    /* Removed/defeated chest actors cannot be selected; identity is checked. */
+    setup();chest(4,120u,100u);actor(4)[0x191u]=0x80u;
     assert(!som_tk_begin(&t,ram,300u));
-    actor(4)[0x181u]=0;
+    actor(4)[0x191u]=0;
     assert(som_tk_begin(&t,ram,300u));
     actor(4)[0x180u]=0xB0u;
     assert(som_tk_step(&t,ram,301u)==-1&&t.slot==-1);

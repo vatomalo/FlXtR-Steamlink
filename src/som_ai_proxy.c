@@ -718,7 +718,7 @@ static void som_next_spell(void){
 static unsigned seal_count;
 static int seal_mode;
 static int special_from_ai;           /* special_<n> command while the AI plays */
-/* R1+A evade: the hero plays the game's own back-roll pose 0x8D (rolls
+/* A evade: the hero plays the game's own back-roll pose 0x8D (rolls
  * 55 px away from the facing, 65 frames; som-decomp hero-poses.md 1-3:
  * pose = +0x1C 0x40, +0x11 code, +0x42 busy, as ACTOR_ANIM does) and is
  * untouchable meanwhile: status 0x0400 (+0x191 bit 2), "no hit is
@@ -869,7 +869,7 @@ static unsigned long a_press_frame,a_kawarimi_since;
 static int a_hold_done=1,a_kawarimi_pending;
 static void som_bunshin_frame(uint8_t *ram);
 static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y);
-/* R1+A bash (swordsman): the game's own run for up to SOM_BASH_LUNGE_FRAMES
+/* R2+A bash (swordsman): the game's own run for up to SOM_BASH_LUNGE_FRAMES
  * (A held: 3 px per frame, stopped by walls, hero-movement.md 4.1), then one
  * frame with nothing pressed (A released), then the game's own sword swing
  * (B) at a full gauge. Only the pad the game sees is changed; R2 (block),

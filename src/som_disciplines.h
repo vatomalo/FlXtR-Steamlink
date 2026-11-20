@@ -84,6 +84,12 @@ static inline int som_weapon_long_range(unsigned weapon){return weapon>=4u&&weap
 static inline int som_weapon_short_range(unsigned weapon){return weapon<4u;}
 /* cartwheel: the game's own cartwheel, its miss reaction (pose 0x93, 25 px),
  * on combat maps; speed/frames are the hop used where the game refuses it. */
+/* cartwheel: the game reaction (E1E5) that plays the dodge natively, 0 =
+ * none: 0x13 the miss reaction's cartwheel (pose 0x93), 0x0D the roll of a
+ * knock-down (pose 0x8D, "rolling over and getting up", som-decomp
+ * hero-poses.md 3), used as Ukemi. */
+#define SOM_REACT_CARTWHEEL 0x13
+#define SOM_REACT_UKEMI 0x0D
 typedef struct { unsigned speed, frames; int forward; const char *name; int cartwheel; } SomDodge;
 #define SOM_DODGE_GRACE 8u                 /* untouchable frames after the move */
 #define SOM_KAWARIMI_NAME "Kawarimi no Jutsu"
@@ -91,11 +97,11 @@ static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
     SomDodge d={0u,0u,0,"",0};
     (void)weapon;
     switch(discipline){
-    case 10: d.speed=3u;d.frames=16u;d.name="Evade";break;               /* 48 px roll */
+    case 2: case 10:                   /* ninja, samurai: Ukemi, a forward roll, else 54 px */
+        d.speed=3u;d.frames=18u;d.name="Ukemi";d.forward=1;d.cartwheel=SOM_REACT_UKEMI;break;
     case 0: case 1: case 9:            /* swordsman, monk, rogue: cartwheel, else 64 px */
-        d.speed=4u;d.frames=16u;d.name="Cartwheel";d.cartwheel=1;break;
+        d.speed=4u;d.frames=16u;d.name="Cartwheel";d.cartwheel=SOM_REACT_CARTWHEEL;break;
     case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
-    case 2: d.speed=3u;d.frames=16u;d.name="Evade";break;                 /* 48 px */
     case 3: d.speed=8u;d.frames=6u;d.name="Blink step";break;            /* mage: 48 px, hidden */
     case 12: d.speed=4u;d.frames=14u;d.name="Backflip";break;            /* hunter: 56 px back */
     case 14: d.speed=3u;d.frames=16u;d.name="Evade";break;               /* artificer: 48 px */

@@ -2707,15 +2707,21 @@ static int som_clone_jutsu(uint8_t *ram,const char *jutsu){
 #define SOM_CARTWHEEL_CHECK 8u               /* frames to see the pose start */
 static int cartwheel_native;
 static unsigned cartwheel_fallback;          /* hop frames if the game refuses */
+/* Which native dodge plays (its reaction code; pose = code | 0x80), and
+ * the facing to give back after a Ukemi: the game's roll travels away from
+ * the facing, so a forward Ukemi turns him round for the roll. */
+static unsigned native_code;
+static int native_restore_facing=-1;
+#define SOM_UKEMI_FRAMES 70u                 /* 65 of pose + tick latency */
 /* Asks the game for its cartwheel toward (dx, dy): it goes away from the
  * facing, so a sideways one turns the hero to face the other way first. */
-static int som_cartwheel_request(uint8_t *ram,int dx,int dy){
+static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
     uint8_t *hero=ram+0xE000u;
     if(!(ram[0xED]&0x80u)||hero[0x1E5]!=0xFFu||hero[0x01C]==0x40u)return 0;
     if(som_word(hero+0x190)&0xC570u)return 0;
     if(dx)hero[0x010]=dx>0?0x82u:0x02u;
     else if(dy)hero[0x010]=dy>0?0x01u:0x00u;
-    hero[0x1E5]=SOM_CARTWHEEL_REACTION;
+    hero[0x1E5]=(uint8_t)code;
     return 1;
 }
 /* The camera follows a dodge. The game scrolls only by the hero's own
@@ -2771,10 +2777,15 @@ static int som_evade_start(uint8_t *ram){
     const unsigned move=dodge.frames+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
     hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
     evade_frames=move+SOM_DODGE_GRACE;
-    cartwheel_native=dodge.cartwheel&&som_cartwheel_request(ram,dx,dy);
+    const unsigned facing_before=hero[0x010];
+    cartwheel_native=dodge.cartwheel&&som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
+    native_restore_facing=-1;
     if(cartwheel_native){
+        native_code=(unsigned)dodge.cartwheel;
         cartwheel_fallback=move;hop_frames_left=0;
-        evade_frames=SOM_CARTWHEEL_FRAMES+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES)+SOM_DODGE_GRACE;
+        evade_frames=(native_code==SOM_REACT_UKEMI?SOM_UKEMI_FRAMES:SOM_CARTWHEEL_FRAMES)+
+                     (unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES)+SOM_DODGE_GRACE;
+        if(native_code==SOM_REACT_UKEMI)native_restore_facing=(int)facing_before;
     }
     hero[0x006]=hero[0x007]=0;
     evade_hp=som_word(hero+0x182);
@@ -2785,11 +2796,12 @@ static int som_evade_start(uint8_t *ram){
         hero[0x0E]|=0x80u;
         som_bun_boom(bunshin_booms,(int)som_bun_u16(hero+2),(int)som_bun_u16(hero+4),1,frame_number);
     }
-    som_overlay_set(&overlay,cartwheel_native?"^Cartwheel":evade_blink?"^Blink step":"^Evade",
-                    SOM_MESSAGE_FRAMES/2u);
+    char dodge_text[32];snprintf(dodge_text,sizeof(dodge_text),"^%s",
+                                 evade_blink?"Blink step":dodge.name);
+    som_overlay_set(&overlay,dodge_text,SOM_MESSAGE_FRAMES/2u);
     if(cartwheel_native)
-        fprintf(stderr,"[som-ai] EVADE Cartwheel as %s: the game's own (pose 0x93) toward %d,%d\n",
-                som_discipline_names[disciplines.selected],dx,dy);
+        fprintf(stderr,"[som-ai] EVADE %s as %s: the game's own (pose %02x) toward %d,%d\n",dodge.name,
+                som_discipline_names[disciplines.selected],0x80u|native_code,dx,dy);
     else fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
                  dodge.name,som_discipline_names[disciplines.selected],hop_dx,hop_dy,move);
     return 1;
@@ -2902,11 +2914,12 @@ static void som_hop_step(void){
     int x=(int)som_bun_u16(hero+2),y=(int)som_bun_u16(hero+4);
     const unsigned slot=(unsigned)(frame_number%SOM_TRAIL_LENGTH);
     if(cartwheel_native&&cartwheel_fallback&&frame_number-evade_started>=SOM_CARTWHEEL_CHECK){
-        if(hero[0x01C]!=0x40u||hero[0x011]!=SOM_CARTWHEEL_POSE){     /* refused or cut */
-            if(hero[0x1E5]==SOM_CARTWHEEL_REACTION)hero[0x1E5]=0xFFu;
+        if(hero[0x01C]!=0x40u||hero[0x011]!=(0x80u|native_code)){   /* refused or cut */
+            if(hero[0x1E5]==native_code)hero[0x1E5]=0xFFu;
+            if(native_restore_facing>=0){hero[0x010]=(uint8_t)native_restore_facing;native_restore_facing=-1;}
             cartwheel_native=0;hop_frames_left=cartwheel_fallback;
             evade_frames=(unsigned)(frame_number-evade_started)+cartwheel_fallback+SOM_DODGE_GRACE;
-            fprintf(stderr,"[som-ai] EVADE cartwheel did not start (pose %02x/%02x): hop\n",
+            fprintf(stderr,"[som-ai] EVADE native dodge did not start (pose %02x/%02x): hop\n",
                     hero[0x01C],hero[0x011]);
         }else cartwheel_fallback=0;
     }
@@ -3144,6 +3157,7 @@ static void som_evade_tick(void){
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
     som_evade_blink_end(ram);
+    if(native_restore_facing>=0){ram[0xE010]=(uint8_t)native_restore_facing;native_restore_facing=-1;}
     evade_active=0;hop_frames_left=0;cartwheel_native=0;issen_active=0;
 }
 /* After-images of the dodge, 4 and 8 frames behind, on even frames only

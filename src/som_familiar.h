@@ -245,6 +245,14 @@ static inline int som_familiar_restore(SomFamiliarCarry *c,uint8_t *ram,uint8_t 
         const unsigned palette=(to[0x8B]>>1)&7u;
         if(c->has_vram){
             if(!vram||!dst_base||palette<5u||palette>7u)continue;
+            /* Another actor already uses this palette: don't recolour it. */
+            int busy=0;
+            for(unsigned actor=0;actor<12u;actor++){
+                if(actor==(unsigned)slot+3u)continue;
+                const uint8_t *other=ram+0xE000u+actor*0x200u;
+                if(other[0]==1u&&((other[0x8B]>>1)&7u)==palette){busy=1;break;}
+            }
+            if(busy)continue;
             const int visual_shift=(int)dst_base-(int)src_base;
             const int capture_shift=(int)dst_base-(int)c->captured_base;
             int valid=1;

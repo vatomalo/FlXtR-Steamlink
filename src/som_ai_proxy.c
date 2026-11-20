@@ -1436,7 +1436,8 @@ static void som_input_poll(void){
         if(((current&attack)&&!(last_physical_buttons&attack))||
            ((current&secondary)&&!(last_physical_buttons&secondary)&&!(current&l2))){
             /* Modifier specials have their own charge, not basic hits. */
-            if(!(current&(r2|l2))&&!som_manual_disciplines&&!ring_ai_enabled&&!bash_stage)
+            if(!(current&(r2|l2|(1u<<RETRO_DEVICE_ID_JOYPAD_L3)))&&
+               !som_manual_disciplines&&!ring_ai_enabled&&!bash_stage)
                 som_combo_swing((current&secondary)&&!(last_physical_buttons&secondary)?1u:0u);
             combo_hold_start=frame_number;combo_hold_tried=0;
         }
@@ -1551,7 +1552,7 @@ static void som_input_poll(void){
         if(!(current&b_bit))taijutsu_want=SOM_NO_WEAPON;
         /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
         const uint16_t x_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
-        if((current&x_bit)&&(current&l2_bit))x_l2_chord=1;
+        if((current&x_bit)&&(current&(l2_bit|l3_bit)))x_l2_chord=1;
         /* A: evade / jutsu for the disciplines with a dodge; the game's A
          * dash is gone for them until dash is re-added. Other classes keep
          * the native A. Field play only (menus keep A as cancel). */
@@ -1597,7 +1598,8 @@ static void som_input_poll(void){
         /* Combo finisher: hold B or Y with a chain level ready. That button's
          * weapon charges straight to the level (capped at what it learned)
          * once the gauge is back, then fires as the game's own power attack. */
-        if(wram&&combo_input_held&&!(current&(l2_bit|r2))&&!special_stage&&!special_suppress&&
+        if(wram&&combo_input_held&&!(current&(l2_bit|r2|l3_bit))&&
+           !special_stage&&!special_suppress&&
            !ring_ai_enabled&&!som_manual_disciplines&&!bash_stage&&!combo_hold_tried&&
            disciplines.selected<SOM_DISCIPLINE_COUNT&&som_combo_effective_level()&&
            frame_number-combo_hold_start>=SOM_COMBO_HOLD_FRAMES&&

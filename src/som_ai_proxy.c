@@ -1159,7 +1159,7 @@ static void som_perk_hit(uint8_t *ram,unsigned slot,unsigned drop,unsigned hp_af
 /* The guard is up: the AI's block action, or the player holding R. */
 static int som_guarding(void){
     return (armed&&active_action==SOM_ACT_BLOCK)||
-           (!ring_ai_enabled&&(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R)));
+           (!ring_ai_enabled&&(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R2)));
 }
 /* After each frame: Uncanny Dodge (the first hit of a fight is cut) and
  * Tiger Drop (a hit landing on the guard is countered). */
@@ -1283,6 +1283,21 @@ static void som_net_pad_frame(void){
     }
     net_pad_was_active=active;
 }
+/* Field-only input translation; never affect original menus or AI pad.
+ * Native R becomes physical R2 guard, L1 is exclusive lock-on, R1 cycles
+ * styles, L3+Y/X opens the native ring, L3+B cycles the old style shortcut. */
+static inline uint16_t som_manual_pad_layout(uint16_t raw){
+    const uint16_t r=1u<<RETRO_DEVICE_ID_JOYPAD_R,r2=1u<<RETRO_DEVICE_ID_JOYPAD_R2;
+    const uint16_t l=1u<<RETRO_DEVICE_ID_JOYPAD_L,l2=1u<<RETRO_DEVICE_ID_JOYPAD_L2;
+    const uint16_t l3=1u<<RETRO_DEVICE_ID_JOYPAD_L3;
+    const uint16_t b=1u<<RETRO_DEVICE_ID_JOYPAD_B;
+    const uint16_t y=1u<<RETRO_DEVICE_ID_JOYPAD_Y,x=1u<<RETRO_DEVICE_ID_JOYPAD_X;
+    uint16_t native=(uint16_t)(raw&~(r|r2|l|l3));
+    if(raw&r2)native|=r;
+    if((raw&l3)&&(raw&(x|y)))native|=l2;
+    if((raw&l2)&&(raw&(b|y)))native&=(uint16_t)~l2;
+    return native;
+}
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
@@ -1357,6 +1372,25 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         else if(id==RETRO_DEVICE_ID_JOYPAD_Y)actual=0;
         else if(id==RETRO_DEVICE_ID_JOYPAD_B)actual=1;
     }
+    if(port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0&&
+       on_turbo&&!ring_ai_enabled&&!som_manual_disciplines&&som_y_field_play()){
+        if(bitmask)actual=(int16_t)som_manual_pad_layout((uint16_t)actual);
+        else if(id==RETRO_DEVICE_ID_JOYPAD_R||id==RETRO_DEVICE_ID_JOYPAD_R2||
+                id==RETRO_DEVICE_ID_JOYPAD_L||id==RETRO_DEVICE_ID_JOYPAD_L2||
+                id==RETRO_DEVICE_ID_JOYPAD_L3){
+            /* Identical behavior on per-button and bitmask-based cores. */
+            static const unsigned watched[]={
+                RETRO_DEVICE_ID_JOYPAD_R,RETRO_DEVICE_ID_JOYPAD_R2,
+                RETRO_DEVICE_ID_JOYPAD_L,RETRO_DEVICE_ID_JOYPAD_L2,
+                RETRO_DEVICE_ID_JOYPAD_L3,RETRO_DEVICE_ID_JOYPAD_B,
+                RETRO_DEVICE_ID_JOYPAD_Y,RETRO_DEVICE_ID_JOYPAD_X};
+            uint16_t raw=0;
+            for(unsigned k=0;k<sizeof(watched)/sizeof(watched[0]);k++)
+                if(physical_state&&physical_state(0,RETRO_DEVICE_JOYPAD,0,watched[k]))
+                    raw|=(uint16_t)(1u<<watched[k]);
+            actual=(som_manual_pad_layout(raw)&(1u<<id))?1:0;
+        }
+    }
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && (id<16||bitmask) && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
@@ -1402,7 +1436,7 @@ static void som_input_poll(void){
         if(((current&attack)&&!(last_physical_buttons&attack))||
            ((current&secondary)&&!(last_physical_buttons&secondary)&&!(current&l2))){
             /* Modifier specials have their own charge, not basic hits. */
-            if(!(current&r2)&&!som_manual_disciplines&&!ring_ai_enabled&&!bash_stage)
+            if(!(current&(r2|l2))&&!som_manual_disciplines&&!ring_ai_enabled&&!bash_stage)
                 som_combo_swing((current&secondary)&&!(last_physical_buttons&secondary)?1u:0u);
             combo_hold_start=frame_number;combo_hold_tried=0;
         }
@@ -1416,7 +1450,7 @@ static void som_input_poll(void){
         const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
-        if(field&&(current&r2)&&!(current&l2_bit)&&!ring_ai_enabled&&
+        if(field&&(current&l2_bit)&&!(current&r2)&&!ring_ai_enabled&&
            !som_manual_disciplines&&!special_stage&&
            disciplines.selected<SOM_DISCIPLINE_COUNT){
             seal_mode=1;
@@ -1435,38 +1469,46 @@ static void som_input_poll(void){
         }else{seal_mode=0;seal_count=0;}
         /* R2+attack is handled before ordinary B/Y weapon switching. */
         if(field&&!special_stage&&!special_suppress&&!ring_ai_enabled&&
-           (current&r2)&&(pressed&(y_bit|b_bit))&&!(current&l2_bit)){
+           (current&l2_bit)&&(pressed&(y_bit|b_bit))&&!(current&r2)){
             unsigned which=(pressed&y_bit)?1u:0u;
             unsigned stage=som_seal_level(seal_count,which);
             seal_count=0;
             if(som_special_start(which,stage)){
-                special_chord=(uint16_t)(r2|(which?y_bit:b_bit));
+                special_chord=(uint16_t)(l2_bit|(which?y_bit:b_bit));
                 special_suppress=1;
             }
         }
         y_weapon_swap=0;y_weapon_blocked=0;b_weapon_blocked=0;x_spell_blocked=0;x_weapon_swap=0;
         uint8_t *wram=field?(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
-        /* L1+B: the next style of the class's B weapon (B hidden meanwhile;
-         * L1 itself still reaches the game). */
+        /* L1 is lock-on only. R1 tap cycles next style. L3+B retains the
+         * previous L1+B modifier, while L3+Y/X accesses the native rings. */
         const uint16_t l1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
-        style_b_hidden=field&&(current&l1_bit)&&!ring_ai_enabled&&
+        const uint16_t l3_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L3);
+        const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+        const uint16_t x_ring_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        const int native_ring=(current&l3_bit)&&(current&(x_ring_bit|y_bit));
+        style_b_hidden=field&&(current&(l3_bit|b_bit))==(l3_bit|b_bit)&&
+            !ring_ai_enabled&&!som_manual_disciplines&&
             disciplines.selected<SOM_DISCIPLINE_COUNT;
         if(pressed&l1_bit)l1_alone=1;
-        if((current&l1_bit)&&(current&(b_bit|y_bit)))l1_alone=0;      /* L1+B: a style */
         if(wram&&!ring_ai_enabled&&l1_alone&&(last_physical_buttons&l1_bit)&&!(current&l1_bit)){
             l1_alone=0;som_lock_toggle(wram);
         }
+        if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
+           (pressed&r1_bit)&&!(current&(l2_bit|r2)))
+            som_style_cycle(-1);
         if(style_b_hidden&&(pressed&b_bit))som_style_cycle(-1);
-        if(style_b_hidden&&(current&b_bit))b_weapon_blocked=1;
+        if(style_b_hidden)b_weapon_blocked=1;
         /* Samurai's throw: R1 (block) + the D-pad away from the facing. */
         if(wram&&disciplines.selected==SOM_DISC_BUSHIDO&&!ring_ai_enabled&&
-           (current&(1u<<RETRO_DEVICE_ID_JOYPAD_R))&&(pressed&dpad)&&
+           (current&r2)&&(pressed&dpad)&&
            som_throw_back_pressed(wram,pressed))
             som_throw_start(wram);
         /* Casters: B casts the first spell of the class, Y the second; the
          * game sees neither. B with too little MP stays the weapon swing. */
         const int caster=wram&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
-            som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines;
+            som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines&&
+            !native_ring;
         if(caster&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
             const unsigned spell=som_class_spell(disciplines.selected,which);
@@ -1479,7 +1521,8 @@ static void som_input_poll(void){
                 }
             }
         }
-        if(wram&&!caster&&!style_b_hidden&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
+        if(wram&&!caster&&!style_b_hidden&&!native_ring&&(current&(y_bit|b_bit))&&
+           !(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
             unsigned want=som_disc_weapons[disciplines.selected][which];
             if(!which&&disciplines.selected==SOM_DISC_NINJUTSU){
@@ -1518,9 +1561,8 @@ static void som_input_poll(void){
         evade_a_hidden=wram&&!ring_ai_enabled&&!som_manual_disciplines&&
             disciplines.selected<SOM_DISCIPLINE_COUNT&&som_disc_has_dodge(disciplines.selected);
         if(evade_a_hidden&&(pressed&a_bit)){
-            const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
             a_press_frame=frame_number;a_hold_done=0;
-            if(disciplines.selected==0u&&(current&r1_bit)){som_bash_start(wram);a_hold_done=1;}
+            if(disciplines.selected==0u&&(current&r2)){som_bash_start(wram);a_hold_done=1;}
             /* Samurai: A with a monster in grab reach grabs and throws it
              * (no Kawarimi: a ninja skill); otherwise A is the evade. */
             else if(disciplines.selected==SOM_DISC_BUSHIDO&&
@@ -1579,7 +1621,7 @@ static void som_input_poll(void){
         if(x_role==SOM_X_THIRD_WEAPON){
             /* Weapon Flow: X equips the third weapon and attacks with it
              * (the game sees B, so holding X charges it). */
-            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
                 const unsigned want=som_disc_third_weapon(disciplines.selected);
                 const int result=wram[0xE1E4]==want?SOM_EQUIP_OK:
                     (pressed&x_bit)?som_equip_weapon(wram,want):som_equip_weapon_direct(wram,want);
@@ -1587,20 +1629,20 @@ static void som_input_poll(void){
             }
         }else if(x_role==SOM_X_FLYING_KICK){
             /* Martial Arts: X is the flying kick (the game never sees X). */
-            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
                 x_spell_blocked=1;
                 if(pressed&x_bit)som_flykick_start(wram);
             }
         }else if(x_role>=SOM_X_HOLY_WATER){
             /* Hunter, Necromancer, Artificer, Mentalist: X is the class move. */
-            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
                 x_spell_blocked=1;
                 if(pressed&x_bit)som_class_x(wram);
             }
         }else if(x_role==SOM_X_IAI){
             /* Bushido: release X for Iaijutsu, katana charge level 3; held
              * SOM_X_HOLD_FRAMES or longer, level 4. No spells. */
-            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+            if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
                 x_spell_blocked=1;
                 if(pressed&x_bit){x_press_frame=frame_number;x_cycled=0;}
                 else if(!x_cycled&&frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
@@ -1608,13 +1650,13 @@ static void som_input_poll(void){
                     som_overlay_set(&overlay,"^Iaijutsu|level 4: release X",SOM_MESSAGE_FRAMES/2u);
                 }
             }else if(wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
-                     !(current&(l2_bit|r2))&&!special_suppress&&!x_l2_chord){
+                     !(current&(l2_bit|r2))&&!native_ring&&!special_suppress&&!x_l2_chord){
                 som_iai_start(x_cycled?SOM_IAI_HELD_LEVEL:SOM_IAI_LEVEL);
                 x_cycled=0;
             }
         }else
         /* Tap X: cast on release. Hold X: next spell every 0.5 s. */
-        if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+        if(wram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
             x_spell_blocked=1;
             if(pressed&x_bit){x_press_frame=frame_number;x_cycled=0;}
             else if(frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
@@ -1624,7 +1666,7 @@ static void som_input_poll(void){
                 som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
             }
         }else if(wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
-                 !(current&(l2_bit|r2))&&!special_suppress&&!x_l2_chord){
+                 !(current&(l2_bit|r2))&&!native_ring&&!special_suppress&&!x_l2_chord){
             if(!x_cycled)som_cast_spell(wram,som_current_spell());
             x_cycled=0;
         }
@@ -1699,7 +1741,7 @@ static void som_input_poll(void){
         if(recording)som_record_presses(pressed);
         last_physical_buttons=current;
         if(current){last_input_frame=frame_number;idle_started=0;}
-        const uint16_t ai_switch=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+        const uint16_t ai_switch=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                             (1u<<RETRO_DEVICE_ID_JOYPAD_R3));
         if(current&&!(current&~ai_switch)){
             if(!switch_holding){
@@ -1775,7 +1817,7 @@ static void som_input_poll(void){
                 break;
             case SOM_GAMBIT_EXIT:
                 ring_ai_enabled=0;unlink(ring_ai_file);
-                som_overlay_set(&overlay,"You play|hold R2 or R3 1s: AI plays",
+                som_overlay_set(&overlay,"You play|hold L2 or R3 1s: AI plays",
                                 SOM_MESSAGE_FRAMES);
                 fprintf(stderr,"[som-ai] GAMBIT EXIT: controls back to the player\n");
                 break;

@@ -18,7 +18,7 @@ import time
 
 from som_weapon_ranges import is_short
 
-DODGE_CLASSES = (0, 1, 2, 9, 10, 11)    # som_disc_has_dodge
+DODGE_CLASSES = (0, 1, 2, 3, 9, 10, 11) # som_disc_has_dodge (3: Blink step)
 NINJA = 2
 KAWARIMI_PX = 40
 KAWARIMI_COOLDOWN_S = 4.0               # 3 s armed + a second

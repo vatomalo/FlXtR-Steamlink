@@ -33,7 +33,7 @@ class JutsuTest(unittest.TestCase):
         self.assertIsNone(j.decide(0, "sword", 30, 1.0, True))      # still armed
         clock.t += 4.0
         self.assertEqual(j.decide(1, "glove", 20, 0.3, False)[0], "kawarimi")
-        self.assertIsNone(JutsuTactics(clock).decide(3, "axe", 20, 0.3, True))  # no dodge
+        self.assertIsNone(JutsuTactics(clock).decide(4, "axe", 20, 0.3, True))  # no dodge
 
     def test_evade_gambit_zero_never_casts_and_refusal_retries(self):
         clock = Clock()

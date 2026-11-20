@@ -23,7 +23,7 @@ static const char *const som_discipline_names[SOM_DISCIPLINE_COUNT]={
  * samurai and archer only. */
 static inline int som_disc_has_dodge(unsigned discipline){
     switch(discipline){
-    case 0: case 1: case 2: case 9: case 10: case 11: return 1;
+    case 0: case 1: case 2: case 3: case 9: case 10: case 11: return 1;   /* 3: Blink step */
     default: return 0;
     }
 }
@@ -84,6 +84,7 @@ static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
         d.speed=4u;d.frames=16u;d.name="Cartwheel";d.cartwheel=1;break;
     case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
     case 2: d.speed=3u;d.frames=16u;d.name="Evade";break;                 /* 48 px */
+    case 3: d.speed=8u;d.frames=6u;d.name="Blink step";break;            /* mage: 48 px, hidden */
     default:break;
     }
     return d;

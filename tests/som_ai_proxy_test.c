@@ -1406,8 +1406,8 @@ int main(void){
         mocked_buttons=0;som_input_poll();
         special_stage=0;special_suppress=0;hero[0x19C]=1;
         /* A: a proxy-driven dodge (the game's poses do not play in field
-         * play). Magic has no dodge: native A (dash). */
-        disciplines.selected=3;
+         * play). Divine Arts has no dodge: native A (dash). */
+        disciplines.selected=4;
         const uint16_t r1a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
         mocked_buttons=r1a;som_input_poll();
         assert(!evade_active);
@@ -1508,6 +1508,24 @@ int main(void){
             kawarimi_armed_until=0;
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
             memcpy(ram+0xA8,camera,sizeof(camera));
+        }
+        /* Mage A: Blink step, the carried dodge with the hero hidden while
+         * he moves and shown again where he lands. */
+        {
+            uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=SOM_DISC_MAGIC;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x0E]=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(evade_active&&evade_blink&&(hero[0x0E]&0x80u));
+            for(unsigned f=0;f<30;f++){som_hop_step();som_evade_tick();frame_number++;}
+            assert(!evade_active&&!evade_blink&&!(hero[0x0E]&0x80u));
+            assert(som_bun_u16(hero+2)==200-48);                       /* back from the facing */
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            disciplines.selected=keep;
         }
         /* Samurai Issen (L2+X): a dash-cut that passes a monster cuts it
          * exactly once; he is untouchable meanwhile; then a cooldown. */
@@ -1662,7 +1680,7 @@ int main(void){
         assert(som_handle_command("kawarimi"));
         assert(kawarimi_armed_until&&!evade_active);
         kawarimi_armed_until=0;kawarimi_log_start=0;
-        disciplines.selected=3;assert(!som_handle_command("kawarimi"));   /* no dodge: none */
+        disciplines.selected=4;assert(!som_handle_command("kawarimi"));   /* no dodge: none */
         /* Ninja with the sword: A is the plain evade; the AI's "shunshin"
          * puts a clone on each side across the facing (clone, ninja,
          * clone); no dash. Not with clones out, not with another weapon. */

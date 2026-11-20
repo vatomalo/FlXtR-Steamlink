@@ -47,7 +47,7 @@ TAIJUTSU_WEAPONS = ("glove", "sword")
 # the old one for a moment: no player pick is read from it meanwhile.
 ADOPT_SETTLE_S = 3.0
 SWORD_CLASSES = tuple(i for i, (b, _) in enumerate(WEAPONS) if b == "sword")
-DODGE_CLASSES = (0, 1, 2, 9, 10, 11)          # som_disc_has_dodge
+DODGE_CLASSES = (0, 1, 2, 3, 9, 10, 11)       # som_disc_has_dodge (3: Blink step)
 ATTACK_MAGIC = (2, 3, 4, 5, 6, 7, 9, 11)      # classes with a hostile spell (som_magic.h)
 # Classes whose X spells are self buffs worth casting as a fight starts:
 # Swordsmanship's sabers, Martial Arts' body buffs, Support & Dance.

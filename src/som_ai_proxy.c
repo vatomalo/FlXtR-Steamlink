@@ -715,6 +715,10 @@ static int special_from_ai;           /* special_<n> command while the AI plays 
  * resolved on the actor" ($C0:4F7B, rom-combat.md 12). Only the
  * disciplines with a dodge (som_disc_has_dodge). */
 static int evade_active,evade_a_hidden,evade_xp_given;
+/* The mage's evade is a Blink step: the same carried dodge, the hero hidden
+ * in smoke while he moves (evade_blink_hid: the evade hid him). */
+static int evade_blink,evade_blink_hid;
+static void som_evade_blink_end(uint8_t *ram);
 static unsigned evade_hp;
 static unsigned evade_frames;
 static unsigned long evade_started;
@@ -2712,7 +2716,14 @@ static int som_evade_start(uint8_t *ram){
     hero[0x006]=hero[0x007]=0;
     evade_hp=som_word(hero+0x182);
     evade_active=1;evade_started=frame_number;evade_xp_given=0;
-    som_overlay_set(&overlay,cartwheel_native?"^Cartwheel":"^Evade",SOM_MESSAGE_FRAMES/2u);
+    evade_blink=disciplines.selected==SOM_DISC_MAGIC&&!cartwheel_native;
+    if(evade_blink){
+        evade_blink_hid=!(hero[0x0E]&0x80u);
+        hero[0x0E]|=0x80u;
+        som_bun_boom(bunshin_booms,(int)som_bun_u16(hero+2),(int)som_bun_u16(hero+4),1,frame_number);
+    }
+    som_overlay_set(&overlay,cartwheel_native?"^Cartwheel":evade_blink?"^Blink step":"^Evade",
+                    SOM_MESSAGE_FRAMES/2u);
     if(cartwheel_native)
         fprintf(stderr,"[som-ai] EVADE Cartwheel as %s: the game's own (pose 0x93) toward %d,%d\n",
                 som_discipline_names[disciplines.selected],dx,dy);
@@ -2832,7 +2843,7 @@ static void som_hop_step(void){
                     hero[0x01C],hero[0x011]);
         }else cartwheel_fallback=0;
     }
-    if(!cartwheel_native){trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;}
+    if(!cartwheel_native&&!evade_blink){trail_x[slot]=x;trail_y[slot]=y;trail_frame[slot]=frame_number;trail_until=frame_number+10u;}
     if(!evade_xp_given&&disciplines.selected<SOM_DISCIPLINE_COUNT){
         const int near=som_bun_toucher(ram,x,y,SOM_XP_NEAR_MISS_PX,SOM_XP_NEAR_MISS_PX,familiar.slot);
         if(near>=0){
@@ -2852,6 +2863,15 @@ static void som_hop_step(void){
     hero[0x006]=hero[0x007]=0;
     if(issen_active)som_issen_cut(ram,x,y);
     hop_frames_left=moved?hop_frames_left-1u:0u;
+    if(evade_blink&&!hop_frames_left)som_evade_blink_end(ram);
+}
+static void som_evade_blink_end(uint8_t *ram){
+    if(!evade_blink)return;
+    evade_blink=0;
+    if(!ram)return;
+    if(evade_blink_hid)ram[0xE00E]&=(uint8_t)~0x80u;
+    evade_blink_hid=0;
+    som_bun_boom(bunshin_booms,(int)som_bun_u16(ram+0xE002),(int)som_bun_u16(ram+0xE004),1,frame_number);
 }
 static void som_issen_cut(uint8_t *ram,int x,int y){
     for(unsigned slot=0;slot<3u;slot++){
@@ -3023,6 +3043,7 @@ static void som_evade_tick(void){
     som_evade_shield(ram);
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
+    som_evade_blink_end(ram);
     evade_active=0;hop_frames_left=0;cartwheel_native=0;issen_active=0;
 }
 /* After-images of the dodge, 4 and 8 frames behind, on even frames only
@@ -3240,6 +3261,30 @@ static const char *som_weapon_name(unsigned type,unsigned grade){
     names[i][n]=0;done[i]=1;
     return names[i];
 }
+/* The grade a class weapon is pinned at: the class's choice, or the
+ * highest grade below it the direct equip can really apply, art model
+ * included (Wingbow and Coral Spear passed the row check but their art did
+ * not build, so B/Y switching was refused, 2026-11-20). 0xFF: none. */
+static unsigned som_class_weapon_grade(uint8_t *hero,unsigned cls,unsigned slot,unsigned type){
+    static uint8_t cache[SOM_DISCIPLINE_COUNT][3];
+    static uint8_t known[SOM_DISCIPLINE_COUNT][3];
+    if(cls>=SOM_DISCIPLINE_COUNT||slot>2u||som_class_arms[cls][slot].grade>8u)return 0xFFu;
+    if(known[cls][slot])return cache[cls][slot];
+    unsigned found=0xFFu;
+    static SomWeaponModel m;
+    for(unsigned g=som_class_arms[cls][slot].grade+1u;g-->0u;){
+        const uint8_t *r=som_rom_at(0xD01000u+12u*(type*9u+g),12u);
+        if(r&&r[0]==type&&som_weapon_row_plain(r)&&som_weapon_model(hero,type*9u+g,&m)){
+            found=g;break;
+        }
+    }
+    if(found!=som_class_arms[cls][slot].grade)
+        fprintf(stderr,"[som-ai] CLASS %s: %s grade %u cannot be switched to directly; using %u\n",
+                som_discipline_titles[cls],som_weapon_types[type],
+                (unsigned)som_class_arms[cls][slot].grade,found);
+    cache[cls][slot]=(uint8_t)found;known[cls][slot]=1;
+    return found;
+}
 /* Highest tier of `type` whose row the direct equip can apply. */
 static unsigned som_style_top_tier(unsigned type){
     for(unsigned t=9u;t-->0u;){
@@ -3308,10 +3353,9 @@ static void som_style_frame(uint8_t *ram){
         for(unsigned type=0;type<8u;type++){
             const unsigned slot=som_class_arm_slot(cls,type);
             if(slot>2u)continue;
-            const unsigned grade=som_class_arms[cls][slot].grade;
-            const uint8_t *r=som_rom_at(0xD01000u+12u*(type*9u+grade),12u);
+            const unsigned grade=som_class_weapon_grade(hero,cls,slot,type);
             uint8_t *owned=ram+0xCC54u+type;
-            if(grade>8u||!r||!som_weapon_row_plain(r)||*owned==0xFF||(*owned&0x0Fu)==grade||
+            if(grade>8u||*owned==0xFF||(*owned&0x0Fu)==grade||
                (hero[0x1E4]==type&&!som_field_idle(ram)))continue;
             *owned=(uint8_t)((*owned&0xF0u)|grade);
             fprintf(stderr,"[som-ai] CLASS %s: %s pinned at grade %u (%s)\n",

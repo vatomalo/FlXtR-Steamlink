@@ -115,3 +115,32 @@ class RefusalTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnemyTypeTests(unittest.TestCase):
+    """Which weapon suits which monster type, learned from kills."""
+
+    def test_learn_each_weapon_then_prefer_the_better_one(self):
+        from som_weapon_tactics import TYPE_SAMPLES, WeaponTactics, choose
+        t = WeaponTactics(clock=lambda: 0.0)
+        # Unknown type: a close fight tries the weapon with the fewest kills on it.
+        fav = t.favourite(0x04, ["sword", "axe"])
+        self.assertEqual(fav[0], "sword")
+        for _ in range(TYPE_SAMPLES):
+            t.record(0x04, "sword", 2.0)
+        self.assertEqual(t.favourite(0x04, ["sword", "axe"])[0], "axe")
+        for _ in range(TYPE_SAMPLES):
+            t.record(0x04, "axe", 9.0)
+        weapon, why = t.favourite(0x04, ["sword", "axe"])
+        self.assertEqual(weapon, "axe")
+        self.assertIn("works best", why)
+        # Close to equal: no favourite, the level rules decide.
+        for _ in range(20):
+            t.record(0x07, "sword", 5.0)
+            t.record(0x07, "axe", 5.5)
+        self.assertIsNone(t.favourite(0x07, ["sword", "axe"]))
+        # Reach still comes first: far away the longer weapon, favourite or not.
+        far = choose("sword", "bow", "sword", 120, 1.0, {}, favourite=("sword", "x"))
+        self.assertEqual(far[0], "bow")
+        close = choose("sword", "axe", "sword", 20, 1.0, {}, favourite=("axe", "learned"))
+        self.assertEqual(close, ("axe", "learned"))

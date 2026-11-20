@@ -49,6 +49,13 @@ KNOCKBACK_WINDOW_S = 1.0
 VERIFY_AFTER_S = 1.0
 REFUSALS = 2
 REFUSED_REST_S = 20.0
+# Per enemy type (2026-11-20): every kill's reward (GP minus weighted HP lost)
+# is credited to the weapon in hand against that monster type. In a close
+# fight a weapon with fewer than TYPE_SAMPLES kills on the type is tried
+# first; once every weapon has them, the one whose average beats the others
+# by TYPE_MARGIN is the type's favourite.
+TYPE_SAMPLES = 3
+TYPE_MARGIN = 2.0
 
 
 def reach(weapon):
@@ -63,7 +70,7 @@ def _others(pair, weapon, levels):
     return f" (the {best} {levels.get(best, 0)})"
 
 
-def choose(primary, secondary, held, distance, hp_fraction, levels, third=None):
+def choose(primary, secondary, held, distance, hp_fraction, levels, third=None, favourite=None):
     """(weapon, reason) to hold now; distance None = no enemy near.
 
     third: a class's third weapon (Weapon Flow's bow on X), chosen by the
@@ -86,6 +93,8 @@ def choose(primary, secondary, held, distance, hp_fraction, levels, third=None):
             if distance > edge:
                 return longer, (f"enemy {distance} px away: the {longer} reaches "
                                 f"{reach(longer)} px, the {shorter} only {reach(shorter)}")
+        if favourite is not None and favourite[0] in pair:
+            return favourite                 # this enemy type: learned or still learning
         stronger = max(pair, key=lambda w: (levels.get(w, 0), w == primary))
         if reach(longer) > reach(shorter) and held == longer and distance > reach(shorter):
             stronger = longer        # inside the band: keep what is in hand
@@ -114,9 +123,35 @@ class WeaponTactics:
         self.pending = None                    # (weapon, time) asked for, not yet seen
         self.refusals = {}                     # weapon -> refusals in a row
         self.resting = {}                      # weapon -> time it may be asked again
+        self.records = {}                      # enemy type -> weapon -> [total, kills]
+
+    def record(self, enemy, weapon, score):
+        """A kill of `enemy` (identity) with `weapon` in hand scored `score`."""
+        if enemy is None or weapon is None or enemy < 0:
+            return
+        entry = self.records.setdefault(str(enemy), {}).setdefault(weapon, [0.0, 0])
+        entry[0] += float(score)
+        entry[1] += 1
+
+    def favourite(self, enemy, pair):
+        """(weapon, why) for a close fight with this enemy type, or None."""
+        if enemy is None or len(pair) < 2:
+            return None
+        known = self.records.get(str(enemy), {})
+        untried = [w for w in pair if known.get(w, [0, 0])[1] < TYPE_SAMPLES]
+        if untried:
+            weapon = min(untried, key=lambda w: (known.get(w, [0, 0])[1], pair.index(w)))
+            return weapon, (f"learning against enemy {enemy:#04x}: the {weapon} has "
+                            f"{known.get(weapon, [0, 0])[1]} kill(s) on it")
+        means = sorted(((known[w][0] / known[w][1], w) for w in pair), reverse=True)
+        if means[0][0] - means[1][0] >= TYPE_MARGIN:
+            best, mean = means[0][1], means[0][0]
+            return best, (f"against enemy {enemy:#04x} the {best} works best "
+                          f"({mean:+.1f} vs {means[1][0]:+.1f} per kill)")
+        return None
 
     def decide(self, primary, secondary, held, distance, hp_fraction, levels, busy=False,
-               third=None):
+               third=None, enemy=None):
         """(weapon, reason) to switch to now, or None to keep the one in hand."""
         now = self.clock()
         knocked = None
@@ -133,7 +168,9 @@ class WeaponTactics:
             elif now - at >= VERIFY_AFTER_S:
                 self.pending = None
                 self._refused(asked, now)
-        weapon, reason = choose(primary, secondary, held, distance, hp_fraction, levels, third)
+        pair = [w for w in dict.fromkeys((primary, secondary, third)) if w]
+        weapon, reason = choose(primary, secondary, held, distance, hp_fraction, levels, third,
+                                self.favourite(enemy, pair))
         if weapon == held or weapon is None or busy or self.cooldown is None:
             return None
         if self.resting.get(weapon, 0) > now or self.pending is not None:

@@ -124,11 +124,12 @@ def masked_style(image, body, style, foot=ORIGIN, donor=None):
             if advance > new_length and advance > 4:
                 out[y][x] = 0
         if donor:
-            # Authentic donor blade replaces only the original distal blade.
-            # No native hilt, guard, or slash effect is stretched.
-            for x, y in axis_mask:
-                if (x-gx)*ux+(y-gy)*uy > 4:
-                    out[y][x] = 0
+            # Replace the original connected sword pixels, including its
+            # hilt. Keeping those under a donor dagger gives a double grip.
+            # The player body is a separate sprite and remains untouched.
+            # Detached slash effects are handled by the FX mask below.
+            for x, y in group:
+                out[y][x] = 0
             place_dagger(out, donor, grip, tip)
         else:
             # Safe procedural version until an SD3 dagger cutout is provided.

@@ -69,7 +69,7 @@ test-som-jukebox:
 
 test-som-weapon-mask:
 	@mkdir -p build
-	$(CC) $(CFLAGS) tests/som_weapon_mask_test.c -o build/som-weapon-mask-test
+	$(CC) $(CFLAGS) -Isrc tests/som_weapon_mask_test.c -o build/som-weapon-mask-test
 	./build/som-weapon-mask-test
 
 .PHONY: test-som-weapon-mask

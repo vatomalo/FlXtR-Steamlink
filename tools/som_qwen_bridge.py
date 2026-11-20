@@ -1039,7 +1039,9 @@ def shop_errand(wram, observation, shop, gold, threshold, stock=MAX_ITEM_COUNT):
 # close-up; wider views only fill the learned map that routes are planned on.
 SURVEY_EVERY = 10          # decisions between 33x33 scans
 SURVEY_RADIUS = 16
-MAP_SURVEY_RADIUS = 32     # 65x65 scan when a new map is entered
+# The whole map when a new map is entered: a 65 x 65 window left the way
+# round on map 23 (96 x 104) unknown, so he pushed at a wall (2026-11-20).
+MAP_SURVEY_RADIUS = 64
 
 
 ROM_PATH = "/home/apps/retroarch/roms/Snes/Secret of Mana, Turbo.smc"

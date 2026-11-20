@@ -809,6 +809,10 @@ tier 0. (A held B keeps that press's weapon for charging.)
 - **Ukemi up/down** (the cannon-flight ball) is drawn smaller about the feet
   (`SOM_UKEMI_SCALE_PCT`, 85 % since 2026-11-21), so it rolls on the ground. Ukemi's drawn
   cartwheel is mirrored the other way from the cartwheel classes' (player: it faced wrong).
+- **Up/down + A** (cartwheel classes, 2026-11-21): the game's own cartwheel, with the hero
+  turned to face away from where he goes, as left/right always did. Before, he faced the
+  pressed way, so the game's cartwheel (which travels away from the facing) went the opposite
+  way. Measured on map 130: down + A moves 25 px down, up + A 25 px up; facing restored.
 
 ### Monk and Weapon Flow B chains with power attacks (2026-11-20)
 

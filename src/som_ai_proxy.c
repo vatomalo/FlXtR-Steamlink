@@ -3305,8 +3305,10 @@ static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
     uint8_t *hero=ram+0xE000u;
     if(!(ram[0xED]&0x80u)||hero[0x1E5]!=0xFFu||hero[0x01C]==0x40u)return 0;
     if(som_word(hero+0x190)&0xC570u)return 0;
+    /* Face away from where he goes, as for left/right: down + A faces up
+     * (it went up before, the wrong way; player, 2026-11-21). */
     if(dx)hero[0x010]=dx>0?0x82u:0x02u;
-    else if(dy)hero[0x010]=dy>0?0x01u:0x00u;
+    else if(dy)hero[0x010]=dy>0?0x00u:0x01u;
     hero[0x1E5]=(uint8_t)code;
     return 1;
 }

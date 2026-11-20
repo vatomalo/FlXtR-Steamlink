@@ -27,6 +27,8 @@ import som_villager_work as V
 
 KIND_BASE = 0x80
 WEAPON = 0xFE
+UKEMI_KIND_BASE = 0x83
+UKEMI_WEAPON = 0xFA
 HEROES = ("boy", "girl", "sprite")
 TURNS = (0, 1, 2, 3, 0)         # quarter turns clockwise per step
 TICKS = 1                       # one actor tick (5 frames) per step
@@ -80,6 +82,24 @@ def cartwheel(gfx, hero, source="down"):
     still = gfx.render(hero, V.standing(gfx, hero, source), size=V.CELL, origin=V.ORIGIN)
     pivot = body_centre(still)
     return [(rotate(still, t, pivot), TICKS) for t in TURNS]
+
+
+def somersault(gfx, hero, source="side"):
+    """Five poses of an Ukemi tumble from the hero's side silhouette.
+
+    It rolls the head beneath the torso rather than playing the native
+    sideways cartwheel. Translation and collision are handled by the proxy.
+    """
+    still = gfx.render(hero, V.standing(gfx, hero, source), size=V.CELL, origin=V.ORIGIN)
+    pivot = body_centre(still)
+    frames = []
+    for turn, rise in zip(TURNS, (0, 3, 7, 3, 0)):
+        image = rotate(still, turn, pivot)
+        if rise:
+            image = [image[y + rise] if y + rise < len(image) else [0] * len(image)
+                     for y in range(len(image))]
+        frames.append((image, TICKS))
+    return frames
 
 
 def flying_kick(gfx, hero, frame_ids):
@@ -146,6 +166,14 @@ def pack(gfx):
         for facing, source in ((0, "side"), (1, "side"), (2, "down")):
             frames = cartwheel(gfx, hero, source)
             out += struct.pack("<4B20H", KIND_BASE + i, WEAPON, facing, len(frames), *colours)
+            for image, ticks in frames:
+                dx, dy, w, h, data = V.crop(image)
+                out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
+            entries += 1
+        for facing in range(3):
+            frames = somersault(gfx, hero)
+            out += struct.pack("<4B20H", UKEMI_KIND_BASE + i, UKEMI_WEAPON, facing,
+                               len(frames), *colours)
             for image, ticks in frames:
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data

@@ -105,6 +105,29 @@ class PlayLoopTest(unittest.TestCase):
         play.died(None, 10)                                   # after arriving: not a trip failure
         self.assertEqual(quest.outcomes[-1], ("arrived", 10, 287))
 
+    def test_deaths_make_trips_turn_back_sooner_and_safe_trips_ease_it(self):
+        play = self.make(trip_gold=50)
+        play.leave_fraction = 0.3                    # the live gambits' share
+        base = play.leave_at()
+        play.died(16, 10)
+        play.died(16, 10)
+        self.assertAlmostEqual(play.leave_at(), base + 0.2)
+        self.assertTrue(any("turn back below" in line for line in self.logs))
+        for _ in range(20):
+            play.died(16, 10)
+        self.assertLessEqual(play.leave_at(), loop.MAX_LEAVE + 1e-9)
+        # Survives with HP just above the old threshold: now he goes home.
+        play._enter("hunt", "test")
+        hp = int(100 * (base + 0.05))
+        self.assertNotIn(play.goal(summary(hp=hp, map_id=129), True, True, True, ALL),
+                         ("hunt_here", "hunt_map_129"))
+        # A trip that ends safely (purse full) eases it.
+        before = play.leave_at()
+        play._enter("hunt", "test")
+        play.goal(summary(gold=0, map_id=129), True, True, True, ALL)
+        play.goal(summary(gold=60, map_id=129), True, True, True, ALL)
+        self.assertLess(play.leave_at(), before)
+
     def test_no_hunting_memory_hunts_here(self):
         play = self.make(rewards=())
         self.assertEqual(play.goal(summary(), False, True, True, ALL), "hunt_here")

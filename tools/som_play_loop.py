@@ -33,6 +33,13 @@ from som_menu import REPLAYABLE, InnMacro, MacroFailed
 PHASES = ("hunt", "shop", "inn", "save")
 TRIP_GOLD = 100
 HUNT_DECISIONS = 3000
+# Self-adjusting retreat (2026-11-20): every death on a trip makes him
+# turn back DEATH_LEAVE_STEP sooner (11 deaths on maps 16/23 in 6 h, each
+# one throwing away the XP since the last inn save); a trip that ends
+# safely eases it back by SAFE_LEAVE_STEP. Capped at MAX_LEAVE.
+DEATH_LEAVE_STEP = 0.1
+SAFE_LEAVE_STEP = 0.02
+MAX_LEAVE = 0.7
 STORY_LEAVE = 0.5                # a story trip turns back below this HP fraction
 STORY_BUDGET = 3                 # a story trip may take this many hunting budgets
 ERRAND_DECISIONS = 1500   # shop alone may time out; inn/save never expire
@@ -147,13 +154,14 @@ class PlayLoop:
                 # a longer decision budget end it. It turns back at half HP:
                 # leaving at a quarter, he died on the walk back every trip.
                 story = bool(self.state.get("target_story")) and not self.fixed_hunt_map
-                leave = max(self.leave_fraction, STORY_LEAVE) if story else self.leave_fraction
+                leave = self.leave_at(story)
                 if max_hp and hp < max_hp * leave:
                     if story and not self.state.get("arrived"):
                         self._story_outcome("retreated", summary)
                     self._enter("shop", f"HP {hp}/{max_hp}, earned {earned} GP")
                     continue
                 if earned >= self.trip_gold and not story:
+                    self._safe_trip()
                     self._enter("shop", f"earned {earned} GP this trip")
                     continue
                 budget = self.hunt_decisions * (STORY_BUDGET if story else 1)
@@ -161,6 +169,7 @@ class PlayLoop:
                     if (target is not None and target != here and
                             not self.state.get("arrived") and self.frontier is not None):
                         self.frontier.failed(target, f"{self.state['steps']} decisions")
+                    self._safe_trip()
                     self._enter("shop", f"hunted {self.state['steps']} decisions, "
                                 f"earned {earned} GP")
                     continue
@@ -234,6 +243,17 @@ class PlayLoop:
             self._save_state()
         return target
 
+    def leave_at(self, story=False):
+        """HP fraction below which this trip turns back: the gambit's, plus
+        what deaths taught (leave_bonus), at least STORY_LEAVE on a story trip."""
+        leave = min(MAX_LEAVE, self.leave_fraction + (self.state.get("leave_bonus") or 0.0))
+        return max(leave, STORY_LEAVE) if story else leave
+
+    def _safe_trip(self):
+        bonus = self.state.get("leave_bonus") or 0.0
+        if bonus:
+            self.state["leave_bonus"] = round(max(0.0, bonus - SAFE_LEAVE_STEP), 3)
+
     def _story_outcome(self, outcome, summary):
         if self.quest is not None and hasattr(self.quest, "story_outcome"):
             self.quest.story_outcome(outcome, summary.get("level"), summary.get("map_id"))
@@ -241,6 +261,11 @@ class PlayLoop:
     def died(self, map_id=None, raw_level=None):
         """Game over and reload: a story trip under way failed; the next
         trip is chosen afresh (the quest may now want levelling first)."""
+        bonus = self.state.get("leave_bonus") or 0.0
+        self.state["leave_bonus"] = round(min(MAX_LEAVE - self.leave_fraction,
+                                              bonus + DEATH_LEAVE_STEP), 3)
+        self.log(f"[loop] adjusting: died on map {map_id if map_id is not None else self.last_here}; "
+                 f"trips now turn back below {self.leave_at():.0%} HP")
         if (self.state.get("phase") == "hunt" and self.state.get("target_story") and
                 not self.state.get("arrived")):
             self._story_outcome("died", {"level": raw_level,

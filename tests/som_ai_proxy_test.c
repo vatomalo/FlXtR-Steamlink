@@ -1549,14 +1549,15 @@ int main(void){
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(ram+0xA8)==0);
-        /* Rogue A off a combat map: the game has no cartwheel there, so the
-         * 4 x 16 = 64 px hop; A held right moves right. */
+        /* Rogue A off a combat map: the game has no cartwheel there, so a
+         * hop of the cartwheel's own length (2 x 13 = 26 px); A held right
+         * moves right. */
         disciplines.selected=9;hero[2]=200;ram[0xA8]=100;
         mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
         mocked_buttons=0;som_input_poll();
         assert(!cartwheel_native&&!(hero[0x0E]&0x80u));
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(som_bun_u16(hero+2)==200+64&&!evade_active&&som_bun_u16(ram+0xA8)==164);
+        assert(som_bun_u16(hero+2)==200+26&&!evade_active&&som_bun_u16(ram+0xA8)==126);
         /* On a combat map ($ED bit 7) the game's own cartwheel: reaction
          * 0x13 in E1E5, the hero turned to face away from the way held (it
          * goes backwards), no proxy move; the pose plays, nothing falls back. */
@@ -1572,13 +1573,13 @@ int main(void){
         for(unsigned f=0;f<20;f++){som_hop_step();som_evade_tick();frame_number++;}
         assert(!evade_active&&!cartwheel_native&&som_bun_u16(hero+2)==200);
         /* The game refuses (the pose never starts): after 8 frames the
-         * request is withdrawn and the 64 px hop runs instead. */
+         * request is withdrawn and the cartwheel-length hop (26 px) runs. */
         hero[0x1E5]=0xFF;hero[0x010]=0x82;
         mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT));som_input_poll();
         mocked_buttons=0;som_input_poll();
         assert(cartwheel_native&&hero[0x1E5]==0x13&&hero[0x010]==0x02);
         for(unsigned f=0;f<60;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(!evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF&&som_bun_u16(hero+2)==200-64);
+        assert(!evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF&&som_bun_u16(hero+2)==200-26);
         /* Busy (already in a pose): straight to the hop. */
         hero[0x01C]=0x40;hero[2]=200;
         mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));som_input_poll();
@@ -2036,8 +2037,8 @@ int main(void){
             disciplines.selected=others[c];hero[2]=200;hero[4]=200;hero[0x1F1]=0;
             assert(!som_handle_command("kawarimi")&&!kawarimi_armed_until);
         }
-        /* Ninja with the sword: A is Ukemi, back with no direction (here
-         * the hop fallback, 54 px, facing kept); the AI's "shunshin"
+        /* Ninja with the sword: A is Ukemi, back with no direction (to the
+         * side: a cartwheel, here the hop fallback, 26 px, facing kept); the AI's "shunshin"
          * puts a clone on each side across the facing (clone, ninja,
          * clone); no dash. Not with clones out, not with another weapon. */
         disciplines.selected=2;hero[0x1E4]=1;hero[0x191]=0;hero[2]=200;hero[4]=200;
@@ -2045,7 +2046,7 @@ int main(void){
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         assert(evade_active&&!som_bun_alive(&bunshin));
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(!evade_active&&som_bun_u16(hero+2)==200-54&&hero[0x010]==0x02);
+        assert(!evade_active&&som_bun_u16(hero+2)==200-26&&hero[0x010]==0x02);
         hero[2]=200;hero[0x1E4]=6;assert(!som_handle_command("shunshin"));hero[0x1E4]=1;
         assert(som_handle_command("shunshin"));
         assert(!evade_active&&!kawarimi_armed_until&&som_bun_alive(&bunshin)==2);
@@ -2197,11 +2198,11 @@ int main(void){
             hero[0x060]=0;hero[0x190]=hero[0x191]=0;hero[0x0E]=0;hero[0x1E5]=0xFF;
             mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
             som_input_poll();mocked_buttons=0;som_input_poll();
-            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==2u);
-            assert(hop_dx==4&&hero[0x010]==0x02&&(hero[0x0E]&0x80u));
+            assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&ukemi_draw.dir==3u);  /* mirrored */
+            assert(hop_dx==2&&hero[0x010]==0x02&&(hero[0x0E]&0x80u));
             for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
             assert(!evade_active&&!ukemi_draw.active&&!(hero[0x0E]&0x80u));
-            assert(som_bun_u16(hero+2)==200+64&&hero[0x010]==0x02);
+            assert(som_bun_u16(hero+2)==200+26&&hero[0x010]==0x02);
             /* Every cartwheel: the rogue, and the monk's Ukemi to the side
              * (the monk tumbles now, Ukemi like the ninja and samurai). */
             assert(!strcmp(som_disc_dodge(1,0).name,"Ukemi"));
@@ -2220,6 +2221,25 @@ int main(void){
             hero[2]=200;hero[3]=0;
             memcpy(ram+0xA8,camera,sizeof(camera));
             cartwheel_pack=NULL;cartwheel_pack_size=0;
+        }
+        /* The game's HUD lifted 10 px in field play: BG3 scroll (7E:0040)
+         * and the portrait sprite; once only; undone for a dialog. */
+        {
+            uint8_t keep_oam[0x220];memcpy(keep_oam,ram+0x0800,sizeof(keep_oam));
+            const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D];
+            ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=0;ram[0x41]=0;hud_lifted=0;
+            uint8_t *e=ram+0x0800;e[0]=88;e[1]=199;e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
+            uint8_t *m=ram+0x0804;m[0]=60;m[1]=200;m[2]=0x40;m[3]=0x30;   /* a monster low on screen */
+            som_hud_lift(ram,0);
+            assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX&&m[1]==200);
+            som_hud_lift(ram,0);
+            assert(e[1]==199-SOM_HUD_LIFT_PX);                         /* not twice */
+            ram[0xD0]=0x83;som_hud_lift(ram,0);                         /* a dialog */
+            assert(ram[0x40]==0&&!hud_lifted);
+            ram[0x40]=0x30;ram[0xD0]=0;som_hud_lift(ram,0);             /* a scroll of the game's own */
+            assert(ram[0x40]==0x30&&!hud_lifted);
+            ram[0x40]=0;ram[0xD0]=keep_d0;ram[0x7D]=keep_7d;
+            memcpy(ram+0x0800,keep_oam,sizeof(keep_oam));
         }
         /* AI commands: class choice and casts within the class. */
         assert(som_handle_command("class_3")&&disciplines.selected==3);

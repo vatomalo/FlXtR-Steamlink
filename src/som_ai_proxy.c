@@ -983,6 +983,8 @@ static int cartwheel_pack_tried;
  * movement; monks and rogues retain the native 0x93 cartwheel. */
 #define SOM_UKEMI_DRAW_KIND 0xC0u
 #define SOM_FORWARD_CART_KIND 0xC8u   /* the game's cartwheel, drawn facing forward */
+#define SOM_SIDE_CART_SPEED 2u        /* side cartwheels: 2 px x 13 frames = 26 px */
+#define SOM_SIDE_CART_FRAMES 13u
 static SomNpcWorkState ukemi_draw;
 static int ukemi_hid;
 static unsigned ukemi_map;
@@ -3110,6 +3112,16 @@ static int som_evade_start_raw(uint8_t *ram){
     const int forward_cart=(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class)&&dx&&
         ((dx>0&&facing_before==0x02u)||(dx<0&&facing_before==0x82u))&&
         som_move_begin_draw(ram,dx,0,SOM_FORWARD_CART_KIND);
+    if(forward_cart)ukemi_draw.dir=dx<0?2u:3u;  /* the frames face the other way: mirrored */
+    /* A cartwheel to the side goes the game's own distance (about 25 px in
+     * 25 frames), not the 54-64 px of the old hop (player: too far). */
+    const int side_cart=dx&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class);
+    if(side_cart){
+        hop_dx=dx*(int)SOM_SIDE_CART_SPEED;hop_dy=0;
+        hop_frames_left=SOM_SIDE_CART_FRAMES+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
+        evade_frames=hop_frames_left+SOM_DODGE_GRACE;
+    }
+    const unsigned side_move=hop_frames_left;
     cartwheel_native=!forward_cart&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&
         som_cartwheel_request(ram,dx,dy,SOM_REACT_CARTWHEEL);
     if(ukemi_class&&!dx&&!som_ukemi_begin_draw(ram,dx,dy))
@@ -3117,7 +3129,7 @@ static int som_evade_start_raw(uint8_t *ram){
     native_restore_facing=-1;
     if(cartwheel_native){
         native_code=SOM_REACT_CARTWHEEL;
-        cartwheel_fallback=move;hop_frames_left=0;
+        cartwheel_fallback=side_cart?side_move:move;hop_frames_left=0;
         evade_frames=(native_code==SOM_REACT_UKEMI?SOM_UKEMI_FRAMES:SOM_CARTWHEEL_FRAMES)+
                      (unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES)+SOM_DODGE_GRACE;
         /* Steering it (forward + A: the cartwheel travels away from the
@@ -5328,6 +5340,32 @@ static void som_video_refresh(const void *data,unsigned width,unsigned height,si
     (void)t0;
 #endif
 }
+/* The game's HUD lifted SOM_HUD_LIFT_PX (player, 2026-11-20: room below
+ * for the class's weapon name and energy). In plain field play only: the
+ * HP numbers are on BG3, whose vertical scroll the NMI takes from 7E:0040
+ * (C0C170; 0 in the field, menus set it themselves), and the portraits are
+ * HUD sprites (tiles 0x1E0-0x1FF near the bottom) in the OAM buffer
+ * 7E:0800 the NMI uploads. Applied at the frame's end; the next frame shows
+ * it. Dialogs and events (7E:00D0 set) and menus get the HUD back as it was. */
+#define SOM_HUD_LIFT_PX 10u
+static int hud_lifted;
+static void som_hud_lift(uint8_t *ram,int menu){
+    const int field=ram&&!menu&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
+                    ram[0xD0]==0&&ram[0x7D]!=1;
+    if(!field){
+        if(hud_lifted&&ram&&ram[0x40]==SOM_HUD_LIFT_PX&&ram[0x41]==0)ram[0x40]=0;
+        hud_lifted=0;
+        return;
+    }
+    if(ram[0x40]!=0&&!(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;  /* the game's own scroll */
+    ram[0x40]=SOM_HUD_LIFT_PX;ram[0x41]=0;
+    hud_lifted=1;
+    for(unsigned i=0;i<128u;i++){
+        uint8_t *e=ram+0x0800u+4u*i;
+        const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
+        if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]>=196u&&e[1]<0xE0u)e[1]=(uint8_t)(e[1]-SOM_HUD_LIFT_PX);
+    }
+}
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
@@ -5337,6 +5375,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     /* Class title next to the HUD portrait, under the HP numbers. Around the
      * hero, field mode only (som_hero_screen): combo counter, shadow clones,
      * explosions and dodge after-images. */
+    if(game_loaded&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_hud_lift((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),menu);
     const char *class_title=menu?NULL:som_disc_title(&disciplines);
     int hud_x=-1,hud_y=-1;
     if(class_title&&!(backend_retro_get_memory_data&&

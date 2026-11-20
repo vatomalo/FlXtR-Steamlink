@@ -60,10 +60,11 @@ int main(void){
     char line[33];assert(som_disc_line(&d,3,line));
     assert(strstr(line,"Ninjutsu")!=NULL);
     puts("disciplines model and menu tests passed");
-        /* Rogue, samurai and archer exist; only six disciplines get the dodge roll. */
-    assert(SOM_DISCIPLINE_COUNT==12u);
+        /* The sixteen disciplines include Hunter, Necromancer, Artificer and Mentalist. */
+    assert(SOM_DISCIPLINE_COUNT==16u);
     assert(!strcmp(som_discipline_names[9],"Roguecraft")&&!strcmp(som_discipline_names[10],"Bushido")&&
-           !strcmp(som_discipline_names[11],"Archery"));
+           !strcmp(som_discipline_names[11],"Archery")&&
+           !strcmp(som_discipline_names[15],"Psionics"));
     for(unsigned k=0;k<SOM_DISCIPLINE_COUNT;k++)
         assert(som_disc_has_dodge(k)==(k==0||k==1||k==2||k==9||k==10||k==11));
     {

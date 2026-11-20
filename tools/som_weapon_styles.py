@@ -41,7 +41,7 @@ _S = WeaponStyle
 STYLES = (
     _S("Rapier", 1, 0, 150, 75, 75), _S("Longsword", 1, 0, 100, 100, 150), _S("Claymore", 1, 16, 70, 135, 200),
     _S("Hand Wraps", 0, 0, 160, 70), _S("Cestus", 0, 0, 100, 100), _S("Tiger Claws", 0, 10, 75, 130),
-    _S("Kunai", 1, 0, 165, 65, 55), _S("Ninjato", 1, 0, 100, 100), _S("Kusarigama", 1, 22, 70, 120),
+    _S("Kunai", 1, 0, 165, 65, 55), _S("Ninjato", 1, 0, 100, 100), _S("Kusarigama", 4, 0, 70, 120),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),
     _S("Quick Hands", 0, 0, 140, 80), _S("Bare Hands", 0, 0, 100, 100), _S("Heavy Hands", 0, 0, 75, 130),

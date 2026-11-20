@@ -21,8 +21,9 @@ class TestWeaponStyles(unittest.TestCase):
         self.assertEqual(len(ws.STYLES), len(ws.CLASSES) * ws.STYLES_PER_CLASS)
         for klass in range(len(ws.CLASSES)):
             fast, balanced, heavy = ws.class_styles(klass)
+            if heavy.name != "Kusarigama":         # the ninja's flail style
+                self.assertEqual(heavy.weapon_id, balanced.weapon_id)
             self.assertEqual(fast.weapon_id, balanced.weapon_id)
-            self.assertEqual(heavy.weapon_id, balanced.weapon_id)
             self.assertEqual((balanced.speed_pct, balanced.power_pct), (100, 100))
             self.assertGreater(fast.speed_pct, 100)
             self.assertGreater(heavy.power_pct, 100)

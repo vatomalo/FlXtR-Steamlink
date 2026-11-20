@@ -53,7 +53,7 @@ static const SomWeaponStyle som_weapon_styles[SOM_STYLE_COUNT]={
     /* Martial Arts: glove */
     {"Hand Wraps",0,0,160,70,0},{"Cestus",0,0,100,100,0},{"Tiger Claws",0,10,75,130,0},
     /* Ninjutsu: sword */
-    {"Kunai",1,0,165,65,55},{"Ninjato",1,0,100,100,0},{"Kusarigama",1,22,70,120,0},
+    {"Kunai",1,0,165,65,55},{"Ninjato",1,0,100,100,0},{"Kusarigama",4,0,70,120,0},
     /* Magic: bare hands (casters hold no weapon) */
     {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
     /* Divine Arts: spear */

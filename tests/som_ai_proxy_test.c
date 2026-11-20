@@ -2164,6 +2164,17 @@ int main(void){
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
             mocked_buttons=0;som_input_poll();
             assert(som_current_spell()==som_class_spell(3,2));       /* X: the rest */
+            /* Spell sets (R1): set II puts spells 3 and 4 on B and Y, X goes on
+             * after them; the default style is set I. */
+            assert(som_caster_set(3)==0u);
+            styles.selected[3]=2;
+            assert(som_caster_spell(3,0)==som_class_spell(3,2)&&som_caster_spell(3,1)==som_class_spell(3,3));
+            assert(som_current_spell()==som_class_spell(3,4));
+            styles.selected[3]=SOM_STYLE_DEFAULT;
+            /* Each class names its spells its own way. */
+            assert(!strcmp(som_class_spell_label(2,0x0C),"Katon"));
+            assert(!strcmp(som_class_spell_label(4,0x28),"Holy Light"));
+            assert(!strcmp(som_class_spell_label(3,0x0C),"Fire Ball"));      /* the mage's own */
             hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;hero[0x186]=0;
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
             som_input_poll();

@@ -55,15 +55,15 @@ static const SomWeaponStyle som_weapon_styles[SOM_STYLE_COUNT]={
     /* Ninjutsu: sword */
     {"Kunai",1,0,165,65,55},{"Ninjato",1,0,100,100,0},{"Kusarigama",4,0,70,120,0},
     /* Magic: bare hands (casters hold no weapon) */
-    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
     /* Divine Arts: spear */
-    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
     /* Dark Arts: whip */
-    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
     /* Summoning: boomerang */
-    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
     /* Support & Dance: whip */
-    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
     /* Weapon Flow: sword */
     {"Gladius",1,0,145,80,75},{"Arming Sword",1,0,100,100,0},{"Bastard Sword",1,14,75,130,150},
     /* Roguecraft: sword */
@@ -75,9 +75,9 @@ static const SomWeaponStyle som_weapon_styles[SOM_STYLE_COUNT]={
     /* Vampire Hunting: whip */
     {"Leather Lash",4,0,150,75,0},{"Chain Whip",4,0,100,100,0},{"Thorn Flail",4,0,70,135,0},
     /* Necromancy, Artifice, Psionics: bare hands / hammer / bare hands */
-    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
     {"Tack Hammer",2,0,145,80,0},{"Forge Hammer",2,0,100,100,0},{"Sledge",2,14,70,135,0},
-    {"Quick Hands",0,0,140,80,0},{"Bare Hands",0,0,100,100,0},{"Heavy Hands",0,0,75,130,0},
+    {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
 };
 
 typedef struct {
@@ -109,19 +109,19 @@ static const char *const som_class_extra_weapon_names[SOM_DISCIPLINE_COUNT][2]={
     {"War Axe",""},        /* Swordsmanship */
     {"Monk Spear",""},     /* Martial Arts */
     {"Chakram",""},        /* Ninjutsu */
-    {"Bare Hands",""},     /* Magic */
-    {"Bare Hands",""},     /* Divine Arts */
-    {"Bare Hands",""},     /* Dark Arts */
-    {"Bare Hands",""},     /* Summoning */
-    {"Bare Hands",""},     /* Support & Dance */
+    {"",""},               /* Magic: casts, no Y weapon */
+    {"",""},               /* Divine Arts: casts, no Y weapon */
+    {"",""},               /* Dark Arts: casts, no Y weapon */
+    {"",""},               /* Summoning: casts, no Y weapon */
+    {"",""},               /* Support & Dance: casts, no Y weapon */
     {"War Spear","War Bow"}, /* Weapon Flow: Y and X */
     {"Rogue Bow",""},      /* Roguecraft */
     {"Yumi",""},           /* Bushido */
     {"Javelin",""},        /* Archery */
     {"Silver Cross",""},   /* Vampire Hunting */
-    {"Bare Hands",""},     /* Necromancy */
+    {"",""},               /* Necromancy: casts, no Y weapon */
     {"Crossbow",""},       /* Artifice */
-    {"Bare Hands",""},     /* Psionics */
+    {"",""},               /* Psionics: casts, no Y weapon */
 };
 static inline const char *som_custom_weapon_name(const SomStyles *styles,
                                                   unsigned cls,unsigned slot){

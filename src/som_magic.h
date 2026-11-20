@@ -77,8 +77,39 @@ static inline int som_disc_caster(unsigned discipline) {
            discipline == 13u || discipline == 15u;     /* Necromancy, Psionics */
 }
 
+/* Each class names its spells its own way (player's request, 2026-11-20):
+ * the game's spell, a class's word for it. Unlisted pairs keep the game's
+ * name. */
+typedef struct { uint8_t discipline, spell; const char *name; } SomClassSpellName;
+static const SomClassSpellName som_class_spell_names[] = {
+    {0, 0x0F, "Flame Edge"}, {0, 0x15, "Thunder Edge"}, {0, 0x09, "Frost Edge"},
+    {1, 0x04, "Swift Chi"}, {1, 0x1C, "Moon Chi"}, {1, 0x05, "Iron Body"},
+    {2, 0x0C, "Katon"}, {2, 0x06, "Hyoton"}, {2, 0x12, "Futon"}, {2, 0x1E, "Nemuri"},
+    {4, 0x28, "Holy Light"}, {4, 0x0B, "Healing Prayer"}, {4, 0x0A, "Purify"},
+    {4, 0x29, "Sanctuary"}, {4, 0x27, "Blessed Blade"}, {4, 0x22, "Divine Ward"},
+    {5, 0x25, "Shadow Bolt"}, {5, 0x08, "Life Siphon"}, {5, 0x24, "Hellgate"},
+    {5, 0x26, "Unweave"}, {5, 0x19, "Mana Leech"}, {5, 0x18, "Hex Form"},
+    {6, 0x1F, "Spirit Burst"}, {6, 0x1E, "Dream Bloom"}, {6, 0x1A, "Moon Pact"},
+    {6, 0x1D, "Lunar Call"},
+    {7, 0x02, "Slow Waltz"}, {7, 0x0B, "Healing Dance"}, {7, 0x04, "Quickstep"},
+    {7, 0x05, "Guarding Step"}, {7, 0x14, "Hush Dance"}, {7, 0x16, "Float Dance"},
+    {9, 0x02, "Hamstring"}, {9, 0x1E, "Sleep Dart"}, {9, 0x07, "Acid Flask"},
+    {9, 0x14, "Gag"},
+    {11, 0x12, "Wind Arrow"}, {11, 0x13, "Thunder Arrow"}, {11, 0x01, "Stone Arrow"},
+    {13, 0x08, "Soul Drain"}, {13, 0x24, "Grave Gate"},
+    {15, 0x1E, "Mind Sleep"}, {15, 0x16, "Levitate"},
+};
+
 static inline const char *som_spell_label(unsigned spell) {
     return spell < SOM_SPELL_COUNT ? som_spell_names[spell] : "spell";
+}
+
+static inline const char *som_class_spell_label(unsigned discipline, unsigned spell) {
+    for (unsigned i = 0; i < sizeof(som_class_spell_names) / sizeof(som_class_spell_names[0]); i++)
+        if (som_class_spell_names[i].discipline == discipline &&
+            som_class_spell_names[i].spell == spell)
+            return som_class_spell_names[i].name;
+    return som_spell_label(spell);
 }
 
 static inline unsigned som_class_spell_count(unsigned discipline) {

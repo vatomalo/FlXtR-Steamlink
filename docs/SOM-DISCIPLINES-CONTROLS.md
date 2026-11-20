@@ -682,3 +682,18 @@ swords' grades (2-5) and scales them with nearest-neighbour; `scripts/build-som-
 stages it with `SOM_ROM_PATH` as `som_weapon_scales.bin` (beside the proxy). While a scaled
 style is held the proxy blanks the native weapon tiles in 7E:2000 (keeping a copy) and draws
 the pack frame for the hero's frame (+0x26 / 2), mirrored for left facings (+0x28 bit 6).
+
+### Casters' spell sets and class spell names (2026-11-20)
+
+Casters (Magic, Divine Arts, Dark Arts, Summoning, Support & Dance, Necromancy, Psionics)
+hold no weapon, so their three styles are **spell sets**, cycled with the style button
+(R1): set I (the default) puts the class's spells 1-2 on B and Y, set II spells 3-4, set
+III spells 5-6 (wrapping); X cycles the rest. The HUD shows the set's B / Y spells.
+
+Each class names its spells its own way (`som_class_spell_names` in src/som_magic.h), e.g.
+Ninjutsu: Katon (Fire Ball), Hyoton (Freeze), Futon (Air Blast), Nemuri (Sleep Flower);
+Divine Arts: Holy Light (Lucent Beam), Healing Prayer (Cure Water); Dark Arts: Shadow Bolt
+(Dark Force), Life Siphon (Energy Absorb); Summoning: Spirit Burst, Dream Bloom; Support &
+Dance: Slow Waltz, Quickstep; Necromancy: Soul Drain, Grave Gate; Psionics: Mind Sleep,
+Levitate; Archery: Wind / Thunder / Stone Arrow; sabers: Flame / Thunder / Frost Edge.
+Magic keeps the game's names.

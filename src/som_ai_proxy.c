@@ -723,6 +723,15 @@ static int x_cycled;
 static int x_l2_chord;
 #define SOM_X_HOLD_FRAMES 30ul
 /* Where X's list starts: a caster's first two spells are on B and Y. */
+/* Casters' spell sets (player's design, 2026-11-20): a caster holds no
+ * weapon, so its three styles (R1) are spell sets: set k puts the class's
+ * spells 2k+1 and 2k+2 on B and Y (wrapping), X cycles the others. The
+ * default style (1) is set I, the list's own first two. */
+static unsigned som_caster_set(unsigned cls);
+static unsigned som_caster_spell(unsigned cls,unsigned which){
+    const unsigned n=som_class_spell_count(cls);
+    return som_class_spell(cls,n?(2u*som_caster_set(cls)+which)%n:0u);
+}
 static unsigned som_x_spell_base(void){
     const unsigned n=som_class_spell_count(disciplines.selected);
     return disciplines.selected<SOM_DISCIPLINE_COUNT&&som_disc_caster(disciplines.selected)&&
@@ -731,6 +740,9 @@ static unsigned som_x_spell_base(void){
 static unsigned som_current_spell(void){
     const unsigned d=disciplines.selected<SOM_DISCIPLINE_COUNT?disciplines.selected:SOM_DISCIPLINE_COUNT;
     const unsigned base=som_x_spell_base(),n=som_class_spell_count(disciplines.selected);
+    if(base&&n>base)                         /* a caster: after its set's B and Y */
+        return som_class_spell(disciplines.selected,
+            (2u*som_caster_set(disciplines.selected)+base+spell_cursor[d]%(n-base))%n);
     return som_class_spell(disciplines.selected,
                            n>base?base+spell_cursor[d]%(n-base):spell_cursor[d]);
 }
@@ -1084,6 +1096,9 @@ static void som_taijutsu_advance(void){
     taijutsu_last=frame_number;
 }
 static SomStyles styles;
+static unsigned som_caster_set(unsigned cls){
+    return cls<SOM_DISCIPLINE_COUNT?(styles.selected[cls]+2u)%SOM_STYLES_PER_CLASS:0u;
+}
 static int style_b_hidden,throw_active;
 static void som_style_cycle(int to);
 static void som_style_give(unsigned species);
@@ -1559,13 +1574,13 @@ static void som_input_poll(void){
             !native_ring;
         if(caster&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
-            const unsigned spell=som_class_spell(disciplines.selected,which);
+            const unsigned spell=som_caster_spell(disciplines.selected,which);
             if(which||som_spell_affordable(wram,spell)){
                 if(which)y_weapon_blocked=1;else b_weapon_blocked=1;
                 if(pressed&(which?y_bit:b_bit)){
                     if(som_cast_spell(wram,spell))
                         fprintf(stderr,"[som-ai] CASTER %s: %s\n",which?"Y":"B",
-                                som_spell_label(spell));
+                                som_class_spell_label(disciplines.selected,spell));
                 }
             }
         }
@@ -1716,7 +1731,8 @@ static void som_input_poll(void){
             else if(frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
                 som_next_spell();x_cycled=1;x_press_frame=frame_number;
                 char text[64];
-                snprintf(text,sizeof(text),"^%s|tap X: cast",som_spell_label(som_current_spell()));
+                snprintf(text,sizeof(text),"^%s|tap X: cast",
+                         som_class_spell_label(disciplines.selected,som_current_spell()));
                 som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
             }
         }else if(wram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
@@ -2285,7 +2301,9 @@ static int som_equip_weapon(uint8_t *ram,unsigned type){
  * when the hero is released. Not reproduced: the "<spell> Lv." banner, and
  * the spark palette for frames 0-59 (the game loads the cast palette itself
  * at frame 60). */
-static const char *som_spell_name(unsigned spell){return som_spell_label(spell);}
+static const char *som_spell_name(unsigned spell){
+    return som_class_spell_label(disciplines.selected,spell);
+}
 /* 0 Gnome .. 5 Dryad: six spells each; 6 Shade, 7 Lumina: three each. */
 static unsigned som_spell_element(unsigned spell){
     return spell<0x24u?spell/6u:spell<0x27u?6u:7u;
@@ -3646,7 +3664,11 @@ static void som_style_cycle(int to){
     unsigned index;
     const SomWeaponStyle *st=som_style_of(&styles,cls,&index);
     char text[64];
-    snprintf(text,sizeof(text),"^%s|Lv%u %s",st->name,(unsigned)styles.level[index],
+    if(som_disc_caster(cls))                       /* a spell set, not a weapon */
+        snprintf(text,sizeof(text),"^%s|B %s Y %s",st->name,
+                 som_class_spell_label(cls,som_caster_spell(cls,0)),
+                 som_class_spell_label(cls,som_caster_spell(cls,1)));
+    else snprintf(text,sizeof(text),"^%s|Lv%u %s",st->name,(unsigned)styles.level[index],
              st->speed_pct>100u?"fast":st->reach_bonus>0||st->power_pct>100u?"heavy":"balanced");
     som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] STYLE %s: %s Lv%u (speed %u%%, power %u%%, reach +%d)\n",
@@ -5282,7 +5304,17 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
          * Never display native forge-grade strings like 'Masamune Katana'. */
         const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         const unsigned type=ram?ram[0xE1E4]:8u;
-        if(type<8u&&ram[0xCC54u+type]!=0xFF){
+        if(ram&&disciplines.selected<SOM_DISCIPLINE_COUNT&&som_disc_caster(disciplines.selected)){
+            char text[48];
+            const unsigned cls=disciplines.selected;
+            snprintf(text,sizeof(text),"%s / %s",
+                     som_class_spell_label(cls,som_caster_spell(cls,0)),
+                     som_class_spell_label(cls,som_caster_spell(cls,1)));
+            const int centre=hud_x+SOM_HUD_LABEL_DX+((int)strlen(class_title)*6-1)/2;
+            som_overlay_label(overlay_frame,width,height,pitch,pixel_format,text,
+                              centre,hud_y+SOM_HUD_LABEL_DY+8,1,
+                              som_overlay_color(pixel_format,170,200,255));
+        }else if(type<8u&&ram[0xCC54u+type]!=0xFF){
             char text[48];
             const unsigned slot=som_class_arm_slot(disciplines.selected,type);
             const char *name=som_custom_weapon_name(&styles,disciplines.selected,slot);

@@ -1,5 +1,32 @@
 # SoM enhanced combat: disciplines, controls, and evade discovery
 
+## Current controller layout (20 November 2026, supersedes earlier layouts)
+
+| Physical input | Current behavior in active field play |
+| --- | --- |
+| **R2 (hold)** | **Block / guard**. The proxy presents native SNES R to the ROM. Samurai Iai parry and Monk Counter Palm/Tiger Drop use the same guard. Samurai R2 + backward D-pad throws; Swordsman R2 + A bashes. |
+| **L2 + D-pad signs, then B/Y** | Seals, charged specials and their level selection, moved from R2. L2+B is primary level 1 by default, L2+Y is secondary level 2. |
+| **L2 + X** | Existing discipline moves (Issen, Hundred Fists, Whirlwind, Telekinesis, etc.) remain in place; not a style switch. |
+| **L1 (tap)** | Toggle enemy lock-on. Only targeting, independent of B/Y. Native L1 is suppressed during active field play so it cannot open the wrong ring. |
+| **R1 (tap)** | Cycle the currently selected class's **three FlXtR weapon styles** (fast -> balanced -> heavy -> fast). Native R1 no longer blocks. |
+| **L3 + B** | Legacy L1+B style-cycle shortcut, moved to L3. B is suppressed so it cannot accidentally attack or start a combo. |
+| **L3 + Y/X** | Native weapon/item or magic ring shortcut, formerly using L2. The proxy sends native L2+Y/X and does not trigger a class attack/spell on release. |
+| **L2 or R3 held alone for 1 s, release** | Start AI mode. A long R2 block no longer starts AI. |
+| **Start** | Class Progress menu, with L2+R2 still available as its alternate shortcut. |
+
+Outside active field play, the base game's menu buttons remain unchanged.
+During the AI gambit menu, L1/R1 still turn pages and do not change styles.
+
+**Weapon names:** the custom HUD under the class title shows **only FlXtR's
+own weapon/style names**: `Katana`, `Dai Katana`, `Yumi`, `Crossbow`, etc.
+It no longer displays compound vanilla names like `Masamune Katana`.
+Native in-ROM inventory/ring names are unchanged, since modifying them
+requires separate ROM text patching and validation.
+
+Previous controller descriptions below are historical and may refer to
+the old R1 block, R2 seals, and L1+B style bindings.
+
+
 Development branch: `feature/som-disciplines-controls-20261114`, based on the **working** familiar branch `feature/som-familiars-working-20261114` (commit `595d57e`). Do not merge older `clone_familiar_visual` experiments over `som_familiar.h`.
 
 ## Direct weapon switching and X/Triangle Fire Ball (14 November 2026, evening)
@@ -238,10 +265,10 @@ be added as disciplines first. Every other discipline has no dodge roll.
   name shown). Hostile spells (row byte 8 = 0x81) target the nearest live monster; ally
   (0x01) and self (0x00) spells target the boy (target 1). MP cost comes from the ROM;
   the boy starts with 0 MP, so use "Infinite MP (test)" until he has some.
-- **Seals** (charge levels without holding): hold **R2**, tap the D-pad once per seal
+- **Seals** (charge levels without holding): hold **L2**, tap the D-pad once per seal
   (Tiger/Boar/Dog/Ram; the D-pad does not move the hero meanwhile), then **B** (primary)
   or **Y** (secondary). Level = number of seals, capped at the weapon's learned level
-  (`+0x19C`). No seals keeps R2+B = 1, R2+Y = 2. Once the swing ends the proxy sets the
+  (`+0x19C`). No seals keeps L2+B = 1, L2+Y = 2. Once the swing ends the proxy sets the
   gauge word `+0x01A` = stage<<8 | 44 and `+0x19B` (som-decomp rom-combat.md 11.3),
   then releases B.
 - **Evade**: **A** (R1+A too) plays the native back-roll pose 0x8D (55 px away from the facing,
@@ -341,7 +368,7 @@ stack 13 %, state_guard 7 %). Changes:
   charges straight to the level (capped at what it learned, via `som_special_start`) and
   fires as the game's own power attack. Manual play only. Replaces the old fixed
   4-hit level-1 finisher.
-- **Swordsman R1+A bash**: the game's own run (A held, 3 px/frame, stops at walls) for up
+- **Swordsman R2+A bash**: the game's own run (A held, 3 px/frame, stops at walls) for up
   to 14 frames (~42 px) or until a monster is within 22 px, one frame of release, then
   the game's own sword swing (B) with the run gauge `E1ED` cleared so it hits at full.
   R1/D-pad/Y/X are hidden from the game meanwhile. Refused while `E1ED` is still loading.
@@ -528,7 +555,7 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
 - **Issen (L2 + X):** a straight dash-cut along the facing, 6 px x 14 frames (~84 px),
   untouchable like the dodge; every monster passed is cut once (16 + 2 x Bushido level).
   4 s cooldown. Log `[som-ai] ISSEN ...`.
-- **Iai counter (guard with R1):** a hit landing on the guard is parried (no damage) and
+- **Iai counter (guard with R2):** a hit landing on the guard is parried (no damage) and
   answered with a cut on the attacker (20 + 2 x Bushido level), on the Iaijutsu cooldown.
   Log `[som-ai] IAI COUNTER ...`.
 - **Zanshin:** a kill readies Iaijutsu at once, so kills chain.
@@ -537,7 +564,7 @@ Log: `[som-ai] CASTER B|Y: <spell>`.
 
 - **Hundred Fists (L2 + X):** for 1 s the game sees B every 4 frames (his own punches)
   and every 8 frames each monster just in front takes 3 + level/2 more. 5 s cooldown.
-- **Counter palm (guard with R1):** a hit on the guard is parried and answered
+- **Counter palm (guard with R2):** a hit on the guard is parried and answered
   (14 + 2 x Martial level), every 2 s at most.
 - **Rising Dragon:** every third hit of a combo adds a strike (8 + level).
 - Not built: cartwheel into a kick (the cartwheel is the game's own pose).
@@ -610,8 +637,7 @@ classes start at level 1); the style file is now `s2 <classes> ...`.
 Tap **L1** (without B or Y in between) to lock onto the nearest monster within 160 px; a
 yellow "V" bobs over it. While locked the hero keeps facing it (before and after each game
 frame), so walking strafes around it and every attack goes its way. Tap L1 again to let go;
-the lock also drops when the monster dies, gets 220 px away, or the map changes. L1 + B still
-switches the weapon style. Player only (the AI does not use it). Log: `[som-ai] LOCK ...`.
+the lock also drops when the monster dies, gets 220 px away, or the map changes. R1 taps now cycle the styles; L3+B is the legacy shortcut. Player only (the AI does not use it). Log: `[som-ai] LOCK ...`.
 
 ### Summon graphics, Ukemi and Mentalist telekinesis (20 November 2026)
 

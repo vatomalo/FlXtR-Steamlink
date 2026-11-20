@@ -403,3 +403,9 @@ test-bios-download: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/bios_download_test.c -o build/bios-download-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/bios-download-test
 	python3 tests/update_package_test.py
+
+.PHONY: test-som-party-classes
+test-som-party-classes:
+	mkdir -p build
+	$(CC) -std=c99 -Wall -Wextra -Werror -Isrc tests/som_party_classes_test.c -o build/som-party-classes-test -ldl
+	build/som-party-classes-test

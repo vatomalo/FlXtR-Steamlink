@@ -235,7 +235,8 @@ static inline int som_disc_line(const SomDisciplines *d,unsigned line,char out[3
     return 1;
 }
 static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
-                                size_t pitch,int format,const SomDisciplines *d){
+                                size_t pitch,int format,const SomDisciplines *d,
+                                const char *party_title){
     if(!d->open||!pixels)return;
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
     const unsigned lines=SOM_DISCIPLINE_COUNT+2u;
@@ -248,6 +249,7 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
     char out[33];
     for(unsigned line=0;line<lines-1u;line++){
         if(!som_disc_line(d,line,out))break;
+        if(line==0&&party_title)snprintf(out,sizeof(out),"%s",party_title);
         for(unsigned i=0;out[i];i++){
             unsigned char c=(unsigned char)out[i];
             if(c<32u||c>126u)continue;

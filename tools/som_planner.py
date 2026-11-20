@@ -170,6 +170,14 @@ PIN_CHASE_TILES = 4
 PIN_INTENTIONS = {"explore_frontier", "leave_room", "return_to_inn", "go_to_inn",
                   "go_to_shop", "go_to_map", "visit_map", "replan", "stuck"}
 BLINK_COOLDOWN_S = 12.0
+# Escaping (player's request, 2026-11-20): on the way to the inn or another
+# fight-free errand, a monster this close makes a dodge class evade along the
+# route, and one a little further makes the hero blink ahead on the route.
+ESCAPE_INTENTIONS = {"return_to_inn", "go_to_inn", "go_to_destination", "survive"}
+ESCAPE_EVADE_PX = 40
+ESCAPE_BLINK_PX = 96
+ESCAPE_EVADE_S = 1.5
+ESCAPE_AHEAD_TILES = 8
 BLINK_SETTLE_S = 1.5        # travel time before a blink's result is judged
 # Keep the current evasion heading unless another step is clearly safer.
 EVADE_HYSTERESIS_PX = 16
@@ -309,6 +317,9 @@ class MemoryPlanner:
         self.travelling = False            # an errand with a destination this decision
         # Set by the bridge while the class has an evade (DODGE_CLASSES).
         self.evade_past = False
+        self.escape_dodge = False         # the class can dodge (the bridge sets it)
+        self.escape_ahead = None          # (map, tile, clock) a few steps along the route
+        self.escape_evaded_at = None
         self.evade_past_pending = None     # (stall key) after the turn tap
         self.evade_past_tries = {}         # per visit: reset on another map
         self.evade_past_map = None
@@ -1537,6 +1548,14 @@ class MemoryPlanner:
                                            f"{destination.get('next_map')} is blocked "
                                            f"by {exit_action}; rerouting", "replan")
             if target in routes and target != position:
+                path, cursor = [], target
+                while cursor != position and cursor in routes.parents and len(path) < 400:
+                    path.append(cursor)
+                    cursor = routes.parents[cursor][0]
+                if path:
+                    path.reverse()
+                    self.escape_ahead = (context.get("map_id"),
+                                         path[min(ESCAPE_AHEAD_TILES, len(path)) - 1], self.clock())
                 action, distance = routes[target]
                 if action.startswith("whip:"):
                     return self._whip_cross(context, action[5:],
@@ -1860,7 +1879,45 @@ class MemoryPlanner:
         decision = self._observe_curiosity(observation, decision, directive, errand)
         decision = self._check_stall(observation, decision)
         decision = self._check_pinned(observation, decision)
-        return self._slide_failsafe_tick(observation, decision)
+        decision = self._slide_failsafe_tick(observation, decision)
+        return self._escape(observation, decision)
+
+    def _escape(self, observation, decision):
+        """Getting away (inn, fight-free errand): evade along the route from a
+        monster at the heels, blink ahead on the route from one closing in."""
+        if decision.intention not in ESCAPE_INTENTIONS or decision.action not in STEP_OFFSETS:
+            return decision
+        context = observation.get("tile_context") if isinstance(observation, dict) else None
+        actor = (context or {}).get("actor") or {}
+        ax, ay = actor.get("x_px"), actor.get("y_px")
+        if not isinstance(ax, int) or not isinstance(ay, int):
+            return decision
+        gaps = [max(abs(e["x_px"] - ax), abs(e["y_px"] - ay))
+                for e in observation.get("enemy_slots", [])
+                if isinstance(e, dict) and e.get("active") and not e.get("familiar") and
+                isinstance(e.get("x_px"), int) and isinstance(e.get("y_px"), int)]
+        if not gaps or min(gaps) > ESCAPE_BLINK_PX:
+            return decision
+        gap, now = min(gaps), self.clock()
+        if (gap <= ESCAPE_EVADE_PX and self.escape_dodge and
+                (self.escape_evaded_at is None or now - self.escape_evaded_at >= ESCAPE_EVADE_S)):
+            self.escape_evaded_at = now
+            return PlannerDecision(f"evade_{decision.action[5:]}", f"escaping: monster {gap} px "
+                                   f"away, evade {decision.action[5:]} along the route",
+                                   "escape_evade")
+        ahead = self.escape_ahead
+        if (self.blink and ahead is not None and ahead[0] == (context or {}).get("map_id") and
+                now - ahead[2] <= 2.0 and
+                (self.blink_at is None or now - self.blink_at >= BLINK_COOLDOWN_S)):
+            x, y = ahead[1]
+            tile = (context or {}).get("actor_tile") or [0, 0]
+            if abs(x - tile[0]) <= BLINK_RANGE and abs(y - tile[1]) <= BLINK_RANGE:
+                self.blink_at = now
+                self.blink_sent = ((context or {}).get("map_id"), tuple(tile), (x, y))
+                self._last_blink = ((context or {}).get("map_id"), (x, y))
+                return PlannerDecision(f"blink_{x}_{y}", f"escaping: monster {gap} px away, "
+                                       f"blinking ahead on the route to {x},{y}", "blink")
+        return decision
 
     BUSY_INTENTIONS = ("engage_enemy", "survive", "recover_at_inn", "return_to_inn",
                        "at_inn", "errand", "arrive")

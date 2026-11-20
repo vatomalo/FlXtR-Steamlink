@@ -109,7 +109,8 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
                     "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
-                    "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap", "telekinesis"} | \
+                    "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap", "telekinesis",
+                    "evade_up", "evade_down", "evade_left", "evade_right"} | \
     {f"class_{n}" for n in range(16)} | {f"special_{n}" for n in range(1, 9)}
 # Blink to a tile (proxy som_blink_start checks range and open ground).
 BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")
@@ -456,9 +457,11 @@ def extend_clear_exploration(action: str, observation, intention: str,
         # A dash goes further than the five tiles seen around the hero, so it
         # needs a long straight run on the learned route and a far target,
         # and never near a monster (travel, not a fight).
+        # Escaping (inn, fight-free errand) dashes past monsters too.
+        escaping = intention in ("return_to_inn", "go_to_inn", "go_to_destination")
         if (intention != "engage_enemy" and straight_tiles >= DASH_MIN_STRAIGHT and
                 (remaining_tiles is None or remaining_tiles >= DASH_MIN_REMAINING) and
-                not enemy_within(observation, DASH_ENEMY_PX)):
+                (escaping or not enemy_within(observation, DASH_ENEMY_PX))):
             return DASH_MOVES[LONG_MOVES[action]]
         return LONG_MOVES[action]
     return action
@@ -1503,6 +1506,10 @@ def main() -> int:
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
     tool_out = "sword"                           # tool weapon taken out (sword/whip)
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
+    # Which weapon suits which monster type: learned from kills, kept.
+    stored_records = history.get_agent_state("weapon_vs_enemy") if history is not None else None
+    if isinstance(stored_records, dict):
+        weapon_tactics.records = stored_records
     jutsu = JutsuTactics()                        # Kawarimi / Shunshin (som_jutsu)
     trials = None                                 # learned thresholds (som_trials)
     iai = IaiTactics()                            # samurai Iaijutsu (som_class_arts)
@@ -1679,6 +1686,12 @@ def main() -> int:
                                                args.hp_penalty)
                 if reward is not None:
                     reward_total += reward["score"]
+                    held_now = (((observation.get("party") or [{}])[0].get("weapon") or {})
+                                .get("type") if isinstance(observation, dict) else None)
+                    if reward.get("enemy_id", -1) >= 0 and held_now and reward.get("gold_gained"):
+                        weapon_tactics.record(reward["enemy_id"], held_now, reward["score"])
+                        if history is not None:
+                            history.set_agent_state("weapon_vs_enemy", weapon_tactics.records)
                     enemy = (f"enemy type {reward['enemy_id']:#04x}"
                              if reward["enemy_id"] >= 0 else "no enemy near")
                     print(f"[reward] {reward['score']:+.1f} "
@@ -2078,6 +2091,7 @@ def main() -> int:
                 # an evade gambit of 0 means the player wants no evading.
                 planner.evade_past = bool(link and class_director.current in DODGE_CLASSES and
                                           style["evade"] > 0)
+                planner.escape_dodge = planner.evade_past      # escapes evade along the route
                 planner.blink = isinstance(link, RemoteLink)    # the Steam Link proxy
                 planner.fuma_swap = planner.blink and class_director.current == NINJA
                 decision = planner.decide(observation, previous, directive, errand)
@@ -2211,10 +2225,14 @@ def main() -> int:
                     if (class_director.current is not None and grass_restore is None and
                             held is not None and decision.action != "charge"):
                         actor = context.get("actor") or {}
-                        gaps = [max(abs(e["x_px"] - actor.get("x_px", 0)),
-                                    abs(e["y_px"] - actor.get("y_px", 0)))
-                                for e in observation.get("enemy_slots", [])
-                                if e.get("active") and not e.get("familiar")]
+                        near = sorted(((max(abs(e["x_px"] - actor.get("x_px", 0)),
+                                             abs(e["y_px"] - actor.get("y_px", 0))),
+                                         e.get("identity"))
+                                        for e in observation.get("enemy_slots", [])
+                                        if e.get("active") and not e.get("familiar")),
+                                      key=lambda item: item[0])
+                        gaps = [gap for gap, _ in near]
+                        foe_type = near[0][1] if near else None
                         primary, secondary = CLASS_WEAPONS[class_director.current]
                         # Taijutsu: the proxy swaps glove and sword on B
                         # itself; either one in hand is the ninja's B.
@@ -2224,7 +2242,8 @@ def main() -> int:
                                                      min(gaps) if gaps else None,
                                                      hp / max_hp if max_hp else 1.0, levels,
                                                      third=THIRD_WEAPONS.get(
-                                                         class_director.current))
+                                                         class_director.current),
+                                                     enemy=foe_type)
                         if swap is not None and swap[0] == b_held:
                             swap = None
                         if (swap is not None and decision.action == "attack" and
@@ -2541,9 +2560,18 @@ def main() -> int:
                     print(f"[ai] intent=blink: {decision.reason}", flush=True)
                     try:
                         link.send_control(decision.action)
-                        announce("AI: Blink|out of the trap")
+                        announce("AI: Blink|escaping" if decision.reason.startswith("escaping")
+                                 else "AI: Blink|out of the trap")
                     except (OSError, subprocess.SubprocessError, ValueError) as exc:
                         print(f"[ai] blink failed: {exc}", flush=True)
+                    previous = "wait"
+                    continue
+                if link and decision.intention == "escape_evade":
+                    print(f"[ai] intent=escape_evade: {decision.reason}", flush=True)
+                    try:
+                        link.send_control(decision.action)
+                    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                        print(f"[ai] escape evade failed: {exc}", flush=True)
                     previous = "wait"
                     continue
                 if link and decision.intention == "evade_past" and decision.action == "evade":

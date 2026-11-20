@@ -222,8 +222,9 @@ int main(void){
     mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
     for(unsigned i=0;i<8;i++)mocked_wram[0xCC54+i]=0xFF;
     mocked_wram[0xCC55]=0x43; /* already-owned tier-3 sword */
-    assert(som_class_supply(mocked_wram,2)==2); /* Ninja gains chakram + Taijutsu glove */
-    assert(mocked_wram[0xCC55]==0x43&&mocked_wram[0xCC5A]==0&&mocked_wram[0xCC54]==0);
+    assert(som_class_supply(mocked_wram,2)==3); /* Ninja: chakram, Taijutsu glove, Kusarigama flail */
+    assert(mocked_wram[0xCC55]==0x43&&mocked_wram[0xCC5A]==0&&mocked_wram[0xCC54]==0&&
+           mocked_wram[0xCC58]==0);
     assert(som_class_supply(mocked_wram,2)==0); /* idempotent */
     assert(som_class_supply(mocked_wram,10)==1); /* Samurai gains yumi */
     assert(mocked_wram[0xCC59]==0&&mocked_wram[0xCC55]==0x43);
@@ -249,9 +250,11 @@ int main(void){
         assert(!strcmp(som_weapon_styles[som_style_index(10,2)].name,"Dai Katana"));
         assert(som_weapon_styles[som_style_index(10,2)].reach_bonus>0);
         assert(som_weapon_styles[som_style_index(10,0)].speed_pct>100u);
+        /* The balanced style is the class's B weapon; another style may be a
+         * weapon of its own (the ninja's Kusarigama is a flail). */
         for(unsigned c=0;c<SOM_DISCIPLINE_COUNT;c++)
-            assert(som_weapon_styles[som_style_index(c,0)].weapon==som_disc_weapons[c][0]&&
-                   som_weapon_styles[som_style_index(c,2)].weapon==som_disc_weapons[c][0]);
+            assert(som_weapon_styles[som_style_index(c,1)].weapon==som_disc_weapons[c][0]);
+        assert(som_weapon_styles[som_style_index(2,2)].weapon==4u);    /* Kusarigama: whip */
     }
     /* Throw: back is the D-pad away from the facing. */
     mocked_wram[0xE010]=0x02u;   /* facing right */
@@ -1637,6 +1640,23 @@ int main(void){
             }
             ram[0xED]=keep_ed;disciplines.selected=keep;
         }
+        /* AI "evade_right": the dodge goes right whatever the facing (an
+         * escape dodges along its route, not back into what chases it). */
+        {
+            uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
+            const uint8_t keep=disciplines.selected;
+            disciplines.selected=14;                                   /* artificer: plain roll */
+            for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x82;hero[0x01C]=0;
+            hero[0x060]=0;hero[0x190]=hero[0x191]=0;
+            assert(!som_handle_command("evade_sideways"));
+            assert(som_handle_command("evade_right")&&evade_active);
+            for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+            assert(!evade_active&&som_bun_u16(hero+2)==200+48);
+            hero[2]=200;hero[3]=0;hero[0x010]=0x02;
+            memcpy(ram+0xA8,camera,sizeof(camera));
+            disciplines.selected=keep;
+        }
         /* Mage A: Blink step, the carried dodge with the hero hidden while
          * he moves and shown again where he lands. */
         {
@@ -1814,6 +1834,7 @@ int main(void){
             pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=16;          /* one 1x1 blade pixel */
             assert(write(fd,pack,sizeof(pack))==(ssize_t)sizeof(pack));close(fd);
             weapon_scale_file=scale_path;weapon_scale_tried=0;
+            weapon_scale_on_file=scale_path;weapon_scale_on_checked=0;   /* sizes on */
             const uint8_t keep=disciplines.selected,keep_style=styles.selected[SOM_DISC_BUSHIDO];
             disciplines.selected=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=2;   /* Dai Katana */
             hero[0x1E4]=1;hero[0x1E3]=14;hero[0x026]=20;hero[0x028]=0x40;
@@ -1828,6 +1849,7 @@ int main(void){
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
             som_weapon_scale_pick(ram);assert(!weapon_scaled.active);
             unlink(scale_path);weapon_scale_file=SOM_WEAPON_SCALE_FILE;weapon_scale_tried=0;
+            weapon_scale_on_file=SOM_WEAPON_SCALE_ON_FILE;weapon_scale_on_checked=0;
             free(weapon_scale_pack);weapon_scale_pack=NULL;weapon_scale_pack_size=0;
             free(weapon_scale_index);weapon_scale_index=NULL;
             disciplines.selected=keep;styles.selected[SOM_DISC_BUSHIDO]=keep_style;

@@ -876,6 +876,12 @@ static int som_class_x(uint8_t *ram);
  * kept and put back when the style or weapon changes). */
 #define SOM_WEAPON_SCALE_FILE "/home/apps/retroarch/cores/experimental/som_weapon_scales.bin"
 static const char *weapon_scale_file=SOM_WEAPON_SCALE_FILE;
+/* Off unless this file exists (2026-11-20: frames incomplete and misplaced
+ * live; the art stays the game's own until that is fixed). */
+#define SOM_WEAPON_SCALE_ON_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_sizes_on"
+static const char *weapon_scale_on_file=SOM_WEAPON_SCALE_ON_FILE;
+static int weapon_scale_on;
+static unsigned long weapon_scale_on_checked;
 static const unsigned som_weapon_scale_steps[4]={55u,75u,150u,200u};
 static uint8_t *weapon_scale_pack;
 static size_t weapon_scale_pack_size;
@@ -1567,7 +1573,12 @@ static void som_input_poll(void){
            !(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
             unsigned want=som_disc_weapons[disciplines.selected][which];
-            if(!which&&disciplines.selected==SOM_DISC_NINJUTSU){
+            /* A style on another weapon (the ninja's Kusarigama is a flail):
+             * B takes the style's weapon, and the Taijutsu chain waits. */
+            const SomWeaponStyle *b_style=som_style_of(&styles,disciplines.selected,NULL);
+            const int style_weapon=!which&&b_style&&b_style->weapon!=want;
+            if(style_weapon)want=b_style->weapon;
+            if(!which&&!style_weapon&&disciplines.selected==SOM_DISC_NINJUTSU){
                 /* Taijutsu: the chain's weapon is chosen on the press and
                  * kept while B stays held (a held B may be charging). */
                 if((pressed&b_bit)||taijutsu_want==SOM_NO_WEAPON){
@@ -3478,6 +3489,13 @@ static unsigned som_class_supply(uint8_t *ram,unsigned discipline){
     if(!ram||discipline>=SOM_DISCIPLINE_COUNT||ram[0xE000]!=1||
        ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
     unsigned given=0;
+    for(unsigned k=0;k<SOM_STYLES_PER_CLASS;k++){      /* a style's own weapon (Kusarigama) */
+        const unsigned type=som_weapon_styles[som_style_index(discipline,k)].weapon;
+        if(type<8u&&ram[0xCC54u+type]==0xFF){
+            ram[0xCC54u+type]=0;given++;
+            fprintf(stderr,"[som-ai] CLASS granted missing %s tier 0\n",som_weapon_types[type]);
+        }
+    }
     for(unsigned i=0;i<3;i++){
         /* the third: Ninjutsu's glove for Taijutsu */
         unsigned type=i<2u?som_disc_weapons[discipline][i]:
@@ -4423,6 +4441,19 @@ static int som_handle_command(const char *command){
     if(!strcmp(command,"telekinesis")||!strcmp(command,"pull_chest"))
         return som_telekinesis_cast(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+    /* evade_up/down/left/right: the AI's dodge in a direction (an escape
+     * goes along its route, not back into the monster behind it). */
+    if(!strncmp(command,"evade_",6)){
+        const char *d=command+6;
+        const int dx=!strcmp(d,"right")?1:!strcmp(d,"left")?-1:0;
+        const int dy=!strcmp(d,"down")?1:!strcmp(d,"up")?-1:0;
+        if(!dx&&!dy)return 0;
+        evade_dir_x=dx;evade_dir_y=dy;
+        const int ok=som_evade_start(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+        evade_dir_x=evade_dir_y=0;
+        return ok;
+    }
     if(!strcmp(command,"evade"))
         return som_evade_start(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -6094,6 +6125,11 @@ static void som_weapon_scale_load(void){
 }
 /* The scale step of the held style (index into som_weapon_scale_steps), -1 none. */
 static int som_weapon_scale_step(const uint8_t *ram){
+    if(!weapon_scale_on_checked||frame_number-weapon_scale_on_checked>=120ul){
+        weapon_scale_on_checked=frame_number?frame_number:1ul;
+        weapon_scale_on=access(weapon_scale_on_file,F_OK)==0;
+    }
+    if(!weapon_scale_on)return -1;
     unsigned index;
     const SomWeaponStyle *st=som_style_held(ram,&index);
     if(!st||!st->scale_pct||st->scale_pct==100u)return -1;

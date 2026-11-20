@@ -1163,3 +1163,32 @@ class TestMemoryPlanner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EscapeTests(unittest.TestCase):
+    """Getting away: evade along the route, blink ahead on it."""
+
+    def test_evade_then_blink_ahead_while_going_to_the_inn(self):
+        planner = MemoryPlanner()
+        now = [100.0]
+        planner.clock = lambda: now[0]
+        planner.escape_dodge, planner.blink = True, True
+        state = observation(enemy={"slot": 1, "active": True, "x_px": 56, "y_px": 56})
+        actor = state["tile_context"]["actor"]
+        actor.update(x_px=40, y_px=56)
+        state["tile_context"]["map_id"] = 131
+        state["tile_context"]["actor_tile"] = [2, 3]
+        step = PlannerDecision("step_right", "go to learned inn (20 tiles)", "go_to_inn")
+        evade = planner._escape(state, step)
+        self.assertEqual((evade.action, evade.intention), ("evade_right", "escape_evade"))
+        self.assertEqual(planner._escape(state, step), step)              # evade resting
+        state["enemy_slots"][0]["x_px"] = 110                            # 70 px: blink range
+        planner.escape_ahead = (131, (9, 3), now[0])
+        blink = planner._escape(state, step)
+        self.assertEqual((blink.action, blink.intention), ("blink_9_3", "blink"))
+        self.assertEqual(planner._escape(state, step), step)              # blink resting
+        state["enemy_slots"][0]["x_px"] = 400                            # nobody near
+        self.assertEqual(planner._escape(state, step), step)
+        hunt = PlannerDecision("step_right", "explore", "explore_frontier")
+        state["enemy_slots"][0]["x_px"] = 56
+        self.assertEqual(planner._escape(state, hunt), hunt)              # not escaping

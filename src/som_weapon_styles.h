@@ -51,16 +51,16 @@ static const SomWeaponStyle som_weapon_styles[SOM_STYLE_COUNT]={
     {"Hand Wraps",0,0,160,70},{"Cestus",0,0,100,100},{"Tiger Claws",0,10,75,130},
     /* Ninjutsu: sword */
     {"Kunai",1,0,165,65},{"Ninjato",1,0,100,100},{"Kusarigama",1,22,70,120},
-    /* Magic: whip */
-    {"Switch",4,0,140,80},{"Ember Lash",4,0,100,100},{"Spellcord",4,0,75,130},
+    /* Magic: bare hands (casters hold no weapon) */
+    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
     /* Divine Arts: spear */
-    {"Short Spear",3,0,145,80},{"Holy Lance",3,0,100,100},{"Halberd",3,14,70,135},
+    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
     /* Dark Arts: whip */
-    {"Cat-o'-Nine",4,0,150,75},{"Scourge",4,0,100,100},{"Bone Chain",4,0,70,135},
+    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
     /* Summoning: boomerang */
-    {"Talisman Ring",6,0,145,80},{"Spirit Disc",6,0,100,100},{"Moon Glaive",6,0,70,135},
+    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
     /* Support & Dance: whip */
-    {"War Fans",4,0,155,70},{"Ribbon",4,0,100,100},{"Long Sash",4,0,75,125},
+    {"Quick Hands",0,0,140,80},{"Bare Hands",0,0,100,100},{"Heavy Hands",0,0,75,130},
     /* Weapon Flow: sword */
     {"Gladius",1,0,145,80},{"Arming Sword",1,0,100,100},{"Bastard Sword",1,14,75,130},
     /* Roguecraft: sword */

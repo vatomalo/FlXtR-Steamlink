@@ -587,11 +587,12 @@ static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {1,2},   /* Swordsmanship: sword, axe */
     {0,3},   /* Martial Arts: glove, spear */
     {1,6},   /* Ninjutsu: sword, chakram (boomerang engine slot) */
-    {4,6},   /* Magic: whip, boomerang */
-    {3,4},   /* Divine Arts: spear, whip */
-    {4,7},   /* Dark Arts: whip, javelin */
-    {6,4},   /* Summoning: boomerang, whip */
-    {4,0},   /* Support & Dance: whip, glove */
+    /* Casters hold no weapon: bare hands (the glove); B and Y cast. */
+    {0,0},   /* Magic */
+    {0,0},   /* Divine Arts */
+    {0,0},   /* Dark Arts */
+    {0,0},   /* Summoning */
+    {0,0},   /* Support & Dance */
     {1,3},   /* Weapon Flow: sword, spear */
     {1,5},   /* Roguecraft: sword, bow */
     {1,5},   /* Bushido: katana (sword), yumi (bow) */
@@ -610,11 +611,11 @@ static const SomClassArm som_class_arms[SOM_DISCIPLINE_COUNT][3]={
     {{4,100},{4,100},{0xFF,0}},   /* Swordsman: Excalibur, Gold Axe */
     {{5,100},{5, 90},{0xFF,0}},   /* Monk: Hyper Fist, Coral Spear */
     {{2,100},{7,100},{0xFF,0}},   /* Ninja: Kusanagi, Shuriken */
-    {{4, 70},{3, 70},{0xFF,0}},   /* Mage: Silver Flail, Full Moon Ring */
-    {{8, 75},{5, 70},{0xFF,0}},   /* Cleric: Daedalus' Lance, Morning Star */
-    {{7, 75},{5, 70},{0xFF,0}},   /* Warlock: Diamond Flail, Imp Harpoon */
-    {{5, 75},{3, 70},{0xFF,0}},   /* Summoner: Cobra Shuttle, Chain Flail */
-    {{4, 75},{2, 70},{0xFF,0}},   /* Dancer: Silver Flail, Moogle Claws */
+    {{4, 70},{4, 70},{0xFF,0}},   /* Mage: bare hands (Metal Glove) */
+    {{4, 70},{4, 70},{0xFF,0}},   /* Cleric: bare hands */
+    {{4, 70},{4, 70},{0xFF,0}},   /* Warlock: bare hands */
+    {{4, 70},{4, 70},{0xFF,0}},   /* Summoner: bare hands */
+    {{4, 70},{4, 70},{0xFF,0}},   /* Dancer: bare hands */
     {{3,100},{4,100},{6,100}},    /* Weaponmaster: Orchicalcum, Halberd, Wingbow */
     {{2,100},{2, 95},{0xFF,0}},   /* Rogue: Kusanagi, Longbow */
     {{5,110},{6, 85},{0xFF,0}},   /* Samurai: Masamune, Wingbow */
@@ -3363,6 +3364,15 @@ static void som_style_frame(uint8_t *ram){
                     som_weapon_name(type,grade));
             if(hero[0x1E4]==type)som_equip_weapon_row(ram,type,1);   /* the new art */
         }
+    }
+    /* A caster holds no weapon: the glove goes on as soon as he is free. */
+    static unsigned long caster_equip_tried;
+    if(cls<SOM_DISCIPLINE_COUNT&&som_disc_caster(cls)&&hero[0x1E4]!=0u&&
+       ram[0xCC54u]!=0xFF&&!ring_ai_enabled&&frame_number-caster_equip_tried>=60ul&&
+       som_field_idle(ram)){
+        caster_equip_tried=frame_number;
+        if(som_equip_weapon_direct(ram,0u)==SOM_EQUIP_OK)
+            fprintf(stderr,"[som-ai] CLASS %s: bare hands (glove)\n",som_discipline_titles[cls]);
     }
     const SomWeaponStyle *st=som_style_held(ram,&index);
     SomWeaponStyle arm;unsigned arm_level=0;

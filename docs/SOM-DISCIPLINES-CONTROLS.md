@@ -567,11 +567,11 @@ plain row at class level 8, times the class's power share (`som_class_arms`).
 | Swordsman | Excalibur | Gold Axe | |
 | Monk | Hyper Fist | Coral Spear (90 %) | |
 | Ninja | Kusanagi | Shuriken | |
-| Mage | Silver Flail (70 %) | Full Moon Ring (70 %) | |
-| Cleric | Daedalus' Lance (75 %) | Morning Star (70 %) | |
-| Warlock | Diamond Flail (75 %) | Imp Harpoon (70 %) | |
-| Summoner | Cobra Shuttle (75 %) | Chain Flail (70 %) | |
-| Dancer | Silver Flail (75 %) | Moogle Claws (70 %) | |
+| Mage | bare hands (glove, 70 %) | bare hands | |
+| Cleric | bare hands | bare hands | |
+| Warlock | bare hands | bare hands | |
+| Summoner | bare hands | bare hands | |
+| Dancer | bare hands | bare hands | |
 | Weaponmaster | Orchicalcum | Halberd | Wingbow |
 | Rogue | Kusanagi | Longbow (95 %) | |
 | Samurai | Masamune (110 %) | Wingbow (85 %) | |

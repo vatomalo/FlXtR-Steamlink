@@ -30,9 +30,10 @@ NAMES = ("Swordsmanship", "Martial Arts", "Ninjutsu", "Magic", "Divine Arts",
          "Roguecraft", "Bushido", "Archery")
 
 # (B weapon, Y weapon) per class, as som_disc_weapons in som_ai_proxy.c.
+# Casters (Magic .. Support & Dance) hold no weapon: bare hands, B/Y cast.
 WEAPONS = (("sword", "axe"), ("glove", "spear"), ("sword", "boomerang"),
-           ("whip", "boomerang"), ("spear", "whip"), ("whip", "javelin"),
-           ("boomerang", "whip"), ("whip", "glove"), ("sword", "spear"),
+           ("glove", "glove"), ("glove", "glove"), ("glove", "glove"),
+           ("glove", "glove"), ("glove", "glove"), ("sword", "spear"),
            ("sword", "bow"), ("sword", "bow"), ("bow", "javelin"))
 
 # Weapon Flow's third weapon (X; som_disc_third_weapon in som_disciplines.h).

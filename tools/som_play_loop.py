@@ -37,9 +37,9 @@ HUNT_DECISIONS = 3000
 # turn back DEATH_LEAVE_STEP sooner (11 deaths on maps 16/23 in 6 h, each
 # one throwing away the XP since the last inn save); a trip that ends
 # safely eases it back by SAFE_LEAVE_STEP. Capped at MAX_LEAVE.
-DEATH_LEAVE_STEP = 0.1
+DEATH_LEAVE_STEP = 0.05
 SAFE_LEAVE_STEP = 0.02
-MAX_LEAVE = 0.7
+MAX_LEAVE = 0.55             # 0.7 made trips two minutes long (99/146 HP, 2026-11-20)
 STORY_LEAVE = 0.5                # a story trip turns back below this HP fraction
 STORY_BUDGET = 3                 # a story trip may take this many hunting budgets
 ERRAND_DECISIONS = 1500   # shop alone may time out; inn/save never expire

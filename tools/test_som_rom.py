@@ -402,6 +402,28 @@ class TestMultiMapTravel(unittest.TestCase):
                              [d.reason for d in decisions])
             history.close()
 
+    def test_escape_blink_never_lands_back_in_a_recent_trap(self):
+        # Potos 20 Nov: the most-walked tile was the corridor he kept being
+        # trapped in, so every escape blink went straight back into it.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "trap.sqlite")
+            cols = [r[1] for r in history.connection.execute("pragma table_info(walked_cells)")]
+            for x, y, seen in ((20, 20, 50), (10, 18, 1)):
+                row = {"map_id": 131, "x": x, "y": y, "seen": seen}
+                history.connection.execute(
+                    f"INSERT INTO walked_cells VALUES({','.join('?' * len(cols))})",
+                    [row.get(c, 1 if c == "layer" else 0) for c in cols])
+                history.connection.execute(
+                    "INSERT INTO tile_visits(map_id,layer,x,y,visits,last_ts) VALUES(131,1,?,?,?,0)",
+                    (x, y, seen))
+            planner = MemoryPlanner(history)
+            planner.blink = True
+            context = {"map_id": 131, "actor_tile": [10, 10], "actor": {"layer": 1}}
+            planner._remember_trap(131, [(20, 20), (20, 21)])
+            decision = planner._blink_out(context, trap=[(10, 10), (10, 11)])
+            self.assertEqual(decision.action, "blink_10_18", decision.reason)
+            history.close()
+
     def test_hero_pinned_by_a_chase_loop_blinks_out(self):
         # "close on enemy 1 at 230px / 220px" for minutes: always moving,
         # never stalled, yet never leaving a few tiles.

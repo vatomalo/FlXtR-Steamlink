@@ -53,6 +53,8 @@ KITE_STEPS = 4
 UNREACHABLE_COOLDOWN = 20
 # A chase with no progress (_engage_stalled) gives up for longer.
 ENGAGE_STALL_S = 15.0
+RECENT_TRAP_S = 600.0         # a trap spot is no blink target for this long
+TRAVEL_GOAL_FRESH_S = 5.0     # a travel target this recent steers escape blinks
 STALL_GAIN_PX = 16
 STALL_COOLDOWN = 300
 # Leave survival when the inn spot does not heal or no recovery happens.
@@ -323,6 +325,8 @@ class MemoryPlanner:
         # sent straight back, over and over).
         self.stay_on_map = False
         self.clock = time.monotonic
+        self.travel_goal = None            # (map, layer, target, cells, size, floor, when)
+        self.recent_traps = []             # (map, x, y, when) where he was pinned lately
         self.engage_watch = None           # _engage_stalled: one chase's progress
         self.last_swing = None
         # Optional som_tactics.TacticLearner: per enemy type fighting style.
@@ -1459,6 +1463,10 @@ class MemoryPlanner:
                                   actor.get("floor_height"), weights,
                                   jumps=self._whip_jumps(context),
                                   forbidden=self._forbidden_steps(context))
+            # Where this trip is going, for an escape blink (_blink_out).
+            self.travel_goal = (context.get("map_id"), actor.get("layer"), target, cells,
+                                tuple(context["map_size_tiles"]), actor.get("floor_height"),
+                                self.clock())
             if target not in routes and target != position and not self.slide_failsafe:
                 # Remembered slides can fence a pocket in for good: 107 on
                 # map 16 cut every way to the Potos exit, and the wait-count
@@ -2529,6 +2537,7 @@ class MemoryPlanner:
             return decision
         trap = [(x, y) for _, x, y in self.step_tiles]
         self.step_tiles = []
+        self._remember_trap(here, trap)
         why = f"pinned: {PIN_STEPS} steps never left a box around {tile[0]},{tile[1]}"
         blink = self._blink_out(context, trap)
         if blink is not None:
@@ -2537,6 +2546,20 @@ class MemoryPlanner:
         if past is not None:
             return replace(past, reason=f"{why}; {past.reason}")
         return decision
+
+    def _remember_trap(self, here, trap):
+        """Keep where he was trapped (RECENT_TRAP_S); a trap next to the
+        last blink landing marks that landing as failed."""
+        now = self.clock()
+        self.recent_traps = [t for t in self.recent_traps if now - t[3] <= RECENT_TRAP_S]
+        for x, y in set(trap):
+            self.recent_traps.append((here, x, y, now))
+        last = getattr(self, "_last_blink", None)
+        if (last is not None and last[0] == here and self.blink_at is not None and
+                now - self.blink_at <= RECENT_TRAP_S and
+                any(abs(x - last[1][0]) <= TRAP_TILES and abs(y - last[1][1]) <= TRAP_TILES
+                    for x, y in trap)):
+            self.blink_failed.add(last)
 
     def _blink_out(self, context, trap=None):
         """Blink to the walked tile farthest from the trap (within range,
@@ -2561,6 +2584,16 @@ class MemoryPlanner:
         # farthest walked tile landed him in pockets with no route out
         # (escapes 24 -> 124 an hour, straight-line guessing 0 -> 21 %).
         visits = self._tile_visits(here, (context.get("actor") or {}).get("layer"))
+        # Travelling: only tiles the destination can be reached from. The
+        # most-walked tile was the corridor the hero kept getting stuck in
+        # (Potos 38,24-25: 262 samples), so every blink went back into it
+        # (2026-11-20).
+        reach = None
+        goal = getattr(self, "travel_goal", None)
+        layer = (context.get("actor") or {}).get("layer")
+        if (goal is not None and goal[0] == here and goal[1] == layer and
+                now - goal[6] <= TRAVEL_GOAL_FRESH_S):
+            reach = self._routes(goal[2], goal[3], goal[4], goal[5], None)
         best = None
         for x, y in self._walked(here):
             if abs(x - tile[0]) > BLINK_RANGE or abs(y - tile[1]) > BLINK_RANGE:
@@ -2569,7 +2602,15 @@ class MemoryPlanner:
                 continue
             if (x, y) in failed:
                 continue
-            score = (visits.get((x, y), 0), abs(x - cx) + abs(y - cy))
+            # Never back into a spot he was trapped in lately: the
+            # most-walked tile was the corridor he kept getting stuck in
+            # (Potos 38,24-25), so each escape blink went back there.
+            if any(m == here and abs(x - tx) <= TRAP_TILES and abs(y - ty) <= TRAP_TILES and
+                   now - when <= RECENT_TRAP_S for m, tx, ty, when in self.recent_traps):
+                continue
+            # Tiles the destination is reached from first, then the rest.
+            linked = reach is None or (x, y) in reach or (x, y) == goal[2]
+            score = (linked, visits.get((x, y), 0), abs(x - cx) + abs(y - cy))
             if best is None or score > best[0]:
                 best = (score, x, y)
         if best is None:

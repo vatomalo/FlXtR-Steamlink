@@ -111,7 +111,7 @@ class PlayLoopTest(unittest.TestCase):
         base = play.leave_at()
         play.died(16, 10)
         play.died(16, 10)
-        self.assertAlmostEqual(play.leave_at(), base + 0.2)
+        self.assertAlmostEqual(play.leave_at(), base + 2 * loop.DEATH_LEAVE_STEP)
         self.assertTrue(any("turn back below" in line for line in self.logs))
         for _ in range(20):
             play.died(16, 10)

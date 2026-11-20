@@ -895,6 +895,12 @@ static int cartwheel_pack_tried;
 static int bash_kick,flykick_from_ai;
 static SomNpcWorkState flykick;
 static int flykick_hid;
+/* A reliable ROM-derived cartwheel animation for Ninja/Samurai Ukemi.
+ * It uses the same SOMWORK1 pack as Flying Kick when the native hit
+ * reaction refuses to play. While drawn, only the hero sprite is hidden. */
+static SomNpcWorkState ukemi_draw;
+static int ukemi_hid;
+static unsigned ukemi_map;
 static int som_flykick_start(uint8_t *ram);
 /* Fuma (Ninjutsu, boomerang): when the hero's boomerang hits a monster, a
  * shadow clone appears in smoke beside it, on the hero's side, swings the
@@ -2749,6 +2755,41 @@ static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
     hero[0x1E5]=(uint8_t)code;
     return 1;
 }
+/* The native miss reaction does not consistently play outside monster hits.
+ * Ninja/Samurai instead use the pre-rendered, ROM-derived cartwheel frames
+ * (tools/som_cartwheel.py, kinds 0x80..0x82) and a collision-safe carried hop.
+ * This animates Ukemi even when the native combat reaction is suppressed. */
+static void som_ukemi_end(uint8_t *ram){
+    if(!ukemi_draw.active)return;
+    if(ram&&ukemi_hid&&ram[0xE000]==1u&&
+       som_bun_u16(ram+0xDC)==ukemi_map)
+        ram[0xE00E]&=(uint8_t)~0x80u;
+    ukemi_draw.active=0;ukemi_hid=0;
+}
+static int som_ukemi_begin(uint8_t *ram,int dx,int dy){
+    if(!ram)return 0;
+    const unsigned id=ram[0xE180];
+    if(id<0x80u||id>0x82u)return 0;
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",
+                           &cartwheel_pack,&cartwheel_pack_size);
+    }
+    const unsigned facing=dx?2u:dy>0?1u:0u;
+    SomWorkEntry entry;
+    if(!som_work_find(cartwheel_pack,cartwheel_pack_size,id,facing,&entry))return 0;
+    som_ukemi_end(ram);
+    memset(&ukemi_draw,0,sizeof(ukemi_draw));
+    ukemi_draw.active=1;ukemi_draw.slot=0;ukemi_draw.kind=id;
+    ukemi_draw.dir=dx<0?3u:dx>0?2u:dy>0?1u:0u;
+    ukemi_draw.start=frame_number;ukemi_draw.entry=entry;
+    ukemi_draw.length=som_work_swing_frames(&entry);
+    ukemi_draw.own_palette=1;
+    ukemi_hid=!(ram[0xE00E]&0x80u);
+    ram[0xE00E]|=0x80u;
+    ukemi_map=som_bun_u16(ram+0xDC);
+    return 1;
+}
 /* The camera follows a dodge. The game scrolls only by the hero's own
  * walking steps, so a hero carried by the proxy left it behind (offline
  * replay of a field state, 2026-11-18: 48 px hop, camera A8 unmoved). Each
@@ -2803,7 +2844,11 @@ static int som_evade_start(uint8_t *ram){
     hop_dx=dx*(int)dodge.speed;hop_dy=dy*(int)dodge.speed;hop_frames_left=move;
     evade_frames=move+SOM_DODGE_GRACE;
     const unsigned facing_before=hero[0x010];
-    cartwheel_native=dodge.cartwheel&&som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
+    const int drawn_ukemi=(disciplines.selected==SOM_DISC_NINJUTSU||
+                           disciplines.selected==SOM_DISC_BUSHIDO)&&
+                           som_ukemi_begin(ram,dx,dy);
+    cartwheel_native=!drawn_ukemi&&dodge.cartwheel&&
+                     som_cartwheel_request(ram,dx,dy,(unsigned)dodge.cartwheel);
     native_restore_facing=-1;
     if(cartwheel_native){
         native_code=(unsigned)dodge.cartwheel;
@@ -2920,6 +2965,13 @@ static int som_kawarimi_check(uint8_t *ram){
  * Records the after-image trail. */
 static void som_hop_step(void){
     if(!backend_retro_get_memory_data)return;
+    if(ukemi_draw.active){
+        uint8_t *r=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(!r||!som_tk_field(r)||som_bun_u16(r+0xDC)!=ukemi_map||
+           !evade_active||frame_number-ukemi_draw.start>=ukemi_draw.length)
+            som_ukemi_end(r);
+        else r[0xE00E]|=0x80u;
+    }
     if(lock_slot>=0){
         uint8_t *locked=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(locked)som_lock_frame(locked);
@@ -3192,6 +3244,7 @@ static void som_evade_tick(void){
     if(frame_number-evade_started<evade_frames&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F)
         return;
     som_evade_blink_end(ram);
+    som_ukemi_end(ram);
     if(native_restore_facing>=0){ram[0xE010]=(uint8_t)native_restore_facing;native_restore_facing=-1;}
     evade_active=0;hop_frames_left=0;cartwheel_native=0;issen_active=0;
 }
@@ -4132,6 +4185,8 @@ static int som_undo_spawn(void){
     undo_ready=0;
     familiar.slot=familiar.target=-1;familiar_pending=0;   /* memory is pre-clone */
     familiar_carry.valid=0;som_tk_init(&telekinesis);
+    som_ukemi_end(backend_retro_get_memory_data?
+        (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     unlink(familiar_file);
     fprintf(stderr,ok?"[som-ai] UNDO restored the pre-spawn snapshot\n":
                       "[som-ai] UNDO failed to restore the snapshot\n");
@@ -4955,7 +5010,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    const int worker=(npc_work.active||flykick.active||companion.draw.active||
+    const int worker=(npc_work.active||flykick.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -5014,6 +5069,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                   pixel_format);
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
+                                  pixel_format);
+            if(ukemi_draw.active)
+                som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
             if(fuma.active&&frame_number>=fuma.start)
                 som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,
@@ -5196,7 +5254,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;
-    som_tk_init(&telekinesis);
+    som_tk_init(&telekinesis);ukemi_draw.active=0;ukemi_hid=0;ukemi_map=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
@@ -5400,6 +5458,8 @@ RETRO_API void retro_unload_game(void){
     unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     familiar_carry.valid=0;som_tk_init(&telekinesis);
+    som_ukemi_end(backend_retro_get_memory_data?
+        (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));

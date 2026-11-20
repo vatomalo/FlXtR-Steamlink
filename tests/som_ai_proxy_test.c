@@ -1856,7 +1856,8 @@ int main(void){
         ram[0xD0]=0x81;assert(!som_give_weapon(ram,2)&&ram[0xCC56]==0xFF); /* dialogue */
         undo_ready=0;
     }
-    /* use_candy: one Candy fewer, 100 HP queued for the game; never the last. */
+    /* use_candy: one Candy fewer, 100 HP queued for the game; the last one
+     * empties its slot and the later items move up. use_herb: poison only. */
     {
         static uint8_t ram[SOM_WRAM_SIZE];
         memset(ram,0,sizeof(ram));memset(ram+0xCC48,0xFF,11);
@@ -1865,7 +1866,14 @@ int main(void){
         ram[0xCC48]=0x43;ram[0xCC49]=0x60;                     /* 2 of item 3, 3 Candy */
         assert(som_use_candy(ram)&&ram[0xCC49]==0x40&&ram[0xE1F3]==100&&ram[0xCC48]==0x43);
         ram[0xE1F3]=200;assert(som_use_candy(ram)&&ram[0xE1F3]==255&&ram[0xCC49]==0x20);
-        assert(!som_use_candy(ram)&&ram[0xCC49]==0x20);        /* last Candy: ring */
+        ram[0xCC4A]=0x21;                                      /* 1 Medical Herb after it */
+        assert(som_use_candy(ram)&&ram[0xCC49]==0x21&&ram[0xCC4A]==0xFF);  /* last Candy */
+        assert(!som_use_candy(ram));                           /* none left */
+        assert(!som_use_herb(ram)&&ram[0xCC49]==0x21);         /* not poisoned */
+        ram[0xE190]=0x01;ram[0xE191]=0x20;                     /* poison (0x2001 live) */
+        assert(som_use_herb(ram)&&ram[0xE191]==0x00&&ram[0xE190]==0x01&&ram[0xCC49]==0xFF);
+        ram[0xE191]=0x20;assert(!som_use_herb(ram)&&ram[0xE191]==0x20);   /* no Herb */
+        ram[0xE190]=ram[0xE191]=0;
         ram[0xCC49]=0xE0;assert(som_use_candy(ram)&&ram[0xCC49]==0xC0); /* Turbo: 7 */
         ram[0xCC49]=0x60;ram[0xD0]=0x81;assert(!som_use_candy(ram)); /* dialogue */
         ram[0xD0]=0;ram[0xE182]=0;assert(!som_use_candy(ram));      /* KO */

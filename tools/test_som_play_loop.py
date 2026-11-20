@@ -76,8 +76,8 @@ class PlayLoopTest(unittest.TestCase):
         self.assertEqual(play.goal(summary(gold=150, map_id=16), True, True, True, ALL),
                          "hunt_map_287")
         self.assertEqual(play.state["phase"], "hunt")
-        # Low HP still sends him back.
-        self.assertNotEqual(play.goal(summary(hp=10, gold=150, map_id=16), True, True, True,
+        # Below half HP a story trip turns back (a hunt only below its fraction).
+        self.assertNotEqual(play.goal(summary(hp=45, gold=150, map_id=16), True, True, True,
                                       ALL), "hunt_map_287")
 
     def test_no_hunting_memory_hunts_here(self):

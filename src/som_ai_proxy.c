@@ -3077,30 +3077,56 @@ static void som_throw_frame(uint8_t *ram){
         throw_active=0;
     }
 }
-static int som_use_candy(uint8_t *ram){
-    if(!ram)return 0;
-    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0xE000]!=1){
-        fprintf(stderr,"[som-ai] CANDY refused: not in field play\n");return 0;
+/* Item ring records $7E:CC48 + slot (11 slots, 0xFF = empty): low nibble
+ * item id, high nibble twice the count (Turbo carries up to 7). Takes one
+ * of item id; the last one empties its slot and the later slots move up,
+ * so the ring keeps no gap. Returns the count left, or -1 without one. */
+static int som_item_take(uint8_t *ram,unsigned id){
+    for(unsigned slot=0;slot<11u;slot++){
+        uint8_t *item=ram+0xCC48u+slot;
+        if(*item==0xFF||(*item&0x0Fu)!=id)continue;
+        const unsigned code=*item>>4;
+        if(code<2u||code>14u||(code&1u))return -1;      /* not a verified count */
+        if(code>2u){*item=(uint8_t)(*item-0x20u);return (int)(code/2u-1u);}
+        for(unsigned k=slot;k+1u<11u;k++)ram[0xCC48u+k]=ram[0xCC48u+k+1u];
+        ram[0xCC48u+10u]=0xFF;
+        return 0;
     }
+    return -1;
+}
+#define SOM_ITEM_CANDY 0u
+#define SOM_ITEM_HERB 1u
+#define SOM_STATUS_POISON 0x2000u
+static int som_item_field(const uint8_t *ram,const char *what){
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0xE000]!=1){
+        fprintf(stderr,"[som-ai] %s refused: not in field play\n",what);return 0;
+    }
+    return 1;
+}
+static int som_use_candy(uint8_t *ram){
+    if(!ram||!som_item_field(ram,"CANDY"))return 0;
     const unsigned hp=ram[0xE182]|ram[0xE183]<<8,max_hp=ram[0xE184]|ram[0xE185]<<8;
     if(!hp||hp>max_hp){fprintf(stderr,"[som-ai] CANDY refused: hero HP %u/%u\n",hp,max_hp);return 0;}
-    for(unsigned slot=0;slot<11;slot++){
-        uint8_t *item=ram+0xCC48u+slot;
-        if(*item==0xFF||(*item&0x0F)!=0)continue;
-        const unsigned code=*item>>4;
-        if(code<4u||code>14u||(code&1u)){        /* Turbo carries up to 7 */
-            fprintf(stderr,"[som-ai] CANDY refused: %u left (the ring handles the last)\n",code/2u);
-            return 0;
-        }
-        *item=(uint8_t)(*item-0x20u);
-        const unsigned heal=ram[0xE1F3]+SOM_CANDY_HEAL;
-        ram[0xE1F3]=(uint8_t)(heal>0xFFu?0xFFu:heal);
-        fprintf(stderr,"[som-ai] CANDY used without the ring: %u left, +%u HP queued\n",
-                code/2u-1u,SOM_CANDY_HEAL);
-        return 1;
-    }
-    fprintf(stderr,"[som-ai] CANDY refused: no Candy\n");
-    return 0;
+    const int left=som_item_take(ram,SOM_ITEM_CANDY);
+    if(left<0){fprintf(stderr,"[som-ai] CANDY refused: no Candy\n");return 0;}
+    const unsigned heal=ram[0xE1F3]+SOM_CANDY_HEAL;
+    ram[0xE1F3]=(uint8_t)(heal>0xFFu?0xFFu:heal);
+    fprintf(stderr,"[som-ai] CANDY used without the ring: %d left, +%u HP queued\n",
+            left,SOM_CANDY_HEAL);
+    return 1;
+}
+/* "use_herb": Medical Herb on the hero when he is poisoned (status word
+ * +0x190 bit 0x2000, som-decomp hit-reactions.md): clears the poison and
+ * takes one Herb. Refused when he is not poisoned. */
+static int som_use_herb(uint8_t *ram){
+    if(!ram||!som_item_field(ram,"HERB"))return 0;
+    const unsigned status=ram[0xE190]|ram[0xE191]<<8;
+    if(!(status&SOM_STATUS_POISON)){fprintf(stderr,"[som-ai] HERB refused: not poisoned\n");return 0;}
+    const int left=som_item_take(ram,SOM_ITEM_HERB);
+    if(left<0){fprintf(stderr,"[som-ai] HERB refused: no Medical Herb\n");return 0;}
+    ram[0xE191]=(uint8_t)(ram[0xE191]&~(SOM_STATUS_POISON>>8));
+    fprintf(stderr,"[som-ai] HERB cured poison without the ring: %d left\n",left);
+    return 1;
 }
 /* Read-only diagnostic: the core's video RAM (sprite tiles live there, loaded
  * per map for that map's monsters) to SOM_VRAM_FILE for analysis. */
@@ -3765,6 +3791,9 @@ static int som_handle_command(const char *command){
     }
     if(!strcmp(command,"use_candy"))
         return som_use_candy(backend_retro_get_memory_data?
+            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+    if(!strcmp(command,"use_herb"))
+        return som_use_herb(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strcmp(command,"pal_trace")){
         pal_trace_frames=0;pal_trace_on=1;

@@ -103,7 +103,7 @@ MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
-                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy",
+                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_herb",
                     "give_glove", "give_axe", "give_spear", "give_whip", "give_bow",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
@@ -1068,6 +1068,7 @@ def load_rom_exits(host, cache=ROM_TABLE_CACHE):
 
 
 INN_RETRY_S = 300.0
+HERB_RETRY_S = 5.0          # between Medical Herb attempts
 QUEST_TABLE_CACHE = Path.home() / ".local/state/flxtr/som-quest.json"
 
 
@@ -1138,9 +1139,10 @@ def hide_familiar(observation, slot):
 
 def direct_candy(link, raw, timeout=1.5):
     """Candy without the ring: the proxy's use_candy queues the game's own
-    heal (hero +0x1F3) and removes one Candy. Only with 2+ Candies; True
-    once a Candy is gone and HP rose, else the ring macro takes over."""
-    if raw is None or candy_count(WRAM(raw)) < 2:
+    heal (hero +0x1F3) and removes one Candy, the last one too (the ring
+    calibration only knows a one-item ring); True once a Candy is gone and
+    HP rose, else the ring macro takes over."""
+    if raw is None or candy_count(WRAM(raw)) < 1:
         return False
     before = WRAM(raw)
     count, hp = candy_count(before), before.character(0)["hp"]
@@ -1157,6 +1159,39 @@ def direct_candy(link, raw, timeout=1.5):
     except (OSError, subprocess.SubprocessError):
         pass
     print("[candy] direct use not confirmed; using the ring", flush=True)
+    return False
+
+
+def poisoned(observation):
+    hero = (observation.get("party") or [{}])[0] if isinstance(observation, dict) else {}
+    status = hero.get("status")
+    return isinstance(status, dict) and "poison" in (status.get("effects") or ())
+
+
+def direct_herb(link, raw, timeout=1.5):
+    """Medical Herb without the ring (proxy use_herb): poison cleared and one
+    Herb gone. Lullabud poison cost 2-3 HP a second on map 16 and killed him
+    on the way back to the inn (2026-11-20). True once verified."""
+    if raw is None:
+        return False
+    def herbs(wram):
+        return next((item["count"] for item in wram.inventory()
+                     if item["name"] == "medical_herb" and item["verified"]), 0)
+    count = herbs(WRAM(raw))
+    if not count:
+        return False
+    link.send_control("use_herb")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.25)
+        raw_now = link.fetch_wram(False)
+        if raw_now is None:
+            return False
+        now = WRAM(raw_now)
+        if herbs(now) < count and not (now.u16(0x7EE190) & 0x2000):
+            print(f"[herb] cured poison: {herbs(now)} Medical Herb left", flush=True)
+            return True
+    print("[herb] use_herb not confirmed", flush=True)
     return False
 
 
@@ -1366,6 +1401,7 @@ def main() -> int:
     # A failed inn macro rests the inn for INN_RETRY_S, not for the whole run:
     # one missed save prompt left the hero waiting at full HP (2026-11-20).
     inn_disabled_until = 0.0
+    herb_retry_at = 0.0
     inn_lookalikes = set()
     surveyed_map, surveys_due = None, 0
     shop_disabled = False
@@ -1757,6 +1793,16 @@ def main() -> int:
                         announce("AI: ring stuck|close manually")
             else:
                 orphan_ring_samples = 0
+            if (link and args.policy in ("hybrid", "memory") and mode == "field" and
+                    time.monotonic() >= herb_retry_at and poisoned(observation)):
+                # A proxy without use_herb (game not restarted yet) or a refused
+                # use waits longer before the next try.
+                herb_retry_at = time.monotonic() + HERB_RETRY_S * 6
+                if direct_herb(link, raw):
+                    herb_retry_at = time.monotonic() + HERB_RETRY_S
+                    announce("AI: poisoned|Medical Herb")
+                    previous = "wait"
+                    continue
             if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
                     time.monotonic() >= candy_retry_at and gambit(GAMBIT_CANDY) and
                     candy_wanted(observation, candy_fraction(gambits)) and mode == "field"):

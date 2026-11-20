@@ -382,7 +382,7 @@ class TestRemoteLink(unittest.TestCase):
         bridge.hide_familiar(observation, 2)
         self.assertEqual([e["active"] for e in observation["enemy_slots"]], [True, False])
 
-    def test_direct_candy_needs_two_and_a_confirmed_heal(self):
+    def test_direct_candy_uses_the_last_one_and_needs_a_confirmed_heal(self):
         import som_qwen_bridge as bridge
         def image(candy_code, hp):
             ram = bytearray(0x20000)
@@ -398,11 +398,40 @@ class TestRemoteLink(unittest.TestCase):
         healed = Link(image(4, 117))
         self.assertTrue(bridge.direct_candy(healed, image(6, 40)))
         self.assertEqual(healed.sent, ["use_candy"])
-        last = Link(image(0, 117))
-        self.assertFalse(bridge.direct_candy(last, image(2, 40)))         # 1 left: ring
-        self.assertEqual(last.sent, [])
+        gone = bytearray(image(0, 117)); gone[0xCC48] = 0xFF
+        last = Link(bytes(gone))
+        self.assertTrue(bridge.direct_candy(last, image(2, 40)))          # the last one too
+        self.assertEqual(last.sent, ["use_candy"])
+        empty = bytearray(image(0, 40)); empty[0xCC48] = 0xFF
+        none = Link(bytes(empty))
+        self.assertFalse(bridge.direct_candy(none, bytes(empty)))
+        self.assertEqual(none.sent, [])
         nothing = Link(image(6, 40))
         self.assertFalse(bridge.direct_candy(nothing, image(6, 40), timeout=0.3))  # not confirmed
+
+    def test_medical_herb_cures_poison_and_is_confirmed(self):
+        import som_qwen_bridge as bridge
+        def image(herbs, poisoned):
+            ram = bytearray(0x20000)
+            ram[0xCC48:0xCC48 + 11] = b"\xff" * 11
+            if herbs:
+                ram[0xCC48] = (herbs * 2) << 4 | 1             # item 1 = Medical Herb
+            ram[0xE190], ram[0xE191] = 0x01, 0x20 if poisoned else 0
+            return bytes(ram)
+        class Link:
+            def __init__(self, after): self.after, self.sent = after, []
+            def send_control(self, command): self.sent.append(command)
+            def fetch_wram(self, marker=False): return self.after
+        cured = Link(image(0, False))
+        self.assertTrue(bridge.direct_herb(cured, image(1, True)))
+        self.assertEqual(cured.sent, ["use_herb"])
+        no_herb = Link(image(0, True))
+        self.assertFalse(bridge.direct_herb(no_herb, image(0, True)))
+        self.assertEqual(no_herb.sent, [])
+        old_proxy = Link(image(1, True))                     # command ignored
+        self.assertFalse(bridge.direct_herb(old_proxy, image(1, True), timeout=0.3))
+        self.assertTrue(bridge.poisoned({"party": [{"status": {"effects": ["poison"]}}]}))
+        self.assertFalse(bridge.poisoned({"party": [{"status": {"effects": []}}]}))
 
     def test_missing_marker_means_takeover(self):
         (self.root / "flxtr-som-wram.bin").write_bytes(bytes(0x20000))

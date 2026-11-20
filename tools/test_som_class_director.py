@@ -48,6 +48,18 @@ class ClassDirectorTest(unittest.TestCase):
                                                     toughest=400)
         self.assertEqual(index, 10)                   # Bushido vs a tough enemy
 
+    def test_new_classes_are_not_ignored_by_situation_scoring(self):
+        for klass, tag, mp in ((12, "crowd", 0), (13, "duel", 20),
+                               (14, "crowd", 0), (15, "crowd", 0)):
+            with self.subTest(klass=klass):
+                baseline, _ = score(klass, "balanced", {}, mp)
+                situational, why = score(klass, "balanced", {}, mp, {tag})
+                self.assertGreater(situational, baseline)
+                self.assertIsNotNone(why)
+        # Necromancy's MP-dependent drain is not a free benefit with zero MP.
+        self.assertEqual(score(13, "balanced", {}, 0, {"duel"})[0],
+                         score(13, "balanced", {}, 0)[0])
+
     def test_gambit_cooldown(self):
         self.director.switched(0)
         self.director.cooldown = None                 # "Switch classes" 0

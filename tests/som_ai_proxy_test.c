@@ -1058,7 +1058,7 @@ int main(void){
         assert(som_fam_u16(back+2)==som_fam_u16(ram+0xE002)+24u);  /* by the hero */
         assert(ram[0xE600+0x3D]==0xC7);                            /* villager kept */
         /* VRAM capture: its exact sprite tiles and palette go with it and
-         * are written back with its home layout on the next map. */
+         * are remapped to the destination slot on the next map. */
         {
             static uint8_t vram[0x10000],slots_before[0x600],pal_before[0x20];
             static SomFamiliarCarry vc;
@@ -1075,10 +1075,13 @@ int main(void){
             /* sprites at 0xA0 and 0xA2: A0 A1 B0 B1 A2 A3 B2 B3; zero fields skipped */
             memset(vram+0xC000,0,0x4000);memset(ram+0xDFE0,0,0x20);  /* new map */
             memset(ram+0xE600,0,0x600);
+            /* The next map assigns a different tile bank to slot 0. */
+            ram[0xE600+0x8A]=0xC0;ram[0xE600+0x8B]=0x2E;
             int slot=som_familiar_restore(&vc,ram,vram);
-            assert(slot==0&&som_fam_u16(ram+0xE600+0x8A)==0x2EA0);   /* home layout */
-            assert(vram[0xC000+0xA0*32]==0xA0&&vram[0xC000+0xB1*32]==0xB1);
-            assert(vram[0xC000+0x60*32]==0);                         /* others untouched */
+            assert(slot==0&&som_fam_u16(ram+0xE600+0x8A)==0x2EC0); /* target layout */
+            assert(vram[0xC000+0xC0*32]==0xA0&&vram[0xC000+0xD1*32]==0xB1);
+            assert(vram[0xC000+0xA0*32]==0); /* source IDs stay untouched */
+            assert(vram[0xC000+0x60*32]==0); /* other tiles untouched */
             assert(ram[0xDFE0]==0x66&&ram[0x07E0]==0x66);           /* shadow + working */
             memcpy(ram+0xE600,slots_before,sizeof(slots_before));
             memcpy(ram+0xDFE0,pal_before,sizeof(pal_before));

@@ -3101,11 +3101,13 @@ static int som_evade_start_raw(uint8_t *ram){
      * flight is the same ball every way), so left and right are the game's
      * own cartwheel; up and down the drawn tumble (player's call, 2026-11-20). */
     const int ukemi_class=disciplines.selected==SOM_DISC_NINJUTSU||
-                          disciplines.selected==SOM_DISC_BUSHIDO;
-    /* Swordsman, forward + A: the game's cartwheel goes away from the
-     * facing, so forward it is drawn facing forward instead (he dashes
-     * ahead facing where he goes; player, 2026-11-20). */
-    const int forward_cart=disciplines.selected==SOM_DISC_SWORD&&dx&&
+                          disciplines.selected==SOM_DISC_BUSHIDO||
+                          disciplines.selected==SOM_DISC_MARTIAL_ARTS;    /* monk: Ukemi too */
+    /* Every cartwheel (swordsman, rogue, Ukemi's sides), forward + A: the
+     * game's cartwheel goes away from the facing, so forward it is drawn
+     * facing forward instead (he dashes ahead facing where he goes; player,
+     * 2026-11-20). */
+    const int forward_cart=(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class)&&dx&&
         ((dx>0&&facing_before==0x02u)||(dx<0&&facing_before==0x82u))&&
         som_move_begin_draw(ram,dx,0,SOM_FORWARD_CART_KIND);
     cartwheel_native=!forward_cart&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||(ukemi_class&&dx))&&

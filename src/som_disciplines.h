@@ -98,9 +98,9 @@ static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
     SomDodge d={0u,0u,0,"",0};
     (void)weapon;
     switch(discipline){
-    case 2: case 10:                   /* ninja, samurai: drawn Ukemi, 54 px tumble */
+    case 1: case 2: case 10:           /* monk, ninja, samurai: Ukemi, 54 px tumble */
         d.speed=3u;d.frames=18u;d.name="Ukemi";break;
-    case 0: case 1: case 9:            /* swordsman, monk, rogue: cartwheel, else 64 px */
+    case 0: case 9:                    /* swordsman, rogue: cartwheel, else 64 px */
         d.speed=4u;d.frames=16u;d.name="Cartwheel";d.cartwheel=SOM_REACT_CARTWHEEL;break;
     case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
     case 3: d.speed=8u;d.frames=6u;d.name="Blink step";break;            /* mage: 48 px, hidden */

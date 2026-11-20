@@ -744,3 +744,11 @@ Like Ninjutsu's Taijutsu, Weapon Flow's B flows through weapons beyond its own t
 B, spear Y, bow X): each B press is the next of **sword, axe, whip, javelin**, then round
 again; 1.5 s without B starts over. Selecting the class grants a missing chain weapon at
 tier 0. (A held B keeps that press's weapon for charging.)
+
+### Evades by class (2026-11-20)
+
+- **Ukemi** (Martial Arts, Ninjutsu, Bushido): up/down the drawn tumble; left/right a cartwheel.
+- **Cartwheel** (Swordsmanship, Roguecraft).
+- Every cartwheel **forward + A** is drawn facing forward (the game's cartwheel frames, the
+  hero carried 64 px / Ukemi 54 px ahead); back + A or A alone is the game's own cartwheel
+  away from the facing.

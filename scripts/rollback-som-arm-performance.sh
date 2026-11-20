@@ -25,7 +25,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 E=/home/apps/retroarch/cores/experimental
-ssh_() { ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$host" "$@"; }   # -n: never eat the loop input
+ssh_() { ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 "$host" "$@"; }   # -n: never eat the loop input
+if [ "$dry" = 0 ]; then
+  ident=$(ssh_ "uname -m; test -d '$E' && echo layout-ok")
+  case "$ident" in armv7l*layout-ok*) ;; *) echo 'Unexpected Steam Link identity' >&2; exit 1;; esac
+  [ "$(ssh_ "ps | grep -c '[r]etroarch.exec' || true")" = 0 ] || {
+    echo 'Close RetroArch before rollback.' >&2; exit 1;
+  }
+fi
 record=$(ssh_ "cat $E/backups/som-arm-perf-deploy.txt 2>/dev/null" || true)
 [ -n "$record" ] || { echo "nothing to roll back: no deploy record on $host"; exit 0; }
 stamp=$(date +%Y%m%d-%H%M%S)
@@ -37,7 +44,7 @@ while read -r when sha path sum old; do
   case "$done_files" in *" $path "*) continue;; esac
   done_files="$done_files$path "
   case "$path" in
-    $E/som_ai_proxy_libretro.so|/home/apps/greenlink/tools/som_wram_server.py) ;;
+    $E/som_ai_proxy_libretro.so|$E/som_cartwheel_frames.bin|$E/som_weapon_masks.bin|/home/apps/greenlink/tools/som_wram_server.py) ;;
     *) echo "skipping unexpected path in record: $path" >&2; continue;;
   esac
   if [ "$old" = none ]; then

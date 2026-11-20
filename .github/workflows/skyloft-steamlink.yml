@@ -1,0 +1,54 @@
+name: SkyLoft Steam Link
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        required: true
+        type: choice
+        options: [build, deploy-proxy, rollback]
+permissions:
+  contents: read
+concurrency:
+  group: skyloft-steamlink
+  cancel-in-progress: false
+jobs:
+  steamlink:
+    if: github.repository == 'vatomalo/FlXtR-Steamlink' && github.ref == 'refs/heads/main' && vars.SKYLOFT_STEAMLINK_ENABLED == 'true'
+    runs-on: [self-hosted, linux, x64, skyloft-flxtr]
+    environment: skyloft-steamlink
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify selected revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Run regression checks and build
+        if: inputs.operation != 'rollback'
+        env:
+          STEAMLINK_SDK_PATH: ${{ vars.STEAMLINK_SDK_PATH }}
+          SOM_ROM_PATH: ${{ vars.SOM_ROM_PATH }}
+        run: |
+          make test-som-ai-proxy test-som-ai-player2 test-som-combo test-som-weapon-styles test-som-weapon-mask test-som-party-classes test-som-net-pad test-som-telekinesis test-som-familiar-art
+          PYTHONPATH=tools python3 -m unittest discover -s tools -p 'test_som_*.py'
+          cc -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared src/som_ai_proxy.c -o build/som-ai-proxy-linux.so -ldl
+          : "${STEAMLINK_SDK_PATH:?Configure the runner-owned SDK path}"
+          : "${SOM_ROM_PATH:?Configure the local ROM path}"
+          bash scripts/build-steamlink.sh
+          bash scripts/build-som-ai-proxy.sh
+          printf '%s\n' "$GITHUB_SHA" | tee build/steamlink-build-commit
+          sha256sum build/greenlink-arm build/greenlink-catalog-arm build/som-ai/*.so build/som-ai/*.bin
+      - name: Install experimental proxy and packs
+        if: inputs.operation == 'deploy-proxy'
+        env:
+          STEAMLINK_HOST: ${{ vars.STEAMLINK_HOST }}
+        run: |
+          : "${STEAMLINK_HOST:?Configure a verified Steam Link SSH host}"
+          bash scripts/deploy-som-arm-performance.sh --host "$STEAMLINK_HOST" proxy-packs
+      - name: Roll back experimental files
+        if: inputs.operation == 'rollback'
+        env:
+          STEAMLINK_HOST: ${{ vars.STEAMLINK_HOST }}
+        run: |
+          : "${STEAMLINK_HOST:?Configure a verified Steam Link SSH host}"
+          bash scripts/rollback-som-arm-performance.sh --host "$STEAMLINK_HOST"

@@ -23,6 +23,8 @@ R='/home/apps/retroarch/roms/Snes'
 G=/home/apps/greenlink
 files=(
   "$E/som_ai_proxy_libretro.so"
+  "$E/som_ai_disciplines.party-1" "$E/som_ai_disciplines.party-2"
+  "$E/som_cartwheel_frames.bin" "$E/som_weapon_masks.bin"
   "$E/snes9x2005_plus_flxtr_libretro.so"
   "$E/som_ai_disciplines" "$E/som_ai_gambits" "$E/som_ai_combat"
   "$E/som_music_genre" "$E/som_song_names.tsv" "$E/som_ai_rom_patch.txt"
@@ -32,7 +34,7 @@ files=(
   "$G/greenlink.sh" "$G/tools/som_music_bridge.py" "$G/tools/state_guard.py"
   "$G/game-runtime.cfg"
 )
-ssh_q() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"; }
+ssh_q() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "$host" "$@"; }
 
 {
   echo "# Secret of Mana Ultimate Steam Link snapshot $stamp"

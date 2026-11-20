@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the Steam Link performance work (docs/SOM-ARM-DEPLOYMENT.md).
 #
-#   bash scripts/deploy-som-arm-performance.sh [--host root@IP] server|proxy|all
+#   bash scripts/deploy-som-arm-performance.sh [--host root@IP] server|proxy|proxy-packs|all
 #
 # server  tools/som_wram_server.py -> /home/apps/greenlink/tools/ (safe while
 #         the game runs; bridges pick it up on their next SSH session)
@@ -21,12 +21,12 @@ cd "$(dirname "$0")/.."
 host=root@100.124.74.13
 if [ "${1:-}" = --host ]; then host=$2; shift 2; fi
 what=${1:-}
-case "$what" in server|proxy|all) ;; *) sed -n 2,18p "$0"; exit 2;; esac
+case "$what" in server|proxy|proxy-packs|all) ;; *) sed -n 2,18p "$0"; exit 2;; esac
 E=/home/apps/retroarch/cores/experimental
 G=/home/apps/greenlink
-ssh_() { ssh -o BatchMode=yes -o ConnectTimeout=8 "$host" "$@"; }
+ssh_() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 "$host" "$@"; }
 stamp=$(date +%Y%m%d-%H%M%S)
-git_sha=$(git rev-parse --short HEAD)
+git_sha=$(git rev-parse HEAD)
 [ -z "$(git status --porcelain -- src tools/som_wram_server.py)" ] ||
   echo "warning: uncommitted changes under src/ or the server; the record names $git_sha" >&2
 
@@ -37,7 +37,7 @@ case "$ident" in armv7l*layout-ok*) ;; *) echo "refusing: $host is not the expec
 install_file() {   # local remote-path mode
   local local_file=$1 remote=$2 mode=$3 sum remote_sum
   sum=$(sha256sum "$local_file" | cut -c1-64)
-  scp -q -o BatchMode=yes "$local_file" "$host:$remote.armperf-new"
+  ssh_ "cat > '$remote.armperf-new'" <"$local_file"
   remote_sum=$(ssh_ "sha256sum '$remote.armperf-new' | cut -c1-64")
   if [ "$sum" != "$remote_sum" ]; then
     ssh_ "rm -f '$remote.armperf-new'"; echo "refusing: checksum mismatch for $remote" >&2; exit 1
@@ -49,18 +49,24 @@ install_file() {   # local remote-path mode
         mkdir -p $E/backups
         old=none; [ ! -e \"\$f.pre-armperf-$stamp\" ] || old=\"\$f.pre-armperf-$stamp\"
         echo \"$stamp $git_sha \$f $sum \$old\" >> $E/backups/som-arm-perf-deploy.txt"
+  [ "$(ssh_ "sha256sum '$remote' | cut -c1-64")" = "$sum" ]
   echo "installed $remote ($sum) from $git_sha"
 }
 
-if [ "$what" = proxy ] || [ "$what" = all ]; then
+if [[ "$what" == proxy || "$what" == proxy-packs || "$what" == all ]]; then
   so=build/som-ai/som_ai_proxy_libretro.so
   [ -f "$so" ] || { echo "build it first: bash scripts/build-som-ai-proxy.sh" >&2; exit 1; }
   file "$so" | grep -q 'ARM, EABI5' || { echo "refusing: $so is not an ARM EABI5 build" >&2; exit 1; }
   # 2./3. active core path, and never while RetroArch has the proxy loaded
-  running=$(ssh_ "ps | grep '[r]etroarch.exec' | grep -c som_ai_proxy_libretro.so || true")
+  running=$(ssh_ "ps | grep -c '[r]etroarch.exec' || true")
   if [ "$running" != 0 ]; then
     echo "refusing: RetroArch is running the proxy; close the game first" >&2; exit 1
   fi
+fi
+if [ "$what" = proxy-packs ]; then
+  for pack in som_cartwheel_frames.bin som_weapon_masks.bin; do
+    test -s "build/som-ai/$pack"
+  done
 fi
 # 4.-6. full read-only snapshot (core, configs, saves) with checksums
 bash scripts/som-backup-steamlink.sh "$host" >/dev/null
@@ -68,7 +74,12 @@ echo "snapshot written under ~/backups/som-steamlink/"
 if [ "$what" = server ] || [ "$what" = all ]; then
   install_file tools/som_wram_server.py "$G/tools/som_wram_server.py" 644
 fi
-if [ "$what" = proxy ] || [ "$what" = all ]; then
+if [[ "$what" == proxy || "$what" == proxy-packs || "$what" == all ]]; then
   install_file build/som-ai/som_ai_proxy_libretro.so "$E/som_ai_proxy_libretro.so" 755
+fi
+if [ "$what" = proxy-packs ]; then
+  for pack in som_cartwheel_frames.bin som_weapon_masks.bin; do
+    install_file "build/som-ai/$pack" "$E/$pack" 644
+  done
 fi
 echo "rollback: bash scripts/rollback-som-arm-performance.sh${host:+ --host $host}"

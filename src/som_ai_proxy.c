@@ -193,7 +193,16 @@ static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
     {3,2,2,2,3,3,3,3},{3,3},0,0,1};
+#include "som_party_classes.h"
 static SomDisciplines disciplines;
+static SomDisciplines follower_disciplines[SOM_PARTY_COUNT-1u];
+static unsigned party_menu_actor;
+static unsigned long follower_ready[SOM_PARTY_COUNT-1u];
+static const char *const party_actor_names[]={"Boy","Girl","Sprite"};
+
+static SomDisciplines *som_party_disc(unsigned slot){
+    return slot?&follower_disciplines[slot-1u]:&disciplines;
+}
 /* The hero's sprite palette (its +0x8B attribute: palette 1 = 7E:DF20 for
  * the boy, live 2026-11-14) follows the chosen discipline's colour ramp.
  * The original colours are kept and re-read whenever the game rewrites
@@ -206,20 +215,20 @@ static unsigned hero_pal_addr;
 #define SOM_DISC_FILE "/home/apps/retroarch/cores/experimental/som_ai_disciplines"
 #define SOM_DISCIPLINES_V1 9u          /* disciplines before rogue/samurai/archer */
 static const char *disc_file=SOM_DISC_FILE;
-static void som_disc_save(void){
-    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",disc_file);
+static void som_disc_save_actor(const char *path,const SomDisciplines *actor){
+    char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",path);
     FILE *out=fopen(temp,"w");
     if(!out)return;
-    int ok=fprintf(out,"v1 %u",(unsigned)disciplines.selected)>0;
+    int ok=fprintf(out,"v1 %u",(unsigned)actor->selected)>0;
     for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++)
-        ok=fprintf(out," %u %lu",(unsigned)disciplines.level[i],
-                   (unsigned long)disciplines.experience[i])>0;
+        ok=fprintf(out," %u %lu",(unsigned)actor->level[i],
+                   (unsigned long)actor->experience[i])>0;
     ok=ok&&fprintf(out,"\n")>0;
     if(fclose(out)!=0)ok=0;
-    if(ok)rename(temp,disc_file);else unlink(temp);
+    if(ok)rename(temp,path);else unlink(temp);
 }
-static void som_disc_load(void){
-    FILE *in=fopen(disc_file,"r");
+static void som_disc_load_actor(const char *path,SomDisciplines *actor){
+    FILE *in=fopen(path,"r");
     if(!in)return;
     SomDisciplines loaded;som_disc_init(&loaded);
     unsigned selected=0;
@@ -236,7 +245,16 @@ static void som_disc_load(void){
     fclose(in);
     if(!ok){fprintf(stderr,"[som-ai] DISCIPLINES file unreadable; starting fresh\n");return;}
     loaded.selected=(uint8_t)selected;
-    disciplines=loaded;
+    *actor=loaded;
+}
+static void som_disc_save(void){som_disc_save_actor(disc_file,&disciplines);}
+static void som_disc_load(void){som_disc_load_actor(disc_file,&disciplines);}
+static void som_follower_disc_file(unsigned slot,int save){
+    char path[240];
+    const int n=snprintf(path,sizeof(path),"%s.party-%u",disc_file,slot);
+    if(n<0||(size_t)n>=sizeof(path))return;
+    if(save)som_disc_save_actor(path,som_party_disc(slot));
+    else som_disc_load_actor(path,som_party_disc(slot));
 }
 static void som_hero_palette_frame(uint8_t *ram){
     if(!ram||ram[0xE000]!=1)return;
@@ -1859,6 +1877,7 @@ static void som_input_poll(void){
             som_manual_disciplines=1;
             disciplines.open=1;
             disciplines.cursor=0;
+            party_menu_actor=0;
             switch_spoiled=1;
             som_overlay_set(&overlay,"DISCIPLINES|A:close B:select",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] MANUAL DISCIPLINES opened\n");
@@ -1878,15 +1897,22 @@ static void som_input_poll(void){
             }else if(som_juke_press(&jukebox,pressed,request,sizeof(request)))
                 som_juke_send(request);
         }else if(som_manual_disciplines && pressed){
-            int result=som_disc_press(&disciplines,pressed);
+            if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT)){
+                party_menu_actor=(party_menu_actor+1u)%SOM_PARTY_COUNT;
+                som_party_disc(party_menu_actor)->open=1;
+                char message[80];
+                snprintf(message,sizeof(message),"^%s|Select: next party member",
+                         party_actor_names[party_menu_actor]);
+                som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+            }
+            int result=som_disc_press(som_party_disc(party_menu_actor),pressed);
             if(result==SOM_DISC_CLOSED){
+                disciplines.open=0;
                 som_manual_disciplines=0;
                 fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
             }else if(result==SOM_DISC_SELECTED){
-                som_disc_save();
-                som_class_selected();
-                fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
-                        (unsigned)disciplines.selected);
+                if(party_menu_actor)som_follower_disc_file(party_menu_actor,1);
+                else{som_disc_save();som_class_selected();}
             }
         }
         if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
@@ -2368,23 +2394,20 @@ static int som_equip_weapon(uint8_t *ram,unsigned type){
  * when the hero is released. Not reproduced: the "<spell> Lv." banner, and
  * the spark palette for frames 0-59 (the game loads the cast palette itself
  * at frame 60). */
-static const char *som_spell_name(unsigned spell){
-    return som_class_spell_label(disciplines.selected,spell);
-}
 /* 0 Gnome .. 5 Dryad: six spells each; 6 Shade, 7 Lumina: three each. */
 static unsigned som_spell_element(unsigned spell){
     return spell<0x24u?spell/6u:spell<0x27u?6u:7u;
 }
 /* Hostile hero spells target the monster slots 3-5 that are present, on
  * screen and alive ($D0:DA60). Take the nearest one. */
-static int som_cast_target(const uint8_t *ram){
-    const uint8_t *hero=ram+0xE000u;
+static int som_cast_target_actor(const uint8_t *ram,const uint8_t *hero){
     const int hx=(int)som_word(hero+0x20),hy=(int)som_word(hero+0x22);
     int best=-1,best_distance=0;
     for(unsigned slot=3;slot<6u;slot++){
         const uint8_t *e=ram+0xE000u+0x200u*slot;
         const int x=(int)som_word(e+0x20),y=(int)som_word(e+0x22);
-        if(e[0]!=1||(e[0x191]&0x80u)||x<8||x>=0xF8||y>=0xD8)continue;
+        if(e[0]!=1||e[0x180]>=0x80u||(e[0x191]&0x80u)||x<8||x>=0xF8||y>=0xD8||
+           (int)(slot-3u)==familiar.slot)continue;
         const int distance=abs(x-hx)+abs(y-hy);
         if(best<0||distance<best_distance){best=(int)slot;best_distance=distance;}
     }
@@ -2396,10 +2419,13 @@ static int som_spell_affordable(const uint8_t *ram,unsigned spell){
     const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
     return row&&ram[0xE186]>=row[15];
 }
-static int som_cast_spell(uint8_t *ram,unsigned spell){
+static int som_cast_target(const uint8_t *ram){
+    return som_cast_target_actor(ram,ram+0xE000u);
+}
+static int som_cast_spell_actor(uint8_t *ram,unsigned spell,unsigned slot,int target){
     if(!ram||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
-    if(!som_field_idle(ram))return 0;                 /* busy: no cast */
-    uint8_t *hero=ram+0xE000u;
+    uint8_t *hero=ram+0xE000u+0x200u*slot;
+    const unsigned cls=som_party_disc(slot)->selected;
     const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
     /* 0x81 hostile: monster slots; 0x01 ally and 0x00 self: the boy
      * himself (hero slot 0, target 1, as the ring's single-ally choice). */
@@ -2412,19 +2438,19 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
     const unsigned cost=row[15];
     if(hero[0x186]<cost){
         snprintf(message,sizeof(message),"^%s: not enough MP|%u/%u",
-                 som_spell_name(spell),(unsigned)hero[0x186],cost);
+                 som_class_spell_label(cls,spell),(unsigned)hero[0x186],cost);
         som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] CAST refused: MP %u < %u\n",(unsigned)hero[0x186],cost);
         return 0;
     }
-    const int target=hostile?som_cast_target(ram):0;
+    if(row[8]==0x00u)target=(int)slot;
     if(target<0){
-        snprintf(message,sizeof(message),"^%s: no target",som_spell_name(spell));
+        snprintf(message,sizeof(message),"^%s: no target",som_class_spell_label(cls,spell));
         som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
         return 0;
     }
     static uint8_t spark[SOM_HERO_EFFECT_BYTES];
-    if(!som_expand_effect_tiles(0xD4BA00u,SOM_WEAPON_TILES,spark))return 0;
+    if(!slot&&!som_expand_effect_tiles(0xD4BA00u,SOM_WEAPON_TILES,spark))return 0;
     const unsigned element=som_spell_element(spell);
     const uint8_t nibbles=hero[0x1C4u+element/2u];
     unsigned level=element%2u?(nibbles&0x0Fu):(nibbles>>4);
@@ -2439,17 +2465,59 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
     hero[0x04F]=0xCE;hero[0x01C]=0x40;hero[0x030]=0xFF;hero[0x011]=0x94;
     hero[0x006]=hero[0x007]=hero[0x008]=0;
     hero[0x060]=0x20;
-    memcpy(ram+SOM_WEAPON_BUF+0x800u,spark,sizeof(spark));   /* $C1:8634 */
-    if(hostile&&target>=0){
-        const uint8_t *m=ram+0xE600u+0x200u*(unsigned)target;
+    /* The Boy's buffer is the only effect buffer verified by a live trace.
+     * Never overwrite it from a follower action. */
+    if(!slot)memcpy(ram+SOM_WEAPON_BUF+0x800u,spark,sizeof(spark));
+    if(!slot&&hostile&&target>=0){
+        const uint8_t *m=som_party_actor(ram,(unsigned)target);
         xp_spell_slot=target;xp_spell_hp=(uint16_t)(m[0x182]|m[0x183]<<8);
         xp_spell_species=m[0x180];xp_spell_frame=frame_number;
     }
     fprintf(stderr,"[som-ai] CAST %s Lv.%u at %s slot %d (MP %u, cost %u)\n",
-            som_spell_name(spell),level,hostile?"monster":"own",target,
+            som_class_spell_label(cls,spell),level,hostile?"monster":"own",target,
             (unsigned)hero[0x186],cost);
     return 1;
 }
+static int som_cast_spell(uint8_t *ram,unsigned spell){
+    if(!som_rom||spell>=SOM_SPELL_COUNT||!som_field_idle(ram))return 0;
+    const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
+    return row&&som_cast_spell_actor(ram,spell,0,row[8]==0x81u?som_cast_target(ram):0);
+}
+
+static void som_party_cast_frame(uint8_t *ram){
+    if(!som_field_idle(ram)||!som_rom||som_manual_disciplines||gambits.open||
+       ring_ai_enabled||ram[0xE02C]!=1u)return;
+    /* Native spell effects use a shared graphics buffer. Start one cast at a
+     * time across the entire party, including the human-controlled actor. */
+    for(unsigned slot=0;slot<SOM_PARTY_COUNT;slot++){
+        const uint8_t *actor=som_party_actor(ram,slot);
+        if(som_party_alive(actor,slot)&&actor[0x060])return;
+    }
+    const int heal=som_party_heal_target(ram);
+    for(unsigned slot=1;slot<SOM_PARTY_COUNT;slot++){
+        const uint8_t *actor=som_party_actor(ram,slot);
+        const unsigned cls=som_party_disc(slot)->selected;
+        if(cls>=SOM_DISCIPLINE_COUNT||frame_number<follower_ready[slot-1u]||
+           ram[0xD9u+slot]!=0u||!som_party_can_cast(actor,slot))continue;
+        follower_ready[slot-1u]=frame_number+30u;
+        const int enemy=som_cast_target_actor(ram,actor);
+        const unsigned count=som_class_spell_count(cls);
+        for(unsigned pass=0;pass<2;pass++){
+            for(unsigned i=0;i<count;i++){
+                const unsigned spell=som_class_spell(cls,i);
+                const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
+                const int target=pass?enemy:heal;
+                if(target<0||!row||row[15]>actor[0x186]||
+                   (pass?row[8]!=0x81u:spell!=0x0Bu||row[8]!=0x01u))continue;
+                if(som_cast_spell_actor(ram,spell,slot,target)){
+                    follower_ready[slot-1u]=frame_number+180u;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /* Kage Bunshin clones (src/som_bunshin.h). Explosion damage grows with
  * the Ninjutsu discipline level. */
 static unsigned som_bunshin_damage(void){
@@ -5538,9 +5606,18 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(menu){
         if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
-        else if(som_manual_disciplines||som_menu_disciplines)
-            som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines);
-        else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
+        else if(som_manual_disciplines||som_menu_disciplines){
+            const unsigned slot=som_manual_disciplines?party_menu_actor:0;
+            const uint8_t *party_ram=backend_retro_get_memory_data&&backend_retro_get_memory_size&&
+                backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE?
+                backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+            char title[33];
+            if(party_ram)snprintf(title,sizeof(title),"%s MP%u  SEL:party A:close",
+                                  party_actor_names[slot],som_party_actor(party_ram,slot)[0x186]);
+            else snprintf(title,sizeof(title),"%s  SEL:party A:close",party_actor_names[slot]);
+            som_disc_draw(overlay_frame,width,height,pitch,pixel_format,
+                          som_party_disc(slot),som_manual_disciplines?title:NULL);
+        }else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
     }
     som_frontend_video(overlay_frame,width,height,pitch);
 }
@@ -5694,6 +5771,12 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     switch_holding=switch_spoiled=0;switch_hold_start=0;
     som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;
     som_disc_load();
+    party_menu_actor=0;
+    for(unsigned slot=1;slot<SOM_PARTY_COUNT;slot++){
+        som_disc_init(som_party_disc(slot));
+        som_follower_disc_file(slot,0);
+    }
+    memset(follower_ready,0,sizeof(follower_ready));
     som_styles_load();style_atk_active=0;style_carry=0;style_cut_pending=0;style_swing_prev=0;
     style_dirty=0;style_b_hidden=0;throw_active=0;throw_slot=-1;throw_ready=0;
     taijutsu_step=0;taijutsu_want=SOM_NO_WEAPON;taijutsu_last=0;
@@ -5808,6 +5891,7 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
     const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
     if(core&&data&&size==core+SOM_PROG_TRAILER_SIZE){
         if(!backend_retro_unserialize(data,core))return false;
+        memset(follower_ready,0,sizeof(follower_ready));
         SomProgress loaded;
         if(som_prog_trailer_read((const uint8_t*)data+core,&loaded)==SOM_PROG_OK){
             prog=loaded;som_prog_to_disc(&prog,&disciplines);
@@ -5817,7 +5901,9 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
         }else fprintf(stderr,"[som-ai] PROGRESS trailer of the save state unreadable\n");
         return true;
     }
-    return backend_retro_unserialize&&backend_retro_unserialize(data,size);
+    const bool ok=backend_retro_unserialize&&backend_retro_unserialize(data,size);
+    if(ok)memset(follower_ready,0,sizeof(follower_ready));
+    return ok;
 }
 static char som_auto_state_path[1024];
 static void som_auto_state_path_set(const char *rom){
@@ -6104,6 +6190,9 @@ RETRO_API void retro_run(void){
     const uint64_t perf_core=PERF_NOW();
     backend_run();
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
+    if(test_enabled&&on_turbo&&frame_number%6u==0u&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_party_cast_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)

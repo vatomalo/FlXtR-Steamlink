@@ -78,6 +78,13 @@ class BladeMaskTests(unittest.TestCase):
         dx,dy,w,h,pixels = masks.cropped(fixed)
         self.assertEqual((dx,dy,w,h,pixels),(10,-18-14,1,1,bytes([2])))
 
+    def test_pack_pose_keys_normalize_horizontal_mirrors_and_skip_vertical_aliases(self):
+        class Fake:
+            def script(self, weapon, animation, direction):
+                return [(0, 10, 1), (0x20, 10, 1), (0x40, 11, 1),
+                        (0, 12, 1), (0x40, 12, 1)]
+        self.assertEqual(masks.sword_frames(Fake()), [(10, 0), (11, 0x40)])
+
     def test_pack_header_and_palette_are_somwork_compatible(self):
         class Fake:
             def weapon_tiles(self,row): return b""

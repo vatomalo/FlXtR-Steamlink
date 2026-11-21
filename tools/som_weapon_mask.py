@@ -180,8 +180,11 @@ def sword_frames(gfx):
     """One stable record key per native frame number."""
     by_frame = {}
     for _, frame, flags in sword_poses(gfx):
-        by_frame.setdefault(frame, set()).add(flags)
-    return sorted((frame, min(flags)) for frame, flags in by_frame.items())
+        # Bit 5 mirrors horizontally. The runtime mirrors the normalized
+        # art just once from the live actor flags. Bit 6 flips vertically.
+        by_frame.setdefault(frame, set()).add(flags & 0x40)
+    return sorted((frame, next(iter(variants))) for frame, variants in by_frame.items()
+                  if len(variants) == 1)
 
 
 def cropped(image):

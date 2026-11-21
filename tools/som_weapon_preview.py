@@ -115,9 +115,10 @@ def render_cell(gfx,row,frame,flags,record=None):
     x0=M.ORIGIN[0]+dx
     y0=M.ORIGIN[1]+V.HERO_HEIGHT+dy
     blade=[rgb555(c) for c in pal[:5]]
+    if flags & 0x20:
+        weapon = [line[::-1] for line in weapon]
+        x0 = 2*M.ORIGIN[0]-x0-w
     paste(image,blade,weapon,offset=(x0,y0),index_start=1)
-    # Subtractive overlay needs its independent quarter-alpha mask; never
-    # apply transparency to the actual blade.
     paste(image,blade,weapon,offset=(x0,y0),index_start=6,alpha=64)
     return image
 
@@ -221,10 +222,10 @@ def main():
            "Red marker: mask unavailable, show native sword; no red marker: masked replacement",
            "Only the weapon silhouette is replaced. Hero body stays native.",
            ""]
-    for frame,_ in frames:
+    for frame,flags in frames:
         a=(M.KIND_TANTO,args.row,frame) in records
         b=(M.KIND_DAI,args.row,frame) in records
-        lines.append(f"frame {frame}: Tanto {'yes' if a else 'native fallback'}, Dai {'yes' if b else 'native fallback'}")
+        lines.append(f"frame {frame}, flags {flags:#04x}: Tanto {'yes' if a else 'native fallback'}, Dai {'yes' if b else 'native fallback'}")
     lines.append("")
     for direction, (total, tanto, dai, native) in direction_coverage(
             gfx, records, args.row, poses).items():

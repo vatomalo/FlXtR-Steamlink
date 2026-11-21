@@ -17,6 +17,7 @@
 #include "som_magic.h"
 #include "som_energy.h"
 #include "som_ally_moves.h"
+#include "som_party_ai.h"
 #include "som_familiar.h"
 #include "som_npc_walk.h"
 #include "som_npc_work.h"
@@ -3679,15 +3680,22 @@ typedef struct {
     SomEnergy en;
     unsigned long ready,dodge_ready,next_hit;
     int dashing,dodging,target,tx,ty,lx,ly;
-    unsigned hits_left,amount,dodge_left,cls;
+    unsigned hits_left,amount,dodge_left,cls,target_kind,map;
     int ddx,ddy;
 } SomAllyTech;
 static SomAllyTech ally_tech[2];
 static int ally_tech_ready;
 #define SOM_ALLY_DODGE_COOLDOWN 150ul
 static uint8_t *som_ally_obj(uint8_t *ram,unsigned who){return ram+0xE000u+0x200u*who;}
-static int som_ally_alive(const uint8_t *o){
-    return o[0]==1&&(o[0x184]|o[0x185])&&(o[0x182]|o[0x183]);
+static void som_ally_cancel(SomAllyTech *t){
+    t->dashing=t->dodging=0;
+    t->hits_left=0;
+    t->target=-1;
+}
+static const uint8_t *som_ally_attack_target(const uint8_t *ram,const SomAllyTech *t){
+    if(t->target<0||t->target>=3||t->target==familiar.slot)return NULL;
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t->target;
+    return som_bun_monster_alive(m)&&m[0x180]==t->target_kind?m:NULL;
 }
 static void som_ally_hurt(uint8_t *ram,unsigned slot,unsigned damage){
     uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
@@ -3713,11 +3721,17 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     SomAllyTech *t=&ally_tech[who-1u];
     uint8_t *o=som_ally_obj(ram,who);
     const unsigned cls=som_disc_member_class(&disciplines,who);
-    if(cls>=SOM_DISCIPLINE_COUNT||!som_ally_alive(o)){
-        if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
-        t->dashing=t->dodging=0;t->hits_left=0;return;
+    if(cls>=SOM_DISCIPLINE_COUNT||!som_party_member_alive(o,who)||
+       !som_party_ai_owned(ram,o,who)||!som_party_action_ready(o)){
+        som_ally_cancel(t);
+        return;
     }
-    if(cls!=t->cls){t->cls=cls;t->hits_left=0;t->dashing=0;}
+    const unsigned map=som_bun_u16(ram+0xDCu);
+    if(cls!=t->cls||map!=t->map){
+        som_ally_cancel(t);
+        t->cls=cls;
+        t->map=map;
+    }
     const SomAllyMove *mv=&som_ally_moves[cls];
     const unsigned level=disciplines.level[cls];
     const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
@@ -3730,20 +3744,19 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         return;
     }
     if(t->dashing){
+        const uint8_t *m=som_ally_attack_target(ram,t);
+        if(!m){som_ally_cancel(t);return;}
         const int dx=som_clamp_step(t->tx-x,SOM_ALLY_DASH_SPEED),dy=som_clamp_step(t->ty-y,SOM_ALLY_DASH_SPEED);
         if(som_ally_step(ram,o,dx,dy))return;
         t->dashing=0;                                     /* there, or blocked: cut */
-        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t->target;
-        if(t->target>=0&&som_bun_monster_alive(m)&&
-           som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,40,40))
+        if(som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,40,40))
             som_ally_hurt(ram,(unsigned)t->target,t->amount);
-        o[0x0E]&=(uint8_t)~0x80u;                          /* seen again */
         return;
     }
     if(t->hits_left){
         if(frame_number<t->next_hit)return;
-        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t->target;
-        if(t->target<0||!som_bun_monster_alive(m)||
+        const uint8_t *m=som_ally_attack_target(ram,t);
+        if(!m||
            !som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,mv->reach+16,mv->reach+16)){
             t->hits_left=0;return;
         }
@@ -3764,8 +3777,8 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     unsigned worst=100u;int worst_who=-1;
     for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
         const uint8_t *p=som_ally_obj(ram,k);
-        if(!som_ally_alive(p))continue;
-        const unsigned hp=som_word(p+0x182),max=som_word(p+0x184);
+        if(!som_party_member_alive(p,k))continue;
+        const unsigned hp=som_word(p+0x182)+p[0x1F3],max=som_word(p+0x184);
         const unsigned pct=max?hp*100u/max:100u;
         if(pct<worst){worst=pct;worst_who=(int)k;}
     }
@@ -3800,7 +3813,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         som_bun_boom(bunshin_booms,x,y,0,frame_number);
         break;
     case SOM_AM_MULTI:
-        t->target=nearest;t->hits_left=mv->hits;t->next_hit=frame_number;
+        t->target=nearest;t->target_kind=m[0x180];t->hits_left=mv->hits;t->next_hit=frame_number;
         break;
     case SOM_AM_DASH:{                     /* to the far side, else the near side */
         const int sx=mx>=x?1:-1,sy=my>=y?1:-1;
@@ -3809,8 +3822,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         if(!som_bun_spot_open(ram,gx,gy,som_hero_place(o))){
             gx=horizontal?mx-sx*20:mx;gy=horizontal?my:my-sy*20;
         }
-        t->target=nearest;t->tx=gx;t->ty=gy;t->dashing=1;
-        o[0x0E]|=0x80u;                    /* a blur: hidden while she travels */
+        t->target=nearest;t->target_kind=m[0x180];t->tx=gx;t->ty=gy;t->dashing=1;
         som_bun_boom(bunshin_booms,x,y,1,frame_number);
         break;}
     case SOM_AM_BOLT:
@@ -3835,7 +3847,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         break;
     case SOM_AM_HEAL_ALL:
         for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++)
-            if(som_ally_alive(som_ally_obj(ram,k)))som_ally_heal(som_ally_obj(ram,k),t->amount);
+            if(som_party_member_alive(som_ally_obj(ram,k),k))som_ally_heal(som_ally_obj(ram,k),t->amount);
         som_bun_boom(bunshin_booms,x,y,0,frame_number);
         break;
     default:return;
@@ -3855,7 +3867,11 @@ static void som_ally_tech_frame(uint8_t *ram){
             som_energy_init(&ally_tech[i].en);ally_tech[i].target=-1;ally_tech[i].cls=SOM_DISCIPLINE_NONE;}
         ally_tech_ready=1;
     }
-    if(ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return;
+    if(ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1||
+       som_manual_disciplines){
+        for(unsigned i=0;i<2u;i++)som_ally_cancel(&ally_tech[i]);
+        return;
+    }
     for(unsigned who=1;who<SOM_PARTY_MEMBERS;who++)som_ally_tech_one(ram,who);
 }
 static int som_class_move_raw(uint8_t *ram){
@@ -4251,7 +4267,7 @@ static void som_ally_equip_frame(uint8_t *ram){
         const uint8_t *o=ram+0xE000u+0x200u*who;
         const unsigned cls=som_disc_member_class(&disciplines,who);
         if(cls>=SOM_DISCIPLINE_COUNT){ally_equip_pending&=~(1u<<who);continue;}
-        if(o[0]!=1||!(o[0x184]|o[0x185]))continue;          /* not joined yet: later */
+        if(!som_party_member_alive(o,who)||!som_party_ai_owned(ram,o,who))continue;
         const unsigned type=som_disc_weapons[cls][0];
         if(ram[0xCC54u+type]==0xFF){
             ram[0xCC54u+type]=0;
@@ -6357,6 +6373,7 @@ static size_t som_apply_rom_patches(uint8_t *rom,size_t size){
 }
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
+    ally_tech_ready=0;
     frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
@@ -6501,6 +6518,7 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
     const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
     if(core&&data&&size==core+SOM_PROG_TRAILER_SIZE){
         if(!backend_retro_unserialize(data,core))return false;
+        ally_tech_ready=0;
         SomProgress loaded;
         if(som_prog_trailer_read((const uint8_t*)data+core,&loaded)==SOM_PROG_OK){
             prog=loaded;som_prog_to_disc(&prog,&disciplines);
@@ -6510,7 +6528,9 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
         }else fprintf(stderr,"[som-ai] PROGRESS trailer of the save state unreadable\n");
         return true;
     }
-    return backend_retro_unserialize&&backend_retro_unserialize(data,size);
+    const bool ok=backend_retro_unserialize&&backend_retro_unserialize(data,size);
+    if(ok)ally_tech_ready=0;
+    return ok;
 }
 static char som_auto_state_path[1024];
 static void som_auto_state_path_set(const char *rom){

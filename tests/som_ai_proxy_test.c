@@ -2813,7 +2813,7 @@ int main(void){
         const unsigned px[3]={200,220,240};
         for(unsigned who=0;who<3;who++){
             uint8_t *o=ram+0xE000+0x200*who;
-            o[0]=1;o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who?100:30;  /* the boy at 30 % */
+            o[0]=1;o[0x180]=(uint8_t)(0x80u+who);o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who?100:30;  /* the boy at 30 % */
         }
         uint8_t *m=ram+0xE600;m[0]=1;som_put_word(m+2,240+50);m[4]=200;        /* 50 px from the sprite */
         som_disc_init(&disciplines);familiar.slot=-1;ally_tech_ready=0;
@@ -2832,6 +2832,18 @@ int main(void){
         assert(!ally_tech[0].dashing);
         assert(som_bun_u16(ram+0xE202)==220+60+20);               /* the far side */
         assert(m[0x1F1]>0&&!(ram[0xE20E]&0x80));                  /* cut, seen again */
+        /* A human taking over a dash immediately gets the native controls. */
+        ally_tech_ready=0;m[0x1F1]=0;som_put_word(m+2,220+60);som_put_word(ram+0xE202,220);
+        frame_number++;som_ally_tech_frame(ram);assert(ally_tech[0].dashing);
+        ram[0xE22C]=2;
+        frame_number++;som_ally_tech_frame(ram);
+        assert(!ally_tech[0].dashing&&som_word(ram+0xE202)==220&&m[0x1F1]==0);
+        ram[0xE22C]=0;
+        ally_tech_ready=0;
+        frame_number++;som_ally_tech_frame(ram);assert(ally_tech[0].dashing);
+        ram[0xDC]++;
+        frame_number++;som_ally_tech_frame(ram);
+        assert(!ally_tech[0].dashing&&som_word(ram+0xE202)==220&&m[0x1F1]==0);
         /* Dead or not joined: nothing. */
         ally_tech_ready=0;m[0x1F1]=0;ram[0xE382]=0;ram[0xE383]=0;
         for(unsigned i=0;i<5;i++){frame_number++;som_ally_tech_frame(ram);}

@@ -900,3 +900,12 @@ party class editor for the ring's owner (`7E:1808`: boy, girl or sprite). **Star
 in the ring does the same. X in the editor still switches member; A closes it and the ring
 is still open underneath (the pad is held back from the game until every button is let go).
 The overlay font gained `*` (the class mark, blank before) and `&`.
+
+The mask preview accepts `--direction up|down|side` and reports script-pose
+coverage for each direction. Left uses the mirrored side art. New private packs
+include native-frame recovery entries. If the backend advances to an uncovered
+replacement during video rendering, the proxy immediately restores the native
+effect buffer and can draw the current native pose from that entry. If the
+native pose is also unavailable, the session returns to native art and the
+already-rendered transition frame may still miss the weapon. The pack remains
+opt-in and the Katana remains native.

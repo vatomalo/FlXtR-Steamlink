@@ -1949,11 +1949,13 @@ int main(void){
         {
             char mask_path[]="/tmp/flxtr-weapon-mask-test-XXXXXX";
             const int fd=mkstemp(mask_path);assert(fd>=0);
-            uint8_t pack[10+44+6];memset(pack,0,sizeof(pack));
-            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            uint8_t pack[10+2*(44+6)];memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=2;
             pack[10]=0xD5;pack[11]=14;pack[12]=10;pack[13]=1;
             pack[14]=0x1F;                       /* mask palette #1 red */
             pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=1;
+            memcpy(pack+60,pack+10,50);
+            pack[60]=0xD6;pack[62]=11;
             assert(write(fd,pack,sizeof(pack))==(ssize_t)sizeof(pack));close(fd);
             weapon_mask_file=mask_path;weapon_mask_tried=0;
             weapon_mask_on_file=mask_path;weapon_mask_on_checked=0;
@@ -1966,9 +1968,14 @@ int main(void){
             som_weapon_mask_pick(ram);
             assert(weapon_masked.active&&weapon_masked.entry.weapon==14u&&weapon_masked.dir==3u);
             hero[0x026]=22;som_weapon_mask_pick(ram);
+            assert(weapon_masked.active&&weapon_masked.entry.kind==0xD6&&!weapon_mask_faulted);
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            hero[0x026]=20;som_weapon_mask_frame(ram);
+            hero[0x026]=24;som_weapon_mask_pick(ram);
             assert(!weapon_masked.active&&weapon_mask_faulted);
-            /* A later frame must restore native art and leave the mask
-             * disabled rather than repeatedly exposing a blank weapon. */
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            /* Older packs missing the native frame are disabled, with the
+             * original tiles already restored in the video callback. */
             som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
             styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;

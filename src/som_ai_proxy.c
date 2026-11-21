@@ -998,12 +998,13 @@ static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried,weapon_mask_faulted;
 static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
-static uint32_t *weapon_mask_index;    /* [2][72][256], byte offsets + 1 */
+static uint32_t *weapon_mask_index;    /* [3][9][256], byte offsets + 1 */
 static uint8_t weapon_native_tiles[0x800];
 static int weapon_tiles_hidden;
 static SomNpcWorkState weapon_masked;
+static int som_weapon_mask_restore(uint8_t *ram);
 static void som_weapon_mask_frame(uint8_t *ram);
-static void som_weapon_mask_pick(const uint8_t *ram);
+static void som_weapon_mask_pick(uint8_t *ram);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
  * style): tap L1 to lock onto the nearest
  * monster within SOM_LOCK_RANGE px, tap again to let go. While locked the
@@ -3581,7 +3582,9 @@ static void som_hop_step(void){
     }
     {
         uint8_t *art=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-        if(art)som_weapon_mask_frame(art);
+        if(art&&backend_retro_get_memory_size&&
+           backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+            som_weapon_mask_frame(art);
     }
     if(holy_until||bomb_at||mind_until||telekinesis.slot>=0||
        mine_live[0]||mine_live[1]||mine_live[2]){
@@ -6092,8 +6095,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    if(backend_retro_get_memory_data)
-        som_weapon_mask_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    if(weapon_tiles_hidden&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_weapon_mask_pick(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    else weapon_masked.active=0;
     const int worker=(npc_work.active||flykick.active||weapon_masked.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
@@ -6798,6 +6803,9 @@ RETRO_API void retro_run(void){
     }
     const uint64_t perf_core=PERF_NOW();
     backend_run();
+    if(weapon_tiles_hidden&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_weapon_mask_restore(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
@@ -7063,108 +7071,7 @@ static void som_lock_frame(uint8_t *ram){
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
 }
 
-/* ---- Bushido per-frame blade masks (the native Katana is unchanged) ---- */
-static void som_weapon_mask_load(void){
-    if(weapon_mask_tried)return;
-    weapon_mask_tried=1;
-    som_load_pack_file(weapon_mask_file,"Bushido weapon masks",
-                       &weapon_mask_pack,&weapon_mask_pack_size);
-    if(!weapon_mask_pack||weapon_mask_pack_size<10u||
-       memcmp(weapon_mask_pack,"SOMWORK1",8u))return;
-    weapon_mask_index=calloc(2u*72u*256u,sizeof(*weapon_mask_index));
-    if(!weapon_mask_index)return;
-    const uint8_t *p=weapon_mask_pack+10u,*end=weapon_mask_pack+weapon_mask_pack_size;
-    const unsigned entries=weapon_mask_pack[8]|(unsigned)weapon_mask_pack[9]<<8;
-    unsigned count=0;
-    for(unsigned e=0;e<entries;e++){
-        if(end-p<44)goto malformed;
-        const uint8_t *next=p+44u;
-        for(unsigned frame=0;frame<p[3];frame++){
-            next=som_work_next_frame(next,end);
-            if(!next)goto malformed;
-        }
-        if(p[0]>=0xD4u&&p[0]<=0xD5u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
-            weapon_mask_index[((p[0]-0xD4u)*72u+p[1])*256u+p[2]]=
-                (uint32_t)(p-weapon_mask_pack)+1u;
-            count++;
-        }
-        p=next;
-    }
-    fprintf(stderr,"[som-ai] Bushido: indexed %u masked weapon frames\\n",count);
-    return;
-malformed:
-    free(weapon_mask_index);weapon_mask_index=NULL;
-    fprintf(stderr,"[som-ai] Bushido: malformed mask pack ignored\\n");
-}
-/* -1 = native sword; 0 = Tanto; 1 = Dai Katana. No other class changes. */
-static int som_weapon_mask_mode(const uint8_t *ram){
-    if(!weapon_mask_on_checked||frame_number-weapon_mask_on_checked>=120ul){
-        weapon_mask_on_checked=frame_number?frame_number:1ul;
-        weapon_mask_on=access(weapon_mask_on_file,F_OK)==0;
-    }
-    if(weapon_mask_faulted||!weapon_mask_on||disciplines.selected!=SOM_DISC_BUSHIDO||
-       ram[0xE1E4]!=1u)return -1;
-    const unsigned style=styles.selected[SOM_DISC_BUSHIDO]%SOM_STYLES_PER_CLASS;
-    return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
-}
-static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_mask_index||mode>1u||row<9u||row>=18u||frame>255u)return 0;
-    const uint32_t at=weapon_mask_index[(mode*72u+row)*256u+frame];
-    if(!at)return 0;
-    const uint8_t *p=weapon_mask_pack+at-1u;
-    out->kind=p[0];out->weapon=p[1];out->facing=p[2];out->frames=p[3];
-    for(unsigned i=0;i<20u;i++)out->colours[i]=(uint16_t)(p[4+2u*i]|p[5+2u*i]<<8);
-    out->first=p+44u;
-    return 1;
-}
-/* Hide native effects only when a matching mask exists for the current
- * sword row and animation frame. On a missing mask, restore the original
- * effect tiles byte-for-byte, rather than showing an invisible weapon. */
-static void som_weapon_mask_frame(uint8_t *ram){
-    if(!ram)return;
-    som_weapon_mask_load();
-    const int field=ram[0xE000u]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
-    const int mode=field?som_weapon_mask_mode(ram):-1;
-    SomWorkEntry entry;
-    const int want=mode>=0&&som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
-                                                  ram[0xE026u]>>1,&entry);
-    uint8_t *tiles=ram+SOM_WEAPON_BUF;
-    int blank=1;
-    for(unsigned i=0;i<sizeof(weapon_native_tiles);i++)if(tiles[i]){blank=0;break;}
-    if(want){
-        if(!blank){
-            memcpy(weapon_native_tiles,tiles,sizeof(weapon_native_tiles));
-            memset(tiles,0,sizeof(weapon_native_tiles));
-        }
-        weapon_tiles_hidden=1;
-    }else if(weapon_tiles_hidden){
-        if(blank)memcpy(tiles,weapon_native_tiles,sizeof(weapon_native_tiles));
-        weapon_tiles_hidden=0;
-    }
-}
-/* The runtime image is composited using the mask-specific alpha-aware
- * renderer, keeping original hero animation and camera coordinates. */
-static void som_weapon_mask_pick(const uint8_t *ram){
-    weapon_masked.active=0;
-    if(!ram||!weapon_tiles_hidden)return;
-    const int mode=som_weapon_mask_mode(ram);
-    SomWorkEntry entry;
-    if(mode<0)return;
-    if(!som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
-                               ram[0xE026u]>>1,&entry)){
-        /* The SNES animation may advance after the pre-frame availability
-         * check. Fail closed for the rest of the session instead of
-         * continuing to blank frames with missing replacement art. */
-        weapon_mask_faulted=1;
-        fprintf(stderr,"[som-ai] BUSHIDO mask frame missing: row %u frame %u, disabling masks for this session\\n",
-                (unsigned)ram[0xE1E3u],(unsigned)(ram[0xE026u]>>1));
-        return;
-    }
-    memset(&weapon_masked,0,sizeof(weapon_masked));
-    weapon_masked.active=1;weapon_masked.slot=0;weapon_masked.kind=ram[0xE180u];
-    weapon_masked.dir=(ram[0xE028u]&0x40u)?3u:2u;
-    weapon_masked.entry=entry;weapon_masked.start=frame_number;weapon_masked.length=2u;
-}
+#include "som_weapon_renderer.h"
 
 /* ---- Costs (FlXtR MP/AP): each technique is paid only when it goes off. ---- */
 static int som_energy_pay(unsigned e,unsigned ap,const char *what){

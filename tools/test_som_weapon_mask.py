@@ -78,6 +78,13 @@ class BladeMaskTests(unittest.TestCase):
         dx,dy,w,h,pixels = masks.cropped(fixed)
         self.assertEqual((dx,dy,w,h,pixels),(10,-18-14,1,1,bytes([2])))
 
+    def test_pack_pose_keys_normalize_horizontal_mirrors_and_skip_vertical_aliases(self):
+        class Fake:
+            def script(self, weapon, animation, direction):
+                return [(0, 10, 1), (0x20, 10, 1), (0x40, 11, 1),
+                        (0, 12, 1), (0x40, 12, 1)]
+        self.assertEqual(masks.sword_frames(Fake()), [(10, 0), (11, 0x40)])
+
     def test_pack_header_and_palette_are_somwork_compatible(self):
         class Fake:
             def weapon_tiles(self,row): return b""
@@ -101,11 +108,11 @@ class BladeMaskTests(unittest.TestCase):
         finally:
             masks.sword_frames=old
         self.assertEqual(result[:8],b"SOMWORK1")
-        self.assertEqual(struct.unpack_from("<H",result,8)[0],2)
+        self.assertEqual(struct.unpack_from("<H",result,8)[0],3)
         self.assertEqual([result[10],result[result.find(b"SOMWORK1")+10]], [masks.KIND_TANTO]*2)
         # Both masks contain only palette indices 0..10; no soft blade pixels.
         offset=10
-        for kind in (masks.KIND_TANTO,masks.KIND_DAI):
+        for kind in (masks.KIND_TANTO,masks.KIND_DAI,masks.KIND_NATIVE):
             self.assertEqual((result[offset],result[offset+1],result[offset+2]),(kind,14,10))
             w,h=result[offset+47],result[offset+48]
             data=result[offset+49:offset+49+w*h]

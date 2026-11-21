@@ -1,0 +1,30 @@
+# Start from a field.state produced by field_load.txt. Set SOM_HEADLESS_DATA
+# to a private directory containing the mask pack and its opt-in marker.
+#! expect-log Bushido: indexed [1-9][0-9]* masked weapon frames
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+cmd class_10
+frames 90
+cmd style_0
+frames 30
+expect u8 E1E4 == 1
+hold B 2
+frames 8
+shot tanto_swing
+frames 75
+cmd style_1
+frames 30
+expect u8 E1E4 == 1
+hold B 2
+frames 8
+shot katana_swing
+frames 75
+cmd style_2
+frames 30
+expect u8 E1E4 == 1
+hold B 2
+frames 8
+shot dai_katana_swing
+frames 75
+expect u8 00D0 == 0

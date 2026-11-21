@@ -119,3 +119,9 @@ resuming matters. Progress records in `som_progress/` are simply ignored by the 
 | exit auto-state full size | yes | yes | yes (531668 bytes after the player's exit) |
 | soundtrack bridge chain | yes | mixing verified (rms, pacing) | search/stream yes; separate player blocked (MV_PE_StreamCreate); mixing pending install |
 | AI curiosity, Qwen failure handling | yes | n/a | pending (service restart) |
+
+For weapon-mask builds, record directional coverage from the local preview.
+On hardware, compare the installed core inode with the running RetroArch
+mapping before evaluating the HUD or weapon art. Capture masked and native
+fallback frames on the same save, including a transition from a covered
+animation pose to an uncovered one.

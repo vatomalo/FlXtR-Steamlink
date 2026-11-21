@@ -1949,11 +1949,13 @@ int main(void){
         {
             char mask_path[]="/tmp/flxtr-weapon-mask-test-XXXXXX";
             const int fd=mkstemp(mask_path);assert(fd>=0);
-            uint8_t pack[10+44+6];memset(pack,0,sizeof(pack));
-            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            uint8_t pack[10+2*(44+6)];memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=2;
             pack[10]=0xD5;pack[11]=14;pack[12]=10;pack[13]=1;
             pack[14]=0x1F;                       /* mask palette #1 red */
             pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=1;
+            memcpy(pack+60,pack+10,50);
+            pack[60]=0xD6;pack[62]=11;
             assert(write(fd,pack,sizeof(pack))==(ssize_t)sizeof(pack));close(fd);
             weapon_mask_file=mask_path;weapon_mask_tried=0;
             weapon_mask_on_file=mask_path;weapon_mask_on_checked=0;
@@ -1966,9 +1968,14 @@ int main(void){
             som_weapon_mask_pick(ram);
             assert(weapon_masked.active&&weapon_masked.entry.weapon==14u&&weapon_masked.dir==3u);
             hero[0x026]=22;som_weapon_mask_pick(ram);
+            assert(weapon_masked.active&&weapon_masked.entry.kind==0xD6&&!weapon_mask_faulted);
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            hero[0x026]=20;som_weapon_mask_frame(ram);
+            hero[0x026]=24;som_weapon_mask_pick(ram);
             assert(!weapon_masked.active&&weapon_mask_faulted);
-            /* A later frame must restore native art and leave the mask
-             * disabled rather than repeatedly exposing a blank weapon. */
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            /* Older packs missing the native frame are disabled, with the
+             * original tiles already restored in the video callback. */
             som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
             styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;
@@ -2806,7 +2813,7 @@ int main(void){
         const unsigned px[3]={200,220,240};
         for(unsigned who=0;who<3;who++){
             uint8_t *o=ram+0xE000+0x200*who;
-            o[0]=1;o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who?100:30;  /* the boy at 30 % */
+            o[0]=1;o[0x180]=(uint8_t)(0x80u+who);o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who?100:30;  /* the boy at 30 % */
         }
         uint8_t *m=ram+0xE600;m[0]=1;som_put_word(m+2,240+50);m[4]=200;        /* 50 px from the sprite */
         som_disc_init(&disciplines);familiar.slot=-1;ally_tech_ready=0;
@@ -2825,6 +2832,18 @@ int main(void){
         assert(!ally_tech[0].dashing);
         assert(som_bun_u16(ram+0xE202)==220+60+20);               /* the far side */
         assert(m[0x1F1]>0&&!(ram[0xE20E]&0x80));                  /* cut, seen again */
+        /* A human taking over a dash immediately gets the native controls. */
+        ally_tech_ready=0;m[0x1F1]=0;som_put_word(m+2,220+60);som_put_word(ram+0xE202,220);
+        frame_number++;som_ally_tech_frame(ram);assert(ally_tech[0].dashing);
+        ram[0xE22C]=2;
+        frame_number++;som_ally_tech_frame(ram);
+        assert(!ally_tech[0].dashing&&som_word(ram+0xE202)==220&&m[0x1F1]==0);
+        ram[0xE22C]=0;
+        ally_tech_ready=0;
+        frame_number++;som_ally_tech_frame(ram);assert(ally_tech[0].dashing);
+        ram[0xDC]++;
+        frame_number++;som_ally_tech_frame(ram);
+        assert(!ally_tech[0].dashing&&som_word(ram+0xE202)==220&&m[0x1F1]==0);
         /* Dead or not joined: nothing. */
         ally_tech_ready=0;m[0x1F1]=0;ram[0xE382]=0;ram[0xE383]=0;
         for(unsigned i=0;i<5;i++){frame_number++;som_ally_tech_frame(ram);}

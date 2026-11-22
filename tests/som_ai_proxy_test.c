@@ -2457,7 +2457,7 @@ int main(void){
              * objects: self target who+1, the sprite's palette index 0xCF,
              * the spark in her own effect buffer; the boy is left alone. */
             uint8_t *girl=ram+0xE200,*spr=ram+0xE400;
-            const uint8_t keep_d9=ram[0xD9],keep_da=ram[0xDA];
+            const uint8_t keep_d9=ram[0xD9],keep_da=ram[0xDA],keep_db=ram[0xDB];
             uint8_t keep_girl[0x200],keep_spr[0x200],keep_buf[0x2000];
             memcpy(keep_girl,girl,0x200);memcpy(keep_spr,spr,0x200);
             memcpy(keep_buf,ram+0x3000,sizeof(keep_buf));
@@ -2488,7 +2488,40 @@ int main(void){
             assert(quick_cast_until[1]>frame_number);         /* button magic: quick */
             quick_cast_until[1]=0;
             mocked_buttons=0;som_input_poll();
-            disciplines.party[0]=keep_party;ram[0xD9]=keep_d9;ram[0xDA]=keep_da;
+            /* X follows pad 1 even while the Boy is casting. */
+            girl[0x1C]=girl[0x60]=0;
+            hero[0x1C]=0x40;hero[0x60]=0x20;
+            const unsigned girl_x=som_current_spell();
+            rom[0x102AD0+girl_x*64+8]=0x81;
+            rom[0x102AD0+girl_x*64+15]=2;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+            som_input_poll();
+            assert(x_spell_blocked&&som_actor==1u);
+            mocked_buttons=0;som_input_poll();
+            assert(girl[0x170]==girl_x&&girl[0x60]==0x20&&hero[0x170]==0);
+
+            /* A pending tap stays with its actor across Select. A fresh X
+             * charges the Sprite's equipped sword while both allies cast. */
+            girl[0x1C]=girl[0x60]=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);som_input_poll();
+            girl[0x1C]=0x40;girl[0x60]=0x20;
+            const uint8_t keep_sprite_class=disciplines.party[1];
+            disciplines.party[1]=SOM_DISC_BUSHIDO;
+            ram[0xDA]=0x80;ram[0xDB]=1;
+            spr[0x1C]=spr[0x60]=0;spr[0x1E4]=1;spr[0x19C]=4;
+            iai_ready=0;
+            mocked_buttons=0;som_input_poll();
+            assert(som_actor==2u&&!special_stage);
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);som_input_poll();
+            assert(x_spell_blocked);
+            mocked_buttons=0;som_input_poll();
+            assert(special_stage==SOM_IAI_LEVEL&&som_actor==2u);
+            assert(hero[0x1C]==0x40&&girl[0x1C]==0x40);
+            special_stage=special_suppress=0;iai_ready=0;
+            hero[0x1C]=hero[0x60]=0;
+            disciplines.party[1]=keep_sprite_class;
+            disciplines.party[0]=keep_party;ram[0xD9]=keep_d9;ram[0xDA]=keep_da;ram[0xDB]=keep_db;
+            som_actor_update();
             memcpy(girl,keep_girl,0x200);memcpy(spr,keep_spr,0x200);
             memcpy(ram+0x3000,keep_buf,sizeof(keep_buf));
         }

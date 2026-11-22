@@ -17,8 +17,8 @@ class ChooseTest(unittest.TestCase):
         self.assertEqual(choose("boomerang", "whip", "boomerang", 150, 1.0, {})[0], "whip")
         # Two melee weapons: the longer one (spear) for a far enemy.
         self.assertEqual(choose("glove", "spear", "glove", 100, 1.0, {"glove": 4})[0], "spear")
-        # Beyond NEAR_PX nothing changes.
-        self.assertEqual(choose("sword", "bow", "sword", 200, 1.0, {})[0], "sword")
+        # Beyond NEAR_PX it is no fight: the longer reach waits in hand.
+        self.assertEqual(choose("sword", "bow", "sword", 200, 1.0, {})[0], "bow")
 
     def test_whip_blind_spot_and_low_hp(self):
         self.assertEqual(choose("whip", "glove", "whip", 12, 1.0, {})[0], "glove")
@@ -27,6 +27,9 @@ class ChooseTest(unittest.TestCase):
     def test_idle_training_and_ready(self):
         self.assertEqual(choose("sword", "axe", "sword", None, 1.0, {"sword": 3, "axe": 0})[0], "axe")
         self.assertEqual(choose("sword", "axe", "axe", None, 1.0, {"sword": 1, "axe": 1})[0], "sword")
+        # A long weapon in the pair: it waits in hand for the next enemy.
+        self.assertEqual(choose("sword", "boomerang", "sword", None, 1.0,
+                                {"sword": 2, "boomerang": 1})[0], "boomerang")
 
     def test_hysteresis_at_the_melee_edge(self):
         # Sword reach 28: holding the sword, 32 px stays sword (band 8),

@@ -25,7 +25,9 @@ Rules, first match wins:
 4. Enemy at melee range: the stronger weapon here, the higher weapon level
    (more charge levels), else the primary.
 5. No enemy near: train the weaker weapon when it lags two levels behind,
-   else ready the primary.
+   else ready the longer reach (2026-11-22: the sword held at rest meant the
+   first contact of every fight was melee; the next enemy now meets the bow
+   or boomerang first and the short weapon comes out when it closes in).
 
 Timing (WeaponTactics.decide): in a fight switches wait `combat_cooldown`
 seconds, out of one `cooldown` seconds (the bridge scales both with the
@@ -108,6 +110,8 @@ def choose(primary, secondary, held, distance, hp_fraction, levels, third=None, 
     if levels.get(stronger, 0) - levels.get(weaker, 0) >= TRAIN_GAP:
         return weaker, (f"no enemy near: training the {weaker} (level "
                         f"{levels.get(weaker, 0)} vs {levels.get(stronger, 0)})")
+    if reach(longer) > reach(shorter):
+        return longer, f"no enemy near: the {longer} ready ({reach(longer)} px reach)"
     return primary, f"no enemy near: the {primary} ready"
 
 

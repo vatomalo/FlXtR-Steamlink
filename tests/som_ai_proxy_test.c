@@ -1376,6 +1376,40 @@ int main(void){
             assert(styles.selected[0]==(i==0u?2u:i==1u?0u:1u));
             mocked_buttons=0;som_input_poll();
         }
+        {   /* Select gave pad 1 to the girl (7E:00DA bit 0): R1 turns her
+             * class's style, L2+R1 / L2+L1 her class; the boy's stay. */
+            const uint8_t keep_d9=ram[0xD9],keep_da=ram[0xDA],keep_party=disciplines.party[0];
+            ram[0xD9]=0x80;ram[0xDA]=1;
+            disciplines.party[0]=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_DEFAULT;
+            assert(som_pad1_member()==1u);
+            mocked_buttons=style_r1;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(styles.selected[SOM_DISC_BUSHIDO]==2u&&styles.selected[0]==1u);
+            assert(ally_equip_pending&2u);
+            const uint16_t l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+            mocked_buttons=l2;som_input_poll();
+            mocked_buttons=(uint16_t)(l2|style_r1);som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(disciplines.party[0]==(SOM_DISC_BUSHIDO+1u)%SOM_DISCIPLINE_COUNT&&
+                   disciplines.selected==0u&&styles.selected[SOM_DISC_BUSHIDO]==2u);
+            mocked_buttons=l2;som_input_poll();
+            mocked_buttons=(uint16_t)(l2|(1u<<RETRO_DEVICE_ID_JOYPAD_L));som_input_poll();
+            mocked_buttons=0;som_input_poll();
+            assert(disciplines.party[0]==SOM_DISC_BUSHIDO&&disciplines.selected==0u);
+            /* B/Y while driving her: her class's weapons, the boy's left be. */
+            disciplines.party[0]=SOM_DISC_SWORD;
+            const uint8_t keep_girl_weapon=ram[0xE3E4],keep_boy_weapon=hero[0x1E4];
+            ram[0xE3E4]=som_disc_weapons[SOM_DISC_SWORD][1];          /* she holds her Y weapon */
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+            assert(y_weapon_swap&&!y_weapon_blocked&&hero[0x1E4]==keep_boy_weapon);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+            mocked_buttons=0;som_input_poll();
+            ram[0xE3E4]=5u;                        /* a bow, not her class's Y: no swap */
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+            assert(y_weapon_blocked&&hero[0x1E4]==keep_boy_weapon);
+            mocked_buttons=0;som_input_poll();
+            ram[0xE3E4]=keep_girl_weapon;
+            ram[0xD9]=keep_d9;ram[0xDA]=keep_da;disciplines.party[0]=keep_party;
+        }
         /* Old L1+B style shortcut is moved to L3+B. Its B is hidden,
          * and pressing L1 alone does not send an unrelated native L. */
         const uint16_t l3=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L3);
@@ -2699,8 +2733,10 @@ int main(void){
         for(unsigned who=1;who<3;who++){
             const uint8_t *pal=ram+0xDF20+32*who,*was=original+32*who;
             for(unsigned c=1;c<16;c++){
+                const int hair=who==1u&&c>=SOM_GIRL_HAIR_FIRST&&c<SOM_GIRL_HAIR_FIRST+3u;
                 const int clothes=(som_member_clothes[who]>>c)&1u;
-                assert(clothes==(memcmp(pal+2*c,was+2*c,2)!=0)); /* only clothes change */
+                assert((clothes||hair)==(memcmp(pal+2*c,was+2*c,2)!=0)); /* clothes (+ her hair) */
+                if(hair)assert((pal[2*c]|pal[2*c+1]<<8)==som_girl_hair[c-SOM_GIRL_HAIR_FIRST]);
             }
             assert(!memcmp(ram+0x0700+32*(who+1),pal,32));       /* shown buffer too */
         }
@@ -2713,7 +2749,10 @@ int main(void){
         ram[0xE4]=0;ram[0xE6]=0;
         disciplines.party[0]=SOM_DISCIPLINE_NONE;                 /* girl: no class */
         som_hero_palette_frame(ram);
-        assert(!memcmp(ram+0xDF40,original+32,32));              /* her colours back */
+        {   /* her own clothes back, the black hair kept */
+            uint8_t want[32];memcpy(want,original+32,32);som_member_hair(want,1u);
+            assert(!memcmp(ram+0xDF40,want,32));
+        }
         ram[0xE384]=0;memset(ram+0xDF40,0x99,32);                /* not joined yet */
         disciplines.party[0]=SOM_DISC_NINJUTSU;
         som_hero_palette_frame(ram);

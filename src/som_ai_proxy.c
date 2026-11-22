@@ -803,7 +803,6 @@ static int som_cast_spell(uint8_t *ram,unsigned spell);
 static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell);
 #define SOM_QUICK_CAST_FRAMES 240ul      /* quick cast: how long the skip may wait */
 static unsigned long quick_cast_until[3];   /* per hero: 0 none */
-static int som_cast_button_spell(uint8_t *ram,unsigned who,unsigned spell,unsigned which);
 #define SOM_SPELL_FIRE_BALL 0x0Cu
 /* X casts the current spell of the chosen discipline (som_magic.h); holding
  * X steps to the next one. One cursor per discipline (+1: no discipline). */
@@ -940,6 +939,13 @@ static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 /* Mage bolts (src/som_mage_bolt.h): every caster's B is a glove punch that
  * throws a painted ball of its B spell's element. */
 static SomBolt mage_bolts[SOM_BOLTS];
+/* Y (player, 2026-11-22): the class's second spell, painted. A ball spell
+ * arms the next jab (until this frame) to throw a big ball of its element;
+ * a heal spell heals the most hurt hero at once. Both cost SOM_MAGE_Y_MP. */
+static unsigned long mage_y_until[3];
+static int som_mage_heal(uint8_t *ram,unsigned who,unsigned cls,unsigned spell);
+#define SOM_MAGE_Y_FRAMES 30ul
+#define SOM_MAGE_Y_MP 1u
 static uint8_t mage_swing_prev[3];
 static unsigned long mage_ally_next[3];
 /* Kawarimi: the log left standing where the hero was (world px). */
@@ -1858,11 +1864,24 @@ static void som_input_poll(void){
          * punch goes through and throws the ball, no spell, no MP. Y casts. */
         if(caster&&!caster_talk&&(current&y_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned spell=som_caster_spell(caster_cls,1u);
-            y_weapon_blocked=1;
+            const int heal=som_bolt_heal_spell(spell);
+            /* A ball: the game sees B (the jab) and the jab throws Y's ball. */
+            if(!heal&&(mage_y_until[driver]>frame_number||(pressed&y_bit)))y_weapon_swap=1;
+            else y_weapon_blocked=1;
             if(pressed&y_bit){
-                if(som_cast_button_spell(wram,driver,spell,1u))
-                    fprintf(stderr,"[som-ai] CASTER %s Y: %s\n",som_party_names[driver],
+                uint8_t *me=wram+0xE000u+0x200u*driver;
+                if(me[0x186]<SOM_MAGE_Y_MP){
+                    y_weapon_swap=0;y_weapon_blocked=1;
+                    char text[48];snprintf(text,sizeof(text),"^%s|no MP",
+                                           som_class_spell_label(caster_cls,spell));
+                    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+                }else if(heal){
+                    if(som_mage_heal(wram,driver,caster_cls,spell))me[0x186]-=SOM_MAGE_Y_MP;
+                }else{
+                    mage_y_until[driver]=frame_number+SOM_MAGE_Y_FRAMES;
+                    fprintf(stderr,"[som-ai] CASTER %s Y: %s ball\n",som_party_names[driver],
                             som_class_spell_label(caster_cls,spell));
+                }
             }
         }
         const unsigned driver_cls=driver?som_disc_member_class(&disciplines,driver):SOM_DISCIPLINE_NONE;
@@ -2818,14 +2837,6 @@ static unsigned som_cast_spirit_end(unsigned base){
     }
     return 0;
 }
-/* A class's button spell (which 0 B, 1 Y) cast by hero who, quick by the
- * rule in som_magic.h. 1 when the cast started. */
-static int som_cast_button_spell(uint8_t *ram,unsigned who,unsigned spell,unsigned which){
-    if(!som_cast_spell_by(ram,who,spell))return 0;
-    if(who<SOM_PARTY_MEMBERS&&som_button_spell_quick(which))
-        quick_cast_until[who]=frame_number+SOM_QUICK_CAST_FRAMES;
-    return 1;
-}
 /* Quick-cast trace (2026-11-22, the skip did not show live and RetroArch
  * keeps no log): each frame of a quick cast appends the caster's cast
  * fields to SOM_QUICK_TRACE, at most SOM_QUICK_TRACE_LINES lines a session. */
@@ -2927,6 +2938,32 @@ static unsigned som_mage_bolt_damage(const uint8_t *hero,unsigned cls){
     return SOM_BOLT_BASE_DAMAGE+hero[0x181]*3u/2u+
         (cls<SOM_DISCIPLINE_COUNT?disciplines.level[cls]:0u);
 }
+/* Y's heal: the hero with the lowest share of her HP (+0x182 of +0x184)
+ * gets 10 + 2 x the healer's level + class level at once, and a sparkle. */
+static int som_mage_heal(uint8_t *ram,unsigned who,unsigned cls,unsigned spell){
+    int best=-1;unsigned long best_share=0;
+    for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+        const uint8_t *o=ram+0xE000u+0x200u*k;
+        const unsigned hp=som_word(o+0x182),max=som_word(o+0x184);
+        if(o[0]!=1||!max||!hp||hp>=max)continue;
+        const unsigned long share=(unsigned long)hp*1000ul/max;
+        if(best<0||share<best_share){best=(int)k;best_share=share;}
+    }
+    if(best<0){
+        som_overlay_set(&overlay,"^Everyone is well",SOM_MESSAGE_FRAMES/3u);
+        return 0;
+    }
+    uint8_t *o=ram+0xE000u+0x200u*(unsigned)best;
+    const uint8_t *healer=ram+0xE000u+0x200u*who;
+    const unsigned amount=10u+2u*healer[0x181]+(cls<SOM_DISCIPLINE_COUNT?disciplines.level[cls]:0u);
+    const unsigned hp=som_word(o+0x182),max=som_word(o+0x184);
+    som_put_word(o+0x182,(uint16_t)(hp+amount>max?max:hp+amount));
+    som_bolt_sparkle(mage_bolts,who,som_spell_element(spell),(int)som_word(o+2),(int)som_word(o+4),
+                     som_word(ram+0xDC)&0x1FFu,frame_number);
+    fprintf(stderr,"[som-ai] CASTER %s Y: %s heals %s +%u\n",som_party_names[who],
+            som_class_spell_label(cls,spell),som_party_names[best],amount);
+    return 1;
+}
 static void som_mage_bolt_frame(uint8_t *ram,int after){
     if(!ram)return;
     const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
@@ -2937,19 +2974,34 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
         const int mage=field&&cls<SOM_DISCIPLINE_COUNT&&som_disc_caster(cls)&&
             hero[0]==1&&(hero[0x182]|hero[0x183])&&hero[0x1E4]==0u;
         if(!mage){mage_swing_prev[who]=hero[0x1C];continue;}
-        if(hero[0x19B]&&!hero[0x1C])hero[0x19B]=0;       /* no charge: no kicks */
+        /* No charge, ever (also while B is held): a charged glove is a
+         * kick. The kick still came now and then live (2026-11-22). */
+        hero[0x19B]=0;
         if(!after)continue;
         if(who)som_mage_ally_throw(ram,who);
+        /* One punch, never the kick or the lunge (glove normals 2, 3), on
+         * any frame of the swing: the game may pick it after the first. */
+        if(hero[0x1C]==0x20u&&(hero[0x11]==2u||hero[0x11]==3u)){
+            hero[0x11]=SOM_GLOVE_JAB;hero[0x30]=0xFF;
+            fprintf(stderr,"[som-ai] MAGE JAB for %s's kick/lunge\n",som_party_names[who]);
+        }
         const int swing=hero[0x1C]==0x20u&&!hero[0x60];
         if(swing&&mage_swing_prev[who]!=0x20u){
-            /* One punch, never the kick or the lunge (glove normals 2, 3). */
-            if(hero[0x11]==2u||hero[0x11]==3u){hero[0x11]=SOM_GLOVE_JAB;hero[0x30]=0xFF;}
-            const unsigned spell=som_caster_spell(cls,0u);
-            const unsigned element=som_spell_element(spell),damage=som_mage_bolt_damage(hero,cls);
-            if(som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),(int)som_word(hero+4),
-                             hero[0x10],damage,map,frame_number))
-                fprintf(stderr,"[som-ai] MAGE BOLT %s %s (%u)\n",som_party_names[who],
-                        som_class_spell_label(cls,spell),damage);
+            /* Y armed this jab: the class's second spell, a big ball. */
+            const int y_ball=mage_y_until[who]>frame_number&&hero[0x186]>=SOM_MAGE_Y_MP;
+            mage_y_until[who]=0;
+            const unsigned spell=som_caster_spell(cls,y_ball?1u:0u);
+            const unsigned element=som_spell_element(spell);
+            unsigned damage=som_mage_bolt_damage(hero,cls);
+            if(y_ball)damage=damage*3u/2u;
+            const int fired=som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),
+                                          (int)som_word(hero+4),hero[0x10],damage,map,frame_number);
+            if(fired){
+                mage_bolts[fired-1].big=y_ball;
+                if(y_ball)hero[0x186]-=SOM_MAGE_Y_MP;
+                fprintf(stderr,"[som-ai] MAGE BOLT %s %s%s (%u)\n",som_party_names[who],
+                        som_class_spell_label(cls,spell),y_ball?" (Y)":"",damage);
+            }
         }
         mage_swing_prev[who]=hero[0x1C];
     }

@@ -30,6 +30,7 @@
 typedef struct {
     int active, x, y, dx, dy;     /* x, y: map pixels of the ball (the hero's feet frame) */
     unsigned who, element, damage, map;
+    int big;                      /* Y's ball: larger (the class's second spell) */
     unsigned long start, burst;   /* burst: frame of the splash, 0 none */
 } SomBolt;
 
@@ -51,7 +52,8 @@ static inline void som_bolt_dir(unsigned facing, int *dx, int *dy) {
     *dy = facing == 0x01u ? 1 : (facing == 0x02u || facing == 0x82u) ? 0 : -1;
 }
 
-/* Throw a ball from (x, y) along the facing. 1 when a slot was free. */
+/* Throw a ball from (x, y) along the facing. Its slot + 1, or 0 when none
+ * was free. */
 static inline int som_bolt_fire(SomBolt b[SOM_BOLTS], unsigned who, unsigned element,
                                 int x, int y, unsigned facing, unsigned damage,
                                 unsigned map, unsigned long frame) {
@@ -63,10 +65,31 @@ static inline int som_bolt_fire(SomBolt b[SOM_BOLTS], unsigned who, unsigned ele
         o->y = y + o->dy * SOM_BOLT_LEAD;
         o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
         o->damage = damage; o->map = map;
-        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1;
+        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1; o->big = 0;
+        return (int)i + 1;
+    }
+    return 0;
+}
+
+/* A sparkle where it stands (map pixels): the heal's splash, no flight. */
+static inline int som_bolt_sparkle(SomBolt b[SOM_BOLTS], unsigned who, unsigned element,
+                                   int x, int y, unsigned map, unsigned long frame) {
+    for (unsigned i = 0; i < SOM_BOLTS; i++) {
+        if (b[i].active) continue;
+        SomBolt *o = &b[i];
+        o->dx = o->dy = 0; o->x = x; o->y = y;
+        o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
+        o->damage = 0; o->map = map; o->big = 1;
+        o->start = o->burst = frame ? frame : 1u; o->active = 1;
         return 1;
     }
     return 0;
+}
+
+/* Y heals with these spells (Remedy, Cure Water, Revivifier); every other
+ * Y spell is a ball. */
+static inline int som_bolt_heal_spell(unsigned spell) {
+    return spell == 0x0Au || spell == 0x0Bu || spell == 0x21u;
 }
 
 /* The game's monster objects: slots 3-5 (7E:E600 + 0x200 each). */
@@ -124,7 +147,7 @@ static inline void som_bolt_draw(uint8_t *pixels, unsigned width, unsigned heigh
     const uint32_t rim = som_overlay_color(format, rgb[2][0], rgb[2][1], rgb[2][2]);
     const unsigned long age = frame - (o->burst ? o->burst : o->start);
     if (o->burst) {                     /* splash: a ring that grows and thins */
-        const int r = 4 + (int)age;
+        const int r = 4 + (int)age + (o->big ? 3 : 0);
         for (int oy = -r; oy <= r; oy++) for (int ox = -r; ox <= r; ox++) {
             const int d2 = ox * ox + oy * oy;
             if (d2 > r * r || d2 < (r - 3) * (r - 3)) continue;
@@ -138,7 +161,7 @@ static inline void som_bolt_draw(uint8_t *pixels, unsigned width, unsigned heigh
     }
     /* Tail: three shrinking puffs behind the ball. */
     for (int t = 3; t >= 0; t--) {
-        const int r = t ? 4 - t : 5 + (int)(age & 1);
+        const int r = (t ? 4 - t : 5 + (int)(age & 1)) + (o->big ? 2 : 0);
         const int bx = cx - o->dx * t * 5, by = cy - o->dy * t * 5;
         for (int oy = -r; oy <= r; oy++) for (int ox = -r; ox <= r; ox++) {
             const int d2 = ox * ox + oy * oy;

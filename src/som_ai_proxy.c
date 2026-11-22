@@ -941,7 +941,7 @@ static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 static SomBolt mage_bolts[SOM_BOLTS];
 /* Y (player, 2026-11-22): the class's second spell, the game's own cast
  * with its original effect, damage and MP; heals go to the most hurt hero. */
-static int som_most_hurt_hero(const uint8_t *ram,int fallback);
+static int som_most_hurt_hero(const uint8_t *ram,unsigned spell);
 static uint8_t mage_swing_prev[3];
 static unsigned long mage_ally_next[3];
 /* Kawarimi: the log left standing where the hero was (world px). */
@@ -2762,17 +2762,29 @@ static unsigned som_spell_element(unsigned spell){
     return spell<0x24u?spell/6u:spell<0x27u?6u:7u;
 }
 /* Hostile hero spells target the monster slots 3-5 that are present, on
- * screen and alive ($D0:DA60). Take the nearest one. */
+ * screen and alive ($D0:DA60). Never the familiar (a summoned monster is
+ * on our side); the locked-on monster when there is one; otherwise the
+ * nearest, with a monster in front of the caster counted at half its
+ * distance and one behind her at double, so the spell goes where she
+ * looks when two are about as near (player, 2026-11-23). */
 static int som_cast_target(const uint8_t *ram,unsigned who){
     const uint8_t *hero=ram+0xE000u+0x200u*who;
     const int hx=(int)som_word(hero+0x20),hy=(int)som_word(hero+0x22);
-    int best=-1,best_distance=0;
+    const unsigned face=hero[0x10];   /* 0x00 up, 0x01 down, 0x02 right, 0x82 left */
+    int best=-1;long best_score=0;
     for(unsigned slot=3;slot<6u;slot++){
+        if((int)slot-3==familiar.slot)continue;
         const uint8_t *e=ram+0xE000u+0x200u*slot;
         const int x=(int)som_word(e+0x20),y=(int)som_word(e+0x22);
         if(e[0]!=1||(e[0x191]&0x80u)||x<8||x>=0xF8||y>=0xD8)continue;
-        const int distance=abs(x-hx)+abs(y-hy);
-        if(best<0||distance<best_distance){best=(int)slot;best_distance=distance;}
+        if((int)slot-3==lock_slot)return (int)slot;
+        const int dx=x-hx,dy=y-hy;
+        const int ahead=face==0x02u?dx:face==0x82u?-dx:face==0x01u?dy:-dy;
+        const int side=face==0x02u||face==0x82u?abs(dy):abs(dx);
+        long score=(long)(abs(dx)+abs(dy))*2;
+        if(ahead>0&&side<=ahead)score/=2;     /* in front, within 45 degrees */
+        else if(ahead<0)score*=2;             /* behind */
+        if(best<0||score<best_score){best=(int)slot;best_score=score;}
     }
     return best;
 }
@@ -2920,9 +2932,15 @@ static unsigned som_mage_bolt_damage(const uint8_t *hero,unsigned cls){
         (cls<SOM_DISCIPLINE_COUNT?disciplines.level[cls]:0u);
 }
 /* The living hero with the lowest share of her HP (+0x182 of +0x184),
- * or fallback when nobody is hurt. */
-static int som_most_hurt_hero(const uint8_t *ram,int fallback){
+ * or -1 when nobody is hurt (no MP spent on a full party). Revivifier
+ * (0x21) wants a fallen hero (HP 0) first (unverified live, 2026-11-23). */
+static int som_most_hurt_hero(const uint8_t *ram,unsigned spell){
     int best=-1;unsigned long best_share=0;
+    if(spell==0x21u)
+        for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+            const uint8_t *o=ram+0xE000u+0x200u*k;
+            if(som_word(o+0x184)&&!som_word(o+0x182))return (int)k;
+        }
     for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
         const uint8_t *o=ram+0xE000u+0x200u*k;
         const unsigned hp=som_word(o+0x182),max=som_word(o+0x184);
@@ -2930,7 +2948,7 @@ static int som_most_hurt_hero(const uint8_t *ram,int fallback){
         const unsigned long share=(unsigned long)hp*1000ul/max;
         if(best<0||share<best_share){best=(int)k;best_share=share;}
     }
-    return best<0?fallback:best;
+    return best;
 }
 static void som_mage_bolt_frame(uint8_t *ram,int after){
     if(!ram)return;
@@ -3009,12 +3027,14 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
         fprintf(stderr,"[som-ai] CAST refused: MP %u < %u\n",(unsigned)hero[0x186],cost);
         return 0;
     }
-    /* Heals go to the hero with the lowest share of her HP (the caster
-     * when nobody is hurt); other ally spells to the caster. */
+    /* Heals go to the hero with the lowest share of her HP, and not at
+     * all when nobody is hurt; other ally spells to the caster. */
+    const int heal=som_bolt_heal_spell(spell);
     const int target=hostile?som_cast_target(ram,who):
-        som_bolt_heal_spell(spell)?som_most_hurt_hero(ram,(int)who):(int)who;
+        heal?som_most_hurt_hero(ram,spell):(int)who;
     if(target<0){
-        snprintf(message,sizeof(message),"^%s: no target",som_spell_name(spell));
+        snprintf(message,sizeof(message),heal?"^%s: nobody is hurt":"^%s: no target",
+                 som_spell_name(spell));
         som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
         return 0;
     }
@@ -3041,7 +3061,7 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
         xp_spell_species=m[0x180];xp_spell_frame=frame_number;
     }
     fprintf(stderr,"[som-ai] CAST %s %s Lv.%u at %s slot %d (MP %u, cost %u)\n",
-            som_party_names[who],som_spell_name(spell),level,hostile?"monster":"own",target,
+            som_party_names[who],som_spell_name(spell),level,hostile?"monster":"hero",target,
             (unsigned)hero[0x186],cost);
     return 1;
 }

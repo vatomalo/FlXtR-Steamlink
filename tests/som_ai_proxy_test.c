@@ -2665,18 +2665,41 @@ int main(void){
                 assert(m[0x1F1]==som_mage_bolt_damage(hero,3)&&mage_bolts[0].burst);
                 frame_number+=SOM_BOLT_BURST_FRAMES;som_mage_bolt_frame(ram,1);
                 assert(!som_bolts_active(mage_bolts));
-                /* Heals go to the most hurt hero (the caster when nobody is). */
+                /* Heals go to the most hurt hero (nobody: no cast). */
                 {
                     uint8_t *g=ram+0xE200;uint8_t keep_g[0x200];memcpy(keep_g,g,0x200);
                     const uint8_t keep_s0=ram[0xE400];ram[0xE400]=0;       /* sprite away */
                     g[0]=1;som_put_word(g+0x182,10);som_put_word(g+0x184,100);
                     som_put_word(hero+0x184,som_word(hero+0x182)+1u);
-                    assert(som_most_hurt_hero(ram,0)==1);
-                    som_put_word(g+0x182,100);assert(som_most_hurt_hero(ram,2)==0);  /* the boy */
+                    assert(som_most_hurt_hero(ram,0x0Au)==1);
+                    som_put_word(g+0x182,100);assert(som_most_hurt_hero(ram,0x0Au)==0);  /* the boy */
                     som_put_word(hero+0x184,som_word(hero+0x182));
-                    assert(som_most_hurt_hero(ram,2)==2);                  /* nobody hurt */
+                    assert(som_most_hurt_hero(ram,0x0Au)==-1);             /* nobody hurt */
+                    som_put_word(g+0x182,0);                               /* the girl fell */
+                    assert(som_most_hurt_hero(ram,0x21u)==1);              /* Revivifier */
+                    assert(som_most_hurt_hero(ram,0x0Au)==-1);             /* Cure Water: no */
                     memcpy(g,keep_g,0x200);ram[0xE400]=keep_s0;
                     assert(som_bolt_heal_spell(som_caster_spell(4,1)));     /* Cure Water */
+                }
+                /* Hostile Y spells: in front beats a little nearer behind;
+                 * never the familiar; the lock wins. */
+                {
+                    uint8_t keep_t[0xC00];memcpy(keep_t,ram+0xE000,sizeof(keep_t));
+                    const int keep_fam=familiar.slot,keep_lock=lock_slot;
+                    uint8_t *c=ram+0xE000;
+                    som_put_word(c+0x20,100);som_put_word(c+0x22,100);c[0x10]=0x02u;  /* faces right */
+                    for(unsigned k=3;k<6u;k++){uint8_t *e=ram+0xE000u+0x200u*k;e[0]=0;e[0x191]=0;}
+                    uint8_t *e3=ram+0xE600,*e4=ram+0xE800,*e5=ram+0xEA00;
+                    e3[0]=1;som_put_word(e3+0x20,70);som_put_word(e3+0x22,100);     /* 30 px behind */
+                    e4[0]=1;som_put_word(e4+0x20,140);som_put_word(e4+0x22,100);    /* 40 px ahead */
+                    familiar.slot=-1;lock_slot=-1;
+                    assert(som_cast_target(ram,0)==4);
+                    c[0x10]=0x82u;assert(som_cast_target(ram,0)==3);             /* faces left */
+                    familiar.slot=0;assert(som_cast_target(ram,0)==4);           /* summon is ours */
+                    familiar.slot=-1;
+                    e5[0]=1;som_put_word(e5+0x20,230);som_put_word(e5+0x22,100);
+                    lock_slot=2;assert(som_cast_target(ram,0)==5);               /* locked on */
+                    memcpy(ram+0xE000,keep_t,sizeof(keep_t));familiar.slot=keep_fam;lock_slot=keep_lock;
                 }
                 /* Psionics' ball is Shadow (Dark Force, Shadow Bolt). */
                 assert(som_spell_element(som_caster_spell(SOM_DISC_PSIONICS,0))==6u);

@@ -108,11 +108,14 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
-                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
+                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade", "party_release",
                     "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap", "telekinesis",
                     "evade_up", "evade_down", "evade_left", "evade_right"} | \
     {f"class_{n}" for n in range(16)} | {f"special_{n}" for n in range(1, 9)}
 # Blink to a tile (proxy som_blink_start checks range and open ground).
+PARTY_ORDER_COMMAND = re.compile(r"party_order_[0-9]{1,3}_[0-3]_[0-9]{1,3}")
+PARTY_ORDER_REFRESH_S = 4.0
+PARTY_ORDER_MIN_INTERVAL_S = 0.75
 BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")
 # A Fuma throw's hit plus the clone's smoke take ~40 frames: swap then.
 FUMA_SWAP_DELAY_S = 0.7
@@ -212,6 +215,30 @@ def objective_directive(objective):
         if direction in words:
             return f"explore_{direction}"
     return "explore_unknown"
+
+def companion_order(mode, observation, decision, intention, directive):
+    """Translate the hero planner's intent into a temporary companion class order."""
+    if mode == "independent" or not any(
+            member.get("slot") in (2, 3) and member.get("availability_byte") == 1
+            and member.get("controller_binding") == 0 and (member.get("hp") or 0) > 0
+            for member in observation.get("party", [])):
+        return None
+    map_id = (observation.get("tile_context") or {}).get("map_id")
+    if not isinstance(map_id, int) or not 0 <= map_id <= 511:
+        return None
+    if (mode == "support" or directive == "avoid_enemy" or decision.intention in
+            ("survive", "evade_enemy", "return_to_inn", "recover_at_inn")):
+        return f"party_order_{map_id}_3_0"
+    if (decision.intention in ("engage_enemy", "defend_enemy", "kite_enemy") and
+            (intention or {}).get("kind") == "engage"):
+        for enemy in observation.get("enemy_slots", []):
+            slot, identity = enemy.get("slot"), enemy.get("identity")
+            if (enemy.get("active") and not enemy.get("familiar") and
+                    slot in (1, 2, 3) and slot == intention.get("enemy") and
+                    isinstance(identity, int) and 0 <= identity < 128):
+                return f"party_order_{map_id}_{slot - 1}_{identity}"
+    return None
+
 
 def build_director_prompt(objective, observation, current, recent, known_cells,
                           combat_memory=None, place_memory=None):
@@ -501,9 +528,8 @@ REMOTE_LOOP = (
     "else echo NONE; fi;; "
     "hotz|hotmz) "
     "if [ \"$cmd\" = hotmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
-    # The proxy writes the hot ranges ready-made (one gzip, no dd: the
-    # Steam Link has a single core shared with the game); older cores fall
-    # back to cutting them out of the snapshot.
+    # Older proxies publish a packed copy. The observation server normally
+    # sends deltas from the full snapshot. The shell can slice it on demand.
     "elif command exec 4< /tmp/flxtr-som-hot.bin 2>/dev/null; then echo WRAMH; gzip -1 -c <&4; exec 4<&-; "
     "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMH; "
     "{ " + "; ".join(f"dd if=/proc/self/fd/3 bs=1024 skip={start} count={count} 2>/dev/null"
@@ -822,7 +848,8 @@ class RemoteLink:
 
     def send_control(self, command: str) -> None:
         """Experimental proxy commands that only tools (never Qwen) may send."""
-        if command not in CONTROL_COMMANDS and not BLINK_COMMAND.fullmatch(command):
+        if (command not in CONTROL_COMMANDS and not BLINK_COMMAND.fullmatch(command)
+                and not PARTY_ORDER_COMMAND.fullmatch(command)):
             raise ValueError(f"refusing unknown control command {command!r}")
         status, _ = self._request("act " + command)
         if status != "OK":
@@ -961,7 +988,7 @@ class AndroidRelayLink:
             with self.condition: self.message = clean
 
     def send_control(self, command: str) -> None:
-        if command not in CONTROL_COMMANDS:
+        if command not in CONTROL_COMMANDS and not PARTY_ORDER_COMMAND.fullmatch(command):
             raise ValueError(f"refusing unknown control command {command!r}")
         self._respond(command)
 
@@ -1360,6 +1387,9 @@ def main() -> int:
     parser.add_argument("--policy", choices=("hybrid", "memory", "qwen"), default="hybrid",
                         help="hybrid uses Qwen for intentions and WRAM planning for execution")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
+    parser.add_argument("--party-ai", choices=("auto", "support", "independent"), default="auto",
+                        help="Coordinate companion class moves in hybrid/memory play, "
+                             "favor healing, or leave class moves fully autonomous")
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--interval", type=float, default=0.25)
     parser.add_argument("--dry-run", action="store_true")
@@ -1590,6 +1620,8 @@ def main() -> int:
                              (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
                              else "GP not calibrated (run tools/som_teach_shop.py); "
                              "only HP loss is penalized"), flush=True)
+    last_party_order = None
+    party_order_sent_at = float("-inf")
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
@@ -2179,6 +2211,26 @@ def main() -> int:
                         print(f"[inn] map {context['map_id']} looks like the taught inn "
                               f"({score:.0%} of tiles); teach it to use it", flush=True)
                         announce("AI: this looks like an inn|teach it to use it")
+                if link and not args.dry_run and mode == "field":
+                    order = companion_order(args.party_ai, observation, decision,
+                                            planner._get_intention(), directive)
+                    now = time.monotonic()
+                    elapsed = now - party_order_sent_at
+                    if (elapsed >= PARTY_ORDER_MIN_INTERVAL_S and
+                            (order != last_party_order or
+                             (order and elapsed >= PARTY_ORDER_REFRESH_S))):
+                        party_order_sent_at = now
+                        try:
+                            link.send_control(order or "party_release")
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[party] order unavailable: {exc}", flush=True)
+                        else:
+                            if order != last_party_order:
+                                print(f"[party] {order or 'released'}", flush=True)
+                            last_party_order = order
+                            # The order shares the device's one-command mailbox.
+                            time.sleep(max(args.interval, 0.12))
+                            continue
                 if (link and wram_now is not None and not args.dry_run and
                         mode == "field"):
                     hero0 = (observation.get("party") or [{}])[0] or {}

@@ -553,21 +553,6 @@ int main(void){
     assert(first[0]==0&&first[1]==1&&first[2]==2);
     assert(fseek(wram,0,SEEK_END)==0&&ftell(wram)==(long)SOM_WRAM_SIZE);
     assert(fclose(wram)==0);
-    /* While the AI plays the hot ranges are also written ready-made. */
-    {
-        char hot_path[]="/tmp/flxtr-som-hot-test-XXXXXX";
-        int hfd=mkstemp(hot_path);assert(hfd>=0);close(hfd);unlink(hot_path);
-        char hot_tmp[64];snprintf(hot_tmp,sizeof(hot_tmp),"%s.tmp",hot_path);
-        hot_file=hot_path;hot_temp_file=hot_tmp;
-        assert(som_export_wram()&&access(hot_path,F_OK)!=0);     /* AI off: none */
-        ring_ai_enabled=1;assert(som_export_wram());ring_ai_enabled=0;
-        FILE *hot=fopen(hot_path,"rb");assert(hot);
-        static uint8_t got[24*1024];assert(fread(got,1,sizeof(got),hot)==sizeof(got));
-        assert(fgetc(hot)==EOF);fclose(hot);
-        assert(got[0]==0&&got[8*1024]==(uint8_t)((39*1024)&0xff)&&
-               got[10*1024+5]==(uint8_t)((50*1024+5)&0xff)&&got[20*1024+7]==(uint8_t)((96*1024+7)&0xff));
-        assert(som_export_wram()&&access(hot_path,F_OK)!=0);     /* AI off again: removed */
-    }
     on_turbo=1;
     ring_ai_file=ring_ai_path;
     ring_ai_selector_open=ring_ai_pending=ring_ai_enabled=0;
@@ -2916,6 +2901,25 @@ int main(void){
         frame_number++;som_ally_tech_frame(ram);
         assert(ram[0xE1F3]==heal&&m[0x1F1]==hurt);                /* cooldown */
         assert(ally_tech[0].en.energy[4]<som_energy_max(1));      /* her own energy paid */
+        uint8_t *focus=ram+0xE800;
+        focus[0]=1;focus[0x180]=7;focus[4]=200;som_put_word(focus+2,340);
+        ally_order.map=0;ally_order.slot=1;ally_order.identity=7;
+        ally_order.until=frame_number+20;
+        m[0x1F1]=0;ally_tech_ready=0;
+        som_ally_tech_frame(ram);
+        assert(focus[0x1F1]>0&&m[0x1F1]==0);
+        ally_order.slot=SOM_ALLY_SUPPORT_SLOT;
+        focus[0x1F1]=0;ram[0xE1F3]=0;ally_tech_ready=0;
+        som_ally_tech_frame(ram);
+        assert(ram[0xE1F3]>0&&focus[0x1F1]==0&&m[0x1F1]==0);
+        frame_number=ally_order.until;ally_tech_ready=0;
+        ram[0xE42C]=2;  /* A human controls the sprite. */
+        som_ally_tech_frame(ram);
+        assert(m[0x1F1]==0);
+        ram[0xE42C]=0;
+        som_ally_tech_frame(ram);
+        assert(m[0x1F1]>0);
+        ally_order.until=0;focus[0]=0;
         /* A Ninja girl: dash past the monster, cut once there. */
         disciplines.party[0]=SOM_DISC_NINJUTSU;disciplines.party[1]=SOM_DISCIPLINE_NONE;
         ally_tech_ready=0;m[0x1F1]=0;som_put_word(m+2,220+60);
@@ -3060,6 +3064,12 @@ int main(void){
     char direct_gambits[SOM_GAMBIT_COUNT+1]={0};
     flxtr_som_ai_gambits(direct_gambits);
     assert(strlen(direct_gambits)==SOM_GAMBIT_COUNT);
+    som_put_word(mocked_wram+0xDC,130);
+    assert(!flxtr_som_ai_command("party_order_129_1_7"));
+    assert(!flxtr_som_ai_command("party_order_130_4_7"));
+    assert(flxtr_som_ai_command("party_order_130_1_7"));
+    assert(ally_order.until==frame_number+SOM_ALLY_ORDER_FRAMES&&ally_order.slot==1);
+    assert(flxtr_som_ai_command("party_release")&&!ally_order.until);
     assert(flxtr_som_ai_command("ai_off")&&!flxtr_som_ai_enabled());
     direct_transport=0;
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);

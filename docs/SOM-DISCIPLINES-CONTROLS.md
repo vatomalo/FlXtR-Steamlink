@@ -325,8 +325,8 @@ stack 13 %, state_guard 7 %). Changes:
   `retro_flxtr_skip_music_voices(2)`: voices 0-5 never mixed, voices 6-7 (all effects,
   som-decomp audio.md) only for 2.5 s after an effect request (APU port 0 = 2). Headless
   x86 benchmark, 3600 intro frames: 1.46 s -> 1.11 s (-24 %); mode 0 is identical to the
-  stock core; all sound off would be 1.01 s. Music overlapping an effect window can still
-  be heard faintly.
+  stock core; all sound off would be 1.01 s. The current filter uses effect key-on
+  ownership as well as the voice mask to keep native music out of the mix.
 - RetroArch resampler: **keep `sinc`**. The Steam Link's RetroArch 1.6.7 has only `sinc`
   and `nearest`; setting `cc` made every launch die right after startup (2026-11-15).
 - Measured on the Steam Link (600 intro frames, headless): stock core 4.08 s, our core
@@ -335,8 +335,9 @@ stack 13 %, state_guard 7 %). Changes:
   decomp-verified names, others "Song 0xNN" until named in
   `cores/experimental/som_song_names.tsv`, lines `<hex id><TAB><name>`).
 - state_guard rescans state folders every 10 s and snapshots each stable version once.
-- Proxy exports WRAM at 2 Hz unless the AI plays (10 Hz) and writes the bridge's hot ranges
-  ready-made (`/tmp/flxtr-som-hot.bin`): one gzip per decision instead of four dd.
+- Proxy exports one atomic WRAM snapshot at 2 Hz unless the AI plays (10 Hz). The
+  observation server sends deltas from that snapshot. Legacy hot-range requests
+  extract the same ranges on demand.
 
 ## Gambit pages and situational classes (2026-11-15)
 
@@ -874,6 +875,17 @@ clears it. Defaults: the girl **Divine Arts** (Cleric, she heals), the sprite **
   classes also take their class evade (1 AP) when a monster comes within 18 px; melee
   classes only under 40 % HP, since the game's AI must stand close to hit.
 - Tool/AI command `ally_class_<1|2>_<class>` sets the girl's or sprite's class.
+
+With the hybrid or memory player AI, companions favor the hero planner's target for
+class techniques when the target is within reach. When the hero retreats, the proxy
+pauses offensive companion techniques and allows class heals. The game still handles
+companion movement, basic attacks, and Action Grid behavior. Joined companions with a
+class are eligible while controlled by the game's AI. Orders expire if the bridge stops
+refreshing them.
+
+Set `SOM_AI_PARTY_AI=support` on the AI service to favor class healing throughout field
+play, or `SOM_AI_PARTY_AI=independent` to keep autonomous companion techniques. The
+default is `auto`. Direct bridge launches use `--party-ai auto|support|independent`.
 
 ### Party panels, Seiken Densetsu 3 style (2026-11-20)
 

@@ -144,12 +144,8 @@ static const char *trigger_file;
 static const char *action_file="/tmp/flxtr-som-ai-action";
 static const char *wram_file="/tmp/flxtr-som-wram.bin";
 static const char *wram_temp_file="/tmp/flxtr-som-wram.bin.tmp";
-/* The bridge's per-decision ranges (som_qwen_bridge.py HOT_RANGES_KB, KiB
- * start/count), written ready-made while the AI plays so the Steam Link
- * serves them with one gzip instead of four dd processes. */
+/* Remove snapshots left by the previous proxy on load/unload. */
 static const char *hot_file="/tmp/flxtr-som-hot.bin";
-static const char *hot_temp_file="/tmp/flxtr-som-hot.bin.tmp";
-static const unsigned som_hot_ranges[4][2]={{0,8},{39,2},{50,10},{96,4}};
 static const char *ring_ai_file="/tmp/flxtr-som-ai-enabled";
 static int wram_export_error_logged;
 static int ring_ai_selector_open,ring_ai_pending,ring_ai_enabled;
@@ -1201,6 +1197,13 @@ static void som_bash_tick(void);
 static void som_class_supply_frame(void);
 static int class_supply_pending, class_equip_pending;
 static unsigned long class_last_equip_attempt;
+/* Temporary class-move guidance for the native AI companions. */
+static struct {
+    unsigned long until;
+    unsigned map, slot, identity;
+} ally_order;
+#define SOM_ALLY_ORDER_FRAMES 480ul
+#define SOM_ALLY_SUPPORT_SLOT 3u
 /* Companions still to be handed their class weapon (bit who). */
 static unsigned ally_equip_pending=6u;
 static unsigned long ally_equip_tried;
@@ -2164,6 +2167,7 @@ static void som_input_poll(void){
         /* The bridge removes the marker when it stops (safety stop, game
          * exit): never keep swallowing the player's buttons after that. */
         if(!direct_transport&&ring_ai_enabled&&frame_number%30u==0&&access(ring_ai_file,F_OK)!=0){
+            ally_order.until=0;
             ring_ai_enabled=0;gambits.open=0;disciplines.open=0;som_menu_disciplines=0;
             som_overlay_set(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
@@ -2215,6 +2219,7 @@ static void som_input_poll(void){
                 som_infinite_mp_changed();
                 break;
             case SOM_GAMBIT_EXIT:
+                ally_order.until=0;
                 ring_ai_enabled=0;unlink(ring_ai_file);
                 som_overlay_set(&overlay,"You play|hold L2 or R3 1s: AI plays",
                                 SOM_MESSAGE_FRAMES);
@@ -2233,7 +2238,7 @@ static void som_input_poll(void){
     if(armed&&!cancelled&&!completed&&on_turbo&&physical_state&&!ring_ai_enabled)
         for(unsigned id=0;id<16;id++)
             if(physical_state(0,RETRO_DEVICE_JOYPAD,0,id)){
-                cancelled=1;armed=0;autonomous_mode=0;
+                cancelled=1;armed=0;autonomous_mode=0;ally_order.until=0;
                 fprintf(stderr,"[som-ai] physical controller override on frame %lu\n",frame_number);
                 break;
             }
@@ -2292,18 +2297,6 @@ static int som_export_wram(void){
     if(fclose(output)!=0)ok=0;
     if(ok)ok=rename(wram_temp_file,wram_file)==0;
     if(!ok)unlink(wram_temp_file);
-    if(ok&&ring_ai_enabled){
-        int hot_fd=open(hot_temp_file,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
-        FILE *hot=hot_fd>=0?fdopen(hot_fd,"wb"):NULL;
-        int hot_ok=hot!=NULL;
-        if(!hot&&hot_fd>=0)close(hot_fd);
-        for(unsigned i=0;i<4u&&hot_ok;i++)
-            hot_ok=fwrite(ram+som_hot_ranges[i][0]*1024u,1,som_hot_ranges[i][1]*1024u,hot)==
-                   som_hot_ranges[i][1]*1024u;
-        if(hot&&fclose(hot)!=0)hot_ok=0;
-        if(hot_ok)hot_ok=rename(hot_temp_file,hot_file)==0;
-        if(!hot_ok)unlink(hot_temp_file);
-    }else if(ok)unlink(hot_file);   /* AI off: never serve stale ranges */
     return ok;
 }
 
@@ -3856,16 +3849,27 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     SomAllyTech *t=&ally_tech[who-1u];
     uint8_t *o=som_ally_obj(ram,who);
     const unsigned cls=som_disc_member_class(&disciplines,who);
-    if(cls>=SOM_DISCIPLINE_COUNT||!som_ally_alive(o)){
+    if(cls>=SOM_DISCIPLINE_COUNT||!som_ally_alive(o)||o[0x2C]!=0){
         if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
         t->dashing=t->dodging=0;t->hits_left=0;return;
     }
-    if(cls!=t->cls){t->cls=cls;t->hits_left=0;t->dashing=0;}
+    if(cls!=t->cls){
+        if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
+        t->cls=cls;t->hits_left=0;t->dashing=t->dodging=0;
+    }
     const SomAllyMove *mv=&som_ally_moves[cls];
     const unsigned level=disciplines.level[cls];
     const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
     som_energy_tick(&t->en,cls,level,x==t->lx&&y==t->ly);
     t->lx=x;t->ly=y;
+    const int ordered=frame_number<ally_order.until&&
+        (som_word(ram+0xDC)&0x1FFu)==ally_order.map;
+    const int support=ordered&&ally_order.slot==SOM_ALLY_SUPPORT_SLOT;
+    if(support){
+        if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
+        t->hits_left=0;t->dashing=t->dodging=0;
+        if(mv->kind!=SOM_AM_HEAL&&mv->kind!=SOM_AM_HEAL_ALL)return;
+    }
     if(t->dodging){
         const SomDodge d=som_disc_dodge(cls,0u);
         if(!t->dodge_left||!som_ally_step(ram,o,t->ddx*(int)d.speed,t->ddy*(int)d.speed))t->dodging=0;
@@ -3915,7 +3919,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     /* Her evade: ranged and caster classes keep their distance; a melee
      * class only when badly hurt (the game's AI must stand close to hit). */
     const unsigned own_pct=som_word(o+0x184)?som_word(o+0x182)*100u/som_word(o+0x184):100u;
-    if(nearest>=0&&best<=SOM_ALLY_DODGE_NEAR&&som_ally_dodges(cls)&&frame_number>=t->dodge_ready&&
+    if(!support&&nearest>=0&&best<=SOM_ALLY_DODGE_NEAR&&som_ally_dodges(cls)&&frame_number>=t->dodge_ready&&
        (!som_weapon_short_range(som_disc_weapons[cls][0])||som_disc_caster(cls)||own_pct<40u)&&
        som_energy_can(&t->en,cls,0u,SOM_ALLY_DODGE_AP)){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)nearest;
@@ -3926,6 +3930,13 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         som_energy_take(&t->en,cls,0u,SOM_ALLY_DODGE_AP);
         fprintf(stderr,"[som-ai] ALLY %s %s\n",som_party_names[who],som_disc_dodge(cls,0u).name);
         return;
+    }
+    if(ordered&&!support&&(int)ally_order.slot!=familiar.slot){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*ally_order.slot;
+        if(som_bun_monster_alive(m)&&m[0x180]==ally_order.identity){
+            const int distance=abs((int)som_bun_u16(m+2)-x)+abs((int)som_bun_u16(m+4)-y);
+            if(distance<=mv->reach){nearest=(int)ally_order.slot;best=distance;}
+        }
     }
     if(frame_number<t->ready||!som_ally_move_fits(mv,nearest>=0?best:-1,worst,crowd)||
        !som_energy_can(&t->en,cls,mv->energy,0u))return;
@@ -3993,6 +4004,8 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
 }
 static void som_ally_tech_frame(uint8_t *ram){
     if(!ram)return;
+    if(ally_order.until&&(som_word(ram+0xDC)&0x1FFu)!=ally_order.map)
+        ally_order.until=0;
     if(!ally_tech_ready){
         for(unsigned i=0;i<2u;i++){memset(&ally_tech[i],0,sizeof(ally_tech[i]));
             som_energy_init(&ally_tech[i].en);ally_tech[i].target=-1;ally_tech[i].cls=SOM_DISCIPLINE_NONE;}
@@ -5283,6 +5296,7 @@ static int som_handle_command(const char *command){
         return 1;
     }
     if(!strcmp(command,"ai_off")){
+        ally_order.until=0;
         ring_ai_enabled=0;ring_ai_pending=0;armed=0;cancelled=1;gambits.open=0;
         if(!direct_transport)unlink(ring_ai_file);
         idle_started=1;
@@ -5320,6 +5334,18 @@ static int som_handle_command(const char *command){
         return clone_no_slot;
     }
     if(!strcmp(command,"dismiss_familiar")){som_familiar_dismiss();return 1;}
+    if(!strcmp(command,"party_release")){ally_order.until=0;return 1;}
+    if(!strncmp(command,"party_order_",12)){
+        unsigned map,slot,identity;char tail;
+        if(sscanf(command+12,"%3u_%1u_%3u%c",&map,&slot,&identity,&tail)!=3||
+           map>0x1FFu||slot>SOM_ALLY_SUPPORT_SLOT||identity>=0x80u)return 0;
+        const uint8_t *ram=backend_retro_get_memory_data?
+            backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+        if(!ram||(som_word(ram+0xDC)&0x1FFu)!=map)return 0;
+        ally_order.map=map;ally_order.slot=slot;ally_order.identity=identity;
+        ally_order.until=frame_number+SOM_ALLY_ORDER_FRAMES;
+        return 1;
+    }
     {   /* ally_class_<who 1|2>_<class>: the girl's or the sprite's class. */
         unsigned who=0,cls=0;char tail;
         if(!strncmp(command,"ally_class_",11)&&sscanf(command+11,"%1u_%2u%c",&who,&cls,&tail)==2&&
@@ -6385,7 +6411,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
 /* Music-free mixing (our core only): Secret of Mana's music is never
  * synthesised, effects keep playing (patches/snes9x2005-flxtr-music-voices). */
 static void (*backend_skip_music)(int);
-#define SOM_SKIP_MUSIC_MODE 2   /* voices 0-5 off; 6-7 only after effect requests */
+#define SOM_SKIP_MUSIC_MODE 2   /* only effect-owned, effect-keyed voices */
 /* Song names (src/som_songs.h): shown when the game starts a song. */
 #define SOM_SONG_FILE "/home/apps/retroarch/cores/experimental/som_song_names.tsv"
 static const char *song_file=SOM_SONG_FILE;
@@ -6547,6 +6573,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
     ally_equip_pending=6u;ally_equip_tried=0;
+    ally_order.until=0;ally_tech_ready=0;
     weapon_trace_on=0;som_weapon_trace_reset();
     memset(member_pal_have,0,sizeof(member_pal_have));
     som_gambit_load();som_music_genre_load();
@@ -6644,6 +6671,7 @@ RETRO_API bool retro_serialize(void *data,size_t size){
     return true;
 }
 RETRO_API bool retro_unserialize(const void *data,size_t size){
+    ally_order.until=0;
     load_backend();
     const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
     if(core&&data&&size==core+SOM_PROG_TRAILER_SIZE){

@@ -73,6 +73,16 @@ class TestBenchmark(unittest.TestCase):
         self.assertIn("Emulated FPS (proxy):    not measured", text)
         self.assertIn("Game FPS (WRAM tick):    8.00", text)
 
+    def test_realtime_requires_every_run_and_window(self):
+        nominal = 60.0
+        proxy = {"nominal_fps": nominal, "fps_min_window": 59.5}
+        report = {"runs": [{"derived": {"proxy": proxy}}]}
+        self.assertTrue(bench.reaches_realtime(report))
+        proxy["fps_min_window"] = 59.3
+        self.assertFalse(bench.reaches_realtime(report))
+        report["runs"][0]["derived"]["proxy"] = None
+        self.assertFalse(bench.reaches_realtime(report))
+
     def test_compare_reports_change_against_the_first_scenario(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = []

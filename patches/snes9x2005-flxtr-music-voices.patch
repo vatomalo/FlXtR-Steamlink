@@ -3,7 +3,7 @@ index f64b71c..2c7c3a5 100644
 --- a/libretro.c
 +++ b/libretro.c
 @@ -1175,3 +1175,14 @@ size_t retro_get_memory_size(unsigned type)
- 
+
     return size;
  }
 +
@@ -18,31 +18,88 @@ index f64b71c..2c7c3a5 100644
 +}
 +#endif
 diff --git a/source/apu_blargg.c b/source/apu_blargg.c
-index cfa7aae..40b3f9e 100644
+index cfa7aae..679c308 100644
 --- a/source/apu_blargg.c
 +++ b/source/apu_blargg.c
-@@ -758,11 +758,1170 @@ V(V9_V6_V3,2) -> V(V9,2) V(V6,3) V(V3,4) */
+@@ -303,6 +303,18 @@ static INLINE void dsp_decode_brr( dsp_voice_t* v )
+    }
+ }
+
++/* Secret of Mana's SPC700 driver marks effect-owned voices in $AE.
++   Classify each KON at the write, then open the mix at the DSP key-on.
++   Claiming a voice alone must never unmute the music note it replaces. */
++int flxtr_skip_music_voices = 0;
++static uint8_t flxtr_effect_voices(void);
++static uint8_t flxtr_pending_fx_keys, flxtr_latched_fx_keys, flxtr_fx_keys;
++static uint8_t flxtr_owned_fx;
++/* The echo ring can contain native music from a state saved with full mixing.
++   Ignore it until the largest legal ring and FIR history have been refreshed. */
++#define FLXTR_ECHO_FLUSH_SAMPLES (0x7800 / 4 + 8)
++static unsigned flxtr_echo_flush;
++
+ /* Misc */
+
+ /* voice 0 doesn't support PMON */
+@@ -323,6 +335,7 @@ static INLINE void dsp_misc_30()
+    if ( dsp_m.every_other_sample )
+    {
+       dsp_m.kon    = dsp_m.new_kon;
++      flxtr_latched_fx_keys = flxtr_pending_fx_keys;
+       dsp_m.t_koff = dsp_m.regs[R_KOFF];
+    }
+
+@@ -429,6 +442,12 @@ static void dsp_voice_V3c( dsp_voice_t* const v )
+       /* KON */
+       if ( dsp_m.kon & v->vbit )
+       {
++         if (flxtr_skip_music_voices == 2)
++         {
++            flxtr_fx_keys = (flxtr_fx_keys & ~v->vbit) | (flxtr_latched_fx_keys & v->vbit);
++            /* This sample still belongs to the previous note. */
++            dsp_m.t_output = 0;
++         }
+          v->kon_delay = 5;
+          v->env_mode  = ENV_ATTACK;
+       }
+@@ -455,6 +474,10 @@ static INLINE void dsp_voice_output( dsp_voice_t const* v, int32_t ch )
+ {
+    int32_t amp;
+
++   if (flxtr_skip_music_voices == 2 &&
++       !(flxtr_fx_keys & flxtr_owned_fx & v->vbit))
++      return;
++
+    /* Apply left/right volume */
+    amp = (dsp_m.t_output * (int8_t) VREG(v->regs,VOLL + ch)) >> 7;
+
+@@ -589,7 +612,9 @@ static void dsp_voice_V9_V6_V3( dsp_voice_t* const v )
+ #define ECHO_READ(ch) \
+ { \
+    int32_t s; \
+-   if ( dsp_m.t_echo_ptr >= 0xffc0 && dsp_m.rom_enabled ) \
++   if ( flxtr_skip_music_voices == 2 && flxtr_echo_flush ) \
++      s = 0; \
++   else if ( dsp_m.t_echo_ptr >= 0xffc0 && dsp_m.rom_enabled ) \
+       s = GET_LE16SA( &dsp_m.hi_ram [dsp_m.t_echo_ptr + ch * 2 - 0xffc0] ); \
+    else \
+       s = GET_LE16SA( ECHO_PTR( ch ) ); \
+@@ -736,6 +761,10 @@ static INLINE void dsp_echo_29()
+       dsp_m.echo_offset = 0;
+
+
++   if (flxtr_skip_music_voices == 2 && flxtr_echo_flush &&
++       !(dsp_m.t_echo_enabled & 0x20))
++      --flxtr_echo_flush;
++
+    ECHO_WRITE(0);
+
+    dsp_m.t_echo_enabled = dsp_m.regs [R_FLG];
+@@ -758,11 +787,1143 @@ V(V9_V6_V3,2) -> V(V9,2) V(V6,3) V(V3,4) */
  /* Runs DSP for specified number of clocks (~1024000 per second). Every 32 clocks
     a pair of samples is be generated. */
- 
-+/* FlXtR: music-free mixing for Secret of Mana. Its SPC700 driver keeps the
-+   voices owned by sound effects in the direct-page byte $AE: effects claim
-+   voices from 6 downward ($0E4C: TSET1 !$00AE), the music keys only
-+   ~$AE voices ($07DA, $0812, $084B) and an ending effect releases its voice
-+   ($09C9: TCLR1 !$00AE). Read from the driver uploaded by the Turbo ROM;
-+   measured in the intro: $AE = 00, 60, 80, C0, E0 (effects on voices 5-7).
-+   Mode 1: voices 0-5 are never synthesised, 6-7 always.
-+   Mode 2: only the voices an effect owns now (plus FLXTR_RELEASE_CLOCKS of
-+   release tail) are synthesised, so the music is skipped on every voice;
-+   an effect below voice 5 falls back to full mixing.
-+   Copies of dsp_run keep the chosen voices' steps (combined helpers split
-+   into their parts) and every shared step (misc, echo, output), so the
-+   SPC700 keeps running the driver and effects play normally.
-+   Set by the frontend through retro_flxtr_skip_music_voices(). */
-+#define FLXTR_RELEASE_CLOCKS (1024000 / 6)
-+int flxtr_skip_music_voices = 0;
-+static int32_t flxtr_hold[3];
-+static uint8_t flxtr_effect_voices(void);
+
++/* The common effect masks use a reduced DSP schedule. A lower voice uses
++   the full schedule with the same output gate, including its echo send. */
 +static void dsp_run_fx0( int32_t clocks_remain )
 +{
 +   int32_t phase;
@@ -1166,35 +1223,33 @@ index cfa7aae..40b3f9e 100644
 +   }
 +   if (flxtr_skip_music_voices == 2)
 +   {
-+      uint8_t owned = flxtr_effect_voices();
-+      if (!(owned & 0x1F))
++      flxtr_owned_fx = flxtr_effect_voices();
++      /* Keep latched or pending key-ons scheduled even if $AE changes between
++         the CPU write and the DSP voice phase. */
++      const uint8_t scheduled = flxtr_owned_fx | (dsp_m.new_kon & flxtr_pending_fx_keys) |
++         (dsp_m.kon & flxtr_latched_fx_keys);
++      flxtr_fx_keys &= flxtr_owned_fx;
++      if (!(scheduled & 0x1F))
 +      {
-+         uint32_t run = 0;
-+         int32_t i;
-+         for (i = 0; i < 3; i++)
-+         {
-+            if (owned & (0x20 << i))
-+            {
-+               flxtr_hold[i] = FLXTR_RELEASE_CLOCKS;
-+               run |= 1u << i;
-+            }
-+            else if (flxtr_hold[i] > 0)
-+            {
-+               flxtr_hold[i] -= clocks_remain;
-+               run |= 1u << i;
-+            }
-+         }
-+         flxtr_fx_runs[run]( clocks_remain );
++         flxtr_fx_runs[scheduled >> 5]( clocks_remain );
 +         return;
 +      }
-+      /* an effect below voice 5: mix everything */
 +   }
     phase = dsp_m.phase;
     dsp_m.phase = (phase + clocks_remain) & 31;
- 
-@@ -1169,6 +2328,11 @@ static void dsp_copy_state( uint8_t ** io, dsp_copy_func_t copy )
+
+@@ -943,6 +2104,8 @@ static void dsp_set_output( int16_t * out, int32_t size )
+
+ static void dsp_soft_reset_common()
+ {
++   flxtr_owned_fx = flxtr_pending_fx_keys = flxtr_latched_fx_keys = flxtr_fx_keys = 0;
++   flxtr_echo_flush = 0;
+    dsp_m.noise              = 0x4000;
+    dsp_m.echo_hist_pos      = dsp_m.echo_hist;
+    dsp_m.every_other_sample = 1;
+@@ -1169,6 +2332,11 @@ static void dsp_copy_state( uint8_t ** io, dsp_copy_func_t copy )
  ***********************************************************************************/
- 
+
  static spc_state_t m;
 +/* FlXtR: SPC700 direct page $AE, the effect-owned voice mask (see dsp_run_fx0). */
 +static uint8_t flxtr_effect_voices(void)
@@ -1203,4 +1258,33 @@ index cfa7aae..40b3f9e 100644
 +}
  static int8_t reg_times [256];
  static bool allow_time_overflow;
- 
+
+@@ -1264,7 +2432,11 @@ static INLINE void spc_dsp_write( int32_t data, int32_t time )
+          break;
+       case 0x0C:
+          if ( addr == R_KON )
++         {
+             dsp_m.new_kon = (uint8_t) data;
++            if (flxtr_skip_music_voices == 2)
++               flxtr_pending_fx_keys = data & flxtr_effect_voices();
++         }
+
+          if ( addr == R_ENDX ) /* always cleared, regardless of data written */
+          {
+@@ -3451,6 +4623,16 @@ void S9xAPULoadState (const uint8_t *block)
+    S9xResetAPU();
+
+    spc_copy_state(&ptr, to_apu_from_state);
++   if (flxtr_skip_music_voices == 2)
++   {
++      /* Older save states contain no effect provenance. Wait for a fresh
++         effect key-on and discard any old mixed samples and echo history. */
++      dsp_m.t_main_out[0] = dsp_m.t_main_out[1] = 0;
++      dsp_m.t_echo_out[0] = dsp_m.t_echo_out[1] = 0;
++      dsp_m.t_echo_in[0] = dsp_m.t_echo_in[1] = 0;
++      memset(dsp_m.echo_hist, 0, sizeof(dsp_m.echo_hist));
++      flxtr_echo_flush = FLXTR_ECHO_FLUSH_SAMPLES;
++   }
+
+    ptr = (uint8_t*)(((uintptr_t)ptr + 0x3)& ~0x3);
+    reference_time = GET_LE32(ptr);

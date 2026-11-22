@@ -8,11 +8,32 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from som_qwen_bridge import (REMOTE_LOOP, AndroidRelayLink, RemoteLink,
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
     parse_directive, prefer_open_step, extend_clear_exploration,
-    objective_directive, shop_errand)
+    companion_order, objective_directive, shop_errand)
+
+
+class TestCompanionOrder(unittest.TestCase):
+    def test_follow_hero_target_and_prioritize_support_on_retreat(self):
+        ally = {"slot": 2, "availability_byte": 1, "controller_binding": 0, "hp": 30}
+        enemy = {"slot": 2, "identity": 7, "active": True}
+        observation = {"party": [ally], "tile_context": {"map_id": 130},
+                       "enemy_slots": [enemy]}
+        decision = SimpleNamespace(intention="engage_enemy")
+        intention = {"kind": "engage", "enemy": 2}
+        self.assertEqual(companion_order("auto", observation, decision, intention, ""),
+                         "party_order_130_1_7")
+        enemy["familiar"] = True
+        self.assertIsNone(companion_order("auto", observation, decision, intention, ""))
+        decision.intention = "survive"
+        self.assertEqual(companion_order("auto", observation, decision, intention, ""),
+                         "party_order_130_3_0")
+        self.assertIsNone(companion_order("independent", observation, decision, intention, ""))
+        ally["controller_binding"] = 2
+        self.assertIsNone(companion_order("support", observation, decision, intention, ""))
 
 
 class TestAndroidRelay(unittest.TestCase):

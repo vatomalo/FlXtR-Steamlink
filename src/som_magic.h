@@ -66,10 +66,11 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     {0x25, 0x16, 0x1E, 0xFF},
 };
 
-/* Casters (Magic, Divine Arts, Dark Arts, Summoning, Support & Dance) trade
- * their weapons for spells: B casts the first spell of their list, Y the
- * second, X the rest (tap: cast, hold: next). With too little MP for the
- * B spell, B stays the game's weapon swing so he can always attack. */
+/* Casters (Magic, Divine Arts, Dark Arts, Summoning, Support & Dance,
+ * Necromancy, Psionics) trade their weapons for spells. B is the mage bolt
+ * (src/som_mage_bolt.h): one glove jab that throws a painted ball of the
+ * element of the first spell of their set, no MP, no spell cast; Y casts
+ * the second spell, X the rest (tap: cast, hold: next). */
 #define SOM_CASTER_FIRST 3u
 #define SOM_CASTER_LAST 7u
 #define SOM_CASTER_BUTTON_SPELLS 2u
@@ -79,10 +80,11 @@ static inline int som_disc_caster(unsigned discipline) {
 }
 
 /* Rule (player, 2026-11-22): button magic is an attack, so it never waits
- * for the casting pose or the spirit. Every B spell is a quick cast (the
- * proxy skips both, som_quick_cast_frame), whoever casts it: the player,
- * the companion he drives, or the AI's attack. Y spells too. X and the
- * ring keep the game's full cast. */
+ * for the casting pose or the spirit. B never runs the game's spell at all:
+ * every caster's B, player, AI or companion, is the mage bolt (a jab and a
+ * painted ball, no spirit possible). Y spells are quick casts (the proxy
+ * skips pose and spirit, som_quick_cast_frame). X and the ring keep the
+ * game's full cast. */
 #define SOM_QUICK_CAST_B 1
 #define SOM_QUICK_CAST_Y 1
 static inline int som_button_spell_quick(unsigned which) {

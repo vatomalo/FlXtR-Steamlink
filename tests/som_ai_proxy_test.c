@@ -2473,15 +2473,20 @@ int main(void){
             assert(spr[0x04F]==0xCF&&spr[0x178]==4&&!memcmp(hero,boy_before,0x200));
             EXPECT_TILES(0x14BA00);
             assert(memcmp(ram+0x4800,expect,sizeof(expect))==0);          /* her spark */
-            /* B while driving a Mage girl: her B spell, cast by her. */
+            /* B while driving a Mage girl: no spell, the game's punch (the
+             * mage bolt rides on it); Y is her Y spell, cast by her, quick. */
             memset(girl+0x170,0,0x10);girl[0x01C]=girl[0x060]=0;girl[0x186]=9;
             const uint8_t keep_party=disciplines.party[0];
             disciplines.party[0]=3;ram[0xD9]=0x80;ram[0xDA]=1;
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
-            assert(girl[0x170]==som_caster_spell(3,0)&&b_weapon_blocked&&hero[0x170]==0);
-            assert(quick_cast_until[1]>frame_number);         /* B magic: quick by rule */
+            assert(girl[0x170]==0&&!b_weapon_blocked&&hero[0x170]==0);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+            mocked_buttons=0;som_input_poll();
+            rom[0x102AD0+0x06*64+8]=0x81;rom[0x102AD0+0x06*64+15]=2;     /* Freeze */
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+            assert(girl[0x170]==som_caster_spell(3,1)&&y_weapon_blocked&&hero[0x170]==0);
+            assert(quick_cast_until[1]>frame_number);         /* button magic: quick */
             quick_cast_until[1]=0;
-            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
             mocked_buttons=0;som_input_poll();
             disciplines.party[0]=keep_party;ram[0xD9]=keep_d9;ram[0xDA]=keep_da;
             memcpy(girl,keep_girl,0x200);memcpy(spr,keep_spr,0x200);
@@ -2531,8 +2536,8 @@ int main(void){
             hero[0x186]=5;hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
             som_input_poll();
-            assert(hero[0x170]==0x0C);
-            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+            assert(hero[0x170]==0);                            /* B: no spell, */
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1); /* the punch */
             mocked_buttons=0;som_input_poll();
             hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
@@ -2556,8 +2561,56 @@ int main(void){
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
             som_input_poll();
             assert(hero[0x170]==0);                                  /* no MP: */
-            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0); /* no punch */
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1); /* B still bolts */
             mocked_buttons=0;som_input_poll();
+            /* Mage bolt: a plain swing throws a ball along the facing; the
+             * kick becomes the jab; it hits the monster in line (pending
+             * damage) and bursts; a held charge is dropped (no kicks). */
+            {
+                uint8_t keep_m[0x200];memcpy(keep_m,ram+0xE600,sizeof(keep_m));
+                const uint8_t keep_e[4]={ram[0xE4],ram[0xE6],ram[0xD0],ram[0x7D]};
+                ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xD0]=0;ram[0x7D]=0;
+                memset(mage_bolts,0,sizeof(mage_bolts));
+                uint8_t *m=ram+0xE600;memset(m,0,0x200);
+                const unsigned hx=som_bun_u16(hero+2),hy=som_bun_u16(hero+4);
+                m[0]=1;m[0x180]=0x05;m[2]=(uint8_t)(hx+40u);m[3]=(uint8_t)((hx+40u)>>8);
+                m[4]=(uint8_t)hy;m[5]=(uint8_t)(hy>>8);
+                hero[0x182]=hero[0x182]?hero[0x182]:30;hero[0x1E4]=0;hero[0x010]=0x02;
+                hero[0x181]=4;hero[0x19B]=2;hero[0x01C]=0;hero[0x060]=0;
+                som_mage_bolt_frame(ram,0);assert(hero[0x19B]==0);   /* no charge */
+                som_mage_bolt_frame(ram,1);assert(!som_bolts_active(mage_bolts));
+                hero[0x01C]=0x20;hero[0x011]=2;                      /* the kick */
+                som_mage_bolt_frame(ram,1);
+                assert(hero[0x011]==SOM_GLOVE_JAB&&hero[0x030]==0xFF);
+                assert(mage_bolts[0].active&&mage_bolts[0].dx==1&&mage_bolts[0].dy==0);
+                assert(mage_bolts[0].element==2u);                  /* Fire Ball: Salamando */
+                som_mage_bolt_frame(ram,1);assert(!mage_bolts[1].active);   /* one per swing */
+                unsigned long guard=0;
+                while(!m[0x1F1]&&guard++<SOM_BOLT_FRAMES){frame_number++;som_mage_bolt_frame(ram,1);}
+                assert(m[0x1F1]==som_mage_bolt_damage(hero,3)&&mage_bolts[0].burst);
+                frame_number+=SOM_BOLT_BURST_FRAMES;som_mage_bolt_frame(ram,1);
+                assert(!som_bolts_active(mage_bolts));
+                /* Psionics' ball is Shadow (Dark Force, Shadow Bolt). */
+                assert(som_spell_element(som_caster_spell(SOM_DISC_PSIONICS,0))==6u);
+                /* An AI companion mage throws at a monster in line out of
+                 * reach of her fist: she turns to it and jabs. */
+                uint8_t *spr2=ram+0xE400;uint8_t keep_s[0x200];memcpy(keep_s,spr2,0x200);
+                const uint8_t keep_party2=disciplines.party[1];disciplines.party[1]=SOM_DISC_PSIONICS;
+                memset(spr2,0,0x200);spr2[0]=1;spr2[0x182]=20;spr2[0x184]=20;
+                spr2[2]=(uint8_t)hx;spr2[3]=(uint8_t)(hx>>8);
+                const unsigned sy=hy+60u;spr2[4]=(uint8_t)sy;spr2[5]=(uint8_t)(sy>>8);
+                m[0x1F1]=0;m[4]=(uint8_t)(sy-0u);m[5]=(uint8_t)(sy>>8);   /* beside her, 40 px */
+                hero[0x01C]=0;mage_ally_next[2]=0;mage_swing_prev[2]=0;
+                som_mage_bolt_frame(ram,1);
+                assert(spr2[0x01C]==0x20&&spr2[0x011]==SOM_GLOVE_JAB&&spr2[0x010]==0x02);
+                assert(som_bolts_active(mage_bolts));
+                assert(!som_mage_ally_throw(ram,2));                  /* busy, waits */
+                memcpy(spr2,keep_s,0x200);disciplines.party[1]=keep_party2;
+                memset(mage_bolts,0,sizeof(mage_bolts));
+                memcpy(ram+0xE600,keep_m,sizeof(keep_m));
+                ram[0xE4]=keep_e[0];ram[0xE6]=keep_e[1];ram[0xD0]=keep_e[2];ram[0x7D]=keep_e[3];
+                hero[0x01C]=0;hero[0x011]=0;hero[0x030]=0;
+            }
             /* An NPC or a chest right in front: B goes to the game (talk,
              * open), no spell. */
             {
@@ -2576,7 +2629,7 @@ int main(void){
                 assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
                 mocked_buttons=0;som_input_poll();
                 hero[0x010]=0x82;                                          /* behind him: no */
-                assert(!som_interact_ahead(ram));
+                assert(!som_interact_ahead_by(ram,0u));
                 hero[0x010]=0x02;hero[0x186]=0;
                 memcpy(ram+0xE600,keep_obj,sizeof(keep_obj));
             }

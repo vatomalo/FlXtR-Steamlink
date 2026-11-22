@@ -28,6 +28,7 @@
 #include "som_bunshin.h"
 #include "som_telekinesis.h"
 #include "som_bunshin_draw.h"
+#include "som_mage_bolt.h"
 #include "som_jukebox.h"
 #include "som_xp.h"
 #include "som_progress.h"
@@ -779,8 +780,6 @@ static int som_equip_ally_weapon(uint8_t *ram,unsigned who,unsigned type);
 #define SOM_EQUIP_REFUSED (-1)          /* will not work: use the ring */
 static int som_cast_spell(uint8_t *ram,unsigned spell);
 static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell);
-static int som_spell_affordable(const uint8_t *ram,unsigned spell);
-static int som_spell_affordable_by(const uint8_t *ram,unsigned who,unsigned spell);
 #define SOM_QUICK_CAST_FRAMES 240ul      /* quick cast: how long the skip may wait */
 static unsigned long quick_cast_until[3];   /* per hero: 0 none */
 static int som_cast_button_spell(uint8_t *ram,unsigned who,unsigned spell,unsigned which);
@@ -829,7 +828,6 @@ static int som_interact_ahead_by(const uint8_t *ram,unsigned who){
     }
     return 0;
 }
-static int som_interact_ahead(const uint8_t *ram){return som_interact_ahead_by(ram,0u);}
 /* FlXtR's own MP (each class's energy: Chakra, Chi, Ki...) and AP (the
  * evade pips), src/som_energy.h. energy_free: tests and no-cost runs. */
 static SomEnergy energy;
@@ -918,6 +916,11 @@ static unsigned hop_frames_left;
 static void som_hop_step(void);
 static void som_evade_shield(uint8_t *ram);
 static SomBoom bunshin_booms[SOM_BUN_BOOMS];
+/* Mage bolts (src/som_mage_bolt.h): every caster's B is a glove punch that
+ * throws a painted ball of its B spell's element. */
+static SomBolt mage_bolts[SOM_BOLTS];
+static uint8_t mage_swing_prev[3];
+static unsigned long mage_ally_next[3];
 /* Kawarimi: the log left standing where the hero was (world px). */
 #define SOM_KAWARIMI_LOG_FRAMES 48ul
 static int kawarimi_log_x,kawarimi_log_y;
@@ -1821,20 +1824,15 @@ static void som_input_poll(void){
         if(wram)som_monk_glove(wram);
         const int caster_talk=caster&&(current&b_bit)&&!(current&y_bit)&&
             som_interact_ahead_by(wram,driver);
-        if(caster&&!caster_talk&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
-            const unsigned which=(current&y_bit)?1u:0u;
-            const unsigned spell=som_caster_spell(caster_cls,which);
-            if(!which&&!som_spell_affordable_by(wram,driver,spell)){
-                b_weapon_blocked=1;
-                if(pressed&b_bit)som_overlay_set(&overlay,"^Not enough MP|casters do not punch",
-                                                 SOM_MESSAGE_FRAMES/3u);
-            }else{
-                if(which)y_weapon_blocked=1;else b_weapon_blocked=1;
-                if(pressed&(which?y_bit:b_bit)){
-                    if(som_cast_button_spell(wram,driver,spell,which))
-                        fprintf(stderr,"[som-ai] CASTER %s %s: %s\n",som_party_names[driver],
-                                which?"Y":"B",som_class_spell_label(caster_cls,spell));
-                }
+        /* B is the mage bolt (som_mage_bolt_frame): the game's own glove
+         * punch goes through and throws the ball, no spell, no MP. Y casts. */
+        if(caster&&!caster_talk&&(current&y_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
+            const unsigned spell=som_caster_spell(caster_cls,1u);
+            y_weapon_blocked=1;
+            if(pressed&y_bit){
+                if(som_cast_button_spell(wram,driver,spell,1u))
+                    fprintf(stderr,"[som-ai] CASTER %s Y: %s\n",som_party_names[driver],
+                            som_class_spell_label(caster_cls,spell));
             }
         }
         const unsigned driver_cls=driver?som_disc_member_class(&disciplines,driver):SOM_DISCIPLINE_NONE;
@@ -1961,7 +1959,8 @@ static void som_input_poll(void){
         if(wram&&combo_input_held&&!(current&(l2_bit|r2|l3_bit))&&
            !special_stage&&!special_suppress&&
            !ring_ai_enabled&&!som_manual_disciplines&&!bash_stage&&!combo_hold_tried&&
-           som_actor_class()<SOM_DISCIPLINE_COUNT&&som_combo_effective_level()&&
+           som_actor_class()<SOM_DISCIPLINE_COUNT&&!som_disc_caster(som_actor_class())&&
+           som_combo_effective_level()&&
            frame_number-combo_hold_start>=SOM_COMBO_HOLD_FRAMES&&
            !SOM_ACT(wram)[0x1ED]&&!SOM_ACT(wram)[0x19B]&&!SOM_ACT(wram)[0x01C]){
             const unsigned which=(current&y_bit)?1u:0u;
@@ -2738,15 +2737,6 @@ static int som_cast_target(const uint8_t *ram,unsigned who){
     }
     return best;
 }
-/* Enough MP for the spell (ROM row byte 15 = cost)? */
-static int som_spell_affordable_by(const uint8_t *ram,unsigned who,unsigned spell){
-    if(!ram||who>2u||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
-    const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
-    return row&&ram[0xE186u+0x200u*who]>=row[15];
-}
-static int som_spell_affordable(const uint8_t *ram,unsigned spell){
-    return som_spell_affordable_by(ram,0u,spell);
-}
 /* Quick cast (player, 2026-11-22: "a mage casts Fire Ball without the
  * precasting"): a class's B/Y spell skips the pose and spark (frames 0-59)
  * and the spirit's pictures (60 .. spell start), so the spell starts a few
@@ -2855,6 +2845,89 @@ static void som_quick_cast_frame(uint8_t *ram){
     }
 }
 static int som_cast_spell(uint8_t *ram,unsigned spell){return som_cast_spell_by(ram,0u,spell);}
+/* Mage bolt (rule, player 2026-11-22; src/som_mage_bolt.h): every caster
+ * (som_disc_caster), boy, girl or sprite, player, AI or the game's ally AI,
+ * attacks with one glove punch and a painted ball of her B spell's element.
+ * Before the game's frame (after = 0) her glove charge +0x19B is held at 0,
+ * so the punch is never a charged one (no kicks); after it (after = 1) a new
+ * plain swing (+0x1C 0 -> 0x20) throws the ball, and the balls fly. Damage:
+ * 6 + 3/2 hero level (+0x181) + class level, no MP. */
+#define SOM_BOLT_BASE_DAMAGE 6u
+#define SOM_BOLT_ALLY_GAP 50ul          /* frames between an AI mage's own throws */
+#define SOM_BOLT_ALLY_REACH 110         /* px along her facing */
+#define SOM_BOLT_ALLY_ACROSS 12         /* px off that line */
+#define SOM_GLOVE_JAB 1u                /* glove normal attack 1, the jab (graphics.md 4) */
+/* An AI companion mage stays back (keep-back), out of the game's punching
+ * range, so she throws from where she stands: a monster in a straight line
+ * (up, down, left or right) within the reach, and she turns to it and
+ * jabs, the game's own swing (+0x1C 0x20, animation 1, script restart). */
+static int som_mage_ally_throw(uint8_t *ram,unsigned who){
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    if(o[0x2C]||som_pad1_member_in(ram)==who||!som_ally_idle(ram,who)||
+       o[0x1ED]||frame_number<mage_ally_next[who])return 0;
+    const int x=(int)som_word(o+2),y=(int)som_word(o+4);
+    int best=-1;unsigned facing=0;
+    for(int slot=0;slot<3;slot++){
+        if(slot==familiar.slot)continue;
+        const uint8_t *m=ram+SOM_BOLT_MONSTER_BASE+SOM_BOLT_OBJECT*(unsigned)slot;
+        if(!som_bolt_monster_alive(m))continue;
+        const int dx=(int)som_word(m+2)-x,dy=(int)som_word(m+4)-y;
+        int along,across;unsigned f;
+        if(abs(dx)>=abs(dy)){along=abs(dx);across=dy;f=dx>=0?0x02u:0x82u;}
+        else{along=abs(dy);across=dx;f=dy>=0?0x01u:0x00u;}
+        if(along>SOM_BOLT_ALLY_REACH||abs(across)>SOM_BOLT_ALLY_ACROSS)continue;
+        if(best<0||along<best){best=along;facing=f;}
+    }
+    if(best<0)return 0;
+    o[0x10]=(uint8_t)facing;o[0x1C]=0x20;o[0x11]=SOM_GLOVE_JAB;o[0x30]=0xFF;
+    o[0x06]=o[0x07]=o[0x08]=0;
+    mage_ally_next[who]=frame_number+SOM_BOLT_ALLY_GAP;
+    return 1;
+}
+static unsigned som_mage_bolt_damage(const uint8_t *hero,unsigned cls){
+    return SOM_BOLT_BASE_DAMAGE+hero[0x181]*3u/2u+
+        (cls<SOM_DISCIPLINE_COUNT?disciplines.level[cls]:0u);
+}
+static void som_mage_bolt_frame(uint8_t *ram,int after){
+    if(!ram)return;
+    const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
+    const unsigned map=som_word(ram+0xDC)&0x1FFu;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        uint8_t *hero=ram+0xE000u+0x200u*who;
+        const unsigned cls=som_disc_member_class(&disciplines,who);
+        const int mage=field&&cls<SOM_DISCIPLINE_COUNT&&som_disc_caster(cls)&&
+            hero[0]==1&&(hero[0x182]|hero[0x183])&&hero[0x1E4]==0u;
+        if(!mage){mage_swing_prev[who]=hero[0x1C];continue;}
+        if(hero[0x19B]&&!hero[0x1C])hero[0x19B]=0;       /* no charge: no kicks */
+        if(!after)continue;
+        if(who)som_mage_ally_throw(ram,who);
+        const int swing=hero[0x1C]==0x20u&&!hero[0x60];
+        if(swing&&mage_swing_prev[who]!=0x20u){
+            /* One punch, never the kick or the lunge (glove normals 2, 3). */
+            if(hero[0x11]==2u||hero[0x11]==3u){hero[0x11]=SOM_GLOVE_JAB;hero[0x30]=0xFF;}
+            const unsigned spell=som_caster_spell(cls,0u);
+            const unsigned element=som_spell_element(spell),damage=som_mage_bolt_damage(hero,cls);
+            if(som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),(int)som_word(hero+4),
+                             hero[0x10],damage,map,frame_number))
+                fprintf(stderr,"[som-ai] MAGE BOLT %s %s (%u)\n",som_party_names[who],
+                        som_class_spell_label(cls,spell),damage);
+        }
+        mage_swing_prev[who]=hero[0x1C];
+    }
+    if(!after)return;
+    for(unsigned i=0;i<SOM_BOLTS;i++){
+        SomBolt *b=&mage_bolts[i];
+        if(!b->active)continue;
+        if(!field){b->active=0;continue;}
+        const int slot=som_bolt_step(b,ram,map,familiar.slot,frame_number);
+        if(slot>=0){
+            const uint8_t *m=ram+SOM_BOLT_MONSTER_BASE+SOM_BOLT_OBJECT*(unsigned)slot;
+            if(b->who==0u&&disciplines.selected<SOM_DISCIPLINE_COUNT)
+                som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
+                            m[0x180],SOM_XPK_SPELL,"mage bolt hit");
+        }
+    }
+}
 /* who: the caster, 0 the boy, 1 the girl, 2 the sprite. The three heroes run
  * the same cast (som-decomp summon-cast.md 2: same script, other pictures);
  * only the sprite's palette index differs (+0x4F 0xCF) and each has her
@@ -3035,6 +3108,10 @@ static void som_bunshin_draw(uint8_t *pixels,unsigned width,unsigned height,size
         som_bun_draw_boom(pixels,width,height,pitch,pixel_format,
                           hero_x+(b->x-hx),hero_y+(b->y-hy)-8,(unsigned)age,b->smoke);
     }
+    for(unsigned i=0;i<SOM_BOLTS;i++)
+        if(mage_bolts[i].active)
+            som_bolt_draw(pixels,width,height,pitch,pixel_format,&mage_bolts[i],
+                          hero_x+(mage_bolts[i].x-hx),hero_y+(mage_bolts[i].y-hy)-10,frame_number);
 }
 /* Swordsman bash: see SOM_BASH_LUNGE_FRAMES. */
 static int som_bash_start_raw(uint8_t *ram){
@@ -5329,19 +5406,8 @@ static int som_undo_spawn(void){
 }
 static void som_start_action(SomAction action){
     if(action==SOM_ACT_SNAPSHOT){som_snapshot();return;}
-    /* A caster's attack is its B spell, never a punch with the decorative
-     * glove (AI too). */
-    if(action==SOM_ACT_ATTACK&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
-       som_disc_caster(disciplines.selected)&&backend_retro_get_memory_data&&
-       !som_interact_ahead((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM))){
-        uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-        const unsigned spell=som_caster_spell(disciplines.selected,0);
-        if(ram&&som_spell_affordable(ram,spell)&&som_cast_button_spell(ram,0u,spell,0u))
-            fprintf(stderr,"[som-ai] CASTER (AI attack): %s\n",
-                    som_class_spell_label(disciplines.selected,spell));
-        else fprintf(stderr,"[som-ai] attack refused: casters do not punch\n");
-        return;
-    }
+    /* A caster's attack is the glove punch like anyone's: the mage bolt
+     * rides on it (som_mage_bolt_frame), AI or player. */
     if(action==SOM_ACT_ATTACK)som_combo_swing(0);
     /* The AI's attack runs the class's B chain only in a fight (a monster
      * within 80 px): cutting grass it keeps the sword it took out (the
@@ -6364,7 +6430,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                0u,&hud_x,&hud_y)))class_title=NULL;
     char combo_text[24];som_combo_text_at(&combo,som_combo_effective_level(),combo_text);
     if(menu)combo_text[0]=0;
-    const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||
+    const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||som_bolts_active(mage_bolts)||
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
@@ -6640,7 +6706,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     memset(&portals,0,sizeof(portals));portal_x_used=0;monk_glove_raised=-1;
     som_tk_reset(&telekinesis);telekinesis_ready=0;
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
-    som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));kawarimi_log_start=0;kawarimi_armed_until=0;
+    som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));
+    memset(mage_bolts,0,sizeof(mage_bolts));memset(mage_swing_prev,0,sizeof(mage_swing_prev));memset(mage_ally_next,0,sizeof(mage_ally_next));kawarimi_log_start=0;kawarimi_armed_until=0;
     evade_dir_x=evade_dir_y=0;bash_stage=SOM_BASH_NONE;bash_started=0;
     hop_dx=hop_dy=0;hop_frames_left=0;
     special_chord=0;special_suppress=0;
@@ -7021,6 +7088,7 @@ RETRO_API void retro_run(void){
         som_class_supply_frame();
         som_ally_equip_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         som_quick_cast_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        som_mage_bolt_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),0);
     }
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){
@@ -7079,6 +7147,9 @@ RETRO_API void retro_run(void){
     backend_run();
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
     if(test_enabled&&on_turbo)som_combo_frame();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_mage_bolt_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),1);
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_style_after((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));

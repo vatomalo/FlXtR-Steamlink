@@ -2927,6 +2927,25 @@ int main(void){
         assert(!ally_tech[0].dashing);
         assert(som_bun_u16(ram+0xE202)==220+60+20);               /* the far side */
         assert(m[0x1F1]>0&&!(ram[0xE20E]&0x80));                  /* cut, seen again */
+        /* Keep-back: an Archer sprite with a monster 20 px away walks off
+         * 2 px a frame; not while she swings, nor while the player drives her. */
+        {
+            disciplines.party[1]=SOM_DISC_ARCHERY;disciplines.party[0]=SOM_DISCIPLINE_NONE;
+            som_put_word(ram+0xE402,240);som_put_word(m+2,260);m[0x1F1]=0;
+            frame_number++;ally_tech_ready=0;som_ally_tech_frame(ram);
+            assert(som_bun_u16(ram+0xE402)==238);
+            ram[0xE41C]=0x20;                                      /* mid-swing: stays */
+            frame_number++;ally_tech_ready=0;som_ally_tech_frame(ram);
+            assert(som_bun_u16(ram+0xE402)==238);
+            ram[0xE41C]=0;ram[0xDB]=1;                             /* on pad 1 */
+            frame_number++;ally_tech_ready=0;som_ally_tech_frame(ram);
+            assert(som_bun_u16(ram+0xE402)==238);
+            ram[0xDB]=0;som_put_word(m+2,300);                     /* 60 px: far enough */
+            frame_number++;ally_tech_ready=0;som_ally_tech_frame(ram);
+            assert(som_bun_u16(ram+0xE402)==238);
+            disciplines.party[0]=SOM_DISC_NINJUTSU;disciplines.party[1]=SOM_DISCIPLINE_NONE;
+            som_put_word(m+2,220+60);
+        }
         /* Dead or not joined: nothing. */
         ally_tech_ready=0;m[0x1F1]=0;ram[0xE382]=0;ram[0xE383]=0;
         for(unsigned i=0;i<5;i++){frame_number++;som_ally_tech_frame(ram);}

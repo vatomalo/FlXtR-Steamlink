@@ -1218,6 +1218,11 @@ static void som_class_selected(void);
 /* Who the player drives (0 boy, 1 girl, 2 sprite): the party member whose
  * controller binding (7E:00D9/DA/DB, som-decomp find_actor_controller_binding
  * C1:DF0A) holds pad 1 (bit 0). Select moves it; unreadable memory: the boy. */
+static unsigned som_pad1_member_in(const uint8_t *ram){
+    if(!ram)return 0;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)if(ram[0xD9u+who]&1u)return who;
+    return 0;
+}
 static unsigned som_pad1_member(void){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return 0;
@@ -3821,6 +3826,18 @@ typedef struct {
 static SomAllyTech ally_tech[2];
 static int ally_tech_ready;
 #define SOM_ALLY_DODGE_COOLDOWN 150ul
+/* Keep-back (player, 2026-11-22: "no one respects long range"): the game's
+ * ally AI walks a bow or caster companion into melee. While a monster is
+ * within SOM_ALLY_KEEP_PX (x+y) and she is not swinging or casting, the
+ * proxy walks her straight away from it SOM_ALLY_KEEP_SPEED px per frame,
+ * faster than the AI brings her in, so she hovers at her range. Not while
+ * the player drives her. */
+#define SOM_ALLY_KEEP_PX 40
+#define SOM_ALLY_KEEP_SPEED 2
+static int som_ally_keeps_back(unsigned cls){
+    return cls<SOM_DISCIPLINE_COUNT&&
+        (!som_weapon_short_range(som_disc_weapons[cls][0])||som_disc_caster(cls));
+}
 static uint8_t *som_ally_obj(uint8_t *ram,unsigned who){return ram+0xE000u+0x200u*who;}
 static int som_ally_alive(const uint8_t *o){
     return o[0]==1&&(o[0x184]|o[0x185])&&(o[0x182]|o[0x183]);
@@ -3930,6 +3947,17 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         som_energy_take(&t->en,cls,0u,SOM_ALLY_DODGE_AP);
         fprintf(stderr,"[som-ai] ALLY %s %s\n",som_party_names[who],som_disc_dodge(cls,0u).name);
         return;
+    }
+    if(!support&&nearest>=0&&best<SOM_ALLY_KEEP_PX&&som_ally_keeps_back(cls)&&
+       o[0x1C]==0&&o[0x60]==0&&som_pad1_member_in(ram)!=who){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)nearest;
+        const int ax=x-(int)som_bun_u16(m+2),ay=y-(int)som_bun_u16(m+4);
+        const int sx=ax>=0?SOM_ALLY_KEEP_SPEED:-SOM_ALLY_KEEP_SPEED;
+        const int sy=ay>=0?SOM_ALLY_KEEP_SPEED:-SOM_ALLY_KEEP_SPEED;
+        /* The axis she is closer on first, then the other (a wall behind). */
+        if(abs(ax)<=abs(ay)?(som_ally_step(ram,o,0,sy)||som_ally_step(ram,o,sx,0)):
+                            (som_ally_step(ram,o,sx,0)||som_ally_step(ram,o,0,sy)))
+            return;
     }
     if(ordered&&!support&&(int)ally_order.slot!=familiar.slot){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*ally_order.slot;

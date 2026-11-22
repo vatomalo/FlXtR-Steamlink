@@ -206,13 +206,13 @@ static SomDisciplines disciplines;
 #define SOM_SPRITE_CLOTHES 0x7E00u
 static const uint16_t som_member_clothes[SOM_PARTY_MEMBERS]={
     SOM_HERO_CLOTHES,SOM_GIRL_CLOTHES,SOM_SPRITE_CLOTHES};
-/* The girl's hair (player, 2026-11-22): black, a dark ramp with a cool
- * sheen over her colours 2-4 (darkest to lightest; live WRAM 2026-11-22
+/* The girl's hair (player, 2026-11-22): black with silver in the middle
+ * shade, over her colours 2-4 (darkest to lightest; live WRAM 2026-11-22
  * shows her orange hair there: 176,56,24 / 216,56,0 / 240,104,16). SNES
- * BGR555. */
+ * BGR555: 2 black, 3 silver, 4 black with a cool sheen. */
 #define SOM_GIRL_HAIR_FIRST 2u
 static const uint16_t som_girl_hair[3]={
-    (5u<<10)|(3u<<5)|3u,(9u<<10)|(6u<<5)|6u,(14u<<10)|(10u<<5)|10u};
+    (5u<<10)|(3u<<5)|3u,(25u<<10)|(22u<<5)|22u,(10u<<10)|(7u<<5)|7u};
 static void som_member_hair(uint8_t *pal,unsigned who){
     if(who!=1u)return;
     for(unsigned i=0;i<3u;i++){

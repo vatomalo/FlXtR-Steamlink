@@ -80,5 +80,27 @@ int main(void){
         char line[33];
         assert(som_disc_line(&v,12,line)&&strstr(line,"Archery"));
     }
+    {   /* The player's class order: Y picks the row up, Up/Down carry it,
+         * Y puts it down; B selects the class shown, and the cycle follows. */
+        SomDisciplines o;som_disc_init(&o);
+        assert(som_disc_order_valid(o.order));
+        const uint16_t Y=1u<<RETRO_DEVICE_ID_JOYPAD_Y,UP=1u<<RETRO_DEVICE_ID_JOYPAD_UP,
+            DOWN=1u<<RETRO_DEVICE_ID_JOYPAD_DOWN,B=1u<<RETRO_DEVICE_ID_JOYPAD_B;
+        o.open=1;o.cursor=10;                       /* Bushido */
+        assert(som_disc_press(&o,Y)==SOM_DISC_NONE&&o.grab);
+        char line[33];som_disc_line(&o,11,line);assert(line[0]=='=');
+        for(unsigned k=0;k<10;k++)assert(som_disc_press(&o,UP)==SOM_DISC_NONE);
+        assert(o.cursor==0&&o.order[0]==10&&o.order[1]==0&&o.order[10]==9);
+        assert(som_disc_press(&o,Y)==SOM_DISC_ORDERED&&!o.grab);
+        assert(som_disc_order_valid(o.order));
+        som_disc_line(&o,1,line);assert(line[0]=='>'&&strstr(line,"Bushido"));
+        assert(som_disc_press(&o,B)==SOM_DISC_SELECTED&&o.selected==10);
+        assert(som_disc_order_step(&o,10,1)==0&&som_disc_order_step(&o,0,-1)==10);
+        assert(som_disc_order_step(&o,10,-1)==15);
+        assert(som_disc_order_step(&o,SOM_DISCIPLINE_NONE,1)==10);
+        assert(som_disc_row_of(&o,9)==10);
+        o.order[3]=o.order[4];assert(!som_disc_order_valid(o.order));
+        (void)DOWN;
+    }
     return 0;
 }

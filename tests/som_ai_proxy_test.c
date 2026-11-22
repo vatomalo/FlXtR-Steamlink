@@ -3091,6 +3091,37 @@ int main(void){
     assert(flxtr_som_ai_command("party_release")&&!ally_order.until);
     assert(flxtr_som_ai_command("ai_off")&&!flxtr_som_ai_enabled());
     direct_transport=0;
+    /* The acting hero (2026-11-22): with pad 1 on a Bushido girl, Issen
+     * dashes her (not the boy) from her own energy; the actor stays hers
+     * until the dash is over, then follows pad 1 back to the boy. */
+    {
+        uint8_t *ram=mocked_wram;
+        memset(ram,0,SOM_WRAM_SIZE);
+        ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xC1]=0x04;ram[0xC3]=0x04;
+        for(unsigned who=0;who<2u;who++){
+            uint8_t *o=ram+0xE000+0x200*who;
+            o[0]=1;som_put_word(o+2,(uint16_t)(200+40*who));o[4]=200;o[0x10]=0x02;
+            o[0x182]=50;o[0x184]=50;
+        }
+        som_disc_init(&disciplines);disciplines.party[0]=SOM_DISC_BUSHIDO;
+        ram[0xD9]=0x80;ram[0xDA]=1;
+        som_actor=0;som_actor_update();assert(som_actor==1u);
+        assert(som_actor_class()==SOM_DISC_BUSHIDO&&SOM_ACT(ram)==ram+0xE200);
+        energy_free=0;issen_ready=0;evade_active=0;
+        ally_tech[0].en.energy[SOM_DISC_BUSHIDO]=(uint16_t)som_energy_max(1);
+        const unsigned girl_energy=ally_tech[0].en.energy[SOM_DISC_BUSHIDO];
+        const unsigned boy_energy=energy.energy[SOM_DISC_BUSHIDO];
+        assert(som_issen_start(ram)&&evade_active&&issen_active);
+        assert(ally_tech[0].en.energy[SOM_DISC_BUSHIDO]<girl_energy&&
+               energy.energy[SOM_DISC_BUSHIDO]==boy_energy);
+        ram[0xD9]=1;ram[0xDA]=0x80;                      /* Select mid-dash */
+        som_hop_step();frame_number++;
+        som_actor_update();assert(som_actor==1u);       /* not while she dashes */
+        assert(som_bun_u16(ram+0xE202)>240&&som_bun_u16(ram+0xE002)==200);
+        evade_active=0;issen_active=0;hop_frames_left=0;
+        som_actor_update();assert(som_actor==0u);       /* free: back to the boy */
+        energy_free=1;som_disc_init(&disciplines);memset(ram,0,SOM_WRAM_SIZE);
+    }
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");
     return 0;

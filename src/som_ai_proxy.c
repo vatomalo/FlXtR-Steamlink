@@ -2797,31 +2797,61 @@ static int som_cast_button_spell(uint8_t *ram,unsigned who,unsigned spell,unsign
         quick_cast_until[who]=frame_number+SOM_QUICK_CAST_FRAMES;
     return 1;
 }
+/* Quick-cast trace (2026-11-22, the skip did not show live and RetroArch
+ * keeps no log): each frame of a quick cast appends the caster's cast
+ * fields to SOM_QUICK_TRACE, at most SOM_QUICK_TRACE_LINES lines a session. */
+#define SOM_QUICK_TRACE "/tmp/flxtr-som-quick-cast.txt"
+#define SOM_QUICK_TRACE_LINES 3000u
+static unsigned quick_trace_lines;
+static const char *quick_trace_file=SOM_QUICK_TRACE;
+static void som_quick_trace(unsigned who,const uint8_t *hero,const char *what){
+    if(quick_trace_lines>=SOM_QUICK_TRACE_LINES||!quick_trace_file)return;
+    FILE *out=fopen(quick_trace_file,"a");
+    if(!out)return;
+    fprintf(out,"%lu %s ph=%02X 1C=%02X an=%02X p16=%04X t12=%02X pFC=%04X %s\n",frame_number,
+            som_party_names[who%SOM_PARTY_MEMBERS],hero[0x60],hero[0x1C],hero[0x11],
+            som_word(hero+0x16),hero[0x12],som_word(hero+0xFC),what);
+    fclose(out);quick_trace_lines++;
+}
 static void som_quick_cast_frame(uint8_t *ram){
     if(!ram)return;
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
         if(!quick_cast_until[who])continue;
         uint8_t *hero=ram+0xE000u+0x200u*who;
         if(frame_number>quick_cast_until[who]||hero[0x1C]!=0x40u||!hero[0x60]){
+            som_quick_trace(who,hero,"end");
             quick_cast_until[who]=0;continue;               /* cast over (or never began) */
         }
         const unsigned ptr=som_word(hero+0x16);
+        const char *what="";
         if(hero[0x60]==0x20u&&hero[0x11]==0x94u){           /* pose and spark */
             const unsigned fd=som_cast_pose_fd(ptr);
             if(fd&&fd!=ptr){
-                hero[0x16]=(uint8_t)fd;hero[0x17]=(uint8_t)(fd>>8);hero[0x12]=0;
+                hero[0x16]=(uint8_t)fd;hero[0x17]=(uint8_t)(fd>>8);hero[0x12]=0;what="pose skipped";
                 fprintf(stderr,"[som-ai] QUICK CAST %s: pose skipped (%04X -> %04X)\n",
                         som_party_names[who],ptr,fd);
             }
         }else if(hero[0x60]==0x80u){                        /* the spirit */
-            const unsigned base=som_word(hero+0xFC),end=som_cast_spirit_end(base);
-            if(end&&ptr>=base&&ptr<end){
+            /* Its pictures run either on the hero's own pointer (+0x16 inside
+             * the spirit script) or on the spirit pointer +0xFC itself (the
+             * pose waits on FD meanwhile): move whichever is in the script
+             * to its FF; the game then starts the spell. */
+            const unsigned fc=som_word(hero+0xFC),end=som_cast_spirit_end(fc);
+            if(end&&ptr>=fc&&ptr<end){
                 hero[0x16]=(uint8_t)end;hero[0x17]=(uint8_t)(end>>8);hero[0x12]=0;
-                fprintf(stderr,"[som-ai] QUICK CAST %s: spirit skipped (%04X -> %04X)\n",
-                        som_party_names[who],ptr,end);
+                what="spirit skipped (+0x16)";
+            }else if(end&&end!=fc){
+                hero[0xFC]=(uint8_t)end;hero[0xFD]=(uint8_t)(end>>8);
+                what="spirit skipped (+0xFC)";
             }
-            quick_cast_until[who]=0;                        /* one try: then the game's */
+            if(*what){
+                fprintf(stderr,"[som-ai] QUICK CAST %s: %s\n",som_party_names[who],what);
+                som_quick_trace(who,hero,what);
+            }
+            som_quick_trace(who,hero,"spirit");
+            continue;                       /* watched to the end (trace) */
         }
+        som_quick_trace(who,hero,what);
     }
 }
 static int som_cast_spell(uint8_t *ram,unsigned spell){return som_cast_spell_by(ram,0u,spell);}

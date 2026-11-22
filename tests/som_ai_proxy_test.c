@@ -2495,6 +2495,7 @@ int main(void){
             static const uint8_t spirit[]={0xF9,0x2E,0x00,0,0,0,1,0,2,0,3,0,4,0,5,0,6,0,7,
                 0,8,0,9,0,10,0,11,0xFF};
             memcpy(rom+0x115D4E,pose,sizeof(pose));memcpy(rom+0x1185E0,spirit,sizeof(spirit));
+            quick_trace_file=NULL;                              /* no trace file in tests */
             uint8_t keep_hero[0x200];memcpy(keep_hero,hero,0x200);
             hero[0x1C]=0x40;hero[0x60]=0x20;hero[0x11]=0x94;hero[0x12]=3;
             hero[0x16]=0x4F;hero[0x17]=0x5D;                    /* after 8A */
@@ -2504,7 +2505,14 @@ int main(void){
             som_quick_cast_frame(ram);assert(som_word(hero+0x16)==0x5D5Bu);
             hero[0x60]=0x80;hero[0xFC]=0xE0;hero[0xFD]=0x85;hero[0x16]=0xE3;hero[0x17]=0x85;
             som_quick_cast_frame(ram);
-            assert(som_word(hero+0x16)==0x85E0+sizeof(spirit)-1u&&!quick_cast_until[0]);
+            assert(som_word(hero+0x16)==0x85E0+sizeof(spirit)-1u&&quick_cast_until[0]);
+            /* The pose waiting on FD while +0xFC runs the spirit: +0xFC moves. */
+            hero[0x16]=0x5C;hero[0x17]=0x5D;hero[0xFC]=0xE5;hero[0xFD]=0x85;
+            som_quick_cast_frame(ram);
+            assert(som_word(hero+0xFC)==0x85E0+sizeof(spirit)-1u&&som_word(hero+0x16)==0x5D5C);
+            som_quick_cast_frame(ram);                          /* at the FF: stays */
+            assert(som_word(hero+0xFC)==0x85E0+sizeof(spirit)-1u);
+            hero[0x60]=0;som_quick_cast_frame(ram);assert(!quick_cast_until[0]);   /* over */
             /* A stale pointer (no 83 before an FD): left alone. */
             rom[0x115D5B]=0x18;
             hero[0x60]=0x20;hero[0x16]=0x4F;hero[0x17]=0x5D;quick_cast_until[0]=frame_number+10u;

@@ -4,7 +4,7 @@
 
 | Physical input | Current behavior in active field play |
 | --- | --- |
-| **R2 (hold)** | **Block / guard**. The proxy presents native SNES R to the ROM. Samurai Iai parry and Monk Counter Palm/Tiger Drop use the same guard. Samurai R2 + backward D-pad throws; Swordsman R2 + A bashes. |
+| **R2 (hold)** | **Block / guard**. The proxy halves nonlethal HP loss for the character on controller 1 without changing party poses. Samurai Iai parry and Monk Counter Palm/Tiger Drop use the same guard. Samurai R2 + backward D-pad throws; Swordsman R2 + A bashes. |
 | **L2 + D-pad signs, then B/Y** | Seals, charged specials and their level selection, moved from R2. L2+B is primary level 1 by default, L2+Y is secondary level 2. |
 | **L2 + X** | Existing discipline moves (Issen, Hundred Fists, Whirlwind, Telekinesis, etc.) remain in place; not a style switch. |
 | **L1 (tap)** | Toggle enemy lock-on. Only targeting, independent of B/Y. Native L1 is suppressed during active field play so it cannot open the wrong ring. |
@@ -798,18 +798,12 @@ tier 0. (A held B keeps that press's weapon for charging.)
 
 ### Evades by class (2026-11-20)
 
-- **Ukemi** (Martial Arts, Ninjutsu, Bushido): up/down the drawn tumble; left/right a cartwheel.
-- **Cartwheel** (Swordsmanship, Roguecraft).
-- Every cartwheel **forward + A** is drawn facing forward (the game's cartwheel frames, the
-  hero carried 64 px / Ukemi 54 px ahead); back + A or A alone is the game's own cartwheel
-  away from the facing.
-- **Left/right + A while facing up or down** (2026-11-20) is drawn the same way, facing where
-  he goes: the game's cartwheel only travels away from the facing, so it used to turn him
-  round and he wheeled off backwards. Only a backward cartwheel is the game's own. Applies
-  to the cartwheel classes and Ukemi's sides alike; the facing is kept after.
-- **Ukemi up/down** (the cannon-flight ball) is drawn smaller about the feet
-  (`SOM_UKEMI_SCALE_PCT`, 85 % since 2026-11-21), so it rolls on the ground. Ukemi's drawn
-  cartwheel is mirrored the other way from the cartwheel classes' (player: it faced wrong).
+- **Ukemi** (Martial Arts, Ninjutsu, Bushido) uses crouch, directional tumble and
+  landing frames from pose `0x9E`. The generated frame pack uses entries
+  `0xCC` through `0xCE` for the Boy, Girl and Sprite. The proxy fits the
+  animation to the collision-checked dodge and mirrors the side roll for left.
+- **Cartwheel** (Swordsmanship, Roguecraft). Forward cartwheels use drawn frames.
+  Backward cartwheels can use the game's native pose on combat maps.
 - **Up/down + A** (cartwheel classes, 2026-11-21): the game's own cartwheel with the hero
   facing up (player's choice), travelling the way pressed: down plays as the game does; up
   has the game's motion mirrored each frame (walls stop it). Off combat maps, where the game

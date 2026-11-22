@@ -1353,7 +1353,7 @@ int main(void){
         on_turbo=1;special_stage=special_suppress=0;
         physical_state=mocked_input_mask;mocked_buttons=0;last_physical_buttons=0;
         som_input_poll();
-        /* New physical controller: R2 is native R guard; R1 is an
+        /* R2 is consumed by the proxy guard. R1 is an
          * edge-triggered style cycle and never reaches the SNES core.
          * Per-button and bitmask reads must agree. */
         som_styles_init(&styles);
@@ -1364,17 +1364,32 @@ int main(void){
         assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_FLOW,2u),"War Bow"));
         const uint16_t guard_r2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
         const uint16_t style_r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
-        const uint16_t native_r=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
         mocked_buttons=guard_r2;som_input_poll();
         assert(som_guarding());
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2)==0);
-        assert((uint16_t)som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==native_r);
+        assert((uint16_t)som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
         physical_state=mocked_input;pressed=RETRO_DEVICE_ID_JOYPAD_R2;
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2)==0);
         pressed=100;physical_state=mocked_input_mask;
         mocked_buttons=0;som_input_poll();assert(!som_guarding());
+        /* Guard absorbs half of the selected actor's HP loss and leaves
+         * the other actor's damage and both animation bytes alone. */
+        const uint8_t boy_bind=ram[0xD9],girl_bind=ram[0xDA];
+        const uint16_t boy_hp=som_word(hero+0x182),girl_hp=som_word(ram+0xE382);
+        const uint8_t girl_active=ram[0xE200];
+        ram[0xD9]=2;ram[0xDA]=1;ram[0xE200]=1;
+        som_put_word(hero+0x182,40);som_put_word(ram+0xE382,40);
+        const uint8_t girl_pose=ram[0xE211],boy_pose=hero[0x11];
+        mocked_buttons=guard_r2;som_input_poll();
+        som_put_word(hero+0x182,30);som_put_word(ram+0xE382,30);
+        som_guard_finish();
+        assert(som_word(hero+0x182)==30&&som_word(ram+0xE382)==35);
+        assert(hero[0x11]==boy_pose&&ram[0xE211]==girl_pose);
+        ram[0xD9]=boy_bind;ram[0xDA]=girl_bind;ram[0xE200]=girl_active;
+        som_put_word(hero+0x182,boy_hp);som_put_word(ram+0xE382,girl_hp);
+        mocked_buttons=0;som_input_poll();
         for(unsigned i=0;i<3u;i++){
             mocked_buttons=style_r1;som_input_poll();
             assert(styles.selected[0]==(i==0u?2u:i==1u?0u:1u));
@@ -1384,10 +1399,10 @@ int main(void){
             assert(styles.selected[0]==(i==0u?2u:i==1u?0u:1u));
             mocked_buttons=0;som_input_poll();
         }
-        {   /* Select gave pad 1 to the girl (7E:00DA bit 0): R1 turns her
+        {   /* Select gave pad 1 to the girl (7E:00D9 bit 1): R1 turns her
              * class's style, L2+R1 / L2+L1 her class; the boy's stay. */
             const uint8_t keep_d9=ram[0xD9],keep_da=ram[0xDA],keep_party=disciplines.party[0];
-            ram[0xD9]=0x80;ram[0xDA]=1;
+            ram[0xD9]=2;ram[0xDA]=1;
             disciplines.party[0]=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_DEFAULT;
             assert(som_pad1_member()==1u);
             mocked_buttons=style_r1;som_input_poll();mocked_buttons=0;som_input_poll();
@@ -1402,9 +1417,40 @@ int main(void){
             mocked_buttons=(uint16_t)(l2|(1u<<RETRO_DEVICE_ID_JOYPAD_L));som_input_poll();
             mocked_buttons=0;som_input_poll();
             assert(disciplines.party[0]==SOM_DISC_BUSHIDO&&disciplines.selected==0u);
-            /* B/Y while driving her: her class's weapons, the boy's left be. */
+            disciplines.party[0]=SOM_DISCIPLINE_NONE;
+            mocked_buttons=style_r1;som_input_poll();
+            mocked_buttons=(uint16_t)(style_r1|l2);som_input_poll();
+            assert(disciplines.party[0]==disciplines.order[0]&&disciplines.selected==0u);
+            mocked_buttons=0;som_input_poll();
+
+            /* Y equips a missing secondary weapon from the companion's
+             * own verified art, even when the Boy's art is unverified. */
             disciplines.party[0]=SOM_DISC_SWORD;
-            const uint8_t keep_girl_weapon=ram[0xE3E4],keep_boy_weapon=hero[0x1E4];
+            uint8_t *girl=ram+0xE200;
+            uint8_t saved_girl[0x200],saved_art[SOM_HERO_EFFECT_BYTES];
+            memcpy(saved_girl,girl,sizeof(saved_girl));
+            memcpy(saved_art,ram+0x3000,sizeof(saved_art));
+            const uint8_t saved_gfx=ram[0xD070],saved_axe=ram[0xCC56];
+            const unsigned keep_boy_weapon=hero[0x1E4];
+            const int saved_verified=weapon_gfx_verified;
+            memcpy(girl,hero,sizeof(saved_girl));
+            girl[0x182]=girl[0x184]=50;
+            SomWeaponModel girl_model;
+            assert(som_weapon_model_for(girl,girl[0x1E3],&girl_model,1u));
+            ram[0xD070]=girl_model.graphics;
+            memcpy(ram+0x3000,girl_model.tiles,sizeof(girl_model.tiles));
+            styles.selected[SOM_DISC_SWORD]=SOM_STYLE_DEFAULT;
+            ram[0xCC56]=0xFF;weapon_gfx_verified=0;
+            ally_equip_pending|=2u;ally_equip_tried=0;
+            som_ally_equip_frame(ram);
+            assert(ram[0xCC56]==0&&!(ally_equip_pending&2u));
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+            assert(y_weapon_swap&&girl[0x1E4]==2&&hero[0x1E4]==keep_boy_weapon);
+            mocked_buttons=0;som_input_poll();
+            ram[0xD070]=saved_gfx;ram[0xCC56]=saved_axe;weapon_gfx_verified=saved_verified;
+            memcpy(girl,saved_girl,sizeof(saved_girl));
+            memcpy(ram+0x3000,saved_art,sizeof(saved_art));
+            const uint8_t keep_girl_weapon=ram[0xE3E4];
             ram[0xE3E4]=som_disc_weapons[SOM_DISC_SWORD][1];          /* she holds her Y weapon */
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
             assert(y_weapon_swap&&!y_weapon_blocked&&hero[0x1E4]==keep_boy_weapon);
@@ -2495,7 +2541,7 @@ int main(void){
              * mage bolt rides on it); Y is her Y spell, cast by her, quick. */
             memset(girl+0x170,0,0x10);girl[0x01C]=girl[0x060]=0;girl[0x186]=9;
             const uint8_t keep_party=disciplines.party[0];
-            disciplines.party[0]=3;ram[0xD9]=0x80;ram[0xDA]=1;
+            disciplines.party[0]=3;ram[0xD9]=2;ram[0xDA]=1;
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
             assert(girl[0x170]==0&&!b_weapon_blocked&&hero[0x170]==0);
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
@@ -2507,6 +2553,17 @@ int main(void){
             assert(girl[0x170]==som_caster_spell(3,1)&&y_weapon_blocked&&hero[0x170]==0);
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
             assert(!quick_cast_until[1]);
+            mocked_buttons=0;som_input_poll();
+            /* Select can move pad 1 before the proxy move owner changes. */
+            const uint8_t keep_boy_class=disciplines.selected;
+            disciplines.selected=3;
+            som_actor=0;blink_active=1;
+            girl[0x170]=girl[0x1C]=girl[0x60]=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+            assert(som_actor==0u&&y_weapon_blocked);
+            assert(girl[0x170]==som_caster_spell(3u,1u)&&girl[0x60]==0x20);
+            assert(!memcmp(hero,boy_before,sizeof(boy_before)));
+            blink_active=0;disciplines.selected=keep_boy_class;
             mocked_buttons=0;som_input_poll();
             /* X follows pad 1 even while the Boy is casting. */
             girl[0x1C]=girl[0x60]=0;
@@ -2527,7 +2584,7 @@ int main(void){
             girl[0x1C]=0x40;girl[0x60]=0x20;
             const uint8_t keep_sprite_class=disciplines.party[1];
             disciplines.party[1]=SOM_DISC_BUSHIDO;
-            ram[0xDA]=0x80;ram[0xDB]=1;
+            ram[0xD9]=4;ram[0xDA]=2;ram[0xDB]=1;
             spr[0x1C]=spr[0x60]=0;spr[0x1E4]=1;spr[0x19C]=4;
             iai_ready=0;
             mocked_buttons=0;som_input_poll();
@@ -2538,6 +2595,17 @@ int main(void){
             assert(special_stage==SOM_IAI_LEVEL&&som_actor==2u);
             assert(hero[0x1C]==0x40&&girl[0x1C]==0x40);
             special_stage=special_suppress=0;iai_ready=0;
+
+            disciplines.party[1]=3;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
+            assert(y_weapon_blocked&&spr[0x170]==som_caster_spell(3u,1u)&&spr[0x60]==0x20);
+            mocked_buttons=0;som_input_poll();
+            spr[0x170]=spr[0x1C]=spr[0x60]=0;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);som_input_poll();
+            assert(x_spell_blocked);
+            mocked_buttons=0;som_input_poll();
+            assert(spr[0x170]==som_current_spell()&&spr[0x60]==0x20);
+            assert(hero[0x170]==0&&girl[0x170]==girl_x);
             hero[0x1C]=hero[0x60]=0;
             disciplines.party[1]=keep_sprite_class;
             disciplines.party[0]=keep_party;ram[0xD9]=keep_d9;ram[0xDA]=keep_da;ram[0xDB]=keep_db;
@@ -3139,10 +3207,10 @@ int main(void){
             ram[0xE41C]=0x20;                                      /* mid-swing: stays */
             frame_number++;ally_tech_ready=0;som_ally_tech_frame(ram);
             assert(som_bun_u16(ram+0xE402)==238);
-            ram[0xE41C]=0;ram[0xDB]=1;                             /* on pad 1 */
+            ram[0xE41C]=0;ram[0xD9]=4;                             /* on pad 1 */
             frame_number++;ally_tech_ready=0;som_ally_tech_frame(ram);
             assert(som_bun_u16(ram+0xE402)==238);
-            ram[0xDB]=0;som_put_word(m+2,300);                     /* 60 px: far enough */
+            ram[0xD9]=1;som_put_word(m+2,300);                     /* 60 px: far enough */
             frame_number++;ally_tech_ready=0;som_ally_tech_frame(ram);
             assert(som_bun_u16(ram+0xE402)==238);
             disciplines.party[0]=SOM_DISC_NINJUTSU;disciplines.party[1]=SOM_DISCIPLINE_NONE;
@@ -3306,7 +3374,7 @@ int main(void){
             o[0x182]=50;o[0x184]=50;
         }
         som_disc_init(&disciplines);disciplines.party[0]=SOM_DISC_BUSHIDO;
-        ram[0xD9]=0x80;ram[0xDA]=1;
+        ram[0xD9]=2;ram[0xDA]=1;
         som_actor=0;som_actor_update();assert(som_actor==1u);
         assert(som_actor_class()==SOM_DISC_BUSHIDO&&SOM_ACT(ram)==ram+0xE200);
         energy_free=0;issen_ready=0;evade_active=0;
@@ -3322,7 +3390,26 @@ int main(void){
         assert(som_bun_u16(ram+0xE202)>240&&som_bun_u16(ram+0xE002)==200);
         evade_active=0;issen_active=0;hop_frames_left=0;
         som_actor_update();assert(som_actor==0u);       /* free: back to the boy */
-        energy_free=1;som_disc_init(&disciplines);memset(ram,0,SOM_WRAM_SIZE);
+        energy_free=1;
+        physical_state=mocked_input_mask;
+        memcpy(ram+0xE400,ram+0xE200,0x200);
+        som_put_word(ram+0xE402,300);
+        for(unsigned who=1;who<SOM_PARTY_MEMBERS;who++){
+            disciplines.party[who-1u]=SOM_DISC_ARCHER;
+            ram[0xD9]=(uint8_t)(1u<<who);ram[0xDA]=0;ram[0xDB]=0;
+            uint8_t *actor=ram+0xE000u+0x200u*who;
+            const unsigned start_x=som_word(actor+2);
+            mocked_buttons=0;som_input_poll();
+            mocked_buttons=(1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);
+            som_input_poll();
+            assert(evade_active&&som_actor==who);
+            som_hop_step();frame_number++;
+            assert(som_word(actor+2)>start_x&&som_word(ram+0xE002)==200);
+            assert(trail_owner==who);
+            evade_active=0;hop_frames_left=0;
+        }
+        mocked_buttons=0;som_input_poll();
+        som_disc_init(&disciplines);memset(ram,0,SOM_WRAM_SIZE);
     }
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");

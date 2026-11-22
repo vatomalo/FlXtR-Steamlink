@@ -109,18 +109,22 @@ int main(void){
     vram[(0x7C00+16*0x11)*2+2*7+1]=0x01;                   /* tile 0x1D1 row 7 px 7: colour 2 */
     ram[0x0720+2]=0x1F;                                    /* colour 1 = red */
     ram[0x0720+4]=0x00;ram[0x0721+4]=0x7C;                 /* colour 2 = blue */
-    assert(som_bun_draw_copy((uint8_t*)frame,256,224,512,0,ram,vram,24,0)==1);
+    assert(som_bun_draw_copy((uint8_t*)frame,256,224,512,0,ram,vram,0u,24,0)==1);
     assert(frame[60][64]==som_overlay_color(0,255,0,0));
     assert(frame[60+15][64+15]==som_overlay_color(0,0,0,255));
     unsigned painted=0;
     for(unsigned y=0;y<224;y++)for(unsigned x=0;x<256;x++)painted+=frame[y][x]!=0;
     assert(painted==2);                                    /* colour 0 transparent */
     memset(frame,0,sizeof(frame));
+    ram[0x0743]=0x7C;                                      /* Girl's colour 1 = blue */
+    assert(som_bun_draw_copy((uint8_t*)frame,256,224,512,0,ram,vram,1u,24,0)==1);
+    assert(frame[60][114]==som_overlay_color(0,0,0,255)&&frame[60][64]==0);
+    memset(frame,0,sizeof(frame));
     ram[0x0803]=0x43;                                      /* horizontal flip */
-    som_bun_draw_copy((uint8_t*)frame,256,224,512,0,ram,vram,0,0);
+    som_bun_draw_copy((uint8_t*)frame,256,224,512,0,ram,vram,0u,0,0);
     assert(frame[60][40+15]==som_overlay_color(0,255,0,0)&&frame[75][40]!=0);
     memset(frame,0,sizeof(frame));
-    som_bun_draw_copy((uint8_t*)frame,256,224,512,0,ram,vram,-60,0);   /* off screen */
+    som_bun_draw_copy((uint8_t*)frame,256,224,512,0,ram,vram,0u,-60,0);   /* off screen */
     painted=0;
     for(unsigned y=0;y<224;y++)for(unsigned x=0;x<256;x++)painted+=frame[y][x]!=0;
     assert(painted==0);

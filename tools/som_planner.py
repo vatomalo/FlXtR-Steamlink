@@ -295,6 +295,7 @@ class MemoryPlanner:
         self.local_cuttable = set()
         self.previous_observation = None
         self.cut_attempts = {}
+        self.local_failed_cuts = set()  # (map, x, y) that did not cut (no database)
         self.previous_action = "none"
         self.local_signatures = set()
         # Enemy identities to avoid when no history database is used.
@@ -2019,6 +2020,14 @@ class MemoryPlanner:
             return self.history.cuttable_signatures()
         return self.local_cuttable
 
+    def _cut_failed(self, map_id, x, y):
+        """A tile already swung at CUT_ATTEMPTS times without cutting."""
+        if (map_id, x, y) in self.local_failed_cuts:
+            return True
+        if self.history is not None and hasattr(self.history, "failed_cut_tiles"):
+            return (x, y) in self.history.failed_cut_tiles(map_id)
+        return False
+
     def _cut_steps(self, context, reach=1):
         """Steps into a blocking tile that looks like grass already cut once.
 
@@ -2058,6 +2067,7 @@ class MemoryPlanner:
         if not (isinstance(rows, list) and isinstance(attrs, list) and isinstance(radius, int)):
             return []
         cuttable, blocked = self._cuttable(), self._blocked_here(context)
+        tile, map_id = context.get("actor_tile") or [0, 0], context.get("map_id")
         targets = []
         for action, (dx, dy) in STEP_OFFSETS.items():
             for distance in range(1, reach + 1):
@@ -2066,7 +2076,9 @@ class MemoryPlanner:
                     break
                 cells = attrs[row].split()
                 if (rows[row][column] in "#?" and column < len(cells) and
-                        cells[column] in cuttable):
+                        cells[column] in cuttable and
+                        not self._cut_failed(map_id, tile[0] + dx * distance,
+                                             tile[1] + dy * distance)):
                     # Next to the hero a blocked step means the cut failed;
                     # farther away the step was blocked by what lies between.
                     if distance > 1 or action not in blocked:
@@ -2089,6 +2101,11 @@ class MemoryPlanner:
         if attempts > CUT_ATTEMPTS:
             self.blocked_moves[self._stall_key(context, action)] = STALL_BLOCK_DECISIONS
             self.cut_attempts.pop(key, None)
+            # Remembered by tile, for good: a tree or stone with grass's
+            # attributes was approached again from every side (live 11-22).
+            self.local_failed_cuts.add(key)
+            if self.history is not None and hasattr(self.history, "remember_cut_failure"):
+                self.history.remember_cut_failure(*key)
             return PlannerDecision("wait", f"grass at {key[1]},{key[2]} did not cut after "
                                    f"{CUT_ATTEMPTS} attacks; avoiding it", "replan")
         return PlannerDecision("attack", f"cut grass at {key[1]},{key[2]} "

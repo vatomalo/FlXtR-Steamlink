@@ -975,6 +975,34 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(actions.count("attack"), 3)
         self.assertNotIn("step_left", planner.trusted_steps(grass))
 
+    def test_a_tile_that_did_not_cut_is_never_swung_at_again(self):
+        # Live 2026-11-22: a tree with grass's attributes was given up on
+        # after 3 attacks and then attacked again from the next decision.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "cut.sqlite")
+            history.connection.execute(
+                "INSERT INTO cuttable_signatures VALUES('03004000',5,0)")
+            planner = MemoryPlanner(history=history)
+            grass = self.grass_state("#")
+            previous, actions = "wait", []
+            for _ in range(10):
+                decision = planner.decide(grass, previous, "explore_west")
+                actions.append(decision.action)
+                previous = decision.action
+            self.assertEqual(actions.count("attack"), 3)
+            tile = grass["tile_context"]["actor_tile"]
+            failed = (tile[0] - 1, tile[1])
+            self.assertIn(failed, history.failed_cut_tiles(grass["tile_context"]["map_id"]))
+            # A fresh planner (restart, other side): no cut, no route through it.
+            again = MemoryPlanner(history=history)
+            for _ in range(6):
+                self.assertNotEqual(again.decide(grass, "wait", "explore_west").intention,
+                                    "cut_grass")
+            history.remember_world(grass)
+            self.assertEqual(history.known_cells(grass["tile_context"]["map_id"], 1)[failed],
+                             "blocked")
+            history.close()
+
     def test_history_learns_grass_and_maps_it_as_cuttable(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "grass.sqlite")

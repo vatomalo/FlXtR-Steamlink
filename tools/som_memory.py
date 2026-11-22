@@ -769,6 +769,13 @@ class ObservationHistory:
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS cuttable_signatures "
             "(attributes TEXT PRIMARY KEY, seen INTEGER NOT NULL, last_ts REAL NOT NULL)")
+        # Tiles that did not cut after the planner's attacks (2026-11-22:
+        # trees and stones share grass's attributes, 1300c85f): never cut or
+        # routed through again, whatever their signature says.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS cut_failures "
+            "(map_id INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, "
+            "fails INTEGER NOT NULL, last_ts REAL NOT NULL, PRIMARY KEY(map_id,x,y))")
         # Whip crossings seen (som_memory.detect_whip_crossing): from this
         # tile, facing `action`, a whip swing lands the hero at (to_x, to_y).
         self.connection.execute(
@@ -1042,6 +1049,7 @@ class ObservationHistory:
         terrain_rows = context.get("terrain_rows")
         proven = self.passable_signatures()
         cuttable = self.cuttable_signatures()
+        failed = self.failed_cut_tiles(context["map_id"])
         attribute_rows = context.get("attribute_rows") or []
         special = {tuple(cell["offset"]): cell.get("attributes")
                    for cell in context.get("special_cells") or []
@@ -1062,10 +1070,11 @@ class ObservationHistory:
                     kind = "open"
                 attributes = (attribute_rows[row_index].split()[column]
                               if row_index < len(attribute_rows) else None)
-                if kind in ("blocked", "conditional", "h1", "h2") and attributes in cuttable:
-                    kind = "cuttable"
                 x = (center[0] + column - radius) % width
                 y = (center[1] + row_index - radius) % height
+                if (kind in ("blocked", "conditional", "h1", "h2") and attributes in cuttable and
+                        (x, y) not in failed):
+                    kind = "cuttable"
                 self.connection.execute(
                     "INSERT INTO world_cells(map_id,layer,x,y,kind,seen,last_ts) "
                     "VALUES(?,?,?,?,?,1,?) ON CONFLICT(map_id,layer,x,y) DO UPDATE SET "
@@ -1089,6 +1098,9 @@ class ObservationHistory:
         for position in self.walked_cells(map_id):
             if cells.get(position) not in WALKABLE_KINDS:
                 cells[position] = "pass"
+        for position in self.failed_cut_tiles(map_id):      # stored before it failed
+            if cells.get(position) == "cuttable":
+                cells[position] = "blocked"
         return cells
 
     @staticmethod
@@ -1184,6 +1196,17 @@ class ObservationHistory:
     def whip_post_signatures(self):
         return {row[0] for row in self.connection.execute(
             "SELECT attributes FROM whip_post_signatures")}
+
+    def remember_cut_failure(self, map_id, x, y):
+        self.connection.execute(
+            "INSERT INTO cut_failures(map_id,x,y,fails,last_ts) VALUES(?,?,?,1,?) "
+            "ON CONFLICT(map_id,x,y) DO UPDATE SET fails=fails+1,last_ts=excluded.last_ts",
+            (map_id, x, y, time.time()))
+        self.connection.commit()
+
+    def failed_cut_tiles(self, map_id):
+        return {(x, y) for x, y in self.connection.execute(
+            "SELECT x,y FROM cut_failures WHERE map_id=?", (map_id,))}
 
     def cuttable_signatures(self):
         return {row[0] for row in self.connection.execute(

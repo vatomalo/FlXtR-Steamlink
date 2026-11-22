@@ -3627,6 +3627,11 @@ static int som_evade_start_raw(uint8_t *ram){
          * facing) turned him round: he faces the old way again after. */
         if(hero[0x010]!=facing_before)native_restore_facing=(int)facing_before;
     }
+    /* A drawn pose (tumble, forward / up-down cartwheel) plays to its end:
+     * the short move is over sooner, and the hero holds still (the D-pad is
+     * hidden while the evade runs) until the last picture. */
+    if(ukemi_draw.active&&ukemi_draw.length+1ul>evade_frames)
+        evade_frames=(unsigned)ukemi_draw.length+1u;
     hero[0x006]=hero[0x007]=0;
     evade_hp=som_word(hero+0x182);
     evade_active=1;evade_started=frame_number;evade_xp_given=0;

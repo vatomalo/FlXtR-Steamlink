@@ -98,14 +98,17 @@ static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
     SomDodge d={0u,0u,0,"",0};
     (void)weapon;
     switch(discipline){
-    case 1: case 2: case 10:           /* monk, ninja, samurai: Ukemi, 54 px tumble */
-        d.speed=3u;d.frames=18u;d.name="Ukemi";break;
-    case 0: case 9:                    /* swordsman, rogue: cartwheel, else 64 px */
-        d.speed=4u;d.frames=16u;d.name="Cartwheel";d.cartwheel=SOM_REACT_CARTWHEEL;break;
-    case 11: d.speed=3u;d.frames=18u;d.name="Evade";break;                /* 54 px back */
-    case 3: d.speed=8u;d.frames=6u;d.name="Blink step";break;            /* mage: 48 px, hidden */
-    case 12: d.speed=4u;d.frames=14u;d.name="Backflip";break;            /* hunter: 56 px back */
-    case 14: d.speed=3u;d.frames=16u;d.name="Evade";break;               /* artificer: 48 px */
+    /* Short and quick (player, 2026-11-22: 48-64 px went too far, broke
+     * the game and looked stiff): about the game's own cartwheel, 24-30 px,
+     * at 2 px a frame; a drawn pose then plays to its end in place. */
+    case 1: case 2: case 10:           /* monk, ninja, samurai: Ukemi, 28 px tumble */
+        d.speed=2u;d.frames=14u;d.name="Ukemi";break;
+    case 0: case 9:                    /* swordsman, rogue: cartwheel, else 28 px */
+        d.speed=2u;d.frames=14u;d.name="Cartwheel";d.cartwheel=SOM_REACT_CARTWHEEL;break;
+    case 11: d.speed=2u;d.frames=13u;d.name="Evade";break;                /* 26 px back */
+    case 3: d.speed=6u;d.frames=5u;d.name="Blink step";break;            /* mage: 30 px, hidden */
+    case 12: d.speed=2u;d.frames=14u;d.name="Backflip";break;            /* hunter: 28 px back */
+    case 14: d.speed=2u;d.frames=12u;d.name="Evade";break;               /* artificer: 24 px */
     default:break;
     }
     return d;

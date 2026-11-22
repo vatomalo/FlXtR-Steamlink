@@ -1560,7 +1560,7 @@ int main(void){
         mocked_buttons=0;som_input_poll();
         memset(ram+0x10000,0,0x10000);memset(ram+0x1B800,0,0x800);   /* open floor */
         ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */
-        /* Artificer A: the plain evade, 3 px x 16 frames away from the
+        /* Artificer A: the plain evade, 2 px x 12 frames away from the
          * facing, untouchable for the move plus the grace frames; A, D-pad
          * and attacks hidden. No Kawarimi on A. */
         for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
@@ -1584,18 +1584,18 @@ int main(void){
                 }else{som_hop_step();som_evade_tick();}
                 frame_number++;
             }
-            assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(hero+4)==200);
-            assert(!evade_active&&!kawarimi_log_start&&trail_until>=hop_start+16u);
+            assert(som_bun_u16(hero+2)==200-24&&som_bun_u16(hero+4)==200);
+            assert(!evade_active&&!kawarimi_log_start&&trail_until>=hop_start+12u);
             /* The camera and both layers' scroll words followed him. */
-            assert(som_bun_u16(ram+0xA8)==52&&som_bun_u16(ram+0xB0)==68&&
-                   som_bun_u16(ram+0xAC)==0xFFFFu-17u&&som_bun_u16(ram+0xB4)==306-48&&
+            assert(som_bun_u16(ram+0xA8)==100-24&&som_bun_u16(ram+0xB0)==116-24&&
+                   som_bun_u16(ram+0xAC)==30-24&&som_bun_u16(ram+0xB4)==306-24&&
                    som_bun_u16(ram+0xAA)==100);
         }
         /* At the map's left edge the camera stays put. */
         ram[0xA8]=10;ram[0xA9]=0;hero[2]=200;hero[0x010]=0x02;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(som_bun_u16(hero+2)==200-48&&som_bun_u16(ram+0xA8)==0);
+        assert(som_bun_u16(hero+2)==200-24&&som_bun_u16(ram+0xA8)==0);
         /* Rogue A off a combat map: the game has no cartwheel there, so a
          * hop of the cartwheel's own length (2 x 13 = 26 px); A held right
          * moves right. */
@@ -1697,12 +1697,12 @@ int main(void){
                 mocked_buttons=(uint16_t)(a|(forward?1u<<RETRO_DEVICE_ID_JOYPAD_DOWN:0u));
                 som_input_poll();mocked_buttons=0;som_input_poll();
                 assert(evade_active&&!cartwheel_native&&hero[0x1E5]==0xFF);
-                assert(hop_dx==0&&hop_dy==(forward?3:-3));
+                assert(hop_dx==0&&hop_dy==(forward?2:-2));
                 for(unsigned f=0;f<40u;f++){
                     som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;
                 }
                 assert(!evade_active&&hero[0x010]==0x01);
-                assert(som_bun_u16(hero+4u)==(unsigned)(200+(forward?54:-54)));
+                assert(som_bun_u16(hero+4u)==(unsigned)(200+(forward?28:-28)));
             }
             /* Left and right: the game's own cartwheel (no side somersault). */
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;
@@ -1729,7 +1729,7 @@ int main(void){
             assert(!som_handle_command("evade_sideways"));
             assert(som_handle_command("evade_right")&&evade_active);
             for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-            assert(!evade_active&&som_bun_u16(hero+2)==200+48);
+            assert(!evade_active&&som_bun_u16(hero+2)==200+24);
             hero[2]=200;hero[3]=0;hero[0x010]=0x02;
             memcpy(ram+0xA8,camera,sizeof(camera));
             disciplines.selected=keep;
@@ -1747,7 +1747,7 @@ int main(void){
             assert(evade_active&&evade_blink&&(hero[0x0E]&0x80u));
             for(unsigned f=0;f<30;f++){som_hop_step();som_evade_tick();frame_number++;}
             assert(!evade_active&&!evade_blink&&!(hero[0x0E]&0x80u));
-            assert(som_bun_u16(hero+2)==200-48);                       /* back from the facing */
+            assert(som_bun_u16(hero+2)==200-30);                       /* back from the facing */
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
             memcpy(ram+0xA8,camera,sizeof(camera));
             disciplines.selected=keep;
@@ -2041,7 +2041,7 @@ int main(void){
         hero[0x182]=100;hero[0x183]=0;hero[0x059]=1;hero[0x1F1]=25;
         som_hop_step();
         assert(evade_active&&!kawarimi_armed_until&&kawarimi_log_start);
-        assert(som_bun_u16(hero+2)==200-54&&som_bun_u16(hero+4)==200);
+        assert(som_bun_u16(hero+2)==200-28&&som_bun_u16(hero+4)==200);
         assert(kawarimi_log_x==200&&kawarimi_log_y==200);
         assert(!hero[0x059]&&!hero[0x1F1]);                   /* the hit is dropped */
         foe[0]=0;
@@ -2056,7 +2056,7 @@ int main(void){
             frame_number++;
             if(frame_number-dodge_start==20u)assert(evade_active);
         }
-        assert(!evade_active&&som_bun_u16(hero+2)==200-54);
+        assert(!evade_active&&som_bun_u16(hero+2)==200-28);
         hero[0x1F1]=7;som_hop_step();som_evade_tick();
         assert(hero[0x1F1]==7);                               /* not after the dodge */
         hero[0x1F1]=0;
@@ -2070,18 +2070,18 @@ int main(void){
         /* A hit with nobody touching fires it too: back from the facing. */
         assert(som_handle_command("kawarimi"));
         hero[0x1F1]=9;som_hop_step();
-        assert(evade_active&&!hero[0x1F1]&&som_bun_u16(hero+2)==200-54);
+        assert(evade_active&&!hero[0x1F1]&&som_bun_u16(hero+2)==200-28);
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        /* Dodge Mastery (Ninjutsu 10: rank 2, +4 frames): 66 px; off: 54. */
+        /* Dodge Mastery (Ninjutsu 10: rank 2, +4 frames): 36 px; off: 28. */
         disciplines.level[2]=10;hero[2]=200;
         assert(som_handle_command("kawarimi"));
         hero[0x1F1]=9;som_hop_step();
-        assert(som_bun_u16(hero+2)==200-66);
+        assert(som_bun_u16(hero+2)==200-36);
         for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
         perks_enabled=0;hero[2]=200;
         assert(som_handle_command("kawarimi"));
         hero[0x1F1]=9;som_hop_step();
-        assert(som_bun_u16(hero+2)==200-54);
+        assert(som_bun_u16(hero+2)==200-28);
         for(unsigned f=0;f<50;f++){som_hop_step();som_evade_tick();frame_number++;}
         perks_enabled=1;disciplines.level[2]=1;hero[0x1F1]=0;
         /* Kawarimi is a ninja skill: monk, archer, rogue and the classes

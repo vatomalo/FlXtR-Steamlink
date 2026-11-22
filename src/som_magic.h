@@ -70,7 +70,9 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
  * Necromancy, Psionics) trade their weapons for spells. B is the mage bolt
  * (src/som_mage_bolt.h): one glove jab that throws a painted ball of the
  * element of the first spell of their set, no MP, no spell cast; Y casts
- * the second spell, X the rest (tap: cast, hold: next). */
+ * the second spell, the game's own full cast with its original effect,
+ * damage and MP (heals land on the most hurt hero); X the rest (tap: cast,
+ * hold: next). */
 #define SOM_CASTER_FIRST 3u
 #define SOM_CASTER_LAST 7u
 #define SOM_CASTER_BUTTON_SPELLS 2u

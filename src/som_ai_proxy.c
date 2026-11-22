@@ -939,13 +939,9 @@ static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 /* Mage bolts (src/som_mage_bolt.h): every caster's B is a glove punch that
  * throws a painted ball of its B spell's element. */
 static SomBolt mage_bolts[SOM_BOLTS];
-/* Y (player, 2026-11-22): the class's second spell, painted. A ball spell
- * arms the next jab (until this frame) to throw a big ball of its element;
- * a heal spell heals the most hurt hero at once. Both cost SOM_MAGE_Y_MP. */
-static unsigned long mage_y_until[3];
-static int som_mage_heal(uint8_t *ram,unsigned who,unsigned cls,unsigned spell);
-#define SOM_MAGE_Y_FRAMES 30ul
-#define SOM_MAGE_Y_MP 1u
+/* Y (player, 2026-11-22): the class's second spell, the game's own cast
+ * with its original effect, damage and MP; heals go to the most hurt hero. */
+static int som_most_hurt_hero(const uint8_t *ram,int fallback);
 static uint8_t mage_swing_prev[3];
 static unsigned long mage_ally_next[3];
 /* Kawarimi: the log left standing where the hero was (world px). */
@@ -1864,25 +1860,10 @@ static void som_input_poll(void){
          * punch goes through and throws the ball, no spell, no MP. Y casts. */
         if(caster&&!caster_talk&&(current&y_bit)&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned spell=som_caster_spell(caster_cls,1u);
-            const int heal=som_bolt_heal_spell(spell);
-            /* A ball: the game sees B (the jab) and the jab throws Y's ball. */
-            if(!heal&&(mage_y_until[driver]>frame_number||(pressed&y_bit)))y_weapon_swap=1;
-            else y_weapon_blocked=1;
-            if(pressed&y_bit){
-                uint8_t *me=wram+0xE000u+0x200u*driver;
-                if(me[0x186]<SOM_MAGE_Y_MP){
-                    y_weapon_swap=0;y_weapon_blocked=1;
-                    char text[48];snprintf(text,sizeof(text),"^%s|no MP",
-                                           som_class_spell_label(caster_cls,spell));
-                    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
-                }else if(heal){
-                    if(som_mage_heal(wram,driver,caster_cls,spell))me[0x186]-=SOM_MAGE_Y_MP;
-                }else{
-                    mage_y_until[driver]=frame_number+SOM_MAGE_Y_FRAMES;
-                    fprintf(stderr,"[som-ai] CASTER %s Y: %s ball\n",som_party_names[driver],
-                            som_class_spell_label(caster_cls,spell));
-                }
-            }
+            y_weapon_blocked=1;
+            if((pressed&y_bit)&&som_cast_spell_by(wram,driver,spell))
+                fprintf(stderr,"[som-ai] CASTER %s Y: %s\n",som_party_names[driver],
+                        som_class_spell_label(caster_cls,spell));
         }
         const unsigned driver_cls=driver?som_disc_member_class(&disciplines,driver):SOM_DISCIPLINE_NONE;
         if(driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!som_disc_caster(driver_cls)&&
@@ -2938,9 +2919,9 @@ static unsigned som_mage_bolt_damage(const uint8_t *hero,unsigned cls){
     return SOM_BOLT_BASE_DAMAGE+hero[0x181]*3u/2u+
         (cls<SOM_DISCIPLINE_COUNT?disciplines.level[cls]:0u);
 }
-/* Y's heal: the hero with the lowest share of her HP (+0x182 of +0x184)
- * gets 10 + 2 x the healer's level + class level at once, and a sparkle. */
-static int som_mage_heal(uint8_t *ram,unsigned who,unsigned cls,unsigned spell){
+/* The living hero with the lowest share of her HP (+0x182 of +0x184),
+ * or fallback when nobody is hurt. */
+static int som_most_hurt_hero(const uint8_t *ram,int fallback){
     int best=-1;unsigned long best_share=0;
     for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
         const uint8_t *o=ram+0xE000u+0x200u*k;
@@ -2949,20 +2930,7 @@ static int som_mage_heal(uint8_t *ram,unsigned who,unsigned cls,unsigned spell){
         const unsigned long share=(unsigned long)hp*1000ul/max;
         if(best<0||share<best_share){best=(int)k;best_share=share;}
     }
-    if(best<0){
-        som_overlay_set(&overlay,"^Everyone is well",SOM_MESSAGE_FRAMES/3u);
-        return 0;
-    }
-    uint8_t *o=ram+0xE000u+0x200u*(unsigned)best;
-    const uint8_t *healer=ram+0xE000u+0x200u*who;
-    const unsigned amount=10u+2u*healer[0x181]+(cls<SOM_DISCIPLINE_COUNT?disciplines.level[cls]:0u);
-    const unsigned hp=som_word(o+0x182),max=som_word(o+0x184);
-    som_put_word(o+0x182,(uint16_t)(hp+amount>max?max:hp+amount));
-    som_bolt_sparkle(mage_bolts,who,som_spell_element(spell),(int)som_word(o+2),(int)som_word(o+4),
-                     som_word(ram+0xDC)&0x1FFu,frame_number);
-    fprintf(stderr,"[som-ai] CASTER %s Y: %s heals %s +%u\n",som_party_names[who],
-            som_class_spell_label(cls,spell),som_party_names[best],amount);
-    return 1;
+    return best<0?fallback:best;
 }
 static void som_mage_bolt_frame(uint8_t *ram,int after){
     if(!ram)return;
@@ -2987,21 +2955,12 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
         }
         const int swing=hero[0x1C]==0x20u&&!hero[0x60];
         if(swing&&mage_swing_prev[who]!=0x20u){
-            /* Y armed this jab: the class's second spell, a big ball. */
-            const int y_ball=mage_y_until[who]>frame_number&&hero[0x186]>=SOM_MAGE_Y_MP;
-            mage_y_until[who]=0;
-            const unsigned spell=som_caster_spell(cls,y_ball?1u:0u);
-            const unsigned element=som_spell_element(spell);
-            unsigned damage=som_mage_bolt_damage(hero,cls);
-            if(y_ball)damage=damage*3u/2u;
-            const int fired=som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),
-                                          (int)som_word(hero+4),hero[0x10],damage,map,frame_number);
-            if(fired){
-                mage_bolts[fired-1].big=y_ball;
-                if(y_ball)hero[0x186]-=SOM_MAGE_Y_MP;
-                fprintf(stderr,"[som-ai] MAGE BOLT %s %s%s (%u)\n",som_party_names[who],
-                        som_class_spell_label(cls,spell),y_ball?" (Y)":"",damage);
-            }
+            const unsigned spell=som_caster_spell(cls,0u);
+            const unsigned element=som_spell_element(spell),damage=som_mage_bolt_damage(hero,cls);
+            if(som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),(int)som_word(hero+4),
+                             hero[0x10],damage,map,frame_number))
+                fprintf(stderr,"[som-ai] MAGE BOLT %s %s (%u)\n",som_party_names[who],
+                        som_class_spell_label(cls,spell),damage);
         }
         mage_swing_prev[who]=hero[0x1C];
     }
@@ -3031,11 +2990,16 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
     const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
     /* 0x81 hostile: monster slots; 0x01 ally and 0x00 self: the caster
      * herself (hero slot who, target who+1, as the ring's single-ally choice). */
-    if(!row||(row[8]!=0x81u&&row[8]!=0x01u&&row[8]!=0x00u)){
+    /* The 0x40 / 0x10 bits (Defender, Fire Bouquet, Lunar Boost 0x41, Moon
+     * Energy 0x51, Burst 0xC1, Dispel 0xD1 in Turbo) read as "may also take
+     * everyone": cast on one, as the ring's default single choice
+     * (unverified live, 2026-11-22). Remedy's 0xE0 stays refused. */
+    const unsigned kind=!row?0xFFu:row[8]==0x00u?0x00u:(unsigned)(row[8]&~0x50u);
+    if(!row||(kind!=0x81u&&kind!=0x01u&&kind!=0x00u)||(kind==0x00u&&row[8])){
         fprintf(stderr,"[som-ai] CAST refused: spell %#04x has unsupported targets\n",spell);
         return 0;
     }
-    const int hostile=row[8]==0x81u;
+    const int hostile=kind==0x81u;
     char message[64];
     const unsigned cost=row[15];
     if(hero[0x186]<cost){
@@ -3045,7 +3009,10 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
         fprintf(stderr,"[som-ai] CAST refused: MP %u < %u\n",(unsigned)hero[0x186],cost);
         return 0;
     }
-    const int target=hostile?som_cast_target(ram,who):(int)who;
+    /* Heals go to the hero with the lowest share of her HP (the caster
+     * when nobody is hurt); other ally spells to the caster. */
+    const int target=hostile?som_cast_target(ram,who):
+        som_bolt_heal_spell(spell)?som_most_hurt_hero(ram,(int)who):(int)who;
     if(target<0){
         snprintf(message,sizeof(message),"^%s: no target",som_spell_name(spell));
         som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);

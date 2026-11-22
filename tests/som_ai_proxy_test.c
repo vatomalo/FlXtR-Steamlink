@@ -2501,20 +2501,13 @@ int main(void){
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
             mocked_buttons=0;som_input_poll();
             rom[0x102AD0+0x06*64+8]=0x81;rom[0x102AD0+0x06*64+15]=2;     /* Freeze */
-            /* Y: her second spell painted (2026-11-22). Freeze is a ball: no
-             * game cast, the game sees B (her jab), and the jab is armed. */
+            /* Y: her second spell, the game's own full cast (2026-11-22:
+             * original effects and values; no quick skip). */
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
-            assert(girl[0x170]==0&&y_weapon_swap&&hero[0x170]==0);
-            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+            assert(girl[0x170]==som_caster_spell(3,1)&&y_weapon_blocked&&hero[0x170]==0);
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
-            assert(mage_y_until[1]>frame_number&&!quick_cast_until[1]);
-            mage_y_until[1]=0;
+            assert(!quick_cast_until[1]);
             mocked_buttons=0;som_input_poll();
-            /* With no MP, Y is nothing. */
-            girl[0x186]=0;
-            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);som_input_poll();
-            assert(!y_weapon_swap&&y_weapon_blocked&&!mage_y_until[1]);
-            mocked_buttons=0;som_input_poll();girl[0x186]=9;
             /* X follows pad 1 even while the Boy is casting. */
             girl[0x1C]=girl[0x60]=0;
             hero[0x1C]=0x40;hero[0x60]=0x20;
@@ -2586,6 +2579,22 @@ int main(void){
         }
         rom[0x102AD0+0x08*64+8]=0x40;           /* undecoded target kind */
         assert(!som_cast_spell(ram,0x08)&&hero[0x170]==0);
+        /* A heal is cast on the most hurt hero; 0x41 (may take all) is
+         * cast on one, like the ring's default. */
+        {
+            uint8_t *g=ram+0xE200;uint8_t keep_g[0x200];memcpy(keep_g,g,0x200);
+            const uint8_t keep_s0=ram[0xE400];ram[0xE400]=0;
+            const uint8_t keep_mp=hero[0x186];hero[0x186]=20;
+            g[0]=1;som_put_word(g+0x182,10);som_put_word(g+0x184,100);
+            rom[0x102AD0+0x0B*64+8]=0x01;rom[0x102AD0+0x0B*64+15]=3;     /* Cure Water */
+            hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
+            assert(som_cast_spell(ram,0x0B)&&hero[0x170]==0x0B&&hero[0x178]==2);   /* the girl */
+            hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
+            rom[0x102AD0+0x05*64+8]=0x41;rom[0x102AD0+0x05*64+15]=2;     /* Defender */
+            assert(som_cast_spell(ram,0x05)&&hero[0x178]==1);              /* himself */
+            hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;hero[0x186]=keep_mp;
+            memcpy(g,keep_g,0x200);ram[0xE400]=keep_s0;
+        }
         /* Casters trade weapons for spells: Mage B = Fire Ball, Y = Freeze,
          * X starts at the third spell; B without the MP is nothing (the glove
          * is only for looks: casters never punch). */
@@ -2602,9 +2611,8 @@ int main(void){
             hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
             som_input_poll();
-            assert(hero[0x170]==0&&mage_y_until[0]>frame_number);    /* Y: Freeze, painted */
+            assert(hero[0x170]==0x06);                               /* Y: Freeze, cast */
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
-            mage_y_until[0]=0;
             mocked_buttons=0;som_input_poll();
             assert(som_current_spell()==som_class_spell(3,2));       /* X: the rest */
             /* Spell sets (R1): set II puts spells 3 and 4 on B and Y, X goes on
@@ -2657,31 +2665,18 @@ int main(void){
                 assert(m[0x1F1]==som_mage_bolt_damage(hero,3)&&mage_bolts[0].burst);
                 frame_number+=SOM_BOLT_BURST_FRAMES;som_mage_bolt_frame(ram,1);
                 assert(!som_bolts_active(mage_bolts));
-                /* A jab Y armed throws the second spell, big, for 1 MP. */
-                {
-                    hero[0x01C]=0;som_mage_bolt_frame(ram,1);
-                    hero[0x186]=5;mage_y_until[0]=frame_number+5u;m[0x1F1]=0;
-                    hero[0x01C]=0x20;hero[0x011]=SOM_GLOVE_JAB;som_mage_bolt_frame(ram,1);
-                    int got=-1;for(int i=0;i<(int)SOM_BOLTS;i++)if(mage_bolts[i].active)got=i;
-                    assert(got>=0&&mage_bolts[got].big&&hero[0x186]==4&&!mage_y_until[0]);
-                    assert(mage_bolts[got].element==som_spell_element(som_caster_spell(3,1)));
-                    assert(mage_bolts[got].damage==som_mage_bolt_damage(hero,3)*3u/2u);
-                    memset(mage_bolts,0,sizeof(mage_bolts));hero[0x01C]=0;
-                    som_mage_bolt_frame(ram,1);
-                }
-                /* A heal Y: the most hurt hero gets HP and a sparkle. */
+                /* Heals go to the most hurt hero (the caster when nobody is). */
                 {
                     uint8_t *g=ram+0xE200;uint8_t keep_g[0x200];memcpy(keep_g,g,0x200);
                     const uint8_t keep_s0=ram[0xE400];ram[0xE400]=0;       /* sprite away */
                     g[0]=1;som_put_word(g+0x182,10);som_put_word(g+0x184,100);
                     som_put_word(hero+0x184,som_word(hero+0x182)+1u);
-                    assert(som_mage_heal(ram,0,4,0x0B));
-                    assert(som_word(g+0x182)==10u+10u+2u*hero[0x181]+disciplines.level[4]);   /* 10 + heal */
-                    assert(som_bolts_active(mage_bolts));
-                    memset(mage_bolts,0,sizeof(mage_bolts));memcpy(g,keep_g,0x200);
-                    ram[0xE400]=keep_s0;
-                    assert(som_bolt_heal_spell(som_caster_spell(4,1)));     /* Healing Prayer */
-                    assert(!som_bolt_heal_spell(som_caster_spell(15,1)));   /* Mind Sleep: a ball */
+                    assert(som_most_hurt_hero(ram,0)==1);
+                    som_put_word(g+0x182,100);assert(som_most_hurt_hero(ram,2)==0);  /* the boy */
+                    som_put_word(hero+0x184,som_word(hero+0x182));
+                    assert(som_most_hurt_hero(ram,2)==2);                  /* nobody hurt */
+                    memcpy(g,keep_g,0x200);ram[0xE400]=keep_s0;
+                    assert(som_bolt_heal_spell(som_caster_spell(4,1)));     /* Cure Water */
                 }
                 /* Psionics' ball is Shadow (Dark Force, Shadow Bolt). */
                 assert(som_spell_element(som_caster_spell(SOM_DISC_PSIONICS,0))==6u);

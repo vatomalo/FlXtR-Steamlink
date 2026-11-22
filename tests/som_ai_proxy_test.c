@@ -2498,6 +2498,30 @@ int main(void){
             memcpy(girl,keep_girl,0x200);memcpy(spr,keep_spr,0x200);
             memcpy(ram+0x3000,keep_buf,sizeof(keep_buf));
         }
+        {   /* Quick cast: the pose jumps to its closing "83 FD", the spirit to
+             * its FF (bytes as in the ROM: pose D1:5D4E, Fire Ball's spirit
+             * D1:85E0); a pointer elsewhere is never moved. */
+            static const uint8_t pose[]={0x8A,0xA7,0x1C,0xB5,0x1A,0xB5,0xF9,0x2D,0x00,
+                0x18,0x7E,0x18,0x85,0x83,0xFD,0x1B,0x2F,0x1B,0x2F,0x1A,0x26,0xFF};
+            static const uint8_t spirit[]={0xF9,0x2E,0x00,0,0,0,1,0,2,0,3,0,4,0,5,0,6,0,7,
+                0,8,0,9,0,10,0,11,0xFF};
+            memcpy(rom+0x115D4E,pose,sizeof(pose));memcpy(rom+0x1185E0,spirit,sizeof(spirit));
+            uint8_t keep_hero[0x200];memcpy(keep_hero,hero,0x200);
+            hero[0x1C]=0x40;hero[0x60]=0x20;hero[0x11]=0x94;hero[0x12]=3;
+            hero[0x16]=0x4F;hero[0x17]=0x5D;                    /* after 8A */
+            quick_cast_until[0]=frame_number+10u;
+            som_quick_cast_frame(ram);
+            assert(som_word(hero+0x16)==0x5D5Bu&&hero[0x12]==0);  /* at the 83 */
+            som_quick_cast_frame(ram);assert(som_word(hero+0x16)==0x5D5Bu);
+            hero[0x60]=0x80;hero[0xFC]=0xE0;hero[0xFD]=0x85;hero[0x16]=0xE3;hero[0x17]=0x85;
+            som_quick_cast_frame(ram);
+            assert(som_word(hero+0x16)==0x85E0+sizeof(spirit)-1u&&!quick_cast_until[0]);
+            /* A stale pointer (no 83 before an FD): left alone. */
+            rom[0x115D5B]=0x18;
+            hero[0x60]=0x20;hero[0x16]=0x4F;hero[0x17]=0x5D;quick_cast_until[0]=frame_number+10u;
+            som_quick_cast_frame(ram);assert(som_word(hero+0x16)==0x5D4F);
+            quick_cast_until[0]=0;memcpy(hero,keep_hero,0x200);
+        }
         rom[0x102AD0+0x08*64+8]=0x40;           /* undecoded target kind */
         assert(!som_cast_spell(ram,0x08)&&hero[0x170]==0);
         /* Casters trade weapons for spells: Mage B = Fire Ball, Y = Freeze,

@@ -774,6 +774,8 @@ static int som_cast_spell(uint8_t *ram,unsigned spell);
 static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell);
 static int som_spell_affordable(const uint8_t *ram,unsigned spell);
 static int som_spell_affordable_by(const uint8_t *ram,unsigned who,unsigned spell);
+#define SOM_QUICK_CAST_FRAMES 240ul      /* quick cast: how long the skip may wait */
+static unsigned long quick_cast_until[3];   /* per hero: 0 none */
 #define SOM_SPELL_FIRE_BALL 0x0Cu
 /* X casts the current spell of the chosen discipline (som_magic.h); holding
  * X steps to the next one. One cursor per discipline (+1: no discipline). */
@@ -1808,7 +1810,8 @@ static void som_input_poll(void){
             }else{
                 if(which)y_weapon_blocked=1;else b_weapon_blocked=1;
                 if(pressed&(which?y_bit:b_bit)){
-                    if(som_cast_spell_by(wram,driver,spell))
+                    if(som_cast_spell_by(wram,driver,spell)&&
+                       (quick_cast_until[driver]=frame_number+SOM_QUICK_CAST_FRAMES))
                         fprintf(stderr,"[som-ai] CASTER %s %s: %s\n",som_party_names[driver],
                                 which?"Y":"B",som_class_spell_label(caster_cls,spell));
                 }
@@ -2732,6 +2735,75 @@ static int som_spell_affordable_by(const uint8_t *ram,unsigned who,unsigned spel
 }
 static int som_spell_affordable(const uint8_t *ram,unsigned spell){
     return som_spell_affordable_by(ram,0u,spell);
+}
+/* Quick cast (player, 2026-11-22: "a mage casts Fire Ball without the
+ * precasting"): a class's B/Y spell skips the pose and spark (frames 0-59)
+ * and the spirit's pictures (60 .. spell start), so the spell starts a few
+ * frames after the press. The game still does every step itself; the
+ * proxy only moves the caster's animation script pointer (+0x16, bank
+ * $D1; +0x12 = ticks left of the step) past them (som-decomp
+ * summon-cast.md 3, 9: the pose holds on op FD, which starts the spirit
+ * with +0x60 = 0x20; the spirit script, +0xFC, ends in FF and then the
+ * spell starts). A skip is made only when the ROM bytes parse as those
+ * scripts; anything else leaves the ordinary cast running. */
+/* Where the cast pose's closing "83 FD" is from ptr on (bank $D1; the 83,
+ * restore the colour set, still runs), or 0: only the steps and operations
+ * the pose is known to use (8A, A7, 82-87, F9 id p), and FD must follow 83,
+ * so a stale pointer into another animation is never moved. */
+static unsigned som_cast_pose_fd(unsigned ptr){
+    const uint8_t *b=som_rom_at(0xD10000u|ptr,64u);
+    if(!b||ptr>0xFFC0u)return 0;
+    unsigned last=64u;                          /* the token before this one */
+    for(unsigned i=0;i<64u;){
+        const uint8_t op=b[i];
+        if(op==0xFDu)return last<64u&&b[last]==0x83u?ptr+last:0u;
+        last=i;
+        if(op<0x80u){i+=2u;continue;}
+        if(op==0xF9u){i+=3u;continue;}
+        if(op==0x8Au||op==0xA7u||(op>=0x82u&&op<=0x87u)){i++;continue;}
+        return 0;
+    }
+    return 0;
+}
+/* The FF that ends the spirit script at base (F9 id p, then steps), or 0. */
+static unsigned som_cast_spirit_end(unsigned base){
+    const uint8_t *b=som_rom_at(0xD10000u|base,64u);
+    if(!b||base>0xFFC0u)return 0;
+    for(unsigned i=0;i<64u;){
+        const uint8_t op=b[i];
+        if(op<0x80u){i+=2u;continue;}
+        if(op==0xFFu)return base+i;
+        if(op==0xF9u){i+=3u;continue;}
+        return 0;
+    }
+    return 0;
+}
+static void som_quick_cast_frame(uint8_t *ram){
+    if(!ram)return;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        if(!quick_cast_until[who])continue;
+        uint8_t *hero=ram+0xE000u+0x200u*who;
+        if(frame_number>quick_cast_until[who]||hero[0x1C]!=0x40u||!hero[0x60]){
+            quick_cast_until[who]=0;continue;               /* cast over (or never began) */
+        }
+        const unsigned ptr=som_word(hero+0x16);
+        if(hero[0x60]==0x20u&&hero[0x11]==0x94u){           /* pose and spark */
+            const unsigned fd=som_cast_pose_fd(ptr);
+            if(fd&&fd!=ptr){
+                hero[0x16]=(uint8_t)fd;hero[0x17]=(uint8_t)(fd>>8);hero[0x12]=0;
+                fprintf(stderr,"[som-ai] QUICK CAST %s: pose skipped (%04X -> %04X)\n",
+                        som_party_names[who],ptr,fd);
+            }
+        }else if(hero[0x60]==0x80u){                        /* the spirit */
+            const unsigned base=som_word(hero+0xFC),end=som_cast_spirit_end(base);
+            if(end&&ptr>=base&&ptr<end){
+                hero[0x16]=(uint8_t)end;hero[0x17]=(uint8_t)(end>>8);hero[0x12]=0;
+                fprintf(stderr,"[som-ai] QUICK CAST %s: spirit skipped (%04X -> %04X)\n",
+                        som_party_names[who],ptr,end);
+            }
+            quick_cast_until[who]=0;                        /* one try: then the game's */
+        }
+    }
 }
 static int som_cast_spell(uint8_t *ram,unsigned spell){return som_cast_spell_by(ram,0u,spell);}
 /* who: the caster, 0 the boy, 1 the girl, 2 the sprite. The three heroes run
@@ -6822,6 +6894,7 @@ RETRO_API void retro_run(void){
     if(test_enabled&&on_turbo){
         som_class_supply_frame();
         som_ally_equip_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        som_quick_cast_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     }
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){

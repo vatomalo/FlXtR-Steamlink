@@ -210,6 +210,20 @@ static SomDisciplines disciplines;
 #define SOM_SPRITE_CLOTHES 0x7E00u
 static const uint16_t som_member_clothes[SOM_PARTY_MEMBERS]={
     SOM_HERO_CLOTHES,SOM_GIRL_CLOTHES,SOM_SPRITE_CLOTHES};
+/* The girl's hair (player, 2026-11-22): black, a dark ramp with a cool
+ * sheen over her colours 2-4 (darkest to lightest; live WRAM 2026-11-22
+ * shows her orange hair there: 176,56,24 / 216,56,0 / 240,104,16). SNES
+ * BGR555. */
+#define SOM_GIRL_HAIR_FIRST 2u
+static const uint16_t som_girl_hair[3]={
+    (5u<<10)|(3u<<5)|3u,(9u<<10)|(6u<<5)|6u,(14u<<10)|(10u<<5)|10u};
+static void som_member_hair(uint8_t *pal,unsigned who){
+    if(who!=1u)return;
+    for(unsigned i=0;i<3u;i++){
+        pal[2u*(SOM_GIRL_HAIR_FIRST+i)]=(uint8_t)(som_girl_hair[i]&0xFFu);
+        pal[2u*(SOM_GIRL_HAIR_FIRST+i)+1u]=(uint8_t)(som_girl_hair[i]>>8);
+    }
+}
 static uint8_t member_pal_orig[SOM_PARTY_MEMBERS][32],member_pal_written[SOM_PARTY_MEMBERS][32];
 static int member_pal_have[SOM_PARTY_MEMBERS];
 static unsigned member_pal_addr[SOM_PARTY_MEMBERS];
@@ -270,7 +284,7 @@ static void som_member_palette_frame(uint8_t *ram,unsigned who){
     if(member_pal_have[who]&&addr!=member_pal_addr[who])member_pal_have[who]=0;
     uint8_t *working=ram+0x0700u+pal*32u;
     const int field_play=ram[0xE4]==1&&ram[0xE6]==0x0F;
-    if(profile==SOM_PAL_ORIGINAL){
+    if(profile==SOM_PAL_ORIGINAL&&who!=1u){     /* the girl still gets her hair */
         if(member_pal_have[who]&&!memcmp(current,written,32)){
             memcpy(current,orig,32);
             if(!memcmp(working,written,32))memcpy(working,orig,32);
@@ -287,12 +301,14 @@ static void som_member_palette_frame(uint8_t *ram,unsigned who){
     }
     uint8_t tinted[32];
     memcpy(tinted,orig,32);
-    som_pal_apply(tinted,profile);
-    /* Clothes only: outline, hair and skin keep their colours. */
+    if(profile!=SOM_PAL_ORIGINAL)som_pal_apply(tinted,profile);
+    /* Clothes only: outline, hair and skin keep their colours (the girl's
+     * hair is black). */
     uint8_t dressed[32];
     memcpy(dressed,orig,32);
     for(unsigned i=0;i<16u;i++)
         if(som_member_clothes[who]&(1u<<i)){dressed[2u*i]=tinted[2u*i];dressed[2u*i+1u]=tinted[2u*i+1u];}
+    som_member_hair(dressed,who);
     memcpy(current,dressed,32);
     /* The game works on (and sends to the screen) a second buffer,
      * 7E:0700 + palette*32 (live trace 2026-11-14: hero palette 1 at 7E:0720
@@ -750,6 +766,7 @@ static uint8_t xp_spell_species;
 static unsigned long xp_spell_frame;
 static int som_equip_weapon(uint8_t *ram,unsigned type);
 static int som_equip_weapon_direct(uint8_t *ram,unsigned type);
+static int som_equip_ally_weapon(uint8_t *ram,unsigned who,unsigned type);
 #define SOM_EQUIP_OK 1
 #define SOM_EQUIP_BUSY 0                /* hero mid-action: retry later */
 #define SOM_EQUIP_REFUSED (-1)          /* will not work: use the ring */
@@ -1189,9 +1206,32 @@ static void som_party_class_saved(void){
             cls<SOM_DISCIPLINE_COUNT?som_discipline_names[cls]:"none");
 }
 static void som_class_selected(void);
+/* Who the player drives (0 boy, 1 girl, 2 sprite): the party member whose
+ * controller binding (7E:00D9/DA/DB, som-decomp find_actor_controller_binding
+ * C1:DF0A) holds pad 1 (bit 0). Select moves it; unreadable memory: the boy. */
+static unsigned som_pad1_member(void){
+    if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return 0;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    if(!ram)return 0;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)if(ram[0xD9u+who]&1u)return who;
+    return 0;
+}
 static void som_class_cycle(int dir){
-    const unsigned n=SOM_DISCIPLINE_COUNT,cur=disciplines.selected;
+    const unsigned who=som_pad1_member();
+    const unsigned n=SOM_DISCIPLINE_COUNT,cur=som_disc_member_class(&disciplines,who);
     const unsigned next=cur>=n?(dir>0?0u:n-1u):(cur+n+(unsigned)(dir>0?1:n-1u))%n;
+    if(who){                        /* the girl or the sprite: her own class */
+        disciplines.party[who-1u]=(uint8_t)next;disciplines.who=(uint8_t)who;
+        som_party_class_saved();
+        char text[64];
+        snprintf(text,sizeof(text),"^%s %s|Lv%u  L2+R1 next  L2+L1 back",
+                 som_party_names[who],som_discipline_titles[next],(unsigned)disciplines.level[next]);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] PARTY %s class=%u by L2+%s\n",som_party_names[who],next,
+                dir>0?"R1":"L1");
+        return;
+    }
     disciplines.selected=(uint8_t)next;
     som_disc_save();
     som_class_selected();
@@ -1268,7 +1308,7 @@ static unsigned som_caster_set(unsigned cls){
     return cls<SOM_DISCIPLINE_COUNT?(styles.selected[cls]+2u)%SOM_STYLES_PER_CLASS:0u;
 }
 static int style_b_hidden,throw_active;
-static void som_style_cycle(int to);
+static void som_style_cycle(int to,unsigned who);
 static void som_style_give(unsigned species);
 static const char *const som_weapon_types[8];
 static int som_throw_back_pressed(const uint8_t *ram,uint16_t pressed);
@@ -1732,8 +1772,8 @@ static void som_input_poll(void){
             som_lock_toggle(wram); /* immediate L1 tap, no B/Y dependency */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (pressed&r1_bit)&&!(current&(l2_bit|r2)))
-            som_style_cycle(-1);
-        if(style_b_hidden&&(pressed&b_bit))som_style_cycle(-1);
+            som_style_cycle(-1,som_pad1_member());
+        if(style_b_hidden&&(pressed&b_bit))som_style_cycle(-1,som_pad1_member());
         if(style_b_hidden)b_weapon_blocked=1;
         /* Samurai's throw: R2 (block) + D-pad away from the facing. */
         if(wram&&disciplines.selected==SOM_DISC_BUSHIDO&&!ring_ai_enabled&&
@@ -1743,7 +1783,10 @@ static void som_input_poll(void){
         /* Casters: B casts the first spell of the class, Y the second; the
          * game sees neither. Their glove is only for looks (player,
          * 2026-11-20): B with too little MP is nothing, never a punch. */
-        const int caster=wram&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
+        /* Select gave pad 1 to the girl or the sprite: B/Y are her class's
+         * weapons (the boy's casting, chains and styles stay his). */
+        const unsigned driver=wram?som_pad1_member():0u;
+        const int caster=wram&&!driver&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
             som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines&&
             !native_ring;
         if(wram)som_monk_glove(wram);
@@ -1764,7 +1807,21 @@ static void som_input_poll(void){
                 }
             }
         }
-        if(wram&&!caster&&!style_b_hidden&&!native_ring&&(current&(y_bit|b_bit))&&
+        const unsigned driver_cls=driver?som_disc_member_class(&disciplines,driver):SOM_DISCIPLINE_NONE;
+        if(driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!som_disc_caster(driver_cls)&&
+           !ring_ai_enabled&&!som_manual_disciplines&&!native_ring&&(current&(y_bit|b_bit))&&
+           !(current&(l2_bit|r2))&&!special_suppress){
+            const unsigned which=(current&y_bit)?1u:0u;
+            unsigned want=som_disc_weapons[driver_cls][which];
+            const SomWeaponStyle *st=which?NULL:som_style_of(&styles,driver_cls,NULL);
+            if(st)want=st->weapon;                       /* her style's weapon */
+            const uint8_t *held=wram+0xE000u+0x200u*driver;
+            const int result=held[0x1E4]==want?SOM_EQUIP_OK:som_equip_ally_weapon(wram,driver,want);
+            if(result==SOM_EQUIP_OK)y_weapon_swap=which;
+            else if(which)y_weapon_blocked=1;            /* never the wrong weapon on Y */
+            else if(result==SOM_EQUIP_BUSY)b_weapon_blocked=1;
+        }
+        if(wram&&!driver&&!caster&&!style_b_hidden&&!native_ring&&(current&(y_bit|b_bit))&&
            !(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u; /* Y: secondary, B: primary */
             unsigned want=som_disc_weapons[disciplines.selected][which];
@@ -4249,7 +4306,9 @@ static void som_ally_equip_frame(uint8_t *ram){
         const unsigned cls=som_disc_member_class(&disciplines,who);
         if(cls>=SOM_DISCIPLINE_COUNT){ally_equip_pending&=~(1u<<who);continue;}
         if(o[0]!=1||!(o[0x184]|o[0x185]))continue;          /* not joined yet: later */
-        const unsigned type=som_disc_weapons[cls][0];
+        unsigned type=som_disc_weapons[cls][0];
+        const SomWeaponStyle *st=som_disc_caster(cls)?NULL:som_style_of(&styles,cls,NULL);
+        if(st)type=st->weapon;                  /* her style's weapon (Kusarigama: whip) */
         if(ram[0xCC54u+type]==0xFF){
             ram[0xCC54u+type]=0;
             fprintf(stderr,"[som-ai] CLASS granted missing %s tier 0 (%s)\n",
@@ -4367,9 +4426,12 @@ static const SomWeaponStyle *som_style_held(const uint8_t *ram,unsigned *index){
     const SomWeaponStyle *st=som_style_of(&styles,disciplines.selected,index);
     return st&&ram[0xE1E4]==st->weapon?st:NULL;
 }
-static void som_style_cycle(int to){
-    const unsigned cls=disciplines.selected;
+/* who: the hero whose class style turns (the player's buttons: the one on pad 1). */
+static void som_style_cycle(int to,unsigned who){
+    if(who>=SOM_PARTY_MEMBERS)who=0;
+    const unsigned cls=som_disc_member_class(&disciplines,who);
     if(cls>=SOM_DISCIPLINE_COUNT)return;
+    if(who){ally_equip_pending|=1u<<who;ally_equip_tried=0;}   /* her style's weapon */
     styles.selected[cls]=(uint8_t)(to>=0?(unsigned)to%SOM_STYLES_PER_CLASS:
                                    (styles.selected[cls]+1u)%SOM_STYLES_PER_CLASS);
     unsigned index;
@@ -4379,11 +4441,12 @@ static void som_style_cycle(int to){
         snprintf(text,sizeof(text),"^%s|B %s Y %s",st->name,
                  som_class_spell_label(cls,som_caster_spell(cls,0)),
                  som_class_spell_label(cls,som_caster_spell(cls,1)));
-    else snprintf(text,sizeof(text),"^%s|Lv%u %s",st->name,(unsigned)styles.level[index],
+    else snprintf(text,sizeof(text),"^%s%s%s|Lv%u %s",who?som_party_names[who]:"",who?" ":"",
+             st->name,(unsigned)styles.level[index],
              st->speed_pct>100u?"fast":st->reach_bonus>0||st->power_pct>100u?"heavy":"balanced");
     som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
-    fprintf(stderr,"[som-ai] STYLE %s: %s Lv%u (speed %u%%, power %u%%, reach +%d)\n",
-            som_discipline_names[cls],st->name,(unsigned)styles.level[index],
+    fprintf(stderr,"[som-ai] STYLE %s %s: %s Lv%u (speed %u%%, power %u%%, reach +%d)\n",
+            som_party_names[who],som_discipline_names[cls],st->name,(unsigned)styles.level[index],
             (unsigned)st->speed_pct,(unsigned)st->power_pct,(int)st->reach_bonus);
     som_styles_save();
 }
@@ -5303,9 +5366,9 @@ static int som_handle_command(const char *command){
      * balanced, heavy). throw: Samurai's grab and throw (AI). */
     if(!strncmp(command,"style_",6)){
         if(disciplines.selected>=SOM_DISCIPLINE_COUNT)return 0;
-        if(!strcmp(command+6,"next")){som_style_cycle(-1);return 1;}
+        if(!strcmp(command+6,"next")){som_style_cycle(-1,0);return 1;}
         if(command[6]>='0'&&command[6]<'0'+(int)SOM_STYLES_PER_CLASS&&!command[7]){
-            som_style_cycle(command[6]-'0');return 1;
+            som_style_cycle(command[6]-'0',0);return 1;
         }
         return 0;
     }

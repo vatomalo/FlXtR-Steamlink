@@ -247,8 +247,12 @@ static void som_disc_save(void){
     for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++)
         ok=fprintf(out," %u %lu",(unsigned)disciplines.level[i],
                    (unsigned long)disciplines.experience[i])>0;
-    ok=ok&&fprintf(out," p %u %u\n",(unsigned)disciplines.party[0],
+    ok=ok&&fprintf(out," p %u %u",(unsigned)disciplines.party[0],
                    (unsigned)disciplines.party[1])>0;
+    ok=ok&&fprintf(out," o")>0;           /* the player's class order */
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT&&ok;i++)
+        ok=fprintf(out," %u",(unsigned)disciplines.order[i])>0;
+    ok=ok&&fprintf(out,"\n")>0;
     if(fclose(out)!=0)ok=0;
     if(ok)rename(temp,disc_file);else unlink(temp);
 }
@@ -272,6 +276,18 @@ static void som_disc_load(void){
     if(ok&&fscanf(in," p %u %u",&girl,&sprite)==2){
         if(girl<SOM_DISCIPLINE_COUNT||girl==SOM_DISCIPLINE_NONE)loaded.party[0]=(uint8_t)girl;
         if(sprite<SOM_DISCIPLINE_COUNT||sprite==SOM_DISCIPLINE_NONE)loaded.party[1]=(uint8_t)sprite;
+        /* The class order (files before 2026-11-22 have none: 0..15). */
+        uint8_t order[SOM_DISCIPLINE_COUNT];unsigned got=0;
+        char tag=0;
+        if(fscanf(in," %c",&tag)==1&&tag=='o'){
+            for(;got<SOM_DISCIPLINE_COUNT;got++){
+                unsigned v=0;
+                if(fscanf(in," %u",&v)!=1||v>=SOM_DISCIPLINE_COUNT)break;
+                order[got]=(uint8_t)v;
+            }
+        }
+        if(got==SOM_DISCIPLINE_COUNT&&som_disc_order_valid(order))
+            memcpy(loaded.order,order,sizeof(order));
     }
     fclose(in);
     if(!ok){fprintf(stderr,"[som-ai] DISCIPLINES file unreadable; starting fresh\n");return;}
@@ -341,6 +357,11 @@ static int som_manual_disciplines;
 /* After the menu closes, the game sees no button until all are let go (the
  * closing A must not also close the ring under it). */
 static int menu_hold_until_release,menu_was_open;
+/* Start in the field: the game sees Y (open_ring) for this many frames and
+ * no Start while it is held. */
+#define SOM_START_RING_FRAMES 3ul
+static int start_ring_held;
+static unsigned long start_ring_until;
 #define SOM_RING_PARTY_ENTRY 4u     /* Controller Settings */
 #define SOM_RING_CONFIG_ENTRIES 6u
 static int som_ring_open_idle(const uint8_t *ram){
@@ -1248,8 +1269,9 @@ static unsigned som_pad1_member(void){
 }
 static void som_class_cycle(int dir){
     const unsigned who=som_pad1_member();
-    const unsigned n=SOM_DISCIPLINE_COUNT,cur=som_disc_member_class(&disciplines,who);
-    const unsigned next=cur>=n?(dir>0?0u:n-1u):(cur+n+(unsigned)(dir>0?1:n-1u))%n;
+    /* Through the player's class order (the menu's Y moves a class). */
+    const unsigned cur=som_disc_member_class(&disciplines,who);
+    const unsigned next=som_disc_order_step(&disciplines,cur,dir);
     if(who){                        /* the girl or the sprite: her own class */
         disciplines.party[who-1u]=(uint8_t)next;disciplines.who=(uint8_t)who;
         som_party_class_saved();
@@ -1693,6 +1715,14 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
             actual=(som_manual_pad_layout(raw)&(1u<<id))?1:0;
         }
     }
+    if((start_ring_held||frame_number<start_ring_until)&&port==0&&
+       (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        const uint16_t start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+        const uint16_t y=frame_number<start_ring_until?(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y):0u;
+        if(bitmask)actual=(int16_t)(((uint16_t)actual&~start)|y);
+        else if(id==RETRO_DEVICE_ID_JOYPAD_START)actual=0;
+        else if(id==RETRO_DEVICE_ID_JOYPAD_Y&&y)actual=1;
+    }
     if(port==0 && (device & RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD &&
        index==0 && (id<16||bitmask) && armed && !cancelled && !completed && on_turbo){
         if(actual){cancelled=1;armed=0;autonomous_mode=0;fprintf(stderr,"[som-ai] cancelled: physical input at frame %lu\n",frame_number);return actual;}
@@ -2105,25 +2135,24 @@ static void som_input_poll(void){
             disciplines.open=1;
             disciplines.who=(uint8_t)(ring_ram[0x1808]<SOM_PARTY_MEMBERS?ring_ram[0x1808]:0u);
             {const unsigned cls=som_disc_member_class(&disciplines,disciplines.who);
-             disciplines.cursor=cls<SOM_DISCIPLINE_COUNT?cls:0u;}
+             disciplines.cursor=som_disc_row_of(&disciplines,cls);disciplines.grab=0;}
             switch_spoiled=1;menu_hold_until_release=1;
             fprintf(stderr,"[som-ai] PARTY menu opened from the ring (%s)\n",
                     som_party_names[disciplines.who]);
         }
-        /* Start opens the class menu (the L2+R2 alias was removed at the
-         * player's request, 2026-11-21). While open, all pad input is
+        /* Start opens the game's ring again (player, 2026-11-22): the game
+         * sees a short Y (its open_ring) and never the Start. Our menu lives
+         * inside the ring: Start in the open ring, or B on its Controller
+         * Settings entry (above). While our menu is open, all pad input is
          * consumed by the overlay. */
         const uint16_t class_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+        if(!(current&class_start))start_ring_held=0;
         if(ring_party){
             /* Opened from the ring this frame: that press is not a menu choice. */
         }else if(!ring_ai_enabled && !som_manual_disciplines && som_overlay_field() &&
            (pressed&class_start)){
-            som_manual_disciplines=1;
-            disciplines.open=1;
-            disciplines.cursor=0;disciplines.who=0;
-            switch_spoiled=1;
-            som_overlay_set(&overlay,"DISCIPLINES|A:close B:select",SOM_MESSAGE_FRAMES);
-            fprintf(stderr,"[som-ai] MANUAL DISCIPLINES opened\n");
+            start_ring_held=1;start_ring_until=frame_number+SOM_START_RING_FRAMES;
+            fprintf(stderr,"[som-ai] START opens the ring\n");
         }else if(som_manual_disciplines && pressed &&
                  (pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R)))&&
                  !jukebox.typing){
@@ -2150,6 +2179,10 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)som_actor_class());
             }else if(result==SOM_DISC_PARTY_SELECTED)som_party_class_saved();
+            else if(result==SOM_DISC_ORDERED){
+                som_disc_save();
+                fprintf(stderr,"[som-ai] CLASS ORDER saved\n");
+            }
         }
         if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
         {   /* A closed menu: hold the pad back from the game until let go. */
@@ -6694,7 +6727,7 @@ static size_t som_apply_rom_patches(uint8_t *rom,size_t size){
 }
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
-    frame_number=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
+    frame_number=0;start_ring_held=0;start_ring_until=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;last_attack_frame=0;som_combo_clear();

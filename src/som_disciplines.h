@@ -125,13 +125,18 @@ typedef struct {
      * who: whose class the menu shows (0 boy, 1 girl, 2 sprite). */
     uint8_t party[2];
     uint8_t who;
+    /* The player's class order (2026-11-22): menu row r shows class
+     * order[r], and L2+R1/L1 step through the classes in this order. The
+     * cursor is a row. grab: Y picked the cursor's row up, Up/Down carry it. */
+    uint8_t order[SOM_DISCIPLINE_COUNT];
+    uint8_t grab;
 } SomDisciplines;
 #define SOM_PARTY_MEMBERS 3u
 #define SOM_GIRL_DEFAULT_CLASS 4u       /* Divine Arts: she heals */
 #define SOM_SPRITE_DEFAULT_CLASS 3u     /* Magic: he casts the attack spells */
 static const char *const som_party_names[SOM_PARTY_MEMBERS]={"BOY","GIRL","SPRITE"};
 enum {SOM_DISC_NONE, SOM_DISC_OPENED, SOM_DISC_CLOSED, SOM_DISC_SELECTED,
-      SOM_DISC_WHO, SOM_DISC_PARTY_SELECTED};
+      SOM_DISC_WHO, SOM_DISC_PARTY_SELECTED, SOM_DISC_ORDERED};
 /* Member 0 the boy, 1 the girl, 2 the sprite: that member's class. */
 static inline unsigned som_disc_member_class(const SomDisciplines *d,unsigned who){
     if(!d)return SOM_DISCIPLINE_NONE;
@@ -224,7 +229,32 @@ static inline void som_disc_init(SomDisciplines *d){
     memset(d,0,sizeof(*d));
     d->selected=SOM_DISCIPLINE_NONE;
     d->party[0]=SOM_GIRL_DEFAULT_CLASS;d->party[1]=SOM_SPRITE_DEFAULT_CLASS;
-    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++)d->level[i]=1u;
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++){d->level[i]=1u;d->order[i]=(uint8_t)i;}
+}
+/* order[] holds every class exactly once. */
+static inline int som_disc_order_valid(const uint8_t *order){
+    unsigned seen=0;
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++){
+        if(order[i]>=SOM_DISCIPLINE_COUNT||(seen&(1u<<order[i])))return 0;
+        seen|=1u<<order[i];
+    }
+    return 1;
+}
+/* The row that shows class cls (no class: row 0). */
+static inline unsigned som_disc_row_of(const SomDisciplines *d,unsigned cls){
+    for(unsigned r=0;r<SOM_DISCIPLINE_COUNT;r++)if(d->order[r]==cls)return r;
+    return 0u;
+}
+static inline unsigned som_disc_cursor_class(const SomDisciplines *d){
+    return d->order[d->cursor%SOM_DISCIPLINE_COUNT];
+}
+/* The class after (dir > 0) or before cur in the player's order; from no
+ * class, the first (or the last). */
+static inline unsigned som_disc_order_step(const SomDisciplines *d,unsigned cur,int dir){
+    const unsigned n=SOM_DISCIPLINE_COUNT;
+    if(cur>=n)return d->order[dir>0?0u:n-1u];
+    const unsigned r=som_disc_row_of(d,cur);
+    return d->order[(r+(dir>0?1u:n-1u))%n];
 }
 static inline uint32_t som_disc_next_xp(unsigned level){
     return 100u+25u*(level>100u?100u:level-1u);
@@ -246,26 +276,45 @@ static inline int som_disc_award(SomDisciplines *d,unsigned skill,unsigned amoun
     }
     return 1;
 }
-/* User-facing menu only. L/R changes page outside this function. */
+/* User-facing menu only. L/R changes page outside this function.
+ * Y picks the cursor's class up; Up/Down then carry it through the list,
+ * and Y, B or A put it down (the order is the caller's to save). */
 static inline int som_disc_press(SomDisciplines *d,uint16_t pressed){
     if(!pressed)return SOM_DISC_NONE;
-    if(!d->open){d->open=1;d->cursor=0;d->who=0;return SOM_DISC_OPENED;}
+    if(!d->open){d->open=1;d->cursor=0;d->who=0;d->grab=0;return SOM_DISC_OPENED;}
     if(d->who>=SOM_PARTY_MEMBERS)d->who=0;
+    const unsigned n=SOM_DISCIPLINE_COUNT;
+    if(d->cursor>=n)d->cursor=0;
+    if(d->grab){
+        if(pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))){
+            const unsigned to=(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?
+                (d->cursor+n-1u)%n:(d->cursor+1u)%n;
+            const uint8_t carried=d->order[d->cursor];
+            d->order[d->cursor]=d->order[to];d->order[to]=carried;
+            d->cursor=to;
+            return SOM_DISC_NONE;
+        }
+        if(pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_Y)|(1u<<RETRO_DEVICE_ID_JOYPAD_B)|
+                    (1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_X))){
+            d->grab=0;return SOM_DISC_ORDERED;
+        }
+        return SOM_DISC_NONE;
+    }
+    if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_Y)){d->grab=1;return SOM_DISC_NONE;}
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_X)){     /* X: next member */
         d->who=(uint8_t)((d->who+1u)%SOM_PARTY_MEMBERS);
         return SOM_DISC_WHO;
     }
-    if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))
-        d->cursor=(d->cursor+SOM_DISCIPLINE_COUNT-1u)%SOM_DISCIPLINE_COUNT;
-    if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))
-        d->cursor=(d->cursor+1u)%SOM_DISCIPLINE_COUNT;
+    if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))d->cursor=(d->cursor+n-1u)%n;
+    if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))d->cursor=(d->cursor+1u)%n;
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_B)){
+        const uint8_t cls=d->order[d->cursor];
         if(d->who){
             uint8_t *c=&d->party[d->who-1u];
-            *c=*c==d->cursor?SOM_DISCIPLINE_NONE:(uint8_t)d->cursor;
+            *c=*c==cls?SOM_DISCIPLINE_NONE:cls;
             return SOM_DISC_PARTY_SELECTED;
         }
-        d->selected=d->selected==d->cursor?SOM_DISCIPLINE_NONE:(uint8_t)d->cursor;
+        d->selected=d->selected==cls?SOM_DISCIPLINE_NONE:cls;
         return SOM_DISC_SELECTED;
     }
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A)){
@@ -277,9 +326,9 @@ static inline int som_disc_line(const SomDisciplines *d,unsigned line,char out[3
     const unsigned who=d->who<SOM_PARTY_MEMBERS?d->who:0u;
     if(line==0){snprintf(out,33,"%s CLASS X:who L/R A:close",som_party_names[who]);return 1;}
     if(line>SOM_DISCIPLINE_COUNT)return 0;
-    unsigned i=line-1u;
+    const unsigned row=line-1u,i=d->order[row]%SOM_DISCIPLINE_COUNT;
     snprintf(out,33,"%c%c %-17s Lv%3u",
-        d->cursor==i?'>':' ',som_disc_member_class(d,who)==i?'*':' ',
+        d->cursor==row?(d->grab?'=':'>'):' ',som_disc_member_class(d,who)==i?'*':' ',
         som_discipline_names[i],(unsigned)d->level[i]);
     return 1;
 }
@@ -306,6 +355,20 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
                 som_overlay_fill(pixels,pitch,format,
                     x0+(5u+i*6u+col)*sx,y0+(4u+line*10u+row)*sy,sx,sy,
                     som_overlay_color(format,255,255,255));
+            }
+        }
+    }
+    {   /* The order hint, right of the colour swatches. */
+        const char *hint=d->grab?"Up/Dn move  Y:drop":"Y: move class";
+        for(unsigned i=0;hint[i];i++){
+            unsigned char c=(unsigned char)hint[i];
+            if(c<32u||c>126u)continue;
+            const uint8_t *glyph=som_overlay_font[c-32u];
+            for(unsigned row=0;row<7;row++)for(unsigned col=0;col<5;col++){
+                if(!(glyph[row]&(0x10u>>col)))continue;
+                som_overlay_fill(pixels,pitch,format,
+                    x0+(78u+i*6u+col)*sx,y0+(4u+(lines-1u)*10u+row)*sy,sx,sy,
+                    som_overlay_color(format,200,200,255));
             }
         }
     }

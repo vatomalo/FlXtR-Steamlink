@@ -79,7 +79,7 @@ static bool mocked_unserialize(const void *data,size_t size){
 static void reset_proxy(void){
     disc_file="/nonexistent/flxtr-disciplines";
     physical_state=mocked_input;physical_poll=NULL;
-    frame_number=180;start_frame=0;injected_queries=0;
+    frame_number=180;start_ring_held=0;start_ring_until=0;start_frame=0;injected_queries=0;
     active_action=SOM_ACT_NONE;action_frames=0;
     armed=0;test_enabled=1;on_turbo=1;game_loaded=1;completed=0;cancelled=0;
     pressed=100;
@@ -171,11 +171,26 @@ int main(void){
                                (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
     som_input_poll();assert(!som_manual_disciplines);
     mocked_buttons=0;som_input_poll();
+    /* Start in the field opens the game's ring (player, 2026-11-22): the
+     * game sees a short Y and never the Start; our menu stays shut. */
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+    som_input_poll();
+    assert(!som_manual_disciplines);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==0);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
+           (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
+    frame_number+=SOM_START_RING_FRAMES;          /* the pulse ends; Start still held */
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+    mocked_buttons=0;som_input_poll();
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+    /* The ring open: Start again is our menu. */
+    mocked_wram[0x7D]=1;
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
     som_input_poll();
     assert(som_manual_disciplines&&disciplines.open&&!ring_ai_enabled);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
-    mocked_buttons=0;som_input_poll();
+    mocked_buttons=0;som_input_poll();mocked_wram[0x7D]=0;disciplines.cursor=0;
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);som_input_poll();
     assert(disciplines.cursor==1);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN)==0);
@@ -195,8 +210,10 @@ int main(void){
         mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R2));
         som_input_poll();mocked_buttons=0;som_input_poll();
         assert(!som_manual_disciplines);                     /* L2+R2 no longer opens it */
+        mocked_wram[0x7D]=1;                                 /* in the ring */
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
         som_input_poll();mocked_buttons=0;som_input_poll();
+        mocked_wram[0x7D]=0;menu_hold_until_release=0;
         assert(som_manual_disciplines&&disciplines.open);
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);som_input_poll();
         mocked_buttons=0;som_input_poll();
@@ -215,10 +232,11 @@ int main(void){
         unlink(juke_req);juke_request_file=SOM_JUKE_REQUEST;juke_list_file=SOM_JUKE_LIST;
     }
     mocked_buttons=0;
-    /* Start is the new manual Class Progress shortcut. */
+    /* Start in the open ring is our menu. */
     som_manual_disciplines=0;disciplines.open=0;last_physical_buttons=0;
+    menu_hold_until_release=0;mocked_wram[0x7D]=1;
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
-    som_input_poll();
+    som_input_poll();mocked_wram[0x7D]=0;
     assert(som_manual_disciplines&&disciplines.open);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
     mocked_buttons=0;som_input_poll();
@@ -2916,6 +2934,32 @@ int main(void){
         mocked_buttons=l2|l1;som_input_poll();
         assert(disciplines.selected==SOM_DISCIPLINE_COUNT-1u);     /* wraps */
         mocked_buttons=0;som_input_poll();
+        /* L2+R1 follows the player's class order, which the save keeps. */
+        {
+            char tmp[]="/tmp/flxtr-disc-order-test-XXXXXX";
+            const int fd=mkstemp(tmp);assert(fd>=0);close(fd);
+            disc_file=tmp;
+            for(unsigned k=0;k<SOM_DISCIPLINE_COUNT;k++)
+                disciplines.order[k]=(uint8_t)(SOM_DISCIPLINE_COUNT-1u-k);
+            disciplines.selected=SOM_DISC_BUSHIDO;
+            mocked_buttons=l2;som_input_poll();
+            mocked_buttons=l2|r1;som_input_poll();
+            assert(disciplines.selected==SOM_DISC_BUSHIDO-1u);     /* next in that order */
+            mocked_buttons=0;som_input_poll();
+            som_disc_save();
+            som_disc_init(&disciplines);assert(disciplines.order[0]==0u);
+            som_disc_load();
+            assert(disciplines.order[0]==SOM_DISCIPLINE_COUNT-1u&&
+                   disciplines.selected==SOM_DISC_BUSHIDO-1u);
+            /* An older file without the order: 0..15. */
+            FILE *old=fopen(tmp,"w");assert(old);
+            fprintf(old,"v1 3");
+            for(unsigned k=0;k<SOM_DISCIPLINE_COUNT;k++)fprintf(old," 1 0");
+            fprintf(old," p 4 3\n");fclose(old);
+            som_disc_load();
+            assert(disciplines.selected==3u&&disciplines.order[0]==0u&&disciplines.order[15]==15u);
+            unlink(tmp);disc_file="/nonexistent/flxtr-disciplines";
+        }
         /* The girl's ring, config category, cursor on Controller Settings. */
         mocked_wram[0x7D]=1;mocked_wram[0x1808]=1;mocked_wram[0x1809]=2;
         mocked_wram[0x180A]=SOM_RING_PARTY_ENTRY;mocked_wram[0x180B]=SOM_RING_CONFIG_ENTRIES;

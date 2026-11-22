@@ -61,7 +61,7 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     {0x08, 0x24, 0xFF},
     /* Artifice: no magic, X is a bomb */
     {0xFF},
-    /* Psionics: B Dark Force (Shadow Blast, player 2026-11-22), Y Balloon,
+    /* Psionics: B Dark Force (Shadow Bolt, the warlock's B, player 2026-11-22), Y Balloon,
      * Sleep Flower in the other spell sets (R1); X takes over a mind */
     {0x25, 0x16, 0x1E, 0xFF},
 };
@@ -76,6 +76,17 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
 static inline int som_disc_caster(unsigned discipline) {
     return (discipline >= SOM_CASTER_FIRST && discipline <= SOM_CASTER_LAST) ||
            discipline == 13u || discipline == 15u;     /* Necromancy, Psionics */
+}
+
+/* Rule (player, 2026-11-22): button magic is an attack, so it never waits
+ * for the casting pose or the spirit. Every B spell is a quick cast (the
+ * proxy skips both, som_quick_cast_frame), whoever casts it: the player,
+ * the companion he drives, or the AI's attack. Y spells too. X and the
+ * ring keep the game's full cast. */
+#define SOM_QUICK_CAST_B 1
+#define SOM_QUICK_CAST_Y 1
+static inline int som_button_spell_quick(unsigned which) {
+    return which == 0u ? SOM_QUICK_CAST_B : which == 1u ? SOM_QUICK_CAST_Y : 0;
 }
 
 /* Each class names its spells its own way (player's request, 2026-11-20):
@@ -98,7 +109,7 @@ static const SomClassSpellName som_class_spell_names[] = {
     {9, 0x14, "Gag"},
     {11, 0x12, "Wind Arrow"}, {11, 0x13, "Thunder Arrow"}, {11, 0x01, "Stone Arrow"},
     {13, 0x08, "Soul Drain"}, {13, 0x24, "Grave Gate"},
-    {15, 0x25, "Shadow Blast"}, {15, 0x1E, "Mind Sleep"}, {15, 0x16, "Levitate"},
+    {15, 0x25, "Shadow Bolt"}, {15, 0x1E, "Mind Sleep"}, {15, 0x16, "Levitate"},
 };
 
 static inline const char *som_spell_label(unsigned spell) {

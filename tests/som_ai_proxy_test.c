@@ -299,7 +299,9 @@ int main(void){
         assert(som_weapon_styles[som_style_index(2,2)].weapon==4u);    /* Kusarigama: whip */
         /* Mentalist: B is Shadow Blast (Dark Force) in the default spell set. */
         assert(som_caster_spell(SOM_DISC_PSIONICS,0)==0x25u&&
-               !strcmp(som_class_spell_label(SOM_DISC_PSIONICS,0x25),"Shadow Blast"));
+               !strcmp(som_class_spell_label(SOM_DISC_PSIONICS,0x25),"Shadow Bolt")&&
+               !strcmp(som_class_spell_label(5u,0x25),"Shadow Bolt"));
+        assert(som_button_spell_quick(0u)&&!som_button_spell_quick(2u));   /* B: always quick */
     }
     /* Throw: back is the D-pad away from the facing. */
     mocked_wram[0xE010]=0x02u;   /* facing right */
@@ -2477,6 +2479,8 @@ int main(void){
             disciplines.party[0]=3;ram[0xD9]=0x80;ram[0xDA]=1;
             mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
             assert(girl[0x170]==som_caster_spell(3,0)&&b_weapon_blocked&&hero[0x170]==0);
+            assert(quick_cast_until[1]>frame_number);         /* B magic: quick by rule */
+            quick_cast_until[1]=0;
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
             mocked_buttons=0;som_input_poll();
             disciplines.party[0]=keep_party;ram[0xD9]=keep_d9;ram[0xDA]=keep_da;

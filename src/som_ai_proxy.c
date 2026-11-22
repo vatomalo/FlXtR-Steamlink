@@ -783,6 +783,7 @@ static int som_spell_affordable(const uint8_t *ram,unsigned spell);
 static int som_spell_affordable_by(const uint8_t *ram,unsigned who,unsigned spell);
 #define SOM_QUICK_CAST_FRAMES 240ul      /* quick cast: how long the skip may wait */
 static unsigned long quick_cast_until[3];   /* per hero: 0 none */
+static int som_cast_button_spell(uint8_t *ram,unsigned who,unsigned spell,unsigned which);
 #define SOM_SPELL_FIRE_BALL 0x0Cu
 /* X casts the current spell of the chosen discipline (som_magic.h); holding
  * X steps to the next one. One cursor per discipline (+1: no discipline). */
@@ -1830,8 +1831,7 @@ static void som_input_poll(void){
             }else{
                 if(which)y_weapon_blocked=1;else b_weapon_blocked=1;
                 if(pressed&(which?y_bit:b_bit)){
-                    if(som_cast_spell_by(wram,driver,spell)&&
-                       (quick_cast_until[driver]=frame_number+SOM_QUICK_CAST_FRAMES))
+                    if(som_cast_button_spell(wram,driver,spell,which))
                         fprintf(stderr,"[som-ai] CASTER %s %s: %s\n",som_party_names[driver],
                                 which?"Y":"B",som_class_spell_label(caster_cls,spell));
                 }
@@ -2788,6 +2788,14 @@ static unsigned som_cast_spirit_end(unsigned base){
         return 0;
     }
     return 0;
+}
+/* A class's button spell (which 0 B, 1 Y) cast by hero who, quick by the
+ * rule in som_magic.h. 1 when the cast started. */
+static int som_cast_button_spell(uint8_t *ram,unsigned who,unsigned spell,unsigned which){
+    if(!som_cast_spell_by(ram,who,spell))return 0;
+    if(who<SOM_PARTY_MEMBERS&&som_button_spell_quick(which))
+        quick_cast_until[who]=frame_number+SOM_QUICK_CAST_FRAMES;
+    return 1;
 }
 static void som_quick_cast_frame(uint8_t *ram){
     if(!ram)return;
@@ -5298,7 +5306,7 @@ static void som_start_action(SomAction action){
        !som_interact_ahead((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM))){
         uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         const unsigned spell=som_caster_spell(disciplines.selected,0);
-        if(ram&&som_spell_affordable(ram,spell)&&som_cast_spell(ram,spell))
+        if(ram&&som_spell_affordable(ram,spell)&&som_cast_button_spell(ram,0u,spell,0u))
             fprintf(stderr,"[som-ai] CASTER (AI attack): %s\n",
                     som_class_spell_label(disciplines.selected,spell));
         else fprintf(stderr,"[som-ai] attack refused: casters do not punch\n");

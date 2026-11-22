@@ -297,6 +297,9 @@ int main(void){
         for(unsigned c=0;c<SOM_DISCIPLINE_COUNT;c++)
             assert(som_weapon_styles[som_style_index(c,1)].weapon==som_disc_weapons[c][0]);
         assert(som_weapon_styles[som_style_index(2,2)].weapon==4u);    /* Kusarigama: whip */
+        /* Mentalist: B is Shadow Blast (Dark Force) in the default spell set. */
+        assert(som_caster_spell(SOM_DISC_PSIONICS,0)==0x25u&&
+               !strcmp(som_class_spell_label(SOM_DISC_PSIONICS,0x25),"Shadow Blast"));
     }
     /* Throw: back is the D-pad away from the facing. */
     mocked_wram[0xE010]=0x02u;   /* facing right */

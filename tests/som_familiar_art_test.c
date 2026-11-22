@@ -6,7 +6,18 @@
 static uint8_t ram[0x20000],vram[0x10000];
 static void put16(unsigned p,unsigned v){ram[p]=(uint8_t)v;ram[p+1u]=(uint8_t)(v>>8);}
 int main(void){
-    (void)som_familiar_tick;(void)som_familiar_summoner;
+    (void)som_familiar_summoner;
+    /* The familiar is never an enemy: status 0x0400 every frame, kept
+     * alive (the dead bit 0x8000 stays clear), other statuses untouched. */
+    {
+        SomFamiliar f={0,-1,0,0};
+        ram[0xE600u]=1;ram[0xE780u]=3;put16(0xE784u,40);put16(0xE782u,10);
+        put16(0xE790u,0x0004u);put16(0xDCu,7);f.map=7;
+        assert(som_familiar_tick(&f,ram,100)==SOM_FAMILIAR_HERE);
+        assert(ram[0xE790u]==0x04u&&ram[0xE791u]==0x04u);
+        assert(ram[0xE782u]==40u&&ram[0xE7F1u]==0u);
+        memset(ram,0,sizeof(ram));
+    }
     SomFamiliarCarry c;memset(&c,0,sizeof(c));
     c.valid=1;c.has_vram=1;c.tile_count=1;c.home_map=130;
     c.object[0]=1;c.object[0x180]=0;c.object[0x184]=25;

@@ -47,18 +47,23 @@ snap(){ echo "@stat"; head -1 /proc/stat; grep -E '^(ctxt|processes) ' /proc/sta
 tick(){ dd if=/tmp/flxtr-som-wram.bin bs=1 skip=244 count=1 2>/dev/null | od -An -tu1; }
 echo "@begin"; snap
 last=; i=0
+if [ -f %(perf)s ]; then read -r last < %(perf)s; fi
 while [ $i -lt $n ]; do
   sleep 2; i=$((i+2))
   read -r up _ < /proc/uptime; echo "@tick $up $(tick)"
-  if [ -f %(perf)s ]; then read -r line < %(perf)s; echo "@perf $line"; fi
+  if [ -f %(perf)s ]; then
+    read -r line < %(perf)s
+    if [ "$line" != "$last" ]; then echo "@perf $line"; last=$line; fi
+  fi
 done
 echo "@end"; snap
 [ $made = 0 ] || rm -f %(marker)s
 """ % {"marker": PERF_MARKER, "perf": PERF_FILE}
 
 
-def ssh(host, command, timeout, stdin=None):
-    return subprocess.run([*SSH, host, command], input=stdin, capture_output=True,
+def ssh(host, command, timeout, stdin=None, config=None):
+    options = ["-F", config, "-o", "StrictHostKeyChecking=yes"] if config is not None else []
+    return subprocess.run([*SSH, *options, host, command], input=stdin, capture_output=True,
                           text=True, timeout=timeout)
 
 
@@ -171,12 +176,12 @@ def derive(begin, end, ticks, windows):
     return result
 
 
-def run_once(host, seconds, warmup, proxy_timing, log):
+def run_once(host, seconds, warmup, proxy_timing, log, ssh_config=None):
     if warmup:
         log(f"  warm-up {warmup} s")
         time.sleep(warmup)
     command = "sh -s %d %d" % (seconds, 1 if proxy_timing else 0)
-    out = ssh(host, command, timeout=seconds + 60, stdin=SAMPLER)
+    out = ssh(host, command, timeout=seconds + 60, stdin=SAMPLER, config=ssh_config)
     if out.returncode != 0 and "@end" not in out.stdout:
         raise RuntimeError(f"sampler failed: {out.stderr.strip()[:200]}")
     begin, end, ticks, windows = parse_output(out.stdout)
@@ -226,6 +231,17 @@ def summary(report):
     return "\n".join(lines)
 
 
+def reaches_realtime(report):
+    """Require every measured window to sustain at least 99% of core cadence."""
+    for run in report["runs"]:
+        proxy = run["derived"]["proxy"] or {}
+        nominal = proxy.get("nominal_fps")
+        slowest = proxy.get("fps_min_window")
+        if not nominal or slowest is None or slowest < 0.99 * nominal:
+            return False
+    return bool(report["runs"])
+
+
 def compare(paths):
     reports = [json.loads(Path(p).read_text()) for p in paths]
     def mean_of(report, getter):
@@ -261,6 +277,9 @@ def compare(paths):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--host", default=HOST)
+    parser.add_argument("--ssh-config", help="Use an explicit SSH config file (e.g. /dev/null)")
+    parser.add_argument("--require-realtime", action="store_true",
+                        help="Fail unless every window sustains 99%% of core cadence")
     parser.add_argument("--scenario", default="adhoc")
     parser.add_argument("--note", default="")
     parser.add_argument("--runs", type=int, default=3)
@@ -275,6 +294,8 @@ def main(argv=None):
     if args.compare:
         print(compare(args.compare))
         return 0
+    if args.require_realtime and args.no_proxy_timing:
+        parser.error("--require-realtime needs proxy timing")
     if not 10 <= args.seconds <= 900 or not 1 <= args.runs <= 10:
         parser.error("use 10..900 seconds and 1..10 runs")
     git = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
@@ -292,7 +313,7 @@ def main(argv=None):
         for i in range(args.runs):
             log(f"{args.scenario}: run {i + 1}/{args.runs}, {args.seconds} s")
             report["runs"].append(run_once(args.host, args.seconds, args.warmup,
-                                           not args.no_proxy_timing, log))
+                                           not args.no_proxy_timing, log, args.ssh_config))
     finally:
         if stopped:
             subprocess.run(["systemctl", "--user", "start", "flxtr-som-ai"])
@@ -303,6 +324,10 @@ def main(argv=None):
     stem.with_suffix(".txt").write_text(text + "\n")
     print(text)
     print(f"raw: {stem.with_suffix('.json')}", file=sys.stderr)
+    if args.require_realtime and not reaches_realtime(report):
+        log("Real-time check did not pass. Each run needs timing data and every window "
+            "must sustain at least 99% of core cadence.")
+        return 1
     return 0
 
 

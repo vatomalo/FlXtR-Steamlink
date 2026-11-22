@@ -49,6 +49,7 @@ exec python3 "$repo/tools/som_qwen_bridge.py" \
   --gp-reward "$gp_reward" \
   --hp-penalty "$hp_penalty" \
   --objective "$objective" \
+  --party-ai "${SOM_AI_PARTY_AI:-auto}" \
   --interval "$interval" \
   --steps 0 \
   --start-timeout "$start_timeout" \

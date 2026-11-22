@@ -244,10 +244,16 @@ class Quest:
         blocked = self._blocked_maps()
         here = getattr(self, "here", None)
 
+        grid = getattr(self.history, "world_grid", None)
+        walked = (grid.distances(here, tables.neighbours)
+                  if grid is not None and here is not None else {})
+
         def hops(map_id):
+            if map_id in walked:              # walked tiles on the world grid
+                return (walked[map_id], map_id)
             path = (self.history.map_path(here, map_id)
                     if here is not None and hasattr(self.history, "map_path") else None)
-            return (len(path) if path else 999, map_id)
+            return ((len(path) * 64) if path else 10 ** 6, map_id)
         doors = sorted((m for m in tables.scripted_into(boss_map)
                         if m not in blocked and reachable(m)), key=hops)
         return doors[0] if doors else None
@@ -306,6 +312,10 @@ class Quest:
         return None
 
     def _pick(self, map_id, why):
+        grid = getattr(self.history, "world_grid", None)
+        where = grid.describe(self.here, map_id) if grid is not None and self.here else ""
+        if where:
+            why = f"{why} ({where} on the world grid)"
         if (map_id, why) != self.last:
             self.log(f"[quest] hunt map {map_id}: {why}")
             self.last = (map_id, why)

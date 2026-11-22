@@ -36,6 +36,7 @@ from som_game_over import GameOverLoad, GameOverWatch
 from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
+from som_story import MANTIS_MAP, POTOS_MAP, ROAD_MAP, story_stage
 from som_tactics import TacticLearner
 from som_build import classify as classify_build, profile as build_profile
 from som_wram_server import apply_block_delta
@@ -1382,6 +1383,8 @@ def main() -> int:
                              "0 never saves")
     parser.add_argument("--no-npc-talk", action="store_true",
                         help="Do not initiate conversations with nearby NPCs")
+    parser.add_argument("--potos-story", action="store_true",
+                        help="practice the Mantis Ant fight and head for the road out of Potos")
     parser.add_argument("--visit-map", type=int,
                         help="Travel to this map, then stay and talk to nearby NPCs")
     parser.add_argument("--policy", choices=("hybrid", "memory", "qwen"), default="hybrid",
@@ -1420,6 +1423,12 @@ def main() -> int:
     parser.add_argument("--start-timeout", type=float, default=300.0,
                         help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
+    if args.potos_story and (args.policy != "memory" or not args.history_db or
+                            args.play_loop or args.visit_map is not None or
+                            not (args.wram_remote or args.wram_file) or
+                            (not args.dry_run and not args.ring_control)):
+        parser.error("--potos-story needs --policy memory, --history-db and WRAM "
+                     "(live use requires --ring-control); omit --play-loop and --visit-map")
     if args.visit_map is not None and not 0 <= args.visit_map <= 511:
         parser.error("visit-map must be 0..511")
     if not (0 <= args.steps <= 30) or args.interval < 0.1:
@@ -1555,6 +1564,8 @@ def main() -> int:
     play_loop = None
     save_disabled = False
     last_loop_goal = None
+    last_story_status = ""
+    story_finished = False
     npc_hint_key, npc_hint_until = None, -1
     block_learner = None
     boss_recorder = BossRecorder(log=lambda line: print(line, flush=True)) if args.wram_remote else None
@@ -1668,6 +1679,8 @@ def main() -> int:
                         pass
                 hide_familiar(observation, familiar_slot)
                 map_guard.apply(observation)
+                if args.potos_story and tactic_learner is not None:
+                    tactic_learner.settle(observation)
                 if boss_recorder is not None and raw is not None:
                     try:
                         boss_recorder.observe(raw, WRAM(raw))
@@ -1849,7 +1862,8 @@ def main() -> int:
                 # inputs (som_event_escape.py) instead of waiting forever.
                 # The respawn handler `continue`s when it presses, so it keeps
                 # priority; waiting on it alone deadlocked on KO text pages.
-                if raw is not None:
+                if raw is not None and (not args.potos_story or
+                                        observation.get("map_id") in (MANTIS_MAP, POTOS_MAP)):
                     escape = event_escape.observe(WRAM(raw))
                     if escape is not None:
                         escape_action, reason = escape
@@ -2172,7 +2186,44 @@ def main() -> int:
                 planner.escape_dodge = planner.evade_past      # escapes evade along the route
                 planner.blink = isinstance(link, RemoteLink)    # the Steam Link proxy
                 planner.fuma_swap = planner.blink and class_director.current == NINJA
-                decision = planner.decide(observation, previous, directive, errand)
+                if args.potos_story:
+                    stage = story_stage(wram_now, observation)
+                    if stage == "road_reached":
+                        print("[story] Potos road reached after the Mantis Ant", flush=True)
+                        story_finished = True
+                        break
+                    planner.mantis_lesson = stage == "fight"
+                    planner.no_retreat = planner.fight_all = planner.mantis_lesson
+                    errand = None
+                    if stage == "leave" and any(
+                            wp["next_map"] == ROAD_MAP
+                            for wp in history.exit_waypoints(POTOS_MAP, ROAD_MAP)):
+                        directive = "explore_unknown"
+                        errand = {"place": "potos_road", "anchor": {"map_id": ROAD_MAP}}
+                    elif stage == "leave":
+                        print("[story] banishment complete; no verified direct road exit", flush=True)
+                        story_finished = True
+                        break
+                    if stage != last_story_status:
+                        print(f"[story] {stage or 'waiting for a verified Potos checkpoint'}",
+                              flush=True)
+                        last_story_status = stage
+                if args.potos_story and not (planner.mantis_lesson or errand):
+                    decision = PlannerDecision("wait", "waiting for a Potos checkpoint", "observe")
+                else:
+                    if args.potos_story and planner.mantis_lesson:
+                        directive = "engage_enemy"
+                    decision = planner.decide(observation, previous, directive, errand)
+                    if (args.potos_story and errand and decision.intention in
+                            ("explore_frontier", "leave_room", "replan", "stuck")):
+                        print(f"[story] banishment complete; road route interrupted: "
+                              f"{decision.reason}", flush=True)
+                        story_finished = True
+                        break
+                    if (args.potos_story and decision.intention in
+                            ("explore_frontier", "leave_room", "stuck")):
+                        decision = PlannerDecision("wait", "waiting for a reachable story objective",
+                                                   "observe")
                 # Missing a taught inn/save macro must NOT freeze the hero.
                 # The play-loop phase stays committed, but the deterministic
                 # planner may explore, fight or evade while the interaction is
@@ -2192,7 +2243,8 @@ def main() -> int:
                     decision = PlannerDecision(side[0] if side else "wait",
                                                "an NPC stands in front: no swing (it would "
                                                "talk); stepping aside", "replan")
-                if (npc_dialogue is not None and not args.no_npc_talk and gambit(GAMBIT_TALK) and
+                if (npc_dialogue is not None and not args.potos_story and
+                        not args.no_npc_talk and gambit(GAMBIT_TALK) and
                         (gambits[GAMBIT_TALK] > gambits[GAMBIT_FIGHT] or
                          not enemy_within(observation, DASH_ENEMY_PX)) and
                         decision.intention in ("explore_frontier", "leave_room", "replan", "stuck", "visit_map")):
@@ -2812,7 +2864,11 @@ def main() -> int:
                 if block_learner is not None and observation is not None:
                     block_learner.record(observation, sent_action)
                 if tactic_learner is not None and observation is not None:
-                    tactic_learner.record(observation)
+                    if not args.potos_story:
+                        tactic_learner.record(observation)
+                    elif (planner.mantis_trial and sent_action == decision.action and
+                          decision.intention in ("engage_enemy", "kite_enemy", "defend_enemy")):
+                        tactic_learner.record_trial(observation, planner.mantis_trial)
                 if class_record is not None and observation is not None:
                     class_record.record(observation, class_director.current,
                                         class_director.wanted)
@@ -2839,7 +2895,8 @@ def main() -> int:
         learner.cancel("session ended")
     if link:
         link.close()
-    if args.ring_control and not args.android_listen and args.steps != 0 and step >= args.steps:
+    if (args.ring_control and not args.android_listen and
+            (story_finished or (args.steps != 0 and step >= args.steps))):
         clear_remote_ring_ai(args.host)
     if history is not None:
         history.close()

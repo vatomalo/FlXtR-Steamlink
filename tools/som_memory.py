@@ -827,6 +827,7 @@ class ObservationHistory:
         self._reward_previous = None
         self._reward_enemy = None
         self.rom_tables = None
+        self._world_grid = None          # (tables, WorldGrid) built on first use
         self._last_verified_state = None
         self._last_verified = None
         self._anchor_misses = 0
@@ -1451,6 +1452,37 @@ class ObservationHistory:
                             "inn", "taught innkeeper tile", "player_demonstration")
         return anchor
 
+    def teach_cannon(self, state, face):
+        """Store the tile in front of a cannon NPC (one per map)."""
+        position = self._verified_position(state, None)
+        if position is None:
+            raise ValueError("the tile under the hero is not runtime-verified")
+        if face not in ("step_up", "step_down", "step_left", "step_right"):
+            raise ValueError(f"unknown facing {face!r}")
+        anchor = {"map_id": position["map_id"], "layer": position["layer"],
+                  "target": position["target"], "face": face, "taught": True}
+        cannons = [c for c in self.cannons() if c.get("map_id") != anchor["map_id"]]
+        self.set_agent_state("cannons", cannons + [anchor])
+        self.remember_place(anchor["map_id"], anchor["layer"], *anchor["target"],
+                            "cannon", "taught cannon NPC tile", "player_demonstration")
+        return anchor
+
+    def cannons(self):
+        cannons = self.get_agent_state("cannons")
+        return [dict(c) for c in cannons] if isinstance(cannons, list) else []
+
+    def record_cannon_flight(self, flight):
+        """Remember one ride's landing (default destination) on its cannon."""
+        cannons = self.cannons()
+        for cannon in cannons:
+            if cannon.get("map_id") == flight["from_map"]:
+                lands = set(cannon.get("lands_on") or []) | {flight["to_map"]}
+                cannon["lands_on"] = sorted(lands)
+                if flight.get("heard"):
+                    cannon["heard"] = flight["heard"][-40:]
+        self.set_agent_state("cannons", cannons)
+        return cannons
+
     def teach_shop(self, state, face, buttons, price, gold):
         """Store the shopkeeper tile, facing, recorded purchase and gold byte."""
         position = self._verified_position(state, None)
@@ -1645,16 +1677,17 @@ class ObservationHistory:
             "SELECT x,y FROM map_edges WHERE from_map=? AND layer=?", (map_id, layer)))
         return {(int(x), int(y)) for x, y in tiles}
 
-    def exits_by_destination(self, map_id):
+    def exits_by_destination(self, map_id, rom_only=False):
         """{to_map: {(layer, x, y)}} of map_id's known exits: ROM exit triggers
         (even before their runtime cross-check, so only use this to avoid
         doors, never to route through them) plus learned crossings that were
-        not rejected."""
+        not rejected (left out with rom_only: their recorded tile is the
+        floor before the door, often a corridor)."""
         result = {}
         rows = self.connection.execute(
             "SELECT to_map,layer,x,y FROM map_exits WHERE map_id=?", (map_id,)).fetchall()
         rejected = self.rejected_edges()
-        rows += [row for row in self.connection.execute(
+        rows += [] if rom_only else [row for row in self.connection.execute(
             "SELECT to_map,layer,x,y FROM map_edges WHERE from_map=?", (map_id,)).fetchall()
             if f"{map_id}>{row[0]}" not in rejected]
         for to_map, layer, x, y in rows:
@@ -1685,6 +1718,19 @@ class ObservationHistory:
         self.connection.commit()
         return len(exits)
 
+    @property
+    def world_grid(self):
+        """som_world_grid.WorldGrid of the attached ROM tables, or None."""
+        tables = self.rom_tables
+        if tables is None or not hasattr(tables, "maps"):
+            return None
+        if self._world_grid is None or self._world_grid[0] is not tables:
+            from som_world_grid import WorldGrid
+            rows = self.connection.execute(
+                "SELECT map_id,x,y,to_map FROM map_exits").fetchall()
+            self._world_grid = (tables, WorldGrid.from_rom(tables, rows))
+        return self._world_grid[1]
+
     def map_path(self, current_map, target_map):
         """Shortest chain of maps [current, ..., target] or None.
 
@@ -1697,6 +1743,13 @@ class ObservationHistory:
         # A complete route through cross-checked ROM exits takes precedence
         # over those shortcuts, regardless of how many hops it requires.
         if self.rom_exits_trusted():
+            # Measured in walked tiles on the world grid, not in map hops:
+            # a hop through a 129-tile field is not a hop through a hut.
+            grid = self.world_grid
+            measured = (grid.route(current_map, target_map, self.rom_tables.neighbours)
+                        if grid is not None else None)
+            if measured is not None:
+                return measured[0]
             parents = {current_map: None}
             queue = deque([current_map])
             while queue:

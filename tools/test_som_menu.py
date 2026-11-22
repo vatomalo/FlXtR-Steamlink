@@ -1,7 +1,7 @@
 """Ring-menu macro tests against a simulated ring; no emulator required."""
 import unittest
 
-from som_menu import (RING_KIND, RING_OPEN, CandyMacro, Calibration, InnMacro,
+from som_menu import (RING_KIND, RING_OPEN, CandyMacro, CannonMacro, Calibration, InnMacro,
                       MacroFailed, ShopMacro, find_cursor_candidates, find_gold_candidates,
                       narrow_gold, read_gold)
 from som_memory import WRAM
@@ -410,3 +410,88 @@ class TestGoldAndShop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+MAP = 0x7E00DC
+
+
+class FakeCannon(FakeInn):
+    """Cannon crew: a few confirms, launch (transition), land on another map."""
+
+    def __init__(self, launch_at=4, flight_reads=5, lands_on=57, **kwargs):
+        super().__init__(heals_at=99, closes_at=99, **kwargs)
+        self.set16(MAP, 159)
+        self.launch_at, self.flight_reads, self.lands_on = launch_at, flight_reads, lands_on
+        self.reads_left = None
+        self.confirms_in_flight = 0
+
+    def fetch_wram(self, require_marker=False):
+        if self.reads_left is not None:
+            self.reads_left -= 1
+            if self.reads_left <= 0:
+                self.reads_left = None
+                self.set(0x7E00E4, 1); self.set(EVENT, 0)
+                self.set16(MAP, self.lands_on)
+        return bytes(self.ram)
+
+    def send_action(self, action):
+        if self.reads_left is not None:
+            self.confirms_in_flight += action == "confirm"
+            return
+        super().send_action(action)
+        if (action == "confirm" and self.get(EVENT) and
+                self.dialog_confirms == self.launch_at and self.launch_at):
+            self.set(0x7E00E4, 0)              # flight: not field, not event
+            self.reads_left = self.flight_reads
+
+
+class TestCannon(CannonMacro):
+    def _tile(self, wram):
+        return (wram.u16(MAP) & 0x1FF, 1, wram.u8(TILE_X), 4)
+
+
+CANNON = {"map_id": 159, "layer": 1, "target": [0, 4], "face": "step_left", "taught": True}
+
+
+def run_cannon(game, anchor=CANNON):
+    now = [0.0]
+    def sleep(seconds):
+        now[0] += seconds
+    return TestCannon(game, anchor, log=lambda _: None, sleep=sleep,
+                      clock=lambda: now[0]).run()
+
+
+class TestCannonMacro(unittest.TestCase):
+    def test_presses_confirm_until_landing_and_reports_the_map(self):
+        game = FakeCannon()
+        flight = run_cannon(game)
+        self.assertEqual(flight["from_map"], 159)
+        self.assertEqual(flight["to_map"], 57)
+        self.assertEqual(game.sent[0], "step_left")
+        self.assertNotIn("cancel", game.sent)
+        self.assertEqual(game.confirms_in_flight, 0)   # no presses mid-flight
+
+    def test_logs_each_new_line_once_with_unknown_bytes_visible(self):
+        game = FakeCannon()
+        for i, byte in enumerate(bytes([0x9B + 15, 0x81 + 14, 0x80, 0x56, 0xB5 + 5, 0xB5])):
+            game.set(0x7EA1A4 + i, byte)    # "Po <56>50"
+        flight = run_cannon(game)
+        self.assertEqual(flight["heard"], [{"text": "Po [56]50", "choice": False}])
+
+    def test_dialog_closing_on_the_same_map_fails(self):
+        game = FakeCannon(launch_at=0)
+        game.closes_at = 3
+        with self.assertRaises(MacroFailed) as raised:
+            run_cannon(game)
+        self.assertIn("without a flight", str(raised.exception))
+
+    def test_endless_dialog_times_out_and_backs_out(self):
+        game = FakeCannon(launch_at=0)
+        with self.assertRaises(MacroFailed):
+            run_cannon(game)
+        self.assertIn("cancel", game.sent)
+        self.assertEqual(game.get(EVENT), 0)
+
+    def test_requires_the_taught_tile(self):
+        with self.assertRaises(MacroFailed):
+            run_cannon(FakeCannon(), dict(CANNON, target=[2, 4]))

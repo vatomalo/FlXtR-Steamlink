@@ -2466,6 +2466,38 @@ int main(void){
         assert(som_cast_spell(ram,0x07)&&hero[0x170]==0x07&&hero[0x178]==1);
         assert(hero[0x177]==1&&hero[0x01C]==0x40);
         hero[0x01C]=0;hero[0x060]=0;hero[0x170]=0;
+        {   /* The girl and the sprite cast the same way from their own
+             * objects: self target who+1, the sprite's palette index 0xCF,
+             * the spark in her own effect buffer; the boy is left alone. */
+            uint8_t *girl=ram+0xE200,*spr=ram+0xE400;
+            const uint8_t keep_d9=ram[0xD9],keep_da=ram[0xDA];
+            uint8_t keep_girl[0x200],keep_spr[0x200],keep_buf[0x2000];
+            memcpy(keep_girl,girl,0x200);memcpy(keep_spr,spr,0x200);
+            memcpy(keep_buf,ram+0x3000,sizeof(keep_buf));
+            memset(girl,0,0x200);memset(spr,0,0x200);
+            girl[0]=spr[0]=1;girl[0x182]=spr[0x182]=40;girl[0x184]=spr[0x184]=50;
+            girl[0x186]=spr[0x186]=9;
+            spr[0x20]=hero[0x20];spr[0x21]=hero[0x21];spr[0x22]=hero[0x22];spr[0x23]=hero[0x23];
+            uint8_t boy_before[0x200];memcpy(boy_before,hero,0x200);
+            assert(som_cast_spell_by(ram,1u,0x07)&&girl[0x170]==0x07&&girl[0x178]==2);
+            assert(girl[0x01C]==0x40&&girl[0x04F]==0xCE&&!memcmp(hero,boy_before,0x200));
+            assert(!som_cast_spell_by(ram,1u,0x07));                  /* busy now */
+            assert(som_cast_spell_by(ram,2u,SOM_SPELL_FIRE_BALL)&&spr[0x170]==0x0C);
+            assert(spr[0x04F]==0xCF&&spr[0x178]==4&&!memcmp(hero,boy_before,0x200));
+            EXPECT_TILES(0x14BA00);
+            assert(memcmp(ram+0x4800,expect,sizeof(expect))==0);          /* her spark */
+            /* B while driving a Mage girl: her B spell, cast by her. */
+            memset(girl+0x170,0,0x10);girl[0x01C]=girl[0x060]=0;girl[0x186]=9;
+            const uint8_t keep_party=disciplines.party[0];
+            disciplines.party[0]=3;ram[0xD9]=0x80;ram[0xDA]=1;
+            mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
+            assert(girl[0x170]==som_caster_spell(3,0)&&b_weapon_blocked&&hero[0x170]==0);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+            mocked_buttons=0;som_input_poll();
+            disciplines.party[0]=keep_party;ram[0xD9]=keep_d9;ram[0xDA]=keep_da;
+            memcpy(girl,keep_girl,0x200);memcpy(spr,keep_spr,0x200);
+            memcpy(ram+0x3000,keep_buf,sizeof(keep_buf));
+        }
         rom[0x102AD0+0x08*64+8]=0x40;           /* undecoded target kind */
         assert(!som_cast_spell(ram,0x08)&&hero[0x170]==0);
         /* Casters trade weapons for spells: Mage B = Fire Ball, Y = Freeze,

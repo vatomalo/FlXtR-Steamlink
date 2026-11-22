@@ -771,7 +771,9 @@ static int som_equip_ally_weapon(uint8_t *ram,unsigned who,unsigned type);
 #define SOM_EQUIP_BUSY 0                /* hero mid-action: retry later */
 #define SOM_EQUIP_REFUSED (-1)          /* will not work: use the ring */
 static int som_cast_spell(uint8_t *ram,unsigned spell);
+static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell);
 static int som_spell_affordable(const uint8_t *ram,unsigned spell);
+static int som_spell_affordable_by(const uint8_t *ram,unsigned who,unsigned spell);
 #define SOM_SPELL_FIRE_BALL 0x0Cu
 /* X casts the current spell of the chosen discipline (som_magic.h); holding
  * X steps to the next one. One cursor per discipline (+1: no discipline). */
@@ -795,9 +797,10 @@ static int som_portal_place_raw(uint8_t *ram);
  * so they talk and open chests with no spell and no swing. NPCs: objects
  * from 7E:E600 with identity >= 0x80 and an event (tools/som_dialogue.py);
  * chests: identity 0x56. */
-static int som_interact_ahead(const uint8_t *ram){
-    if(!ram)return 0;
-    const uint8_t *hero=ram+0xE000u;
+/* who: the hero looking (0 boy, 1 girl, 2 sprite). */
+static int som_interact_ahead_by(const uint8_t *ram,unsigned who){
+    if(!ram||who>2u)return 0;
+    const uint8_t *hero=ram+0xE000u+0x200u*who;
     const int hx=(int)(hero[2]|hero[3]<<8),hy=(int)(hero[4]|hero[5]<<8);
     const unsigned facing=hero[0x010];
     int fx=0,fy=0;
@@ -816,6 +819,7 @@ static int som_interact_ahead(const uint8_t *ram){
     }
     return 0;
 }
+static int som_interact_ahead(const uint8_t *ram){return som_interact_ahead_by(ram,0u);}
 /* FlXtR's own MP (each class's energy: Chakra, Chi, Ki...) and AP (the
  * evade pips), src/som_energy.h. energy_free: tests and no-cost runs. */
 static SomEnergy energy;
@@ -1786,24 +1790,27 @@ static void som_input_poll(void){
         /* Select gave pad 1 to the girl or the sprite: B/Y are her class's
          * weapons (the boy's casting, chains and styles stay his). */
         const unsigned driver=wram?som_pad1_member():0u;
-        const int caster=wram&&!driver&&disciplines.selected<SOM_DISCIPLINE_COUNT&&
-            som_disc_caster(disciplines.selected)&&!ring_ai_enabled&&!som_manual_disciplines&&
+        const unsigned caster_cls=driver?som_disc_member_class(&disciplines,driver):
+            disciplines.selected;
+        const int caster=wram&&caster_cls<SOM_DISCIPLINE_COUNT&&
+            som_disc_caster(caster_cls)&&!ring_ai_enabled&&!som_manual_disciplines&&
             !native_ring;
         if(wram)som_monk_glove(wram);
-        const int caster_talk=caster&&(current&b_bit)&&!(current&y_bit)&&som_interact_ahead(wram);
+        const int caster_talk=caster&&(current&b_bit)&&!(current&y_bit)&&
+            som_interact_ahead_by(wram,driver);
         if(caster&&!caster_talk&&(current&(y_bit|b_bit))&&!(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
-            const unsigned spell=som_caster_spell(disciplines.selected,which);
-            if(!which&&!som_spell_affordable(wram,spell)){
+            const unsigned spell=som_caster_spell(caster_cls,which);
+            if(!which&&!som_spell_affordable_by(wram,driver,spell)){
                 b_weapon_blocked=1;
                 if(pressed&b_bit)som_overlay_set(&overlay,"^Not enough MP|casters do not punch",
                                                  SOM_MESSAGE_FRAMES/3u);
             }else{
                 if(which)y_weapon_blocked=1;else b_weapon_blocked=1;
                 if(pressed&(which?y_bit:b_bit)){
-                    if(som_cast_spell(wram,spell))
-                        fprintf(stderr,"[som-ai] CASTER %s: %s\n",which?"Y":"B",
-                                som_class_spell_label(disciplines.selected,spell));
+                    if(som_cast_spell_by(wram,driver,spell))
+                        fprintf(stderr,"[som-ai] CASTER %s %s: %s\n",som_party_names[driver],
+                                which?"Y":"B",som_class_spell_label(caster_cls,spell));
                 }
             }
         }
@@ -2694,8 +2701,9 @@ static int som_equip_weapon(uint8_t *ram,unsigned type){
  * when the hero is released. Not reproduced: the "<spell> Lv." banner, and
  * the spark palette for frames 0-59 (the game loads the cast palette itself
  * at frame 60). */
+static unsigned cast_who;                 /* the hero casting now (spell names) */
 static const char *som_spell_name(unsigned spell){
-    return som_class_spell_label(disciplines.selected,spell);
+    return som_class_spell_label(som_disc_member_class(&disciplines,cast_who),spell);
 }
 /* 0 Gnome .. 5 Dryad: six spells each; 6 Shade, 7 Lumina: three each. */
 static unsigned som_spell_element(unsigned spell){
@@ -2703,8 +2711,8 @@ static unsigned som_spell_element(unsigned spell){
 }
 /* Hostile hero spells target the monster slots 3-5 that are present, on
  * screen and alive ($D0:DA60). Take the nearest one. */
-static int som_cast_target(const uint8_t *ram){
-    const uint8_t *hero=ram+0xE000u;
+static int som_cast_target(const uint8_t *ram,unsigned who){
+    const uint8_t *hero=ram+0xE000u+0x200u*who;
     const int hx=(int)som_word(hero+0x20),hy=(int)som_word(hero+0x22);
     int best=-1,best_distance=0;
     for(unsigned slot=3;slot<6u;slot++){
@@ -2717,18 +2725,27 @@ static int som_cast_target(const uint8_t *ram){
     return best;
 }
 /* Enough MP for the spell (ROM row byte 15 = cost)? */
-static int som_spell_affordable(const uint8_t *ram,unsigned spell){
-    if(!ram||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
+static int som_spell_affordable_by(const uint8_t *ram,unsigned who,unsigned spell){
+    if(!ram||who>2u||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
     const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
-    return row&&ram[0xE186]>=row[15];
+    return row&&ram[0xE186u+0x200u*who]>=row[15];
 }
-static int som_cast_spell(uint8_t *ram,unsigned spell){
-    if(!ram||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
-    if(!som_field_idle(ram))return 0;                 /* busy: no cast */
-    uint8_t *hero=ram+0xE000u;
+static int som_spell_affordable(const uint8_t *ram,unsigned spell){
+    return som_spell_affordable_by(ram,0u,spell);
+}
+static int som_cast_spell(uint8_t *ram,unsigned spell){return som_cast_spell_by(ram,0u,spell);}
+/* who: the caster, 0 the boy, 1 the girl, 2 the sprite. The three heroes run
+ * the same cast (som-decomp summon-cast.md 2: same script, other pictures);
+ * only the sprite's palette index differs (+0x4F 0xCF) and each has her
+ * own effect-tile buffer (7E:2000 + who*0x1000). */
+static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
+    if(!ram||who>2u||spell>=SOM_SPELL_COUNT||!som_rom)return 0;
+    if(who?!som_ally_idle(ram,who):!som_field_idle(ram))return 0;   /* busy: no cast */
+    cast_who=who;
+    uint8_t *hero=ram+0xE000u+0x200u*who;
     const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
-    /* 0x81 hostile: monster slots; 0x01 ally and 0x00 self: the boy
-     * himself (hero slot 0, target 1, as the ring's single-ally choice). */
+    /* 0x81 hostile: monster slots; 0x01 ally and 0x00 self: the caster
+     * herself (hero slot who, target who+1, as the ring's single-ally choice). */
     if(!row||(row[8]!=0x81u&&row[8]!=0x01u&&row[8]!=0x00u)){
         fprintf(stderr,"[som-ai] CAST refused: spell %#04x has unsupported targets\n",spell);
         return 0;
@@ -2743,7 +2760,7 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
         fprintf(stderr,"[som-ai] CAST refused: MP %u < %u\n",(unsigned)hero[0x186],cost);
         return 0;
     }
-    const int target=hostile?som_cast_target(ram):0;
+    const int target=hostile?som_cast_target(ram,who):(int)who;
     if(target<0){
         snprintf(message,sizeof(message),"^%s: no target",som_spell_name(spell));
         som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
@@ -2760,19 +2777,19 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){
     hero[0x176]=1;hero[0x178]=(uint8_t)(target+1);hero[0x179]=hero[0x17A]=0;
     hero[0x172]=hero[0x173]=hero[0x174]=0xFF;
     hero[0x171]=(uint8_t)level;
-    /* $C1:88C7 for the boy */
+    /* $C1:88C7 */
     hero[0x111]=(uint8_t)level;hero[0x108]=0;
-    hero[0x04F]=0xCE;hero[0x01C]=0x40;hero[0x030]=0xFF;hero[0x011]=0x94;
+    hero[0x04F]=who==2u?0xCFu:0xCEu;hero[0x01C]=0x40;hero[0x030]=0xFF;hero[0x011]=0x94;
     hero[0x006]=hero[0x007]=hero[0x008]=0;
     hero[0x060]=0x20;
-    memcpy(ram+SOM_WEAPON_BUF+0x800u,spark,sizeof(spark));   /* $C1:8634 */
+    memcpy(ram+SOM_WEAPON_BUF+0x1000u*who+0x800u,spark,sizeof(spark));   /* $C1:8634 */
     if(hostile&&target>=0){
         const uint8_t *m=ram+0xE600u+0x200u*(unsigned)target;
         xp_spell_slot=target;xp_spell_hp=(uint16_t)(m[0x182]|m[0x183]<<8);
         xp_spell_species=m[0x180];xp_spell_frame=frame_number;
     }
-    fprintf(stderr,"[som-ai] CAST %s Lv.%u at %s slot %d (MP %u, cost %u)\n",
-            som_spell_name(spell),level,hostile?"monster":"own",target,
+    fprintf(stderr,"[som-ai] CAST %s %s Lv.%u at %s slot %d (MP %u, cost %u)\n",
+            som_party_names[who],som_spell_name(spell),level,hostile?"monster":"own",target,
             (unsigned)hero[0x186],cost);
     return 1;
 }

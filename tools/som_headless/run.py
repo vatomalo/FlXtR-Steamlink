@@ -125,7 +125,8 @@ def build(work, run_dir, remote):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("scenario", type=Path)
+    parser.add_argument("scenario", type=Path, nargs="?")
+    parser.add_argument("--train-boss", action="store_true", help="reload a boss save and train all three party members")
     parser.add_argument("--rom", required=True, help="ROM path (on --host when remote)")
     parser.add_argument("--start", default="-", help=".srm or save state to copy, or -")
     parser.add_argument("--host", help="ssh target; omit to run locally")
@@ -133,14 +134,20 @@ def main(argv=None):
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--keep", action="store_true", help="keep the run folder")
     args = parser.parse_args(argv)
-    script = args.scenario.read_text()
-    out = args.out or REPO / "build" / "som-headless" / (args.scenario.stem + time.strftime("-%Y%m%d-%H%M%S"))
+    if args.train_boss:
+        if args.scenario or args.start == "-" or args.start.endswith(".srm"):
+            parser.error("--train-boss requires a savestate and no scenario file")
+    elif args.scenario is None:
+        parser.error("specify a scenario or --train-boss")
+    script = "" if args.train_boss else args.scenario.read_text()
+    name = "boss-training" if args.train_boss else args.scenario.stem
+    out = args.out or REPO / "build" / "som-headless" / (name + time.strftime("-%Y%m%d-%H%M%S"))
     out.mkdir(parents=True, exist_ok=True)
     run_dir = "/tmp/som-headless-%d-%d" % (os.getpid(), int(time.time()))
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         build(work, run_dir, bool(args.host))
-        shutil.copy(args.scenario, work / "scenario.txt")
+        (work / "scenario.txt").write_text(script)
         start = "-" if args.start == "-" else run_dir + "/start" + (".srm" if args.start.endswith(".srm") else ".state")
         rom = run_dir + "/" + TURBO_NAME
         setup = ["mkdir -p %s" % shlex.quote(run_dir),
@@ -158,8 +165,9 @@ def main(argv=None):
                 newer = shlex.quote(os.path.join(local, name))
                 setup.append("[ ! -f %s ] || cp %s %s/" % (newer, newer, run_dir))
         run = ("cd %s && FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 FLXTR_SOM_TEST_COMMANDS=1 ./som-harness "
-               "./som_ai_proxy_test.so %s %s scenario.txt %s") % (
-                   shlex.quote(run_dir), shlex.quote(rom), shlex.quote(start), shlex.quote(run_dir))
+               "./som_ai_proxy_test.so %s %s %s %s") % (
+                   shlex.quote(run_dir), shlex.quote(rom), shlex.quote(start),
+                   "--train-boss" if args.train_boss else "scenario.txt", shlex.quote(run_dir))
         cleanup = "rm -rf %s" % shlex.quote(run_dir)
 
         def shell(command, **kw):
@@ -181,14 +189,15 @@ def main(argv=None):
                                        stdin=data, check=True)
                 else:
                     shutil.copy(work / name, Path(run_dir) / name)
-            try:
-                done = shell(run, capture_output=True, text=True, errors="replace",
-                             timeout=args.timeout)
-                code, log = done.returncode, done.stdout + done.stderr
-            except subprocess.TimeoutExpired as expired:
-                code, log = 3, (expired.stderr or "") if isinstance(expired.stderr, str) else ""
-                log += "\n[runner] TIMEOUT after %d s\n" % args.timeout
-            (out / "run.log").write_text(log)
+            log_path = out / "run.log"
+            with log_path.open("wb") as stream:
+                try:
+                    done = shell(run, stdout=stream, stderr=subprocess.STDOUT, timeout=args.timeout)
+                    code = done.returncode
+                except subprocess.TimeoutExpired:
+                    code = 3
+                    stream.write(f"\n[runner] TIMEOUT after {args.timeout} s\n".encode())
+            log = log_path.read_text(errors="replace")
             saves = re.findall(r"\[harness\] save (\S+) \d+ bytes serialize 1", log)
             saves += re.findall(r"\[harness\] dump (\S+) \d+ bytes", log)
             for saved in saves:
@@ -215,13 +224,13 @@ def main(argv=None):
                 shell(cleanup)
     failures = check_log(log, scenario_log_checks(script))
     for line in log.splitlines():
-        if "FAIL" in line or "TIMEOUT" in line:
+        if "FAIL" in line or "TIMEOUT" in line or line.startswith("[training]"):
             print(line)
     for failure in failures:
         print("[runner] FAIL log check:", failure)
     if code == 0 and failures:
         code = 4
-    print("[runner] %s: exit %d, output in %s" % (args.scenario.name, code, out))
+    print("[runner] %s: exit %d, output in %s" % (name, code, out))
     return code
 
 

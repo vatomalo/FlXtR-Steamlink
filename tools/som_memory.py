@@ -528,12 +528,40 @@ def grid_cells(state):
     return cells
 
 
-def detect_cuts(previous, current):
-    """Attributes of tiles next to the hero that turned from blocking to open.
+def sword_cut_signature(context, tile_id, attributes):
+    """A native sword-cut descriptor scoped to its map, layer, and tile ID."""
+    if not context.get("runtime_verified"):
+        return None
+    map_id = context.get("map_id")
+    layer = (context.get("actor") or {}).get("layer")
+    if not isinstance(map_id, int) or layer not in (1, 2):
+        return None
+    try:
+        tile = int(tile_id, 16)
+        values = bytes.fromhex(attributes)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= tile < 256 or len(values) != 4 or values[2] not in (0xC1, 0xC8):
+        return None
+    return f"{map_id}:{layer}:{tile:02x}:{values.hex()}"
 
-    That is what cutting grass (or breaking a pot) looks like in WRAM: the
-    tile in front of the hero is replaced by a different, walkable tile.
-    """
+
+def confirmed_sword_cut(context, tile_id, attributes, learned):
+    key = sword_cut_signature(context, tile_id, attributes)
+    if key is None:
+        return False
+    # Potos Falls tile 05, documented in the decomp and exercised by a sword.
+    return key in learned or (key.startswith("128:1:05:13") and key.endswith("c85f"))
+
+
+def world_cell_kind(kind):
+    if kind == "cuttable":
+        return "blocked"  # stale atlas rows classified by shared attributes
+    return "cuttable" if kind == "verified_cuttable" else kind
+
+
+def detect_cuts(previous, current):
+    """Native sword-cut tiles that changed to their declared replacement."""
     if not isinstance(previous, dict) or not isinstance(current, dict):
         return []
     before_context = previous.get("tile_context") or {}
@@ -554,8 +582,9 @@ def detect_cuts(previous, current):
             continue
         dx = min((x - hero[0]) % size[0], (hero[0] - x) % size[0])
         dy = min((y - hero[1]) % size[1], (hero[1] - y) % size[1])
-        if dx + dy == 1:
-            found.append(old[2])
+        key = sword_cut_signature(before_context, old[1], old[2])
+        if dx + dy == 1 and key and tile_id.lower() == key[-2:]:
+            found.append(key)
     return found
 
 
@@ -1007,7 +1036,7 @@ class ObservationHistory:
                 "ORDER BY map_id,layer,y,x"):
             entry = maps.setdefault(str(map_id), {"known_cells": [], "places": []})
             entry["known_cells"].append(
-                {"layer": layer, "x": x, "y": y, "kind": kind, "seen": seen})
+                {"layer": layer, "x": x, "y": y, "kind": world_cell_kind(kind), "seen": seen})
         for place in self.place_summary():
             maps.setdefault(str(place["map_id"]),
                             {"known_cells": [], "places": []})["places"].append(place)
@@ -1052,6 +1081,7 @@ class ObservationHistory:
         cuttable = self.cuttable_signatures()
         failed = self.failed_cut_tiles(context["map_id"])
         attribute_rows = context.get("attribute_rows") or []
+        tile_id_rows = context.get("tile_id_rows") or []
         special = {tuple(cell["offset"]): cell.get("attributes")
                    for cell in context.get("special_cells") or []
                    if isinstance(cell.get("offset"), list)}
@@ -1059,6 +1089,8 @@ class ObservationHistory:
         for row_index, row in enumerate(rows):
             if not isinstance(row, str):
                 continue
+            attrs = attribute_rows[row_index].split() if row_index < len(attribute_rows) else []
+            ids = tile_id_rows[row_index].split() if row_index < len(tile_id_rows) else []
             for column, marker in enumerate(row):
                 kind = kinds.get(marker)
                 if kind is None:
@@ -1069,13 +1101,12 @@ class ObservationHistory:
                 if (kind == "conditional" and
                         special.get((column - radius, row_index - radius)) in proven):
                     kind = "open"
-                attributes = (attribute_rows[row_index].split()[column]
-                              if row_index < len(attribute_rows) else None)
                 x = (center[0] + column - radius) % width
                 y = (center[1] + row_index - radius) % height
-                if (kind in ("blocked", "conditional", "h1", "h2") and attributes in cuttable and
-                        (x, y) not in failed):
-                    kind = "cuttable"
+                if (kind in ("blocked", "conditional", "h1", "h2") and (x, y) not in failed and
+                        column < min(len(attrs), len(ids)) and
+                        confirmed_sword_cut(context, ids[column], attrs[column], cuttable)):
+                    kind = "verified_cuttable"
                 self.connection.execute(
                     "INSERT INTO world_cells(map_id,layer,x,y,kind,seen,last_ts) "
                     "VALUES(?,?,?,?,?,1,?) ON CONFLICT(map_id,layer,x,y) DO UPDATE SET "
@@ -1089,7 +1120,7 @@ class ObservationHistory:
         rows = self.connection.execute(
             "SELECT x,y,kind FROM world_cells WHERE map_id=? AND layer=?",
             (map_id, layer)).fetchall()
-        cells = {(x, y): kind for x, y, kind in rows}
+        cells = {(x, y): world_cell_kind(kind) for x, y, kind in rows}
         # Standing on a tile proves it walkable, but not its height: a walked
         # bridge deck relabelled "open" (height 0) let routes step from the
         # deck onto height-2 banks the game refuses, so the hero swung

@@ -2198,6 +2198,32 @@ int main(void){
         hero[2]=202;som_bunshin_frame(ram);                  /* clones copy the step */
         assert(bunshin.x[0]==202&&bunshin.x[1]==202);
         uint8_t *m0=ram+0xE600;
+        {
+            const SomBunshin keep_bunshin=bunshin;
+            const uint8_t keep_owner=bunshin_owner;
+            uint8_t saved_m[0x200];memcpy(saved_m,m0,sizeof(saved_m));
+            const unsigned row=0x102AD0u+64u*0x0Cu;
+            rom[row+8]=0x81;rom[row+15]=3;
+            memset(m0,0,0x200);
+            m0[0]=1;m0[0x180]=0x57;m0[0x140]=0x44;m0[0x170]=0x0C;
+            m0[0x172]=m0[0x173]=m0[0x174]=0xFF;m0[0x186]=9;
+            m0[0x176]=3;m0[0x178]=1;m0[0x179]=2;m0[0x17A]=3;
+            bunshin_owner=1;
+            som_bunshin_absorb_magic(ram);
+            assert(som_bun_alive(&bunshin)==2&&m0[0x186]==9);     /* area spell */
+            m0[0x176]=1;m0[0x179]=m0[0x17A]=0;
+            som_bunshin_absorb_magic(ram);
+            assert(som_bun_alive(&bunshin)==2&&m0[0x186]==9);     /* Boy was targeted */
+            m0[0x178]=2;
+            som_bunshin_absorb_magic(ram);
+            assert(som_bun_alive(&bunshin)==1&&m0[0x186]==6);
+            assert(m0[0x172]==0&&m0[0x173]==1&&m0[0x174]==2);
+            assert(!m0[0x176]&&!m0[0x178]);
+            som_bunshin_absorb_magic(ram);
+            assert(som_bun_alive(&bunshin)==1&&m0[0x186]==6);     /* one clone per cast */
+            bunshin=keep_bunshin;bunshin_owner=keep_owner;
+            memcpy(m0,saved_m,sizeof(saved_m));
+        }
         m0[0]=1;m0[0x180]=7;m0[0x190]=m0[0x191]=0;m0[0x1F1]=0;
         m0[2]=210;m0[3]=0;m0[4]=230;m0[5]=0;                  /* touches clone 1 */
         som_bunshin_frame(ram);
@@ -2555,6 +2581,33 @@ int main(void){
             assert(som_cast_spell_by(ram,1u,0x07)&&girl[0x170]==0x07&&girl[0x178]==2);
             assert(girl[0x01C]==0x40&&girl[0x04F]==0xCE&&!memcmp(hero,boy_before,0x200));
             assert(!som_cast_spell_by(ram,1u,0x07));                  /* busy now */
+            girl[0x1C]=girl[0x60]=0;
+            const unsigned revive_row=0x102AD0u+0x21u*64u;
+            rom[revive_row+8]=1;rom[revive_row+15]=3;
+            assert(!som_cast_spell_by(ram,1u,0x21u));                /* nobody fallen */
+            spr[0x182]=0;
+            const SomAllyTech keep_tech=ally_tech[0];
+            const uint8_t keep_cleric=disciplines.party[0];
+            disciplines.party[0]=SOM_DISC_CLERIC;
+            som_ally_tech_one(ram,1u);
+            assert(girl[0x170]==0x21u&&girl[0x178]==3u&&girl[0x60]==0x20);
+            disciplines.party[0]=keep_cleric;ally_tech[0]=keep_tech;
+            spr[0x191]=0x80;
+            girl[0x186]=6;
+            som_revival_frame(ram);
+            assert(spr[0x182]==0);                   /* still in the cast pose */
+            girl[0x60]=0;
+            som_revival_frame(ram);
+            assert(spr[0x182]==1&&spr[0x191]==0&&spr[0x1F3]==12);
+            girl[0x1C]=girl[0x60]=0;
+            spr[0x182]=0;
+            disciplines.party[0]=SOM_DISC_BUSHIDO;
+            assert(som_try_revivifier(ram,1u,1)&&girl[0x178]==3u);
+            assert(disciplines.party[0]==SOM_DISC_BUSHIDO);
+            assert(!som_try_revivifier(ram,0u,1));  /* already targeted */
+            memset(revivals,0,sizeof(revivals));
+            disciplines.party[0]=keep_cleric;
+            spr[0x182]=40;
             assert(som_cast_spell_by(ram,2u,SOM_SPELL_FIRE_BALL)&&spr[0x170]==0x0C);
             assert(spr[0x04F]==0xCF&&spr[0x178]==4&&!memcmp(hero,boy_before,0x200));
             EXPECT_TILES(0x14BA00);
@@ -2931,19 +2984,22 @@ int main(void){
         ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xE000]=1;
         ram[0xE182]=40;ram[0xE184]=117;
         ram[0xCC48]=0x43;ram[0xCC49]=0x60;                     /* 2 of item 3, 3 Candy */
-        assert(som_use_candy(ram)&&ram[0xCC49]==0x40&&ram[0xE1F3]==100&&ram[0xCC48]==0x43);
-        ram[0xE1F3]=200;assert(som_use_candy(ram)&&ram[0xE1F3]==255&&ram[0xCC49]==0x20);
+        assert(som_use_candy(ram,0u)&&ram[0xCC49]==0x40&&ram[0xE1F3]==100&&ram[0xCC48]==0x43);
+        ram[0xE1F3]=200;assert(som_use_candy(ram,0u)&&ram[0xE1F3]==255&&ram[0xCC49]==0x20);
         ram[0xCC4A]=0x21;                                      /* 1 Medical Herb after it */
-        assert(som_use_candy(ram)&&ram[0xCC49]==0x21&&ram[0xCC4A]==0xFF);  /* last Candy */
-        assert(!som_use_candy(ram));                           /* none left */
+        assert(som_use_candy(ram,0u)&&ram[0xCC49]==0x21&&ram[0xCC4A]==0xFF);  /* last Candy */
+        assert(!som_use_candy(ram,0u));                           /* none left */
+        ram[0xCC4A]=0x20;ram[0xE200]=1;ram[0xE382]=12;ram[0xE384]=100;
+        assert(som_use_candy(ram,1u)&&ram[0xE3F3]==100&&ram[0xE1F3]==255);
+        ram[0xE200]=0;ram[0xE382]=ram[0xE384]=ram[0xE3F3]=0;
         assert(!som_use_herb(ram)&&ram[0xCC49]==0x21);         /* not poisoned */
         ram[0xE190]=0x01;ram[0xE191]=0x20;                     /* poison (0x2001 live) */
         assert(som_use_herb(ram)&&ram[0xE191]==0x00&&ram[0xE190]==0x01&&ram[0xCC49]==0xFF);
         ram[0xE191]=0x20;assert(!som_use_herb(ram)&&ram[0xE191]==0x20);   /* no Herb */
         ram[0xE190]=ram[0xE191]=0;
-        ram[0xCC49]=0xE0;assert(som_use_candy(ram)&&ram[0xCC49]==0xC0); /* Turbo: 7 */
-        ram[0xCC49]=0x60;ram[0xD0]=0x81;assert(!som_use_candy(ram)); /* dialogue */
-        ram[0xD0]=0;ram[0xE182]=0;assert(!som_use_candy(ram));      /* KO */
+        ram[0xCC49]=0xE0;assert(som_use_candy(ram,0u)&&ram[0xCC49]==0xC0); /* Turbo: 7 */
+        ram[0xCC49]=0x60;ram[0xD0]=0x81;assert(!som_use_candy(ram,0u)); /* dialogue */
+        ram[0xD0]=0;ram[0xE182]=0;assert(!som_use_candy(ram,0u));      /* KO */
     }
     /* pal_trace: per-frame low WRAM + palette shadow, written when done. */
     {
@@ -3171,6 +3227,32 @@ int main(void){
         memset(mocked_wram,0,sizeof(mocked_wram));som_disc_init(&disciplines);
         menu_hold_until_release=menu_was_open=0;
     }
+    /* A Mentalist blinks the endangered ally, leaving the caster, the
+     * other ally, and the enemy where they were. */
+    {
+        static uint8_t ram[SOM_WRAM_SIZE];
+        memset(ram,0,sizeof(ram));
+        ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xC1]=ram[0xC3]=2;
+        for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+            uint8_t *actor=som_ally_obj(ram,who);
+            actor[0]=1;actor[0x184]=100;actor[0x182]=who==0u?30:100;
+            som_put_word(actor+2,(uint16_t)(200+40*who));som_put_word(actor+4,200);
+        }
+        uint8_t *enemy=ram+0xE600;
+        enemy[0]=1;enemy[0x180]=0x57;enemy[0x182]=100;
+        som_put_word(enemy+2,204);som_put_word(enemy+4,200);
+        rescue_ready[1]=0;familiar.slot=-1;
+        ram[0x1B800]=3;                  /* all landing spots blocked */
+        assert(!som_telekinesis_rescue(ram,1u,1)&&som_word(ram+0xE002)==200);
+        ram[0x1B800]=0;
+        assert(som_telekinesis_rescue(ram,1u,1));
+        assert(som_rescue_threat(ram,(int)som_word(ram+0xE002),
+                                 (int)som_word(ram+0xE004),0u)>=48);
+        assert(som_word(ram+0xE202)==240&&som_word(ram+0xE402)==280);
+        assert(som_word(enemy+2)==204&&som_word(ram+0xE182)==30);
+        assert(!som_telekinesis_rescue(ram,1u,1));
+        rescue_ready[1]=0;
+    }
     /* Companion class moves (2026-11-20): the girl (Cleric) heals the
      * hurt boy, the sprite (Mage) bolts the monster; a Ninja girl dashes to
      * the monster's far side and cuts on arrival. Weapon holder bits. */
@@ -3181,13 +3263,13 @@ int main(void){
         const unsigned px[3]={200,220,240};
         for(unsigned who=0;who<3;who++){
             uint8_t *o=ram+0xE000+0x200*who;
-            o[0]=1;o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who?100:30;  /* the boy at 30 % */
+            o[0]=1;o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who==0u?30:who==2u?65:100;
         }
         uint8_t *m=ram+0xE600;m[0]=1;som_put_word(m+2,240+50);m[4]=200;        /* 50 px from the sprite */
         som_disc_init(&disciplines);familiar.slot=-1;ally_tech_ready=0;
         const unsigned long saved_frame=frame_number;frame_number=1000;
         som_ally_tech_frame(ram);
-        assert(ram[0xE1F3]>0);                                    /* the boy healed */
+        assert(ram[0xE1F3]>0&&ram[0xE5F3]>0);                  /* party healed */
         assert(m[0x1F1]>0);                                       /* the monster hit */
         const uint8_t heal=ram[0xE1F3],hurt=m[0x1F1];
         frame_number++;som_ally_tech_frame(ram);

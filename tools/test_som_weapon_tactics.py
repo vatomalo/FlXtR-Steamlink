@@ -20,6 +20,12 @@ class ChooseTest(unittest.TestCase):
         # Beyond NEAR_PX it is no fight: the longer reach waits in hand.
         self.assertEqual(choose("sword", "bow", "sword", 200, 1.0, {})[0], "bow")
 
+    def test_boss_policy_prefers_ninja_and_weaponmaster_ranged_options(self):
+        self.assertEqual(choose("sword", "boomerang", "sword", 24, 1, {},
+                                prefer_range=True)[0], "boomerang")
+        self.assertEqual(choose("sword", "spear", "sword", 24, 1, {}, third="bow",
+                                prefer_range=True)[0], "bow")
+
     def test_whip_blind_spot_and_low_hp(self):
         self.assertEqual(choose("whip", "glove", "whip", 12, 1.0, {})[0], "glove")
         self.assertEqual(choose("sword", "bow", "sword", 20, 0.3, {})[0], "bow")

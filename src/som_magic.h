@@ -5,7 +5,7 @@
  * The proxy reads byte 8 and the MP cost (byte 15) from the loaded Turbo
  * ROM at cast time; these lists only decide who may cast what.
  * Left out: 0x17 Analyzer (0xA0, a scan, not a cast), 0x20/0x23 (0x40,
- * undecoded), 0x21 Revivifier (revives others; the boy casts on himself).
+ * undecoded).
  * Pure tables and helpers, no I/O. */
 #ifndef FLXTR_SOM_MAGIC_H
 #define FLXTR_SOM_MAGIC_H
@@ -37,7 +37,7 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     /* Magic: the attack spells of every spirit */
     {0x0C, 0x06, 0x13, 0x00, 0x01, 0x0D, 0x0E, 0x11, 0x07, 0x1F, 0x28, 0xFF},
     /* Divine Arts: B Lucent Beam, Y Cure Water, X the rest */
-    {0x28, 0x0B, 0x0A, 0x29, 0x27, 0x22, 0xFF},
+    {0x28, 0x0B, 0x0A, 0x29, 0x27, 0x22, 0x21, 0xFF},
     /* Dark Arts: shade and draining */
     /* B Dark Force, Y Energy Absorb, X the rest */
     {0x25, 0x08, 0x24, 0x26, 0x19, 0x18, 0xFF},

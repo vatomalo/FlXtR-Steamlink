@@ -104,12 +104,12 @@ MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
-                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_herb",
+                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_candy_1", "use_candy_2", "use_herb",
                     "give_glove", "give_axe", "give_spear", "give_whip", "give_bow",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
-                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade", "party_release",
+                    "cast_attack", "cast_heal", "cast_revive", "cast_buff", "class_none", "evade", "party_release",
                     "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap", "telekinesis",
                     "evade_up", "evade_down", "evade_left", "evade_right"} | \
     {f"class_{n}" for n in range(16)} | {f"special_{n}" for n in range(1, 9)}
@@ -1170,7 +1170,7 @@ def hide_familiar(observation, slot):
             enemy["familiar"] = True
 
 
-def direct_candy(link, raw, timeout=1.5):
+def direct_candy(link, raw, timeout=1.5, who=0):
     """Candy without the ring: the proxy's use_candy queues the game's own
     heal (hero +0x1F3) and removes one Candy, the last one too (the ring
     calibration only knows a one-item ring); True once a Candy is gone and
@@ -1178,15 +1178,16 @@ def direct_candy(link, raw, timeout=1.5):
     if raw is None or candy_count(WRAM(raw)) < 1:
         return False
     before = WRAM(raw)
-    count, hp = candy_count(before), before.character(0)["hp"]
+    count, hp = candy_count(before), before.character(who)["hp"]
     try:
-        link.send_control("use_candy")
+        link.send_control("use_candy" if who == 0 else f"use_candy_{who}")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             time.sleep(0.25)
             now = WRAM(link.fetch_wram(False))
-            if candy_count(now) < count and now.character(0)["hp"] > hp:
-                print(f"[candy] used without the ring: +{now.character(0)['hp'] - hp} HP, "
+            if candy_count(now) < count:
+                gained = max(0, now.character(who)["hp"] - hp)
+                print(f"[candy] used on party slot {who + 1}: +{gained} HP observed, "
                       f"{candy_count(now)} left", flush=True)
                 return True
     except (OSError, subprocess.SubprocessError):
@@ -1295,14 +1296,29 @@ def apply_gambits(planner, play_loop, weights):
         play_loop.leave_fraction = min(0.85, max(0.3, 0.6 + 0.08 * (inn - fight)))
 
 
-def candy_wanted(observation, fraction=0.5):
-    """Use Candy below `fraction` of max HP when no enemy is within weapon reach."""
+def candy_recipient(observation, fraction=0.5):
+    """Prefer the active party member closest to being knocked out."""
+    if not isinstance(observation, dict) or not observation.get("candy_count"):
+        return None
+    endangered = [(hero["hp"] / hero["max_hp"], index)
+                  for index, hero in enumerate((observation.get("party") or [])[:3])
+                  if hero.get("availability_byte") == 1 and
+                  0 < (hero.get("hp") or 0) <= (hero.get("max_hp") or 0) * min(fraction, 0.35)]
+    if endangered:
+        return min(endangered)[1]
+    return 0 if candy_wanted(observation, fraction) else None
+
+
+def candy_wanted(observation, fraction=0.5, emergency=False):
+    """Ring use needs space. Direct use can rescue a hero at critical HP."""
     if not isinstance(observation, dict) or not observation.get("candy_count"):
         return False
     hero = (observation.get("party") or [{}])[0]
     hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-    if not max_hp or hp > max_hp * fraction:
+    if not max_hp or not 0 < hp <= max_hp * fraction:
         return False
+    if emergency and hp * 4 <= max_hp:
+        return True
     actor = ((observation.get("tile_context") or {}).get("actor") or {})
     for enemy in observation.get("enemy_slots", []):
         if (enemy.get("active") and isinstance(actor.get("x_px"), int) and
@@ -1506,8 +1522,8 @@ def main() -> int:
     print("[shop] " + (f"Candy shop known, buying from {args.shop_gold} GP"
                        if isinstance(shop, dict) else
                        "no shop taught: run tools/som_teach_shop.py once"), flush=True)
-    print("[candy] " + ("enabled from ring calibration" if calibration else
-                        "disabled: run tools/som_ring_probe.py once to enable"), flush=True)
+    print("[candy] direct use enabled" + (" with ring fallback" if calibration else ""),
+          flush=True)
     messages = link is not None and not args.no_messages
     personality = (Personality(args.personality) if messages and
                    not args.no_personality else None)
@@ -1925,13 +1941,17 @@ def main() -> int:
                     announce("AI: poisoned|Medical Herb")
                     previous = "wait"
                     continue
-            if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
-                    time.monotonic() >= candy_retry_at and gambit(GAMBIT_CANDY) and
-                    candy_wanted(observation, candy_fraction(gambits)) and mode == "field"):
+            if (link and not args.dry_run and args.policy in ("hybrid", "memory") and
+                    time.monotonic() >= candy_retry_at and gambit(GAMBIT_CANDY) and mode == "field"
+                    and (recipient := candy_recipient(observation, candy_fraction(gambits))) is not None):
                 if learner is not None:
                     learner.cancel("Candy macro")
                 announce("AI: HP low|using Candy")
-                if direct_candy(link, raw):
+                if direct_candy(link, raw, who=recipient):
+                    previous = "wait"
+                    continue
+                if recipient or candy_disabled or not candy_wanted(observation, candy_fraction(gambits)):
+                    candy_retry_at = time.monotonic() + CANDY_RETRY_S
                     previous = "wait"
                     continue
                 try:
@@ -2389,12 +2409,13 @@ def main() -> int:
                         actor = context.get("actor") or {}
                         near = sorted(((max(abs(e["x_px"] - actor.get("x_px", 0)),
                                              abs(e["y_px"] - actor.get("y_px", 0))),
-                                         e.get("identity"))
+                                         e.get("identity"), e.get("max_hp") or 0)
                                         for e in observation.get("enemy_slots", [])
                                         if e.get("active") and not e.get("familiar")),
                                       key=lambda item: item[0])
-                        gaps = [gap for gap, _ in near]
+                        gaps = [gap for gap, _, _ in near]
                         foe_type = near[0][1] if near else None
+                        boss_range = bool(near and near[0][2] >= 200)
                         primary, secondary = CLASS_WEAPONS[class_director.current]
                         # B chains (Taijutsu, Weapon Flow): the proxy swaps
                         # the weapon on B itself; any of the chain's is B.
@@ -2405,10 +2426,11 @@ def main() -> int:
                                                      hp / max_hp if max_hp else 1.0, levels,
                                                      third=THIRD_WEAPONS.get(
                                                          class_director.current),
-                                                     enemy=foe_type)
+                                                     enemy=foe_type, prefer_range=boss_range)
                         if swap is not None and swap[0] == b_held:
                             swap = None
                         if (swap is not None and decision.action == "attack" and
+                                not (boss_range and weapon_reach(swap[0]) > weapon_reach(held)) and
                                 not (weapon_reach(swap[0]) < weapon_reach(held) and
                                      gaps and min(gaps) <= weapon_reach(swap[0]))):
                             weapon_tactics.refused()     # swing now; reconsider next look
@@ -2473,8 +2495,15 @@ def main() -> int:
                     command = None
                     if (class_director.current is not None and now >= spell_ready_at and
                             style["magic"] > 0 and (hero0.get("mp") or 0) >= 2):
-                        if (class_director.current in HEALERS and max_hp and
-                                hp < max_hp * 0.40):
+                        party = observation.get("party") or []
+                        if (class_director.current == 4 and any(
+                                member.get("max_hp", 0) and member.get("hp") == 0
+                                for member in party[1:])):
+                            command = "cast_revive"
+                        elif class_director.current in HEALERS and any(
+                                member.get("max_hp", 0) and
+                                0 < member.get("hp", 0) < member["max_hp"] * 0.40
+                                for member in party):
                             command = "cast_heal"
                         elif (class_director.current in BUFF_CLASSES and
                               now >= buff_ready_at and

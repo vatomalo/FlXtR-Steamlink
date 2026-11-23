@@ -29,7 +29,7 @@ static const SomAllyMove som_ally_moves[SOM_DISCIPLINE_COUNT]={
     {"Hundred Fists", SOM_AM_MULTI,    20, 28,  4,1,5},  /* Monk */
     {"Shunshin",      SOM_AM_DASH,     25, 96, 14,2,1},  /* Ninja */
     {"Arcane Bolt",   SOM_AM_BOLT,     20,128, 12,2,1},  /* Mage */
-    {"Holy Light",    SOM_AM_HEAL,     25,  0, 12,3,1},  /* Cleric */
+    {"Healing Prayer",SOM_AM_HEAL_ALL, 25,  0, 12,3,1},  /* Cleric */
     {"Shadow Bolt",   SOM_AM_BOLT,     20,128, 13,2,1},  /* Warlock */
     {"Spirit Lash",   SOM_AM_BOLT,     20,112, 11,2,1},  /* Summoner */
     {"Healing Waltz", SOM_AM_HEAL_ALL, 30,  0,  6,2,1},  /* Dancer */

@@ -430,6 +430,25 @@ class TestRemoteLink(unittest.TestCase):
         nothing = Link(image(6, 40))
         self.assertFalse(bridge.direct_candy(nothing, image(6, 40), timeout=0.3))  # not confirmed
 
+    def test_direct_emergency_candy_does_not_need_room_to_open_a_ring(self):
+        import som_qwen_bridge as bridge
+        hero = {"hp": 25, "max_hp": 100}
+        obs = {"candy_count": 1, "party": [hero],
+               "tile_context": {"actor": {"x_px": 100, "y_px": 100}},
+               "enemy_slots": [{"active": True, "x_px": 104, "y_px": 100}]}
+        self.assertFalse(bridge.candy_wanted(obs))
+        self.assertTrue(bridge.candy_wanted(obs, emergency=True))
+        hero["hp"] = 0
+        self.assertFalse(bridge.candy_wanted(obs, emergency=True))
+
+    def test_candy_targets_the_most_endangered_living_companion(self):
+        import som_qwen_bridge as bridge
+        obs = {"candy_count": 1, "party": [
+            {"availability_byte": 1, "hp": 70, "max_hp": 100},
+            {"availability_byte": 1, "hp": 0, "max_hp": 100},
+            {"availability_byte": 1, "hp": 20, "max_hp": 150}]}
+        self.assertEqual(bridge.candy_recipient(obs), 2)
+
     def test_evade_when_guarding_keeps_failing_or_hp_is_low(self):
         import som_qwen_bridge as bridge
         self.assertFalse(bridge.guard_failing(4, True, False, []))

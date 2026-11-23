@@ -12,7 +12,7 @@ from som_build import profile as build_profile
 from som_story import is_mantis
 from som_tactics import CLOSE_SWING_PX, MANTIS_TACTICS, RANGE_PX
 
-from som_memory import detect_cuts, detect_whip_crossing, held_weapon, hero_airborne, is_whip_post
+from som_memory import confirmed_sword_cut, detect_cuts, detect_whip_crossing, held_weapon, hero_airborne, is_whip_post
 
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
@@ -2135,9 +2135,11 @@ class MemoryPlanner:
 
     def _cut_targets(self, context, reach=1):
         """[(action, distance)] toward cuttable tiles within reach tiles."""
-        rows, attrs, radius = (context.get("passability_rows"), context.get("attribute_rows"),
-                               context.get("radius"))
-        if not (isinstance(rows, list) and isinstance(attrs, list) and isinstance(radius, int)):
+        rows = context.get("passability_rows")
+        attrs, ids = context.get("attribute_rows"), context.get("tile_id_rows")
+        radius = context.get("radius")
+        if not (all(isinstance(grid, list) for grid in (rows, attrs, ids)) and
+                isinstance(radius, int)):
             return []
         cuttable, blocked = self._cuttable(), self._blocked_here(context)
         tile, map_id = context.get("actor_tile") or [0, 0], context.get("map_id")
@@ -2147,9 +2149,11 @@ class MemoryPlanner:
                 row, column = radius + dy * distance, radius + dx * distance
                 if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
                     break
-                cells = attrs[row].split()
-                if (rows[row][column] in "#?" and column < len(cells) and
-                        cells[column] in cuttable and
+                if row >= min(len(attrs), len(ids)):
+                    break
+                cells, tiles = attrs[row].split(), ids[row].split()
+                if (rows[row][column] in "#?" and column < min(len(cells), len(tiles)) and
+                        confirmed_sword_cut(context, tiles[column], cells[column], cuttable) and
                         not self._cut_failed(map_id, tile[0] + dx * distance,
                                              tile[1] + dy * distance)):
                     # Next to the hero a blocked step means the cut failed;

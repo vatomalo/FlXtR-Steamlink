@@ -22,6 +22,7 @@ static const char *const som_discipline_names[SOM_DISCIPLINE_COUNT]={
 /* The classes added 2026-11-20 (player's ideas): a whip-and-cross vampire
  * hunter, a corpse-raising necromancer, a bomb-and-mine artificer and a
  * mind-controlling mentalist. */
+#define SOM_DISC_CLERIC 4u
 #define SOM_DISC_HUNTER 12u
 #define SOM_DISC_NECRO 13u
 #define SOM_DISC_ARTIFICER 14u

@@ -24,3 +24,24 @@ ROM-free checks: `PYTHONPATH=tools python3 -m unittest tools/test_som_headless.p
 (the real-ROM test runs only with SOM_HEADLESS_HOST, SOM_HEADLESS_ROM, SOM_HEADLESS_START).
 Headless results are not hardware play: they use scripted input and no monsters are near
 the save's inn.
+
+## Boss training
+
+Use `--train-boss` in place of a scenario and pass an existing state from
+inside the boss encounter. The trainer starts attempts with the Boy, Girl,
+and Sprite in turn. Its first strategies keep the saved classes and try
+their Y and X attacks at range, including Ninja's chakram and
+Weaponmaster's bow. Further trials can pair a ranged fighter with a Cleric
+companion. It ranks attack patterns by observed boss HP, keeps
+working on party members without a win, and stops when all three have led
+a win with the whole party alive or after 18 attempts per party member.
+Training can spend the party's existing Candy on the most injured ally.
+Knockouts lower the score.
+
+Training reloads the original state bytes for each attempt. It runs in a
+disposable directory with exit autosave disabled and records the results in
+`run.log`. It neither writes a savestate nor changes the running game.
+
+    python3 tools/som_headless/run.py --train-boss --host root@100.124.74.13 \
+      --rom '/home/apps/retroarch/roms/Snes/Secret of Mana, Turbo.smc' \
+      --start /path/to/boss.state --timeout 600

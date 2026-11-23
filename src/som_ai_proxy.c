@@ -806,6 +806,12 @@ static int som_cast_spell(uint8_t *ram,unsigned spell);
 static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell);
 #define SOM_QUICK_CAST_FRAMES 240ul      /* quick cast: how long the skip may wait */
 static unsigned long quick_cast_until[3];   /* per hero: 0 none */
+typedef struct {
+    unsigned long deadline;
+    unsigned target,map,mp,cost;
+    int paid;
+} SomRevival;
+static SomRevival revivals[SOM_PARTY_MEMBERS];
 #define SOM_SPELL_FIRE_BALL 0x0Cu
 /* X casts the current spell of the chosen discipline (som_magic.h); holding
  * X steps to the next one. One cursor per discipline (+1: no discipline). */
@@ -1044,7 +1050,7 @@ static int mine_x[SOM_MINES],mine_y[SOM_MINES];static unsigned mine_map[SOM_MINE
 static uint8_t mine_live[SOM_MINES];
 static uint8_t mind_palette[32];static int mind_slot=-1;
 static SomTelekinesis telekinesis={.slot=-1};
-static unsigned long telekinesis_ready;
+static unsigned long telekinesis_ready,rescue_ready[SOM_PARTY_MEMBERS];
 static int som_telekinesis_cast(uint8_t *ram);
 static int som_telekinesis_cast_raw(uint8_t *ram);
 static int som_class_x(uint8_t *ram);
@@ -2970,14 +2976,20 @@ static unsigned som_mage_bolt_damage(const uint8_t *hero,unsigned cls){
 }
 /* The living hero with the lowest share of her HP (+0x182 of +0x184),
  * or -1 when nobody is hurt (no MP spent on a full party). Revivifier
- * (0x21) wants a fallen hero (HP 0) first (unverified live, 2026-11-23). */
+ * (0x21) only targets a fallen party member. */
 static int som_most_hurt_hero(const uint8_t *ram,unsigned spell){
     int best=-1;unsigned long best_share=0;
-    if(spell==0x21u)
+    if(spell==0x21u){
         for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
             const uint8_t *o=ram+0xE000u+0x200u*k;
-            if(som_word(o+0x184)&&!som_word(o+0x182))return (int)k;
+            if(!som_word(o+0x184)||som_word(o+0x182))continue;
+            int pending=0;
+            for(unsigned i=0;i<SOM_PARTY_MEMBERS;i++)
+                pending|=revivals[i].deadline&&revivals[i].target==k;
+            if(!pending)return (int)k;
         }
+        return -1;
+    }
     for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
         const uint8_t *o=ram+0xE000u+0x200u*k;
         const unsigned hp=som_word(o+0x182),max=som_word(o+0x184);
@@ -3033,6 +3045,33 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
         }
     }
 }
+/* Turbo can charge for the quick-triggered cast without raising its
+ * target. Finish revival only when that cast paid MP and left its pose. */
+static void som_revival_frame(uint8_t *ram){
+    if(!ram)return;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        SomRevival *revival=&revivals[who];
+        if(!revival->deadline)continue;
+        uint8_t *caster=ram+0xE000u+0x200u*who;
+        uint8_t *target=ram+0xE000u+0x200u*revival->target;
+        const unsigned max_hp=som_word(target+0x184);
+        if(frame_number>revival->deadline||som_word(ram+0xDC)!=revival->map||
+           caster[0]!=1||!som_word(caster+0x182)||!max_hp||som_word(target+0x182)){
+            revival->deadline=0;
+            continue;
+        }
+        if(caster[0x170]==0x21u&&caster[0x186]+revival->cost<=revival->mp)
+            revival->paid=1;
+        if(caster[0x60])continue;
+        revival->deadline=0;
+        if(!revival->paid)continue;
+        target[0x191]&=0x7Fu;
+        som_put_word(target+0x182,1u);
+        som_put_word(target+0x1F1,0u);
+        som_put_word(target+0x1F3,(uint16_t)(max_hp/4u));
+        fprintf(stderr,"[som-ai] REVIVIFIER restored %s\n",som_party_names[revival->target]);
+    }
+}
 /* who: the caster, 0 the boy, 1 the girl, 2 the sprite. The three heroes run
  * the same cast (som-decomp summon-cast.md 2: same script, other pictures);
  * only the sprite's palette index differs (+0x4F 0xCF) and each has her
@@ -3070,7 +3109,8 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
     const int target=hostile?som_cast_target(ram,who):
         heal?som_most_hurt_hero(ram,spell):(int)who;
     if(target<0){
-        snprintf(message,sizeof(message),heal?"^%s: nobody is hurt":"^%s: no target",
+        snprintf(message,sizeof(message),spell==0x21u?"^%s: no fallen ally":
+                 heal?"^%s: nobody is hurt":"^%s: no target",
                  som_spell_name(spell));
         som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
         return 0;
@@ -3091,6 +3131,10 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
     hero[0x04F]=who==2u?0xCFu:0xCEu;hero[0x01C]=0x40;hero[0x030]=0xFF;hero[0x011]=0x94;
     hero[0x006]=hero[0x007]=hero[0x008]=0;
     hero[0x060]=0x20;
+    revivals[who].deadline=0;
+    if(spell==0x21u)
+        revivals[who]=(SomRevival){frame_number+420u,(unsigned)target,som_word(ram+0xDC),
+                                  hero[0x186],cost,0};
     memcpy(ram+SOM_WEAPON_BUF+0x1000u*who+0x800u,spark,sizeof(spark));   /* $C1:8634 */
     if(hostile&&target>=0){
         const uint8_t *m=ram+0xE600u+0x200u*(unsigned)target;
@@ -3144,6 +3188,42 @@ static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int di
             flee?"substitution":"swap",hx,hy,i,nx,ny);
     return 1;
 }
+/* The native cast queue names real actor slots. A decoy has no such
+ * slot, so absorb the queued single-target cast and draw its impact at
+ * the decoy. The caster keeps its animation and pays the normal MP cost.
+ * C8:E6D4 ignores hits once the cast's hit list is full. */
+static void som_bunshin_absorb_magic(uint8_t *ram){
+    if(bunshin_shunshin)return;
+    for(unsigned slot=0;slot<3u;slot++){
+        uint8_t *caster=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        if((int)slot==familiar.slot||!som_bun_monster_alive(caster)||
+           (caster[0x140]!=0x44u&&caster[0x60]!=0x20u)||
+           caster[0x176]!=1u||caster[0x178]!=bunshin_owner+1u||
+           caster[0x179]||caster[0x17A]||
+           caster[0x172]!=0xFFu||caster[0x173]!=0xFFu||caster[0x174]!=0xFFu)
+            continue;
+        const unsigned spell=caster[0x170];
+        if(spell>=SOM_SPELL_COUNT)continue;
+        const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
+        if(!row||!(row[8]&0x80u))continue;
+        const int x=(int)som_word(caster+2),y=(int)som_word(caster+4);
+        int decoy=-1,nearest=0;
+        for(unsigned i=0;i<SOM_BUN_COUNT;i++){
+            if(!bunshin.alive[i])continue;
+            const int distance=abs(bunshin.x[i]-x)+abs(bunshin.y[i]-y);
+            if(decoy<0||distance<nearest){decoy=(int)i;nearest=distance;}
+        }
+        if(decoy<0)return;
+        caster[0x172]=0;caster[0x173]=1;caster[0x174]=2;
+        caster[0x176]=caster[0x178]=0;
+        caster[0x186]=(uint8_t)(caster[0x186]>row[15]?caster[0x186]-row[15]:0);
+        bunshin.alive[decoy]=0;
+        som_bun_boom(bunshin_booms,bunshin.x[decoy],bunshin.y[decoy],1,frame_number);
+        som_overlay_set(&overlay,"^Kage Bunshin|spell absorbed",SOM_MESSAGE_FRAMES/3u);
+        fprintf(stderr,"[som-ai] BUNSHIN absorbed %s from enemy slot %u for %s\n",
+                som_spell_label(spell),slot,som_party_names[bunshin_owner]);
+    }
+}
 static void som_bunshin_frame(uint8_t *ram){
     if(!ram||!som_bun_alive(&bunshin))return;
     uint8_t *hero=ram+0xE000u+0x200u*bunshin_owner;
@@ -3159,6 +3239,8 @@ static void som_bunshin_frame(uint8_t *ram){
                 }
         som_bun_clear(&bunshin);bunshin_shunshin=0;return;
     }
+    som_bunshin_absorb_magic(ram);
+    if(!som_bun_alive(&bunshin))return;
     const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
     som_bun_follow(&bunshin,ram,hx,hy,som_hero_place(hero));
     for(unsigned i=0;i<SOM_BUN_COUNT;i++){
@@ -4127,7 +4209,98 @@ static int som_ally_step(uint8_t *ram,uint8_t *o,int dx,int dy){
     som_put_word(o+2,(uint16_t)(x+dx));som_put_word(o+4,(uint16_t)(y+dy));
     return 1;
 }
+static int som_rescue_threat(const uint8_t *ram,int x,int y,unsigned place){
+    int nearest=SOM_TK_RANGE+1;
+    for(unsigned slot=0;slot<3u;slot++){
+        const uint8_t *enemy=ram+SOM_BUN_MONSTER_BASE+slot*SOM_BUN_OBJECT;
+        if((int)slot==familiar.slot||!som_bun_monster_alive(enemy)||
+           (enemy[0x0B]&0x80u)!=(place&0x80u))continue;
+        const int distance=abs((int)som_word(enemy+2)-x)+abs((int)som_word(enemy+4)-y);
+        if(distance<nearest)nearest=distance;
+    }
+    return nearest;
+}
+static int som_rescue_path_open(const uint8_t *ram,int x,int y,int nx,int ny,unsigned place){
+    const int dx=nx-x,dy=ny-y;
+    const int steps=(abs(dx)+abs(dy)+3)/4;
+    for(int step=1;step<steps;step++)
+        if(!som_bun_spot_open(ram,x+dx*step/steps,y+dy*step/steps,place))return 0;
+    return 1;
+}
+static int som_telekinesis_rescue(uint8_t *ram,unsigned who,int automatic){
+    if(!som_tk_field(ram)||frame_number<rescue_ready[who])return 0;
+    const uint8_t *caster=som_ally_obj(ram,who);
+    if(!som_ally_alive(caster)||caster[0x60]||caster[0x1C]||
+       (som_word(caster+0x190)&0xC160u))return 0;
+    const int cx=(int)som_word(caster+2),cy=(int)som_word(caster+4);
+    const unsigned place=caster[0x0B];
+    int picked=-1,land_x=0,land_y=0;
+    unsigned lowest=101;
+    for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+        const uint8_t *ally=som_ally_obj(ram,k);
+        if(k==who||!som_ally_alive(ally)||ally[0x60]||
+           (ally[0x0B]&0x83u)!=(place&0x83u))continue;
+        const unsigned pct=som_word(ally+0x182)*100u/som_word(ally+0x184);
+        if(pct>=lowest||(automatic&&pct>60u))continue;
+        const int x=(int)som_word(ally+2),y=(int)som_word(ally+4);
+        const int danger=som_rescue_threat(ram,x,y,place);
+        if(danger>40||abs(x-cx)+abs(y-cy)>SOM_TK_RANGE)continue;
+        static const int spots[][2]={{-28,0},{28,0},{0,-28},{0,28},
+                                     {-20,-20},{20,-20},{-20,20},{20,20}};
+        int safest=47;
+        for(unsigned i=0;i<sizeof(spots)/sizeof(spots[0]);i++){
+            const int nx=cx+spots[i][0],ny=cy+spots[i][1];
+            const int threat=som_rescue_threat(ram,nx,ny,place);
+            if(threat<=safest||threat<danger+24||
+               !som_bun_spot_open(ram,nx,ny,place)||
+               !som_rescue_path_open(ram,x,y,nx,ny,place))continue;
+            int occupied=0;
+            for(unsigned j=0;j<SOM_PARTY_MEMBERS;j++){
+                const uint8_t *other=som_ally_obj(ram,j);
+                if(j!=k&&som_ally_alive(other)&&
+                   som_bun_near(nx,ny,(int)som_word(other+2),(int)som_word(other+4),12,10))
+                    occupied=1;
+            }
+            if(occupied)continue;
+            safest=threat;picked=(int)k;lowest=pct;land_x=nx;land_y=ny;
+        }
+    }
+    if(picked<0)return 0;
+    uint8_t *ally=som_ally_obj(ram,(unsigned)picked);
+    som_bun_boom(bunshin_booms,(int)som_word(ally+2),(int)som_word(ally+4),1,frame_number);
+    som_put_word(ally+2,(uint16_t)land_x);
+    som_put_word(ally+4,(uint16_t)land_y);
+    ally[0x06]=ally[0x07]=ally[0x08]=0;
+    som_bun_boom(bunshin_booms,land_x,land_y,1,frame_number);
+    rescue_ready[who]=frame_number+SOM_TK_COOLDOWN;
+    char message[48];
+    snprintf(message,sizeof(message),"^Telekinesis|%s rescued",som_party_names[picked]);
+    som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] TELEKINESIS %s blinked %s out of danger\n",
+            som_party_names[who],som_party_names[picked]);
+    return 1;
+}
 static int som_clamp_step(int d,int limit){return d>limit?limit:d<-limit?-limit:d;}
+static int som_try_revivifier(uint8_t *ram,unsigned who,int switch_class){
+    const uint8_t *row=som_rom_at(0xD02AD0u+64u*0x21u,16u);
+    uint8_t *caster=som_ally_obj(ram,who);
+    if(!row||!som_ally_alive(caster)||caster[0x186]<row[15]||
+       (som_word(caster+0x190)&0xC1E0u)||revivals[who].deadline||
+       som_most_hurt_hero(ram,0x21u)<0)return 0;
+    uint8_t *selected=who?&disciplines.party[who-1u]:&disciplines.selected;
+    const uint8_t previous=*selected;
+    if(previous!=SOM_DISC_CLERIC&&!switch_class)return 0;
+    /* Use Cleric for this cast without replacing the player's saved class. */
+    *selected=SOM_DISC_CLERIC;
+    const int started=som_cast_spell_by(ram,who,0x21u);
+    *selected=previous;
+    if(started){
+        som_overlay_set(&overlay,"^Cleric|Revivifier",SOM_MESSAGE_FRAMES/3u);
+        if(previous!=SOM_DISC_CLERIC)
+            fprintf(stderr,"[som-ai] %s switched to Cleric to revive an ally\n",som_party_names[who]);
+    }
+    return started;
+}
 static void som_ally_tech_one(uint8_t *ram,unsigned who){
     SomAllyTech *t=&ally_tech[who-1u];
     uint8_t *o=som_ally_obj(ram,who);
@@ -4147,6 +4320,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         t->cls=cls;t->hits_left=0;t->dashing=t->dodging=0;
     }
     if(o[0x60]||o[0x1C]==0x40||o[0x1C]==0x80)return;
+    if(cls==SOM_DISC_CLERIC&&som_try_revivifier(ram,who,0))return;
     const SomAllyMove *mv=&som_ally_moves[cls];
     const unsigned level=disciplines.level[cls];
     const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
@@ -4159,6 +4333,11 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
         t->hits_left=0;t->dashing=t->dodging=0;
         if(mv->kind!=SOM_AM_HEAL&&mv->kind!=SOM_AM_HEAL_ALL)return;
+    }
+    if(cls==SOM_DISC_PSIONICS&&som_energy_can(&t->en,cls,10u,0u)&&
+       som_telekinesis_rescue(ram,who,1)){
+        som_energy_take(&t->en,cls,10u,0u);
+        return;
     }
     if(t->dodging){
         const SomDodge d=som_disc_dodge(cls,0u);
@@ -4221,7 +4400,8 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         fprintf(stderr,"[som-ai] ALLY %s %s\n",som_party_names[who],som_disc_dodge(cls,0u).name);
         return;
     }
-    if(!support&&nearest>=0&&best<SOM_ALLY_KEEP_PX&&som_ally_keeps_back(cls)&&
+    if(!support&&!(cls==SOM_DISC_CLERIC&&worst<SOM_ALLY_HEAL_BELOW_PCT+15u)&&
+       nearest>=0&&best<SOM_ALLY_KEEP_PX&&som_ally_keeps_back(cls)&&
        o[0x1C]==0&&o[0x60]==0&&som_pad1_member_in(ram)!=who){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)nearest;
         const int ax=x-(int)som_bun_u16(m+2),ay=y-(int)som_bun_u16(m+4);
@@ -4289,8 +4469,11 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
                      (int)som_bun_u16(som_ally_obj(ram,(unsigned)worst_who)+4),0,frame_number);
         break;
     case SOM_AM_HEAL_ALL:
-        for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++)
-            if(som_ally_alive(som_ally_obj(ram,k)))som_ally_heal(som_ally_obj(ram,k),t->amount);
+        for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+            uint8_t *member=som_ally_obj(ram,k);
+            if(som_ally_alive(member)&&som_word(member+0x182)<som_word(member+0x184))
+                som_ally_heal(member,t->amount);
+        }
         som_bun_boom(bunshin_booms,x,y,0,frame_number);
         break;
     default:return;
@@ -4313,7 +4496,17 @@ static void som_ally_tech_frame(uint8_t *ram){
         ally_tech_ready=1;
     }
     if(ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return;
+    if(ring_ai_enabled&&som_pad1_member_in(ram)==0u&&disciplines.selected==SOM_DISC_PSIONICS&&
+       som_energy_can(&energy,SOM_DISC_PSIONICS,10u,0u)&&som_telekinesis_rescue(ram,0u,1))
+        som_energy_take(&energy,SOM_DISC_PSIONICS,10u,0u);
     for(unsigned who=1;who<SOM_PARTY_MEMBERS;who++)som_ally_tech_one(ram,who);
+    if(ring_ai_enabled){
+        const unsigned driver=som_pad1_member_in(ram);
+        if(!som_try_revivifier(ram,driver,1)){
+            for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)
+                if(who!=driver&&!som_ally_obj(ram,who)[0x2C]&&som_try_revivifier(ram,who,1))break;
+        }
+    }
 }
 static int som_class_move_raw(uint8_t *ram){
     const unsigned d=som_actor_class();
@@ -5137,16 +5330,19 @@ static int som_item_field(const uint8_t *ram,const char *what){
     }
     return 1;
 }
-static int som_use_candy(uint8_t *ram){
-    if(!ram||!som_item_field(ram,"CANDY"))return 0;
-    const unsigned hp=ram[0xE182]|ram[0xE183]<<8,max_hp=ram[0xE184]|ram[0xE185]<<8;
-    if(!hp||hp>max_hp){fprintf(stderr,"[som-ai] CANDY refused: hero HP %u/%u\n",hp,max_hp);return 0;}
+static int som_use_candy(uint8_t *ram,unsigned who){
+    if(!ram||who>=SOM_PARTY_MEMBERS||!som_item_field(ram,"CANDY"))return 0;
+    uint8_t *hero=som_ally_obj(ram,who);
+    const unsigned hp=som_word(hero+0x182),max_hp=som_word(hero+0x184);
+    if(!som_ally_alive(hero)||hp>max_hp){
+        fprintf(stderr,"[som-ai] CANDY refused: %s HP %u/%u\n",som_party_names[who],hp,max_hp);
+        return 0;
+    }
     const int left=som_item_take(ram,SOM_ITEM_CANDY);
     if(left<0){fprintf(stderr,"[som-ai] CANDY refused: no Candy\n");return 0;}
-    const unsigned heal=ram[0xE1F3]+SOM_CANDY_HEAL;
-    ram[0xE1F3]=(uint8_t)(heal>0xFFu?0xFFu:heal);
-    fprintf(stderr,"[som-ai] CANDY used without the ring: %d left, +%u HP queued\n",
-            left,SOM_CANDY_HEAL);
+    som_ally_heal(hero,SOM_CANDY_HEAL);
+    fprintf(stderr,"[som-ai] CANDY for %s: %d left, +%u HP queued\n",
+            som_party_names[who],left,SOM_CANDY_HEAL);
     return 1;
 }
 /* "use_herb": Medical Herb on the hero when he is poisoned (status word
@@ -5831,18 +6027,20 @@ static int som_handle_command(const char *command){
         }
         return 1;
     }
-    /* cast_attack / cast_heal / cast_buff: a spell of the chosen class. */
+    /* Cast a spell from the AI leader's class. */
     if(!strncmp(command,"cast_",5)&&som_rom&&backend_retro_get_memory_data){
         uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         const unsigned d=disciplines.selected;
         const int want_attack=!strcmp(command+5,"attack"),want_heal=!strcmp(command+5,"heal");
+        if(!strcmp(command+5,"revive"))
+            return ram&&som_try_revivifier(ram,0u,ring_ai_enabled);
         if(!want_attack&&!want_heal&&strcmp(command+5,"buff"))return 0;
         for(unsigned i=0;i<som_class_spell_count(d);i++){
             const unsigned spell=som_class_spell(d,i);
             const uint8_t *row=som_rom_at(0xD02AD0u+64u*spell,16u);
             if(!row)continue;
-            const int heal=spell==0x0Bu||spell==0x0Au;    /* Cure Water, Remedy */
-            if(want_attack?row[8]==0x81u:want_heal?heal:(row[8]!=0x81u&&!heal))
+            const int heal=spell==0x0Bu;    /* Cure Water */
+            if(want_attack?row[8]==0x81u:want_heal?heal:(row[8]!=0x81u&&!som_bolt_heal_spell(spell)))
                 return som_cast_spell(ram,spell);
         }
         return 0;
@@ -5901,9 +6099,9 @@ static int som_handle_command(const char *command){
                 return som_give_weapon(backend_retro_get_memory_data?
                     (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL,t);
     }
-    if(!strcmp(command,"use_candy"))
-        return som_use_candy(backend_retro_get_memory_data?
-            (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
+    if(!strcmp(command,"use_candy"))return som_use_candy(som_live_wram(),0u);
+    if(!strcmp(command,"use_candy_1"))return som_use_candy(som_live_wram(),1u);
+    if(!strcmp(command,"use_candy_2"))return som_use_candy(som_live_wram(),2u);
     if(!strcmp(command,"use_herb"))
         return som_use_herb(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -6919,7 +7117,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     memset(&ukemi_draw,0,sizeof(ukemi_draw));ukemi_hid=0;ukemi_map=0;
     som_energy_init(&energy);
     memset(&portals,0,sizeof(portals));portal_x_used=0;monk_glove_raised=-1;
-    som_tk_reset(&telekinesis);telekinesis_ready=0;
+    som_tk_reset(&telekinesis);telekinesis_ready=0;memset(rescue_ready,0,sizeof(rescue_ready));
     memset(trail_frame,0,sizeof(trail_frame));seal_mode=0;seal_count=0;x_cycled=0;
     som_bun_clear(&bunshin);bunshin_shunshin=0;memset(bunshin_booms,0,sizeof(bunshin_booms));
     memset(mage_bolts,0,sizeof(mage_bolts));memset(mage_swing_prev,0,sizeof(mage_swing_prev));memset(mage_ally_next,0,sizeof(mage_ally_next));kawarimi_log_start=0;kawarimi_armed_until=0;
@@ -6953,7 +7151,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
     ally_equip_pending=6u;ally_equip_tried=0;
-    ally_order.until=0;ally_tech_ready=0;
+    ally_order.until=0;ally_tech_ready=0;memset(revivals,0,sizeof(revivals));
     weapon_trace_on=0;som_weapon_trace_reset();
     memset(member_pal_have,0,sizeof(member_pal_have));
     som_gambit_load();som_music_genre_load();
@@ -7052,6 +7250,8 @@ RETRO_API bool retro_serialize(void *data,size_t size){
 }
 RETRO_API bool retro_unserialize(const void *data,size_t size){
     ally_order.until=0;
+    memset(revivals,0,sizeof(revivals));
+    memset(rescue_ready,0,sizeof(rescue_ready));
     load_backend();
     const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
     if(core&&data&&size==core+SOM_PROG_TRAILER_SIZE){
@@ -7127,7 +7327,7 @@ RETRO_API void retro_unload_game(void){
     unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
     familiar_carry.valid=0;
-    som_tk_reset(&telekinesis);telekinesis_ready=0;
+    som_tk_reset(&telekinesis);telekinesis_ready=0;memset(rescue_ready,0,sizeof(rescue_ready));
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
     memset(&overlay,0,sizeof(overlay));
@@ -7398,6 +7598,7 @@ RETRO_API void retro_run(void){
     }
     backend_run();
     som_guard_finish();
+    if(test_enabled&&on_turbo)som_revival_frame(som_live_wram());
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
@@ -7445,6 +7646,7 @@ static void som_ahead(const uint8_t *hero,int distance,int *x,int *y){
  * its native opening, traps and rewards completely untouched. */
 static int som_telekinesis_cast_raw(uint8_t *ram){
     if(som_actor_class()!=SOM_DISC_PSIONICS||!ram||!som_jutsu_free(ram))return 0;
+    if(som_telekinesis_rescue(ram,som_actor,0))return 1;
     if(telekinesis.slot>=0){
         som_overlay_set(&overlay,"^Telekinesis|already pulling",SOM_MESSAGE_FRAMES/3u);
         return 0;
@@ -7453,7 +7655,7 @@ static int som_telekinesis_cast_raw(uint8_t *ram){
         som_overlay_set(&overlay,"^Telekinesis|recharging",SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
-    if(!som_tk_begin(&telekinesis,ram,frame_number)){
+    if(!som_tk_begin_by(&telekinesis,ram,frame_number,som_actor)){
         som_overlay_set(&overlay,"^Telekinesis|no reachable chest",SOM_MESSAGE_FRAMES/2u);
         return 0;
     }

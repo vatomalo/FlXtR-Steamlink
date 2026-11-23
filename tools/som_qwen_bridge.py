@@ -2415,7 +2415,18 @@ def main() -> int:
                                       key=lambda item: item[0])
                         gaps = [gap for gap, _, _ in near]
                         foe_type = near[0][1] if near else None
-                        boss_range = bool(near and near[0][2] >= 200)
+                        # Carry the boss-training lesson into ordinary fights:
+                        # favor reach when the party is under pressure, not
+                        # only when the target crosses the old boss HP cutoff.
+                        party = observation.get("party") or []
+                        wounded_allies = any(
+                            member.get("max_hp", 0) and 0 < member.get("hp", 0) <=
+                            member["max_hp"] * 0.60 for member in party)
+                        dangerous_target = bool(near and hero0.get("max_hp") and
+                                                near[0][2] >= hero0["max_hp"])
+                        ranged_pressure = bool(near and (
+                            len(foes) > 1 or wounded_allies or dangerous_target or
+                            (max_hp and hp / max_hp < 0.60)))
                         primary, secondary = CLASS_WEAPONS[class_director.current]
                         # B chains (Taijutsu, Weapon Flow): the proxy swaps
                         # the weapon on B itself; any of the chain's is B.
@@ -2426,11 +2437,11 @@ def main() -> int:
                                                      hp / max_hp if max_hp else 1.0, levels,
                                                      third=THIRD_WEAPONS.get(
                                                          class_director.current),
-                                                     enemy=foe_type, prefer_range=boss_range)
+                                                     enemy=foe_type, prefer_range=ranged_pressure)
                         if swap is not None and swap[0] == b_held:
                             swap = None
                         if (swap is not None and decision.action == "attack" and
-                                not (boss_range and weapon_reach(swap[0]) > weapon_reach(held)) and
+                                not (ranged_pressure and weapon_reach(swap[0]) > weapon_reach(held)) and
                                 not (weapon_reach(swap[0]) < weapon_reach(held) and
                                      gaps and min(gaps) <= weapon_reach(swap[0]))):
                             weapon_tactics.refused()     # swing now; reconsider next look

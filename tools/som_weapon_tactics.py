@@ -88,8 +88,9 @@ def choose(primary, secondary, held, distance, hp_fraction, levels, third=None, 
         if held in WEAPON_MIN_PX and distance <= WEAPON_MIN_PX[held] + 4:
             other = shorter if held == longer else longer
             return other, f"enemy {distance} px away is too close for the {held}"
-        if prefer_range and reach(longer) > reach(shorter):
-            return longer, f"boss fight: keep the {longer} ready at {reach(longer)} px"
+        if (prefer_range and reach(longer) > reach(shorter) and
+                distance > reach(shorter)):
+            return longer, f"party under pressure: use the {longer}'s {reach(longer)} px reach"
         if hp_fraction < LOW_HP and reach(longer) > reach(shorter):
             return longer, (f"HP {hp_fraction:.0%}: the {longer} hits from "
                             f"{reach(longer)} px, outside the enemy's reach")

@@ -22,7 +22,7 @@ int main(void){
     desktop_key(SDLK_ESCAPE,KMOD_NONE);assert(!settings_on);
     desktop_key(SDLK_F4,KMOD_NONE);assert(menu_theme==0);
     music_on=music_edit=1;strcpy(music_query,"cafe");desktop_key(SDLK_m,KMOD_NONE);assert(music_edit&&!strcmp(music_query,"cafe"));
-    strcpy(music_query,"CAF\xc3\x89");music_backspace();assert(!strcmp(music_query,"CAF"));music_on=music_edit=0;
+    strcpy(music_query,"CAF\xc3\x89");music_cursor=strlen(music_query);music_backspace();assert(!strcmp(music_query,"CAF"));music_on=music_edit=0;
     memcpy(tv_blocks,tv_defaults,sizeof(tv_blocks));tv_blocks[0].genre=TV_MUSIC_VIDEOS;assert(tv_valid(tv_blocks));
     assert(!mkdir("scripts",0700));
     write_file("scripts/music-runtime.sh","#!/bin/sh\nprintf '%s\\n' \"$@\" >worker-args.txt\nmkdir -p music-cache\nprintf 'Fixture video\\nhttps://example.test/video.mp4\\n\\nMozilla/5.0\\n' >music-cache/video.txt\n",1);

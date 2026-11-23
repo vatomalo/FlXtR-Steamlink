@@ -73,8 +73,8 @@ static int subtitle_track_for(int language){
     for(int pass=0;pass<3;pass++)for(int i=0;i<subtitle_track_count;i++){
         const SubtitleTrack *t=&subtitle_tracks[i];
         if(pass==0&&t->stream>=0&&t->language==language)return i;
-        if(pass==1&&t->stream>=0&&t->language<0)return i;
-        if(pass==2&&t->stream<0&&t->language==language)return i;
+        if(pass==1&&t->stream<0&&t->language==language)return i;
+        if(pass==2&&t->stream>=0&&t->language<0)return i;
     }
     return -1;
 }

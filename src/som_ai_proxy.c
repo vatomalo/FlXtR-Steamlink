@@ -6039,7 +6039,11 @@ static int som_item_take(uint8_t *ram,unsigned id){
     return -1;
 }
 #define SOM_ITEM_CANDY 0u
-#define SOM_ITEM_HERB 1u
+/* Turbo's own order (its name table, 2026-11-23, and som-decomp
+ * items-shops.md): 0 Candy, 1 Chocolate, 2 Royal Jam, 3 Walnut, 4 Herb,
+ * 5 Cup of Wishes, 6 Magic Rope, 7 Drum. Id 1 for the Herb took Chocolate. */
+#define SOM_ITEM_HERB 4u
+#define SOM_ITEM_ROPE 6u
 #define SOM_STATUS_POISON 0x2000u
 static int som_item_field(const uint8_t *ram,const char *what){
     if(ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0xE000]!=1){
@@ -6073,6 +6077,40 @@ static int som_use_herb(uint8_t *ram){
     if(left<0){fprintf(stderr,"[som-ai] HERB refused: no Medical Herb\n");return 0;}
     ram[0xE191]=(uint8_t)(ram[0xE191]&~(SOM_STATUS_POISON>>8));
     fprintf(stderr,"[som-ai] HERB cured poison without the ring: %d left\n",left);
+    return 1;
+}
+/* "use_rope" (player, 2026-11-23: "AI should use rope to get out ... just
+ * load from address from decomp"): the Magic Rope without the ring. The
+ * game allows it where $011F bit 0x40 is set and remembers the way out of
+ * the dungeon in $0108; script command 0D ($C1:EAB4) changes to map event
+ * 0x800 + $0108. The event VM is started on a 0D 00 (leave, END) of the
+ * game's own ROM as $C1:E77B / E88D start an event, so the fade, the load
+ * and the release are the game's. The rope is not used up (nor by the
+ * game: $C0:7212 leaves the count of item 6). */
+#define SOM_ROPE_SCRIPT 0xCA90F7u
+#define SOM_ROPE_ALLOWED 0x40u
+static int som_use_rope(uint8_t *ram){
+    if(!ram||!som_item_field(ram,"ROPE"))return 0;
+    const uint8_t *script=som_rom_at(SOM_ROPE_SCRIPT,2u);
+    int owned=0;
+    for(unsigned slot=0;slot<11u;slot++)
+        owned|=ram[0xCC48u+slot]!=0xFF&&(ram[0xCC48u+slot]&0x1Fu)==SOM_ITEM_ROPE&&ram[0xCC48u+slot]>=0x20u;
+    const unsigned out=som_word(ram+0x108);
+    const char *why=!owned?"no Magic Rope":!(ram[0x11F]&SOM_ROPE_ALLOWED)?"not allowed on this map":
+        !out||out>=0x400u?"no way out remembered":ram[0xFF]||(ram[0xF1]&0x80u)||ram[0x7D]==1?"game busy":
+        !script||script[0]!=0x0D||script[1]!=0x00?"script bytes differ":
+        !som_jutsu_free(ram)||evade_active||blink_active||bash_stage||special_stage||throw_active?"hero busy":NULL;
+    if(why){fprintf(stderr,"[som-ai] ROPE refused: %s\n",why);return 0;}
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)
+        ram[0xE006u+0x200u*who]=ram[0xE007u+0x200u*who]=0;
+    for(unsigned pad=0;pad<3u;pad++)
+        if(ram[0xD9u+pad]&(1u<<som_pad1_member_in(ram)))ram[0xD9u+pad]|=0x80u;
+    ram[0xCC]=ram[0xCD]=ram[0xCE]=0;
+    ram[0xD1]=(uint8_t)SOM_ROPE_SCRIPT;ram[0xD2]=(uint8_t)(SOM_ROPE_SCRIPT>>8);
+    ram[0xD3]=(uint8_t)(SOM_ROPE_SCRIPT>>16);
+    ram[0xD0]=1;
+    som_overlay_set(&overlay,"^Magic Rope",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] ROPE out of map %u by transition %03x\n",som_word(ram+0xDC)&0x1FFu,out);
     return 1;
 }
 /* Read-only diagnostic: the core's video RAM (sprite tiles live there, loaded
@@ -6819,6 +6857,7 @@ static int som_handle_command(const char *command){
     if(!strcmp(command,"use_candy"))return som_use_candy(som_live_wram(),0u);
     if(!strcmp(command,"use_candy_1"))return som_use_candy(som_live_wram(),1u);
     if(!strcmp(command,"use_candy_2"))return som_use_candy(som_live_wram(),2u);
+    if(!strcmp(command,"use_rope"))return som_use_rope(som_live_wram());
     if(!strcmp(command,"use_herb"))
         return som_use_herb(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);

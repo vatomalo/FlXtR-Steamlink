@@ -54,6 +54,7 @@ from som_critic import Critic
 from som_critic_link import (FINISHER_COOLDOWN_SCALE, critic_coach, critic_tags,
                              nudge_style, read_critic)
 from som_class_arts import KICK_COOLDOWN_S, FlyingKickTactics, IaiTactics
+from som_rope import RopeTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
 from som_class_director import B_CHAIN_WEAPONS
 from som_anticipate import AttackPredictor
@@ -104,7 +105,7 @@ MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
-                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_candy_1", "use_candy_2", "use_herb",
+                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_candy_1", "use_candy_2", "use_herb", "use_rope",
                     "give_glove", "give_axe", "give_spear", "give_whip", "give_bow",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
@@ -1658,6 +1659,7 @@ def main() -> int:
     charge_settle_until = 0.0                     # an instant charge still running
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
     tool_out = "sword"                           # tool weapon taken out (sword/whip)
+    rope = RopeTactics()                          # Magic Rope out of dungeons
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
     # Which weapon suits which monster type: learned from kills, kept.
     stored_records = history.get_agent_state("weapon_vs_enemy") if history is not None else None
@@ -2544,6 +2546,24 @@ def main() -> int:
                         if picks != stored_picks:
                             stored_picks = picks
                             history.set_agent_state("class_picks", picks)
+                    # The Magic Rope: out of a dungeon we only circle in, or
+                    # on the way to the inn or the shop.
+                    rope_line = rope.see_map(context.get("map_id"))
+                    if rope_line:
+                        print(f"[rope] {rope_line}", flush=True)
+                    rope_why = rope.decide(wram_now, context.get("map_id"), decision.intention,
+                                           enemy_within(observation, CLASS_CONTACT_PX), foes)
+                    if rope_why is not None:
+                        try:
+                            link.send_control("use_rope")
+                            rope.used(context.get("map_id"))
+                            print(f"[rope] Magic Rope: {rope_why}", flush=True)
+                            announce("AI: Magic Rope!|" + rope_why[:28])
+                            time.sleep(max(args.interval, 0.12))
+                            previous = "wait"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[rope] use failed: {exc}", flush=True)
                     hp, max_hp = hero0.get("hp") or 0, hero0.get("max_hp") or 0
                     # Alternate the class's two weapons (som_weapon_tactics):
                     # reach against the nearest enemy, low HP, training.

@@ -3177,13 +3177,20 @@ int main(void){
         ram[0xCC48]=0x43;ram[0xCC49]=0x60;                     /* 2 of item 3, 3 Candy */
         assert(som_use_candy(ram,0u)&&ram[0xCC49]==0x40&&ram[0xE1F3]==100&&ram[0xCC48]==0x43);
         ram[0xE1F3]=200;assert(som_use_candy(ram,0u)&&ram[0xE1F3]==255&&ram[0xCC49]==0x20);
-        ram[0xCC4A]=0x21;                                      /* 1 Medical Herb after it */
-        assert(som_use_candy(ram,0u)&&ram[0xCC49]==0x21&&ram[0xCC4A]==0xFF);  /* last Candy */
+        ram[0xCC4A]=0x24;                                      /* 1 Medical Herb after it */
+        assert(som_use_candy(ram,0u)&&ram[0xCC49]==0x24&&ram[0xCC4A]==0xFF);  /* last Candy */
         assert(!som_use_candy(ram,0u));                           /* none left */
         ram[0xCC4A]=0x20;ram[0xE200]=1;ram[0xE382]=12;ram[0xE384]=100;
         assert(som_use_candy(ram,1u)&&ram[0xE3F3]==100&&ram[0xE1F3]==255);
         ram[0xE200]=0;ram[0xE382]=ram[0xE384]=ram[0xE3F3]=0;
-        assert(!som_use_herb(ram)&&ram[0xCC49]==0x21);         /* not poisoned */
+        /* use_rope: refused without the game's permission, the rope or a way
+         * out; the script address is checked against the ROM. */
+        assert(!som_use_rope(ram)&&ram[0xD0]==0);
+        ram[0x11F]=0x40;ram[0x108]=0x4A;ram[0x109]=1;assert(!som_use_rope(ram)&&ram[0xD0]==0);
+        ram[0xCC4B]=0x26;som_use_rope(ram);
+        assert(ram[0xD0]==0||(ram[0xD1]==0xF7&&ram[0xD2]==0x90&&ram[0xD3]==0xCA));
+        ram[0xD0]=ram[0xD1]=ram[0xD2]=ram[0xD3]=0;ram[0xCC4B]=0xFF;ram[0x11F]=0;
+        assert(!som_use_herb(ram)&&ram[0xCC49]==0x24);         /* not poisoned */
         ram[0xE190]=0x01;ram[0xE191]=0x20;                     /* poison (0x2001 live) */
         assert(som_use_herb(ram)&&ram[0xE191]==0x00&&ram[0xE190]==0x01&&ram[0xCC49]==0xFF);
         ram[0xE191]=0x20;assert(!som_use_herb(ram)&&ram[0xE191]==0x20);   /* no Herb */

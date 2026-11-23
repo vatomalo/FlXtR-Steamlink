@@ -51,9 +51,12 @@ def walk_step(action):
     return action
 
 
-ITEM_NAMES = ("candy", "medical_herb", "cup_of_wishes", "faerie_walnut",
-              "royal_jam", "chocolate", "barrel", "magic_rope",
-              "flammie_drum", "moogle_belt", "midge_mallet", "unknown_curative")
+# Turbo's order: its own name table (2026-11-23) and som-decomp
+# items-shops.md. The order used before was wrong (the rope read as a barrel,
+# and use_herb took Chocolate).
+ITEM_NAMES = ("candy", "chocolate", "royal_jam", "faerie_walnut",
+              "medical_herb", "cup_of_wishes", "magic_rope", "flammie_drum",
+              "moogle_belt", "midge_mallet", "barrel", "unknown_curative")
 
 
 class WRAM:

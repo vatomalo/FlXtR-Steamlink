@@ -466,7 +466,7 @@ class TestRemoteLink(unittest.TestCase):
             ram = bytearray(0x20000)
             ram[0xCC48:0xCC48 + 11] = b"\xff" * 11
             if herbs:
-                ram[0xCC48] = (herbs * 2) << 4 | 1             # item 1 = Medical Herb
+                ram[0xCC48] = (herbs * 2) << 4 | 4             # item 4 = Medical Herb
             ram[0xE190], ram[0xE191] = 0x01, 0x20 if poisoned else 0
             return bytes(ram)
         class Link:

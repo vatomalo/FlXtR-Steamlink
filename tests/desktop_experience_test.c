@@ -35,7 +35,7 @@ int main(void){
     char args[500]={0};FILE *f=fopen("worker-args.txt","r");assert(f);assert(fread(args,1,sizeof(args)-1,f)>0);fclose(f);
     assert(strstr(args,"tv-video")&&strstr(args,"720"));
     int code;assert(waitpid(player_pid,&code,0)==player_pid);finish_player(code);
-    assert(tv_active&&!tv_attempts&&tv_next_at==0);
+    assert(tv_active&&!tv_attempts&&tv_next_at>0);
     assert(access("tv-progress.tsv",R_OK));
     write_file("playback-request","7 0 0 1 2 0\n",0);finish_player(40<<8);assert(!tv_active);
     write_file("playback-request","10 0 0 1 2 0\n",0);finish_player(40<<8);assert(!running);

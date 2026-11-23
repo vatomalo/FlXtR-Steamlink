@@ -142,6 +142,8 @@ static int som_monk_chain_press(uint8_t *ram,unsigned who,uint16_t held_dirs);
 static void som_monk_chain_dirs(const uint8_t *ram,unsigned who,uint16_t pressed_dirs);
 static int som_monk_in_string(unsigned who);
 static unsigned som_string_weapon(unsigned cls);
+static int som_blade_string(unsigned cls);
+static int som_string_off(unsigned cls);
 static void som_monk_chain_frame(uint8_t *ram);
 static void som_combo_clear(void){som_combo_reset(&combo);}
 /* which: 0 = B (primary weapon), 1 = Y (secondary). */
@@ -1329,6 +1331,7 @@ static void som_class_selected(void){
  * L2+Y) held. */
 static int y_weapon_swap, y_weapon_blocked, b_weapon_blocked, x_spell_blocked;
 static int x_weapon_swap;                 /* Weapon Flow: X attacks as B (third weapon) */
+static int string_b_waits;                /* B pressed, its string weapon not in hand yet */
 static unsigned long iai_ready;           /* Bushido: next frame Iaijutsu may start */
 /* Taijutsu (Ninjutsu's B, player's design 2026-11-19): B, B are glove
  * punches, the third B is the sword; SOM_TAIJUTSU_RESET frames without a B
@@ -1925,7 +1928,8 @@ static void som_input_poll(void){
             unsigned want=som_disc_weapons[driver_cls][which];
             const SomWeaponStyle *st=which?NULL:som_style_of(&styles,driver_cls,NULL);
             if(st)want=st->weapon;
-            const int result=som_equip_ally_weapon(attack_ram,driver,want);
+            const int result=!which&&som_blade_string(driver_cls)&&som_monk_in_string(driver)?SOM_EQUIP_OK:
+                som_equip_ally_weapon(attack_ram,driver,want);
             if(result==SOM_EQUIP_OK)y_weapon_swap=which;
             else if(which)y_weapon_blocked=1;
             else if(result==SOM_EQUIP_BUSY)b_weapon_blocked=1;
@@ -1941,7 +1945,10 @@ static void som_input_poll(void){
             const int style_weapon=!which&&b_style&&b_style->weapon!=want;
             if(style_weapon)want=b_style->weapon;
             const uint8_t *chain_steps;
-            const int chained=som_b_chain(disciplines.selected,&chain_steps)>0;
+            /* By hand these classes' B is the string; the AI keeps the chain. */
+            const int by_string=som_blade_string(disciplines.selected)&&!style_weapon&&
+                !ring_ai_enabled&&!som_manual_disciplines;
+            const int chained=!by_string&&som_b_chain(disciplines.selected,&chain_steps)>0;
             if(!which&&!style_weapon&&chained){
                 /* Taijutsu: the chain's weapon is chosen on the press and
                  * kept while B stays held (a held B may be charging). */
@@ -1965,7 +1972,7 @@ static void som_input_poll(void){
             }
             /* Switch on the press, or as soon as the hero is free while the
              * button stays held; the game then sees a fresh press. */
-            int result=attack_ram[0xE1E4]==want?SOM_EQUIP_OK:
+            int result=attack_ram[0xE1E4]==want||(by_string&&!which&&som_monk_in_string(driver))?SOM_EQUIP_OK:
                 (pressed&(y_bit|b_bit))?som_equip_weapon(attack_ram,want):
                 som_equip_weapon_direct(attack_ram,want);
             if(result==SOM_EQUIP_OK)y_weapon_swap=which;
@@ -1985,19 +1992,26 @@ static void som_input_poll(void){
          * (som_monk_chain_press). B to a villager or a chest stays the game's
          * when the monk stands; mid-string (a lunge that ends beside one) B
          * keeps the string. */
-        const unsigned string_weapon=som_string_weapon(driver_cls);
+        const unsigned string_weapon=som_string_off(driver_cls)?SOM_NO_WEAPON:som_string_weapon(driver_cls);
         if(attack_ram&&string_weapon!=SOM_NO_WEAPON&&!ring_ai_enabled&&
            !som_manual_disciplines&&!(current&(l2_bit|r2)))
             som_monk_chain_dirs(attack_ram,driver,(uint16_t)(pressed&dpad));
         if(attack_ram&&string_weapon!=SOM_NO_WEAPON&&!ring_ai_enabled&&
            !som_manual_disciplines&&!native_ring&&!style_b_hidden&&!special_suppress&&
            !(current&(l2_bit|r2|y_bit))&&(current&b_bit)&&
-           attack_ram[0xE000u+0x200u*driver+0x1E4u]==string_weapon&&
+           (attack_ram[0xE000u+0x200u*driver+0x1E4u]==string_weapon||
+            (som_blade_string(driver_cls)&&som_monk_in_string(driver)))&&
            (som_monk_in_string(driver)||                     /* mid-string: never talk */
             !som_interact_ahead_by(attack_ram,driver))){
             b_weapon_blocked=1;
-            if(pressed&b_bit)som_monk_chain_press(attack_ram,driver,(uint16_t)(current&dpad));
+            /* A press that waited for the weapon (Y's swing still played)
+             * starts the string as the hero takes it, B still held. */
+            if((pressed&b_bit)||string_b_waits)
+                som_monk_chain_press(attack_ram,driver,(uint16_t)(current&dpad));
+            string_b_waits=0;
         }
+        else if((pressed&b_bit)&&string_weapon!=SOM_NO_WEAPON&&b_weapon_blocked)string_b_waits=1;
+        if(!(current&b_bit))string_b_waits=0;
         if(!(current&b_bit))taijutsu_want=SOM_NO_WEAPON;
         /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
         const uint16_t x_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
@@ -4889,7 +4903,8 @@ static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
  * + class, som-decomp weapons-melee.md 4.1). SOM_NO_WEAPON: no string. */
 static unsigned som_string_weapon(unsigned cls){
     return cls==SOM_DISC_MARTIAL_ARTS?0u:cls==SOM_DISC_BUSHIDO?1u:
-           cls==SOM_DISC_ARCHERY?5u:SOM_NO_WEAPON;
+           cls==SOM_DISC_ARCHERY?5u:
+           som_blade_string(cls)?som_disc_weapons[cls][0]:SOM_NO_WEAPON;
 }
 /* Martial Arts' B: a Ninja Storm string with Tekken commands (player,
  * 2026-11-23: "somewhere between Naruto Ninja Storm B+B+B+B+B+B and
@@ -5169,9 +5184,182 @@ static void som_archer_frame(uint8_t *ram){
     monk_chain_active=0;monk_chain_end=frame_number;
     monk_chain_queued=0;monk_chain_queued_cmd=0;
 }
+/* The mixed-weapon strings (player, 2026-11-23: "Ninja, Swordman, WeaponFLow
+ * and Rogue need this too"): one table per class, each move with its own
+ * weapon, played like the monk's (a swing variant, or the power attack of a
+ * level) and, for the bow and javelin, like the archer's (stage until the
+ * launch, then the damage stage). hop: the class's dodge first, away from
+ * (1) or toward (2) the enemy. extra: a sword wave (a painted light bolt),
+ * the rogue's Sleep Flower (its MP; the move itself when it cannot be
+ * cast), Shunshin or Kawarimi before the cut (their Chakra; the cut alone
+ * when it cannot be paid). */
+enum{SOM_BX_NONE,SOM_BX_WAVE,SOM_BX_SLEEP,SOM_BX_SHUNSHIN,SOM_BX_KAWARIMI};
+#define SOM_BLADE_STEPS 5u
+#define SOM_BLADE_WAIT 60ul          /* a kept press waits this long for a weapon swap */
+#define SOM_BLADE_WAVE_FRAME 8ul
+#define SOM_SLEEP_FLOWER 0x1Eu
+typedef struct {
+    uint8_t weapon,level,variant,arrows,damage,hop,extra,launch,free;
+    const char *name;
+} SomBladeMove;
+typedef struct {
+    unsigned cls;
+    SomBladeMove step[SOM_BLADE_STEPS];
+    SomBladeMove finish[4];                  /* none, toward, away, sideways */
+    SomBladeMove toward,away;                /* toward, toward + B; away, toward + B */
+} SomBladeString;
+static const SomBladeString som_blade_strings[]={
+    {SOM_DISC_SWORD,
+     {{1,0,1,0,0,0,0,0,0,NULL},{1,0,0,0,0,0,0,0,0,NULL},{1,0,3,0,0,0,0,0,0,NULL},
+      {1,0,2,0,0,0,0,0,0,NULL},{2,1,0,1,1,0,0,0,0,"Axe Cleave"}},
+     {{1,3,0,2,2,0,SOM_BX_WAVE,0,0,"Saber Wave"},{1,4,0,2,2,0,0,0,0,"Thrust"},
+      {1,2,0,2,2,1,0,0,0,"Step-Back Cut"},{1,5,0,2,2,0,0,0,0,"Wide Sweep"}},
+     {1,7,0,3,3,0,0,0,0,"Bash Cut"},{1,6,0,3,3,0,0,0,0,"Parry Cut"}},
+    {SOM_DISC_NINJUTSU,
+     {{0,0,1,0,0,0,0,0,0,NULL},{0,0,0,0,0,0,0,0,0,NULL},{1,0,0,0,0,0,0,0,0,NULL},
+      {0,0,3,0,0,0,0,0,0,NULL},{0,1,0,1,1,0,0,0,0,"Taijutsu"}},
+     {{6,0,0,0,1,0,0,0,0,"Chakram"},{1,4,0,2,2,0,0,0,0,"Dash Cut"},
+      {6,0,0,0,1,1,0,0,0,"Retreat Chakram"},{1,5,0,2,2,0,0,0,0,"Shadow Spin"}},
+     {1,7,0,3,3,0,SOM_BX_SHUNSHIN,0,0,"Shunshin Cut"},
+     {0,6,0,3,3,0,SOM_BX_KAWARIMI,0,0,"Kawarimi Fist"}},
+    {SOM_DISC_WEAPON_FLOW,
+     {{1,0,1,0,0,0,0,0,0,NULL},{2,0,0,0,0,0,0,0,0,NULL},{3,0,0,0,0,0,0,0,0,NULL},
+      {4,0,0,0,0,0,0,0,0,NULL},{7,3,0,3,1,0,0,16,56,"Javelin Step"}},
+     {{2,3,0,2,2,0,0,0,0,"Axe Breaker"},{7,4,0,3,2,0,0,41,82,"Javelin Leap"},
+      {4,2,0,2,2,0,0,0,0,"Whip Guard"},{3,5,0,2,2,0,0,0,0,"Spear Wheel"}},
+     {3,7,0,3,3,0,0,0,0,"Spear Charge"},{5,6,0,6,2,0,0,21,69,"Triple Shot"}},
+    {SOM_DISC_ROGUE,
+     {{1,0,0,0,0,0,0,0,0,NULL},{1,0,1,0,0,0,0,0,0,NULL},{1,0,0,0,0,0,0,0,0,NULL},
+      {1,0,2,0,0,0,0,0,0,NULL},{5,3,0,3,1,0,0,21,55,"Quick Shot"}},
+     {{1,3,0,2,2,0,SOM_BX_SLEEP,0,0,"Cruel Cut"},{1,4,0,2,2,0,0,0,0,"Backstab"},
+      {5,3,0,3,1,1,0,21,55,"Cartwheel Shot"},{1,5,0,2,2,0,0,0,0,"Side Stab"}},
+     {1,7,0,3,3,2,0,0,0,"Slip Past"},{5,6,0,6,2,1,0,21,69,"Smoke Hop"}},
+};
+static const SomBladeMove *blade_move,*blade_hop_move;
+static unsigned long blade_launch_at,blade_free_at,blade_started,blade_wait_at;
+static const SomBladeString *som_blade_of(unsigned cls){
+    for(unsigned i=0;i<sizeof(som_blade_strings)/sizeof(som_blade_strings[0]);i++)
+        if(som_blade_strings[i].cls==cls)return &som_blade_strings[i];
+    return NULL;
+}
+static int som_blade_string(unsigned cls){return som_blade_of(cls)!=NULL;}
+/* A B style on another weapon (the ninja's Kusarigama) keeps its own B. */
+static int som_string_off(unsigned cls){
+    if(!som_blade_string(cls))return 0;
+    const SomWeaponStyle *st=som_style_of(&styles,cls,NULL);
+    return st&&st->weapon!=som_disc_weapons[cls][0];
+}
+/* 1 started, 0 not now (try again), -1 never. */
+static int som_blade_play(uint8_t *ram,unsigned who,const SomBladeMove *m,int cancel,int hop_done){
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    if(o[0]!=1||o[0x060]||(o[0x191]&0x80u)||!(o[0x182]|o[0x183])||
+       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return -1;
+    const int cancelled=cancel&&o[0x01C]&&monk_chain_active&&monk_chain_who==who&&
+        o[0x1E4]==m->weapon&&!m->hop&&!m->extra&&!o[0x061];
+    if(!cancelled&&(o[0x01C]||(who?!som_ally_idle(ram,who):!som_field_idle(ram))))return 0;
+    if(o[0x061]&&(!m->launch||frame_number+m->launch<blade_free_at))return 0;
+    if(m->hop&&!hop_done&&who==som_actor){
+        int ex,ey;(void)som_monk_enemy(ram,o,&ex,&ey);
+        const int keep_x=evade_dir_x,keep_y=evade_dir_y,sign=m->hop==1u?-1:1;
+        evade_dir_x=sign*ex;evade_dir_y=sign*ey;
+        const int hopped=som_evade_start_raw(ram);
+        evade_dir_x=keep_x;evade_dir_y=keep_y;
+        if(hopped){blade_hop_move=m;blade_wait_at=frame_number;return 1;}
+    }
+    unsigned extra=m->extra;
+    if(extra==SOM_BX_SLEEP&&som_cast_spell_by(ram,who,SOM_SLEEP_FLOWER)){
+        blade_move=m;blade_started=frame_number;blade_launch_at=0;return 1;
+    }
+    if(o[0x1E4]!=m->weapon){
+        const int r=who?som_equip_ally_weapon(ram,who,m->weapon):som_equip_weapon(ram,m->weapon);
+        if(r==SOM_EQUIP_BUSY)return 0;
+        if(r!=SOM_EQUIP_OK)return -1;
+    }
+    if(extra==SOM_BX_SHUNSHIN&&who==som_actor)(void)som_shunshin_start(ram);
+    if(extra==SOM_BX_KAWARIMI&&who==som_actor)(void)som_kawarimi_arm(ram);
+    som_archer_face(ram,o);
+    const unsigned cls=som_monk_enemy(ram,o,&(int){0},&(int){0});
+    o[0x01C]=m->level?0x80u:0x20u;
+    o[0x011]=(uint8_t)(m->level?4u*m->level+cls:m->variant);
+    o[0x19B]=m->arrows;
+    o[0x006]=o[0x007]=0;o[0x030]=0xFF;
+    blade_move=m;blade_started=frame_number;
+    blade_launch_at=m->launch?frame_number+m->launch+SOM_ARCHER_LATENCY:0;
+    blade_free_at=m->launch?frame_number+m->free+SOM_ARCHER_LATENCY:0;
+    if(m->name){
+        char text[32];snprintf(text,sizeof(text),"^%s",m->name);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+    }
+    fprintf(stderr,"[som-ai] STRING %s: %s (weapon %u level %u, animation %u)\n",
+            som_discipline_names[som_disc_member_class(&disciplines,who)],m->name?m->name:"strike",
+            (unsigned)m->weapon,(unsigned)m->level,(unsigned)o[0x011]);
+    return 1;
+}
+static int som_blade_start(uint8_t *ram,unsigned who,uint16_t held_dirs,unsigned cmd){
+    const SomBladeString *str=som_blade_of(som_disc_member_class(&disciplines,who));
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    if(!str)return 0;
+    if(cmd==SOM_CMD_AWAY_AWAY)cmd=0;
+    if(frame_number-monk_chain_end>SOM_MONK_CHAIN_RESET||monk_chain_who!=who)monk_chain_step=0;
+    const SomBladeMove *m;unsigned next=monk_chain_step+1u;
+    if(cmd){m=cmd==7u?&str->toward:&str->away;next=0;}
+    else if(monk_chain_step<SOM_BLADE_STEPS)m=&str->step[monk_chain_step];
+    else{m=&str->finish[som_monk_dir_of(ram,o,held_dirs)];next=0;}
+    if(!monk_chain_active)blade_move=blade_hop_move=NULL;      /* none left from another class */
+    int r=som_blade_play(ram,who,m,cmd!=0u,0);
+    if(r<0&&o[0x1E4]!=m->weapon&&(o[0x1E4]<5u)){
+        /* The weapon is not to be had: the same swing with the one in hand. */
+        static SomBladeMove held;held=*m;held.weapon=o[0x1E4];
+        if(held.launch){held.launch=held.free=0;held.arrows=held.damage;}
+        held.hop=held.extra=0;
+        r=som_blade_play(ram,who,&held,0,1);
+    }
+    if(r<=0)return 0;
+    monk_chain_step=next;
+    if(cmd)monk_dir_last=monk_dir_prev=0;
+    monk_chain_who=who;monk_chain_active=1;monk_chain_queued=0;monk_chain_queued_cmd=0;
+    som_combo_clear();
+    return 1;
+}
+static void som_blade_frame(uint8_t *ram){
+    uint8_t *o=ram+0xE000u+0x200u*monk_chain_who;
+    if(blade_hop_move){
+        if(evade_active)return;
+        const SomBladeMove *m=blade_hop_move;blade_hop_move=NULL;
+        const int r=som_blade_play(ram,monk_chain_who,m,0,1);
+        if(r==0&&frame_number-blade_wait_at<=SOM_BLADE_WAIT){blade_hop_move=m;return;}
+        if(r<=0){monk_chain_active=0;monk_chain_end=frame_number;}
+        return;
+    }
+    if(blade_move){
+        if(blade_launch_at){
+            if(frame_number<=blade_launch_at)o[0x19B]=blade_move->arrows;
+            else if(frame_number==blade_launch_at+1u&&o[0x061])o[0x19B]=blade_move->damage;
+        }else if(blade_move->extra==SOM_BX_WAVE&&frame_number==blade_started+SOM_BLADE_WAVE_FRAME)
+            (void)som_bolt_fire(mage_bolts,monk_chain_who,7u,(int)som_word(o+2),(int)som_word(o+4),
+                                o[0x010],som_mage_bolt_damage(o,som_disc_member_class(&disciplines,monk_chain_who)),
+                                som_word(ram+0xDC)&0x1FFu,frame_number);
+    }
+    if(o[0]==1&&(o[0x01C]==0x80u||o[0x01C]==0x20u)&&ram[0xE4]==1&&ram[0xD0]==0)return;
+    if(blade_move){
+        if(!o[0x01C]&&!o[0x061])o[0x19B]=0;
+        monk_chain_end=blade_wait_at=frame_number;blade_move=NULL;
+    }
+    if(monk_chain_queued&&som_blade_string(som_disc_member_class(&disciplines,monk_chain_who))){
+        if(som_blade_start(ram,monk_chain_who,monk_chain_held_dirs,(unsigned)monk_chain_queued_cmd))return;
+        /* The arrow still flies or the swap must wait: the press is kept. */
+        if(o[0]==1&&!(o[0x191]&0x80u)&&ram[0xE4]==1&&ram[0xD0]==0&&
+           (!o[0x01C]||o[0x01C]==0x20u||o[0x01C]==0x80u)&&frame_number-blade_wait_at<=SOM_BLADE_WAIT)return;
+    }
+    if(!o[0x01C]&&!o[0x061])o[0x19B]=0;
+    monk_chain_active=0;monk_chain_end=frame_number;
+    monk_chain_queued=0;monk_chain_queued_cmd=0;
+}
 /* The next move of the string, or the command `cmd` (6 / 7). */
 static int som_monk_chain_start(uint8_t *ram,unsigned who,uint16_t held_dirs,unsigned cmd){
     if(som_archer_class(who))return som_archer_start(ram,who,held_dirs,cmd);
+    if(som_blade_string(som_disc_member_class(&disciplines,who)))
+        return som_blade_start(ram,who,held_dirs,cmd);
     if(cmd==SOM_CMD_AWAY_AWAY)cmd=0;                   /* the archer's command */
     uint8_t *o=ram+0xE000u+0x200u*who;
     if(!som_monk_ready(ram,o,who,cmd!=0u)&&!som_monk_ready(ram,o,who,0))return 0;
@@ -5230,6 +5418,7 @@ static int som_monk_chain_press(uint8_t *ram,unsigned who,uint16_t held_dirs){
 static void som_monk_chain_frame(uint8_t *ram){
     if(!ram||!monk_chain_active)return;
     if(som_archer_class(monk_chain_who)){som_archer_frame(ram);return;}
+    if(som_blade_string(som_disc_member_class(&disciplines,monk_chain_who))){som_blade_frame(ram);return;}
     uint8_t *o=ram+0xE000u+0x200u*monk_chain_who;
     if(o[0]==1&&(o[0x01C]==0x80u||o[0x01C]==0x20u)&&ram[0xE4]==1&&ram[0xD0]==0)return;
     monk_chain_active=0;monk_chain_end=frame_number;

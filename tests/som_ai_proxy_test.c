@@ -1477,14 +1477,19 @@ int main(void){
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
         mocked_buttons=0;som_input_poll();
         hero[0x01C]=0x20;                           /* axe swing still playing */
+        const unsigned string_hp=som_word(hero+0x182);som_put_word(hero+0x182,50);
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         som_input_poll();                           /* B waits: no axe swing */
         assert(hero[0x1E4]==2&&b_weapon_blocked);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
         hero[0x01C]=0;som_input_poll();             /* still held, hero free */
-        assert(hero[0x1E4]==1&&!b_weapon_blocked);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        /* The sword, and the string's first strike (B hidden from the game). */
+        assert(hero[0x1E4]==1&&b_weapon_blocked&&monk_chain_active&&hero[0x01C]==0x20);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+        hero[0x01C]=0;som_monk_chain_frame(ram);som_input_poll();
+        assert(!monk_chain_active&&!hero[0x01C]);      /* one press, one strike */
+        monk_chain_step=0;hero[0x010]=0;hero[0x011]=0;hero[0x030]=0;som_put_word(hero+0x182,string_hp);
         mocked_buttons=0;som_input_poll();
         /* Y never attacks with the wrong weapon when the switch is refused. */
         ram[0xCC56]=0xFF;
@@ -2033,6 +2038,7 @@ int main(void){
             mocked_buttons=(uint16_t)(l1|(1u<<RETRO_DEVICE_ID_JOYPAD_B));som_input_poll();
             mocked_buttons=0;som_input_poll();
             assert(lock_slot<0);      /* second press toggles immediately */
+            hero[0x01C]=0;hero[0x19B]=0;som_monk_chain_frame(ram);monk_chain_step=0;   /* that B's strike ends */
             mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
             assert(lock_slot==0);
             /* Strafing: locked on a foe to the left, Up walks round it (the
@@ -2465,6 +2471,45 @@ int main(void){
                     som_evade_tick();hero[0x1E4]=0;disciplines.selected=keep_cls;hero[0x19B]=0;
                     ram[0xCC5B]=keep_jav;ram[0xCC59]=keep_bow;
                     memcpy(hero,keep_hero,sizeof(keep_hero));monk_glove_raised=keep_raised;
+                }
+                /* The mixed strings: every class's tables name weapons the
+                 * class is supplied, and Swordsmanship plays its string. */
+                for(unsigned i=0;i<sizeof(som_blade_strings)/sizeof(som_blade_strings[0]);i++){
+                    const SomBladeMove *m=(const SomBladeMove*)som_blade_strings[i].step;
+                    assert(som_blade_strings[i].step[0].weapon<8u);
+                    for(unsigned k=0;k<SOM_BLADE_STEPS+4u+2u;k++){
+                        m=k<SOM_BLADE_STEPS?&som_blade_strings[i].step[k]:
+                          k<SOM_BLADE_STEPS+4u?&som_blade_strings[i].finish[k-SOM_BLADE_STEPS]:
+                          k==SOM_BLADE_STEPS+4u?&som_blade_strings[i].toward:&som_blade_strings[i].away;
+                        assert(m->weapon<8u&&m->level<=8u&&(!m->level||m->name));
+                        assert(!(m->launch)||m->free>m->launch);
+                    }
+                }
+                {
+                    const uint8_t keep_cls=disciplines.selected,keep_axe=ram[0xCC56];
+                    static uint8_t keep_hero[0x200];memcpy(keep_hero,hero,sizeof(keep_hero));
+                    disciplines.selected=SOM_DISC_SWORD;frame_number+=200;
+                    const uint8_t keep_style=styles.selected[SOM_DISC_NINJUTSU];
+                    styles.selected[SOM_DISC_NINJUTSU]=2u;assert(som_string_off(SOM_DISC_NINJUTSU));
+                    styles.selected[SOM_DISC_NINJUTSU]=1u;assert(!som_string_off(SOM_DISC_NINJUTSU));
+                    styles.selected[SOM_DISC_NINJUTSU]=keep_style;
+                    ram[0xCC56]=0xFF;                       /* no axe: the sword stands in */
+                    som_put_word(hero+0x182,50);hero[0x1E4]=1;hero[0x010]=0x82;hero[0x01C]=0;hero[0x061]=0;
+                    monk_chain_step=0;monk_chain_active=0;monk_dir_last=monk_dir_prev=0;
+                    const uint8_t v[4]={1,0,3,2};
+                    for(unsigned n=0;n<4u;n++){
+                        MONK_TAP(bb);assert(hero[0x01C]==0x20u&&hero[0x011]==v[n]);MONK_END();
+                    }
+                    MONK_TAP(bb);assert(hero[0x01C]==0x80u&&hero[0x011]==6u&&hero[0x1E4]==1u);
+                    MONK_END();frame_number+=40;
+                    MONK_TAP((uint16_t)(bb|lt));assert(hero[0x011]==4u*4u+2u);      /* Thrust */
+                    MONK_TAP(bb);assert(monk_chain_queued);
+                    MONK_END();assert(hero[0x01C]==0x20u);                        /* queued strike */
+                    MONK_TAP(lt);frame_number+=5;MONK_TAP(lt);frame_number+=5;MONK_TAP(bb);
+                    assert(hero[0x011]==4u*7u+2u&&hero[0x19B]==3u);               /* cancels it */
+                    MONK_END();assert(!hero[0x19B]&&!monk_chain_active);
+                    memcpy(hero,keep_hero,sizeof(keep_hero));
+                    disciplines.selected=keep_cls;ram[0xCC56]=keep_axe;monk_chain_step=0;blade_move=NULL;
                 }
                 #undef MONK_TAP
                 #undef MONK_END

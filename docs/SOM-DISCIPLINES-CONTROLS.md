@@ -908,3 +908,20 @@ party class editor for the ring's owner (`7E:1808`: boy, girl or sprite). **Star
 in the ring does the same. X in the editor still switches member; A closes it and the ring
 is still open underneath (the pad is held back from the game until every button is let go).
 The overlay font gained `*` (the class mark, blank before) and `&`.
+
+## Mixed-weapon B strings (2026-11-23)
+
+Swordsmanship, Ninjutsu, Weapon Flow and Roguecraft have a B string like the monk's, played by
+hand (the AI keeps its own chains). Tap B four times, B again for the heavy move, and B once more
+for a finisher chosen by the held direction, counted against the nearest enemy. Two commands work
+at any time: toward, toward + B and away, toward + B. A pause of 1.5 s starts over.
+
+| Class | B x4 | Heavy | Finisher: none / toward / away / sideways | toward, toward | away, toward |
+|---|---|---|---|---|---|
+| Swordsmanship | sword | Axe Cleave | Saber Wave / Thrust / Step-Back Cut / Wide Sweep | Bash Cut | Parry Cut |
+| Ninjutsu | fist, fist, sword, fist | Taijutsu | Chakram / Dash Cut / Retreat Chakram / Shadow Spin | Shunshin Cut | Kawarimi Fist |
+| Weapon Flow | sword, axe, spear, whip | Javelin Step | Axe Breaker / Javelin Leap / Whip Guard / Spear Wheel | Spear Charge | Triple Shot |
+| Roguecraft | sword | Quick Shot (bow) | Sleep Flower / Backstab / Cartwheel Shot / Side Stab | Slip Past | Smoke Hop |
+
+Shunshin and Kawarimi still cost their Chakra; without it the cut comes alone. Sleep Flower costs
+its MP; when it cannot be cast the rogue plays Cruel Cut. The Kusarigama style keeps its own B.

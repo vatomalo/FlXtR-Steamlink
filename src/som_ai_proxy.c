@@ -106,6 +106,8 @@ static int som_perk(unsigned effect);
 #define SOM_TIGER_COOLDOWN 60ul
 static unsigned long perk_quiet,monster_hit_frame[3],tiger_ready;
 static uint8_t perk_monster_live[3];
+static uint8_t perk_monster_species[3];   /* what lived in each slot (Raise Dead) */
+static int last_kill_species=-1;
 #define SOM_KILL_CREDIT_FRAMES 120ul    /* a death this soon after our hit is our kill */
 static int perk_first_hit_used;
 static unsigned perk_hero_hp_prev,perk_last_hit_damage=8u;
@@ -1617,7 +1619,10 @@ static void som_perks_frame(uint8_t *ram){
             }
             monster_hit_frame[slot]=0;
         }
-        if(perk_monster_live[slot]&&!live&&(int)slot!=familiar.slot)last_kill_frame=frame_number;
+        if(perk_monster_live[slot]&&!live&&(int)slot!=familiar.slot){
+            last_kill_frame=frame_number;last_kill_species=perk_monster_species[slot];
+        }
+        if(live)perk_monster_species[slot]=m[0x180];
         perk_monster_live[slot]=(uint8_t)live;
     }
     perk_hero_hp_prev=now_hp;
@@ -2535,6 +2540,59 @@ static int familiar_pending;
 static SomFamiliarCarry familiar_carry;
 static SomFamiliarCarry clone_source_art; /* captured before mutating destination */
 static int familiar_is_native_control; /* Mind Control never repaints native art */
+/* Necromancy's Raise Dead (player, 2026-11-23: "copy the zombies as thats
+ * what Necromancers undead should look like ... depending on what type of
+ * creature he revives"): the raised familiar becomes one of the game's own
+ * undead. The game re-skins a live monster itself: a new id in +0x180 /
+ * +0x1E7 and bit 0 of the request byte +0x1FA make $C1:939C load that id's
+ * program, palette ($C8:1000 + id * 30) and art (descriptor $D0:0000 +
+ * id * 16, frames streamed from ROM), on any map (som-decomp
+ * refresh_actor_graphics_status_and_controller.s, load_actor_map_*.s; the
+ * game's own form change, status 0x0800, uses it). Headless 2026-11-23:
+ * Zombie 0x12, Beast Zombie 0x35, Ghoul 0x36, Ghost 0x30, Specter 0x09
+ * all drew cleanly in a rabite slot (som-decomp numbers monsters in hex). */
+#define SOM_UNDEAD_ZOMBIE 0x12u
+#define SOM_UNDEAD_BEAST 0x35u
+#define SOM_UNDEAD_GHOUL 0x36u
+#define SOM_UNDEAD_GHOST 0x30u
+#define SOM_UNDEAD_SPECTER 0x09u
+static unsigned familiar_undead;          /* 0, or the undead id it wears */
+static unsigned som_undead_for(int species){
+    switch(species){
+    case 0x09:case 0x12:case 0x30:case 0x35:case 0x36:return (unsigned)species;
+    /* animals and crawlers: the rotting hound */
+    case 0x00:case 0x10:case 0x14:case 0x16:case 0x18:case 0x24:case 0x28:case 0x31:
+    case 0x32:case 0x34:case 0x43:case 0x45:case 0x47:case 0x49:case 0x50:
+        return SOM_UNDEAD_BEAST;
+    /* mushrooms, flowers, drops, pumpkins, vegetables: the ghoul */
+    case 0x02:case 0x04:case 0x08:case 0x17:case 0x22:case 0x27:case 0x38:case 0x39:
+    case 0x40:case 0x42:
+        return SOM_UNDEAD_GHOUL;
+    /* flyers: a ghost */
+    case 0x01:case 0x13:case 0x15:case 0x29:return SOM_UNDEAD_GHOST;
+    /* magic things (books, swords, eyes, imps): a specter */
+    case 0x07:case 0x21:case 0x23:case 0x33:case 0x37:case 0x46:case 0x51:
+        return SOM_UNDEAD_SPECTER;
+    default:return SOM_UNDEAD_ZOMBIE;           /* goblins, thugs, knights, ninjas */
+    }
+}
+static const char *som_undead_name(unsigned id){
+    return id==SOM_UNDEAD_BEAST?"Beast Zombie":id==SOM_UNDEAD_GHOUL?"Ghoul":
+           id==SOM_UNDEAD_GHOST?"Ghost":id==SOM_UNDEAD_SPECTER?"Specter":"Zombie";
+}
+/* Turns the familiar in `slot` into its undead form through the game's
+ * own refresh (next combat tick). */
+static void som_familiar_raise_undead(uint8_t *ram,int slot){
+    if(!ram||slot<0||slot>2||!familiar_undead)return;
+    uint8_t *o=ram+0xE600u+0x200u*(unsigned)slot;
+    o[0x180]=o[0x1E7]=(uint8_t)familiar_undead;
+    o[0x011]=0;o[0x01C]=0;o[0x030]=0xFF;
+    o[0x1FA]|=0x01u;
+    char text[40];snprintf(text,sizeof(text),"^Rise, %s!",som_undead_name(familiar_undead));
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] UNDEAD familiar in slot %d rises as %s (id 0x%02X)\n",
+            slot+1,som_undead_name(familiar_undead),familiar_undead);
+}
 static unsigned long familiar_arrived;
 #define SOM_FAMILIAR_SETTLE_FRAMES 60ul
 static void som_familiar_bind(void);
@@ -7671,7 +7729,7 @@ RETRO_API void retro_unload_game(void){
     weapon_gfx_verified=0;
     unlink(wram_file);unlink(wram_temp_file);unlink(hot_file);unlink(ring_ai_file);unlink(message_file);
     unlink(familiar_file);familiar.slot=familiar.target=-1;familiar_pending=0;
-    familiar_carry.valid=0;
+    familiar_carry.valid=0;familiar_undead=0;last_kill_species=-1;
     som_tk_reset(&telekinesis);telekinesis_ready=0;memset(rescue_ready,0,sizeof(rescue_ready));
     weapon_trace_on=0;som_weapon_trace_reset();
     unlink(npc_command_file);
@@ -7724,6 +7782,7 @@ static void som_familiar_bind(void){
     som_familiar_publish();
     som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] FAMILIAR bound to monster slot %d\n",familiar.slot+1);
+    if(familiar_undead)som_familiar_raise_undead((uint8_t*)ram,familiar.slot);
 }
 static int som_summon_boss(void){
     if(familiar.slot>=0||familiar_carry.valid){
@@ -7813,7 +7872,7 @@ static void som_familiar_frame(void){
         som_xp_give(SOM_DISC_SUMMONING,SOM_XP_FAMILIAR,
                     ram[0xE600u+0x200u*(unsigned)familiar.target+0x180u],SOM_XPK_FAMILIAR,
                     "familiar strike");
-    if(state==SOM_FAMILIAR_HERE&&!familiar_is_native_control)
+    if(state==SOM_FAMILIAR_HERE&&!familiar_is_native_control&&!familiar_undead)
         som_familiar_reapply(&familiar_carry,ram,som_vram()); /* own slot only */
     if(state==SOM_FAMILIAR_HERE){
         if(frame_number%60u==0)
@@ -7830,7 +7889,7 @@ static void som_familiar_frame(void){
         }
         fprintf(stderr,"[som-ai] FAMILIAR follows the hero to the next map\n");
     }else{
-        familiar_carry.valid=0;familiar_is_native_control=0;
+        familiar_carry.valid=0;familiar_is_native_control=0;familiar_undead=0;
         fprintf(stderr,"[som-ai] FAMILIAR gone (died)\n");
     }
 }
@@ -7841,7 +7900,7 @@ static void som_familiar_dismiss(void){
         uint8_t *me=ram+SOM_MONSTER_BASE+(unsigned)familiar.slot*SOM_OBJECT_SIZE;
         me[0x182]=1;me[0x183]=0;me[0x1F1]=0xFF;    /* ends through its own death */
     }
-    familiar.slot=familiar.target=-1;familiar_pending=0;familiar_carry.valid=0;
+    familiar.slot=familiar.target=-1;familiar_pending=0;familiar_carry.valid=0;familiar_undead=0;
     som_familiar_publish();
     fprintf(stderr,"[som-ai] FAMILIAR dismissed\n");
 }
@@ -8066,6 +8125,7 @@ static int som_class_x_raw(uint8_t *ram){
         som_overlay_set(&overlay,"^One ally at a time",SOM_MESSAGE_FRAMES/3u);return 0;
     }
     if(d==5u||d==SOM_DISC_SUMMONING){                   /* a familiar: summon / shadow pact */
+        familiar_undead=0;
         familiar_pending=1;
         x_move_ready=frame_number+SOM_RAISE_COOLDOWN;
         som_overlay_set(&overlay,d==5u?"^Shadow Pact!":"^Summon!",SOM_MESSAGE_FRAMES/2u);
@@ -8081,9 +8141,11 @@ static int som_class_x_raw(uint8_t *ram){
             som_overlay_set(&overlay,"^Raise Dead|no fresh corpse",SOM_MESSAGE_FRAMES/3u);return 0;
         }
         familiar_pending=1;
+        familiar_undead=som_undead_for(last_kill_species);
         x_move_ready=frame_number+SOM_RAISE_COOLDOWN;
         som_overlay_set(&overlay,"^Rise!",SOM_MESSAGE_FRAMES/2u);
-        fprintf(stderr,"[som-ai] RAISE DEAD\n");
+        fprintf(stderr,"[som-ai] RAISE DEAD (species 0x%02X -> %s)\n",
+                last_kill_species<0?0u:(unsigned)last_kill_species,som_undead_name(familiar_undead));
         if(som_clone_enemy()){som_familiar_bind();return 1;}
         if(clone_no_slot){clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;return 1;}
         familiar_pending=0;
@@ -8102,7 +8164,7 @@ static int som_class_x_raw(uint8_t *ram){
         memcpy(mind_palette,ram+SOM_MONSTER_PALETTE+(unsigned)best*SOM_MONSTER_PALETTE_SIZE,
                SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
         familiar_is_native_control=1;clone_source_art.has_vram=0;
-        familiar_pending=1;last_clone_target=best;
+        familiar_pending=1;last_clone_target=best;familiar_undead=0;
         som_familiar_bind();
         mind_slot=best;mind_until=frame_number+SOM_MIND_FRAMES;
         x_move_ready=frame_number+SOM_MIND_COOLDOWN;

@@ -1998,6 +1998,21 @@ int main(void){
                 assert(familiar.slot<0);
             }
             assert(som_disc_x_role(5)==SOM_X_SUMMON&&som_disc_x_role(6)==SOM_X_SUMMON);
+            /* Raise Dead's undead by creature: a rabite rises as the Beast
+             * Zombie, a goblin as a Zombie, a mushroom as a Ghoul, a bee as a
+             * Ghost, a book as a Specter; the undead stay themselves. The
+             * re-skin is the game's own: id, restart, refresh request bit 0. */
+            assert(som_undead_for(0x00)==SOM_UNDEAD_BEAST&&som_undead_for(0x06)==SOM_UNDEAD_ZOMBIE);
+            assert(som_undead_for(0x02)==SOM_UNDEAD_GHOUL&&som_undead_for(0x01)==SOM_UNDEAD_GHOST);
+            assert(som_undead_for(0x23)==SOM_UNDEAD_SPECTER&&som_undead_for(0x36)==0x36u);
+            assert(som_undead_for(-1)==SOM_UNDEAD_ZOMBIE);
+            {
+                uint8_t *u=ram+0xE800;uint8_t keep_u[0x200];memcpy(keep_u,u,sizeof(keep_u));
+                u[0x180]=0;u[0x1FA]=0;u[0x011]=3;u[0x030]=0;familiar_undead=SOM_UNDEAD_BEAST;
+                som_familiar_raise_undead(ram,1);
+                assert(u[0x180]==0x35u&&u[0x1E7]==0x35u&&(u[0x1FA]&1u)&&u[0x011]==0&&u[0x030]==0xFFu);
+                memcpy(u,keep_u,sizeof(keep_u));familiar_undead=0;
+            }
             foe[0]=0;foe[0x1F1]=0;x_move_ready=0;
             disciplines.selected=keep;
         }

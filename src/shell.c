@@ -298,7 +298,7 @@ static const int disk_megabytes[]={64,128,256};
 static const int disk_megabytes[]={16,32,64};
 #endif
 static int quality_height(void){return quality_setting==3?adaptive_height:qualities[quality_setting];}
-static const char *const subtitle_languages[]={"off","auto","eng","nor","spa"};
+#include "subtitle_languages.h"
 static void subtitle_route_log(const char *route,const Title *t){
     FILE *f=fopen("subtitle-debug.log","a");if(!f)return;
     fprintf(f,"%lu shell route=%s kind=%s video=%s english=%s norwegian=%s\n",
@@ -385,7 +385,7 @@ static void load_settings(void){
         else if(!strcmp(key,"disk")&&value>=0&&value<3)disk_setting=value;
         else if(!strcmp(key,"coverflow")&&(value==0||value==1))coverflow=value;
         else if(!strcmp(key,"series_autoplay")&&(value==0||value==1))series_autoplay=value;
-        else if(!strcmp(key,"subtitles")&&value>=0&&value<5)subtitle_setting=value;
+        else if(!strcmp(key,"subtitles")&&value>=0&&value<SUBTITLE_LANGUAGES)subtitle_setting=value;
         else if(!strcmp(key,"scale")&&value>=2&&value<=3)subtitle_scale=value;
         else if(!strcmp(key,"delay")&&value>=-5&&value<=5)subtitle_delay=value;
         else if(!strncmp(key,"tv_marathon_",12)&&strlen(key)==13&&key[12]>='0'&&key[12]<'0'+TV_BLOCKS&&(value==0||value==1))tv_blocks[key[12]-'0'].marathon=value;
@@ -1949,7 +1949,7 @@ const char *labels[]={"QUALITY TARGET","RAM PREBUFFER","RAM LIMIT","LIBRARY VIEW
 #endif
 char values[43][40];if(quality_setting==3)snprintf(values[0],40,"AUTO / %dP",adaptive_height);else snprintf(values[0],40,"%dP",qualities[quality_setting]);snprintf(values[1],40,"%d SECONDS",buffer_seconds[buffer_setting]);
         snprintf(values[2],40,"%d MB",disk_megabytes[disk_setting]);snprintf(values[3],40,"%s",coverflow?"COVERFLOW":"SIX-COVER WALL");
-        const char *sub_names[]={"OFF","AUTOMATIC","ENGLISH","NORWEGIAN","SPANISH"};snprintf(values[4],40,"%s",sub_names[subtitle_setting]);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
+        snprintf(values[4],40,"%s",subtitle_setting==1?"AUTOMATIC":subtitle_language_table[subtitle_setting].name);snprintf(values[5],40,"%s",subtitle_scale==2?"NORMAL":"LARGE");snprintf(values[6],40,"%+d SECONDS",subtitle_delay);
         snprintf(values[7],40,"EDIT HOURS / GENRES");snprintf(values[8],40,"%s",tv_breaks?"BETWEEN PROGRAMS":"OFF");snprintf(values[9],40,"%s",menu_theme_names[menu_theme]);snprintf(values[10],40,"VIEW BIOS STATUS");snprintf(values[11],40,"%s",game_autostate?"ON":"OFF");
         snprintf(values[12],40,"%d / 5",tv_rating_weight);snprintf(values[13],40,"%d / 5",tv_popularity_weight);snprintf(values[14],40,"%d / 5",tv_variety_weight);
         snprintf(values[15],40,"SCAN QR WITH PHONE");
@@ -2535,6 +2535,10 @@ static void launch_player(const Title *t) {
         else unsetenv("FLXTR_SUBTITLE_SPANISH");
         if(t->subs_nor[0])setenv("FLXTR_SUBTITLE_NORWEGIAN",t->subs_nor,1);
         else unsetenv("FLXTR_SUBTITLE_NORWEGIAN");
+        char subtitle_tracks_file[96];
+        subtitle_tracks_path(t->url,subtitle_tracks_file,sizeof(subtitle_tracks_file));
+        if(t->url[0]&&!access(subtitle_tracks_file,R_OK))setenv("FLXTR_SUBTITLE_TRACKS",subtitle_tracks_file,1);
+        else unsetenv("FLXTR_SUBTITLE_TRACKS");
         /* Metadata is passed to the video child via environment, never via
          * the video URL. Prefer parent-series synopsis for an episode. */
         setenv("FLXTR_VIDEO_TITLE",t->title,1);
@@ -2577,7 +2581,7 @@ static void launch_player(const Title *t) {
         snprintf(buffer,sizeof(buffer),"%d",buffer_seconds[buffer_setting]);snprintf(disk,sizeof(disk),"%d",disk_megabytes[disk_setting]);
         snprintf(scale,sizeof(scale),"%d",subtitle_scale);snprintf(delay,sizeof(delay),"%d",subtitle_delay);
 #ifndef _WIN32
-        if(!player_menu)execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)NULL);
+        if(!player_menu)execl("./greenlink-player","greenlink-player",t->url,"--view",modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",subtitle_language_table[subtitle_setting].code,"--subtitle-size",scale,"--subtitle-delay",delay,(char*)NULL);
 #endif
         char gate_arg[32];
 #ifdef _WIN32
@@ -2587,7 +2591,7 @@ static void launch_player(const Title *t) {
         snprintf(gate_arg,sizeof(gate_arg),"%d",gate[0]);
         const char *control_option="--control-fd",*gate_option="--preload-fd";
 #endif
-        char *args[30]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_languages[subtitle_setting],"--subtitle-size",scale,"--subtitle-delay",delay,(char*)control_option,control,"--start",start,NULL,NULL,NULL};
+        char *args[30]={"greenlink-player",(char*)t->url,"--view",(char*)modes[viewing],"--height",height,"--buffer-seconds",buffer,"--buffer-mb",disk,"--subtitles",(char*)subtitle_language_table[subtitle_setting].code,"--subtitle-size",scale,"--subtitle-delay",delay,(char*)control_option,control,"--start",start,NULL,NULL,NULL};
         int n=20;
 #ifndef FLXTR_DESKTOP
         if(quality_setting==3)args[n++]="--adaptive";
@@ -2644,6 +2648,11 @@ static void series_advance(int direction){
 static void finish_player(int code){
     tv_history_poll();
     int cancelled=stopping_player;
+    {   /* The language chosen while it played, however it ended. */
+        int chosen=-1;FILE *f=fopen("subtitle-choice","r");
+        if(f){if(fscanf(f,"%d",&chosen)!=1)chosen=-1;fclose(f);unlink("subtitle-choice");}
+        if(chosen>=0&&chosen<SUBTITLE_LANGUAGES&&chosen!=subtitle_setting){subtitle_setting=chosen;save_settings();}
+    }
     player_pid=0;stopping_player=0;if(player_control>=0)player_pipe_close(player_control);player_control=-1;
     if(open_ui()){fprintf(stderr,"Restore UI: %s\n",SDL_GetError());running=0;auto_active=0;return;}
     if(!tv_active||strcmp(playing_title.kind,"youtube"))music_video_pause(1);
@@ -2688,7 +2697,7 @@ static void finish_player(int code){
         int valid=f&&fscanf(f,"%d %lf %d %d %d %d",&command,&position,&view,&sub,&scale,&delay)==6;
         if(f)fclose(f);
         unlink("playback-request");
-        if(!valid||command<1||command>11||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>4||scale<2||scale>3||delay< -5||delay>5){auto_active=0;tv_history_finish("failed",tv_history_last_position());snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
+        if(!valid||command<1||command>11||!(position>=0&&position<=86400)||view<0||view>=VIEW_COUNT||sub<0||sub>=SUBTITLE_LANGUAGES||scale<2||scale>3||delay< -5||delay>5){auto_active=0;tv_history_finish("failed",tv_history_last_position());snprintf(status,sizeof(status),"INVALID PLAYBACK REQUEST");return;}
         if(command>=5)tv_history_finish(command==5||command==6?"skipped":"stopped",position);
         if(command==10){tv_active=auto_active=0;running=0;return;}
         if(command==11){
@@ -2863,8 +2872,7 @@ static void handoff_video_settings(Title *title,const char *language,const char 
     /* A remote sender selects the title and resume position. Playback starts
      * from this TV's preferences, including after a differently scaled video. */
     viewing=default_viewing;
-    const char *languages[]={"","auto","en","no","es"};
-    const char *preferred=languages[subtitle_setting];
+    const char *preferred=subtitle_setting>1?subtitle_language_table[subtitle_setting].two:"";
     if(subtitle_setting&&caption[0]&&!strncmp(caption,"https://",8)&&
        (!strcmp(language,"en")||!strcmp(language,"no")||!strcmp(language,"es"))&&
        (subtitle_setting==1||!strcmp(preferred,language))){
@@ -3320,7 +3328,7 @@ if(party_entry==3&&(key==SDLK_x||key==SDLK_F2)){FILE *last=fopen("handoff/last",
                 case 1:if(!buffer_setting)buffer_setting=1;buffer_setting=1+(buffer_setting-1+step+8)%8;break;
                 case 2:disk_setting=(disk_setting+step+3)%3;break;
                 case 3:coverflow=!coverflow;break;
-                case 4:subtitle_setting=(subtitle_setting+step+5)%5;break;
+                case 4:subtitle_setting=(subtitle_setting+step+SUBTITLE_LANGUAGES)%SUBTITLE_LANGUAGES;break;
                 case 5:subtitle_scale=subtitle_scale==2?3:2;break;
                 case 8:tv_breaks=!tv_breaks;break;
                 case 9:menu_theme=(menu_theme+step+MENU_THEMES)%MENU_THEMES;monochrome_menu=menu_theme==1;load_menu_background();break;

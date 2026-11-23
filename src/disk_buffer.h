@@ -45,6 +45,13 @@ static void disk_wait(DiskBuffer *q){
     if(until.tv_nsec>=1000000000){until.tv_sec++;until.tv_nsec-=1000000000;}
     pthread_cond_timedwait(&q->changed,&q->mutex,&until);
 }
+/* Other subtitle tracks that were not discarded: kept so the player can
+ * switch language without reading the stream again. */
+static int disk_subtitle(const DiskBuffer *q,int index){
+    if(!q->format||!q->format->streams||index<0||(unsigned)index>=q->format->nb_streams)return 0;
+    const AVStream *s=q->format->streams[index];
+    return s&&s->codecpar&&s->codecpar->codec_type==AVMEDIA_TYPE_SUBTITLE&&s->discard<AVDISCARD_ALL;
+}
 static void *disk_producer(void *opaque){
     DiskBuffer *q=opaque;AVPacket *p=av_packet_alloc();int rc=AVERROR(ENOMEM);
     if(!p)goto finished;
@@ -53,7 +60,7 @@ static void *disk_producer(void *opaque){
         if(quit||stopped){rc=AVERROR_EXIT;break;}
         deadline=av_gettime_relative()+30000000;rc=DISK_READ_PACKET(q->format,p);deadline=0;
         if(rc<0)break;
-        if(p->stream_index!=q->vi&&p->stream_index!=q->ai&&p->stream_index!=q->si){av_packet_unref(p);continue;}
+        if(p->stream_index!=q->vi&&p->stream_index!=q->ai&&p->stream_index!=q->si&&!disk_subtitle(q,p->stream_index)){av_packet_unref(p);continue;}
         uint64_t bytes=sizeof(DiskHeader)+(uint64_t)p->size;
         if(p->size<0||p->size>8*1024*1024||p->side_data_elems>64){rc=AVERROR_INVALIDDATA;break;}
         for(int i=0;i<p->side_data_elems;i++)bytes+=sizeof(DiskSide)+p->side_data[i].size;

@@ -20,6 +20,23 @@ int main(void){
     o=parse("[{\"label\":\"English Hi3\",\"file\":\"https://cache.example/Movie Name.vtt\"},{\"label\":\"Norwegian\",\"file\":\"https://cache.example/no.vtt\"},{\"label\":\"Spanish 2\",\"file\":\"https://cache.example/es.vtt\"}]");
     select_subtitles(o,english,norwegian,spanish);json_object_put(o);
     assert(!strcmp(english,"https://cache.example/Movie%20Name.vtt")&&strstr(norwegian,"/no.vtt")&&strstr(spanish,"/es.vtt"));
+    assert(subtitle_catalog_count==3&&!strcmp(subtitle_catalog[1].name,"NORWEGIAN"));
+    o=parse("[{\"label\":\"Français\",\"file\":\"https://cache.example/fr.vtt\"},{\"lang\":\"pt-BR\",\"label\":\"Portuguese (BR)\",\"file\":\"https://cache.example/br.vtt\"},"
+            "{\"label\":\"English SDH\",\"file\":\"https://cache.example/sdh.vtt\"},{\"label\":\"日本語\",\"lang\":\"ja\",\"file\":\"https://cache.example/ja.vtt\"},"
+            "{\"label\":\"Klingon\",\"file\":\"https://cache.example/kl.vtt\"},{\"label\":\"German\",\"file\":\"http://insecure/de.vtt\"},"
+            "{\"label\":\"French\",\"file\":\"https://cache.example/fr.vtt\"}]");
+    select_subtitles(o,english,norwegian,spanish);json_object_put(o);
+    assert(subtitle_catalog_count==8&&!strcmp(subtitle_catalog[3].name,"FRENCH")&&!strcmp(subtitle_catalog[4].name,"PORTUGUESE (BR)"));
+    assert(!strcmp(subtitle_catalog[5].name,"ENGLISH SDH")&&subtitle_catalog[6].language==24&&!strcmp(subtitle_catalog[7].name,"KLINGON"));
+    assert(subtitle_language_index("nb")==3&&subtitle_language_index("en-US")==2&&subtitle_language_index("xx")<0&&
+           subtitle_language_index("fre")==15&&subtitle_language_index("BR_PT")==31);
+    {
+        char folder[]="/tmp/flxtr-subs-XXXXXX",here[1024],path[96];assert(mkdtemp(folder)&&getcwd(here,sizeof(here))&&!chdir(folder));
+        assert(subtitle_catalog_write("https://example.org/a.m3u8")==8);
+        subtitle_tracks_path("https://example.org/a.m3u8",path,sizeof(path));
+        FILE *f=fopen(path,"r");char row[1200];assert(f&&fgets(row,sizeof(row),f)&&!strncmp(row,"eng\tENGLISH\thttps://",20));fclose(f);
+        unlink(path);assert(!rmdir("subtitle-tracks")&&!chdir(here)&&!rmdir(folder));
+    }
     char encoded[1024];assert(!caption_url("file:///etc/passwd",encoded)&&!caption_url("https://x/\nsecret",encoded));
     count=1;
     char master[]="#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",URI=\"audio.m3u8\"\n"

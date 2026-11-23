@@ -18,6 +18,7 @@
 #include "windows_runtime.h"
 #define BASE "https://plsdontscrapemelove.flixer.gd"
 #define FLIXER_SITE "https://flixer.gd"
+#include "subtitle_catalog.h"
 typedef struct {char *data;size_t length,limit;} Buffer;
 typedef struct {char label[80],meta[96],url[2048],subs_eng[1024],subs_nor[1024],subs_spa[1024];int height;} Choice;
 static Choice choices[40];static int count;
@@ -162,6 +163,8 @@ static void select_subtitles(json_object *list,char *eng,char *nor,char *spa){
         if(!*lang)lang=string(track,"languageCode");
         if(!*lang)lang=string(track,"srclang");
         char encoded[1024];if(!caption_url(url,encoded))continue;url=encoded;
+        const char *label=string(track,"label");
+        subtitle_catalog_add(lang,label,url);
         int english=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
         int norwegian=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
             !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);
@@ -254,8 +257,8 @@ static void hls_subtitles(char *manifest,const char *base,char *eng,char *nor,ch
         int norwegian=!strncasecmp(language,"no",2)||!strncasecmp(language,"nb",2)||
                       !strncasecmp(language,"nn",2)||!strncasecmp(language,"norwegian",9);
         int spanish=!strncasecmp(language,"es",2)||!strncasecmp(language,"spanish",7);
-        if(!(english&&!*eng)&&!(norwegian&&!*nor)&&!(spanish&&!*spa))continue;
         if(!hls_resolve_uri(base,uri,resolved,sizeof(resolved)))continue;
+        subtitle_catalog_add(lang,label,resolved);
         if(english&&!*eng)snprintf(eng,1024,"%s",resolved);
         if(norwegian&&!*nor)snprintf(nor,1024,"%s",resolved);
         if(spanish&&!*spa)snprintf(spa,1024,"%s",resolved);
@@ -311,7 +314,7 @@ static void subdl_subtitles(int id,int season,int episode,Choice *c){
     size_t len=strlen(key);
     if(len>200||strpbrk(key,"\r\n"))return;
     char uri[512];
-    snprintf(uri,sizeof(uri),"https://api.subdl.com/api/v1/subtitles?tmdb_id=%d&type=tv&season_number=%d&episode_number=%d&languages=EN,NO,ES&unpack=1&subs_per_page=30&client=custom_integration",id,season,episode);
+    snprintf(uri,sizeof(uri),"https://api.subdl.com/api/v1/subtitles?tmdb_id=%d&type=tv&season_number=%d&episode_number=%d&languages=EN,NO,ES,SV,DA,FI,DE,FR,IT,PT,BR_PT,NL,PL,CS,RO,HU,TR,EL,RU,UK,AR,HE,JA,KO,ZH,HR,SR,BG,ID,VI,TH&unpack=1&subs_per_page=30&client=custom_integration",id,season,episode);
     char auth[256];
     if(snprintf(auth,sizeof(auth),"X-API-Key: %s",key)>=(int)sizeof(auth))return;
     struct curl_slist *headers=curl_slist_append(NULL,auth);
@@ -338,9 +341,11 @@ static void subdl_subtitles(int id,int season,int episode,Choice *c){
                 if(!strcasecmp(language,"EN")||!strcasecmp(language,"ENG"))dst=c->subs_eng;
                 else if(!strcasecmp(language,"NO")||!strcasecmp(language,"NB")||!strcasecmp(language,"NOR"))dst=c->subs_nor;
                 else if(!strcasecmp(language,"ES")||!strcasecmp(language,"SPA"))dst=c->subs_spa;
-                if(!dst||*dst)continue;
                 const char *url=string(file,"url");
                 if(strncmp(url,"/subtitle/",10)||strlen(url)>900||strpbrk(url,"\r\n\t"))continue;
+                char full[1024];snprintf(full,sizeof(full),"https://dl.subdl.com%s",url);
+                subtitle_catalog_add(language,"",full);
+                if(!dst||*dst)continue;
                 snprintf(dst,1024,"https://dl.subdl.com%s",url);
             }
         }
@@ -361,6 +366,7 @@ static void independent_subtitles(int id,int season,int episode,Choice *c){
         if(sscanf(line,"%d\t%d\t%d\t%15[^\t]\t%1023[^\r\n]",&series,&s,&e,lang,url)!=5)continue;
         if(series!=id||s!=season||e!=episode||strncmp(url,"https://",8)||
            strpbrk(url,"\r\n\t")||strlen(url)>=1024)continue;
+        subtitle_catalog_add(lang,"",url);
         char *destination=NULL;
         if(!strcasecmp(lang,"eng")||!strcasecmp(lang,"en"))destination=c->subs_eng;
         else if(!strcasecmp(lang,"nor")||!strcasecmp(lang,"no")||!strcasecmp(lang,"nb"))destination=c->subs_nor;
@@ -402,6 +408,7 @@ int main(int argc,char **argv){
                 }
         }
     else if(!resolving){if(root)servers(root);web_servers();}
+    if(count&&resolving)subtitle_log("subtitle tracks written=%d",subtitle_catalog_write(choices[0].url));
     if(count){
         printf("# pages=%d total=%d\n",count?(count+5)/6:1,count);
         for(int i=(page-1)*6;i<count&&i<page*6;i++){Choice *c=&choices[i];if(resolving)printf("%s\t%s\t\t%s\tsource\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",c->label,c->meta,c->url,id,season,episode,c->height,c->subs_eng,c->subs_nor,c->subs_spa);

@@ -57,6 +57,7 @@ static void mega_subtitle_list(json_object *tracks,char *english,char *norwegian
         if(!*lang)lang=string(item,"lang");
         if(!*lang)lang=string(item,"language");
         if(strncmp(link,"https://",8)||strlen(link)>=1024||strpbrk(link,"\r\n\t "))continue;
+        subtitle_catalog_add(lang,string(item,"label"),link);
         int en=!strncasecmp(lang,"en",2)||!strncasecmp(lang,"english",7);
         int no=!strncasecmp(lang,"no",2)||!strncasecmp(lang,"nb",2)||
             !strncasecmp(lang,"nn",2)||!strncasecmp(lang,"norwegian",9);

@@ -64,7 +64,7 @@ class TestServerMatchesShellLoop(Fixture):
         for marker in (False, True):
             if marker:
                 (self.root / "flxtr-som-ai-enabled").write_text("enabled\n")
-            for line in ("obs", "obsm", "nav", "gmb", "gmc", "gmm", "fam", "dsc", "act up",
+            for line in ("obs", "obsm", "nav", "gmb", "gmc", "gmm", "fam", "dsc", "dpc", "act up",
                          "act rm -rf", "act ", "msg Hello there!|Next", "msg $(reboot)",
                          "nonsense", "dltx"):
                 with self.subTest(line=line, marker=marker):
@@ -79,6 +79,16 @@ class TestServerMatchesShellLoop(Fixture):
             (self.root / "som_ai_disciplines").write_text(text)
             self.assertEqual(server.handle("dsc"), want)
             self.assertEqual(shell_reply(self.loop, self.root, "dsc"), want)
+
+    def test_party_disciplines(self):
+        server = Server(str(self.root), str(self.root))
+        for text, want in (("v1 3 13 p 1 3 o 0 1\n", b"DPC 1 3\n"),
+                           ("v1 3 p 15 255\n", b"DPC 15 255\n"),
+                           ("v1 3 13\n", b"DPC 255 255\n"), ("v1 3 p 1\n", b"DPC 255 255\n"),
+                           ("v1 3 p x 2\n", b"DPC 255 255\n")):
+            (self.root / "som_ai_disciplines").write_text(text)
+            self.assertEqual(server.handle("dpc"), want)
+            self.assertEqual(shell_reply(self.loop, self.root, "dpc"), want)
 
     def test_compressed_replies_inflate_to_the_same_bytes(self):
         server = Server(str(self.root), str(self.root))
@@ -162,6 +172,14 @@ class TestDeltaLink(Fixture):
             self.assertIsNone(link.fetch_discipline())
             (self.root / "som_ai_disciplines").write_text("v1 1 5 29\n")
             self.assertEqual(link.fetch_discipline(), 1)
+            self.assertEqual(link.fetch_party_disciplines(), [None, None])
+            (self.root / "som_ai_disciplines").write_text("v1 15 5 29 p 1 3\n")
+            self.assertEqual(link.fetch_discipline(), 15)
+            self.assertEqual(link.fetch_party_disciplines(), [1, 3])
+            link.send_control("ally_class_2_15")
+            for bad in ("ally_class_0_1", "ally_class_1_16"):
+                with self.assertRaises(ValueError):
+                    link.send_control(bad)
             self.assertTrue(link.serving)
         finally:
             link.close()

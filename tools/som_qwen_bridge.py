@@ -40,7 +40,7 @@ from som_story import MANTIS_MAP, POTOS_MAP, ROAD_MAP, story_stage
 from som_tactics import TacticLearner
 from som_build import classify as classify_build, profile as build_profile
 from som_wram_server import apply_block_delta
-from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
+from som_class_director import (COMPANION_HOLD_S, ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
                                 ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
                                 CONTACT_PX as CLASS_CONTACT_PX, ClassRecord,
                                 parse_classes, plan_classes)
@@ -115,6 +115,7 @@ CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
     {f"class_{n}" for n in range(16)} | {f"special_{n}" for n in range(1, 9)}
 # Blink to a tile (proxy som_blink_start checks range and open ground).
 PARTY_ORDER_COMMAND = re.compile(r"party_order_[0-9]{1,3}_[0-3]_[0-9]{1,3}")
+ALLY_CLASS_COMMAND = re.compile(r"ally_class_[12]_(?:[0-9]|1[0-5])")
 PARTY_ORDER_REFRESH_S = 4.0
 PARTY_ORDER_MIN_INTERVAL_S = 0.75
 BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")
@@ -579,6 +580,8 @@ REMOTE_LOOP = (
     'echo "GMM $i $c";; '
     "dsc) d=; [ -f " + DISCIPLINE_FILE + " ] && read -r v d rest < " + DISCIPLINE_FILE + "; "
     "case \"$d\" in ''|*[!0-9]*) d=255;; esac; echo \"DSC $d\";; "
+    "dpc) s=; [ -f " + DISCIPLINE_FILE + " ] && s=$(awk 'NR==1{for(i=1;i<=NF;i++)if($i==\"p\"){if($(i+1)~/^[0-9]+$/&&$(i+2)~/^[0-9]+$/)print $(i+1),$(i+2);exit}}' " + DISCIPLINE_FILE + "); "
+    "echo \"DPC ${s:-255 255}\";; "
     "fam) f=; [ -f " + FAMILIAR_FILE + " ] && read -r f < " + FAMILIAR_FILE + "; "
     "case \"$f\" in [1-3]) ;; *) f=0;; esac; echo \"FAM $f\";; "
     "obsz|obsmz) "
@@ -842,13 +845,25 @@ class RemoteLink:
         return int(status[4:])
 
     def fetch_discipline(self):
-        """The discipline selected in the game (0-11), or None for none."""
+        """The discipline selected in the game (0-15), or None for none."""
         status, _ = self._request("dsc")
         value = status[4:] if status.startswith("DSC ") else ""
         if not value.isdigit():
             raise OSError(f"discipline unavailable ({status})")
         n = int(value)
-        return n if n < 12 else None
+        return n if n < len(CLASS_NAMES) else None
+
+    def fetch_party_disciplines(self):
+        """Saved Girl and Sprite disciplines, or None for an unset slot."""
+        status, _ = self._request("dpc")
+        fields = status.split()
+        if len(fields) != 3 or fields[0] != "DPC":
+            raise OSError(f"party disciplines unavailable ({status})")
+        try:
+            values = [int(value) for value in fields[1:]]
+        except ValueError as exc:
+            raise OSError(f"party disciplines unavailable ({status})") from exc
+        return [value if value < len(CLASS_NAMES) else None for value in values]
 
     def show_message(self, text: str) -> None:
         """Ask the proxy to draw a short two-line message box ('|' = new line)."""
@@ -879,7 +894,8 @@ class RemoteLink:
     def send_control(self, command: str) -> None:
         """Experimental proxy commands that only tools (never Qwen) may send."""
         if (command not in CONTROL_COMMANDS and not BLINK_COMMAND.fullmatch(command)
-                and not PARTY_ORDER_COMMAND.fullmatch(command)):
+                and not PARTY_ORDER_COMMAND.fullmatch(command)
+                and not ALLY_CLASS_COMMAND.fullmatch(command)):
             raise ValueError(f"refusing unknown control command {command!r}")
         status, _ = self._request("act " + command)
         if status != "OK":
@@ -1018,7 +1034,8 @@ class AndroidRelayLink:
             with self.condition: self.message = clean
 
     def send_control(self, command: str) -> None:
-        if command not in CONTROL_COMMANDS and not PARTY_ORDER_COMMAND.fullmatch(command):
+        if (command not in CONTROL_COMMANDS and not PARTY_ORDER_COMMAND.fullmatch(command)
+                and not ALLY_CLASS_COMMAND.fullmatch(command)):
             raise ValueError(f"refusing unknown control command {command!r}")
         self._respond(command)
 
@@ -1619,6 +1636,15 @@ def main() -> int:
     # once it guarded after swings and when hit; guarding costs swings.
     planner.build = None              # log the hero's build once it is read
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
+    party_class_directors = {who: ClassDirector(min_hold=COMPANION_HOLD_S) for who in (1, 2)}
+    for party_director in party_class_directors.values():
+        party_director.cooldown = COMPANION_HOLD_S
+    # The player's own picks outlive a bridge restart (PICK_KEEP_S).
+    stored_picks = history.get_agent_state("class_picks") if history is not None else None
+    stored_picks = stored_picks if isinstance(stored_picks, dict) else {}
+    discipline_initialized = False
+    party_discipline_initialized = False
+    party_discipline_checked_at = None
     player_plan = parse_classes(args.wanted_classes)
     if player_plan:
         class_director.set_plan(player_plan, fixed=True)
@@ -2072,6 +2098,9 @@ def main() -> int:
                     planner.charge_disabled = charge_failed or style["charge"] == 0
                     class_director.cooldown = (None if style["classes"] == 0 else
                                                150.0 / style["classes"])
+                    for party_director in party_class_directors.values():
+                        party_director.cooldown = (None if style["classes"] == 0 else
+                                                   COMPANION_HOLD_S)
                     weapon_tactics.cooldown = (None if style["weapons"] == 0 else
                                                12.0 / style["weapons"])
                     if style["weapons"]:
@@ -2397,8 +2426,19 @@ def main() -> int:
                             selected = link.fetch_discipline()
                         except (OSError, subprocess.SubprocessError) as exc:
                             selected = class_director.current
+                            read_ok = False
                             print(f"[class] discipline read failed: {exc}", flush=True)
-                        if class_director.adopt(selected):
+                        else:
+                            read_ok = True
+                        if not discipline_initialized:
+                            if read_ok:
+                                class_director.initialize(selected, stored_picks.get("0"))
+                                discipline_initialized = True
+                                print("[class] starting as " +
+                                      (CLASS_NAMES[selected] if selected is not None else "unassigned") +
+                                      (" (the player's pick)" if class_director.pinned else ""),
+                                      flush=True)
+                        elif class_director.adopt(selected):
                             print(f"[class] player picked {CLASS_NAMES[selected]}: "
                                   f"the AI keeps it", flush=True)
                     actor_now = context.get("actor") or {}
@@ -2406,7 +2446,9 @@ def main() -> int:
                             if e.get("active") and not e.get("familiar")]
                     gaps = [max(abs(e["x_px"] - actor_now.get("x_px", 0)),
                                 abs(e["y_px"] - actor_now.get("y_px", 0))) for e in foes]
-                    pick = class_director.choose(
+                    # Until the game's class is known, a pick would overwrite it.
+                    pick = None if (hasattr(link, "fetch_discipline") and
+                                    not discipline_initialized) else class_director.choose(
                         build, levels, max_mp, False,
                         enemy_within(observation, CLASS_CONTACT_PX) or grass_restore is not None,
                         hp_fraction=(hero0.get("hp") or 0) / max(1, hero0.get("max_hp") or 1),
@@ -2425,6 +2467,83 @@ def main() -> int:
                                 continue
                         except (OSError, subprocess.SubprocessError, ValueError) as exc:
                             print(f"[class] switch failed: {exc}", flush=True)
+                    # The game's saved Girl/Sprite class is independent of the
+                    # active hero. Give each AI-controlled companion its own
+                    # director and class decision, using that member's build,
+                    # weapon levels, HP, and MP.
+                    if (hasattr(link, "fetch_party_disciplines") and
+                            (party_discipline_checked_at is None or
+                             time.monotonic() - party_discipline_checked_at >= DISCIPLINE_CHECK_S)):
+                        party_discipline_checked_at = time.monotonic()
+                        try:
+                            party_classes = link.fetch_party_disciplines()
+                        except (OSError, subprocess.SubprocessError) as exc:
+                            party_classes = None
+                            print(f"[class] companion discipline read failed: {exc}", flush=True)
+                        if party_classes is not None:
+                            if not party_discipline_initialized:
+                                for who, selected in enumerate(party_classes, 1):
+                                    party_class_directors[who].initialize(
+                                        selected, stored_picks.get(str(who)))
+                                party_discipline_initialized = True
+                            else:
+                                for who, selected in enumerate(party_classes, 1):
+                                    if party_class_directors[who].adopt(selected):
+                                        print(f"[class] player picked {CLASS_NAMES[selected]} for the "
+                                              f"{'Girl' if who == 1 else 'Sprite'}: the AI keeps it",
+                                              flush=True)
+                    if party_discipline_initialized and party_discipline_checked_at is not None:
+                        companion_switched = False
+                        for who in (1, 2):
+                            member = next((p for p in observation.get("party", [])
+                                           if p.get("slot") == who + 1), None)
+                            if (not member or member.get("availability_byte") != 1 or
+                                    member.get("controller_binding") != 0 or
+                                    (member.get("hp") or 0) <= 0):
+                                continue
+                            member_hp = member.get("hp") or 0
+                            member_max_hp = member.get("max_hp") or 0
+                            member_max_mp = member.get("max_mp") or 0
+                            member_build = classify_build(member.get("stats"))
+                            member_levels = (member.get("weapon") or {}).get("levels") or {}
+                            member_director = party_class_directors[who]
+                            member_pick = member_director.choose(
+                                member_build, member_levels, member_max_mp, False,
+                                False,  # companions can change roles during a fight
+                                hp_fraction=member_hp / max(1, member_max_hp),
+                                enemies=len(foes), nearest=min(gaps) if gaps else None,
+                                toughest=max((e.get("max_hp") or 0 for e in foes
+                                              if e.get("hp_plausible")), default=0))
+                            if member_pick is not None:
+                                index, why = member_pick
+                                try:
+                                    link.send_control(f"ally_class_{who}_{index}")
+                                    member_director.switched(index)
+                                    print(f"[class] {('Girl' if who == 1 else 'Sprite')} -> "
+                                          f"{CLASS_NAMES[index]}: {why}", flush=True)
+                                    companion_switched = True
+                                    break
+                                except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                    print(f"[class] companion switch failed: {exc}", flush=True)
+                        if companion_switched:
+                            # The order shares the device's one-command mailbox.
+                            time.sleep(max(args.interval, 0.12))
+                            previous = "wait"
+                            continue
+                    if history is not None:
+                        picks = dict(stored_picks)
+                        known = ({0: class_director} if discipline_initialized else {})
+                        if party_discipline_initialized:
+                            known.update(party_class_directors)
+                        for who, director in known.items():
+                            state = director.pick_state()
+                            if state is None:
+                                picks.pop(str(who), None)
+                            else:
+                                picks[str(who)] = state
+                        if picks != stored_picks:
+                            stored_picks = picks
+                            history.set_agent_state("class_picks", picks)
                     hp, max_hp = hero0.get("hp") or 0, hero0.get("max_hp") or 0
                     # Alternate the class's two weapons (som_weapon_tactics):
                     # reach against the nearest enemy, low HP, training.

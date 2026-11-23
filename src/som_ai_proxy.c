@@ -139,6 +139,7 @@ static void som_special_tick(void);
 static int som_monk_chain_press(uint8_t *ram,unsigned who,uint16_t held_dirs);
 static void som_monk_chain_dirs(const uint8_t *ram,unsigned who,uint16_t pressed_dirs);
 static int som_monk_in_string(unsigned who);
+static unsigned som_string_weapon(unsigned cls);
 static void som_monk_chain_frame(uint8_t *ram);
 static void som_combo_clear(void){som_combo_reset(&combo);}
 /* which: 0 = B (primary weapon), 1 = Y (secondary). */
@@ -1955,17 +1956,18 @@ static void som_input_poll(void){
                         "TAIJUTSU":"WEAPON FLOW",som_weapon_types[taijutsu_want]);
             }
         }
-        /* Martial Arts' B: the Storm string and the Tekken commands
+        /* Martial Arts' and Bushido's B: the Storm string and the Tekken commands
          * (som_monk_chain_press). B to a villager or a chest stays the game's
          * when the monk stands; mid-string (a lunge that ends beside one) B
          * keeps the string. */
-        if(attack_ram&&driver_cls==SOM_DISC_MARTIAL_ARTS&&!ring_ai_enabled&&
+        const unsigned string_weapon=som_string_weapon(driver_cls);
+        if(attack_ram&&string_weapon!=SOM_NO_WEAPON&&!ring_ai_enabled&&
            !som_manual_disciplines&&!(current&(l2_bit|r2)))
             som_monk_chain_dirs(attack_ram,driver,(uint16_t)(pressed&dpad));
-        if(attack_ram&&driver_cls==SOM_DISC_MARTIAL_ARTS&&!ring_ai_enabled&&
+        if(attack_ram&&string_weapon!=SOM_NO_WEAPON&&!ring_ai_enabled&&
            !som_manual_disciplines&&!native_ring&&!style_b_hidden&&!special_suppress&&
            !(current&(l2_bit|r2|y_bit))&&(current&b_bit)&&
-           attack_ram[0xE000u+0x200u*driver+0x1E4u]==0u&&
+           attack_ram[0xE000u+0x200u*driver+0x1E4u]==string_weapon&&
            (som_monk_in_string(driver)||                     /* mid-string: never talk */
             !som_interact_ahead_by(attack_ram,driver))){
             b_weapon_blocked=1;
@@ -4783,6 +4785,13 @@ static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
             som_weapon_types[weapon],stage);
     return 1;
 }
+/* The B string's weapon by class: the monk's glove, the samurai's katana
+ * (player, 2026-11-23: "MONK IT TOTALLY BEST ... SAME RECIPE BUT FOR
+ * SAMURAI"; sword power attacks follow the glove's rule, E011 = 4 * stage
+ * + class, som-decomp weapons-melee.md 4.1). SOM_NO_WEAPON: no string. */
+static unsigned som_string_weapon(unsigned cls){
+    return cls==SOM_DISC_MARTIAL_ARTS?0u:cls==SOM_DISC_BUSHIDO?1u:SOM_NO_WEAPON;
+}
 /* Martial Arts' B: a Ninja Storm string with Tekken commands (player,
  * 2026-11-23: "somewhere between Naruto Ninja Storm B+B+B+B+B+B and
  * Tekken's ->-> + B"; command moves are free, "the command is the
@@ -4877,7 +4886,8 @@ static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned varian
     fprintf(stderr,"[som-ai] MONK %s level %u (animation %u)\n",what,level,(unsigned)o[0x011]);
 }
 static int som_monk_ready(const uint8_t *ram,const uint8_t *o,unsigned who,int cancel){
-    if(o[0]!=1||o[0x1E4]!=0u||o[0x061]||o[0x060]||(o[0x191]&0x80u)||
+    if(o[0]!=1||o[0x1E4]!=som_string_weapon(som_disc_member_class(&disciplines,who))||
+       o[0x061]||o[0x060]||(o[0x191]&0x80u)||
        ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
     if(cancel)return monk_chain_active&&monk_chain_who==who&&(o[0x01C]==0x20u||o[0x01C]==0x80u);
     return !o[0x01C]&&(who?som_ally_idle(ram,who):som_field_idle(ram));
@@ -4888,14 +4898,17 @@ static int som_monk_chain_start(uint8_t *ram,unsigned who,uint16_t held_dirs,uns
     if(!som_monk_ready(ram,o,who,cmd!=0u)&&!som_monk_ready(ram,o,who,0))return 0;
     if(frame_number-monk_chain_end>SOM_MONK_CHAIN_RESET||monk_chain_who!=who)monk_chain_step=0;
     if(cmd){
-        som_monk_play(ram,o,cmd,0,3,cmd==7u?"Rising Chi":"Hundred Fists");
+        const int samurai=som_disc_member_class(&disciplines,who)==SOM_DISC_BUSHIDO;
+        som_monk_play(ram,o,cmd,0,3,cmd==7u?(samurai?"Tsubame Gaeshi":"Rising Chi"):
+                                         (samurai?"Hyakuretsu":"Fist Storm"));
         monk_chain_step=0;
         monk_dir_last=monk_dir_prev=0;
     }else if(monk_chain_step<SOM_MONK_STRIKES){
         som_monk_play(ram,o,0,som_monk_strike_variant[monk_chain_step],0,"strike");
         monk_chain_step++;
     }else if(monk_chain_step==SOM_MONK_STRIKES){
-        som_monk_play(ram,o,1,0,1,"flurry");
+        som_monk_play(ram,o,1,0,1,som_disc_member_class(&disciplines,who)==SOM_DISC_BUSHIDO?
+                      "Renzoku":"flurry");
         monk_chain_step++;
     }else{
         const unsigned d=som_monk_dir_of(ram,o,held_dirs);
@@ -4932,7 +4945,7 @@ static void som_monk_chain_frame(uint8_t *ram){
     if(o[0]==1&&(o[0x01C]==0x80u||o[0x01C]==0x20u)&&ram[0xE4]==1&&ram[0xD0]==0)return;
     monk_chain_active=0;monk_chain_end=frame_number;
     if(!o[0x01C])o[0x19B]=0;               /* the stage only lives for the move */
-    if(monk_chain_queued&&som_disc_member_class(&disciplines,monk_chain_who)==SOM_DISC_MARTIAL_ARTS)
+    if(monk_chain_queued&&som_string_weapon(som_disc_member_class(&disciplines,monk_chain_who))!=SOM_NO_WEAPON)
         som_monk_chain_start(ram,monk_chain_who,monk_chain_held_dirs,(unsigned)monk_chain_queued_cmd);
     monk_chain_queued=0;monk_chain_queued_cmd=0;
 }

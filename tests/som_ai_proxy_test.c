@@ -2366,6 +2366,24 @@ int main(void){
                 MONK_END();frame_number+=SOM_MONK_CHAIN_RESET+1u;
                 MONK_TAP(bb);assert(hero[0x011]==1u);                       /* a pause starts over */
                 MONK_END();hero[0x19B]=0;
+                /* The samurai: the same string on the katana (sword, type 1);
+                 * with the bow in hand B takes the katana back and strings. */
+                {
+                    const uint8_t keep_cls=disciplines.selected;
+                    disciplines.selected=SOM_DISC_BUSHIDO;frame_number+=200;
+                    hero[0x1E4]=1;hero[0x010]=0x82;monk_chain_step=0;monk_dir_last=monk_dir_prev=0;
+                    MONK_TAP(bb);assert(hero[0x01C]==0x20u&&hero[0x011]==1u);
+                    for(unsigned n=0;n<3u;n++){MONK_END();MONK_TAP(bb);}
+                    MONK_END();MONK_TAP(bb);
+                    assert(hero[0x01C]==0x80u&&hero[0x011]==6u&&hero[0x19B]==1u);   /* level 1 */
+                    MONK_END();MONK_TAP(lt);frame_number+=5;MONK_TAP(lt);frame_number+=5;MONK_TAP(bb);
+                    assert(hero[0x011]==4u*7u+2u);                                 /* Tsubame Gaeshi */
+                    MONK_END();frame_number+=SOM_MONK_CHAIN_RESET+1u;
+                    hero[0x1E4]=5;monk_dir_last=monk_dir_prev=0;                   /* the bow (Y) */
+                    MONK_TAP(bb);assert(hero[0x1E4]==1u&&monk_chain_active&&hero[0x011]==1u); /* B: katana, string */
+                    MONK_END();
+                    hero[0x1E4]=0;disciplines.selected=keep_cls;hero[0x19B]=0;
+                }
                 #undef MONK_TAP
                 #undef MONK_END
                 ram[0xD0]=0x83;som_monk_glove(ram);                        /* the inn's save */

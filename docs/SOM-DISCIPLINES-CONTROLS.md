@@ -681,7 +681,7 @@ The old all-pixel 55%/150%/200% scaled-art renderer was replaced on the
 in the style data for existing balancing/configuration compatibility, but
 the proxy **does not scale the entire weapon** any more.
 
-The first pilot is Bushido (Samurai) only:
+The pack carries Bushido's blade masks and the Ninjutsu Kusarigama hybrid:
 
 - **Tanto:** shortened native sword silhouette, optionally replaced with a
   user-extracted Seiken Densetsu 3 dagger PNG. The PNG must have a transparent
@@ -689,6 +689,10 @@ The first pilot is Bushido (Samurai) only:
 - **Katana:** untouched native Secret of Mana weapon art and animations.
 - **Dai Katana:** extended solid blade with a reconstructed narrow tip, **not**
   a doubled hilt, thick pixel resize, or scaled attack trail.
+- **Kusarigama (Ninjutsu heavy style):** normal B taps still use the whip. Hold
+  B after its recovery to charge the sword's native level-2 attack; the
+  level-2 body animation is paired with whip frames extracted from the local
+  ROM. It requires sword charge level 2 and the opted-in weapon-mask pack.
 - The runtime draws palette indices 1..5 opaque; separate FX indices 6..10
   have 25% translucency on the post-core frame, including RGB565, 1555, 8888.
 - Native game/hero palettes and attack scripts remain unchanged. The proxy
@@ -727,12 +731,10 @@ python3 tools/som_weapon_preview.py "$SOM_ROM_PATH" \\
   build/som-ai/som_weapon_masks.bin build/som-ai/som_weapon_preview.png
 ```
 
-When happy with the preview, place `som_weapon_masks.bin` in the
-Steam Link's `/home/apps/retroarch/cores/experimental/` folder and
-explicitly create the marker `som_ai_weapon_masks_on` to opt in.
-Keep RetroArch/Secret of Mana closed for the install, retain the earlier
-core and pack for immediate rollback. Neither the build script nor CI
-installs or enables the feature automatically.
+Review the preview before deployment. `bash scripts/deploy-som-arm-performance.sh
+proxy` installs the pack and creates `som_ai_weapon_masks_on`; keep
+RetroArch/Secret of Mana closed for the install. The deployment script backs
+up the previous core, pack, and marker for rollback.
 
 ### Casters' spell sets and class spell names (2026-11-20)
 

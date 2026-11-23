@@ -44,11 +44,13 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
     : "${SOM_DAGGER_TIP:?Set SOM_DAGGER_TIP=X,Y for the dagger PNG}"
     dagger_args=(--dagger-png "$SOM_DAGGER_PNG" --dagger-hilt "$SOM_DAGGER_HILT" --dagger-tip "$SOM_DAGGER_TIP")
   fi
-  python3 tools/som_weapon_mask.py "$SOM_ROM_PATH" build/som-ai/som_weapon_masks.bin "${dagger_args[@]}"
-  echo "Staged Bushido mask art: build/som-ai/som_weapon_masks.bin (opt-in; not installed automatically)"
+  python3 tools/som_weapon_mask.py "$SOM_ROM_PATH" build/som-ai/som_weapon_masks.bin \
+    --kusarigama "${dagger_args[@]}"
+  echo "Staged Bushido and Kusarigama mask art: build/som-ai/som_weapon_masks.bin"
+  : > build/som-ai/som_ai_weapon_masks_on
   python3 tools/som_weapon_preview.py "$SOM_ROM_PATH" \
     build/som-ai/som_weapon_masks.bin build/som-ai/som_weapon_preview.png
-  echo "Review first: build/som-ai/som_weapon_preview.png (Tanto / native Katana / Dai)"
+  echo "Review first: build/som-ai/som_weapon_preview.png (Bushido blades and Kusarigama)"
   echo "Missing frames listed in build/som-ai/som_weapon_preview.png.txt"
 else
   echo "Ukemi/flying-kick animated pack not staged: set SOM_ROM_PATH to generate it"

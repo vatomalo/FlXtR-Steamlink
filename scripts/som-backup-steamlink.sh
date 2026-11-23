@@ -23,6 +23,7 @@ R='/home/apps/retroarch/roms/Snes'
 G=/home/apps/greenlink
 files=(
   "$E/som_ai_proxy_libretro.so"
+  "$E/som_weapon_masks.bin" "$E/som_ai_weapon_masks_on"
   "$E/snes9x2005_plus_flxtr_libretro.so"
   "$E/som_ai_disciplines" "$E/som_ai_gambits" "$E/som_ai_combat"
   "$E/som_music_genre" "$E/som_song_names.tsv" "$E/som_ai_rom_patch.txt"

@@ -1069,12 +1069,16 @@ static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried,weapon_mask_faulted;
 static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
-static uint32_t *weapon_mask_index;    /* [2][72][256], byte offsets + 1 */
+static uint32_t *weapon_mask_index;    /* [Tanto,Dai,Kusarigama][72][256] */
 static uint8_t weapon_native_tiles[0x800];
 static int weapon_tiles_hidden;
 static SomNpcWorkState weapon_masked;
+static int kusarigama_attack_active,kusarigama_attack_released,kusarigama_swing_seen;
+static unsigned kusarigama_attack_who;
+static unsigned long kusarigama_attack_started;
 static void som_weapon_mask_frame(uint8_t *ram);
 static void som_weapon_mask_pick(const uint8_t *ram);
+static int som_kusarigama_art_ready(void);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
  * style): tap L1 to lock onto the nearest
  * monster within SOM_LOCK_RANGE px, tap again to let go. While locked the
@@ -1810,6 +1814,7 @@ static void som_input_poll(void){
         if(special_stage&&current&&(current&~special_chord)){
             fprintf(stderr,"[som-ai] SPECIAL cancelled by manual input\n");
             special_stage=0;special_suppress=0;
+            kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
         }
         if(special_suppress&&!(current&special_chord))special_suppress=0;
         combo_input_held=(current&(attack|secondary))!=0;
@@ -2042,6 +2047,26 @@ static void som_input_poll(void){
             else if(som_kawarimi_arm(wram)){
                 a_kawarimi_pending=0;
                 fprintf(stderr,"[som-ai] KAWARIMI from held A\n");
+            }
+        }
+        /* The Ninja's heavy Kusarigama keeps the whip for normal B taps.
+         * Hold B to charge the sword's native level-2 move, then mask only
+         * its weapon art with the matched whip frames from the local ROM. */
+        if(wram&&(current&b_bit)&&!(current&y_bit)&&!special_stage&&!special_suppress&&
+           !ring_ai_enabled&&!som_manual_disciplines&&!bash_stage&&!combo_hold_tried&&
+           som_actor_class()==SOM_DISC_NINJUTSU&&
+           styles.selected[SOM_DISC_NINJUTSU]==SOM_STYLE_HEAVY&&
+           (SOM_ACT(wram)[0x1C0]&0x0Fu)>=2u&&som_kusarigama_art_ready()&&
+           frame_number-combo_hold_start>=SOM_COMBO_HOLD_FRAMES&&
+           !SOM_ACT(wram)[0x1ED]&&!SOM_ACT(wram)[0x19B]&&!SOM_ACT(wram)[0x01C]){
+            combo_hold_tried=1;
+            if(som_special_start_weapon(1u,2u,0)){
+                kusarigama_attack_active=1;kusarigama_attack_released=0;
+                kusarigama_swing_seen=0;kusarigama_attack_who=som_actor;
+                kusarigama_attack_started=frame_number;
+                special_chord=b_bit;special_suppress=1;
+                som_overlay_set(&overlay,"^Kusarigama|level 2 whip strike",SOM_MESSAGE_FRAMES/2u);
+                fprintf(stderr,"[som-ai] KUSARIGAMA level 2 sword attack with whip art\n");
             }
         }
         /* Combo finisher: hold B or Y with a chain level ready. That button's
@@ -5179,7 +5204,9 @@ static void som_special_tick(void){
        ram[0xD0]!=0||SOM_ACT(ram)[0x1E4]!=special_weapon||
        frame_number-special_started>SOM_SPECIAL_TIMEOUT){
         fprintf(stderr,"[som-ai] SPECIAL abort: state changed or charge timeout\n");
-        special_stage=0;return;
+        special_stage=0;
+        kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
+        return;
     }
     /* Skip the hold: once the swing is over and the gauge runs ($C0:B330:
      * E01C, E061, E1ED clear; E01A counting), set the gauge word E01A to
@@ -5193,6 +5220,7 @@ static void som_special_tick(void){
     if(SOM_ACT(ram)[0x19B]>=special_stage){
         fprintf(stderr,"[som-ai] SPECIAL release %s level %u\n",
                 som_weapon_types[special_weapon],special_stage);
+        if(kusarigama_attack_active)kusarigama_attack_released=1;
         special_stage=0; /* B releases on next emulated frame */
     }
 }
@@ -7427,6 +7455,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     autonomous_mode=0;auto_step=0;auto_deadline=0;
     last_physical_buttons=0;x_tap_armed=x_l2_chord=0;x_cast_at=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
+    kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
+    kusarigama_attack_who=0;kusarigama_attack_started=0;
     evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;
     memset(&ukemi_draw,0,sizeof(ukemi_draw));ukemi_hid=0;ukemi_map=0;
@@ -8268,15 +8298,15 @@ static void som_lock_frame(uint8_t *ram){
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
 }
 
-/* ---- Bushido per-frame blade masks (the native Katana is unchanged) ---- */
+/* ---- ROM-derived weapon masks (Tanto, Dai Katana, Kusarigama) ---- */
 static void som_weapon_mask_load(void){
     if(weapon_mask_tried)return;
     weapon_mask_tried=1;
-    som_load_pack_file(weapon_mask_file,"Bushido weapon masks",
+    som_load_pack_file(weapon_mask_file,"weapon style masks",
                        &weapon_mask_pack,&weapon_mask_pack_size);
     if(!weapon_mask_pack||weapon_mask_pack_size<10u||
        memcmp(weapon_mask_pack,"SOMWORK1",8u))return;
-    weapon_mask_index=calloc(2u*72u*256u,sizeof(*weapon_mask_index));
+    weapon_mask_index=calloc(3u*72u*256u,sizeof(*weapon_mask_index));
     if(!weapon_mask_index)return;
     const uint8_t *p=weapon_mask_pack+10u,*end=weapon_mask_pack+weapon_mask_pack_size;
     const unsigned entries=weapon_mask_pack[8]|(unsigned)weapon_mask_pack[9]<<8;
@@ -8288,32 +8318,37 @@ static void som_weapon_mask_load(void){
             next=som_work_next_frame(next,end);
             if(!next)goto malformed;
         }
-        if(p[0]>=0xD4u&&p[0]<=0xD5u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
+        if(p[0]>=0xD4u&&p[0]<=0xD6u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
             weapon_mask_index[((p[0]-0xD4u)*72u+p[1])*256u+p[2]]=
                 (uint32_t)(p-weapon_mask_pack)+1u;
             count++;
         }
         p=next;
     }
-    fprintf(stderr,"[som-ai] Bushido: indexed %u masked weapon frames\\n",count);
+    fprintf(stderr,"[som-ai] weapon styles: indexed %u masked frames\\n",count);
     return;
 malformed:
     free(weapon_mask_index);weapon_mask_index=NULL;
-    fprintf(stderr,"[som-ai] Bushido: malformed mask pack ignored\\n");
+    fprintf(stderr,"[som-ai] weapon style: malformed mask pack ignored\\n");
 }
-/* -1 = native sword; 0 = Tanto; 1 = Dai Katana. No other class changes. */
-static int som_weapon_mask_mode(const uint8_t *ram){
+/* -1 = native, 0 = Tanto, 1 = Dai Katana, 2 = Kusarigama strike. */
+static int som_weapon_mask_mode(const uint8_t *ram,unsigned who){
     if(!weapon_mask_on_checked||frame_number-weapon_mask_on_checked>=120ul){
         weapon_mask_on_checked=frame_number?frame_number:1ul;
         weapon_mask_on=access(weapon_mask_on_file,F_OK)==0;
     }
-    if(weapon_mask_faulted||!weapon_mask_on||disciplines.selected!=SOM_DISC_BUSHIDO||
-       ram[0xE1E4]!=1u)return -1;
+    if(weapon_mask_faulted||!weapon_mask_on)return -1;
+    const uint8_t *actor=ram+0xE000u+0x200u*who;
+    if(kusarigama_attack_active&&who==kusarigama_attack_who&&
+       som_disc_member_class(&disciplines,who)==SOM_DISC_NINJUTSU&&
+       styles.selected[SOM_DISC_NINJUTSU]==SOM_STYLE_HEAVY&&actor[0x1E4]==1u)
+        return 2;
+    if(who!=0u||disciplines.selected!=SOM_DISC_BUSHIDO||actor[0x1E4]!=1u)return -1;
     const unsigned style=styles.selected[SOM_DISC_BUSHIDO]%SOM_STYLES_PER_CLASS;
     return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
 }
 static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_mask_index||mode>1u||row<9u||row>=18u||frame>255u)return 0;
+    if(!weapon_mask_index||mode>2u||row<9u||row>=18u||frame>255u)return 0;
     const uint32_t at=weapon_mask_index[(mode*72u+row)*256u+frame];
     if(!at)return 0;
     const uint8_t *p=weapon_mask_pack+at-1u;
@@ -8322,17 +8357,39 @@ static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWo
     out->first=p+44u;
     return 1;
 }
+/* Only start the hybrid move when the opt-in ROM-derived whip art covers
+ * the native sword level-2 frames. An old Bushido-only pack leaves normal
+ * Kusarigama whip attacks untouched. */
+static int som_kusarigama_art_ready(void){
+    if(!weapon_mask_on||weapon_mask_faulted||!weapon_mask_index)return 0;
+    static const unsigned frames[]={171u,172u,173u,174u,175u,176u,177u,178u,179u};
+    for(unsigned row=9u;row<18u;row++)for(unsigned f=0;f<sizeof(frames)/sizeof(frames[0]);f++)
+        if(weapon_mask_index[(2u*72u+row)*256u+frames[f]])return 1;
+    return 0;
+}
 /* Hide native effects only when a matching mask exists for the current
  * sword row and animation frame. On a missing mask, restore the original
  * effect tiles byte-for-byte, rather than showing an invisible weapon. */
 static void som_weapon_mask_frame(uint8_t *ram){
     if(!ram)return;
     som_weapon_mask_load();
-    const int field=ram[0xE000u]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
-    const int mode=field?som_weapon_mask_mode(ram):-1;
+    if(kusarigama_attack_active){
+        const uint8_t *owner=ram+0xE000u+0x200u*kusarigama_attack_who;
+        if(frame_number-kusarigama_attack_started>420ul||
+           som_disc_member_class(&disciplines,kusarigama_attack_who)!=SOM_DISC_NINJUTSU||
+           styles.selected[SOM_DISC_NINJUTSU]!=SOM_STYLE_HEAVY){
+            kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
+        }else if(kusarigama_attack_released&&owner[0x01C])kusarigama_swing_seen=1;
+        else if(kusarigama_swing_seen&&!owner[0x01C])
+            kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
+    }
+    const unsigned who=kusarigama_attack_active?kusarigama_attack_who:0u;
+    const uint8_t *actor=ram+0xE000u+0x200u*who;
+    const int field=actor[0]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
+    const int mode=field?som_weapon_mask_mode(ram,who):-1;
     SomWorkEntry entry;
-    const int want=mode>=0&&som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
-                                                  ram[0xE026u]>>1,&entry);
+    const int want=mode>=0&&som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],
+                                                  actor[0x026u]>>1,&entry);
     uint8_t *tiles=ram+SOM_WEAPON_BUF;
     int blank=1;
     for(unsigned i=0;i<sizeof(weapon_native_tiles);i++)if(tiles[i]){blank=0;break;}
@@ -8352,22 +8409,24 @@ static void som_weapon_mask_frame(uint8_t *ram){
 static void som_weapon_mask_pick(const uint8_t *ram){
     weapon_masked.active=0;
     if(!ram||!weapon_tiles_hidden)return;
-    const int mode=som_weapon_mask_mode(ram);
+    const unsigned who=kusarigama_attack_active?kusarigama_attack_who:0u;
+    const uint8_t *actor=ram+0xE000u+0x200u*who;
+    const int mode=som_weapon_mask_mode(ram,who);
     SomWorkEntry entry;
     if(mode<0)return;
-    if(!som_weapon_mask_entry((unsigned)mode,ram[0xE1E3u],
-                               ram[0xE026u]>>1,&entry)){
+    if(!som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],
+                               actor[0x026u]>>1,&entry)){
         /* The SNES animation may advance after the pre-frame availability
          * check. Fail closed for the rest of the session instead of
          * continuing to blank frames with missing replacement art. */
         weapon_mask_faulted=1;
         fprintf(stderr,"[som-ai] BUSHIDO mask frame missing: row %u frame %u, disabling masks for this session\\n",
-                (unsigned)ram[0xE1E3u],(unsigned)(ram[0xE026u]>>1));
+                (unsigned)actor[0x1E3u],(unsigned)(actor[0x026u]>>1));
         return;
     }
     memset(&weapon_masked,0,sizeof(weapon_masked));
-    weapon_masked.active=1;weapon_masked.slot=0;weapon_masked.kind=ram[0xE180u];
-    weapon_masked.dir=(ram[0xE028u]&0x40u)?3u:2u;
+    weapon_masked.active=1;weapon_masked.slot=(uint8_t)who;weapon_masked.kind=actor[0x180u];
+    weapon_masked.dir=(actor[0x028u]&0x40u)?3u:2u;
     weapon_masked.entry=entry;weapon_masked.start=frame_number;weapon_masked.length=2u;
 }
 

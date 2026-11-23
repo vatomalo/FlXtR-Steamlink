@@ -37,7 +37,8 @@ while read -r when sha path sum old; do
   case "$done_files" in *" $path "*) continue;; esac
   done_files="$done_files$path "
   case "$path" in
-    $E/som_ai_proxy_libretro.so|/home/apps/greenlink/tools/som_wram_server.py) ;;
+    $E/som_ai_proxy_libretro.so|$E/som_weapon_masks.bin|$E/som_ai_weapon_masks_on|\
+    /home/apps/greenlink/tools/som_wram_server.py) ;;
     *) echo "skipping unexpected path in record: $path" >&2; continue;;
   esac
   if [ "$old" = none ]; then

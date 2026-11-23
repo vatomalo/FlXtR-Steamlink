@@ -136,6 +136,8 @@ static void som_monk_glove(uint8_t *ram);
 static int som_iai_start(unsigned level);
 static int som_iai_start_raw(unsigned level);
 static void som_special_tick(void);
+static int som_monk_chain_press(uint8_t *ram,unsigned who);
+static void som_monk_chain_frame(uint8_t *ram);
 static void som_combo_clear(void){som_combo_reset(&combo);}
 /* which: 0 = B (primary weapon), 1 = Y (secondary). */
 static void som_combo_swing(unsigned which){
@@ -1327,15 +1329,11 @@ static const uint8_t som_chain_ninjutsu[]={0,0,1};
 static const uint8_t som_chain_ninjutsu_levels[]={0,0,0};
 static const uint8_t som_chain_flow[]={1,2,4,7,3};
 static const uint8_t som_chain_flow_levels[]={0,0,0,0,SOM_CHAIN_TOP};
-static const uint8_t som_chain_monk[]={0,0,0,0,0,3};
-static const uint8_t som_chain_monk_levels[]={0,0,1,2,3,SOM_CHAIN_TOP};
 static unsigned som_b_chain_levels(unsigned cls,const uint8_t **steps,const uint8_t **levels){
     if(cls==SOM_DISC_NINJUTSU){*steps=som_chain_ninjutsu;*levels=som_chain_ninjutsu_levels;
                                return sizeof(som_chain_ninjutsu);}
     if(cls==SOM_DISC_WEAPON_FLOW){*steps=som_chain_flow;*levels=som_chain_flow_levels;
                                   return sizeof(som_chain_flow);}
-    if(cls==SOM_DISC_MARTIAL_ARTS){*steps=som_chain_monk;*levels=som_chain_monk_levels;
-                                   return sizeof(som_chain_monk);}
     *steps=*levels=NULL;return 0;
 }
 static unsigned som_b_chain(unsigned cls,const uint8_t **steps){
@@ -1948,6 +1946,16 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] %s %s\n",disciplines.selected==SOM_DISC_NINJUTSU?
                         "TAIJUTSU":"WEAPON FLOW",som_weapon_types[taijutsu_want]);
             }
+        }
+        /* Martial Arts' B: the glove's power attacks 1-7 as one chain
+         * (som_monk_chain_press). B to a villager or a chest stays the game's. */
+        if(attack_ram&&driver_cls==SOM_DISC_MARTIAL_ARTS&&!ring_ai_enabled&&
+           !som_manual_disciplines&&!native_ring&&!style_b_hidden&&!special_suppress&&
+           !(current&(l2_bit|r2|y_bit))&&(current&b_bit)&&
+           attack_ram[0xE000u+0x200u*driver+0x1E4u]==0u&&
+           !som_interact_ahead_by(attack_ram,driver)){
+            b_weapon_blocked=1;
+            if(pressed&b_bit)som_monk_chain_press(attack_ram,driver);
         }
         if(!(current&b_bit))taijutsu_want=SOM_NO_WEAPON;
         /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
@@ -4573,6 +4581,71 @@ static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
     fprintf(stderr,"[som-ai] SPECIAL charging %s level %u\n",
             som_weapon_types[weapon],stage);
     return 1;
+}
+/* Martial Arts' B chain (player, 2026-11-23: "use the level 1-7 attack
+ * animations as combo moves for B"): each press plays the next glove power
+ * attack, level 1 up to 7, then level 1 again, with no charge. The game's
+ * release path ($C0:B21C, som-decomp glove-attacks.md 3, 4.1) is done here
+ * directly: E01C = 0x80, E006 = E007 = 0, E011 = 4 * level + distance class
+ * (0 near < 26/24 px, 1 mid, 2 far, as the game picks it, 2.2). A press
+ * during an attack is kept and starts the next level the frame the attack
+ * ends (the game itself drops presses during a swing). SOM_MONK_CHAIN_RESET
+ * frames after an attack without a press start the chain over. The damage
+ * stage E19B (x(2s+4)/4, 5.2) climbs gently with the chain, x1.5 to x3,
+ * not the x4.5 a held level 7 earns. */
+#define SOM_MONK_CHAIN_LEVELS 7u
+#define SOM_MONK_CHAIN_RESET 90ul
+static const uint8_t som_monk_chain_damage[SOM_MONK_CHAIN_LEVELS]={1,1,2,2,3,3,4};
+static unsigned monk_chain_step,monk_chain_who;
+static int monk_chain_active,monk_chain_queued;
+static unsigned long monk_chain_end;
+static unsigned som_monk_chain_class(const uint8_t *ram,const uint8_t *o){
+    const int hx=(int)som_word(o+2),hy=(int)som_word(o+4);
+    unsigned best=3u;
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+0xE600u+0x200u*k;
+        if(m[0]!=1||m[0x180]>=0x80||(int)k==familiar.slot)continue;
+        const int dx=abs((int)som_word(m+2)-hx),dy=abs((int)som_word(m+4)-hy);
+        const unsigned cx=dx<26?1u:dx<42?2u:3u,cy=dy<24?1u:dy<40?2u:3u;
+        const unsigned c=cx>cy?cx:cy;
+        if(c<best)best=c;
+    }
+    return best-1u;
+}
+static int som_monk_chain_start(uint8_t *ram,unsigned who){
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    if(o[0]!=1||o[0x1E4]!=0u||o[0x01C]||o[0x061]||o[0x060]||(o[0x191]&0x80u)||
+       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    if(who?!som_ally_idle(ram,who):!som_field_idle(ram))return 0;
+    if(frame_number-monk_chain_end>SOM_MONK_CHAIN_RESET||monk_chain_who!=who)monk_chain_step=0;
+    const unsigned level=monk_chain_step+1u;
+    o[0x01C]=0x80;o[0x011]=(uint8_t)(4u*level+som_monk_chain_class(ram,o));
+    o[0x19B]=som_monk_chain_damage[monk_chain_step];
+    o[0x006]=o[0x007]=0;o[0x030]=0xFF;
+    monk_chain_who=who;monk_chain_active=1;monk_chain_queued=0;
+    monk_chain_step=(monk_chain_step+1u)%SOM_MONK_CHAIN_LEVELS;
+    som_combo_clear();
+    char text[32];snprintf(text,sizeof(text),"^Chi chain|level %u",level);
+    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+    fprintf(stderr,"[som-ai] MONK CHAIN level %u (animation %u)\n",level,(unsigned)o[0x011]);
+    return 1;
+}
+/* B pressed: start the next level now, or queue it behind the attack. */
+static int som_monk_chain_press(uint8_t *ram,unsigned who){
+    if(!ram)return 0;
+    if(monk_chain_active&&monk_chain_who==who){monk_chain_queued=1;return 1;}
+    return som_monk_chain_start(ram,who);
+}
+/* Each frame: notice the end of a chain attack and start a queued one. */
+static void som_monk_chain_frame(uint8_t *ram){
+    if(!ram||!monk_chain_active)return;
+    uint8_t *o=ram+0xE000u+0x200u*monk_chain_who;
+    if(o[0]==1&&o[0x01C]==0x80u&&ram[0xE4]==1&&ram[0xD0]==0)return;   /* still playing */
+    monk_chain_active=0;monk_chain_end=frame_number;
+    if(o[0x01C]!=0x80u)o[0x19B]=0;          /* the stage only lives for the attack */
+    if(monk_chain_queued&&som_disc_member_class(&disciplines,monk_chain_who)==SOM_DISC_MARTIAL_ARTS)
+        som_monk_chain_start(ram,monk_chain_who);
+    monk_chain_queued=0;
 }
 /* Bushido's X (and the AI's iai_<3|4>): the katana's charge level
  * straight away, one per SOM_IAI_COOLDOWN_FRAMES. */
@@ -7338,6 +7411,9 @@ RETRO_API void retro_run(void){
         som_perks_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&frame_number%30u==0u)som_prog_frame();
     if(test_enabled&&on_turbo)som_special_tick();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_monk_chain_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo&&cart_flip_y)
         som_cart_flip_after((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_evade_tick();

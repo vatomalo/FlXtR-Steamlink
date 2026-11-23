@@ -1184,7 +1184,7 @@ static void som_fuma_frame(uint8_t *ram);
  * tile the hero has walked on. For a hero boxed in where walking cannot get
  * out (behind slide tiles above map 130's cliffs, 2026-11-18). The camera
  * follows at SOM_BLINK_SPEED px per frame, the rate checked to stream new
- * tile rows (som_camera_follow). No MP: the boy often has none. */
+ * tile rows (som_camera_follow_axis). No MP: the boy often has none. */
 #define SOM_BLINK_RANGE 12
 #define SOM_BLINK_SPEED 4
 #define SOM_BLINK_COOLDOWN 600ul
@@ -1253,8 +1253,14 @@ static unsigned som_companion_pick(const uint8_t *ram,unsigned slot,const char *
     return som_shinobi[want];
 }
 static void som_companion_frame(uint8_t *ram);
-static void som_camera_follow(uint8_t *ram,int dx,int dy);
 static void som_blink_frame(uint8_t *ram);
+static void som_camera_shift(uint8_t *ram,unsigned axis,int d,unsigned layer2);
+static void som_camera_follow_axis(uint8_t *ram,const uint8_t *hero,unsigned axis,int d,int leash);
+static int som_camera_step_ok(const uint8_t *ram,const uint8_t *hero,unsigned axis,int d);
+static void som_camera_catch_frame(uint8_t *ram);
+static unsigned long camera_catch_until;
+static int som_blink_spot_ok(const uint8_t *ram,int x,int y);
+static void som_blink_bring_party(uint8_t *ram);
 static void som_flykick_frame(uint8_t *ram);
 static int som_bash_start(uint8_t *ram);
 static int som_bash_start_raw(uint8_t *ram);
@@ -3293,7 +3299,7 @@ static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int di
     const int nx=bunshin.x[i],ny=bunshin.y[i];
     hero[2]=(uint8_t)nx;hero[3]=(uint8_t)(nx>>8);
     hero[4]=(uint8_t)ny;hero[5]=(uint8_t)(ny>>8);
-    hero[0x006]=hero[0x007]=0;
+    hero[0x006]=hero[0x007]=0;camera_catch_until=frame_number+60ul;
     bunshin.hero_x=nx;bunshin.hero_y=ny;
     bunshin.swap_ready=frame_number+SOM_BUN_SWAP_COOLDOWN;
     som_bun_boom(bunshin_booms,nx,ny,1,frame_number);
@@ -3591,7 +3597,7 @@ static int som_blink_start_raw(uint8_t *ram,int tx,int ty){
     int x=0,y=0,found=0;
     for(unsigned k=0;k<sizeof(near)/sizeof(near[0])&&!found;k++){
         x=tx*16+8+near[k][0];y=ty*16+8+near[k][1];
-        found=som_bun_spot_open(ram,x,y,som_hero_place(hero));
+        found=som_bun_spot_open(ram,x,y,som_hero_place(hero))&&som_blink_spot_ok(ram,x,y);
     }
     if(!found){
         fprintf(stderr,"[som-ai] BLINK refused: tile %d,%d is not open ground\n",tx,ty);
@@ -3623,7 +3629,8 @@ static int som_blink_dash_raw(uint8_t *ram,int dx,int dy){
     const unsigned place=som_hero_place(hero);
     int reach=0;
     for(int d=8;d<=SOM_BLINK_DASH_PX;d+=8){
-        if(!som_bun_spot_open(ram,x0+dx*d,y0+dy*d,place))break;
+        if(!som_bun_spot_open(ram,x0+dx*d,y0+dy*d,place)||
+           !som_blink_spot_ok(ram,x0+dx*d,y0+dy*d))break;
         reach=d;
     }
     if(reach<24){
@@ -3676,8 +3683,9 @@ static void som_blink_frame(uint8_t *ram){
         x+=sx;y+=sy;
         hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
         hero[0x006]=hero[0x007]=0;
-        som_camera_follow(ram,sx,sy);
+        som_camera_follow_axis(ram,hero,0u,sx,0);som_camera_follow_axis(ram,hero,1u,sy,0);
         if(x!=blink_tx||y!=blink_ty)return;
+        som_blink_bring_party(ram);
         som_bun_boom(bunshin_booms,x,y,1,frame_number);
         fprintf(stderr,"[som-ai] BLINK arrived at %d,%d\n",x,y);
     }
@@ -3908,7 +3916,6 @@ static void som_ukemi_frame(uint8_t *ram){
 static int cart_flip_y;
 static unsigned cart_last_y,cart_last_cam;
 static unsigned som_hero_place(const uint8_t *hero);
-static void som_camera_follow(uint8_t *ram,int dx,int dy);
 /* Walls only (terrain 3, layer switches): the full box check refused
  * ground the hero had just cartwheeled over (headless map 130). */
 static int som_cart_ground(const uint8_t *ram,int x,int y,unsigned place){
@@ -3936,7 +3943,12 @@ static void som_cart_flip_after(uint8_t *ram){
         if(som_cart_ground(ram,(int)som_word(hero+2),want-4,som_hero_place(hero)))ny=want;
         som_put_word(hero+4,(uint16_t)ny);
     }
-    if(c)som_camera_follow(ram,0,-2*c);
+    if(c){                        /* the game's scroll undone, then his own step's */
+        const int full=(int)som_bun_u16(ram+0xC2);
+        const int back=c>full/2?c-full:c<-full/2?c+full:c;
+        som_camera_shift(ram,1u,-back,hero[0x00B]&0x80u?1u:0u);
+    }
+    if(d&&ny!=(int)cart_last_y)som_camera_follow_axis(ram,hero,1u,ny-(int)cart_last_y,1);
     cart_last_y=(unsigned)ny;cart_last_cam=som_word(ram+0xAA);
 }
 static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
@@ -3950,26 +3962,140 @@ static int som_cartwheel_request(uint8_t *ram,int dx,int dy,unsigned code){
     hero[0x1E5]=(uint8_t)code;
     return 1;
 }
-/* The camera follows a dodge. The game scrolls only by the hero's own
- * walking steps, so a hero carried by the proxy left it behind (offline
- * replay of a field state, 2026-11-18: 48 px hop, camera A8 unmoved). Each
- * camera word moves with its BG scroll word, A8/B0 and AA/B2 (BG1), AC/B4
- * and AE/B6 (BG2, the second camera); moving A8 alone shifted the sprites
- * but not the ground. Clamped to the map (C0/C2 minus the screen); new
- * tile rows stream in by themselves (checked at 4 px per frame). */
-static void som_camera_follow(uint8_t *ram,int dx,int dy){
-    const int w=(int)som_bun_u16(ram+0xC0),h=(int)som_bun_u16(ram+0xC2);
-    const int cx=(int)som_bun_u16(ram+0xA8),cy=(int)som_bun_u16(ram+0xAA);
-    int nx=cx+dx,ny=cy+dy;
-    if(w>=256&&w<=4096){if(nx>w-256)nx=w-256;if(nx<0)nx=0;}else nx=cx;
-    if(h>=224&&h<=4096){if(ny>h-224)ny=h-224;if(ny<0)ny=0;}else ny=cy;
-    dx=nx-cx;dy=ny-cy;
-    static const unsigned xs[4]={0xA8u,0xB0u,0xACu,0xB4u},ys[4]={0xAAu,0xB2u,0xAEu,0xB6u};
-    for(unsigned k=0;k<4u;k++){
-        const unsigned vx=(som_bun_u16(ram+xs[k])+(unsigned)dx)&0xFFFFu;
-        const unsigned vy=(som_bun_u16(ram+ys[k])+(unsigned)dy)&0xFFFFu;
-        ram[xs[k]]=(uint8_t)vx;ram[xs[k]+1u]=(uint8_t)(vx>>8);
-        ram[ys[k]]=(uint8_t)vy;ram[ys[k]+1u]=(uint8_t)(vy>>8);
+/* The camera during the proxy's own moves (dodges, Ukemi, Blink; player,
+ * 2026-11-23: "they should not make the game glitch"). The game's rules,
+ * som-decomp C0:D6C8 / D890 / DA6E, with the numbers of Turbo's own code
+ * (its window is tighter than the original's 38-C8, 48-B0):
+ *   - no scroll at all with $FF set or with word 010E clear (a fixed room);
+ *   - the camera moves by the hero's step only when that step leaves him
+ *     outside the window x [5B,A3), y [61,94) and goes further out;
+ *   - a partner a pad controls (E02C or E08C) is kept on screen, x [9,F7),
+ *     y [20,C2); the AI's partners never hold it back;
+ *   - the layer he stands on (E00B bit 7) moves by the step, the other by
+ *     its parallax mode 0A80 + 0 / 10 / 20 / 30 (0 still, 1 half, 2 the
+ *     same, else double), the second layer only with $B9;
+ *   - scroll words wrap at 512.
+ * Moving it on every step, both layers alike and in fixed rooms, as before,
+ * left the hero off-centre for good and showed ground beyond the room.
+ * Never more than 15 px a frame: the game streams one tile row and column
+ * per frame. */
+#define SOM_CAM_LEFT 0x5B
+#define SOM_CAM_RIGHT 0xA3
+#define SOM_CAM_TOP 0x61
+#define SOM_CAM_BOTTOM 0x94
+#define SOM_CAM_PARTNER_LEFT 0x09
+#define SOM_CAM_PARTNER_RIGHT 0xF7
+#define SOM_CAM_PARTNER_TOP 0x20
+#define SOM_CAM_PARTNER_BOTTOM 0xC2
+#define SOM_CAM_EDGE 0x18                /* a dodge may go this near the screen's edge */
+#define SOM_CAM_CATCH_SPEED 4
+static int som_camera_locked(const uint8_t *ram){
+    return ram[0xFF]||!(ram[0x10E]|ram[0x10F]);
+}
+static int som_camera_layer2(const uint8_t *hero){return (hero[0x00B]&0x80u)!=0;}
+/* The hero's screen position on one axis (0 x, 1 y), the map being a torus. */
+static int som_camera_screen(const uint8_t *ram,const uint8_t *hero,int pos,unsigned axis){
+    const unsigned cam=(som_camera_layer2(hero)?0xACu:0xA8u)+2u*axis;
+    const int size=(int)som_bun_u16(ram+0xC0u+2u*axis);
+    int at=pos-(int)som_bun_u16(ram+cam);
+    if(at<0&&size)at+=size;
+    return at;
+}
+static void som_camera_shift_layer(uint8_t *ram,unsigned second,unsigned axis,int d){
+    if(!d||(second&&!ram[0xB9]))return;
+    const unsigned cam=(second?0xACu:0xA8u)+2u*axis,scroll=(second?0xB4u:0xB0u)+2u*axis;
+    const int size=(int)som_bun_u16(ram+(second?0xC4u:0xC0u)+2u*axis);
+    int c=(int)som_bun_u16(ram+cam)+d;
+    if(size){if(c<0)c+=size;else if(c>=size)c-=size;}
+    som_put_word(ram+cam,(uint16_t)c);
+    som_put_word(ram+scroll,(uint16_t)((som_bun_u16(ram+scroll)+(unsigned)d)&0x1FFu));
+}
+/* Moves both layers as the game does for a step of the hero's layer. */
+static void som_camera_shift(uint8_t *ram,unsigned axis,int d,unsigned layer2){
+    if(!d)return;
+    som_camera_shift_layer(ram,layer2,axis,d);
+    uint8_t *mode=ram+0xA80u+(layer2?0u:0x20u)+0x10u*axis;
+    int mag=abs(d);
+    if(mode[0]==0)return;
+    if(mode[0]==1u){
+        if(mag>1)mag/=2;else{mode[1]++;mag=mode[1]&1;}
+    }else if(mode[0]!=2u)mag*=2;
+    som_camera_shift_layer(ram,!layer2,axis,d<0?-mag:mag);
+}
+/* A partner on a pad that a scroll of d would take off the screen. */
+static int som_camera_partner_out(const uint8_t *ram,const uint8_t *hero,unsigned axis,int d){
+    const int low=axis?SOM_CAM_PARTNER_TOP:SOM_CAM_PARTNER_LEFT;
+    const int high=axis?SOM_CAM_PARTNER_BOTTOM:SOM_CAM_PARTNER_RIGHT;
+    for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+        const uint8_t *o=ram+0xE000u+0x200u*k;
+        if(o==hero||!o[0]||(o[0]&0x80u)||!(o[0x02C]|o[0x08C]))continue;
+        const int at=som_camera_screen(ram,hero,(int)som_bun_u16(o+2u+2u*axis),axis)-d;
+        if(at<low||at>=high)return 1;
+    }
+    return 0;
+}
+/* The game's camera for a step d the hero has just taken on one axis. */
+static void som_camera_follow_axis(uint8_t *ram,const uint8_t *hero,unsigned axis,int d,int leash){
+    if(!d||som_camera_locked(ram))return;
+    const int at=som_camera_screen(ram,hero,(int)som_bun_u16(hero+2u+2u*axis),axis);
+    const int low=axis?SOM_CAM_TOP:SOM_CAM_LEFT,high=axis?SOM_CAM_BOTTOM:SOM_CAM_RIGHT;
+    if(d>0?at<high:at>=low)return;
+    if(leash&&som_camera_partner_out(ram,hero,axis,d))return;
+    som_camera_shift(ram,axis,d>15?15:d<-15?-15:d,(unsigned)som_camera_layer2(hero));
+}
+/* May the hero step d on this axis? Not past the screen's edge when the
+ * camera may not come along (fixed room, or a partner would be left). */
+static int som_camera_step_ok(const uint8_t *ram,const uint8_t *hero,unsigned axis,int d){
+    const int size=axis?224:256;
+    const int at=som_camera_screen(ram,hero,(int)som_bun_u16(hero+2u+2u*axis)+d,axis);
+    const int low=axis?SOM_CAM_TOP:SOM_CAM_LEFT,high=axis?SOM_CAM_BOTTOM:SOM_CAM_RIGHT;
+    if(d>0?at<high:at>=low)return 1;
+    if(!som_camera_locked(ram)&&!som_camera_partner_out(ram,hero,axis,d))return 1;
+    return d>0?at<size-SOM_CAM_EDGE:at>=SOM_CAM_EDGE;
+}
+/* A jump (a clone swap, Kawarimi) left him outside the window: the camera
+ * then walks after him a few px a frame. */
+static void som_camera_catch_frame(uint8_t *ram){
+    if(!camera_catch_until||!ram)return;
+    const uint8_t *hero=SOM_ACT(ram);
+    if(frame_number>camera_catch_until||hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||
+       som_camera_locked(ram)){camera_catch_until=0;return;}
+    int out=0;
+    for(unsigned axis=0;axis<2u;axis++){
+        const int at=som_camera_screen(ram,hero,(int)som_bun_u16(hero+2u+2u*axis),axis);
+        const int low=axis?SOM_CAM_TOP:SOM_CAM_LEFT,high=axis?SOM_CAM_BOTTOM:SOM_CAM_RIGHT;
+        int d=at<low?at-low:at>=high?at-high+1:0;
+        if(!d)continue;
+        if(d>SOM_CAM_CATCH_SPEED)d=SOM_CAM_CATCH_SPEED;else if(d<-SOM_CAM_CATCH_SPEED)d=-SOM_CAM_CATCH_SPEED;
+        if(som_camera_partner_out(ram,hero,axis,d))continue;
+        som_camera_shift(ram,axis,d,(unsigned)som_camera_layer2(hero));
+        out=1;
+    }
+    if(!out)camera_catch_until=0;
+}
+/* Blink ends on (x, y): on screen when the camera cannot come along. */
+static int som_blink_spot_ok(const uint8_t *ram,int x,int y){
+    if(!som_camera_locked(ram))return 1;
+    const uint8_t *hero=SOM_ACT(ram);
+    const int sx=som_camera_screen(ram,hero,x,0),sy=som_camera_screen(ram,hero,y,1);
+    return sx>=SOM_CAM_EDGE&&sx<256-SOM_CAM_EDGE&&sy>=SOM_CAM_EDGE&&sy<224-SOM_CAM_EDGE;
+}
+/* Blink outran the party: whoever is off the screen when he arrives comes
+ * out of the smoke with him (a partner left behind a wall could not follow,
+ * and one on a pad would hold the camera). */
+static void som_blink_bring_party(uint8_t *ram){
+    const uint8_t *hero=SOM_ACT(ram);
+    for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+        uint8_t *o=ram+0xE000u+0x200u*k;
+        if(o==hero||!o[0]||(o[0]&0x80u))continue;
+        const int sx=som_camera_screen(ram,hero,(int)som_bun_u16(o+2),0);
+        const int sy=som_camera_screen(ram,hero,(int)som_bun_u16(o+4),1);
+        if(sx>=SOM_CAM_PARTNER_LEFT&&sx<SOM_CAM_PARTNER_RIGHT&&
+           sy>=SOM_CAM_PARTNER_TOP&&sy<SOM_CAM_PARTNER_BOTTOM)continue;
+        memcpy(o+2,hero+2,4);
+        o[0x00B]=hero[0x00B];o[0x08E]=hero[0x08E];
+        o[0x006]=o[0x007]=0;
+        fprintf(stderr,"[som-ai] BLINK brought %s along\n",som_party_names[k]);
     }
 }
 /* A (and the AI's "evade"): the class's plain dodge hop. A ninja with the
@@ -4158,7 +4284,7 @@ static int som_kawarimi_check(uint8_t *ram){
     }
     hero[0x059]=0;hero[0x1F1]=hero[0x1F2]=0;
     hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
-    hero[0x006]=hero[0x007]=0;
+    hero[0x006]=hero[0x007]=0;camera_catch_until=frame_number+60ul;
     kawarimi_armed_until=0;
     hop_dx=hop_dy=0;hop_frames_left=0;
     evade_frames=move+SOM_DODGE_GRACE;
@@ -4203,6 +4329,7 @@ static void som_hop_step(void){
         uint8_t *armed=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(armed)som_kawarimi_check(armed);
     }
+    if(camera_catch_until)som_camera_catch_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(!evade_active)return;
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram)return;
@@ -4238,11 +4365,11 @@ static void som_hop_step(void){
     const unsigned place=som_hero_place(hero);
     int moved=0;
     const int x0=x,y0=y;
-    if(hop_dx&&som_bun_spot_open(ram,x+hop_dx,y,place)){x+=hop_dx;moved=1;}
-    if(hop_dy&&som_bun_spot_open(ram,x,y+hop_dy,place)){y+=hop_dy;moved=1;}
-    if(moved)som_camera_follow(ram,x-x0,y-y0);
+    if(hop_dx&&som_bun_spot_open(ram,x+hop_dx,y,place)&&som_camera_step_ok(ram,hero,0u,hop_dx)){x+=hop_dx;moved=1;}
+    if(hop_dy&&som_bun_spot_open(ram,x,y+hop_dy,place)&&som_camera_step_ok(ram,hero,1u,hop_dy)){y+=hop_dy;moved=1;}
     hero[2]=(uint8_t)x;hero[3]=(uint8_t)(x>>8);hero[4]=(uint8_t)y;hero[5]=(uint8_t)(y>>8);
     hero[0x006]=hero[0x007]=0;
+    som_camera_follow_axis(ram,hero,0u,x-x0,1);som_camera_follow_axis(ram,hero,1u,y-y0,1);
     if(issen_active)som_issen_cut(ram,x,y);
     hop_frames_left=moved?hop_frames_left-1u:0u;
     if(evade_blink&&!hop_frames_left)som_evade_blink_end(ram);

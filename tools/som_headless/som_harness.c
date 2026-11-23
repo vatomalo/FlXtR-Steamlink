@@ -9,6 +9,7 @@
  *   frames N                 run N frames, no buttons
  *   hold BTN[,BTN] N         hold buttons for N frames (B Y SELECT START UP
  *                            DOWN LEFT RIGHT A X L R L2 R2 L3 R3)
+ *   hold2 BTN[,BTN] N        the same on player 2's pad
  *   cmd TEXT                 flxtr_som_ai_command(TEXT) (proxy only)
  *   shot NAME                write OUTDIR/NAME.ppm of the last frame
  *   peek                     print hero, monster slots and HUD fields
@@ -45,7 +46,7 @@
 static void *frame_copy;
 static unsigned frame_w,frame_h,pixel_format;
 static size_t frame_pitch;
-static uint16_t buttons;
+static uint16_t buttons,buttons2;
 static int training;
 static const char *outdir=".";
 
@@ -67,9 +68,10 @@ static size_t audio_batch(const int16_t *d,size_t n){
 }
 static void poll(void){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id){
-    if(port||index||(device&RETRO_DEVICE_MASK)!=RETRO_DEVICE_JOYPAD)return 0;
-    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)buttons;
-    return id<16u&&(buttons&(1u<<id))?1:0;
+    if(port>1u||index||(device&RETRO_DEVICE_MASK)!=RETRO_DEVICE_JOYPAD)return 0;
+    const uint16_t now=port?buttons2:buttons;
+    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)now;
+    return id<16u&&(now&(1u<<id))?1:0;
 }
 static bool env(unsigned cmd,void *data){
     switch(cmd){
@@ -426,6 +428,12 @@ int main(int argc,char **argv){
             buttons=(uint16_t)m;
             for(unsigned long i=0;i<k;i++){run();frame++;}
             buttons=0;
+        }else if(sscanf(line,"hold2 %63s %lu",a,&k)==2){
+            const unsigned m=button_mask(a);
+            if(m==0xFFFFFFFFu)return 2;
+            buttons2=(uint16_t)m;
+            for(unsigned long i=0;i<k;i++){run();frame++;}
+            buttons2=0;
         }else if(!strncmp(line,"cmd ",4)){
             if(!command){fputs("[harness] FAIL core is not the AI proxy\n",stderr);return 2;}
             fprintf(stderr,"[harness] cmd %s -> %d\n",line+4,command(line+4));

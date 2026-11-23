@@ -1632,7 +1632,7 @@ int main(void){
         uint8_t *foe=ram+0xE600;
         disciplines.selected=14;hero[0x191]=0;hero[0x01C]=0;hero[0x011]=0;
         hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;   /* facing right */
-        ram[0xA8]=100;ram[0xA9]=0;ram[0xAA]=100;ram[0xAB]=0;            /* camera */
+        ram[0xA8]=80;ram[0xA9]=0;ram[0xAA]=100;ram[0xAB]=0;             /* camera */
         ram[0xB0]=116;ram[0xB1]=0;ram[0xAC]=30;ram[0xAD]=0;ram[0xB4]=50;ram[0xB5]=1;
         mocked_buttons=r1a;som_input_poll();
         assert(evade_active&&!kawarimi_armed_until&&!(hero[0x191]&0x04));
@@ -1651,16 +1651,47 @@ int main(void){
             }
             assert(som_bun_u16(hero+2)==200-24&&som_bun_u16(hero+4)==200);
             assert(!evade_active&&!kawarimi_log_start&&trail_until>=hop_start+12u);
-            /* The camera and both layers' scroll words followed him. */
-            assert(som_bun_u16(ram+0xA8)==100-24&&som_bun_u16(ram+0xB0)==116-24&&
-                   som_bun_u16(ram+0xAC)==30-24&&som_bun_u16(ram+0xB4)==306-24&&
+            /* Screen x 120 -> 96: inside the game's window, so no scroll. */
+            assert(som_bun_u16(ram+0xA8)==80&&som_bun_u16(ram+0xB0)==116&&
+                   som_bun_u16(ram+0xAC)==30&&som_bun_u16(ram+0xB4)==306&&
                    som_bun_u16(ram+0xAA)==100);
         }
-        /* At the map's left edge the camera stays put. */
-        ram[0xA8]=10;ram[0xA9]=0;hero[2]=200;hero[0x010]=0x02;
-        mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
-        for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(som_bun_u16(hero+2)==200-24&&som_bun_u16(ram+0xA8)==0);
+        {   /* Past the window the camera follows as the game's: its layer by
+             * the step, the other by its parallax mode; not in a fixed room;
+             * a dodge stays on screen when a partner would be left behind. */
+            const uint8_t keep_lock=ram[0x10E],keep_b9=ram[0xB9],keep_mode=ram[0xAA0];
+            const uint8_t keep_girl=ram[0xE200],keep_sprite=ram[0xE400];
+            uint8_t keep_c4[4];memcpy(keep_c4,ram+0xC4,4);
+            ram[0xC4]=0;ram[0xC5]=2;ram[0xC6]=0;ram[0xC7]=2;
+            ram[0xE200]=ram[0xE400]=0;ram[0xFF]=0;ram[0x10E]=1;ram[0xB9]=1;
+            #define CAM_DODGE(camx) do{som_put_word(ram+0xA8,(camx));som_put_word(ram+0xB0,(camx));\
+                som_put_word(ram+0xAC,100);som_put_word(ram+0xB4,4);hero[2]=200;hero[0x010]=0x02;\
+                mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();\
+                for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}}while(0)
+            ram[0xAA0]=1;CAM_DODGE(105);          /* screen 95 -> window edge 91: 20 px of scroll */
+            assert(som_bun_u16(hero+2)==176&&som_bun_u16(ram+0xA8)==85&&som_bun_u16(ram+0xB0)==85);
+            assert(som_bun_u16(ram+0xAC)==100-10&&som_bun_u16(ram+0xB4)==((4u-10u)&0x1FFu));
+            ram[0xAA0]=2;CAM_DODGE(105);assert(som_bun_u16(ram+0xAC)==100-20);
+            ram[0xAA0]=0;CAM_DODGE(105);assert(som_bun_u16(ram+0xAC)==100&&som_bun_u16(ram+0xA8)==85);
+            ram[0x10E]=0;CAM_DODGE(105);assert(som_bun_u16(ram+0xA8)==105&&som_bun_u16(hero+2)==176);
+            CAM_DODGE(170);assert(som_bun_u16(hero+2)-170u>=(unsigned)SOM_CAM_EDGE);   /* stays on screen */
+            assert(!som_blink_spot_ok(ram,180,200));
+            ram[0x10E]=1;ram[0xE200]=1;ram[0xE22C]=1;ram[0xE202]=(uint8_t)(105+246);ram[0xE203]=1;
+            ram[0xE204]=200;ram[0xE205]=0;        /* player 2's girl at the screen's right edge */
+            CAM_DODGE(105);assert(som_bun_u16(ram+0xA8)==105&&som_bun_u16(hero+2)==176);
+            som_blink_bring_party(ram);assert(som_bun_u16(ram+0xE202)!=som_bun_u16(hero+2));  /* in view */
+            ram[0xE202]=20;ram[0xE203]=0;som_blink_bring_party(ram);
+            assert(som_bun_u16(ram+0xE202)==som_bun_u16(hero+2));
+            ram[0xE22C]=0;
+            /* A jump out of the window: the camera walks after him. */
+            ram[0xE200]=0;som_put_word(ram+0xA8,150);camera_catch_until=frame_number+60;
+            for(unsigned f=0;f<20;f++){som_camera_catch_frame(ram);frame_number++;}
+            assert(som_bun_u16(hero+2)-som_bun_u16(ram+0xA8)==SOM_CAM_LEFT&&!camera_catch_until);
+            #undef CAM_DODGE
+            ram[0x10E]=keep_lock;ram[0xB9]=keep_b9;ram[0xAA0]=keep_mode;
+            ram[0xE200]=keep_girl;ram[0xE400]=keep_sprite;memcpy(ram+0xC4,keep_c4,4);
+            som_put_word(ram+0xB0,116);som_put_word(ram+0xAC,30);som_put_word(ram+0xB4,306);
+        }
         /* Rogue A off a combat map: the game has no cartwheel there, so a
          * hop of the cartwheel's own length (2 x 13 = 26 px); A held right
          * moves right. */
@@ -1669,7 +1700,7 @@ int main(void){
         mocked_buttons=0;som_input_poll();
         assert(!cartwheel_native&&!(hero[0x0E]&0x80u));
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
-        assert(som_bun_u16(hero+2)==200+26&&!evade_active&&som_bun_u16(ram+0xA8)==126);
+        assert(som_bun_u16(hero+2)==200+26&&!evade_active&&som_bun_u16(ram+0xA8)==100);
         /* On a combat map ($ED bit 7) the game's own cartwheel: reaction
          * 0x13 in E1E5, the hero turned to face away from the way held (it
          * goes backwards), no proxy move; the pose plays, nothing falls back. */
@@ -3632,6 +3663,7 @@ int main(void){
         uint8_t *ram=mocked_wram;
         memset(ram,0,SOM_WRAM_SIZE);
         ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xC1]=0x04;ram[0xC3]=0x04;
+        ram[0xA8]=150;ram[0xAA]=100;ram[0x10E]=1;               /* a camera with them in view */
         for(unsigned who=0;who<2u;who++){
             uint8_t *o=ram+0xE000+0x200*who;
             o[0]=1;som_put_word(o+2,(uint16_t)(200+40*who));o[4]=200;o[0x10]=0x02;

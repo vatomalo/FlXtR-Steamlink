@@ -136,7 +136,9 @@ static void som_monk_glove(uint8_t *ram);
 static int som_iai_start(unsigned level);
 static int som_iai_start_raw(unsigned level);
 static void som_special_tick(void);
-static int som_monk_chain_press(uint8_t *ram,unsigned who);
+static int som_monk_chain_press(uint8_t *ram,unsigned who,uint16_t held_dirs);
+static void som_monk_chain_dirs(const uint8_t *ram,unsigned who,uint16_t pressed_dirs);
+static int som_monk_in_string(unsigned who);
 static void som_monk_chain_frame(uint8_t *ram);
 static void som_combo_clear(void){som_combo_reset(&combo);}
 /* which: 0 = B (primary weapon), 1 = Y (secondary). */
@@ -1953,15 +1955,21 @@ static void som_input_poll(void){
                         "TAIJUTSU":"WEAPON FLOW",som_weapon_types[taijutsu_want]);
             }
         }
-        /* Martial Arts' B: the glove's power attacks 1-7 as one chain
-         * (som_monk_chain_press). B to a villager or a chest stays the game's. */
+        /* Martial Arts' B: the Storm string and the Tekken commands
+         * (som_monk_chain_press). B to a villager or a chest stays the game's
+         * when the monk stands; mid-string (a lunge that ends beside one) B
+         * keeps the string. */
+        if(attack_ram&&driver_cls==SOM_DISC_MARTIAL_ARTS&&!ring_ai_enabled&&
+           !som_manual_disciplines&&!(current&(l2_bit|r2)))
+            som_monk_chain_dirs(attack_ram,driver,(uint16_t)(pressed&dpad));
         if(attack_ram&&driver_cls==SOM_DISC_MARTIAL_ARTS&&!ring_ai_enabled&&
            !som_manual_disciplines&&!native_ring&&!style_b_hidden&&!special_suppress&&
            !(current&(l2_bit|r2|y_bit))&&(current&b_bit)&&
            attack_ram[0xE000u+0x200u*driver+0x1E4u]==0u&&
-           !som_interact_ahead_by(attack_ram,driver)){
+           (som_monk_in_string(driver)||                     /* mid-string: never talk */
+            !som_interact_ahead_by(attack_ram,driver))){
             b_weapon_blocked=1;
-            if(pressed&b_bit)som_monk_chain_press(attack_ram,driver);
+            if(pressed&b_bit)som_monk_chain_press(attack_ram,driver,(uint16_t)(current&dpad));
         }
         if(!(current&b_bit))taijutsu_want=SOM_NO_WEAPON;
         /* X/Triangle casts the selected spell; L2+X keeps the game's X. */
@@ -4775,70 +4783,158 @@ static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
             som_weapon_types[weapon],stage);
     return 1;
 }
-/* Martial Arts' B chain (player, 2026-11-23: "use the level 1-7 attack
- * animations as combo moves for B"): each press plays the next glove power
- * attack, level 1 up to 7, then level 1 again, with no charge. The game's
- * release path ($C0:B21C, som-decomp glove-attacks.md 3, 4.1) is done here
- * directly: E01C = 0x80, E006 = E007 = 0, E011 = 4 * level + distance class
- * (0 near < 26/24 px, 1 mid, 2 far, as the game picks it, 2.2). A press
- * during an attack is kept and starts the next level the frame the attack
- * ends (the game itself drops presses during a swing). SOM_MONK_CHAIN_RESET
- * frames after an attack without a press start the chain over. The damage
- * stage E19B (x(2s+4)/4, 5.2) climbs gently with the chain, x1.5 to x3,
- * not the x4.5 a held level 7 earns. */
-#define SOM_MONK_CHAIN_LEVELS 7u
+/* Martial Arts' B: a Ninja Storm string with Tekken commands (player,
+ * 2026-11-23: "somewhere between Naruto Ninja Storm B+B+B+B+B+B and
+ * Tekken's ->-> + B"; command moves are free, "the command is the
+ * penalty"). The glove's moves are the game's own: the normal swings
+ * (E01C = 0x20, E011 = variant 0-3) and the power attacks of levels 1-7,
+ * started the way the game's release does it ($C0:B21C, som-decomp
+ * glove-attacks.md 3, 4.1: E01C = 0x80, E006 = E007 = 0, E011 = 4 * level +
+ * distance class 0 near / 1 mid / 2 far, 2.2), with no charge.
+ *
+ *   B B B B   four quick strikes (swing variants 1, 0, 3, 2)
+ *   B         the level-1 flurry
+ *   B         the finisher, by the direction held at the press:
+ *             none level 3, toward the enemy 4, away 2, sideways 5
+ *   toward, toward + B   level 7      away, toward + B   level 6
+ *
+ * Directions are taken against the nearest monster (the facing when none):
+ * pressing away turns the hero in SoM, so "back" cannot be the facing. A
+ * command needs its two D-pad presses within SOM_MONK_CMD_GAP frames and B
+ * within SOM_MONK_CMD_GAP of the second; it starts at once from standing or
+ * cancels a string move. A B during a move is kept and starts the next one
+ * the frame it ends (the game drops presses during a swing).
+ * SOM_MONK_CHAIN_RESET frames after a move without a press start the
+ * string over. Damage stage E19B (x(2s+4)/4, 5.2): strikes 0, flurry 1,
+ * finishers 2, commands 3. */
 #define SOM_MONK_CHAIN_RESET 90ul
-static const uint8_t som_monk_chain_damage[SOM_MONK_CHAIN_LEVELS]={1,1,2,2,3,3,4};
+#define SOM_MONK_CMD_GAP 15ul
+#define SOM_MONK_STRIKES 4u
+enum{SOM_MONK_TOWARD=1,SOM_MONK_AWAY=2,SOM_MONK_SIDE=3};
+static const uint8_t som_monk_strike_variant[SOM_MONK_STRIKES]={1,0,3,2};
 static unsigned monk_chain_step,monk_chain_who;
-static int monk_chain_active,monk_chain_queued;
+static int monk_chain_active,monk_chain_queued,monk_chain_queued_cmd;
 static unsigned long monk_chain_end;
-static unsigned som_monk_chain_class(const uint8_t *ram,const uint8_t *o){
+static unsigned monk_dir_last,monk_dir_prev;       /* SOM_MONK_* of the last D-pad presses */
+static unsigned long monk_dir_last_at,monk_dir_prev_at;
+/* The nearest monster's direction from the hero as a unit step on its
+ * larger axis (the facing when no monster is near), and the near / mid /
+ * far class the game uses for the variant. */
+static unsigned som_monk_enemy(const uint8_t *ram,const uint8_t *o,int *ex,int *ey){
     const int hx=(int)som_word(o+2),hy=(int)som_word(o+4);
-    unsigned best=3u;
+    unsigned best=3u;long best_d=-1;
+    const unsigned f=o[0x010];
+    *ex=f==0x02u?1:f==0x82u?-1:0;*ey=*ex?0:(f==0x01u?1:-1);
     for(unsigned k=0;k<3u;k++){
         const uint8_t *m=ram+0xE600u+0x200u*k;
         if(m[0]!=1||m[0x180]>=0x80||(int)k==familiar.slot)continue;
-        const int dx=abs((int)som_word(m+2)-hx),dy=abs((int)som_word(m+4)-hy);
-        const unsigned cx=dx<26?1u:dx<42?2u:3u,cy=dy<24?1u:dy<40?2u:3u;
+        const int dx=(int)som_word(m+2)-hx,dy=(int)som_word(m+4)-hy;
+        const unsigned cx=abs(dx)<26?1u:abs(dx)<42?2u:3u,cy=abs(dy)<24?1u:abs(dy)<40?2u:3u;
         const unsigned c=cx>cy?cx:cy;
         if(c<best)best=c;
+        const long d=labs((long)dx)+labs((long)dy);
+        if(d<=160&&(best_d<0||d<best_d)){
+            best_d=d;
+            if(abs(dx)>=abs(dy)){*ex=dx>=0?1:-1;*ey=0;}else{*ex=0;*ey=dy>=0?1:-1;}
+        }
     }
     return best-1u;
 }
-static int som_monk_chain_start(uint8_t *ram,unsigned who){
-    uint8_t *o=ram+0xE000u+0x200u*who;
-    if(o[0]!=1||o[0x1E4]!=0u||o[0x01C]||o[0x061]||o[0x060]||(o[0x191]&0x80u)||
-       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
-    if(who?!som_ally_idle(ram,who):!som_field_idle(ram))return 0;
-    if(frame_number-monk_chain_end>SOM_MONK_CHAIN_RESET||monk_chain_who!=who)monk_chain_step=0;
-    const unsigned level=monk_chain_step+1u;
-    o[0x01C]=0x80;o[0x011]=(uint8_t)(4u*level+som_monk_chain_class(ram,o));
-    o[0x19B]=som_monk_chain_damage[monk_chain_step];
+static unsigned som_monk_dir_of(const uint8_t *ram,const uint8_t *o,uint16_t dirs){
+    const int x=(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
+    const int y=(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))?1:(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?-1:0;
+    if(!x&&!y)return 0;
+    int ex,ey;(void)som_monk_enemy(ram,o,&ex,&ey);
+    const int along=x*ex+y*ey;
+    return along>0?SOM_MONK_TOWARD:along<0?SOM_MONK_AWAY:SOM_MONK_SIDE;
+}
+/* Each poll: remember the D-pad presses (for the commands). */
+static void som_monk_chain_dirs(const uint8_t *ram,unsigned who,uint16_t pressed_dirs){
+    if(!ram||!pressed_dirs)return;
+    const unsigned d=som_monk_dir_of(ram,ram+0xE000u+0x200u*who,pressed_dirs);
+    if(!d)return;
+    monk_dir_prev=monk_dir_last;monk_dir_prev_at=monk_dir_last_at;
+    monk_dir_last=d;monk_dir_last_at=frame_number;
+}
+/* The command the last two D-pad presses make with a B now: level 7 / 6 / 0. */
+static unsigned som_monk_command(void){
+    if(!monk_dir_last||!monk_dir_prev||frame_number-monk_dir_last_at>SOM_MONK_CMD_GAP||
+       monk_dir_last_at-monk_dir_prev_at>SOM_MONK_CMD_GAP||monk_dir_last!=SOM_MONK_TOWARD)return 0;
+    return monk_dir_prev==SOM_MONK_TOWARD?7u:monk_dir_prev==SOM_MONK_AWAY?6u:0u;
+}
+/* Plays one move: a strike (level 0, swing variant) or a power attack. */
+static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned variant,unsigned stage,
+                          const char *what){
+    const unsigned cls=som_monk_enemy(ram,o,&(int){0},&(int){0});
+    o[0x01C]=level?0x80u:0x20u;
+    o[0x011]=(uint8_t)(level?4u*level+cls:variant);
+    o[0x19B]=(uint8_t)stage;
     o[0x006]=o[0x007]=0;o[0x030]=0xFF;
-    monk_chain_who=who;monk_chain_active=1;monk_chain_queued=0;
-    monk_chain_step=(monk_chain_step+1u)%SOM_MONK_CHAIN_LEVELS;
+    if(level){
+        char text[32];snprintf(text,sizeof(text),"^%s|level %u",what,level);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+    }
+    fprintf(stderr,"[som-ai] MONK %s level %u (animation %u)\n",what,level,(unsigned)o[0x011]);
+}
+static int som_monk_ready(const uint8_t *ram,const uint8_t *o,unsigned who,int cancel){
+    if(o[0]!=1||o[0x1E4]!=0u||o[0x061]||o[0x060]||(o[0x191]&0x80u)||
+       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    if(cancel)return monk_chain_active&&monk_chain_who==who&&(o[0x01C]==0x20u||o[0x01C]==0x80u);
+    return !o[0x01C]&&(who?som_ally_idle(ram,who):som_field_idle(ram));
+}
+/* The next move of the string, or the command `cmd` (6 / 7). */
+static int som_monk_chain_start(uint8_t *ram,unsigned who,uint16_t held_dirs,unsigned cmd){
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    if(!som_monk_ready(ram,o,who,cmd!=0u)&&!som_monk_ready(ram,o,who,0))return 0;
+    if(frame_number-monk_chain_end>SOM_MONK_CHAIN_RESET||monk_chain_who!=who)monk_chain_step=0;
+    if(cmd){
+        som_monk_play(ram,o,cmd,0,3,cmd==7u?"Rising Chi":"Hundred Fists");
+        monk_chain_step=0;
+        monk_dir_last=monk_dir_prev=0;
+    }else if(monk_chain_step<SOM_MONK_STRIKES){
+        som_monk_play(ram,o,0,som_monk_strike_variant[monk_chain_step],0,"strike");
+        monk_chain_step++;
+    }else if(monk_chain_step==SOM_MONK_STRIKES){
+        som_monk_play(ram,o,1,0,1,"flurry");
+        monk_chain_step++;
+    }else{
+        const unsigned d=som_monk_dir_of(ram,o,held_dirs);
+        const unsigned level=d==SOM_MONK_TOWARD?4u:d==SOM_MONK_AWAY?2u:d==SOM_MONK_SIDE?5u:3u;
+        som_monk_play(ram,o,level,0,2,"finisher");
+        monk_chain_step=0;
+    }
+    monk_chain_who=who;monk_chain_active=1;monk_chain_queued=0;monk_chain_queued_cmd=0;
     som_combo_clear();
-    char text[32];snprintf(text,sizeof(text),"^Chi chain|level %u",level);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
-    fprintf(stderr,"[som-ai] MONK CHAIN level %u (animation %u)\n",level,(unsigned)o[0x011]);
     return 1;
 }
-/* B pressed: start the next level now, or queue it behind the attack. */
-static int som_monk_chain_press(uint8_t *ram,unsigned who){
-    if(!ram)return 0;
-    if(monk_chain_active&&monk_chain_who==who){monk_chain_queued=1;return 1;}
-    return som_monk_chain_start(ram,who);
+/* A move is playing, or the string is under way and may still go on. */
+static int som_monk_in_string(unsigned who){
+    return monk_chain_who==who&&(monk_chain_active||
+        (monk_chain_step>0u&&frame_number-monk_chain_end<=SOM_MONK_CHAIN_RESET));
 }
-/* Each frame: notice the end of a chain attack and start a queued one. */
+/* B pressed: a command at once (cancelling a string move), otherwise the
+ * next move now, or queued behind the one playing. */
+static uint16_t monk_chain_held_dirs;
+static int som_monk_chain_press(uint8_t *ram,unsigned who,uint16_t held_dirs){
+    if(!ram)return 0;
+    const unsigned cmd=som_monk_command();
+    monk_chain_held_dirs=held_dirs;
+    if(cmd&&som_monk_chain_start(ram,who,held_dirs,cmd))return 1;
+    if(monk_chain_active&&monk_chain_who==who){
+        monk_chain_queued=1;monk_chain_queued_cmd=(int)cmd;return 1;
+    }
+    return som_monk_chain_start(ram,who,held_dirs,0);
+}
+/* Each frame: notice the end of a move and start a queued one. */
 static void som_monk_chain_frame(uint8_t *ram){
     if(!ram||!monk_chain_active)return;
     uint8_t *o=ram+0xE000u+0x200u*monk_chain_who;
-    if(o[0]==1&&o[0x01C]==0x80u&&ram[0xE4]==1&&ram[0xD0]==0)return;   /* still playing */
+    if(o[0]==1&&(o[0x01C]==0x80u||o[0x01C]==0x20u)&&ram[0xE4]==1&&ram[0xD0]==0)return;
     monk_chain_active=0;monk_chain_end=frame_number;
-    if(o[0x01C]!=0x80u)o[0x19B]=0;          /* the stage only lives for the attack */
+    if(!o[0x01C])o[0x19B]=0;               /* the stage only lives for the move */
     if(monk_chain_queued&&som_disc_member_class(&disciplines,monk_chain_who)==SOM_DISC_MARTIAL_ARTS)
-        som_monk_chain_start(ram,monk_chain_who);
-    monk_chain_queued=0;
+        som_monk_chain_start(ram,monk_chain_who,monk_chain_held_dirs,(unsigned)monk_chain_queued_cmd);
+    monk_chain_queued=0;monk_chain_queued_cmd=0;
 }
 /* Bushido's X (and the AI's iai_<3|4>): the katana's charge level
  * straight away, one per SOM_IAI_COOLDOWN_FRAMES. */

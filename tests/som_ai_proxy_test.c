@@ -2313,46 +2313,61 @@ int main(void){
             special_stage=0;special_suppress=0;frame_number+=30;som_flykick_frame(ram);
             assert(!flykick.active&&!(hero[0x0E]&0x80u));
             special_stage=0;special_suppress=0;
-            /* The monk's B chain: each tap is the glove's next power attack,
-             * level 1 to 7, started directly (no charge), B hidden from the
-             * game; a tap during an attack queues the next level. */
+            /* The monk's B: a Storm string (4 strikes, the level-1 flurry, a
+             * finisher by direction) and Tekken commands, no charge, B
+             * hidden from the game; a B during a move queues the next. */
             {
                 const uint16_t bb=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
-                for(unsigned m=0;m<9u;m++)ram[0xE600+0x200*m]=0;   /* no monster: far class 2 */
+                const uint16_t lt=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT);
+                const uint16_t rt=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);
+                const uint16_t up=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_UP);
+                for(unsigned m=0;m<9u;m++)ram[0xE600+0x200*m]=0;   /* no monster: far, facing */
                 hero[0x1E4]=0;hero[0x19C]=2;hero[0x19B]=0;hero[0x01C]=0;hero[0x1ED]=40;
-                hero[0x060]=0;hero[0x061]=0;hero[0x191]=0;
+                hero[0x060]=0;hero[0x061]=0;hero[0x191]=0;hero[0x010]=0x82;   /* faces left */
                 monk_glove_raised=-1;monk_chain_active=0;monk_chain_step=0;
+                monk_dir_last=monk_dir_prev=0;frame_number+=100;
+                #define MONK_TAP(btn) do{mocked_buttons=(btn);som_input_poll();mocked_buttons=0;som_input_poll();}while(0)
+                #define MONK_END() do{hero[0x01C]=0;som_monk_chain_frame(ram);frame_number++;}while(0)
                 mocked_buttons=bb;som_input_poll();
-                assert(hero[0x01C]==0x80u&&hero[0x011]==4u*1u+2u&&hero[0x19B]==1u);
-                assert(!special_stage&&monk_chain_active);
+                assert(hero[0x01C]==0x20u&&hero[0x011]==1u&&hero[0x19B]==0u&&monk_chain_active);
                 assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0); /* hidden */
                 assert(hero[0x19C]==SOM_MONK_GLOVE_LEVELS);
                 mocked_buttons=0;som_input_poll();
-                mocked_buttons=bb;som_input_poll();mocked_buttons=0;som_input_poll();
-                assert(monk_chain_queued&&hero[0x011]==6u);          /* waits its turn */
-                frame_number+=60;som_monk_chain_frame(ram);
-                assert(hero[0x011]==6u);                            /* still playing */
-                hero[0x01C]=0;som_monk_chain_frame(ram);            /* level 1 ends */
-                assert(hero[0x01C]==0x80u&&hero[0x011]==4u*2u+2u&&hero[0x19B]==1u&&!monk_chain_queued);
-                /* Near a monster the near version plays. */
-                uint8_t *nm=ram+0xE600;nm[0]=1;nm[0x180]=3;
-                nm[2]=hero[2];nm[3]=hero[3];nm[4]=hero[4];nm[5]=hero[5];
-                for(unsigned lv=3u;lv<=7u;lv++){
-                    hero[0x01C]=0;som_monk_chain_frame(ram);frame_number++;
-                    mocked_buttons=bb;som_input_poll();mocked_buttons=0;som_input_poll();
-                    assert(hero[0x011]==4u*lv&&hero[0x01C]==0x80u);
+                MONK_TAP(bb);assert(monk_chain_queued&&hero[0x011]==1u);   /* waits its turn */
+                MONK_END();assert(hero[0x01C]==0x20u&&hero[0x011]==0u);    /* strike 2 */
+                MONK_END();MONK_TAP(bb);assert(hero[0x011]==3u);
+                MONK_END();MONK_TAP(bb);assert(hero[0x011]==2u);
+                MONK_END();MONK_TAP(bb);
+                assert(hero[0x01C]==0x80u&&hero[0x011]==4u+2u&&hero[0x19B]==1u);  /* flurry */
+                MONK_END();MONK_TAP(bb);
+                assert(hero[0x011]==4u*3u+2u&&hero[0x19B]==2u);             /* finisher: none = 3 */
+                MONK_END();assert(!hero[0x19B]);
+                /* The finisher by direction: toward (left, the facing) 4,
+                 * away (right) 2, sideways (up) 5. */
+                const uint16_t held[3]={lt,rt,up};const unsigned want[3]={4u,2u,5u};
+                for(unsigned k=0;k<3u;k++){
+                    for(unsigned n=0;n<5u;n++){MONK_TAP(bb);MONK_END();}
+                    frame_number+=40;                                   /* no command */
+                    hero[0x010]=0x82;MONK_TAP((uint16_t)(bb|held[k]));
+                    assert(hero[0x011]==4u*want[k]+2u);
+                    MONK_END();
                 }
-                assert(hero[0x19B]==4u);                            /* the finisher: x3 */
-                hero[0x01C]=0;som_monk_chain_frame(ram);assert(!hero[0x19B]);
-                mocked_buttons=bb;som_input_poll();mocked_buttons=0;som_input_poll();
-                assert(hero[0x011]==4u);                            /* round to level 1 */
-                hero[0x01C]=0;som_monk_chain_frame(ram);
-                mocked_buttons=bb;som_input_poll();mocked_buttons=0;som_input_poll();
-                assert(hero[0x011]==8u);
-                hero[0x01C]=0;som_monk_chain_frame(ram);frame_number+=SOM_MONK_CHAIN_RESET+1u;
-                mocked_buttons=bb;som_input_poll();mocked_buttons=0;som_input_poll();
-                assert(hero[0x011]==4u);                            /* a pause starts over */
-                hero[0x01C]=0;som_monk_chain_frame(ram);nm[0]=0;hero[0x19B]=0;
+                /* Commands: toward, toward + B = 7; away, toward + B = 6;
+                 * they cancel a strike in progress. */
+                hero[0x010]=0x82;MONK_TAP(bb);assert(hero[0x01C]==0x20u);    /* a strike */
+                MONK_TAP(lt);frame_number+=5;MONK_TAP(lt);frame_number+=5;MONK_TAP(bb);
+                assert(hero[0x01C]==0x80u&&hero[0x011]==4u*7u+2u&&hero[0x19B]==3u);
+                MONK_END();hero[0x010]=0x82;
+                MONK_TAP(rt);hero[0x010]=0x82;frame_number+=5;MONK_TAP(lt);frame_number+=5;MONK_TAP(bb);
+                assert(hero[0x011]==4u*6u+2u);
+                MONK_END();hero[0x010]=0x82;
+                MONK_TAP(lt);frame_number+=SOM_MONK_CMD_GAP+5u;MONK_TAP(lt);frame_number+=2;MONK_TAP(bb);
+                assert(hero[0x01C]==0x20u);                                 /* too slow: a strike */
+                MONK_END();frame_number+=SOM_MONK_CHAIN_RESET+1u;
+                MONK_TAP(bb);assert(hero[0x011]==1u);                       /* a pause starts over */
+                MONK_END();hero[0x19B]=0;
+                #undef MONK_TAP
+                #undef MONK_END
                 ram[0xD0]=0x83;som_monk_glove(ram);                        /* the inn's save */
                 assert(hero[0x19C]==2&&monk_glove_raised<0);
                 ram[0xD0]=0;som_monk_glove(ram);assert(hero[0x19C]==SOM_MONK_GLOVE_LEVELS);

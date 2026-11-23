@@ -58,11 +58,7 @@ static int subtitle_catalog_write(const char *media_url){
     if(!media_url||!*media_url)return 0;
     char path[96],temp[112];subtitle_tracks_path(media_url,path,sizeof(path));
     if(!subtitle_catalog_count){unlink(path);return 0;}
-#ifdef _WIN32
-    mkdir("subtitle-tracks");
-#else
     mkdir("subtitle-tracks",0700);
-#endif
     subtitle_catalog_prune();
     snprintf(temp,sizeof(temp),"%s.%ld",path,(long)getpid());
     FILE *f=fopen(temp,"w");if(!f)return 0;

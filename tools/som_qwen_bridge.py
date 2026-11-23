@@ -202,9 +202,14 @@ def allowed_directives(observation):
     enemies = [enemy for enemy in observation.get("enemy_slots", [])
                if isinstance(enemy, dict) and enemy.get("active")]
     if enemies:
-        hero = (observation.get("party") or [{}])[0]
+        party = observation.get("party") or []
+        hero = party[0] if party else {}
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-        if max_hp and hp * 4 <= max_hp:
+        party_critical = any(
+            member.get("availability_byte") == 1 and member.get("max_hp", 0) and
+            0 < member.get("hp", 0) * 4 <= member["max_hp"]
+            for member in party)
+        if party_critical or (max_hp and hp * 4 <= max_hp):
             return ["avoid_enemy", "engage_enemy", *choices]
         return ["engage_enemy", "avoid_enemy", *choices]
     return choices
@@ -232,12 +237,31 @@ def companion_order(mode, observation, decision, intention, directive):
         return f"party_order_{map_id}_3_0"
     if (decision.intention in ("engage_enemy", "defend_enemy", "kite_enemy") and
             (intention or {}).get("kind") == "engage"):
-        for enemy in observation.get("enemy_slots", []):
-            slot, identity = enemy.get("slot"), enemy.get("identity")
-            if (enemy.get("active") and not enemy.get("familiar") and
-                    slot in (1, 2, 3) and slot == intention.get("enemy") and
-                    isinstance(identity, int) and 0 <= identity < 128):
-                return f"party_order_{map_id}_{slot - 1}_{identity}"
+        enemies = [enemy for enemy in observation.get("enemy_slots", [])
+                   if enemy.get("active") and not enemy.get("familiar") and
+                   enemy.get("slot") in (1, 2, 3) and
+                   isinstance(enemy.get("identity"), int) and
+                   0 <= enemy["identity"] < 128]
+        intended = next((enemy for enemy in enemies
+                         if enemy["slot"] == intention.get("enemy")), None)
+        # A weak nearby enemy is a good focus-fire target: the leader and both
+        # companions can remove one threat together before splitting attacks.
+        # Keep the planner's choice if HP data is missing or every other foe is
+        # too far away to join the opening attack.
+        actor = ((observation.get("tile_context") or {}).get("actor") or {})
+        x, y = actor.get("x_px"), actor.get("y_px")
+        if len(enemies) > 1 and isinstance(x, int) and isinstance(y, int):
+            reachable = [enemy for enemy in enemies
+                         if enemy.get("hp_plausible") and enemy.get("max_hp", 0) > 0 and
+                         max(abs(enemy.get("x_px", x) - x),
+                             abs(enemy.get("y_px", y) - y)) <= 160]
+            if reachable:
+                intended = min(reachable, key=lambda enemy: (
+                    enemy["hp"] / enemy["max_hp"],
+                    max(abs(enemy.get("x_px", x) - x),
+                        abs(enemy.get("y_px", y) - y)), enemy["slot"]))
+        if intended is not None:
+            return f"party_order_{map_id}_{intended['slot'] - 1}_{intended['identity']}"
     return None
 
 
@@ -250,6 +274,9 @@ def build_director_prompt(objective, observation, current, recent, known_cells,
     native_allies = [member for member in party
                      if member.get("availability_byte") == 1 and
                      member.get("controller_binding") == 0]
+    party_health = ", ".join(
+        f"{member.get('hp')}/{member.get('max_hp')}" for member in party
+        if member.get("availability_byte") == 1) or "unknown"
     enemies = [enemy for enemy in observation.get("enemy_slots", [])
                if isinstance(enemy, dict) and enemy.get("active")] if isinstance(observation, dict) else []
     choices = allowed_directives(observation)
@@ -261,13 +288,15 @@ def build_director_prompt(objective, observation, current, recent, known_cells,
         f"Player objective: {objective}. Location: {location}, map {map_id}, "
         f"tile {context.get('actor_tile')}, layer {actor.get('layer')}. "
         f"HP {hero.get('hp')}/{hero.get('max_hp')}; active enemies {len(enemies)}; "
-        f"native AI allies {len(native_allies)}; "
+        f"party HP {party_health}; native AI allies {len(native_allies)}; "
         f"known map cells {known_cells}. Current directive: {current}. "
         f"Recent actions: {recent}. Allowed directives: {', '.join(choices)}. "
         f"Remembered places on this map: {compact(place_memory)}. "
         f"Learned combat outcomes: {compact(combat_memory)}. "
-        "Prefer a consistent heading that reveals unknown territory. Engage a real enemy "
-        "when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
+        "Prefer a consistent heading that reveals unknown territory. In fights, coordinate "
+        "focus fire to finish a weak nearby enemy, use area attacks when enemies cluster, "
+        "and favor healing, revival, or retreat when an ally is in danger. Engage a real "
+        "enemy when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
     )
 
 def compact(items):

@@ -2447,11 +2447,19 @@ static void som_idle_tick(void){
 #define SOM_MONSTER_GFX_SIZE 0x1000u
 #define SOM_MONSTER_PALETTE 0xDFA0u
 #define SOM_MONSTER_PALETTE_SIZE 0x20u
+#define SOM_MIND_WORKING_ROW(slot) (0x0700u+32u*(5u+(unsigned)(slot)))  /* CGRAM working copy */
 static const uint8_t som_slot_fields[]={0x6C,0x6E,0x86,0x8A,0x92,0x96,0x9A,0x9E,0xA2,0xA6,
     0xAA,0xAE,0xB2,0xB6,0xD2,0xD6,0xDA,0xF8,0xFA};   /* 16-bit fields */
 #define SOM_CLONE_WAIT_FRAMES 600ul           /* slots refill ~3 s after a kill */
 static unsigned long clone_pending_until;
 static int clone_no_slot,last_clone_target=-1;
+/* The OAM shadow 7E:0800-0A1F as it was when this frame started: the game
+ * builds the next frame's sprites during the frame, so at video time the
+ * live shadow is a frame ahead of the picture (and of the hero tiles the
+ * NMI uploaded). Clones and trails draw from this copy (headless trace
+ * 2026-11-23: the live shadow matched the following frame's picture). */
+static uint8_t oam_shown[0x220];
+static int oam_shown_valid;
 /* Familiar (src/som_familiar.h): a clone bound to fight for the hero. Its
  * monster slot (1..3) is published for the SkyLoft bridge, which must not
  * attack it. */
@@ -3123,6 +3131,7 @@ static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int di
         bunshin.x[i]=hx;bunshin.y[i]=hy;
         som_bun_boom(bunshin_booms,hx,hy,1,frame_number);
     }
+    som_bun_reform(&bunshin,nx,ny);
     fprintf(stderr,"[som-ai] BUNSHIN %s: hero %d,%d -> clone %d at %d,%d\n",
             flee?"substitution":"swap",hx,hy,i,nx,ny);
     return 1;
@@ -3189,8 +3198,9 @@ static void som_bunshin_draw(uint8_t *pixels,unsigned width,unsigned height,size
     if(vram)
         for(unsigned i=0;i<SOM_BUN_COUNT;i++)
             if(bunshin.alive[i])
-                som_bun_draw_copy(pixels,width,height,pitch,pixel_format,ram,vram,bunshin_owner,
-                                  bunshin.x[i]-hx,bunshin.y[i]-hy);
+                som_bun_draw_copy_oam(pixels,width,height,pitch,pixel_format,ram,
+                                      oam_shown_valid?oam_shown:ram+0x0800u,vram,bunshin_owner,
+                                      bunshin.x[i]-hx,bunshin.y[i]-hy);
     if(kawarimi_log_start){
         const unsigned long age=frame_number-kawarimi_log_start;
         if(age>=SOM_KAWARIMI_LOG_FRAMES||som_bun_u16(ram+0xDC)!=kawarimi_log_map){
@@ -4497,7 +4507,8 @@ static void som_trail_draw(uint8_t *pixels,unsigned width,unsigned height,size_t
         const unsigned slot=(unsigned)((frame_number-back)%SOM_TRAIL_LENGTH);
         if(!trail_frame[slot]||trail_frame[slot]!=frame_number-back)continue;
         const int dx=trail_x[slot]-hx,dy=trail_y[slot]-hy;
-        if(dx||dy)som_bun_draw_copy(pixels,width,height,pitch,pixel_format,ram,vram,trail_owner,dx,dy);
+        if(dx||dy)som_bun_draw_copy_oam(pixels,width,height,pitch,pixel_format,ram,
+                                        oam_shown_valid?oam_shown:ram+0x0800u,vram,trail_owner,dx,dy);
     }
 }
 /* Charge the game's actual weapon stage through its normal B input. */
@@ -5352,6 +5363,25 @@ static int som_clone_enemy(void){
     }
     clone_no_slot=0;
     if(source<0){fprintf(stderr,"[som-ai] SPAWN refused: no live monster to copy\n");return 0;}
+    /* Every slot busy (map 130 refills a slot the frame its rabite dies,
+     * so a summon used to wait 10 s for nothing): a familiar takes over
+     * the farthest other monster of the source's own kind. Its slot holds
+     * that kind's art already, so the copy draws exactly like the source
+     * (headless 2026-11-23). Not a boss. */
+    if(target<0&&familiar_pending){
+        const uint8_t *src=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
+        const long hx=(long)som_bun_u16(ram+0xE002u),hy=(long)som_bun_u16(ram+0xE004u);
+        long far=-1;
+        for(unsigned slot=0;slot<3;slot++){
+            const uint8_t *o=ram+SOM_MONSTER_BASE+slot*SOM_OBJECT_SIZE;
+            if((int)slot==source||!som_monster_live(o)||o[0x180]!=src[0x180]||o[0x180]>=0x57u)
+                continue;
+            const long d=labs((long)som_bun_u16(o+2u)-hx)+labs((long)som_bun_u16(o+4u)-hy);
+            if(d>far){far=d;target=(int)slot;}
+        }
+        if(target>=0)fprintf(stderr,"[som-ai] SPAWN takes over monster slot %d (%ld px away)\n",
+                             target+1,far);
+    }
     if(target<0){clone_no_slot=1;return 0;}
     if(!som_take_undo())return 0;
     uint8_t *from=ram+SOM_MONSTER_BASE+(unsigned)source*SOM_OBJECT_SIZE;
@@ -7047,6 +7077,14 @@ static void som_familiar_bind(void){
     if(ram){
         som_familiar_tint((uint8_t*)ram+SOM_MONSTER_PALETTE+
                           (unsigned)familiar.slot*SOM_MONSTER_PALETTE_SIZE);
+        /* 7E:DFA0 + slot * 0x20 is palette row 5 + slot's shadow; the
+         * screen shows 7E:0700 + row * 32 (547ff5e). A native-controlled
+         * monster is never repainted, so its tint only showed after a hit
+         * flash copied the shadow over (headless 2026-11-23: stayed yellow). */
+        if(familiar_is_native_control)
+            memcpy((uint8_t*)ram+SOM_MIND_WORKING_ROW(familiar.slot),
+                   ram+SOM_MONSTER_PALETTE+(unsigned)familiar.slot*SOM_MONSTER_PALETTE_SIZE,
+                   SOM_MONSTER_PALETTE_SIZE);
         som_familiar_save(&familiar_carry,ram,familiar.slot);
         /* Translate the original source monster's captured graphics into
          * the destination slot; never capture the just-cloned target's VRAM. */
@@ -7120,6 +7158,29 @@ static void som_familiar_frame(void){
     if(familiar.slot<0){                                          /* carried */
         if(!familiar_arrived)familiar_arrived=frame_number;
         if(frame_number-familiar_arrived<SOM_FAMILIAR_SETTLE_FRAMES)return;
+        /* A summoned familiar takes the shape of a monster of this map: the
+         * clone draws with art this map loaded. Remapping the home map's
+         * tiles into a slot of another map drew a shadow and stray pixels
+         * (headless 2026-11-23, map 130 -> 131). Where no monster lives
+         * (towns) it waits, unseen, for the next map that has one. */
+        if(familiar_carry.has_vram){
+            if((frame_number-familiar_arrived)%30u)return;
+            int live=0;
+            for(unsigned k=0;k<3u;k++)
+                live|=som_monster_live(ram+SOM_MONSTER_BASE+k*SOM_OBJECT_SIZE)&&
+                      ram[SOM_MONSTER_BASE+k*SOM_OBJECT_SIZE+0x180u]<0x57u;
+            if(!live)return;
+            familiar_carry.valid=0;familiar_pending=1;
+            if(som_clone_enemy()){
+                som_familiar_bind();
+                som_overlay_set(&overlay,"^Your familiar|takes a new shape",SOM_MESSAGE_FRAMES/2u);
+                fprintf(stderr,"[som-ai] FAMILIAR re-formed on map %u (slot %d)\n",
+                        familiar.map,familiar.slot+1);
+                return;
+            }
+            familiar_pending=0;familiar_carry.valid=1;     /* try again later */
+            return;
+        }
         int slot=som_familiar_restore(&familiar_carry,ram,som_vram());
         if(slot<0)return;                                         /* wait for a slot */
         familiar.slot=slot;familiar.target=-1;familiar.last_strike=0;
@@ -7257,6 +7318,11 @@ RETRO_API void retro_run(void){
     }
     const uint64_t perf_core=PERF_NOW();
     guard_hp=0;
+    if(backend_retro_get_memory_data&&backend_retro_get_memory_size&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){
+        const uint8_t *shadow=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(shadow){memcpy(oam_shown,shadow+0x0800u,sizeof(oam_shown));oam_shown_valid=1;}
+    }
     backend_run();
     som_guard_finish();
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
@@ -7328,6 +7394,8 @@ static void som_mind_release(uint8_t *ram){
     if(mind_slot<0)return;
     if(ram&&familiar.slot==mind_slot){
         memcpy(ram+SOM_MONSTER_PALETTE+(unsigned)mind_slot*SOM_MONSTER_PALETTE_SIZE,mind_palette,
+               SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
+        memcpy(ram+SOM_MIND_WORKING_ROW(mind_slot),mind_palette,
                SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
         familiar.slot=familiar.target=-1;familiar_carry.valid=0;
         som_familiar_publish();

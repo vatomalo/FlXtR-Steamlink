@@ -75,6 +75,18 @@ int main(void){
     som_bun_follow(&b,ram,224,202,0);assert(b.x[1]==stuck&&b.y[1]==202); /* slides */
     som_bun_follow(&b,ram,300,202,0);assert(b.x[0]==200);  /* a warp is not copied */
     memset(ram+0x10000,0,0x10000);
+    /* ... but the clones walk back to their spots beside him, faster than
+     * he walks (wall gone), and never pile onto him. */
+    for(int s=0;s<40;s++)som_bun_follow(&b,ram,300,202,0);
+    assert(b.x[0]==276&&b.y[0]==202&&b.x[1]==324&&b.y[1]==202);
+    /* Facing right with the ground below blocked: the lower clone stands
+     * diagonally behind the hero, not on top of him or the other clone. */
+    ram[0x1B800+4*3]=0x03;
+    for(unsigned c=0;c<256;c++)ram[0x10000+((224u>>4)*128u)+c]=3;   /* wall y 224..255 */
+    assert(som_bun_spawn(&b,ram,200,200,0x02,0,50)==2);
+    assert(b.x[0]==200&&b.y[0]==168);                      /* above: 32 px */
+    assert(b.x[1]==176&&b.y[1]==216);                      /* behind him, low */
+    memset(ram+0x10000,0,0x10000);
 
     uint8_t *m=ram+SOM_BUN_MONSTER_BASE;
     m[0]=1;m[0x180]=3;m[2]=210;m[4]=200;                    /* slot 0 */

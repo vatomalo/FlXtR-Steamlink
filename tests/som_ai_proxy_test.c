@@ -2171,7 +2171,7 @@ int main(void){
         assert(som_handle_command("shunshin"));
         assert(!evade_active&&!kawarimi_armed_until&&som_bun_alive(&bunshin)==2);
         assert(som_bun_u16(hero+2)==200&&som_bun_u16(hero+4)==200);
-        assert(bunshin.x[0]==200&&bunshin.y[0]==176&&bunshin.x[1]==200&&bunshin.y[1]==224);
+        assert(bunshin.x[0]==200&&bunshin.y[0]==168&&bunshin.x[1]==200&&bunshin.y[1]==232);  /* 32 px above / below */
         assert(!som_handle_command("shunshin"));                     /* clones already out */
         assert(bunshin_shunshin);
         /* Shunshin is not a substitution: a monster at the hero sets off
@@ -2200,7 +2200,7 @@ int main(void){
         for(unsigned m=0;m<3;m++)ram[0xE600+0x200*m]=0;
         mocked_buttons=r1a;som_input_poll();mocked_buttons=0;som_input_poll();
         assert(!evade_active&&som_bun_alive(&bunshin)==2);
-        assert(bunshin.x[0]==200&&bunshin.y[0]==176&&bunshin.x[1]==200&&bunshin.y[1]==224);
+        assert(bunshin.x[0]==200&&bunshin.y[0]==168&&bunshin.x[1]==200&&bunshin.y[1]==232);  /* 32 px above / below */
         hero[2]=202;som_bunshin_frame(ram);                  /* clones copy the step */
         assert(bunshin.x[0]==202&&bunshin.x[1]==202);
         uint8_t *m0=ram+0xE600;
@@ -2211,15 +2211,15 @@ int main(void){
         m0[0]=0;
         mocked_buttons=(uint16_t)(r1a|(1u<<RETRO_DEVICE_ID_JOYPAD_UP));som_input_poll();
         mocked_buttons=0;som_input_poll();
-        assert(som_bun_u16(hero+4)==176&&bunshin.y[0]==200);   /* swapped places */
-        m0[0]=1;m0[0x1F1]=0;m0[2]=202;m0[3]=0;m0[4]=186;m0[5]=0;   /* at the hero */
+        assert(som_bun_u16(hero+4)==168&&bunshin.y[0]==200);   /* swapped places */
+        m0[0]=1;m0[0x1F1]=0;m0[2]=202;m0[3]=0;m0[4]=178;m0[5]=0;   /* at the hero */
         frame_number+=SOM_BUN_SWAP_COOLDOWN+1;bunshin.until=frame_number+100;
         som_bunshin_frame(ram);
         assert(som_bun_u16(hero+4)==200&&!som_bun_alive(&bunshin)&&m0[0x1F1]); /* substitution */
         m0[0]=0;
         /* No clone ends up in a wall. */
         ram[0x1B800+4*9]=0x03;                                 /* tile 9 solid */
-        for(unsigned c=0;c<128;c++)ram[0x10000+((176u>>4)*128u)+c]=9;  /* wall above */
+        for(unsigned c=0;c<256;c++)ram[0x10000+((160u>>4)*128u)+c]=9;  /* wall above: rows 10-11 */
         hero[2]=200;hero[4]=200;
         assert(som_bun_spawn(&bunshin,ram,200,200,0x02,0,frame_number)==1);
         assert(!bunshin.alive[0]&&bunshin.alive[1]);

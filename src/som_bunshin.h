@@ -22,6 +22,7 @@
 #define SOM_BUN_COUNT 2u
 #define SOM_BUN_FRAMES 600ul        /* clones last 10 s */
 #define SOM_BUN_SPACING 24
+#define SOM_BUN_SPACING_Y 32         /* clones above / below the hero */
 #define SOM_BUN_TOUCH_X 14          /* monster touching a clone, px */
 #define SOM_BUN_TOUCH_Y 12
 #define SOM_BUN_HERO_TOUCH_X 18     /* a little wider: swap before the bite */
@@ -37,6 +38,7 @@
 
 typedef struct {
     int x[SOM_BUN_COUNT],y[SOM_BUN_COUNT];
+    int ox[SOM_BUN_COUNT],oy[SOM_BUN_COUNT];   /* formation spot, from the hero */
     uint8_t alive[SOM_BUN_COUNT];
     int hero_x,hero_y;              /* hero position the clones last followed */
     unsigned long until,swap_ready;
@@ -82,39 +84,68 @@ static inline unsigned som_bun_alive(const SomBunshin *b){
     return n;
 }
 static inline void som_bun_clear(SomBunshin *b){memset(b,0,sizeof(*b));}
+static inline int som_bun_near(int ax,int ay,int bx,int by,int rx,int ry){
+    return abs(ax-bx)<=rx&&abs(ay-by)<=ry;
+}
+/* Each clone's formation spot is its offset from the hero. */
+static inline void som_bun_reform(SomBunshin *b,int hx,int hy){
+    for(unsigned i=0;i<SOM_BUN_COUNT;i++){b->ox[i]=b->x[i]-hx;b->oy[i]=b->y[i]-hy;}
+    b->hero_x=hx;b->hero_y=hy;
+}
 /* Two clones either side of the hero, across his facing (a hero facing
- * right gets them above and below). Returns how many found open ground. */
+ * right gets them above and below). Where that side is blocked a clone
+ * stands diagonally behind him, then in front, and only then close beside him; the two
+ * never share a spot (live 2026-11-23: a tree below the hero put both at
+ * 16 px and they tangled with him). Returns how many found open ground. */
 static inline unsigned som_bun_spawn(SomBunshin *b,const uint8_t *ram,int hx,int hy,
                                      unsigned facing,unsigned place,unsigned long frame){
     som_bun_clear(b);
     const int across=(facing&0x7Fu)==0x02u;     /* facing left/right */
+    const int fx=(facing&0x7Fu)==0x02u?((facing&0x80u)?-1:1):0;
+    const int fy=fx?0:((facing&0x7Fu)==0x01u?1:-1);
     for(unsigned i=0;i<SOM_BUN_COUNT;i++){
         const int sign=i?1:-1;
-        for(int spacing=SOM_BUN_SPACING;spacing>=16;spacing-=8){
-            const int x=across?hx:hx+sign*spacing,y=across?hy+sign*spacing:hy;
+        const int side=across?SOM_BUN_SPACING_Y:SOM_BUN_SPACING;
+        /* across the facing (far, nearer), diagonally behind, diagonally
+         * in front, then close beside him */
+        const int spot[7][2]={
+            {across?0:sign*side,across?sign*side:0},
+            {across?0:sign*(side-8),across?sign*(side-8):0},
+            {-fx*24+(across?0:sign*16),-fy*24+(across?sign*16:0)},
+            {-fx*24+(across?0:sign*24),-fy*24+(across?sign*24:0)},
+            {fx*24+(across?0:sign*16),fy*24+(across?sign*16:0)},
+            {fx*24+(across?0:sign*24),fy*24+(across?sign*24:0)},
+            {across?0:sign*16,across?sign*16:0}};
+        for(unsigned k=0;k<7u;k++){
+            const int x=hx+spot[k][0],y=hy+spot[k][1];
+            if(i&&b->alive[0]&&som_bun_near(x,y,b->x[0],b->y[0],15,15))continue;
             if(som_bun_spot_open(ram,x,y,place)){
                 b->x[i]=x;b->y[i]=y;b->alive[i]=1;break;
             }
         }
     }
-    b->hero_x=hx;b->hero_y=hy;
+    som_bun_reform(b,hx,hy);
     b->until=frame+SOM_BUN_FRAMES;b->map=som_bun_u16(ram+0xDC);
     return som_bun_alive(b);
 }
-/* Copy the hero's step onto every clone, per axis, stopped by walls. A jump
- * of more than 16 px (a swap, a warp) is not copied. */
+/* The clones keep their formation: each walks back toward its spot beside
+ * the hero, faster than he walks, so one held up by a wall catches up
+ * instead of piling onto the hero (live 2026-11-23: two blocked clones
+ * stacked on one spot). A jump of more than 16 px (a warp) is not copied:
+ * they walk back to him. A swap re-forms them (som_bun_reform). */
 static inline void som_bun_follow(SomBunshin *b,const uint8_t *ram,int hx,int hy,unsigned place){
-    const int dx=hx-b->hero_x,dy=hy-b->hero_y;
+    const int jx=hx-b->hero_x,jy=hy-b->hero_y;
     b->hero_x=hx;b->hero_y=hy;
-    if((!dx&&!dy)||abs(dx)>16||abs(dy)>16)return;
+    if(abs(jx)>16||abs(jy)>16)return;          /* not copied; they walk back */
+    const int speed=(abs(jx)>abs(jy)?abs(jx):abs(jy))+2>4?(abs(jx)>abs(jy)?abs(jx):abs(jy))+2:4;
     for(unsigned i=0;i<SOM_BUN_COUNT;i++){
         if(!b->alive[i])continue;
+        int dx=hx+b->ox[i]-b->x[i],dy=hy+b->oy[i]-b->y[i];
+        if(dx>speed)dx=speed;else if(dx<-speed)dx=-speed;
+        if(dy>speed)dy=speed;else if(dy<-speed)dy=-speed;
         if(dx&&som_bun_spot_open(ram,b->x[i]+dx,b->y[i],place))b->x[i]+=dx;
         if(dy&&som_bun_spot_open(ram,b->x[i],b->y[i]+dy,place))b->y[i]+=dy;
     }
-}
-static inline int som_bun_near(int ax,int ay,int bx,int by,int rx,int ry){
-    return abs(ax-bx)<=rx&&abs(ay-by)<=ry;
 }
 static inline int som_bun_monster_alive(const uint8_t *o){
     return o[0]==1&&o[0x180]<0x80&&!(som_bun_u16(o+0x190)&0x8000u);

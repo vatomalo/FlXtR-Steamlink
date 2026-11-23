@@ -4790,7 +4790,8 @@ static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
  * SAMURAI"; sword power attacks follow the glove's rule, E011 = 4 * stage
  * + class, som-decomp weapons-melee.md 4.1). SOM_NO_WEAPON: no string. */
 static unsigned som_string_weapon(unsigned cls){
-    return cls==SOM_DISC_MARTIAL_ARTS?0u:cls==SOM_DISC_BUSHIDO?1u:SOM_NO_WEAPON;
+    return cls==SOM_DISC_MARTIAL_ARTS?0u:cls==SOM_DISC_BUSHIDO?1u:
+           cls==SOM_DISC_ARCHERY?5u:SOM_NO_WEAPON;
 }
 /* Martial Arts' B: a Ninja Storm string with Tekken commands (player,
  * 2026-11-23: "somewhere between Naruto Ninja Storm B+B+B+B+B+B and
@@ -4849,26 +4850,45 @@ static unsigned som_monk_enemy(const uint8_t *ram,const uint8_t *o,int *ex,int *
     }
     return best-1u;
 }
+/* "Toward" is fixed at the first D-pad press of a run of presses (the
+ * nearest enemy, else the facing as it was then): pressing away turns the
+ * hero, so with no enemy near the second "away" read as "toward" (headless
+ * 2026-11-23). SOM_MONK_REF_FRAMES after the last press it is taken anew. */
+#define SOM_MONK_REF_FRAMES 45ul
+static int monk_ref_x,monk_ref_y;
+static unsigned long monk_ref_at;
+static void som_monk_ref(const uint8_t *ram,const uint8_t *o,int *ex,int *ey){
+    if(monk_ref_at&&frame_number-monk_ref_at<=SOM_MONK_REF_FRAMES){*ex=monk_ref_x;*ey=monk_ref_y;return;}
+    (void)som_monk_enemy(ram,o,ex,ey);
+}
 static unsigned som_monk_dir_of(const uint8_t *ram,const uint8_t *o,uint16_t dirs){
     const int x=(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
     const int y=(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))?1:(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?-1:0;
     if(!x&&!y)return 0;
-    int ex,ey;(void)som_monk_enemy(ram,o,&ex,&ey);
+    int ex,ey;som_monk_ref(ram,o,&ex,&ey);
     const int along=x*ex+y*ey;
     return along>0?SOM_MONK_TOWARD:along<0?SOM_MONK_AWAY:SOM_MONK_SIDE;
 }
 /* Each poll: remember the D-pad presses (for the commands). */
 static void som_monk_chain_dirs(const uint8_t *ram,unsigned who,uint16_t pressed_dirs){
     if(!ram||!pressed_dirs)return;
-    const unsigned d=som_monk_dir_of(ram,ram+0xE000u+0x200u*who,pressed_dirs);
+    const uint8_t *o=ram+0xE000u+0x200u*who;
+    if(!monk_ref_at||frame_number-monk_ref_at>SOM_MONK_REF_FRAMES)
+        (void)som_monk_enemy(ram,o,&monk_ref_x,&monk_ref_y);
+    monk_ref_at=frame_number;
+    const unsigned d=som_monk_dir_of(ram,o,pressed_dirs);
     if(!d)return;
     monk_dir_prev=monk_dir_last;monk_dir_prev_at=monk_dir_last_at;
     monk_dir_last=d;monk_dir_last_at=frame_number;
 }
-/* The command the last two D-pad presses make with a B now: level 7 / 6 / 0. */
+/* The command the last two D-pad presses make with a B now: 7 toward,
+ * toward; 6 away, toward; 9 away, away (the archer's); 0 none. */
+#define SOM_CMD_AWAY_AWAY 9u
 static unsigned som_monk_command(void){
     if(!monk_dir_last||!monk_dir_prev||frame_number-monk_dir_last_at>SOM_MONK_CMD_GAP||
-       monk_dir_last_at-monk_dir_prev_at>SOM_MONK_CMD_GAP||monk_dir_last!=SOM_MONK_TOWARD)return 0;
+       monk_dir_last_at-monk_dir_prev_at>SOM_MONK_CMD_GAP)return 0;
+    if(monk_dir_last==SOM_MONK_AWAY)return monk_dir_prev==SOM_MONK_AWAY?SOM_CMD_AWAY_AWAY:0u;
+    if(monk_dir_last!=SOM_MONK_TOWARD)return 0;
     return monk_dir_prev==SOM_MONK_TOWARD?7u:monk_dir_prev==SOM_MONK_AWAY?6u:0u;
 }
 /* Plays one move: a strike (level 0, swing variant) or a power attack. */
@@ -4892,8 +4912,169 @@ static int som_monk_ready(const uint8_t *ram,const uint8_t *o,unsigned who,int c
     if(cancel)return monk_chain_active&&monk_chain_who==who&&(o[0x01C]==0x20u||o[0x01C]==0x80u);
     return !o[0x01C]&&(who?som_ally_idle(ram,who):som_field_idle(ram));
 }
+/* The archer's string (player, 2026-11-23: "archer needs an overhaul";
+ * javelin moves in it "would be nice"). The bow has one shot animation for
+ * every stage; the stage E19B at the launch (op FB, frame 21) sets how many
+ * arrows fly: 0-2 one, 3-5 two, 6-8 three (som-decomp weapons-ranged.md
+ * 3.1). The javelin has a script per stage, some with a lunge and a jump
+ * (5.2). So a move holds E19B at its projectile stage until the launch,
+ * then sets its own damage stage (the game keeps E19B while the volley
+ * flies, x(2s+4)/4). The launcher fires nothing while an earlier volley
+ * still flies (E061), so a move waits until the last volley will be gone
+ * by its launch. Every archer move first turns to the nearest enemy.
+ *
+ *   B B B      shots (1 arrow)          B   Double Shot (2 arrows)
+ *   B          finisher: none Triple Shot (3), toward Javelin Leap (stage 4,
+ *              2 javelins), away Retreat Shot (hop back, 2 arrows),
+ *              sideways Javelin Step (stage 3, 2 javelins)
+ *   toward, toward + B   Javelin Strike (stage 8, 3 javelins)
+ *   away, away + B       Falcon Retreat (hop back, 3 arrows)
+ *   away, toward + B     Triple Shot */
+typedef struct {
+    uint8_t weapon,level,arrows,damage,hop,launch,free;   /* frames from the start */
+    const char *name;
+} SomArcherMove;
+enum{SOM_ARC_SHOT,SOM_ARC_DOUBLE,SOM_ARC_TRIPLE,SOM_ARC_LEAP,SOM_ARC_STEP,
+     SOM_ARC_RETREAT,SOM_ARC_FALCON,SOM_ARC_STRIKE};
+static const SomArcherMove som_archer_moves[]={
+    {5,0,0,0,0,21,43,"shot"},
+    {5,3,3,1,0,21,55,"Double Shot"},
+    {5,6,6,2,0,21,69,"Triple Shot"},
+    {7,4,3,2,0,41,82,"Javelin Leap"},
+    {7,3,3,1,0,16,56,"Javelin Step"},
+    {5,3,3,1,1,21,55,"Retreat Shot"},
+    {5,6,6,2,1,21,69,"Falcon Retreat"},
+    {7,8,6,3,0,46,100,"Javelin Strike"},
+};
+#define SOM_ARCHER_SHOTS 3u
+#define SOM_ARCHER_LATENCY 5u     /* the first animation step comes 0-4 frames late */
+static int archer_hop_move=-1,archer_moving=-1;
+static uint16_t monk_chain_held_dirs;      /* defined with som_monk_chain_press */
+static unsigned long archer_launch_at,archer_free_at;
+static int som_archer_class(unsigned who){
+    return som_disc_member_class(&disciplines,who)==SOM_DISC_ARCHERY;
+}
+/* The hero can take the next move now (the move's launch comes after the
+ * last volley is gone). */
+static int som_archer_ready(const uint8_t *ram,const uint8_t *o,unsigned who,unsigned move){
+    if(o[0]!=1||o[0x01C]||o[0x060]||(o[0x191]&0x80u)||!(o[0x182]|o[0x183])||
+       ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    if(o[0x1E4]!=5u&&o[0x1E4]!=7u)return 0;
+    if(who&&!som_ally_idle(ram,who)&&o[0x19B]==0)return 0;
+    return !o[0x061]||frame_number+som_archer_moves[move].launch>=archer_free_at;
+}
+static void som_archer_face(const uint8_t *ram,uint8_t *o){
+    /* The nearest live enemy; with none in 160 px, "toward" as the command
+     * was read (the hero has turned round pressing away). */
+    int near=0;
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+0xE600u+0x200u*k;
+        if(m[0]!=1||m[0x180]>=0x80||(int)k==familiar.slot||(som_word(m+0x190)&0x8000u))continue;
+        near|=labs((long)som_word(m+2)-(long)som_word(o+2))+
+              labs((long)som_word(m+4)-(long)som_word(o+4))<=160;
+    }
+    int ex,ey;
+    if(near)(void)som_monk_enemy(ram,o,&ex,&ey);else som_monk_ref(ram,o,&ex,&ey);
+    o[0x010]=ex>0?0x02u:ex<0?0x82u:ey>0?0x01u:0x00u;
+}
+/* Starts `move` (after its hop, if it has one). */
+static int som_archer_play(uint8_t *ram,unsigned who,unsigned move,int hop_done){
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    const SomArcherMove *m=&som_archer_moves[move];
+    if(m->hop&&!hop_done&&who==som_actor){
+        int ex,ey;(void)som_monk_enemy(ram,o,&ex,&ey);
+        const int keep_x=evade_dir_x,keep_y=evade_dir_y;
+        evade_dir_x=-ex;evade_dir_y=-ey;
+        const int hopped=som_evade_start_raw(ram);
+        evade_dir_x=keep_x;evade_dir_y=keep_y;
+        if(hopped){
+            archer_hop_move=(int)move;
+            fprintf(stderr,"[som-ai] ARCHER %s: hop back\n",m->name);
+            return 1;
+        }
+    }
+    if(!som_archer_ready(ram,o,who,move))return 0;
+    if(o[0x1E4]!=m->weapon){
+        const int r=who?som_equip_ally_weapon(ram,who,m->weapon):som_equip_weapon(ram,m->weapon);
+        if(r==SOM_EQUIP_BUSY)return 0;                                     /* wait */
+        if(r!=SOM_EQUIP_OK){
+            if(m->weapon!=5u)return som_archer_play(ram,who,SOM_ARC_TRIPLE,1);   /* no javelin */
+            return 0;
+        }
+    }
+    som_archer_face(ram,o);
+    const unsigned cls=som_monk_enemy(ram,o,&(int){0},&(int){0});
+    o[0x01C]=m->level?0x80u:0x20u;
+    o[0x011]=(uint8_t)(m->level?4u*m->level+cls:0u);
+    o[0x19B]=m->arrows;
+    o[0x006]=o[0x007]=0;o[0x030]=0xFF;
+    archer_moving=(int)move;
+    archer_launch_at=frame_number+m->launch+SOM_ARCHER_LATENCY;
+    archer_free_at=frame_number+m->free+SOM_ARCHER_LATENCY;
+    if(move!=SOM_ARC_SHOT){
+        char text[32];snprintf(text,sizeof(text),"^%s",m->name);
+        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+    }
+    fprintf(stderr,"[som-ai] ARCHER %s (%s stage %u, animation %u) at frame %lu, step %u\n",m->name,
+            m->weapon==7u?"javelin":"bow",(unsigned)m->level,(unsigned)o[0x011],frame_number,
+            monk_chain_step);
+    return 1;
+}
+/* The archer's next move of the string, or the command `cmd`. */
+static int som_archer_start(uint8_t *ram,unsigned who,uint16_t held_dirs,unsigned cmd){
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    if(frame_number-monk_chain_end>SOM_MONK_CHAIN_RESET||monk_chain_who!=who)monk_chain_step=0;
+    unsigned move,next=monk_chain_step+1u;
+    if(cmd){
+        move=cmd==7u?SOM_ARC_STRIKE:cmd==SOM_CMD_AWAY_AWAY?SOM_ARC_FALCON:SOM_ARC_TRIPLE;
+        next=0;
+    }else if(monk_chain_step<SOM_ARCHER_SHOTS)move=SOM_ARC_SHOT;
+    else if(monk_chain_step==SOM_ARCHER_SHOTS)move=SOM_ARC_DOUBLE;
+    else{
+        const unsigned d=som_monk_dir_of(ram,o,held_dirs);
+        move=d==SOM_MONK_TOWARD?SOM_ARC_LEAP:d==SOM_MONK_AWAY?SOM_ARC_RETREAT:
+             d==SOM_MONK_SIDE?SOM_ARC_STEP:SOM_ARC_TRIPLE;
+        next=0;
+    }
+    if(!som_archer_play(ram,who,move,0))return 0;
+    monk_chain_step=next;
+    if(cmd)monk_dir_last=monk_dir_prev=0;
+    monk_chain_who=who;monk_chain_active=1;monk_chain_queued=0;monk_chain_queued_cmd=0;
+    som_combo_clear();
+    return 1;
+}
+/* Each frame of an archer move: its hop, its projectile stage, its end. */
+static void som_archer_frame(uint8_t *ram){
+    uint8_t *o=ram+0xE000u+0x200u*monk_chain_who;
+    if(archer_hop_move>=0){
+        if(evade_active)return;
+        const int move=archer_hop_move;archer_hop_move=-1;
+        if(!som_archer_play(ram,monk_chain_who,(unsigned)move,1)){
+            monk_chain_active=0;monk_chain_end=frame_number;
+        }
+        return;
+    }
+    if(archer_moving>=0){
+        const SomArcherMove *m=&som_archer_moves[archer_moving];
+        if(frame_number<=archer_launch_at)o[0x19B]=m->arrows;          /* the count, at launch */
+        else if(frame_number==archer_launch_at+1u&&o[0x061])o[0x19B]=m->damage;
+    }
+    if(o[0]==1&&(o[0x01C]==0x80u||o[0x01C]==0x20u)&&ram[0xE4]==1&&ram[0xD0]==0)return;
+    if(archer_moving>=0&&o[0x01C]==0&&!o[0x061])o[0x19B]=0;           /* no volley out */
+    if(archer_moving>=0)monk_chain_end=frame_number;     /* the move ended now */
+    archer_moving=-1;
+    if(monk_chain_queued&&som_archer_class(monk_chain_who)){
+        if(som_archer_start(ram,monk_chain_who,monk_chain_held_dirs,(unsigned)monk_chain_queued_cmd))
+            return;
+        if(o[0x061]&&!o[0x01C])return;                                  /* waits for the volley */
+    }
+    monk_chain_active=0;monk_chain_end=frame_number;
+    monk_chain_queued=0;monk_chain_queued_cmd=0;
+}
 /* The next move of the string, or the command `cmd` (6 / 7). */
 static int som_monk_chain_start(uint8_t *ram,unsigned who,uint16_t held_dirs,unsigned cmd){
+    if(som_archer_class(who))return som_archer_start(ram,who,held_dirs,cmd);
+    if(cmd==SOM_CMD_AWAY_AWAY)cmd=0;                   /* the archer's command */
     uint8_t *o=ram+0xE000u+0x200u*who;
     if(!som_monk_ready(ram,o,who,cmd!=0u)&&!som_monk_ready(ram,o,who,0))return 0;
     if(frame_number-monk_chain_end>SOM_MONK_CHAIN_RESET||monk_chain_who!=who)monk_chain_step=0;
@@ -4930,17 +5111,27 @@ static int som_monk_in_string(unsigned who){
 static uint16_t monk_chain_held_dirs;
 static int som_monk_chain_press(uint8_t *ram,unsigned who,uint16_t held_dirs){
     if(!ram)return 0;
-    const unsigned cmd=som_monk_command();
+    unsigned cmd=som_monk_command();
+    if(cmd==SOM_CMD_AWAY_AWAY&&!som_archer_class(who))cmd=0;
     monk_chain_held_dirs=held_dirs;
     if(cmd&&som_monk_chain_start(ram,who,held_dirs,cmd))return 1;
     if(monk_chain_active&&monk_chain_who==who){
         monk_chain_queued=1;monk_chain_queued_cmd=(int)cmd;return 1;
     }
-    return som_monk_chain_start(ram,who,held_dirs,0);
+    if(som_monk_chain_start(ram,who,held_dirs,cmd))return 1;
+    /* The archer's volley still flies (or a weapon swap must wait): the
+     * press is kept and fired when it can be. */
+    const uint8_t *o=ram+0xE000u+0x200u*who;
+    if(som_archer_class(who)&&o[0]==1&&(o[0x061]||o[0x01C])){
+        monk_chain_who=who;monk_chain_active=1;monk_chain_queued=1;monk_chain_queued_cmd=(int)cmd;
+        return 1;
+    }
+    return 0;
 }
 /* Each frame: notice the end of a move and start a queued one. */
 static void som_monk_chain_frame(uint8_t *ram){
     if(!ram||!monk_chain_active)return;
+    if(som_archer_class(monk_chain_who)){som_archer_frame(ram);return;}
     uint8_t *o=ram+0xE000u+0x200u*monk_chain_who;
     if(o[0]==1&&(o[0x01C]==0x80u||o[0x01C]==0x20u)&&ram[0xE4]==1&&ram[0xD0]==0)return;
     monk_chain_active=0;monk_chain_end=frame_number;

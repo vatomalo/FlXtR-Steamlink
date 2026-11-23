@@ -2384,6 +2384,46 @@ int main(void){
                     MONK_END();
                     hero[0x1E4]=0;disciplines.selected=keep_cls;hero[0x19B]=0;
                 }
+                /* The archer: shots, a double shot (arrow stage held until
+                 * the launch, then the damage stage), a javelin finisher,
+                 * and away, away + B: a hop back, then three arrows. */
+                {
+                    const uint8_t keep_cls=disciplines.selected;
+                    static uint8_t keep_hero[0x200];memcpy(keep_hero,hero,sizeof(keep_hero));
+                    const int keep_raised=monk_glove_raised;
+                    disciplines.selected=SOM_DISC_ARCHERY;frame_number+=200;
+                    const uint8_t keep_jav=ram[0xCC5B],keep_bow=ram[0xCC59];
+                    ram[0xCC5B]=0;ram[0xCC59]=0;                       /* bow and javelin owned */
+                    hero[0x1E4]=5;hero[0x010]=0x82;hero[0x061]=0;monk_chain_step=0;
+                    monk_dir_last=monk_dir_prev=0;archer_hop_move=-1;archer_moving=-1;
+                    #define ARC_END() do{hero[0x01C]=0;hero[0x061]=0;hero[0x19B]=0;frame_number+=40;som_monk_chain_frame(ram);}while(0)
+                    MONK_TAP(bb);assert(hero[0x01C]==0x20u&&hero[0x011]==0u&&hero[0x19B]==0u);
+                    ARC_END();MONK_TAP(bb);ARC_END();MONK_TAP(bb);
+                    assert(archer_moving==SOM_ARC_SHOT);
+                    ARC_END();MONK_TAP(bb);
+                    assert(archer_moving==SOM_ARC_DOUBLE&&hero[0x01C]==0x80u&&hero[0x19B]==3u);
+                    frame_number=archer_launch_at;som_monk_chain_frame(ram);assert(hero[0x19B]==3u);
+                    hero[0x061]=1;frame_number++;som_monk_chain_frame(ram);
+                    assert(hero[0x19B]==1u);                            /* damage after the launch */
+                    /* B while the volley flies: queued, fired when it is gone. */
+                    hero[0x01C]=0;frame_number++;som_monk_chain_frame(ram);
+                    MONK_TAP((uint16_t)(bb|lt));                        /* toward (facing left) */
+                    assert(monk_chain_queued||archer_moving==SOM_ARC_LEAP);
+                    hero[0x061]=0;hero[0x19B]=0;frame_number+=30;som_monk_chain_frame(ram);  /* volley gone */
+                    assert(archer_moving==SOM_ARC_LEAP&&hero[0x1E4]==7u&&hero[0x011]==4u*4u+2u);
+                    ARC_END();
+                    hero[0x1E4]=5;          /* the bow back (the mock has no bow art to swap to) */
+                    MONK_TAP(rt);hero[0x010]=0x82;frame_number+=5;MONK_TAP(rt);hero[0x010]=0x82;
+                    frame_number+=5;MONK_TAP(bb);
+                    assert(archer_hop_move==SOM_ARC_FALCON||archer_moving==SOM_ARC_FALCON);
+                    evade_active=0;som_monk_chain_frame(ram);
+                    assert(archer_moving==SOM_ARC_FALCON&&hero[0x19B]==6u&&hero[0x1E4]==5u&&hero[0x010]==0x82u);
+                    ARC_END();archer_hop_move=-1;
+                    #undef ARC_END
+                    som_evade_tick();hero[0x1E4]=0;disciplines.selected=keep_cls;hero[0x19B]=0;
+                    ram[0xCC5B]=keep_jav;ram[0xCC59]=keep_bow;
+                    memcpy(hero,keep_hero,sizeof(keep_hero));monk_glove_raised=keep_raised;
+                }
                 #undef MONK_TAP
                 #undef MONK_END
                 ram[0xD0]=0x83;som_monk_glove(ram);                        /* the inn's save */

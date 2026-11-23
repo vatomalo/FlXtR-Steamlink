@@ -27,7 +27,7 @@ static void subtitle_track_add(int language,const char *name,int stream,const ch
     SubtitleTrack *t=&subtitle_tracks[subtitle_track_count++];
     memset(t,0,sizeof(*t));t->language=language;t->stream=stream;
     if(url)snprintf(t->url,sizeof(t->url),"%s",url);
-    if(same)snprintf(t->name,sizeof(t->name),"%.32s %d",name,same+1);else snprintf(t->name,sizeof(t->name),"%.39s",name);
+    if(same)snprintf(t->name,sizeof(t->name),"%.26s %d",name,same+1);else snprintf(t->name,sizeof(t->name),"%.39s",name);
 }
 static void subtitle_tracks_find(AVFormatContext *fmt){
     subtitle_track_count=0;subtitle_format=fmt;

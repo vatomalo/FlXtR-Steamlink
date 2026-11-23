@@ -1086,6 +1086,12 @@ static void som_weapon_mask_pick(const uint8_t *ram);
 #define SOM_LOCK_DROP 220
 static int lock_slot=-1;
 static uint8_t lock_identity;
+/* Locked on, the D-pad circles the target (player, 2026-11-23: "when
+ * targeting player will walk in a circle around the radius of targetted
+ * enemy"): som_lock_steer, som_lock_orbit_after. */
+static int lock_orbiting,lock_radius;
+static uint16_t lock_dpad_out;
+static void som_lock_steer(uint8_t *ram,uint16_t dirs);
 static unsigned lock_map;
 static void som_lock_toggle(uint8_t *ram);
 static void som_lock_frame(uint8_t *ram);
@@ -1702,6 +1708,13 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         if(bitmask)actual=(int16_t)(actual&~a);
         else if(id<16u&&(a&(1u<<id)))actual=0;
     }
+    if(lock_orbiting&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+        const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
+            (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+        if(bitmask)actual=(int16_t)(((uint16_t)actual&~dpad)|lock_dpad_out);
+        else if(id<16u&&(dpad&(1u<<id)))actual=(lock_dpad_out>>id)&1u;
+    }
     if((seal_mode||throw_active)&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
@@ -1877,6 +1890,8 @@ static void som_input_poll(void){
            (current&r2)&&(pressed&dpad)&&
            som_throw_back_pressed(wram,pressed))
             som_throw_start(wram);
+        /* Locked on: the D-pad strafes round the target (not with L2's seals). */
+        som_lock_steer(!(current&l2_bit)?wram:NULL,(uint16_t)(current&dpad));
         /* Ordinary attacks follow the controller binding. The proxy move
          * owner can still be finishing a move on a different party member. */
         const unsigned driver=som_pad1_member_in(attack_ram);
@@ -8127,10 +8142,89 @@ static void som_class_x_frame(uint8_t *ram){
 }
 
 /* ---- Lock-on targeting (see SOM_LOCK_RANGE) ------------------------------- */
+/* Strafing. The held D-pad splits into a part toward / away from the
+ * target and a part across (round it). With an across part the game is
+ * given the walking direction along the circle (8-way: its own walk
+ * animation and wall stops), and after its frame the hero is pulled back
+ * to the radius, at most SOM_LOCK_PULL px a frame, so the walk bends into
+ * a circle. The way round is kept while the direction stays held (one
+ * held direction circles all the way); a press mostly toward / away is a
+ * plain walk, and the radius is then wherever he stands (never under
+ * SOM_LOCK_MIN_RADIUS). */
+#define SOM_LOCK_PULL 3
+#define SOM_LOCK_MIN_RADIUS 20
+static int lock_keep_radius,lock_orbit_sign,lock_last_x,lock_last_y;
+static unsigned lock_stuck;               /* frames the circling walk went nowhere */
+static uint16_t lock_orbit_dirs;
+static int som_isqrt(long v){
+    long r=0;while((r+1)*(r+1)<=v)r++;return (int)r;
+}
+static void som_lock_steer(uint8_t *ram,uint16_t dirs){
+    lock_orbiting=0;lock_keep_radius=0;
+    if(!dirs){lock_orbit_dirs=0;lock_orbit_sign=0;}
+    if(!ram||lock_slot<0||ring_ai_enabled||evade_active||!dirs)return;
+    const uint8_t *hero=SOM_ACT(ram);
+    if(hero[0]!=1||hero[0x01C])return;                /* busy: the game ignores the pad */
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
+    const long vx=(long)som_bun_u16(m+2)-(long)som_bun_u16(hero+2);
+    const long vy=(long)som_bun_u16(m+4)-(long)som_bun_u16(hero+4);
+    const int dist=som_isqrt(vx*vx+vy*vy);
+    if(dist<4)return;
+    const int x=(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
+    const int y=(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))?1:(dirs&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?-1:0;
+    const long ux=vx*256/dist,uy=vy*256/dist;        /* toward the target, x256 */
+    /* The way round is chosen when a direction is pressed and kept while it
+     * stays held, so one held direction goes all the way round; a press
+     * mostly toward / away is a plain walk that changes the radius. */
+    if(dirs!=lock_orbit_dirs||!lock_orbit_sign){
+        const long r=x*ux+y*uy,t=-x*uy+y*ux;          /* toward / round, x256 */
+        lock_orbit_dirs=dirs;
+        lock_orbit_sign=labs(t)>=labs(r)?(t>0?1:-1):0;
+        if(!lock_orbit_sign)return;
+    }
+    const int ts=lock_orbit_sign;
+    const long ox=-uy*ts,oy=ux*ts;                    /* along the circle */
+    const long ax=labs(ox),ay=labs(oy);
+    uint16_t out=0;
+    if(ax*5>ay*2)out|=(uint16_t)(1u<<(ox>0?RETRO_DEVICE_ID_JOYPAD_RIGHT:RETRO_DEVICE_ID_JOYPAD_LEFT));
+    if(ay*5>ax*2)out|=(uint16_t)(1u<<(oy>0?RETRO_DEVICE_ID_JOYPAD_DOWN:RETRO_DEVICE_ID_JOYPAD_UP));
+    /* Blocked on the diagonal (a tree line): slide on one axis, then the
+     * other, so he goes along the obstacle instead of standing still. */
+    if(lock_stuck>=2u&&(out&(out-1u))){
+        const uint16_t h=(uint16_t)(out&((1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)));
+        const int x_first=ax>=ay;
+        out=((lock_stuck/8u)%2u==0u)==x_first?h:(uint16_t)(out&~h);
+    }
+    lock_dpad_out=out;lock_orbiting=1;lock_keep_radius=1;
+}
+/* After the game's frame: keep the radius while circling, else take it. */
+static void som_lock_orbit_after(uint8_t *ram){
+    uint8_t *hero=SOM_ACT(ram);
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
+    const long vx=(long)som_bun_u16(m+2)-(long)som_bun_u16(hero+2);
+    const long vy=(long)som_bun_u16(m+4)-(long)som_bun_u16(hero+4);
+    const int dist=som_isqrt(vx*vx+vy*vy);
+    if(!lock_orbiting||!lock_keep_radius||!lock_radius){
+        lock_radius=dist<SOM_LOCK_MIN_RADIUS?SOM_LOCK_MIN_RADIUS:dist;return;
+    }
+    if(dist<4||hero[0x01C]||evade_active)return;
+    const int px=(int)som_bun_u16(hero+2),py=(int)som_bun_u16(hero+4);
+    lock_stuck=px==lock_last_x&&py==lock_last_y?lock_stuck+1u:0u;
+    lock_last_x=px;lock_last_y=py;
+    int pull=dist-lock_radius;                        /* + : too far, step in */
+    if(!pull)return;
+    if(pull>SOM_LOCK_PULL)pull=SOM_LOCK_PULL;else if(pull<-SOM_LOCK_PULL)pull=-SOM_LOCK_PULL;
+    const int hx=(int)som_bun_u16(hero+2)+(int)(vx*pull/dist);
+    const int hy=(int)som_bun_u16(hero+4)+(int)(vy*pull/dist);
+    if(!som_bun_spot_open(ram,hx,hy,som_hero_place(hero)))return;
+    hero[2]=(uint8_t)hx;hero[3]=(uint8_t)(hx>>8);
+    hero[4]=(uint8_t)hy;hero[5]=(uint8_t)(hy>>8);
+}
 static void som_lock_release(const char *why){
     if(lock_slot<0)return;
     fprintf(stderr,"[som-ai] LOCK off (monster slot %d): %s\n",lock_slot+1,why);
     lock_slot=-1;
+    lock_orbiting=0;lock_radius=0;
 }
 static void som_lock_toggle(uint8_t *ram){
     if(lock_slot>=0){
@@ -8168,6 +8262,7 @@ static void som_lock_frame(uint8_t *ram){
     const int dx=(int)som_bun_u16(m+2)-(int)som_bun_u16(hero+2);
     const int dy=(int)som_bun_u16(m+4)-(int)som_bun_u16(hero+4);
     if(abs(dx)+abs(dy)>SOM_LOCK_DROP){som_lock_release("too far");return;}
+    som_lock_orbit_after(ram);
     /* Not during a dodge or a pose the game is playing on its own. */
     if(evade_active||hero[0x01C]==0x40u||hero[0x01C]==0x30u)return;
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);

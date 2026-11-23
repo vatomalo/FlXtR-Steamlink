@@ -2020,6 +2020,33 @@ int main(void){
             assert(lock_slot<0);      /* second press toggles immediately */
             mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
             assert(lock_slot==0);
+            /* Strafing: locked on a foe to the left, Up walks round it (the
+             * game is given Up), and the radius holds: drifting out pulls
+             * him back in. */
+            {
+                const uint16_t upb=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_UP);
+                uint8_t keep_dims[4];memcpy(keep_dims,ram+0xC0,4);
+                ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512, open */
+                memset(ram+0x10000,0,0x10000);ram[0x1B800]=0;
+                hero[2]=200;hero[4]=210;foe[2]=150;foe[4]=210;
+                som_style_after(ram);assert(lock_radius==50);              /* standing: taken */
+                mocked_buttons=upb;som_input_poll();
+                assert(lock_orbiting&&lock_keep_radius);
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP)==1&&
+                       som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==0);
+                hero[4]=190;som_style_after(ram);                           /* the game walked up */
+                const long ddx=(long)som_bun_u16(hero+2)-150,ddy=(long)som_bun_u16(hero+4)-210;
+                assert(som_bun_u16(hero+2)<200&&ddx*ddx+ddy*ddy<53L*53L);  /* pulled in */
+                /* Further round, the game is told up-left: the walk bends. */
+                hero[2]=180;hero[4]=170;mocked_buttons=upb;som_input_poll();
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP)==1&&
+                       som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==1);
+                /* Toward it (down, from up here): a plain walk, the radius follows. */
+                mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);som_input_poll();
+                assert(!lock_orbiting);
+                mocked_buttons=0;som_input_poll();
+                memcpy(ram+0xC0,keep_dims,4);hero[2]=200;hero[4]=200;foe[2]=150;foe[4]=210;
+            }
             foe[0x191]=0x80;som_hop_step();                            /* it dies */
             assert(lock_slot<0);
             foe[0]=0;foe[0x191]=0;hero[0x010]=0x02;

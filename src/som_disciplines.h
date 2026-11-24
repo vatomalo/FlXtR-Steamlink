@@ -217,9 +217,8 @@ static inline int som_hud_member_portrait(const uint8_t *ram,unsigned who,int *x
     }
     return 0;
 }
-/* The class title sits right of the portrait, under the HP numbers. */
-#define SOM_HUD_LABEL_DX 18
-#define SOM_HUD_LABEL_DY 9
+/* Leave room for the portrait and both native stat rows. */
+#define SOM_HUD_LABEL_DY 17
 /* Pixels below the hero's position (base SNES pixels) for the label top. */
 #define SOM_CLASS_LABEL_DROP_PX 3
 /* The class title, centred under the hero at base screen position

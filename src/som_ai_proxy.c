@@ -7560,7 +7560,8 @@ static void som_portal_frame(uint8_t *ram){
  * HUD sprites (tiles 0x1E0-0x1FF near the bottom) in the OAM buffer
  * 7E:0800 the NMI uploads. Applied at the frame's end; the next frame shows
  * it. Dialogs and events (7E:00D0 set) and menus get the HUD back as it was. */
-#define SOM_HUD_LIFT_PX 10u
+#define SOM_HUD_LIFT_PX 26u
+#define SOM_HUD_LEGACY_LIFT_PX 10u
 static int hud_lifted;
 static void som_hud_lift(uint8_t *ram,int menu){
     const int field=ram&&!menu&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
@@ -7570,7 +7571,10 @@ static void som_hud_lift(uint8_t *ram,int menu){
         hud_lifted=0;
         return;
     }
-    if(ram[0x40]!=0&&!(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;  /* the game's own scroll */
+    /* Existing field save states may carry the previous proxy's BG3 lift.
+     * The native game rebuilds the portrait OAM on the next frame. */
+    const unsigned scroll=som_word(ram+0x40);
+    if(scroll&&scroll!=SOM_HUD_LEGACY_LIFT_PX&&scroll!=SOM_HUD_LIFT_PX)return;
     ram[0x40]=SOM_HUD_LIFT_PX;ram[0x41]=0;
     hud_lifted=1;
     for(unsigned i=0;i<128u;i++){
@@ -7582,7 +7586,7 @@ static void som_hud_lift(uint8_t *ram,int menu){
 /* Party panels, Seiken Densetsu 3 style (player, 2026-11-20): under each
  * member's HUD portrait (tile 0x1E8 + 2*who in palette who + 1, live OAM
  * 2026-11-20: x 8 / 88 / 168), in that member's 80 px column:
- *   class title, right of the portrait, under the game's HP numbers;
+ *   class title below the portrait and the native HP/MP rows;
  *   the weapon (boy: class weapon or spell set; companions: their class
  *   move), from the portrait's left edge under it;
  *   a gauge: the class energy bar and the AP pips, no text.
@@ -7622,10 +7626,11 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         if(cls>=SOM_DISCIPLINE_COUNT||!som_hud_member_portrait(ram,who,&px,&py))continue;
         char line[24];
         const unsigned chars=(unsigned)(SOM_PANEL_COLUMN/6);
-        som_panel_text(line,sizeof(line),som_discipline_titles[cls],(unsigned)((SOM_PANEL_COLUMN-SOM_HUD_LABEL_DX)/6));
+        const int class_y=py+SOM_HUD_LABEL_DY;
+        som_panel_text(line,sizeof(line),som_discipline_titles[cls],chars);
         for(char *c=line;*c;c++)if(*c>='a'&&*c<='z')*c=(char)(*c-32);
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                          px+SOM_HUD_LABEL_DX,py+SOM_HUD_LABEL_DY,0,
+                          px,class_y,0,
                           som_overlay_color(pixel_format,255,255,255));
         /* Line 2. */
         char second[48]="";uint32_t ink=som_overlay_color(pixel_format,255,214,96);
@@ -7644,13 +7649,13 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         }
         som_panel_text(line,sizeof(line),second,chars);
         if(line[0])som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                                     px,py+SOM_HUD_LABEL_DY+8,0,ink);
+                                     px,class_y+8,0,ink);
         /* Line 3: the gauge. */
         const unsigned max=som_energy_max(som_disc_member_level(&disciplines,who,cls));
         const SomEnergy *en=who==0u?&energy:&ally_tech[who-1u].en;
         const int fresh=who&&!ally_tech_ready;
         const unsigned have=fresh||!en->started[cls]?max:en->energy[cls];
-        som_panel_gauge(width,height,pitch,px+1,py+SOM_HUD_LABEL_DY+18,have,max,
+        som_panel_gauge(width,height,pitch,px+1,class_y+17,have,max,
                         fresh?SOM_AP_MAX:en->ap);
     }
 }

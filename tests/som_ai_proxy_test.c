@@ -2711,11 +2711,12 @@ int main(void){
             portals.count=0;hero[2]=200;hero[4]=200;hero[0x0E]=0;
             disciplines.selected=keep;
         }
-        /* The game's HUD lifted 10 px in field play: BG3 scroll (7E:0040)
+        /* The game's HUD lifted in field play: BG3 scroll (7E:0040)
          * and the portrait sprite; once only; undone for a dialog. */
         {
             uint8_t keep_oam[0x220];memcpy(keep_oam,ram+0x0800,sizeof(keep_oam));
             const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D];
+            assert(SOM_HUD_LABEL_DY>=16); /* Class starts below both native rows. */
             ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=0;ram[0x41]=0;hud_lifted=0;
             uint8_t *e=ram+0x0800;e[0]=88;e[1]=199;e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
             uint8_t *m=ram+0x0804;m[0]=60;m[1]=200;m[2]=0x40;m[3]=0x30;   /* a monster low on screen */
@@ -2725,7 +2726,11 @@ int main(void){
             assert(e[1]==199-SOM_HUD_LIFT_PX);                         /* not twice */
             ram[0xD0]=0x83;som_hud_lift(ram,0);                         /* a dialog */
             assert(ram[0x40]==0&&!hud_lifted);
-            ram[0x40]=0x30;ram[0xD0]=0;som_hud_lift(ram,0);             /* a scroll of the game's own */
+            ram[0x40]=SOM_HUD_LEGACY_LIFT_PX;ram[0xD0]=0;e[1]=199;
+            som_hud_lift(ram,0);
+            assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX);
+            hud_lifted=0;
+            ram[0x40]=0x30;som_hud_lift(ram,0);             /* a scroll of the game's own */
             assert(ram[0x40]==0x30&&!hud_lifted);
             ram[0x40]=0;ram[0xD0]=keep_d0;ram[0x7D]=keep_7d;
             memcpy(ram+0x0800,keep_oam,sizeof(keep_oam));

@@ -2514,7 +2514,17 @@ static void som_input_poll(void){
             fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
         }
         const uint16_t gambit_buttons=(uint16_t)(pressed|pad2_pressed);
-        if(ring_ai_enabled&&gambit_buttons&&frame_number>=ring_ai_grace_until){
+        const uint16_t p2_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+        if(ring_ai_enabled&&(pad2_pressed&p2_start)&&frame_number>=ring_ai_grace_until){
+            /* Player 2 has a direct escape from AI play; Start never opens
+             * the native ring on the companion's controller. */
+            ally_order.until=0;
+            ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
+            som_manual_disciplines=0;jukebox.open=0;
+            unlink(ring_ai_file);
+            som_overlay_set(&overlay,"You play|AI stopped by Player 2",SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] PLAYER 2 START: controls back to the player\n");
+        }else if(ring_ai_enabled&&gambit_buttons&&frame_number>=ring_ai_grace_until){
             /* Shoulder tabs switch the overlay page, never reach the game. */
             const uint16_t tabs=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L)|
                                            (1u<<RETRO_DEVICE_ID_JOYPAD_R));

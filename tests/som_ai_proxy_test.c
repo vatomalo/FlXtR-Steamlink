@@ -285,6 +285,9 @@ int main(void){
     mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
     assert(!ring_ai_enabled&&!gambits.open);
     mocked_pad2=0;som_input_poll();
+    ring_ai_enabled=1;gambits.open=0;mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_START;
+    som_input_poll();assert(!ring_ai_enabled&&!gambits.open); /* P2 Start exits AI immediately */
+    mocked_pad2=0;som_input_poll();
     memset(mocked_wram,0,sizeof(mocked_wram));
     {
         /* Scaled savestates can enter on any frame. Keep damage proportion

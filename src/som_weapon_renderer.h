@@ -9,14 +9,14 @@ static void som_weapon_mask_load(void){
                        &weapon_mask_pack,&weapon_mask_pack_size);
     if(!weapon_mask_pack||weapon_mask_pack_size<10u||
        memcmp(weapon_mask_pack,"SOMWORK1",8u))return;
-    weapon_mask_index=calloc(3u*9u*256u,sizeof(*weapon_mask_index));
+    weapon_mask_index=calloc(4u*9u*256u,sizeof(*weapon_mask_index));
     if(!weapon_mask_index)return;
     const uint8_t *p=weapon_mask_pack+10u,*end=weapon_mask_pack+weapon_mask_pack_size;
     const unsigned entries=weapon_mask_pack[8]|(unsigned)weapon_mask_pack[9]<<8;
     unsigned count=0;
     for(unsigned e=0;e<entries;e++){
         if(end-p<44)goto malformed;
-        if(p[0]<0xD4u||p[0]>0xD6u||p[1]<9u||p[1]>=18u||p[3]!=1u)goto malformed;
+        if(p[0]<0xD4u||p[0]>0xD7u||p[1]<9u||p[1]>=18u||p[3]!=1u)goto malformed;
         const uint8_t *frame=p+44u;
         const uint8_t *next=som_work_next_frame(frame,end);
         if(!next||!frame[0]||!frame[3]||!frame[4])goto malformed;
@@ -40,19 +40,32 @@ malformed:
     free(weapon_mask_index);weapon_mask_index=NULL;
     fprintf(stderr,"[som-ai] Bushido: malformed mask pack ignored\n");
 }
-/* -1 = native sword; 0 = Tanto; 1 = Dai Katana. No other class changes. */
+/* Blade-only profiles apply to selected sword styles. Other weapon
+ * families retain their native art, including the Ninja's flail. */
 static int som_weapon_mask_mode(const uint8_t *ram){
     if(!weapon_mask_on_checked||frame_number-weapon_mask_on_checked>=120ul){
         weapon_mask_on_checked=frame_number?frame_number:1ul;
         weapon_mask_on=access(weapon_mask_on_file,F_OK)==0;
     }
-    if(weapon_mask_faulted||!weapon_mask_on||disciplines.selected!=SOM_DISC_BUSHIDO||
-       ram[0xE1E4]!=1u)return -1;
-    const unsigned style=styles.selected[SOM_DISC_BUSHIDO]%SOM_STYLES_PER_CLASS;
-    return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
+    const unsigned cls=disciplines.selected;
+    if(weapon_mask_faulted||!weapon_mask_on||cls>=SOM_DISCIPLINE_COUNT||ram[0xE1E4]!=1u)
+        return -1;
+    const unsigned style=styles.selected[cls]%SOM_STYLES_PER_CLASS;
+    if(som_weapon_styles[som_style_index(cls,style)].weapon!=1u)return -1;
+    switch(cls){
+    case SOM_DISC_BUSHIDO:
+        return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
+    case SOM_DISC_SWORD:
+    case SOM_DISC_NINJUTSU:
+    case SOM_DISC_FLOW:
+    case SOM_DISC_ROGUE:
+        return style==SOM_STYLE_FAST?3:style==SOM_STYLE_HEAVY?1:-1;
+    default:
+        return -1;
+    }
 }
 static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_mask_index||mode>2u||row<9u||row>=18u||frame>255u)return 0;
+    if(!weapon_mask_index||mode>3u||row<9u||row>=18u||frame>255u)return 0;
     const uint32_t at=weapon_mask_index[(mode*9u+row-9u)*256u+frame];
     if(!at)return 0;
     const uint8_t *p=weapon_mask_pack+at-1u;
@@ -102,6 +115,14 @@ static void som_weapon_mask_pick(uint8_t *ram){
     if(!ram||!weapon_tiles_hidden)return;
     const int mode=som_weapon_mask_mode(ram);
     const unsigned row=ram[0xE1E3u], frame=ram[0xE026u]>>1;
+    /* A backend-side equip/refresh may have restored the native weapon
+     * within this frame. Do not composite a duplicate over that art. */
+    const uint8_t *tiles=ram+SOM_WEAPON_BUF;
+    for(unsigned i=0;i<sizeof(weapon_native_tiles);i++){
+        if(!tiles[i])continue;
+        weapon_tiles_hidden=0;
+        return;
+    }
     SomWorkEntry entry;
     if(mode<0||!som_weapon_mask_entry((unsigned)mode,row,frame,&entry)){
         /* The core has already drawn this frame. Restore its native WRAM

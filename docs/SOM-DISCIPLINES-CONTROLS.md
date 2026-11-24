@@ -909,3 +909,14 @@ effect buffer and can draw the current native pose from that entry. If the
 native pose is also unavailable, the session returns to native art and the
 already-rendered transition frame may still miss the weapon. The pack remains
 opt-in and the Katana remains native.
+
+Girl and Sprite each have their own class levels and experience. Their class
+selection and progression are included in the existing save-slot record and
+save-state trailer. Older records retain Boy's progression and start the
+companions at level 1 without changing their configured disciplines.
+
+The same opt-in pack provides shortened and extended sword profiles for
+Swordsmanship, Roguecraft and Weapon Flow, and a short Kunai profile for
+Ninjutsu. The profiles only engage when the selected style and equipped weapon
+are both swords. Kusarigama keeps its native whip art and mechanics. Balanced
+styles keep native art. Imported Tanto artwork is confined to Bushido.

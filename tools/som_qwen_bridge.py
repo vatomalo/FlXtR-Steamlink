@@ -1784,6 +1784,10 @@ def main() -> int:
                         continue
                     announce("AI: back from the last save" if kind == "loaded"
                              else "AI: could not load|please Continue by hand")
+                    if kind == "stuck":
+                        previous = "wait"
+                        time.sleep(args.interval)
+                        continue
                     if kind == "loaded" and play_loop is not None:
                         hero = (observation.get("party") or [{}])[0] \
                             if isinstance(observation, dict) else {}

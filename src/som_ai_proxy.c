@@ -999,7 +999,7 @@ static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried,weapon_mask_faulted;
 static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
-static uint32_t *weapon_mask_index;    /* [3][9][256], byte offsets + 1 */
+static uint32_t *weapon_mask_index;    /* [4][9][256], byte offsets + 1 */
 static uint8_t weapon_native_tiles[0x800];
 static int weapon_tiles_hidden;
 static SomNpcWorkState weapon_masked;
@@ -1185,6 +1185,7 @@ static unsigned ally_equip_pending=6u;
 static unsigned long ally_equip_tried;
 static void som_party_class_saved(void){
     som_disc_save();
+    som_prog_write();
     ally_equip_pending|=1u<<(disciplines.who%SOM_PARTY_MEMBERS);
     const unsigned who=disciplines.who,cls=som_disc_member_class(&disciplines,who);
     fprintf(stderr,"[som-ai] PARTY %s class=%s (saved)\n",som_party_names[who%SOM_PARTY_MEMBERS],
@@ -3682,6 +3683,12 @@ typedef struct {
     int dashing,dodging,target,tx,ty,lx,ly;
     unsigned hits_left,amount,dodge_left,cls,target_kind,map;
     int ddx,ddy;
+    struct {
+        unsigned slot,identity,hp,map,cls;
+        unsigned long queued_at;
+        int active,heal;
+    } credit;
+    unsigned long xp_ready;
 } SomAllyTech;
 static SomAllyTech ally_tech[2];
 static int ally_tech_ready;
@@ -3697,15 +3704,57 @@ static const uint8_t *som_ally_attack_target(const uint8_t *ram,const SomAllyTec
     const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t->target;
     return som_bun_monster_alive(m)&&m[0x180]==t->target_kind?m:NULL;
 }
-static void som_ally_hurt(uint8_t *ram,unsigned slot,unsigned damage){
-    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
-    const unsigned pending=m[0x1F1]+damage;
-    m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+/* Only actions that begin with an empty native queue can claim XP.
+ * Observe the queue being consumed and HP moving in the intended direction. */
+static void som_ally_queue(uint8_t *ram,unsigned who,unsigned slot,unsigned amount,int heal){
+    uint8_t *target=som_ally_obj(ram,slot);
+    const unsigned offset=heal?0x1F3u:0x1F1u;
+    SomAllyTech *t=&ally_tech[who-1u];
+    const unsigned hp=som_word(target+0x182);
+    if(!target[offset]&&!t->credit.active&&frame_number>=t->xp_ready&&hp&&amount&&
+       (!heal||hp<som_word(target+0x184))){
+        t->credit.slot=slot;
+        t->credit.identity=target[0x180];
+        t->credit.hp=hp;
+        t->credit.map=som_word(ram+0xDC);
+        t->credit.cls=t->cls;
+        t->credit.queued_at=frame_number;
+        t->credit.heal=heal;
+        t->credit.active=1;
+    }
+    const unsigned queued=target[offset]+amount;
+    target[offset]=(uint8_t)(queued>0xFFu?0xFFu:queued);
+}
+static void som_ally_hurt(uint8_t *ram,unsigned who,unsigned slot,unsigned damage){
+    uint8_t *m=som_ally_obj(ram,slot+3u);
+    som_ally_queue(ram,who,slot+3u,damage,0);
     som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
 }
-static void som_ally_heal(uint8_t *o,unsigned amount){
-    const unsigned queued=o[0x1F3]+amount;
-    o[0x1F3]=(uint8_t)(queued>0xFFu?0xFFu:queued);
+static void som_ally_xp_frame(const uint8_t *ram){
+    if(!ram||!ally_tech_ready)return;
+    for(unsigned i=0;i<2u;i++){
+        SomAllyTech *t=&ally_tech[i];
+        if(!t->credit.active)continue;
+        const unsigned slot=t->credit.slot;
+        const uint8_t *actor=ram+0xE000u+0x200u*(i+1u);
+        const uint8_t *target=ram+0xE000u+0x200u*slot;
+        if(ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]||
+           t->credit.map!=som_word(ram+0xDC)||frame_number-t->credit.queued_at>12u||
+           target[0]!=1u||target[0x180]!=t->credit.identity||
+           (!t->credit.heal&&(int)slot-3==familiar.slot)||
+           !som_party_member_alive(actor,i+1u)||!som_party_ai_owned(ram,actor,i+1u)){
+            t->credit.active=0;
+            continue;
+        }
+        if(target[t->credit.heal?0x1F3u:0x1F1u])continue;
+        const unsigned hp=som_word(target+0x182);
+        const int changed=t->credit.heal?hp>t->credit.hp:hp<t->credit.hp;
+        if(changed&&som_disc_award_member(&disciplines,i+1u,t->credit.cls,10u)){
+            xp_dirty=1;
+            t->xp_ready=frame_number+30u;
+        }
+        t->credit.active=0;
+    }
 }
 /* One step of a carried move (dash or dodge): px toward the goal, only onto
  * open ground. 0 when blocked or there. */
@@ -3733,7 +3782,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         t->map=map;
     }
     const SomAllyMove *mv=&som_ally_moves[cls];
-    const unsigned level=disciplines.level[cls];
+    const unsigned level=som_disc_member_level(&disciplines,who,cls);
     const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
     som_energy_tick(&t->en,cls,level,x==t->lx&&y==t->ly);
     t->lx=x;t->ly=y;
@@ -3750,7 +3799,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         if(som_ally_step(ram,o,dx,dy))return;
         t->dashing=0;                                     /* there, or blocked: cut */
         if(som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,40,40))
-            som_ally_hurt(ram,(unsigned)t->target,t->amount);
+            som_ally_hurt(ram,who,(unsigned)t->target,t->amount);
         return;
     }
     if(t->hits_left){
@@ -3760,7 +3809,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
            !som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,mv->reach+16,mv->reach+16)){
             t->hits_left=0;return;
         }
-        som_ally_hurt(ram,(unsigned)t->target,t->amount);
+        som_ally_hurt(ram,who,(unsigned)t->target,t->amount);
         t->hits_left--;t->next_hit=frame_number+SOM_ALLY_HIT_GAP;
         return;
     }
@@ -3808,7 +3857,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
             const uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
             if((int)slot!=familiar.slot&&som_bun_monster_alive(e)&&
                som_bun_near((int)som_bun_u16(e+2),(int)som_bun_u16(e+4),x,y,mv->reach,mv->reach))
-                som_ally_hurt(ram,slot,t->amount);
+                som_ally_hurt(ram,who,slot,t->amount);
         }
         som_bun_boom(bunshin_booms,x,y,0,frame_number);
         break;
@@ -3826,7 +3875,12 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         som_bun_boom(bunshin_booms,x,y,1,frame_number);
         break;}
     case SOM_AM_BOLT:
-        som_bun_blast(ram,mx,my,t->amount,familiar.slot);
+        for(unsigned slot=0;slot<3u;slot++){
+            const uint8_t *e=som_ally_obj(ram,slot+3u);
+            if((int)slot!=familiar.slot&&som_bun_monster_alive(e)&&
+               som_bun_near((int)som_word(e+2),(int)som_word(e+4),mx,my,SOM_BUN_BLAST_X,SOM_BUN_BLAST_Y))
+                som_ally_queue(ram,who,slot+3u,t->amount,0);
+        }
         som_bun_boom(bunshin_booms,mx,my,0,frame_number);
         break;
     case SOM_AM_RANGED:{
@@ -3835,19 +3889,19 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
             const uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
             if((int)slot!=familiar.slot&&som_bun_monster_alive(e)&&
                abs((int)som_bun_u16(e+2)-x)+abs((int)som_bun_u16(e+4)-y)<=mv->reach){
-                som_ally_hurt(ram,slot,t->amount);shots++;
+                som_ally_hurt(ram,who,slot,t->amount);shots++;
             }
         }
         break;}
     case SOM_AM_HEAL:
         if(worst_who<0)return;
-        som_ally_heal(som_ally_obj(ram,(unsigned)worst_who),t->amount);
+        som_ally_queue(ram,who,(unsigned)worst_who,t->amount,1);
         som_bun_boom(bunshin_booms,(int)som_bun_u16(som_ally_obj(ram,(unsigned)worst_who)+2),
                      (int)som_bun_u16(som_ally_obj(ram,(unsigned)worst_who)+4),0,frame_number);
         break;
     case SOM_AM_HEAL_ALL:
         for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++)
-            if(som_party_member_alive(som_ally_obj(ram,k),k))som_ally_heal(som_ally_obj(ram,k),t->amount);
+            if(som_party_member_alive(som_ally_obj(ram,k),k))som_ally_queue(ram,who,k,t->amount,1);
         som_bun_boom(bunshin_booms,x,y,0,frame_number);
         break;
     default:return;
@@ -5201,10 +5255,16 @@ static int som_handle_command(const char *command){
         if((!strcmp(command,"companion")||
             (!strncmp(command,"companion_",10)&&sscanf(command+10,"%2u%c",&cls,&tail)==1))&&
            cls<SOM_DISCIPLINE_COUNT){
-            companion.cls=cls;
-            if(companion.active)return 1;               /* a new class for her */
+            const char *test_mode=getenv("FLXTR_SOM_TEST_COMMANDS");
+            if(!test_mode||strcmp(test_mode,"1")){
+                disciplines.party[0]=(uint8_t)cls;
+                disciplines.who=1u;
+                som_party_class_saved();
+                return 1;
+            }
+            if(companion.active){companion.cls=cls;return 1;}
+            if(familiar.slot>=0||familiar_carry.valid||familiar_pending)return 0;
             memset(&companion,0,sizeof(companion));companion.cls=cls;companion.active=1;
-            if(familiar.slot>=0||familiar_carry.valid)return 1;    /* she takes it over */
             familiar_pending=1;
             fprintf(stderr,"[som-ai] COMPANION as %s\n",som_discipline_names[cls]);
             if(som_clone_enemy()){som_familiar_bind();return 1;}
@@ -6078,7 +6138,7 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         if(line[0])som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
                                      px,py+SOM_HUD_LABEL_DY+8,0,ink);
         /* Line 3: the gauge. */
-        const unsigned max=som_energy_max(disciplines.level[cls]);
+        const unsigned max=som_energy_max(som_disc_member_level(&disciplines,who,cls));
         const SomEnergy *en=who==0u?&energy:&ally_tech[who-1u].en;
         const int fresh=who&&!ally_tech_ready;
         const unsigned have=fresh||!en->started[cls]?max:en->energy[cls];
@@ -6827,6 +6887,9 @@ RETRO_API void retro_run(void){
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_weapon_mask_restore(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_ally_xp_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)

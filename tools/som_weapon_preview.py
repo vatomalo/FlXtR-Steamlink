@@ -54,7 +54,7 @@ def unpack(data):
     for _ in range(count):
         if ptr+44>end:raise ValueError("truncated weapon mask entry")
         kind,row,frame,nframes=struct.unpack_from("<BBBB",data,ptr)
-        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_NATIVE) or row not in M.SWORD_ROWS or nframes!=1:
+        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_NATIVE,M.KIND_SHORT_SWORD) or row not in M.SWORD_ROWS or nframes!=1:
             raise ValueError("not a Bushido weapon-mask pack")
         palette=struct.unpack_from("<20H",data,ptr+4)
         if any(c&0x8000 for c in palette):

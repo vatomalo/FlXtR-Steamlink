@@ -11,7 +11,8 @@ native weapon art instead of displaying a detached or invisible weapon.
 
 SOMWORK1: one packed, cropped colour-index image per (style, row, frame).
 Pixels 1..5 = opaque weapon palette, 6..10 = 25%-opacity FX pixels.
-Kinds 0xD4 Tanto, 0xD5 Dai Katana and 0xD6 native fallback.
+Kinds 0xD4 Tanto, 0xD5 extended sword, 0xD6 native fallback,
+and 0xD7 shortened native sword.
 Weapon = native row, facing = frame.
 The pack is generated on the user's build machine; no ROM is bundled.
 """
@@ -26,6 +27,7 @@ import som_villager_work as V
 KIND_TANTO = 0xD4
 KIND_DAI = 0xD5
 KIND_NATIVE = 0xD6
+KIND_SHORT_SWORD = 0xD7
 SWORD_ROWS = tuple(range(9, 18))
 CANVAS = 224
 ORIGIN = (112, 140)
@@ -213,7 +215,8 @@ def pack(gfx, rows=SWORD_ROWS, dagger=None):
             gfx.render("boy", wp, image=weapon, origin=ORIGIN, source=tiles)
             gfx.render("boy", gfx.pieces("boy", "sword", frame, flags),
                        image=body, origin=ORIGIN)
-            for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI), ("native", KIND_NATIVE)):
+            for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI),
+                                ("native", KIND_NATIVE), ("short", KIND_SHORT_SWORD)):
                 if style == "native":
                     # Only encode native art representable by this pack.
                     # Higher palette indices would alias the FX alpha channel.
@@ -221,7 +224,8 @@ def pack(gfx, rows=SWORD_ROWS, dagger=None):
                         continue
                     art = weapon
                 else:
-                    art = masked_style(weapon, body, style, donor=dagger if style=="tanto" else None)
+                    blade_style = "tanto" if style == "short" else style
+                    art = masked_style(weapon, body, blade_style, donor=dagger if style=="tanto" else None)
                 record = cropped(art) if art else None
                 if record is None:
                     continue

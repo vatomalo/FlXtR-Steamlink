@@ -35,6 +35,10 @@ typedef struct {
     uint8_t selected;
     uint16_t level[SOM_DISCIPLINE_COUNT];
     uint32_t experience[SOM_DISCIPLINE_COUNT];
+    uint8_t party_present;
+    uint8_t party[2];
+    uint16_t party_level[2][SOM_DISCIPLINE_COUNT];
+    uint32_t party_xp[2][SOM_DISCIPLINE_COUNT];
     uint32_t perks[4];       /* reserved for unlocks (bit sets) */
 } SomProgress;
 
@@ -68,12 +72,26 @@ static inline void som_prog_from_disc(SomProgress *p,const SomDisciplines *d){
     p->selected=d->selected;
     memcpy(p->level,d->level,sizeof(p->level));
     memcpy(p->experience,d->experience,sizeof(p->experience));
+    p->party_present=3u;
+    memcpy(p->party,d->party,sizeof(p->party));
+    memcpy(p->party_level,d->party_level,sizeof(p->party_level));
+    memcpy(p->party_xp,d->party_xp,sizeof(p->party_xp));
 }
 static inline void som_prog_to_disc(const SomProgress *p,SomDisciplines *d){
     d->selected=p->selected;
     memcpy(d->level,p->level,sizeof(d->level));
     memcpy(d->experience,p->experience,sizeof(d->experience));
     memset(d->last_event,0,sizeof(d->last_event));
+    for(unsigned i=0;i<2u;i++){
+        if(p->party_present&(1u<<i)){
+            d->party[i]=p->party[i];
+            memcpy(d->party_level[i],p->party_level[i],sizeof(d->party_level[i]));
+            memcpy(d->party_xp[i],p->party_xp[i],sizeof(d->party_xp[i]));
+        }else{
+            for(unsigned cls=0;cls<SOM_DISCIPLINE_COUNT;cls++)d->party_level[i][cls]=1u;
+            memset(d->party_xp[i],0,sizeof(d->party_xp[i]));
+        }
+    }
 }
 /* Text form; the last line is "sum <fnv of everything before it>". Returns
  * the length written, 0 if it did not fit. */
@@ -93,6 +111,21 @@ static inline size_t som_prog_format(const SomProgress *p,char *out,size_t cap){
                (unsigned long)p->perks[1],(unsigned long)p->perks[2],(unsigned long)p->perks[3]);
     if(w<0||(size_t)w>=cap-n)return 0;
     n+=(size_t)w;
+    /* Optional v2 lines stay within the existing save-state trailer size. */
+    for(unsigned i=0;i<2u;i++){
+        if(!(p->party_present&(1u<<i)))continue;
+        w=snprintf(out+n,cap-n,"party %u %u ",i,(unsigned)p->party[i]);
+        if(w<0||(size_t)w>=cap-n)return 0;
+        n+=(size_t)w;
+        for(unsigned cls=0;cls<SOM_DISCIPLINE_COUNT;cls++){
+            w=snprintf(out+n,cap-n,"%02x%08lx",(unsigned)p->party_level[i][cls],
+                       (unsigned long)p->party_xp[i][cls]);
+            if(w!=10||(size_t)w>=cap-n)return 0;
+            n+=(size_t)w;
+        }
+        if(n+1u>=cap)return 0;
+        out[n++]='\n';
+    }
     const uint64_t sum=som_prog_hash((const uint8_t*)out,n);
     w=snprintf(out+n,cap-n,"sum %016llx\n",(unsigned long long)sum);
     if(w<0||(size_t)w>=cap-n)return 0;
@@ -122,6 +155,25 @@ static inline int som_prog_parse(const char *text,size_t len,SomProgress *p){
         else if(sscanf(line,"d %u %u %lu",&i,&level,&xp)==3){
             if(i>=SOM_DISCIPLINE_COUNT||level<1u||level>100u)return SOM_PROG_CORRUPT;
             q.level[i]=(uint16_t)level;q.experience[i]=(uint32_t)xp;seen|=16<<0;
+        }else if(!strncmp(line,"party ",6)){
+            unsigned member=0,cls=0;
+            int offset=0;
+            if(sscanf(line,"party %u %u %n",&member,&cls,&offset)!=2||offset<=0||member>=2u||
+               (cls>=SOM_DISCIPLINE_COUNT&&cls!=SOM_DISCIPLINE_NONE)||
+               (q.party_present&(1u<<member)))return SOM_PROG_CORRUPT;
+            const char *values=line+offset;
+            const char *end=strchr(values,'\n');
+            if(!end||end>sum_line||(size_t)(end-values)!=10u*SOM_DISCIPLINE_COUNT||
+               strspn(values,"0123456789abcdefABCDEF")!=(size_t)(end-values))
+                return SOM_PROG_CORRUPT;
+            q.party_present|=(uint8_t)(1u<<member);
+            q.party[member]=(uint8_t)cls;
+            for(unsigned j=0;j<SOM_DISCIPLINE_COUNT;j++,values+=10){
+                if(sscanf(values,"%2x%8lx",&level,&xp)!=2||level<1u||level>100u)
+                    return SOM_PROG_CORRUPT;
+                q.party_level[member][j]=(uint16_t)level;
+                q.party_xp[member][j]=(uint32_t)xp;
+            }
         }else if(sscanf(line,"perks %lx %lx %lx %lx",&k[0],&k[1],&k[2],&k[3])==4){
             for(unsigned j=0;j<4u;j++)q.perks[j]=(uint32_t)k[j];
         }

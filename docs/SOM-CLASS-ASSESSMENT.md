@@ -66,8 +66,9 @@ bow, boomerang, javelin.
    the same verified weapon-art path as B/Y; if the bow's art row is not
    verified on a save, X shows the ring notice instead.
 
-Native Girl and Sprite techniques currently have separate energy and cooldowns,
-with damage scaling still based on Boy's discipline levels. The proxy cancels
+Native Girl and Sprite techniques use separate discipline levels, experience,
+energy, and cooldowns. Experience follows a consumed native action queue and
+an observed change in the target's HP. The proxy cancels
 native companion sequences when a human takes ownership, a scripted phase
 interrupts combat, or the actor's map or target changes. The experimental
 monster-backed teammate remains a separate legacy feature.

@@ -164,23 +164,26 @@ class GameOverLoad:
         mode = context.get("game_mode")
         hp = _hero(observation).get("hp")
         now = self.clock()
-        if mode == "field" and isinstance(hp, int) and hp > 0:
+        if (mode == "field" and not context.get("map_loading") and wram is not None
+                and wram.u8(0x7EE000) == 1 and isinstance(hp, int) and hp > 0):
             if self.died_at is not None and self.presses:
                 done = ("loaded", f"save loaded after {self.presses} presses; HP {hp}")
                 self.__init__(self.clock)
                 return done
             self.__init__(self.clock)
             return None
-        if hp != 0 or wram is None:
-            return None
         if self.died_at is None:
-            if mode not in ("field", "event", "transition") or wram.u8(0x7EE000) != 1:
+            if (hp != 0 or wram is None or mode not in ("field", "event", "transition")
+                    or wram.u8(0x7EE000) != 1):
                 return None
             self.died_at = now
-        if self.gave_up or now - self.died_at > LOAD_WINDOW_S:
-            return None
+        if self.gave_up:
+            return ("hold", "game over: waiting for manual recovery")
+        if now - self.died_at > LOAD_WINDOW_S:
+            self.gave_up = True
+            return ("stuck", "reload timed out without reaching a live field")
         hold = ("hold", "game over: waiting for the next screen")
-        if mode not in ("event", "transition"):
+        if hp != 0 or wram is None or mode not in ("event", "transition"):
             return hold
         screen = self._screen(wram)
         if self.screen is None or self.screen[0] != screen:

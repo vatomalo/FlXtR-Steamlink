@@ -271,6 +271,20 @@ int main(void){
     assert((pad2_wanted&((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                          (1u<<RETRO_DEVICE_ID_JOYPAD_R)))==0);
     mocked_pad2=0;som_pad2_poll();
+    /* Player 2 can open and exit AI play from the second controller. */
+    ring_ai_file=ring_ai_path;ring_ai_enabled=1;ring_ai_grace_until=0;gambits.open=0;gambits.cursor=0;
+    mocked_buttons=0;mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+    assert(gambits.open&&ring_ai_enabled);
+    assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+    mocked_pad2=0;som_input_poll();
+    for(unsigned i=0;i<SOM_GAMBIT_EXIT_ITEM;i++){
+        mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_DOWN;som_input_poll();
+        mocked_pad2=0;som_input_poll();
+    }
+    assert(gambits.cursor==SOM_GAMBIT_EXIT_ITEM);
+    mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+    assert(!ring_ai_enabled&&!gambits.open);
+    mocked_pad2=0;som_input_poll();
     memset(mocked_wram,0,sizeof(mocked_wram));
     {
         /* Scaled savestates can enter on any frame. Keep damage proportion
@@ -703,6 +717,14 @@ int main(void){
     FILE *note=fopen(message_path,"w");
     assert(note!=NULL&&fputs("AI: using Candy|line two\n",note)>0&&fclose(note)==0);
     frame_number=SOM_MESSAGE_POLL_FRAMES*20u;som_check_message();
+    assert(access(message_path,F_OK)!=0&&!overlay.line_count); /* debug hidden by default */
+    note=fopen(message_path,"w");
+    assert(note!=NULL&&fputs("^Hello there!|speech remains\n",note)>0&&fclose(note)==0);
+    som_check_message();assert(overlay.speech_bubble&&overlay.line_count==2);
+    overlay.frames_left=0;
+    note=fopen(message_path,"w");
+    assert(note!=NULL&&fputs("AI: using Candy|line two\n",note)>0&&fclose(note)==0);
+    gambits.debug_messages=1;som_check_message();
     assert(access(message_path,F_OK)!=0&&overlay.line_count==2);
     assert(!strcmp(overlay.lines[0],"AI: using Candy"));
     som_video_refresh(core_frame,256,224,512);
@@ -1030,7 +1052,7 @@ int main(void){
     /* Gambit menu text and drawing. */
     {
         SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
-            {3,2,2,2,3,3,3,3},{3,3},0,0,1};
+            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         /* Quest page: two weights + exit, changed with Right, saved as digits. */
@@ -1073,6 +1095,10 @@ int main(void){
         assert(som_gambit_line(&g,SOM_GAMBIT_ITEMS,text)&&strstr(text,"Exit gambits"));
         assert(som_gambit_line(&g,SOM_GAMBIT_INFINITE_MP+1,text)&&strstr(text,"Infinite MP")&&
                strstr(text,"off"));
+        g.cursor=SOM_GAMBIT_DEBUG_ITEM;
+        assert(som_gambit_line(&g,SOM_GAMBIT_DEBUG_ITEM+1u,text)&&strstr(text,"AI debug messages")&&strstr(text,"off"));
+        assert(som_gambit_press(&g,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_DEBUG_CHANGED);
+        assert(g.debug_messages&&som_gambit_line(&g,SOM_GAMBIT_DEBUG_ITEM+1u,text)&&strstr(text,"ON"));
         /* Infinite MP test switch: B toggles; weights and file text unchanged. */
         {
             SomGambits m;memset(&m,0,sizeof(m));som_gambit_parse(&m,"433341");
@@ -1084,6 +1110,8 @@ int main(void){
             assert(som_gambit_line(&m,SOM_GAMBIT_INFINITE_MP+1,text)&&strstr(text,"ON"));
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_TEST_SWITCH);
             assert(!m.infinite_mp);
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
+            assert(m.cursor==SOM_GAMBIT_DEBUG_ITEM);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(m.cursor==SOM_GAMBIT_EXIT_ITEM);
         }
@@ -2732,16 +2760,20 @@ int main(void){
             portals.count=0;hero[2]=200;hero[4]=200;hero[0x0E]=0;
             disciplines.selected=keep;
         }
-        /* The game's HUD lifted 10 px in field play: BG3 scroll (7E:0040)
+        /* The class HUD lift upgrades old 10 px save-state placement to 26:
+         * BG3 scroll (7E:0040)
          * and the portrait sprite; once only; undone for a dialog. */
         {
             uint8_t keep_oam[0x220];memcpy(keep_oam,ram+0x0800,sizeof(keep_oam));
             const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D];
-            ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=0;ram[0x41]=0;hud_lifted=0;
+            assert(SOM_HUD_LABEL_DY>=16); /* class begins below both native rows */
+            ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=SOM_HUD_LEGACY_LIFT_PX;ram[0x41]=0;hud_lifted=0;
             uint8_t *e=ram+0x0800;e[0]=88;e[1]=199;e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
             uint8_t *m=ram+0x0804;m[0]=60;m[1]=200;m[2]=0x40;m[3]=0x30;   /* a monster low on screen */
             som_hud_lift(ram,0);
             assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX&&m[1]==200);
+            ram[0x40]=SOM_HUD_LEGACY_LIFT_PX;e[1]=189;hud_lifted=0;
+            som_hud_lift(ram,0);assert(e[1]==199-SOM_HUD_LIFT_PX); /* legacy saved OAM: shift by delta */
             som_hud_lift(ram,0);
             assert(e[1]==199-SOM_HUD_LIFT_PX);                         /* not twice */
             ram[0xD0]=0x83;som_hud_lift(ram,0);                         /* a dialog */

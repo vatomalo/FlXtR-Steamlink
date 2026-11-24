@@ -196,6 +196,8 @@ static const char *combat_file=SOM_COMBAT_FILE;
 static const char *quest_file=SOM_QUEST_FILE;
 #define SOM_BRAIN_FILE "/home/apps/retroarch/cores/experimental/som_ai_brain"
 static const char *brain_file=SOM_BRAIN_FILE;
+#define SOM_DEBUG_MESSAGES_FILE "/home/apps/retroarch/cores/experimental/som_ai_debug_messages"
+static const char *debug_messages_file=SOM_DEBUG_MESSAGES_FILE;
 /* Independent from the six Gambit priority digits, shared with the
  * external song-id -> yt-dlp playback bridge. */
 #define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
@@ -203,7 +205,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},{3,3},0,0,1};
+    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0};
 static SomDisciplines disciplines;
 /* The acting hero (2026-11-22, "write them with companions in mind"): the
  * player's moves (X class moves, L2 specials, throw, bash, Blink, portals,
@@ -460,6 +462,10 @@ static void som_gambit_load(void){
     in=fopen(brain_file,"r");
     if(in){if(!fgets(brain,sizeof(brain),in))brain[0]=0;fclose(in);}
     som_brain_parse(&gambits,brain[0]?brain:NULL);
+    char debug[8]={0};
+    in=fopen(debug_messages_file,"r");
+    if(in){if(!fgets(debug,sizeof(debug),in))debug[0]=0;fclose(in);}
+    gambits.debug_messages=debug[0]=='1';
 }
 static void som_gambit_write(const char *path,const char *text){
     char temp[256];
@@ -481,6 +487,7 @@ static void som_gambit_save(void){
     char brain[16];
     som_brain_format(&gambits,brain);
     som_gambit_write(brain_file,brain);
+    som_gambit_write(debug_messages_file,gambits.debug_messages?"1":"0");
 }
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
@@ -1740,6 +1747,9 @@ static void som_pad2_poll(void){
     uint8_t *ram=som_field_ram();
     const unsigned who=som_pad2_member(ram);
     if(who!=pad2_actor){pad2_x_tapped=0;pad2_spell_class=SOM_DISCIPLINE_NONE;pad2_actor=who;}
+    /* While the AI owns play, Player 2's separate controller can still open
+     * and operate the AI menu; never leak those menu presses to the game. */
+    if(ring_ai_enabled){pad2_wanted=0;return;}
     if(!ram||som_manual_disciplines||menu_hold_until_release)return;
 
     const uint16_t b=1u<<RETRO_DEVICE_ID_JOYPAD_B,y=1u<<RETRO_DEVICE_ID_JOYPAD_Y;
@@ -2503,14 +2513,15 @@ static void som_input_poll(void){
             som_overlay_set(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
         }
-        if(ring_ai_enabled&&pressed&&frame_number>=ring_ai_grace_until){
+        const uint16_t gambit_buttons=(uint16_t)(pressed|pad2_pressed);
+        if(ring_ai_enabled&&gambit_buttons&&frame_number>=ring_ai_grace_until){
             /* Shoulder tabs switch the overlay page, never reach the game. */
             const uint16_t tabs=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L)|
                                            (1u<<RETRO_DEVICE_ID_JOYPAD_R));
-            if(pressed&tabs){
-                som_gambit_turn_page(&gambits,(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R))!=0);
+            if(gambit_buttons&tabs){
+                som_gambit_turn_page(&gambits,(gambit_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R))!=0);
                 gambits.open=1;
-            }else switch(som_gambit_press(&gambits,pressed)){
+            }else switch(som_gambit_press(&gambits,gambit_buttons)){
             case SOM_GAMBIT_GENRE_CHANGED:
                 som_music_genre_save();
                 fprintf(stderr,"[som-ai] MUSIC genre %s (%u)\n",
@@ -2531,6 +2542,11 @@ static void som_input_poll(void){
                 break;
             case SOM_GAMBIT_TEST_SWITCH:
                 som_infinite_mp_changed();
+                break;
+            case SOM_GAMBIT_DEBUG_CHANGED:
+                som_gambit_write(debug_messages_file,gambits.debug_messages?"1":"0");
+                som_overlay_set(&overlay,gambits.debug_messages?"AI debug on|speech stays on":
+                                "AI debug off|speech stays on",SOM_MESSAGE_FRAMES);
                 break;
             case SOM_GAMBIT_EXIT:
                 ally_order.until=0;
@@ -6926,7 +6942,7 @@ static int som_handle_command(const char *command){
         if(disciplines.selected!=n){
             disciplines.selected=(uint8_t)n;
             som_disc_save();som_class_selected();
-            if(n<SOM_DISCIPLINE_COUNT){
+            if(gambits.debug_messages&&n<SOM_DISCIPLINE_COUNT){
                 char text[64];
                 snprintf(text,sizeof(text),"^%s|AI chose this class",som_discipline_names[n]);
                 som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
@@ -7063,6 +7079,13 @@ static void som_check_message(void){
     int have=fgets(text,sizeof(text),input)!=NULL;
     fclose(input);
     unlink(message_file);
+    if(have){
+        const char *content=text+(text[0]=='^');
+        /* Bridge status messages are debug by default. A leading ^ changes
+         * their visual style, but not their category; ordinary ^ speech is
+         * always retained. */
+        if(!gambits.debug_messages&&!strncmp(content,"AI:",3))return;
+    }
     if(have&&som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES))
         fprintf(stderr,"[som-ai] MESSAGE %s\n",text);
 }
@@ -7722,7 +7745,8 @@ static void som_portal_frame(uint8_t *ram){
  * HUD sprites (tiles 0x1E0-0x1FF near the bottom) in the OAM buffer
  * 7E:0800 the NMI uploads. Applied at the frame's end; the next frame shows
  * it. Dialogs and events (7E:00D0 set) and menus get the HUD back as it was. */
-#define SOM_HUD_LIFT_PX 10u
+#define SOM_HUD_LIFT_PX 26u
+#define SOM_HUD_LEGACY_LIFT_PX 10u
 static int hud_lifted;
 static void som_hud_lift(uint8_t *ram,int menu){
     const int field=ram&&!menu&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
@@ -7732,19 +7756,27 @@ static void som_hud_lift(uint8_t *ram,int menu){
         hud_lifted=0;
         return;
     }
-    if(ram[0x40]!=0&&!(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;  /* the game's own scroll */
+    /* Upgrade the previous 10 px HUD position in an existing save state;
+     * leave any unrelated game scroll untouched. */
+    if(ram[0x40]!=0&&ram[0x40]!=SOM_HUD_LEGACY_LIFT_PX&&
+       !(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;
+    const int upgrading_legacy=ram[0x40]==SOM_HUD_LEGACY_LIFT_PX;
     ram[0x40]=SOM_HUD_LIFT_PX;ram[0x41]=0;
     hud_lifted=1;
     for(unsigned i=0;i<128u;i++){
         uint8_t *e=ram+0x0800u+4u*i;
         const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-        if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]>=196u&&e[1]<0xE0u)e[1]=(uint8_t)(e[1]-SOM_HUD_LIFT_PX);
+        if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]<0xE0u){
+            if(upgrading_legacy&&e[1]>=186u&&e[1]<196u)
+                e[1]=(uint8_t)(e[1]-(SOM_HUD_LIFT_PX-SOM_HUD_LEGACY_LIFT_PX));
+            else if(e[1]>=196u)e[1]=(uint8_t)(e[1]-SOM_HUD_LIFT_PX);
+        }
     }
 }
 /* Party panels, Seiken Densetsu 3 style (player, 2026-11-20): under each
  * member's HUD portrait (tile 0x1E8 + 2*who in palette who + 1, live OAM
  * 2026-11-20: x 8 / 88 / 168), in that member's 80 px column:
- *   class title, right of the portrait, under the game's HP numbers;
+ *   class title below the portrait and the native HP/MP rows;
  *   the weapon (boy: class weapon or spell set; companions: their class
  *   move), from the portrait's left edge under it;
  *   a gauge: the class energy bar and the AP pips, no text.
@@ -7784,10 +7816,11 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         if(cls>=SOM_DISCIPLINE_COUNT||!som_hud_member_portrait(ram,who,&px,&py))continue;
         char line[24];
         const unsigned chars=(unsigned)(SOM_PANEL_COLUMN/6);
-        som_panel_text(line,sizeof(line),som_discipline_titles[cls],(unsigned)((SOM_PANEL_COLUMN-SOM_HUD_LABEL_DX)/6));
+        const int class_y=py+SOM_HUD_LABEL_DY;
+        som_panel_text(line,sizeof(line),som_discipline_titles[cls],chars);
         for(char *c=line;*c;c++)if(*c>='a'&&*c<='z')*c=(char)(*c-32);
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                          px+SOM_HUD_LABEL_DX,py+SOM_HUD_LABEL_DY,0,
+                          px,class_y,0,
                           som_overlay_color(pixel_format,255,255,255));
         /* Line 2. */
         char second[48]="";uint32_t ink=som_overlay_color(pixel_format,255,214,96);
@@ -7806,13 +7839,13 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         }
         som_panel_text(line,sizeof(line),second,chars);
         if(line[0])som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                                     px,py+SOM_HUD_LABEL_DY+8,0,ink);
+                                     px,class_y+8,0,ink);
         /* Line 3: the gauge. */
         const unsigned max=som_energy_max(disciplines.level[cls]);
         const SomEnergy *en=who==0u?&energy:&ally_tech[who-1u].en;
         const int fresh=who&&!ally_tech_ready;
         const unsigned have=fresh||!en->started[cls]?max:en->energy[cls];
-        som_panel_gauge(width,height,pitch,px+1,py+SOM_HUD_LABEL_DY+18,have,max,
+        som_panel_gauge(width,height,pitch,px+1,class_y+17,have,max,
                         fresh?SOM_AP_MAX:en->ap);
     }
 }

@@ -339,6 +339,10 @@ stack 13 %, state_guard 7 %). Changes:
 
 ## Gambit pages and situational classes (2026-11-15)
 
+- On the Actions page, **AI debug messages** defaults to off. Turning it on shows the
+  bridge's blue `AI:` status banners and class-selection debug bubbles; contextual AI
+  speech bubbles remain enabled either way. Player 2 can open and operate the Gambit
+  menu from controller 2 while AI play is active, including **Exit gambits: you play**.
 - The AI overlay now has three pages cycled with **L1/R1**: **Gambits: Actions** (the six
   activities, file `som_ai_gambits`, unchanged format), **Gambits: Combat** (file
   `som_ai_combat`, 8 digits: press the attack, keep distance, guard and counter, evade,

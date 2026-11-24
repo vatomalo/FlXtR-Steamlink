@@ -2516,15 +2516,18 @@ static void som_input_poll(void){
         }
         const uint16_t gambit_buttons=(uint16_t)(pressed|pad2_pressed);
         const uint16_t p2_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
-        if(ring_ai_enabled&&(pad2_pressed&p2_start)&&frame_number>=ring_ai_grace_until){
-            /* Player 2 has a direct escape from AI play; Start never opens
-             * the native ring on the companion's controller. */
+        const uint16_t p2_l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+        const int p2_quit_chord=(pad2_raw&(p2_start|p2_l2))==(p2_start|p2_l2)&&
+            (pad2_pressed&(p2_start|p2_l2));
+        if(ring_ai_enabled&&p2_quit_chord&&frame_number>=ring_ai_grace_until){
+            /* Player 2 deliberately holds L2 and presses Start to exit AI;
+             * Start alone stays swallowed and cannot interrupt a session. */
             ally_order.until=0;
             ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
             som_manual_disciplines=0;jukebox.open=0;
             unlink(ring_ai_file);
-            som_overlay_set(&overlay,"You play|AI stopped by Player 2",SOM_MESSAGE_FRAMES);
-            fprintf(stderr,"[som-ai] PLAYER 2 START: controls back to the player\n");
+            som_overlay_set(&overlay,"You play|L2 + Start stopped AI",SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] PLAYER 2 L2+START: controls back to the player\n");
         }else if(ring_ai_enabled&&gambit_buttons&&frame_number>=ring_ai_grace_until){
             /* Shoulder tabs switch the overlay page, never reach the game. */
             const uint16_t tabs=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L)|

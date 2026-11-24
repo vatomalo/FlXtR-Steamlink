@@ -286,7 +286,9 @@ int main(void){
     assert(!ring_ai_enabled&&!gambits.open);
     mocked_pad2=0;som_input_poll();
     ring_ai_enabled=1;gambits.open=0;mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_START;
-    som_input_poll();assert(!ring_ai_enabled&&!gambits.open); /* P2 Start exits AI immediately */
+    som_input_poll();assert(ring_ai_enabled); /* Start alone cannot quit */
+    mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+    som_input_poll();assert(!ring_ai_enabled&&!gambits.open); /* L2+Start is the explicit P2 exit */
     mocked_pad2=0;som_input_poll();
     memset(mocked_wram,0,sizeof(mocked_wram));
     {

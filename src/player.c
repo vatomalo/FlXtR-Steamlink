@@ -342,13 +342,18 @@ static int playback_seek(double position){
     }
     menu_restart(1,position);return 0;
 }
+/* A download has its own limit (the reader thread owns `deadline`) and ends
+ * at once when playback does. One runs at a time. */
+static int64_t subtitle_deadline;
+static int subtitle_interrupt(void *opaque){(void)opaque;return stopped||subtitle_cancel||av_gettime_relative()>subtitle_deadline;}
 static int subtitle_fetch(const char *url,SubtitleCue *cues){
+    subtitle_deadline=av_gettime_relative()+30000000;
     int local=phone_local_media(url);const char *ext=url?strrchr(url,'.'):NULL;
     if(!url||(!local&&strncmp(url,"https://",8))||strlen(url)>1023||strpbrk(url,"\r\n\t"))return -1;
     if(local&&(!ext||(strcasecmp(ext,".srt")&&strcasecmp(ext,".vtt"))))return -1;
     AVFormatContext *subfmt=avformat_alloc_context();
     if(!subfmt)return -1;
-    subfmt->interrupt_callback.callback=interrupt_io;
+    subfmt->interrupt_callback.callback=subtitle_interrupt;
     AVDictionary *options=NULL;
     /* MegaPlay caption endpoints enforce the same origin headers as video. */
     if(megaplay){
@@ -383,7 +388,7 @@ static int subtitle_fetch(const char *url,SubtitleCue *cues){
     if(packet){
         /* Cap downloads to avoid untrusted subtitle playlists or endless streams. */
         int64_t start=av_gettime_relative();
-        while(packets<4096&&av_gettime_relative()-start<12000000&&!stopped){
+        while(packets<4096&&av_gettime_relative()-start<12000000&&!stopped&&!subtitle_cancel){
             rc=av_read_frame(subfmt,packet);
             if(rc<0)break;
             if(packet->stream_index==stream){subtitle_decode_into(cues,context,subfmt->streams[stream],packet);packets++;}

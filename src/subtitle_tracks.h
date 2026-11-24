@@ -122,6 +122,7 @@ static int subtitle_open_stream(int stream){
 }
 static void subtitle_close_stream(void){avcodec_free_context(&subtitle_decoder);subtitle_stream=-1;subtitle_discard();}
 static int subtitle_fetch(const char *url,SubtitleCue *cues);
+static volatile sig_atomic_t subtitle_cancel;        /* playback is over: drop the download */
 /* One download at a time; the video never waits for it. */
 static struct {pthread_t thread;pthread_mutex_t mutex;int running,done,result,choice;char url[1024];SubtitleCue *cues;} subtitle_job={.mutex=PTHREAD_MUTEX_INITIALIZER};
 static void *subtitle_job_run(void *opaque){
@@ -187,6 +188,7 @@ static void subtitle_switch_poll(void){
     show_view("LOADING SUBTITLES...");
 }
 static void subtitle_switch_close(void){
+    subtitle_cancel=1;
     if(subtitle_job.running){pthread_join(subtitle_job.thread,NULL);subtitle_job.running=0;free(subtitle_job.cues);subtitle_job.cues=NULL;}
     avcodec_free_context(&subtitle_decoder);
     if(subtitle_cues!=subtitle_first_cues){free(subtitle_cues);subtitle_cues=subtitle_first_cues;}

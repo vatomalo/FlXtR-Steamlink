@@ -12,12 +12,13 @@ static int16_t mocked_input(unsigned port,unsigned device,unsigned index,unsigne
     (void)index;
     return port==0&&device==RETRO_DEVICE_JOYPAD&&(id==pressed||id==pressed_too)?1:0;
 }
-static uint16_t mocked_buttons;
+static uint16_t mocked_buttons,mocked_pad2;
 static int16_t mocked_input_mask(unsigned port,unsigned device,unsigned index,unsigned id){
     (void)index;
-    if(port!=0||device!=RETRO_DEVICE_JOYPAD)return 0;
-    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)mocked_buttons;
-    return id<16&&(mocked_buttons&(uint16_t)(1u<<id))?1:0;
+    if(port>1||device!=RETRO_DEVICE_JOYPAD)return 0;
+    const uint16_t buttons=port==0?mocked_buttons:mocked_pad2;
+    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return (int16_t)buttons;
+    return id<16&&(buttons&(uint16_t)(1u<<id))?1:0;
 }
 static uint8_t mocked_vram[0x10000];
 static int mocked_has_vram;
@@ -154,10 +155,10 @@ int main(void){
     mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;mocked_wram[0xD0]=0x82;
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
     assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
-    /* The ring open: Start opens the party class editor (player, 2026-11-20). */
+    /* Start inside the ring does not open the class editor. */
     mocked_wram[0xD0]=0;mocked_wram[0x7D]=1;
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
-    assert(som_manual_disciplines&&disciplines.who==0u);
+    assert(!som_manual_disciplines);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==0);
     som_manual_disciplines=0;disciplines.open=0;menu_hold_until_release=menu_was_open=0;
     mocked_buttons=0;som_input_poll();mocked_wram[0x7D]=0;
@@ -165,8 +166,7 @@ int main(void){
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);som_input_poll();
     assert(!som_manual_disciplines);mocked_buttons=0;som_input_poll();
     backend_retro_get_memory_data=mocked_memory_data;mocked_wram[0x7D]=0;
-    /* Manual-play class menu via Start in verified field play (L2+R2 no
-     * longer opens it). */
+    /* L2+R2 does not open either menu. */
     mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
     som_input_poll();assert(!som_manual_disciplines);
@@ -184,13 +184,27 @@ int main(void){
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
     mocked_buttons=0;som_input_poll();
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
-    /* The ring open: Start again is our menu. */
-    mocked_wram[0x7D]=1;
-    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
-    som_input_poll();
+    /* B on the native Classes descriptor opens the editor. */
+    classes_ring_enabled=1;
+    mocked_wram[0x7D]=1;mocked_wram[0x1809]=2;mocked_wram[0x180B]=SOM_RING_CONFIG_ENTRIES;
+    mocked_wram[0x180A]=6;
+    som_put_word(mocked_wram+0x1880+2*6,SOM_RING_CLASSES_DESCRIPTOR);
+    mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
     assert(som_manual_disciplines&&disciplines.open&&!ring_ai_enabled);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
-    mocked_buttons=0;som_input_poll();mocked_wram[0x7D]=0;disciplines.cursor=0;
+    mocked_buttons=0;som_input_poll();disciplines.cursor=0;
+    const unsigned old_class=disciplines.selected;
+    mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_SELECT;som_input_poll();
+    assert(class_guide_open&&som_manual_disciplines);
+    mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_UP;som_input_poll();
+    assert(disciplines.cursor==SOM_DISCIPLINE_COUNT-1u);
+    mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+    assert(disciplines.selected==old_class);
+    mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_SELECT;som_input_poll();
+    assert(!class_guide_open&&som_manual_disciplines);
+    mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_DOWN;som_input_poll();
+    assert(disciplines.cursor==0u);
+    mocked_buttons=0;som_input_poll();
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);som_input_poll();
     assert(disciplines.cursor==1);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN)==0);
@@ -210,10 +224,9 @@ int main(void){
         mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R2));
         som_input_poll();mocked_buttons=0;som_input_poll();
         assert(!som_manual_disciplines);                     /* L2+R2 no longer opens it */
-        mocked_wram[0x7D]=1;                                 /* in the ring */
-        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
-        som_input_poll();mocked_buttons=0;som_input_poll();
-        mocked_wram[0x7D]=0;menu_hold_until_release=0;
+        assert(som_ring_on_classes(mocked_wram));            /* returned to Classes */
+        mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();
+        mocked_buttons=0;som_input_poll();
         assert(som_manual_disciplines&&disciplines.open);
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);som_input_poll();
         mocked_buttons=0;som_input_poll();
@@ -232,18 +245,51 @@ int main(void){
         unlink(juke_req);juke_request_file=SOM_JUKE_REQUEST;juke_list_file=SOM_JUKE_LIST;
     }
     mocked_buttons=0;
-    /* Start in the open ring is our menu. */
-    som_manual_disciplines=0;disciplines.open=0;last_physical_buttons=0;
-    menu_hold_until_release=0;mocked_wram[0x7D]=1;
-    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
-    som_input_poll();mocked_wram[0x7D]=0;
-    assert(som_manual_disciplines&&disciplines.open);
-    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
-    mocked_buttons=0;som_input_poll();
-    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
-    som_input_poll();
-    assert(!som_manual_disciplines&&!disciplines.open);
     memset(mocked_wram,0,sizeof(mocked_wram));
+    /* P2's class modifiers never send native ring buttons. Both stick
+     * clicks generate an independent Y pulse, and only R2 arms guard. */
+    mocked_wram[0xE000]=mocked_wram[0xE200]=mocked_wram[0xE4]=1;
+    mocked_wram[0xE6]=0x0F;mocked_wram[0xD9]=1;mocked_wram[0xDA]=2;
+    mocked_wram[0xE382]=40;
+    mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+    som_pad2_poll();
+    assert(pad2_combo_actor==1u&&pad2_wanted==0);
+    mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_R2;som_pad2_poll();
+    assert(pad2_guard_hp==40u&&pad2_wanted==0);
+    mocked_wram[0xE382]=30;som_pad2_guard_finish();
+    assert(mocked_wram[0xE382]==35u);
+    mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L3)|(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+    som_pad2_poll();
+    assert(pad2_wanted==(1u<<RETRO_DEVICE_ID_JOYPAD_L3)); /* no P2 ring */
+    mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_R3;som_pad2_poll();
+    assert(pad2_wanted==(1u<<RETRO_DEVICE_ID_JOYPAD_R3)); /* no synthetic Y */
+    mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+    const unsigned boy_class=disciplines.selected;
+    const unsigned girl_class=disciplines.party[0];
+    som_pad2_poll();
+    assert(disciplines.party[0]!=girl_class&&disciplines.selected==boy_class);
+    assert((pad2_wanted&((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
+                         (1u<<RETRO_DEVICE_ID_JOYPAD_R)))==0);
+    mocked_pad2=0;som_pad2_poll();
+    memset(mocked_wram,0,sizeof(mocked_wram));
+    {
+        /* Scaled savestates can enter on any frame. Keep damage proportion
+         * and never stack the same stat floor on a second pass. */
+        uint8_t enemy[SOM_BUN_OBJECT]={0};
+        uint8_t rabite[29]={1,20,0,0,3,1,1,1};
+        enemy[0x181]=1;enemy[0x182]=10;enemy[0x184]=20;
+        som_enemy_scale(enemy,rabite,13);
+        assert(enemy[0x181]==15&&som_word(enemy+0x184)==125&&som_word(enemy+0x182)==63);
+        assert(enemy[0x188]==35&&som_word(enemy+0x1A5)==9);
+        uint8_t prior[SOM_BUN_OBJECT];memcpy(prior,enemy,sizeof(prior));
+        som_enemy_scale(enemy,rabite,13);
+        assert(!memcmp(prior,enemy,sizeof(prior)));
+        som_enemy_scale(enemy,rabite,20);
+        assert(enemy[0x181]==22&&som_word(enemy+0x184)==174&&som_word(enemy+0x182)==88);
+        som_put_word(enemy+0x182,0);
+        som_enemy_scale(enemy,rabite,25);
+        assert(!som_word(enemy+0x182));
+    }
     assert(som_disc_weapons[0][0]==1&&som_disc_weapons[0][1]==2);
     assert(som_disc_weapons[1][0]==0&&som_disc_weapons[1][1]==3);
     assert(som_disc_weapons[2][0]==1&&som_disc_weapons[2][1]==6);
@@ -1465,10 +1511,10 @@ int main(void){
         assert(styles.selected[0]==2u&&b_weapon_blocked);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
         mocked_buttons=0;som_input_poll();
-        /* L3+X is native L2+X without firing a spell on release. */
+        /* The old L3+X ring chord is consumed. */
         mocked_buttons=(uint16_t)(l3|(1u<<RETRO_DEVICE_ID_JOYPAD_X));som_input_poll();
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2)==1);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
         mocked_buttons=0;som_input_poll();
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
         som_input_poll();                           /* Y: axe now, swing as B */
@@ -1500,14 +1546,13 @@ int main(void){
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         mocked_buttons=0;som_input_poll();
         ram[0xCC56]=0;
-        /* L3+Y is the native ring, since L2+Y is now a seal special. */
+        /* The old L3+Y ring chord is consumed in both input APIs. */
         mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L3)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
         som_input_poll();
         assert(!special_stage&&!y_weapon_swap);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2)==1);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
-               ((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y)));
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
         mocked_buttons=0;som_input_poll();
 
         /* Level-2 secondary special switches to the axe, then charges. */
@@ -2057,9 +2102,19 @@ int main(void){
         {
             const uint16_t l1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+            som_put_word(hero+0x182,40);som_put_word(hero+0x184,80);
             hero[0x060]=0;hero[0x190]=hero[0x191]=0;
             foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x182]=50;
             foe[2]=150;foe[3]=0;foe[4]=210;foe[5]=0;                   /* to the left */
+            auto_target_ready=0;lock_slot=-1;
+            som_auto_target_frame(ram);                                /* baseline */
+            foe[0x182]=49;som_auto_target_frame(ram);
+            assert(lock_slot==0&&lock_who==0u);                        /* party hit */
+            som_lock_release("test");foe[0x182]=50;som_auto_target_frame(ram);
+            som_put_word(hero+0x182,39);som_auto_target_frame(ram);
+            assert(lock_slot==0&&lock_who==0u);                        /* party member hit */
+            som_lock_release("test");som_put_word(hero+0x182,40);
+            som_auto_target_frame(ram);
             mocked_buttons=l1;som_input_poll();mocked_buttons=0;som_input_poll();
             assert(lock_slot==0);
             som_hop_step();
@@ -3092,13 +3147,13 @@ int main(void){
         for(unsigned i=0;i<som_class_spell_count(2)-1u;i++)som_next_spell();
         assert(som_current_spell()==SOM_SPELL_FIRE_BALL);  /* wraps */
         /* L2+X: a ninja with a short-range weapon casts Shunshin (X hidden);
-         * with a long-range weapon L2+X keeps the game's own X. */
+         * with a long-range weapon the old native ring input is swallowed. */
         {
             const uint8_t weapon=hero[0x1E4];
             hero[0x1E4]=4;                       /* long range */
             mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_X));
             som_input_poll();
-            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==1);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
             assert(!som_bun_alive(&bunshin));
             mocked_buttons=0;som_input_poll();
             hero[0x1E4]=0;                       /* short range, hero free */
@@ -3337,9 +3392,8 @@ int main(void){
         assert(strlen(line)<=32u);
         som_disc_init(&disciplines);memset(member_pal_have,0,sizeof(member_pal_have));
     }
-    /* L2+R1 / L2+L1 cycle the boy's class; the ring's Controller Settings
-     * (config entry 4) and Start in the ring open the party class editor for
-     * the ring's owner; the closing A never reaches the game. */
+    /* Class shortcuts follow saved order. Opening the editor requires the
+     * Classes icon and preserves the ring owner and native entries. */
     {
         backend_retro_get_memory_data=mocked_memory_data;
         backend_retro_get_memory_size=mocked_memory_size;
@@ -3397,31 +3451,44 @@ int main(void){
             assert(disciplines.selected==3u&&disciplines.order[0]==0u&&disciplines.order[15]==15u);
             unlink(tmp);disc_file="/nonexistent/flxtr-disciplines";
         }
-        /* The girl's ring, config category, cursor on Controller Settings. */
+        mocked_buttons=start;som_input_poll();                     /* Start opens the ring */
+        assert(!som_manual_disciplines);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
+               (1u<<RETRO_DEVICE_ID_JOYPAD_Y));
+        frame_number+=SOM_START_RING_FRAMES;
+        mocked_buttons=0;som_input_poll();
+
         mocked_wram[0x7D]=1;mocked_wram[0x1808]=1;mocked_wram[0x1809]=2;
-        mocked_wram[0x180A]=SOM_RING_PARTY_ENTRY;mocked_wram[0x180B]=SOM_RING_CONFIG_ENTRIES;
+        mocked_wram[0x180A]=4;mocked_wram[0x180B]=SOM_RING_CONFIG_ENTRIES;
+        mocked_buttons=b;som_input_poll();                         /* Controller Settings */
+        assert(!som_manual_disciplines);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        mocked_buttons=0;som_input_poll();
+        mocked_buttons=start;som_input_poll();                     /* Start in the ring */
+        assert(!som_manual_disciplines);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        mocked_buttons=0;som_input_poll();
+
+        /* The native descriptor list can rotate after visiting Status. */
+        classes_ring_enabled=1;
+        mocked_wram[0x180A]=4;
+        som_put_word(mocked_wram+0x1880+2*4,SOM_RING_CLASSES_DESCRIPTOR);
+        mocked_wram[0x1801]=0x80u;
+        mocked_buttons=b;som_input_poll();
+        assert(!som_manual_disciplines);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+        mocked_buttons=0;som_input_poll();
+        mocked_wram[0x1801]=0;
         mocked_buttons=b;som_input_poll();
         assert(som_manual_disciplines&&disciplines.open&&disciplines.who==1u);
         assert(disciplines.cursor==disciplines.party[0]);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         mocked_buttons=0;som_input_poll();
-        mocked_buttons=a;som_input_poll();                         /* close */
-        assert(!som_manual_disciplines);
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
-        som_input_poll();                                          /* still held */
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
-        mocked_buttons=0;som_input_poll();
-        mocked_buttons=a;som_input_poll();                         /* a fresh A: the game's */
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
-        mocked_buttons=0;som_input_poll();
-        mocked_wram[0x180A]=2;                                     /* Status: the game's */
-        mocked_buttons=b;som_input_poll();
-        assert(!som_manual_disciplines);
-        mocked_buttons=0;som_input_poll();
-        mocked_wram[0x1808]=2;mocked_buttons=start;som_input_poll();   /* Start in the ring */
-        assert(som_manual_disciplines&&disciplines.who==2u);
-        som_manual_disciplines=0;disciplines.open=0;mocked_buttons=0;som_input_poll();
+        mocked_buttons=a;som_input_poll();
+        assert(!som_manual_disciplines&&som_ring_on_classes(mocked_wram));
         som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+        mocked_buttons=0;som_input_poll();
         memset(mocked_wram,0,sizeof(mocked_wram));som_disc_init(&disciplines);
         menu_hold_until_release=menu_was_open=0;
     }

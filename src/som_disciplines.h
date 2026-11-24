@@ -333,57 +333,113 @@ static inline int som_disc_line(const SomDisciplines *d,unsigned line,char out[3
         som_discipline_names[i],(unsigned)d->level[i]);
     return 1;
 }
-static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
-                                size_t pitch,int format,const SomDisciplines *d){
-    if(!d->open||!pixels)return;
+/* Beveled silver frames and an open green interior, like the Status screen. */
+static inline void som_disc_window(uint8_t *pixels,unsigned width,unsigned height,
+                                  size_t pitch,int format,unsigned x,unsigned y,
+                                  unsigned w,unsigned h){
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
-    const unsigned lines=SOM_DISCIPLINE_COUNT+2u;
-    const unsigned bw=195u*sx,bh=(lines*10u+8u)*sy;
-    if(bw+12u*sx>width||bh+12u*sy>height)return;
-    unsigned x0=6u*sx,y0=6u*sy;
-    som_overlay_fill(pixels,pitch,format,x0,y0,bw,bh,som_overlay_color(format,245,245,255));
-    som_overlay_fill(pixels,pitch,format,x0+sx,y0+sy,bw-2u*sx,bh-2u*sy,
-                     som_overlay_color(format,24,21,73));
-    char out[33];
-    for(unsigned line=0;line<lines-1u;line++){
-        if(!som_disc_line(d,line,out))break;
-        for(unsigned i=0;out[i];i++){
-            unsigned char c=(unsigned char)out[i];
-            if(c<32u||c>126u)continue;
-            const uint8_t *glyph=som_overlay_font[c-32u];
-            for(unsigned row=0;row<7;row++)for(unsigned col=0;col<5;col++){
-                if(!(glyph[row]&(0x10u>>col)))continue;
-                som_overlay_fill(pixels,pitch,format,
-                    x0+(5u+i*6u+col)*sx,y0+(4u+line*10u+row)*sy,sx,sy,
-                    som_overlay_color(format,255,255,255));
-            }
-        }
+    const uint32_t shades[]={
+        som_overlay_color(format,15,26,24),
+        som_overlay_color(format,139,149,154),
+        som_overlay_color(format,229,231,233),
+        som_overlay_color(format,87,101,109)
+    };
+    for(unsigned i=0;i<4;i++){
+        const unsigned right=x+w-1u-i,bottom=y+h-1u-i;
+        som_overlay_fill(pixels,pitch,format,(x+i)*sx,(y+i)*sy,(w-2u*i)*sx,sy,shades[i]);
+        som_overlay_fill(pixels,pitch,format,(x+i)*sx,bottom*sy,(w-2u*i)*sx,sy,shades[i]);
+        som_overlay_fill(pixels,pitch,format,(x+i)*sx,(y+i)*sy,sx,(h-2u*i)*sy,shades[i]);
+        som_overlay_fill(pixels,pitch,format,right*sx,(y+i)*sy,sx,(h-2u*i)*sy,shades[i]);
     }
-    {   /* The order hint, right of the colour swatches. */
-        const char *hint=d->grab?"Up/Dn move  Y:drop":"Y: move class";
-        for(unsigned i=0;hint[i];i++){
-            unsigned char c=(unsigned char)hint[i];
-            if(c<32u||c>126u)continue;
-            const uint8_t *glyph=som_overlay_font[c-32u];
-            for(unsigned row=0;row<7;row++)for(unsigned col=0;col<5;col++){
-                if(!(glyph[row]&(0x10u>>col)))continue;
-                som_overlay_fill(pixels,pitch,format,
-                    x0+(78u+i*6u+col)*sx,y0+(4u+(lines-1u)*10u+row)*sy,sx,sy,
-                    som_overlay_color(format,200,200,255));
-            }
+}
+
+static inline void som_ring_classes_title(uint8_t *pixels,unsigned width,unsigned height,
+                                          size_t pitch,int format){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    if(width<256u*sx||height<224u*sy)return;
+    som_overlay_fill(pixels,pitch,format,16u*sx,15u*sy,224u*sx,15u*sy,
+                     som_overlay_color(format,0,0,88));
+    som_overlay_label(pixels,width,height,pitch,format,"Classes",19,19,0,
+                      som_overlay_color(format,255,255,255));
+}
+
+/* The native Status screen uploads these 32 tiles unchanged to VRAM and
+ * renders them in high resolution using the adjacent BGR555 palette. */
+typedef struct {
+    uint8_t pixels[32][64];
+    uint16_t palette[16];
+} SomStatusTexture;
+
+static inline int som_status_texture_load(SomStatusTexture *texture,const uint8_t *rom,size_t size){
+    const unsigned palette_base=0x07FBE0u,tile_base=0x07FC00u;
+    const uint8_t prefix[]={0x00,0x00,0x2C,0x26,0x2A,0x1E,0xC7,0x19};
+    const uint8_t tile_rows[]={0,2,1,3};
+    if(size<tile_base+32u*32u||memcmp(rom+palette_base,prefix,sizeof(prefix)))return 0;
+    for(unsigned i=0;i<16u;i++)
+        texture->palette[i]=(uint16_t)(rom[palette_base+2u*i]|(rom[palette_base+2u*i+1u]<<8));
+    for(unsigned y=0;y<32u;y++)
+        for(unsigned x=0;x<64u;x++){
+            const uint8_t *tile=rom+tile_base+32u*(tile_rows[y/8u]*8u+x/8u)+2u*(y&7u);
+            const unsigned shift=7u-(x&7u);
+            texture->pixels[y][x]=(uint8_t)(((tile[0]>>shift)&1u)|(((tile[1]>>shift)&1u)<<1)|
+                (((tile[16]>>shift)&1u)<<2)|(((tile[17]>>shift)&1u)<<3));
         }
+    return 1;
+}
+
+static inline void som_status_texture_draw(const SomStatusTexture *texture,uint8_t *pixels,
+                                           size_t pitch,int format,unsigned sx,unsigned sy){
+    uint32_t palette[16];
+    for(unsigned i=0;i<16u;i++){
+        const uint16_t color=texture->palette[i];
+        palette[i]=som_overlay_color(format,(color&31u)<<3,((color>>5)&31u)<<3,((color>>10)&31u)<<3);
     }
-    /* Visual preview only. Native hero palettes and saves stay untouched. */
-    unsigned profile=som_disc_class_profile(som_disc_member_class(d,d->who));
-    const unsigned shades[4]={6u,13u,22u,31u};
-    for(unsigned i=0;i<4u;i++){
-        uint16_t color=som_pal_color(som_pal_rgb(shades[i],shades[i],shades[i]),profile);
-        unsigned red=(color&31u)*255u/31u;
-        unsigned green=((color>>5)&31u)*255u/31u;
-        unsigned blue=((color>>10)&31u)*255u/31u;
-        som_overlay_fill(pixels,pitch,format,x0+(6u+i*17u)*sx,
-            y0+(4u+(lines-1u)*10u)*sy,14u*sx,7u*sy,
-            som_overlay_color(format,(uint8_t)red,(uint8_t)green,(uint8_t)blue));
+    for(unsigned y=0;y<224u*sy;y++)
+        for(unsigned x=0;x<256u*sx;x++){
+            const unsigned index=texture->pixels[(y/sy+6u)&31u][(x*(2u/sx)+10u)&63u];
+            som_overlay_put(pixels,pitch,format,x,y,palette[index]);
+        }
+}
+
+static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
+                                size_t pitch,int format,const SomDisciplines *d,
+                                const SomStatusTexture *texture){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    if(!d->open||!pixels||width<256u*sx||height<224u*sy)return;
+    const unsigned who=d->who<SOM_PARTY_MEMBERS?d->who:0u;
+    const unsigned equipped=som_disc_member_class(d,who);
+    const uint32_t white=som_overlay_color(format,255,255,255);
+    const uint32_t gold=som_overlay_color(format,255,223,143);
+    som_status_texture_draw(texture,pixels,pitch,format,sx,sy);
+
+    char text[32];
+    som_disc_window(pixels,width,height,pitch,format,3,10,101,85);
+    som_disc_window(pixels,width,height,pitch,format,3,99,101,99);
+    som_disc_window(pixels,width,height,pitch,format,107,10,146,188);
+    som_overlay_label(pixels,width,height,pitch,format,som_party_names[who],53,23,1,white);
+    som_overlay_label(pixels,width,height,pitch,format,"Current Class",53,43,1,gold);
+    som_overlay_label(pixels,width,height,pitch,format,
+                      equipped<SOM_DISCIPLINE_COUNT?som_discipline_names[equipped]:"None",
+                      53,57,1,white);
+    if(equipped<SOM_DISCIPLINE_COUNT){
+        snprintf(text,sizeof(text),"Level %u",(unsigned)d->level[equipped]);
+        som_overlay_label(pixels,width,height,pitch,format,text,53,73,1,white);
+    }
+    som_overlay_label(pixels,width,height,pitch,format,"B Equip",13,113,0,white);
+    som_overlay_label(pixels,width,height,pitch,format,"X Party",13,127,0,white);
+    som_overlay_label(pixels,width,height,pitch,format,d->grab?"Y Drop":"Y Reorder",13,141,0,white);
+    som_overlay_label(pixels,width,height,pitch,format,"L/R Music",13,155,0,white);
+    som_overlay_label(pixels,width,height,pitch,format,"Select Guide",13,169,0,white);
+    som_overlay_label(pixels,width,height,pitch,format,"A Back",13,183,0,white);
+    som_overlay_label(pixels,width,height,pitch,format,"Classes",115,21,0,gold);
+    som_overlay_label(pixels,width,height,pitch,format,"Lv",235,21,0,gold);
+    for(unsigned row=0;row<SOM_DISCIPLINE_COUNT;row++){
+        const unsigned cls=d->order[row]%SOM_DISCIPLINE_COUNT;
+        snprintf(text,sizeof(text),"%c%c %-16s %3u",
+                 row==d->cursor?(d->grab?'=':'>'):' ',cls==equipped?'*':' ',
+                 som_discipline_names[cls],(unsigned)d->level[cls]);
+        som_overlay_label(pixels,width,height,pitch,format,text,112,36+(int)row*9,0,
+                          row==d->cursor?gold:white);
     }
 }
 #endif

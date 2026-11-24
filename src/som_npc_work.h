@@ -249,21 +249,12 @@ static inline int som_npc_work_colours(const SomNpcWorkState *s,const uint8_t *w
     return 1;
 }
 
-/* Draws the worker on the frame copy (base screen 256x224, doubled when the
- * frame is). The foot point is world minus the camera, as $C0:E443 computes
- * +0x20/+0x22 (+0x0B bit 7 selects the second camera), lifted by the jump
- * height +0x45. Returns 1 when something was drawn. */
-static inline int som_npc_work_draw(const SomNpcWorkState *s,const uint8_t *wram,unsigned long frame,
-                             uint8_t *pixels,unsigned width,unsigned height,size_t pitch,
-                             int format){
-    if(!s->active||!pixels||!wram)return 0;
-    const unsigned o=SOM_NPC_OBJECT(s->slot);
-    const unsigned cam=(wram[o+0x0Bu]&0x80u)?0xACu:0xA8u;
-    const int fx=s->fixed?(int16_t)((unsigned)s->wx-som_npc_u16(wram,cam)):
-                          (int16_t)(som_npc_u16(wram,o+0x02u)-som_npc_u16(wram,cam));
-    const int fy=s->fixed?(int16_t)((unsigned)s->wy-som_npc_u16(wram,cam+2u))-s->lift:
-                          (int16_t)(som_npc_u16(wram,o+0x04u)-som_npc_u16(wram,cam+2u))-
-                          wram[o+0x45u]-s->lift;
+/* Draw a packed pose at a screen position. With no WRAM the pack
+ * supplies its own colours, so a menu preview cannot affect gameplay. */
+static inline int som_npc_work_draw_at(const SomNpcWorkState *s,const uint8_t *wram,
+                                     unsigned long frame,int fx,int fy,uint8_t *pixels,
+                                     unsigned width,unsigned height,size_t pitch,int format){
+    if(!s->active||!pixels)return 0;
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
     const int base_w=(int)(width/sx),base_h=(int)(height/sy);
     const uint8_t *p=som_npc_work_pose(s,frame-s->start);
@@ -308,6 +299,24 @@ static inline int som_npc_work_draw(const SomNpcWorkState *s,const uint8_t *wram
         drawn=1;
     }
     return drawn;
+}
+
+/* Draws the worker on the frame copy (base screen 256x224, doubled when the
+ * frame is). The foot point is world minus the camera, as $C0:E443 computes
+ * +0x20/+0x22 (+0x0B bit 7 selects the second camera), lifted by the jump
+ * height +0x45. Returns 1 when something was drawn. */
+static inline int som_npc_work_draw(const SomNpcWorkState *s,const uint8_t *wram,unsigned long frame,
+                             uint8_t *pixels,unsigned width,unsigned height,size_t pitch,
+                             int format){
+    if(!s->active||!pixels||!wram)return 0;
+    const unsigned o=SOM_NPC_OBJECT(s->slot);
+    const unsigned cam=(wram[o+0x0Bu]&0x80u)?0xACu:0xA8u;
+    const int fx=s->fixed?(int16_t)((unsigned)s->wx-som_npc_u16(wram,cam)):
+                          (int16_t)(som_npc_u16(wram,o+0x02u)-som_npc_u16(wram,cam));
+    const int fy=s->fixed?(int16_t)((unsigned)s->wy-som_npc_u16(wram,cam+2u))-s->lift:
+                          (int16_t)(som_npc_u16(wram,o+0x04u)-som_npc_u16(wram,cam+2u))-
+                          wram[o+0x45u]-s->lift;
+    return som_npc_work_draw_at(s,wram,frame,fx,fy,pixels,width,height,pitch,format);
 }
 
 #endif

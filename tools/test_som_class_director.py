@@ -193,8 +193,10 @@ class PickTest(unittest.TestCase):
         self.assertTrue(d.pinned)
 
     def test_pick_survives_a_restart_but_not_forever(self):
-        from som_class_director import PICK_KEEP_S
+        from som_class_director import ADOPT_SETTLE_S, PICK_KEEP_S
         self.director.initialize(3)
+        self.assertFalse(self.director.adopt(1))
+        self.now += ADOPT_SETTLE_S
         self.assertTrue(self.director.adopt(1))
         saved = self.director.pick_state(now=1000)
         later = ClassDirector()

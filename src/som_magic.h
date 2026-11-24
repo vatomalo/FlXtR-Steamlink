@@ -5,7 +5,7 @@
  * The proxy reads byte 8 and the MP cost (byte 15) from the loaded Turbo
  * ROM at cast time; these lists only decide who may cast what.
  * Left out: 0x17 Analyzer (0xA0, a scan, not a cast), 0x20/0x23 (0x40,
- * undecoded), 0x21 Revivifier (revives others; the boy casts on himself).
+ * undecoded).
  * Pure tables and helpers, no I/O. */
 #ifndef FLXTR_SOM_MAGIC_H
 #define FLXTR_SOM_MAGIC_H
@@ -37,7 +37,7 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     /* Magic: the attack spells of every spirit */
     {0x0C, 0x06, 0x13, 0x00, 0x01, 0x0D, 0x0E, 0x11, 0x07, 0x1F, 0x28, 0xFF},
     /* Divine Arts: B Lucent Beam, Y Cure Water, X the rest */
-    {0x28, 0x0B, 0x0A, 0x29, 0x27, 0x22, 0xFF},
+    {0x28, 0x0B, 0x0A, 0x29, 0x27, 0x22, 0x21, 0xFF},
     /* Dark Arts: shade and draining */
     /* B Dark Force, Y Energy Absorb, X the rest */
     {0x25, 0x08, 0x24, 0x26, 0x19, 0x18, 0xFF},
@@ -61,20 +61,36 @@ static const uint8_t som_class_spells[SOM_DISCIPLINE_COUNT][SOM_CLASS_SPELLS_MAX
     {0x08, 0x24, 0xFF},
     /* Artifice: no magic, X is a bomb */
     {0xFF},
-    /* Psionics: B Sleep Flower, Y Balloon; X takes over a mind */
-    {0x1E, 0x16, 0xFF},
+    /* Psionics: B Dark Force (Shadow Bolt, the warlock's B, player 2026-11-22), Y Balloon,
+     * Sleep Flower in the other spell sets (R1); X takes over a mind */
+    {0x25, 0x16, 0x1E, 0xFF},
 };
 
-/* Casters (Magic, Divine Arts, Dark Arts, Summoning, Support & Dance) trade
- * their weapons for spells: B casts the first spell of their list, Y the
- * second, X the rest (tap: cast, hold: next). With too little MP for the
- * B spell, B stays the game's weapon swing so he can always attack. */
+/* Casters (Magic, Divine Arts, Dark Arts, Summoning, Support & Dance,
+ * Necromancy, Psionics) trade their weapons for spells. B is the mage bolt
+ * (src/som_mage_bolt.h): one glove jab that throws a painted ball of the
+ * element of the first spell of their set, no MP, no spell cast; Y casts
+ * the second spell, the game's own full cast with its original effect,
+ * damage and MP (heals land on the most hurt hero); X the rest (tap: cast,
+ * hold: next). */
 #define SOM_CASTER_FIRST 3u
 #define SOM_CASTER_LAST 7u
 #define SOM_CASTER_BUTTON_SPELLS 2u
 static inline int som_disc_caster(unsigned discipline) {
     return (discipline >= SOM_CASTER_FIRST && discipline <= SOM_CASTER_LAST) ||
            discipline == 13u || discipline == 15u;     /* Necromancy, Psionics */
+}
+
+/* Rule (player, 2026-11-22): button magic is an attack, so it never waits
+ * for the casting pose or the spirit. B never runs the game's spell at all:
+ * every caster's B, player, AI or companion, is the mage bolt (a jab and a
+ * painted ball, no spirit possible). Y spells are quick casts (the proxy
+ * skips pose and spirit, som_quick_cast_frame). X and the ring keep the
+ * game's full cast. */
+#define SOM_QUICK_CAST_B 1
+#define SOM_QUICK_CAST_Y 1
+static inline int som_button_spell_quick(unsigned which) {
+    return which == 0u ? SOM_QUICK_CAST_B : which == 1u ? SOM_QUICK_CAST_Y : 0;
 }
 
 /* Each class names its spells its own way (player's request, 2026-11-20):
@@ -97,7 +113,7 @@ static const SomClassSpellName som_class_spell_names[] = {
     {9, 0x14, "Gag"},
     {11, 0x12, "Wind Arrow"}, {11, 0x13, "Thunder Arrow"}, {11, 0x01, "Stone Arrow"},
     {13, 0x08, "Soul Drain"}, {13, 0x24, "Grave Gate"},
-    {15, 0x1E, "Mind Sleep"}, {15, 0x16, "Levitate"},
+    {15, 0x25, "Shadow Bolt"}, {15, 0x1E, "Mind Sleep"}, {15, 0x16, "Levitate"},
 };
 
 static inline const char *som_spell_label(unsigned spell) {

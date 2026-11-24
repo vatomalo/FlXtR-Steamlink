@@ -882,7 +882,7 @@ class TestMemoryPlanner(unittest.TestCase):
                                                           "explore_west").reason)
 
     @staticmethod
-    def grass_state(left_marker, left_tile="10", left_attrs="03004000", others="00000000"):
+    def grass_state(left_marker, left_tile="10", left_attrs="0300c111", others="00000000"):
         state = observation(("###", left_marker + "@#", "###"))
         attrs = [" ".join([others] * 3),
                  " ".join([left_attrs, others, others]),
@@ -895,10 +895,12 @@ class TestMemoryPlanner(unittest.TestCase):
         planner = MemoryPlanner()
         planner.decide(self.grass_state("#"))
         planner.decide(self.grass_state(".", left_tile="11", left_attrs="00000000"))
-        self.assertIn("03004000", planner.local_cuttable)
-        # Elsewhere: grass with the same attributes blocks the only way west.
+        self.assertIn("131:1:10:0300c111", planner.local_cuttable)
+        for obstacle in (self.grass_state("#", left_tile="12"), self.grass_state("#")):
+            if obstacle["tile_context"]["tile_id_rows"][1].startswith("10"):
+                obstacle["tile_context"]["map_id"] = 140
+            self.assertEqual(planner._cut_targets(obstacle["tile_context"]), [])
         grass = self.grass_state("#")
-        grass["tile_context"]["map_id"] = 140
         face = planner.decide(grass, "wait", "explore_west")
         self.assertEqual((face.action, face.intention), ("step_left", "cut_grass"))
         self.assertIn("step_left", planner.trusted_steps(grass))
@@ -922,11 +924,12 @@ class TestMemoryPlanner(unittest.TestCase):
                     "runtime_verified": True, "game_mode": "field", "radius": 3,
                     "map_id": 129, "map_size_tiles": [64, 72], "actor_tile": [38, 23],
                     "actor": {"x_px": 623, "y_px": 370, "layer": 1},
-                    "passability_rows": rows, "attribute_rows": attrs}}
+                    "passability_rows": rows, "attribute_rows": attrs,
+                    "tile_id_rows": ["05 05 05 05 05 05 05"] * 7}}
 
     def test_cuts_grass_beyond_a_step_that_never_moves(self):
         planner = MemoryPlanner()
-        planner.local_cuttable.add("1300c85f")
+        planner.local_cuttable.add("129:1:05:1300c85f")
         planner.previous_action = "step_up"          # it kept pressing up
         state = self.grass_ledge_state()
         decisions = []
@@ -940,7 +943,7 @@ class TestMemoryPlanner(unittest.TestCase):
 
     def test_boxed_in_hero_cuts_grass_two_tiles_away(self):
         planner = MemoryPlanner()
-        planner.local_cuttable.add("1300c85f")
+        planner.local_cuttable.add("129:1:05:1300c85f")
         state = self.grass_ledge_state()
         # Everything around refused (stall-blocked); grass waits beyond.
         for action in ("step_up", "step_left", "step_right", "step_down"):
@@ -950,9 +953,10 @@ class TestMemoryPlanner(unittest.TestCase):
 
     def test_regrown_grass_on_a_walked_tile_is_cut_not_walked_into(self):
         planner = MemoryPlanner()
-        planner.local_cuttable.add("1300c85f")
+        planner.local_cuttable.add("131:1:05:1300c85f")
         planner.local_walked[131] = {(2, 4)}         # walked after an earlier cut
         state = observation(("...", ".@.", "###"))
+        state["tile_context"]["tile_id_rows"] = ["05 05 05"] * 3
         state["tile_context"]["attribute_rows"] = [
             "12020000 12020000 12020000", "12020000 12020000 12020000",
             "73060000 1300c85f 73060000"]
@@ -965,7 +969,7 @@ class TestMemoryPlanner(unittest.TestCase):
 
     def test_gives_up_on_grass_that_does_not_cut(self):
         planner = MemoryPlanner()
-        planner.local_cuttable.add("03004000")
+        planner.local_cuttable.add("131:1:10:0300c111")
         grass = self.grass_state("#")
         previous, actions = "wait", []
         for _ in range(10):
@@ -975,17 +979,46 @@ class TestMemoryPlanner(unittest.TestCase):
         self.assertEqual(actions.count("attack"), 3)
         self.assertNotIn("step_left", planner.trusted_steps(grass))
 
+    def test_a_tile_that_did_not_cut_is_never_swung_at_again(self):
+        # Live 2026-11-22: a tree with grass's attributes was given up on
+        # after 3 attacks and then attacked again from the next decision.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "cut.sqlite")
+            history.connection.execute(
+                "INSERT INTO cuttable_signatures VALUES('131:1:10:0300c111',5,0)")
+            planner = MemoryPlanner(history=history)
+            grass = self.grass_state("#")
+            previous, actions = "wait", []
+            for _ in range(10):
+                decision = planner.decide(grass, previous, "explore_west")
+                actions.append(decision.action)
+                previous = decision.action
+            self.assertEqual(actions.count("attack"), 3)
+            tile = grass["tile_context"]["actor_tile"]
+            failed = (tile[0] - 1, tile[1])
+            self.assertIn(failed, history.failed_cut_tiles(grass["tile_context"]["map_id"]))
+            # A fresh planner (restart, other side): no cut, no route through it.
+            again = MemoryPlanner(history=history)
+            for _ in range(6):
+                self.assertNotEqual(again.decide(grass, "wait", "explore_west").intention,
+                                    "cut_grass")
+            history.remember_world(grass)
+            self.assertEqual(history.known_cells(grass["tile_context"]["map_id"], 1)[failed],
+                             "blocked")
+            history.close()
+
     def test_history_learns_grass_and_maps_it_as_cuttable(self):
         with tempfile.TemporaryDirectory() as directory:
             history = ObservationHistory(Path(directory) / "grass.sqlite")
             self.assertEqual(history.learn_cuts(self.grass_state("#")), [])
             self.assertEqual(history.learn_cuts(
-                self.grass_state(".", left_tile="11", left_attrs="00000000")), ["03004000"])
+                self.grass_state(".", left_tile="11", left_attrs="00000000")), ["131:1:10:0300c111"])
             other = self.grass_state("#")
             other["tile_context"]["map_id"] = 140
             history.remember_world(other)
-            self.assertEqual(history.known_cells(140, 1)[(1, 3)], "cuttable")
-            self.assertEqual(history.known_cells(140, 1)[(3, 3)], "blocked")
+            history.remember_world(self.grass_state("#"))
+            self.assertEqual(history.known_cells(131, 1)[(1, 3)], "cuttable")
+            self.assertEqual(history.known_cells(140, 1)[(1, 3)], "blocked")
             history.close()
 
     def test_changes_that_are_not_cuts_are_ignored(self):
@@ -1079,13 +1112,14 @@ class TestMemoryPlanner(unittest.TestCase):
 
     def test_combat_cuts_known_grass_directly_between_hero_and_enemy(self):
         planner = MemoryPlanner()
-        planner.local_cuttable.add("03004000")
+        planner.local_cuttable.add("131:1:10:0300c111")
         state = observation(
             ("###", "#@#", "###"),
             enemy={"slot": 1, "active": True, "x_px": 40, "y_px": 24},
             recharge=0)
+        state["tile_context"]["tile_id_rows"] = ["10 10 10"] * 3
         state["tile_context"]["attribute_rows"] = [
-            "00000000 03004000 00000000",
+            "00000000 0300c111 00000000",
             "00000000 00000000 00000000",
             "00000000 00000000 00000000"]
         face = planner.decide(state, previous="wait")
@@ -1099,13 +1133,14 @@ class TestMemoryPlanner(unittest.TestCase):
             ("###", "#@#", "###"),
             enemy={"slot": 1, "active": True, "x_px": 40, "y_px": 24},
             recharge=0)
+        state["tile_context"]["tile_id_rows"] = ["10 10 10"] * 3
         state["tile_context"]["attribute_rows"] = [
-            "00000000 03004000 00000000",
-            "03004000 00000000 00000000",
+            "00000000 0300c111 00000000",
+            "0300c111 00000000 00000000",
             "00000000 00000000 00000000"]
         self.assertIsNone(planner._grass_blocking_enemy(
             state["tile_context"], 0, -32))
-        planner.local_cuttable.add("03004000")
+        planner.local_cuttable.add("131:1:10:0300c111")
         self.assertEqual(planner._grass_blocking_enemy(
             state["tile_context"], 0, -32), ("step_up", 1))
 

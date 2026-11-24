@@ -9,9 +9,10 @@ from dataclasses import dataclass, replace
 from som_curiosity import AREA_TILES, Curiosity, LINGER_RADIUS
 from som_weapon_ranges import DEFAULT_REACH_PX, WEAPONS as RANGES, is_long
 from som_build import profile as build_profile
-from som_tactics import CLOSE_SWING_PX
+from som_story import is_mantis
+from som_tactics import CLOSE_SWING_PX, MANTIS_TACTICS, RANGE_PX
 
-from som_memory import detect_cuts, detect_whip_crossing, held_weapon, hero_airborne, is_whip_post
+from som_memory import confirmed_sword_cut, detect_cuts, detect_whip_crossing, held_weapon, hero_airborne, is_whip_post
 
 STEP_OFFSETS = {
     "step_right": (1, 0), "step_left": (-1, 0),
@@ -295,6 +296,7 @@ class MemoryPlanner:
         self.local_cuttable = set()
         self.previous_observation = None
         self.cut_attempts = {}
+        self.local_failed_cuts = set()  # (map, x, y) that did not cut (no database)
         self.previous_action = "none"
         self.local_signatures = set()
         # Enemy identities to avoid when no history database is used.
@@ -347,6 +349,8 @@ class MemoryPlanner:
         self.last_swing = None
         # Optional som_tactics.TacticLearner: per enemy type fighting style.
         self.tactic_learner = None
+        self.mantis_lesson = False
+        self.mantis_trial = None
         # som_build profile of the hero (set by the bridge from its stats).
         self.build, self.build_profile = "balanced", build_profile("balanced")
         # "Fight monsters" gambit off: ignore monsters unless they attack.
@@ -1002,6 +1006,26 @@ class MemoryPlanner:
                 return kite
         else:
             self.kite_steps = 0
+        if (self.mantis_lesson and is_mantis(enemy) and distance <= RANGE_PX and
+                observation.get("weapons_enabled") and 0 < hp <= max_hp):
+            tactic = self._tactic(enemy)
+            self.mantis_trial = (enemy["identity"], enemy["slot"], tactic)
+            recovering = self.last_swing is not None and (
+                self.clock() - self.last_swing < SWING_INTERVAL_S or bool(recharge))
+            if (tactic == "circle" and recovering and distance <= 40 and
+                    self.kited_swing != self.last_swing):
+                # The decomp's native boss chooser approaches targets above
+                # it by jumping. Prefer that flank when a lateral step is open.
+                toward = self._toward(dx, dy)
+                if toward in ("step_left", "step_right"):
+                    sides = ("step_up", "step_down")
+                else:
+                    sides = ("step_left", "step_right") if dx >= 0 else ("step_right", "step_left")
+                side = next((step for step in sides if step in open_steps), None)
+                if side is not None:
+                    self.kited_swing = self.last_swing
+                    return PlannerDecision(side, "circle the Mantis Ant while recovering",
+                                           "kite_enemy")
         # Turbo's R guard blocks physical hits. Defend briefly when the
         # weapon is still recharging and an enemy is already in striking
         # distance. Cooldown prevents standing still blocking forever.
@@ -1269,6 +1293,10 @@ class MemoryPlanner:
         return None
 
     def _tactic(self, enemy):
+        if self.mantis_lesson and is_mantis(enemy):
+            if self.tactic_learner is None:
+                return "circle"
+            return self.tactic_learner.tactic(enemy["identity"], "circle", MANTIS_TACTICS)
         if self.tactic_learner is None:
             return self.build_profile.get("preferred") or "press"
         return self.tactic_learner.tactic(enemy.get("identity"),
@@ -1524,10 +1552,20 @@ class MemoryPlanner:
                         risk += max(0, 10-dx-dy)*8
                     half = pos in self.route_diagonals.get((context["map_id"], actor["layer"]), ())
                     weights[pos] = 1 + risk + (3 if kind == "cuttable" else 0) + (20 if half else 0)
-            routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
+            walled = (self._wall_doors(context, cells, destination.get("next_map"), {target})
+                      if crossing else cells)
+            routes = self._routes(position, walled, tuple(context["map_size_tiles"]),
                                   actor.get("floor_height"), weights,
                                   jumps=self._whip_jumps(context),
                                   forbidden=self._forbidden_steps(context))
+            if walled is not cells and target not in routes:
+                # Only a way over another door: better than no way at all.
+                routes = self._routes(position, cells, tuple(context["map_size_tiles"]),
+                                      actor.get("floor_height"), weights,
+                                      jumps=self._whip_jumps(context),
+                                      forbidden=self._forbidden_steps(context))
+            elif walled is not cells:
+                cells = walled
             # Where this trip is going, for an escape blink (_blink_out).
             self.travel_goal = (context.get("map_id"), actor.get("layer"), target, cells,
                                 tuple(context["map_size_tiles"]), actor.get("floor_height"),
@@ -1730,6 +1768,31 @@ class MemoryPlanner:
                                    routes.straight(target))
         return PlannerDecision("wait", "return door has no verified route", "observe")
 
+    def _other_doors(self, context, next_map):
+        """ROM trigger tiles on the hero's layer that lead anywhere but
+        next_map. Stepping on one changes the map, so a route must not
+        cross it: on map 144 the way to map 170 ran north over the exit to
+        map 16, and every trip from 16 bounced back 16>144>16 for two hours
+        and never reached the Witch's Castle maps 160-166 (2026-11-21)."""
+        if self.history is None or not hasattr(self.history, "exits_by_destination"):
+            return set()
+        layer = context["actor"].get("layer")
+        doors = set()
+        for to_map, tiles in self.history.exits_by_destination(
+                context["map_id"], rom_only=True).items():
+            if to_map in (next_map, context["map_id"]):
+                continue
+            doors.update((x, y) for tile_layer, x, y in tiles if tile_layer == layer)
+        return doors - {tuple(context["actor_tile"])}
+
+    def _wall_doors(self, context, cells, next_map, keep=()):
+        doors = self._other_doors(context, next_map) - set(keep)
+        if not doors:
+            return cells
+        cells = dict(cells)
+        cells.update({tile: "exit" for tile in doors})
+        return cells
+
     def _exit_cells(self, context, destination, cells=None):
         """Known cells; a ROM exit tile is entered whatever its looks say.
 
@@ -1758,8 +1821,18 @@ class MemoryPlanner:
         for waypoint in usable:
             if waypoint.get("source") == "rom":
                 cells.update(self._exit_cells(context, waypoint, cells))
-        routes = self._routes(position, cells, size, actor.get("floor_height"),
-                              forbidden=self._forbidden_steps(context))
+        next_maps = {waypoint.get("next_map") for waypoint in usable}
+        if len(next_maps) == 1:
+            walled = self._wall_doors(context, cells, next_maps.pop(),
+                                      {tuple(w["target"]) for w in usable})
+            routes = self._routes(position, walled, size, actor.get("floor_height"),
+                                  forbidden=self._forbidden_steps(context))
+            if not any(tuple(w["target"]) in routes for w in usable):
+                routes = self._routes(position, cells, size, actor.get("floor_height"),
+                                      forbidden=self._forbidden_steps(context))
+        else:
+            routes = self._routes(position, cells, size, actor.get("floor_height"),
+                                  forbidden=self._forbidden_steps(context))
         best = None
         for order, waypoint in enumerate(usable):
             target = tuple(waypoint["target"])
@@ -1907,6 +1980,7 @@ class MemoryPlanner:
             # When that swing was decided (sent right after), else now.
             self.last_swing = self.swing_decided_at or self.clock()
         self.swing_decided_at = None
+        self.mantis_trial = None
         if self.escape_left and errand is None and directive.startswith("explore_"):
             self.escape_left -= 1
             directive = self.escape_directive
@@ -2019,6 +2093,14 @@ class MemoryPlanner:
             return self.history.cuttable_signatures()
         return self.local_cuttable
 
+    def _cut_failed(self, map_id, x, y):
+        """A tile already swung at CUT_ATTEMPTS times without cutting."""
+        if (map_id, x, y) in self.local_failed_cuts:
+            return True
+        if self.history is not None and hasattr(self.history, "failed_cut_tiles"):
+            return (x, y) in self.history.failed_cut_tiles(map_id)
+        return False
+
     def _cut_steps(self, context, reach=1):
         """Steps into a blocking tile that looks like grass already cut once.
 
@@ -2053,20 +2135,27 @@ class MemoryPlanner:
 
     def _cut_targets(self, context, reach=1):
         """[(action, distance)] toward cuttable tiles within reach tiles."""
-        rows, attrs, radius = (context.get("passability_rows"), context.get("attribute_rows"),
-                               context.get("radius"))
-        if not (isinstance(rows, list) and isinstance(attrs, list) and isinstance(radius, int)):
+        rows = context.get("passability_rows")
+        attrs, ids = context.get("attribute_rows"), context.get("tile_id_rows")
+        radius = context.get("radius")
+        if not (all(isinstance(grid, list) for grid in (rows, attrs, ids)) and
+                isinstance(radius, int)):
             return []
         cuttable, blocked = self._cuttable(), self._blocked_here(context)
+        tile, map_id = context.get("actor_tile") or [0, 0], context.get("map_id")
         targets = []
         for action, (dx, dy) in STEP_OFFSETS.items():
             for distance in range(1, reach + 1):
                 row, column = radius + dy * distance, radius + dx * distance
                 if not (0 <= row < len(rows) and 0 <= column < len(rows[row])):
                     break
-                cells = attrs[row].split()
-                if (rows[row][column] in "#?" and column < len(cells) and
-                        cells[column] in cuttable):
+                if row >= min(len(attrs), len(ids)):
+                    break
+                cells, tiles = attrs[row].split(), ids[row].split()
+                if (rows[row][column] in "#?" and column < min(len(cells), len(tiles)) and
+                        confirmed_sword_cut(context, tiles[column], cells[column], cuttable) and
+                        not self._cut_failed(map_id, tile[0] + dx * distance,
+                                             tile[1] + dy * distance)):
                     # Next to the hero a blocked step means the cut failed;
                     # farther away the step was blocked by what lies between.
                     if distance > 1 or action not in blocked:
@@ -2089,6 +2178,11 @@ class MemoryPlanner:
         if attempts > CUT_ATTEMPTS:
             self.blocked_moves[self._stall_key(context, action)] = STALL_BLOCK_DECISIONS
             self.cut_attempts.pop(key, None)
+            # Remembered by tile, for good: a tree or stone with grass's
+            # attributes was approached again from every side (live 11-22).
+            self.local_failed_cuts.add(key)
+            if self.history is not None and hasattr(self.history, "remember_cut_failure"):
+                self.history.remember_cut_failure(*key)
             return PlannerDecision("wait", f"grass at {key[1]},{key[2]} did not cut after "
                                    f"{CUT_ATTEMPTS} attacks; avoiding it", "replan")
         return PlannerDecision("attack", f"cut grass at {key[1]},{key[2]} "

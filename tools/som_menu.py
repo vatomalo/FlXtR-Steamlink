@@ -12,6 +12,7 @@ import os
 import time
 from pathlib import Path
 
+from som_dialogue import GLYPHS
 from som_memory import WRAM
 
 RING_OPEN = 0x7E007D
@@ -415,6 +416,101 @@ class InnMacro:
             raise MacroFailed("no full HP after the inn dialog (enough GP? right NPC?)")
         except MacroFailed:
             self._leave_dialog()
+            raise
+
+
+MAP_ID = 0x7E00DC   # current map (low 9 bits), as WRAM.tile_context reads it
+
+
+class CannonMacro(InnMacro):
+    """Ride the cannon: talk to the taught cannon NPC, press Confirm until landed.
+
+    The player's tip (2026-11-21): the cannon works like the inn, just press
+    B enough times. The script ends in op 0x1D (MAP_CHANGE_D), so a flight is
+    a scripted teleport with a launch animation. Confirm takes the default
+    answer of every box: the paid "50 GP" Yes, the first destination of the
+    menu, the free first ride's "Please".
+
+    Success is field mode on another map; that map is returned as the
+    landing. Field mode again on the starting map means no flight (not
+    enough GP, refused), which fails like a dry inn.
+    """
+
+    MAX_SECONDS = 60.0   # dialog + launch animation + flight + landing fade
+
+    def ready(self, wram):
+        if not isinstance(self.anchor, dict) or self.anchor.get("face") is None:
+            return "no taught cannon; run tools/som_teach_cannon.py"
+        if wram.game_mode() != "field":
+            return "not in field mode"
+        target = (self.anchor["map_id"], self.anchor["layer"], *self.anchor["target"])
+        if self._tile(wram) != target:
+            return "not on the taught cannon tile"
+        return None
+
+    def _map(self, wram):
+        return wram.u16(MAP_ID) & 0x1FF
+
+    def _listen(self, wram):
+        """Log each new line the game prints during the ride (menu included).
+
+        Reads the same line buffer as som_dialogue; bytes outside the font
+        table show as [xx] so menu markup is visible, not dropped.
+        """
+        raw = bytes(wram.u8(0x7EA1A4 + i) for i in range(33)).split(b"\0", 1)[0]
+        text = "".join(GLYPHS.get(c, f"[{c:02x}]") for c in raw).strip()
+        line = (text, is_choice(wram))
+        if text and line != self._heard:
+            self.transcript.append({"text": text, "choice": line[1]})
+            self.log(f"[cannon] {'choice' if line[1] else 'says'}: {text}")
+        self._heard = line
+
+    def run(self):
+        start = self._read()
+        why = self.ready(start)
+        if why:
+            raise MacroFailed(why)
+        origin = self._map(start)
+        before = self._tile(start)
+        self.link.send_action(self.anchor["face"])
+        self.sleep(0.3)
+        if self._tile(self._read()) != before:
+            raise MacroFailed("facing tap moved the hero; the cannon NPC is not on that side")
+        self.link.send_action(self.confirm)
+        deadline = self.clock() + 1.5
+        while self._read().game_mode() == "field":
+            if self.clock() >= deadline:
+                raise MacroFailed("cannon NPC did not start talking")
+            self.sleep(self.POLL)
+        self.log("[cannon] talking to the cannon crew")
+        self.transcript, self._heard = [], None
+        deadline = self.clock() + self.MAX_SECONDS
+        flying = False
+        try:
+            while self.clock() < deadline:
+                wram = self._read()
+                mode = wram.game_mode()
+                if mode == "field":
+                    here = self._map(wram)
+                    if here != origin:
+                        self.log(f"[cannon] landed on map {here} (from {origin})")
+                        return {"from_map": origin, "to_map": here,
+                                "tile": self._tile(wram), "heard": self.transcript}
+                    raise MacroFailed("dialog closed without a flight (enough GP?)")
+                if mode == "event":
+                    self._listen(wram)
+                    # B through every page and box, as on the inn.
+                    self.link.send_action(self.confirm)
+                    self.sleep(0.7)
+                else:
+                    if not flying:
+                        self.log("[cannon] launch / flight")
+                        flying = True
+                    self.sleep(0.3)
+            raise MacroFailed("no landing within the time limit")
+        except MacroFailed:
+            if self._read().game_mode() == "event" and not flying:
+                self._leave_dialog()
             raise
 
 

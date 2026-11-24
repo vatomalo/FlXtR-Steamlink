@@ -1,12 +1,11 @@
 /* Drawing for Kage Bunshin (src/som_bunshin.h), on the proxy's private copy
  * of the video frame; game RAM, VRAM and OAM are only read.
  *
- * A clone is the boy's current picture: his OAM pieces from the OAM shadow
+ * A clone copies its owner's current picture: his OAM pieces from the OAM shadow
  * 7E:0800 (tiles 0x1C0-0x1C7 / 0x1D0-0x1D7, palette 1, 16x16), decoded from
  * VRAM (name table 1 at word 0x7000, so tile 0x1C0 is word 0x7C00) with the
  * colours of 7E:0700 + palette * 32, the buffer the game sends to CGRAM
- * (cidwel/som-decomp docs/graphics.md). So clones copy his every pose, his
- * class colours included. Colour 0 is transparent. */
+ * (cidwel/som-decomp docs/graphics.md). The copy includes class colours. Colour 0 is transparent. */
 #ifndef FLXTR_SOM_BUNSHIN_DRAW_H
 #define FLXTR_SOM_BUNSHIN_DRAW_H
 #include <stddef.h>
@@ -15,10 +14,11 @@
 
 #define SOM_BUN_VRAM_SIZE 0x10000u
 
-static inline int som_bun_boy_piece(const uint8_t *e){
+static inline int som_bun_hero_piece(const uint8_t *e,unsigned who){
     const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-    return ((tile>=0x1C0u&&tile<=0x1C7u)||(tile>=0x1D0u&&tile<=0x1D7u))&&
-           ((e[3]>>1)&7u)==1u&&e[1]<0xE0u;
+    const unsigned row_tile=tile&~0x10u;
+    return row_tile>=0x1C0u&&row_tile<0x1D0u&&(who||row_tile<0x1C8u)&&
+           ((e[3]>>1)&7u)==who+1u&&e[1]<0xE0u;
 }
 /* Colour index (0..15) of pixel (px, py) of 8x8 4bpp tile `tile`. */
 static inline unsigned som_bun_tile_pixel(const uint8_t *vram,unsigned tile,unsigned px,unsigned py){
@@ -28,16 +28,20 @@ static inline unsigned som_bun_tile_pixel(const uint8_t *vram,unsigned tile,unsi
     return ((t[2u*py]>>bit)&1u)|(((t[2u*py+1u]>>bit)&1u)<<1)|
            (((t[16u+2u*py]>>bit)&1u)<<2)|(((t[16u+2u*py+1u]>>bit)&1u)<<3);
 }
-/* Draw a copy of the boy shifted by (dx, dy) base pixels. Returns the
- * number of pieces drawn. */
-static inline unsigned som_bun_draw_copy(uint8_t *pixels,unsigned width,unsigned height,
-                                         size_t pitch,int format,const uint8_t *ram,
-                                         const uint8_t *vram,int dx,int dy){
-    if(!pixels||!ram||!vram)return 0;
+/* Draw a copy of a party member shifted by (dx, dy) base pixels, from the
+ * OAM shadow `oam` (544 bytes as at 7E:0800: 512 bytes of pieces, then the
+ * high table). Pass the shadow as it was when the frame started: the live
+ * one is already the next frame's, whose poses do not match the tiles in
+ * VRAM yet. Returns the number of pieces drawn. */
+static inline unsigned som_bun_draw_copy_oam(uint8_t *pixels,unsigned width,unsigned height,
+                                             size_t pitch,int format,const uint8_t *ram,
+                                             const uint8_t *oam,const uint8_t *vram,
+                                             unsigned who,int dx,int dy){
+    if(!pixels||!ram||!oam||!vram||who>2u)return 0;
     const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
     const unsigned base_w=width/sx,base_h=height/sy;
-    const uint8_t *oam=ram+0x0800u,*high=ram+0x0A00u;
-    const uint8_t *palette=ram+0x0700u+32u;      /* OBJ palette 1 */
+    const uint8_t *high=oam+0x200u;
+    const uint8_t *palette=ram+0x0700u+32u*(who+1u);
     uint32_t colours[16];
     for(unsigned i=1;i<16u;i++){
         const unsigned c=palette[2u*i]|((unsigned)palette[2u*i+1u]<<8);
@@ -47,7 +51,7 @@ static inline unsigned som_bun_draw_copy(uint8_t *pixels,unsigned width,unsigned
     unsigned drawn=0;
     for(unsigned i=0;i<128u;i++){
         const uint8_t *e=oam+4u*i;
-        if(!som_bun_boy_piece(e))continue;
+        if(!som_bun_hero_piece(e,who))continue;
         const unsigned hb=(high[i/4u]>>(2u*(i%4u)))&3u;
         if(hb&2u)continue;                       /* hero pieces are small */
         int x=(int)(e[0]|((hb&1u)<<8));if(x>=256)x-=512;
@@ -67,6 +71,13 @@ static inline unsigned som_bun_draw_copy(uint8_t *pixels,unsigned width,unsigned
         drawn++;
     }
     return drawn;
+}
+/* The same from the live shadow 7E:0800. */
+static inline unsigned som_bun_draw_copy(uint8_t *pixels,unsigned width,unsigned height,
+                                         size_t pitch,int format,const uint8_t *ram,
+                                         const uint8_t *vram,unsigned who,int dx,int dy){
+    return som_bun_draw_copy_oam(pixels,width,height,pitch,format,ram,
+                                 ram?ram+0x0800u:NULL,vram,who,dx,dy);
 }
 /* Kawarimi's log: the game's whip post (the tree stump the whip catches
  * to cross a ledge), copied from VRAM on map 30 (2026-11-16: BG1 tile

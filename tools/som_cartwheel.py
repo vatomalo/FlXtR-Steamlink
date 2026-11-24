@@ -27,18 +27,14 @@ import som_villager_work as V
 
 KIND_BASE = 0x80
 WEAPON = 0xFE
-UKEMI_KIND_BASE = 0xC0
+UKEMI_KIND_BASE = 0xCC
 UKEMI_WEAPON = 0xFA
-# Ukemi (2026-11-20): the tucked ball of the cannon flight (pose script 34),
-# frame 140 the ball from the front, 139 from behind. The script's later
-# frames are the upside-down flight and landing, never used. Side: the ball
-# turns a full circle clockwise (the proxy mirrors it to the left), so it
-# rolls the way the hero goes; up/down: the front/back tumble, ending facing
-# the way rolled. Six ticks in all.
-UKEMI_BALL_FRONT, UKEMI_BALL_BACK = 140, 139
-UKEMI_TICKS = (1, 1, 1, 1, 2)
-UKEMI_SIDE_TURNS = (0, 1, 2, 3, 0)
-UKEMI_TUMBLE = {"down": (139, 140, 139, 140, 140), "up": (140, 139, 140, 139, 139)}
+# Ukemi uses the crouch and four directional tumble frames from pose 0x9E.
+# Durations are video frames for this entry, at the roll's reference speed.
+UKEMI_FRAMES = {"up": (47, 142, 143, 144, 145, 47),
+                "down": (49, 138, 139, 140, 141, 49),
+                "side": (45, 134, 135, 136, 137, 45)}
+UKEMI_TIMING = (2, 3, 3, 3, 3, 4)
 # Forward cartwheel (Swordsmanship, forward + A, 2026-11-20): the game's own
 # cartwheel (miss reaction 0x93: frames 65, 66, 67, 66 turned over, 65)
 # travels away from the facing; drawn as it is while the hero moves toward
@@ -103,15 +99,20 @@ def cartwheel(gfx, hero, source="down"):
 
 def somersault(gfx, hero, direction):
     """[(image, ticks)] of the Ukemi roll toward `direction` (up, down, side)."""
-    def ball(frame):
-        return gfx.render(hero, gfx.pieces(hero, None, frame, 0), size=V.CELL, origin=V.ORIGIN)
-    if direction == "side":
-        tuck = ball(UKEMI_BALL_FRONT)
-        pivot = body_centre(tuck)
-        images = [rotate(tuck, t, pivot) for t in UKEMI_SIDE_TURNS]
-    else:
-        images = [ball(frame) for frame in UKEMI_TUMBLE[direction]]
-    return list(zip(images, UKEMI_TICKS))
+    images = [gfx.render(hero, gfx.pieces(hero, None, frame),
+                         size=V.CELL, origin=V.ORIGIN)
+              for frame in UKEMI_FRAMES[direction]]
+    ground = max(y for y, row in enumerate(images[0]) if any(row))
+    frames = []
+    for image, duration in zip(images, UKEMI_TIMING):
+        bottom = max(y for y, row in enumerate(image) if any(row))
+        offset = ground - bottom
+        aligned = [[0] * V.CELL for _ in range(V.CELL)]
+        for y, row in enumerate(image):
+            if 0 <= y + offset < V.CELL:
+                aligned[y + offset] = row
+        frames.append((aligned, duration))
+    return frames
 
 
 def forward_cartwheel(gfx, hero):

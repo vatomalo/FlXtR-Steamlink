@@ -56,6 +56,7 @@ typedef struct {
     int fixed,wx,wy;                 /* fixed: drawn at world (wx, wy), not at the object */
     int scale_pct;                   /* 0 or 100: as is; else shrunk about the foot point */
     unsigned profile;                /* som_class_palette profile for colours 1-15, 0 = none */
+    unsigned long pose_duration;    /* one-shot source timeline in video frames, scaled to length */
     int no_rest;                     /* loop the frames without the resting pose (a walk) */
 } SomNpcWorkState;
 
@@ -166,12 +167,15 @@ static inline const char *som_npc_work_tick(SomNpcWorkState *s,uint8_t *wram,uns
 
 /* The frame record shown `elapsed` frames into the work. */
 static inline const uint8_t *som_npc_work_pose(const SomNpcWorkState *s,unsigned long elapsed){
-    const unsigned long swing=som_work_swing_frames(&s->entry);
-    unsigned long t=elapsed%(swing+(s->no_rest?0u:SOM_WORK_REST_FRAMES));
+    const unsigned tick_frames=s->pose_duration?1u:SOM_WORK_TICK_FRAMES;
+    const unsigned long swing=s->pose_duration?s->pose_duration:som_work_swing_frames(&s->entry);
+    unsigned long t=s->pose_duration&&s->length?
+        (elapsed<s->length?elapsed*swing/s->length:swing-1u):
+        elapsed%(swing+(s->no_rest?0u:SOM_WORK_REST_FRAMES));
     const uint8_t *p=s->entry.first;
     if(t>=swing)return p;            /* resting: the first pose */
     for(unsigned f=0;f<s->entry.frames;f++){
-        const unsigned long len=(unsigned long)p[0]*SOM_WORK_TICK_FRAMES;
+        const unsigned long len=(unsigned long)p[0]*tick_frames;
         if(t<len)return p;
         t-=len;
         p+=5+(size_t)p[3]*p[4];

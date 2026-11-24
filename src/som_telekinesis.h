@@ -26,7 +26,7 @@
 typedef struct {
     int slot;                     /* native monster slot 3..5; -1 while idle */
     unsigned map;
-    uint8_t kind;
+    uint8_t kind,source;
     int last_x,last_y;            /* reject an object changed by the game */
     unsigned long start;
 } SomTelekinesis;
@@ -57,17 +57,21 @@ static inline int som_tk_nearest(const uint8_t *ram,int hx,int hy,unsigned place
     return found;
 }
 /* Return 1 only when a chest is acquired. Does not move anything yet. */
-static inline int som_tk_begin(SomTelekinesis *t,uint8_t *ram,unsigned long frame){
-    if(t->slot>=0||!som_tk_field(ram))return 0;
-    const uint8_t *hero=ram+0xE000u;
+static inline int som_tk_begin_by(SomTelekinesis *t,uint8_t *ram,unsigned long frame,unsigned source){
+    if(t->slot>=0||!som_tk_field(ram)||source>=3u)return 0;
+    const uint8_t *hero=ram+0xE000u+0x200u*source;
+    if(hero[0]!=1u)return 0;
     const int hx=(int)som_bun_u16(hero+2u),hy=(int)som_bun_u16(hero+4u);
     const int slot=som_tk_nearest(ram,hx,hy,hero[0x0Bu]);
     if(slot<0)return 0;
     const uint8_t *o=ram+0xE000u+0x200u*(unsigned)slot;
-    t->slot=slot;t->map=som_bun_u16(ram+0xDCu);t->kind=o[0x180u];
+    t->slot=slot;t->map=som_bun_u16(ram+0xDCu);t->kind=o[0x180u];t->source=(uint8_t)source;
     t->last_x=(int)som_bun_u16(o+2u);t->last_y=(int)som_bun_u16(o+4u);
     t->start=frame;
     return 1;
+}
+static inline int som_tk_begin(SomTelekinesis *t,uint8_t *ram,unsigned long frame){
+    return som_tk_begin_by(t,ram,frame,0u);
 }
 /* 1: moved, 2: in pickup range, -1: cancelled/blocked, 0: inactive.
  * Movement uses the same conservative terrain check as the proxy's dodge.
@@ -77,9 +81,9 @@ static inline int som_tk_step(SomTelekinesis *t,uint8_t *ram,unsigned long frame
     if(!som_tk_field(ram)||som_bun_u16(ram+0xDCu)!=t->map||
        frame-t->start>SOM_TK_MAX_FRAMES){som_tk_reset(t);return -1;}
     uint8_t *o=ram+0xE000u+0x200u*(unsigned)t->slot;
-    const uint8_t *hero=ram+0xE000u;
+    const uint8_t *hero=ram+0xE000u+0x200u*t->source;
     int x=(int)som_bun_u16(o+2u),y=(int)som_bun_u16(o+4u);
-    if(!som_tk_is_chest(o)||o[0x180u]!=t->kind||
+    if(hero[0]!=1u||!som_tk_is_chest(o)||o[0x180u]!=t->kind||
        x!=t->last_x||y!=t->last_y||
        (o[0x0Bu]&0x83u)!=(hero[0x0Bu]&0x83u)){
         som_tk_reset(t);return -1;

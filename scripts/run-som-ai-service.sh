@@ -34,7 +34,10 @@ transport_args=(--wram-remote --ring-control)
 if [ "${SOM_AI_ANDROID:-0}" != 0 ]; then
   transport_args+=(--android-listen "${SOM_AI_ANDROID_LISTEN:-100.69.7.81:43928}")
 fi
-if [ "${SOM_AI_PLAY_LOOP:-1}" != 0 ]; then
+if [ "${SOM_AI_POTOS_STORY:-0}" != 0 ]; then
+  policy=memory
+  extra_args+=(--potos-story)
+elif [ "${SOM_AI_PLAY_LOOP:-1}" != 0 ]; then
   loop_args=(--play-loop --trip-gold "${SOM_AI_TRIP_GOLD:-100}")
   [ -n "${SOM_AI_HUNT_MAP:-}" ] && loop_args+=(--hunt-map "$SOM_AI_HUNT_MAP")
 fi
@@ -49,6 +52,7 @@ exec python3 "$repo/tools/som_qwen_bridge.py" \
   --gp-reward "$gp_reward" \
   --hp-penalty "$hp_penalty" \
   --objective "$objective" \
+  --party-ai "${SOM_AI_PARTY_AI:-auto}" \
   --interval "$interval" \
   --steps 0 \
   --start-timeout "$start_timeout" \

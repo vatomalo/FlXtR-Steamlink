@@ -12,7 +12,9 @@ static inline int som_party_member_alive(const uint8_t *actor,unsigned slot){
 
 /* The actor's binding and global pad assignments both have to indicate AI. */
 static inline int som_party_ai_owned(const uint8_t *ram,const uint8_t *actor,unsigned slot){
-    return slot>0u&&slot<3u&&!actor[0x2C]&&!ram[0xD9u+slot];
+    if(slot==0u||slot>=3u||actor[0x2C])return 0;
+    const unsigned human=ram[0xD9u]|ram[0xDAu]|ram[0xDBu];
+    return !(human&(1u<<slot));
 }
 
 static inline int som_party_action_ready(const uint8_t *actor){

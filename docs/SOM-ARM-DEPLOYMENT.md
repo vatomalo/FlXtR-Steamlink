@@ -5,7 +5,7 @@ Branch `perf/som-steamlink-arm-stabilization-20261115`. Two independent pieces:
 | Piece | Where it runs | Needs a game restart | Rollback |
 | --- | --- | --- | --- |
 | `tools/som_wram_server.py` (observation server) | Steam Link, one Python process per AI / living-world SSH session | no: bridges pick it up on their next SSH session (restart the PC services) | move the file aside, or `SOM_AI_SHELL_LOOP=1` for the AI bridge |
-| `som_ai_proxy_libretro.so` (timing hooks, packed overlay copy) | inside RetroArch | yes: refused while RetroArch runs the proxy | restore the previous `.so` |
+| `som_ai_proxy_libretro.so`, `som_weapon_masks.bin`, and `som_ai_weapon_masks_on` | inside RetroArch | yes: refused while RetroArch runs the proxy | restore the prior files or roll back |
 | PC side (`som_qwen_bridge.py`, `som_living_world.py`) | SkyLoft services, run from this worktree | restart `flxtr-som-ai` / `flxtr-som-living-world` | `git checkout` the previous commit, restart |
 
 ## Procedure
@@ -20,7 +20,7 @@ bash scripts/build-som-ai-proxy.sh
 
 # 2. install; the script refuses the proxy while the game runs
 bash scripts/deploy-som-arm-performance.sh server     # any time
-bash scripts/deploy-som-arm-performance.sh proxy      # with the game closed
+bash scripts/deploy-som-arm-performance.sh proxy      # with the game closed; installs core and ROM-derived masks
 systemctl --user restart flxtr-som-ai flxtr-som-living-world
 ```
 
@@ -33,7 +33,8 @@ checksum only) under `~/backups/som-steamlink/<stamp>/`; uploads to
 `<target>.armperf-new`; compares SHA-256; copies the old file to
 `<target>.pre-armperf-<stamp>` on the device; copies permissions; renames
 atomically on the same filesystem; appends `stamp git-sha path sha256 backup`
-to `cores/experimental/backups/som-arm-perf-deploy.txt`.
+to `cores/experimental/backups/som-arm-perf-deploy.txt`. Proxy deployment
+also installs the ROM-derived weapon mask pack and creates its opt-in marker.
 
 It never touches saves, ROMs, RetroArch configuration, the AI memory database
 (on the PC) or other FlXtR files, and restarts nothing on the device.

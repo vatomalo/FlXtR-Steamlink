@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bushido sword masks built from the player's own Secret of Mana Turbo ROM.
+"""Weapon masks built from the player's own Secret of Mana Turbo ROM.
 
 Tanto: remove only the distal part of the blade. Dai Katana: extend its
 one/two-pixel edge and rebuild the tip. Katana stays native. The grip,
@@ -11,10 +11,10 @@ native weapon art instead of displaying a detached or invisible weapon.
 
 SOMWORK1: one packed, cropped colour-index image per (style, row, frame).
 Pixels 1..5 = opaque weapon palette, 6..10 = 25%-opacity FX pixels.
-Kinds 0xD4 Tanto, 0xD5 extended sword, 0xD6 native fallback,
-and 0xD7 shortened native sword.
-Weapon = native row, facing = frame.
-The pack is generated on the user's build machine; no ROM is bundled.
+Kinds 0xD4 Tanto and 0xD5 Dai Katana, weapon = native row, facing = frame.
+Kusarigama entries pair the sword's level-2 body animation with matching
+whip poses. Kinds 0xD7 and 0xD8 are short sword and native fallback. The pack is generated on the user's build machine; no ROM is
+bundled.
 """
 import argparse
 import math
@@ -26,9 +26,11 @@ import som_villager_work as V
 
 KIND_TANTO = 0xD4
 KIND_DAI = 0xD5
-KIND_NATIVE = 0xD6
+KIND_KUSARIGAMA = 0xD6
+KIND_NATIVE = 0xD8
 KIND_SHORT_SWORD = 0xD7
 SWORD_ROWS = tuple(range(9, 18))
+KUSARIGAMA_WHIP_ROW = 36       # Ninjutsu's default Leather Lash artwork
 CANVAS = 224
 ORIGIN = (112, 140)
 MAX_BLADE_EXTENSION = 14
@@ -189,6 +191,30 @@ def sword_frames(gfx):
                   if len(variants) == 1)
 
 
+def kusarigama_frames(gfx):
+    """Map each level-2 sword body frame to the whip's matching attack pose."""
+    out = {}
+    for direction in V.FACINGS:
+        sword = gfx.script("sword", 2, direction)
+        whip = gfx.script("whip", 2, direction)
+        sword_total = sum(ticks for _, _, ticks in sword)
+        whip_total = sum(ticks for _, _, ticks in whip)
+        if not sword or not whip or not sword_total or not whip_total:
+            continue
+        sword_time = 0
+        for sword_flags, sword_frame, ticks in sword:
+            midpoint = sword_time + ticks / 2
+            whip_time = midpoint * whip_total / sword_total
+            cursor = 0
+            for whip_flags, whip_frame, whip_ticks in whip:
+                if whip_time < cursor + whip_ticks:
+                    out.setdefault(sword_frame, (sword_flags, whip_frame, whip_flags))
+                    break
+                cursor += whip_ticks
+            sword_time += ticks
+    return sorted((frame, *pose) for frame, pose in out.items())
+
+
 def cropped(image):
     filled = [(x, y) for y, line in enumerate(image) for x, c in enumerate(line) if c]
     if not filled:
@@ -201,7 +227,7 @@ def cropped(image):
     return dx, dy, x1-x0, y1-y0, bytes(c for row in image[y0:y1] for c in row[x0:x1])
 
 
-def pack(gfx, rows=SWORD_ROWS, dagger=None):
+def pack(gfx, rows=SWORD_ROWS, dagger=None, kusarigama=False):
     entries, encoded = 0, bytearray()
     for row in rows:
         tiles = gfx.weapon_tiles(row)
@@ -235,6 +261,25 @@ def pack(gfx, rows=SWORD_ROWS, dagger=None):
                 encoded += struct.pack("<4B20H", kind, row, frame, 1, *palette)
                 encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
                 entries += 1
+        if kusarigama:
+            whip_tiles = gfx.weapon_tiles(KUSARIGAMA_WHIP_ROW)
+            whip_palette = [V.bgr555(c) for c in gfx.weapon_palette(
+                gfx.weapon_group(KUSARIGAMA_WHIP_ROW)[1][4])[1:6]]
+            for sword_frame, _sword_flags, whip_frame, whip_flags in kusarigama_frames(gfx):
+                pieces = gfx.weapon_pieces(KUSARIGAMA_WHIP_ROW, whip_frame, whip_flags)
+                if not pieces:
+                    continue
+                whip = [[0]*CANVAS for _ in range(CANVAS)]
+                gfx.render("boy", pieces, image=whip, origin=ORIGIN, source=whip_tiles)
+                record = cropped(whip)
+                if record is None:
+                    continue
+                dx, dy, w, h, pixels = record
+                palette = whip_palette + whip_palette + [0]*10
+                encoded += struct.pack("<4B20H", KIND_KUSARIGAMA, row,
+                                       sword_frame, 1, *palette)
+                encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
+                entries += 1
     if entries > 65535:
         raise ValueError("too many weapon mask frames")
     return b"SOMWORK1"+struct.pack("<H", entries)+bytes(encoded)
@@ -247,6 +292,8 @@ def main():
     parser.add_argument("--dagger-png", help="one cropped transparent SD3 dagger PNG")
     parser.add_argument("--dagger-hilt", help="opaque hilt pixel as X,Y in the cropped image")
     parser.add_argument("--dagger-tip", help="opaque tip pixel as X,Y in the cropped image")
+    parser.add_argument("--kusarigama", action="store_true",
+                        help="include whip artwork aligned to the level-2 sword attack")
     args = parser.parse_args()
     if bool(args.dagger_png) != bool(args.dagger_hilt and args.dagger_tip):
         parser.error("--dagger-png requires --dagger-hilt X,Y and --dagger-tip X,Y")
@@ -257,10 +304,11 @@ def main():
         except (ValueError,AttributeError):
             parser.error("use X,Y for donor anchor coordinates")
     donor = import_dagger(args.dagger_png,point(args.dagger_hilt),point(args.dagger_tip)) if args.dagger_png else None
-    payload = pack(H.HeroGfx.load(args.rom), dagger=donor)
+    payload = pack(H.HeroGfx.load(args.rom), dagger=donor,
+                   kusarigama=args.kusarigama)
     with open(args.out, "wb") as out:
         out.write(payload)
-    print(f"Bushido masks: {int.from_bytes(payload[8:10], 'little')} frames, "
+    print(f"Weapon masks: {int.from_bytes(payload[8:10], 'little')} frames, "
           f"{len(payload)} bytes -> {args.out}")
 
 

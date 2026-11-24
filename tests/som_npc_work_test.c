@@ -73,6 +73,12 @@ int main(void){
     assert(som_npc_work_pose(&s,0)==s.entry.first&&som_npc_work_pose(&s,4)==s.entry.first);
     assert(som_npc_work_pose(&s,5)!=s.entry.first&&som_npc_work_pose(&s,14)!=s.entry.first);
     assert(som_npc_work_pose(&s,15)==s.entry.first);
+    /* One-shot rolls use video-frame durations and land at the end of travel. */
+    SomNpcWorkState roll=s;
+    roll.pose_duration=3;roll.length=6;
+    assert(som_npc_work_pose(&roll,1)==s.entry.first);
+    assert(som_npc_work_pose(&roll,2)!=s.entry.first);
+    assert(som_npc_work_pose(&roll,5)==som_npc_work_pose(&roll,6));
 
     /* Draw at frame 1000: foot (72,104); frame 0 pixel at (-3,-20) -> (69,84).
      * The colour buffer holds the villager's red in OBJ palette 0. */

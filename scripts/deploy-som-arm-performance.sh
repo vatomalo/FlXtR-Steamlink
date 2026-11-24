@@ -5,9 +5,9 @@
 #
 # server  tools/som_wram_server.py -> /home/apps/greenlink/tools/ (safe while
 #         the game runs; bridges pick it up on their next SSH session)
-# proxy   build/som-ai/som_ai_proxy_libretro.so (build it first with
-#         scripts/build-som-ai-proxy.sh) -> cores/experimental/; refused while
-#         RetroArch runs the proxy
+# proxy   core, ROM-derived weapon masks and their opt-in marker from
+#         build/som-ai/ -> cores/experimental/; refused while RetroArch runs
+#         the proxy
 #
 # Every install: device identity check, a full read-only snapshot with
 # scripts/som-backup-steamlink.sh, an on-device copy of the file it replaces
@@ -55,6 +55,11 @@ install_file() {   # local remote-path mode
 if [ "$what" = proxy ] || [ "$what" = all ]; then
   so=build/som-ai/som_ai_proxy_libretro.so
   [ -f "$so" ] || { echo "build it first: bash scripts/build-som-ai-proxy.sh" >&2; exit 1; }
+  masks=build/som-ai/som_weapon_masks.bin
+  marker=build/som-ai/som_ai_weapon_masks_on
+  [ -f "$masks" ] && [ -f "$marker" ] || {
+    echo "build the ROM-derived weapon mask pack first with SOM_ROM_PATH set" >&2; exit 1;
+  }
   file "$so" | grep -q 'ARM, EABI5' || { echo "refusing: $so is not an ARM EABI5 build" >&2; exit 1; }
   # 2./3. active core path, and never while RetroArch has the proxy loaded
   running=$(ssh_ "ps | grep '[r]etroarch.exec' | grep -c som_ai_proxy_libretro.so || true")
@@ -70,5 +75,7 @@ if [ "$what" = server ] || [ "$what" = all ]; then
 fi
 if [ "$what" = proxy ] || [ "$what" = all ]; then
   install_file build/som-ai/som_ai_proxy_libretro.so "$E/som_ai_proxy_libretro.so" 755
+  install_file build/som-ai/som_weapon_masks.bin "$E/som_weapon_masks.bin" 644
+  install_file build/som-ai/som_ai_weapon_masks_on "$E/som_ai_weapon_masks_on" 644
 fi
 echo "rollback: bash scripts/rollback-som-arm-performance.sh${host:+ --host $host}"

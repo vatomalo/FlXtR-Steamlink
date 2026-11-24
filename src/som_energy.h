@@ -21,7 +21,7 @@
 #define SOM_ENERGY_REFILL_FRAMES 20u      /* +1 every 1/3 s */
 #define SOM_ENERGY_STILL_FRAMES 6u        /* +1 every 0.1 s standing still */
 #define SOM_AP_MAX 4u
-#define SOM_AP_REFILL_FRAMES 90u          /* one pip every 1.5 s */
+#define SOM_AP_REFILL_FRAMES 60u          /* one pip a second: short evades, more of them */
 
 static const char *const som_energy_names[SOM_DISCIPLINE_COUNT]={
     "Spirit",   /* Swordsmanship */

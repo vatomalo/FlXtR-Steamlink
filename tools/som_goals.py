@@ -42,6 +42,12 @@ def memory_summary(history, observation, gold=None, shop_errand=None):
                "shop_ready": bool(shop_errand),
                "known_maps": [], "reward_maps": [], "avoided_enemies": [],
                "weapon": None, "status": [], "npc_clues": []}
+    summary["native_allies"] = [
+        {"slot": member["slot"], "hp": member.get("hp"), "max_hp": member.get("max_hp")}
+        for member in (observation or {}).get("party", [])
+        if member.get("slot") in (2, 3) and member.get("availability_byte") == 1
+        and member.get("controller_binding") == 0 and member.get("hp_plausible")
+    ]
     weapon, status = hero.get("weapon") or {}, hero.get("status") or {}
     if weapon.get("verified"):
         summary["weapon"] = f"{weapon['type']} level {weapon['level']}"
@@ -116,6 +122,9 @@ def build_goal_prompt(objective, summary, offered, current, coach=None):
               **({"heading": c["directions"]} if c.get("directions") else {}),
               **({"names": c["names"]} if c.get("names") else {})}
              for c in (summary.get("npc_clues") or [])[:4]]
+    allies = summary.get("native_allies") or []
+    ally_health = ", ".join(f"slot {ally['slot']} {ally['hp']}/{ally['max_hp']} HP"
+                            for ally in allies)
     return (
         "You choose the next goal for a Secret of Mana hero. Score: +1 per gold "
         "gained, -2 per percent of max HP lost. "
@@ -125,7 +134,9 @@ def build_goal_prompt(objective, summary, offered, current, coach=None):
         f"candy {summary.get('candy')}, enemies near {summary.get('enemies_near')}, "
         f"weapon {summary.get('weapon') or 'unknown'}, "
         f"status {', '.join(summary.get('status') or []) or 'normal'}. "
-        f"Inn on map {summary.get('inn_map')}, shop on map {summary.get('shop_map')}. "
+        + (f"Native AI companions: {ally_health}. Consider their health when choosing a fight. "
+           if allies else "")
+        + f"Inn on map {summary.get('inn_map')}, shop on map {summary.get('shop_map')}. "
         f"Known maps {summary.get('known_maps')}. Score per map: {rewards}. "
         f"NPC hearsay (unverified, possibly partial): "
         f"{json.dumps(clues, ensure_ascii=True, separators=(',', ':'))}. "

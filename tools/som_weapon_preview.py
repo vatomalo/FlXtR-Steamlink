@@ -20,7 +20,7 @@ VIEW=96
 ZOOM=3
 PAD=9
 MAX_COLS=12
-ROWS=("TANTO","KATANA","DAI KATANA")
+ROWS=("TANTO","KATANA","DAI KATANA","KUSARIGAMA")
 GLYPHS={
     "T":("11111","00100","00100","00100","00100","00100","00100"),
     "A":("01110","10001","10001","11111","10001","10001","10001"),
@@ -54,8 +54,8 @@ def unpack(data):
     for _ in range(count):
         if ptr+44>end:raise ValueError("truncated weapon mask entry")
         kind,row,frame,nframes=struct.unpack_from("<BBBB",data,ptr)
-        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_NATIVE,M.KIND_SHORT_SWORD) or row not in M.SWORD_ROWS or nframes!=1:
-            raise ValueError("not a Bushido weapon-mask pack")
+        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_NATIVE,M.KIND_SHORT_SWORD,M.KIND_KUSARIGAMA) or row not in M.SWORD_ROWS or nframes!=1:
+            raise ValueError("not a supported weapon-mask pack")
         palette=struct.unpack_from("<20H",data,ptr+4)
         if any(c&0x8000 for c in palette):
             raise ValueError("invalid BGR555 mask palette")
@@ -152,7 +152,7 @@ def contact_sheet(gfx,records,row,frames):
     if count<1:raise ValueError("no compatible sword frames")
     panel=VIEW*ZOOM
     sheet_w=PAD+(panel+PAD)*count
-    sheet_h=24+(panel+22)*3+PAD
+    sheet_h=24+(panel+22)*len(ROWS)+PAD
     pic=[[(15,17,29)]*sheet_w for _ in range(sheet_h)]
     for col,(frame,flags) in enumerate(frames):
         for which,title in enumerate(ROWS):
@@ -160,7 +160,9 @@ def contact_sheet(gfx,records,row,frames):
             y0=24+which*(panel+22)
             stamp(pic,x0,y0-14,title,(235,225,196))
             stamp(pic,x0+panel-20,y0-14,f"{frame:02d}")
-            rec=records.get((M.KIND_TANTO if which==0 else M.KIND_DAI,row,frame)) if which!=1 else None
+            kind=(M.KIND_TANTO if which==0 else M.KIND_DAI if which==2 else
+                  M.KIND_KUSARIGAMA if which==3 else None)
+            rec=records.get((kind,row,frame)) if kind is not None else None
             img=render_cell(gfx,row,frame,flags,rec)
             # Red missing-frame marker means the native weapon was used.
             if which!=1 and rec is None:
@@ -217,15 +219,16 @@ def main():
     frames=frames[:args.max_frames]
     pic=contact_sheet(gfx,records,args.row,frames)
     png(args.png,pic)
-    lines=[f"Bushido weapon masks, {args.direction} poses, grade row {args.row}",
-           "Row 1: Tanto (SD3 donor if configured), row 2: native Katana, row 3: Dai Katana",
+    lines=["Weapon masks, native frame numbers, sword grade row "+str(args.row),
+           "Rows: Tanto, native Katana, Dai Katana, Kusarigama whip overlay",
            "Red marker: mask unavailable, show native sword; no red marker: masked replacement",
            "Only the weapon silhouette is replaced. Hero body stays native.",
            ""]
     for frame,flags in frames:
         a=(M.KIND_TANTO,args.row,frame) in records
         b=(M.KIND_DAI,args.row,frame) in records
-        lines.append(f"frame {frame}, flags {flags:#04x}: Tanto {'yes' if a else 'native fallback'}, Dai {'yes' if b else 'native fallback'}")
+        k=(M.KIND_KUSARIGAMA,args.row,frame) in records
+        lines.append(f"frame {frame}, flags {flags:#04x}: Tanto {'yes' if a else 'native fallback'}, Dai {'yes' if b else 'native fallback'}, Kusarigama {'yes' if k else 'native fallback'}")
     lines.append("")
     for direction, (total, tanto, dai, native) in direction_coverage(
             gfx, records, args.row, poses).items():

@@ -137,6 +137,26 @@ Stop the service before running a teach or probe tool, and start it again after.
 - Add a unit test for every behaviour change; run all tests before committing.
 - Commit to this branch and push; never force-push.
 
+## Potos story lesson
+
+Set SOM_AI_POTOS_STORY=1 for the next bridge session to use the Potos lesson
+in place of the farming loop. Start the agent from the Action Grid during the
+Mantis Ant encounter or in Potos after the banishment scene. The existing
+bounded dialogue handler advances text pages during this segment. The lesson
+stops after the banishment if it lacks a verified way out, or when verified
+field observations show the party on the road out of Potos.
+
+The guide (printed pp. 7–9) describes circling the Mantis Ant and pursuing
+Jema's lead at the Water Palace. The planner tries a lateral step during sword
+recovery and compares it with the regular press tactic using the existing
+SQLite tactic scores. The story gate comes from som-decomp's map and event
+decoders, cross-checked against the local Turbo ROM. Event 0x10C enters map
+260 via transition 141. Event 0x112 marks pit victory, takes the player back
+to Potos and ends with story flag 0x10 at 9. Potos exit 2 reaches map 16.
+
+Leaving Potos requires the planner to have a learned or runtime-verified
+direct exit to map 16. The bridge hands control back if the route is blocked.
+
 ## Open problems (latest first)
 
 0. Steam Link speed (2026-11-15, `docs/SOM-ARM-PERFORMANCE-*.md`): the game ran

@@ -114,6 +114,11 @@ LINES = {
 # (it flipped between five classes every 1-3 minutes on 2026-11-16).
 SWITCH_MARGIN = 3
 MIN_HOLD_S = 90.0
+COMPANION_HOLD_S = 30.0              # girl and sprite change roles sooner
+# A switch the game has not shown yet: the old class read meanwhile is lag,
+# not a player pick. After this long the switch did not take.
+CONFIRM_S = 15.0
+PICK_KEEP_S = 12 * 3600.0            # a player's pick survives restarts this long
 # Sister classes (the player's family, 2026-11-19): Martial Arts, Ninjutsu,
 # Roguecraft, Bushido. A hero in one of them switches between them in a
 # fight by situation, at most every SISTER_HOLD_S, even with a class the
@@ -297,8 +302,10 @@ def score(index, build, levels, max_mp, tags=frozenset()):
 
 
 class ClassDirector:
-    def __init__(self, clock=None):
+    def __init__(self, clock=None, min_hold=MIN_HOLD_S):
         import time
+        self.min_hold = min_hold
+        self.unconfirmed = None      # class before a switch not yet seen in the game
         self.clock = clock or time.monotonic
         self.current = None          # what this director last asked for
         self.switched_at = None
@@ -306,6 +313,7 @@ class ClassDirector:
         self.wanted = ()             # the wanted build (class indices)
         self.wanted_fixed = False    # set by the player: the AI keeps it
         self.pinned = False          # the player picked the class in the game
+        self.picked_at = None        # wall clock of that pick
         self.home = None             # sister class to return to when calm
 
     def sister_choose(self, hp_fraction=1.0, enemies=0, nearest=None, toughest=0):
@@ -397,7 +405,7 @@ class ClassDirector:
             sword_needed = need_cut and self.current not in SWORD_CLASSES
             if not sword_needed:
                 if (self.switched_at is not None and
-                        self.clock() - self.switched_at < max(self.cooldown, MIN_HOLD_S)):
+                        self.clock() - self.switched_at < max(self.cooldown, self.min_hold)):
                     return None
                 if need_cut:         # already holds a sword: keep it
                     return None
@@ -412,16 +420,56 @@ class ClassDirector:
         """The class selected in the game (None = none). When it is not what
         this director asked for, the player picked it: the director takes it
         as current and stops switching. Returns True when that happened."""
-        if selected is None or selected == self.current:
+        if selected is not None and selected == self.current:
+            self.unconfirmed = None
+            return False
+        if selected is None:
             return False
         if (self.switched_at is not None and
                 self.clock() - self.switched_at < ADOPT_SETTLE_S):
             return False
-        self.current, self.pinned = selected, True
+        if selected == self.unconfirmed:
+            if self.clock() - self.switched_at < CONFIRM_S:
+                return False
+            self.current, self.unconfirmed = selected, None   # it did not take
+            self.home = None
+            self.switched_at = self.clock()
+            return False
+        self.unconfirmed = self.home = None
+        self.current, self.pinned, self.picked_at = selected, True, None
         self.switched_at = self.clock()
         return True
 
+    def initialize(self, selected, saved=None, now=None):
+        """Seed the observed class without treating startup state as a pick.
+
+        saved: an earlier pick_state(). A recent pick is kept only while the
+        game still shows that class."""
+        import time
+        now = time.time() if now is None else now
+        self.current = selected
+        self.unconfirmed = None
+        self.pinned = bool(
+            selected is not None and isinstance(saved, dict) and
+            saved.get("class") == selected and
+            isinstance(saved.get("at"), (int, float)) and
+            0 <= now - saved["at"] < PICK_KEEP_S)
+        self.picked_at = saved["at"] if self.pinned else None
+        home = saved.get("home") if self.pinned else None
+        self.home = home if home in SISTERS else None
+        self.switched_at = self.clock() if selected is not None else None
+
+    def pick_state(self, now=None):
+        """The player's pick to store across restarts, or None."""
+        import time
+        if not self.pinned:
+            return None
+        if self.picked_at is None:
+            self.picked_at = time.time() if now is None else now
+        return {"class": self.current, "home": self.home, "at": self.picked_at}
+
     def switched(self, index):
+        self.unconfirmed = self.current if index != self.current else None
         self.current = index
         self.switched_at = self.clock()
 

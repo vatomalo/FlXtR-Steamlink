@@ -22,7 +22,10 @@ Stats persist in the AI history database (table tactic_stats).
 """
 import random
 
+from som_story import MANTIS_ID
+
 TACTICS = ("press", "kite", "close")
+MANTIS_TACTICS = ("circle", "press")
 DEFAULT = "press"
 RANGE_PX = 64
 CLOSE_SWING_PX = 24
@@ -65,6 +68,8 @@ class TacticLearner:
 
     def stats(self, enemy_id):
         out = {tactic: (0, 0, 0) for tactic in TACTICS}
+        if enemy_id == MANTIS_ID:
+            out["circle"] = (0, 0, 0)
         for tactic, samples, dealt, taken in self.db.execute(
                 "SELECT tactic,samples,dealt,taken FROM tactic_stats WHERE enemy_id=?",
                 (int(enemy_id),)):
@@ -86,7 +91,8 @@ class TacticLearner:
         if not isinstance(enemy_id, int):
             return preferred or DEFAULT
         current = self.current.get(enemy_id)
-        allowed = tuple(t for t in (allowed or TACTICS) if t in TACTICS) or TACTICS
+        valid = (*TACTICS, "circle") if enemy_id == MANTIS_ID else TACTICS
+        allowed = tuple(t for t in (allowed or TACTICS) if t in valid) or TACTICS
         if (current is not None and current[1] > 0 and current[2] == preferred and
                 current[0] in allowed):
             return current[0]
@@ -100,7 +106,7 @@ class TacticLearner:
         if preferred in untried:
             return preferred
         if untried:
-            return min(untried, key=lambda t: (stats[t][0], TACTICS.index(t)))
+            return min(untried, key=lambda t: (stats[t][0], (*TACTICS, "circle").index(t)))
         best = max(allowed, key=lambda t: self.score(*stats[t]))
         if (preferred in allowed and preferred != best and
                 self.score(*stats[preferred]) >= self.score(*stats[best]) - BUILD_MARGIN):
@@ -121,31 +127,57 @@ class TacticLearner:
                 "taken=taken+excluded.taken",
                 (int(enemy_id), tactic, int(dealt), int(taken)))
 
-    def record(self, observation):
-        """Settle the previous sample, then open one for this decision."""
+    def settle(self, observation):
+        """Settle a sample against the next snapshot, at most once."""
         hero = ((observation or {}).get("party") or [{}])[0] or {}
         hp, max_hp = hero.get("hp"), hero.get("max_hp") or 0
         context = (observation or {}).get("tile_context") or {}
         map_id = context.get("map_id")
         if self.pending is not None and isinstance(hp, int):
-            enemy_id, tactic, slot, hero_before, enemy_before, pending_map = self.pending
+            enemy_id, tactic, slot, hero_before, enemy_before, pending_map, strict = self.pending
             lost = hero_before - hp
-            if hp > 0 and 0 <= lost and (not max_hp or lost < max_hp) and map_id == pending_map:
+            if (hp > 0 and 0 <= lost and (not max_hp or lost < max_hp) and map_id == pending_map and
+                    (not strict or (context.get("runtime_verified") and
+                                    context.get("game_mode") == "field"))):
                 enemy = next((e for e in (observation or {}).get("enemy_slots", [])
                               if isinstance(e, dict) and e.get("slot") == slot), None)
                 if enemy is not None and enemy.get("active") and \
-                        enemy.get("identity") == enemy_id and isinstance(enemy.get("hp"), int):
+                        enemy.get("identity") == enemy_id and isinstance(enemy.get("hp"), int) and (
+                            not strict or enemy.get("hp_plausible")):
                     dealt = max(0, enemy_before - enemy["hp"])
+                elif strict:
+                    # A missing or reused slot is not proof of a hit. Accept
+                    # a final zero-HP observation only with the same identity.
+                    if not (enemy and enemy.get("identity") == enemy_id and
+                            enemy.get("hp_plausible") and enemy.get("hp") == 0):
+                        self.pending = None
+                        return
+                    dealt = enemy_before
                 else:
-                    dealt = enemy_before          # gone: defeated (or despawned)
+                    dealt = enemy_before          # legacy ambient sample
                 self._add(enemy_id, tactic, dealt, lost)
                 current = self.current.get(enemy_id)
                 if current is not None and current[0] == tactic:
                     current[1] -= 1
         self.pending = None
+
+    def record_trial(self, observation, trial):
+        """Open a verified boss sample using the tactic that chose the input."""
+        identity, slot, tactic = trial
+        hero = observation["party"][0]
+        enemy = next(e for e in observation["enemy_slots"] if e["slot"] == slot)
+        self.pending = (identity, tactic, slot, hero["hp"], enemy["hp"],
+                        observation["tile_context"]["map_id"], True)
+
+    def record(self, observation):
+        """Settle the previous sample, then open one for this decision."""
+        self.settle(observation)
+        hero = ((observation or {}).get("party") or [{}])[0] or {}
+        hp = hero.get("hp")
+        map_id = ((observation or {}).get("tile_context") or {}).get("map_id")
         enemy = _nearest(observation)
         if enemy is not None and isinstance(hp, int) and hp > 0 and \
                 isinstance(enemy.get("hp"), int):
             identity = enemy["identity"]
             self.pending = (identity, self.tactic(identity), enemy.get("slot"), hp,
-                            enemy["hp"], map_id)
+                            enemy["hp"], map_id, False)

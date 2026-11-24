@@ -25,7 +25,9 @@ Rules, first match wins:
 4. Enemy at melee range: the stronger weapon here, the higher weapon level
    (more charge levels), else the primary.
 5. No enemy near: train the weaker weapon when it lags two levels behind,
-   else ready the primary.
+   else ready the longer reach (2026-11-22: the sword held at rest meant the
+   first contact of every fight was melee; the next enemy now meets the bow
+   or boomerang first and the short weapon comes out when it closes in).
 
 Timing (WeaponTactics.decide): in a fight switches wait `combat_cooldown`
 seconds, out of one `cooldown` seconds (the bridge scales both with the
@@ -70,7 +72,8 @@ def _others(pair, weapon, levels):
     return f" (the {best} {levels.get(best, 0)})"
 
 
-def choose(primary, secondary, held, distance, hp_fraction, levels, third=None, favourite=None):
+def choose(primary, secondary, held, distance, hp_fraction, levels, third=None, favourite=None,
+           prefer_range=False):
     """(weapon, reason) to hold now; distance None = no enemy near.
 
     third: a class's third weapon (Weapon Flow's bow on X), chosen by the
@@ -85,6 +88,9 @@ def choose(primary, secondary, held, distance, hp_fraction, levels, third=None, 
         if held in WEAPON_MIN_PX and distance <= WEAPON_MIN_PX[held] + 4:
             other = shorter if held == longer else longer
             return other, f"enemy {distance} px away is too close for the {held}"
+        if (prefer_range and reach(longer) > reach(shorter) and
+                distance > reach(shorter)):
+            return longer, f"party under pressure: use the {longer}'s {reach(longer)} px reach"
         if hp_fraction < LOW_HP and reach(longer) > reach(shorter):
             return longer, (f"HP {hp_fraction:.0%}: the {longer} hits from "
                             f"{reach(longer)} px, outside the enemy's reach")
@@ -108,6 +114,8 @@ def choose(primary, secondary, held, distance, hp_fraction, levels, third=None, 
     if levels.get(stronger, 0) - levels.get(weaker, 0) >= TRAIN_GAP:
         return weaker, (f"no enemy near: training the {weaker} (level "
                         f"{levels.get(weaker, 0)} vs {levels.get(stronger, 0)})")
+    if reach(longer) > reach(shorter):
+        return longer, f"no enemy near: the {longer} ready ({reach(longer)} px reach)"
     return primary, f"no enemy near: the {primary} ready"
 
 
@@ -151,7 +159,7 @@ class WeaponTactics:
         return None
 
     def decide(self, primary, secondary, held, distance, hp_fraction, levels, busy=False,
-               third=None, enemy=None):
+               third=None, enemy=None, prefer_range=False):
         """(weapon, reason) to switch to now, or None to keep the one in hand."""
         now = self.clock()
         knocked = None
@@ -170,7 +178,7 @@ class WeaponTactics:
                 self._refused(asked, now)
         pair = [w for w in dict.fromkeys((primary, secondary, third)) if w]
         weapon, reason = choose(primary, secondary, held, distance, hp_fraction, levels, third,
-                                self.favourite(enemy, pair))
+                                self.favourite(enemy, pair), prefer_range=prefer_range)
         if weapon == held or weapon is None or busy or self.cooldown is None:
             return None
         if self.resting.get(weapon, 0) > now or self.pending is not None:

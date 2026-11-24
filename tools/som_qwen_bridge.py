@@ -36,10 +36,11 @@ from som_game_over import GameOverLoad, GameOverWatch
 from som_event_escape import EventEscape
 from som_play_loop import PlayLoop, SaveMacro
 from som_block import BlockLearner
+from som_story import MANTIS_MAP, POTOS_MAP, ROAD_MAP, story_stage
 from som_tactics import TacticLearner
 from som_build import classify as classify_build, profile as build_profile
 from som_wram_server import apply_block_delta
-from som_class_director import (ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
+from som_class_director import (COMPANION_HOLD_S, ClassDirector, HEALERS, NAMES as CLASS_NAMES, WEAPONS as CLASS_WEAPONS,
                                 ATTACK_MAGIC, DODGE_CLASSES, LINES as CLASS_LINES,
                                 CONTACT_PX as CLASS_CONTACT_PX, ClassRecord,
                                 parse_classes, plan_classes)
@@ -53,6 +54,7 @@ from som_critic import Critic
 from som_critic_link import (FINISHER_COOLDOWN_SCALE, critic_coach, critic_tags,
                              nudge_style, read_critic)
 from som_class_arts import KICK_COOLDOWN_S, FlyingKickTactics, IaiTactics
+from som_rope import RopeTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
 from som_class_director import B_CHAIN_WEAPONS
 from som_anticipate import AttackPredictor
@@ -103,16 +105,20 @@ MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
                            "dash_up", "dash_down"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
-                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_herb",
+                    "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_candy_1", "use_candy_2", "use_herb", "use_rope",
                     "give_glove", "give_axe", "give_spear", "give_whip", "give_bow",
                     "give_boomerang", "give_javelin", "next_weapon",
                     "equip_glove", "equip_sword", "equip_axe", "equip_spear", "equip_whip",
                     "equip_bow", "equip_boomerang", "equip_javelin",
-                    "cast_attack", "cast_heal", "cast_buff", "class_none", "evade",
+                    "cast_attack", "cast_heal", "cast_revive", "cast_buff", "class_none", "evade", "party_release",
                     "kawarimi", "shunshin", "iai_3", "iai_4", "flykick", "fuma_swap", "telekinesis",
                     "evade_up", "evade_down", "evade_left", "evade_right"} | \
     {f"class_{n}" for n in range(16)} | {f"special_{n}" for n in range(1, 9)}
 # Blink to a tile (proxy som_blink_start checks range and open ground).
+PARTY_ORDER_COMMAND = re.compile(r"party_order_[0-9]{1,3}_[0-3]_[0-9]{1,3}")
+ALLY_CLASS_COMMAND = re.compile(r"ally_class_[12]_(?:[0-9]|1[0-5])")
+PARTY_ORDER_REFRESH_S = 4.0
+PARTY_ORDER_MIN_INTERVAL_S = 0.75
 BLINK_COMMAND = re.compile(r"blink_\d{1,3}_\d{1,3}")
 # A Fuma throw's hit plus the clone's smoke take ~40 frames: swap then.
 FUMA_SWAP_DELAY_S = 0.7
@@ -198,9 +204,14 @@ def allowed_directives(observation):
     enemies = [enemy for enemy in observation.get("enemy_slots", [])
                if isinstance(enemy, dict) and enemy.get("active")]
     if enemies:
-        hero = (observation.get("party") or [{}])[0]
+        party = observation.get("party") or []
+        hero = party[0] if party else {}
         hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-        if max_hp and hp * 4 <= max_hp:
+        party_critical = any(
+            member.get("availability_byte") == 1 and member.get("max_hp", 0) and
+            0 < member.get("hp", 0) * 4 <= member["max_hp"]
+            for member in party)
+        if party_critical or (max_hp and hp * 4 <= max_hp):
             return ["avoid_enemy", "engage_enemy", *choices]
         return ["engage_enemy", "avoid_enemy", *choices]
     return choices
@@ -213,6 +224,49 @@ def objective_directive(objective):
             return f"explore_{direction}"
     return "explore_unknown"
 
+def companion_order(mode, observation, decision, intention, directive):
+    """Translate the hero planner's intent into a temporary companion class order."""
+    if mode == "independent" or not any(
+            member.get("slot") in (2, 3) and member.get("availability_byte") == 1
+            and member.get("controller_binding") == 0 and (member.get("hp") or 0) > 0
+            for member in observation.get("party", [])):
+        return None
+    map_id = (observation.get("tile_context") or {}).get("map_id")
+    if not isinstance(map_id, int) or not 0 <= map_id <= 511:
+        return None
+    if (mode == "support" or directive == "avoid_enemy" or decision.intention in
+            ("survive", "evade_enemy", "return_to_inn", "recover_at_inn")):
+        return f"party_order_{map_id}_3_0"
+    if (decision.intention in ("engage_enemy", "defend_enemy", "kite_enemy") and
+            (intention or {}).get("kind") == "engage"):
+        enemies = [enemy for enemy in observation.get("enemy_slots", [])
+                   if enemy.get("active") and not enemy.get("familiar") and
+                   enemy.get("slot") in (1, 2, 3) and
+                   isinstance(enemy.get("identity"), int) and
+                   0 <= enemy["identity"] < 128]
+        intended = next((enemy for enemy in enemies
+                         if enemy["slot"] == intention.get("enemy")), None)
+        # A weak nearby enemy is a good focus-fire target: the leader and both
+        # companions can remove one threat together before splitting attacks.
+        # Keep the planner's choice if HP data is missing or every other foe is
+        # too far away to join the opening attack.
+        actor = ((observation.get("tile_context") or {}).get("actor") or {})
+        x, y = actor.get("x_px"), actor.get("y_px")
+        if len(enemies) > 1 and isinstance(x, int) and isinstance(y, int):
+            reachable = [enemy for enemy in enemies
+                         if enemy.get("hp_plausible") and enemy.get("max_hp", 0) > 0 and
+                         max(abs(enemy.get("x_px", x) - x),
+                             abs(enemy.get("y_px", y) - y)) <= 160]
+            if reachable:
+                intended = min(reachable, key=lambda enemy: (
+                    enemy["hp"] / enemy["max_hp"],
+                    max(abs(enemy.get("x_px", x) - x),
+                        abs(enemy.get("y_px", y) - y)), enemy["slot"]))
+        if intended is not None:
+            return f"party_order_{map_id}_{intended['slot'] - 1}_{intended['identity']}"
+    return None
+
+
 def build_director_prompt(objective, observation, current, recent, known_cells,
                           combat_memory=None, place_memory=None):
     context = observation.get("tile_context", {}) if isinstance(observation, dict) else {}
@@ -222,6 +276,9 @@ def build_director_prompt(objective, observation, current, recent, known_cells,
     native_allies = [member for member in party
                      if member.get("availability_byte") == 1 and
                      member.get("controller_binding") == 0]
+    party_health = ", ".join(
+        f"{member.get('hp')}/{member.get('max_hp')}" for member in party
+        if member.get("availability_byte") == 1) or "unknown"
     enemies = [enemy for enemy in observation.get("enemy_slots", [])
                if isinstance(enemy, dict) and enemy.get("active")] if isinstance(observation, dict) else []
     choices = allowed_directives(observation)
@@ -233,13 +290,15 @@ def build_director_prompt(objective, observation, current, recent, known_cells,
         f"Player objective: {objective}. Location: {location}, map {map_id}, "
         f"tile {context.get('actor_tile')}, layer {actor.get('layer')}. "
         f"HP {hero.get('hp')}/{hero.get('max_hp')}; active enemies {len(enemies)}; "
-        f"native AI allies {len(native_allies)}; "
+        f"party HP {party_health}; native AI allies {len(native_allies)}; "
         f"known map cells {known_cells}. Current directive: {current}. "
         f"Recent actions: {recent}. Allowed directives: {', '.join(choices)}. "
         f"Remembered places on this map: {compact(place_memory)}. "
         f"Learned combat outcomes: {compact(combat_memory)}. "
-        "Prefer a consistent heading that reveals unknown territory. Engage a real enemy "
-        "when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
+        "Prefer a consistent heading that reveals unknown territory. In fights, coordinate "
+        "focus fire to finish a weak nearby enemy, use area attacks when enemies cluster, "
+        "and favor healing, revival, or retreat when an ally is in danger. Engage a real "
+        "enemy when healthy; avoid it when badly hurt. Reply with exactly one allowed directive."
     )
 
 def compact(items):
@@ -501,9 +560,8 @@ REMOTE_LOOP = (
     "else echo NONE; fi;; "
     "hotz|hotmz) "
     "if [ \"$cmd\" = hotmz ] && [ ! -f /tmp/flxtr-som-ai-enabled ]; then echo STOP; "
-    # The proxy writes the hot ranges ready-made (one gzip, no dd: the
-    # Steam Link has a single core shared with the game); older cores fall
-    # back to cutting them out of the snapshot.
+    # Older proxies publish a packed copy. The observation server normally
+    # sends deltas from the full snapshot. The shell can slice it on demand.
     "elif command exec 4< /tmp/flxtr-som-hot.bin 2>/dev/null; then echo WRAMH; gzip -1 -c <&4; exec 4<&-; "
     "elif command exec 3< /tmp/flxtr-som-wram.bin 2>/dev/null; then echo WRAMH; "
     "{ " + "; ".join(f"dd if=/proc/self/fd/3 bs=1024 skip={start} count={count} 2>/dev/null"
@@ -523,6 +581,8 @@ REMOTE_LOOP = (
     'echo "GMM $i $c";; '
     "dsc) d=; [ -f " + DISCIPLINE_FILE + " ] && read -r v d rest < " + DISCIPLINE_FILE + "; "
     "case \"$d\" in ''|*[!0-9]*) d=255;; esac; echo \"DSC $d\";; "
+    "dpc) s=; [ -f " + DISCIPLINE_FILE + " ] && s=$(awk 'NR==1{for(i=1;i<=NF;i++)if($i==\"p\"){if($(i+1)~/^[0-9]+$/&&$(i+2)~/^[0-9]+$/)print $(i+1),$(i+2);exit}}' " + DISCIPLINE_FILE + "); "
+    "echo \"DPC ${s:-255 255}\";; "
     "fam) f=; [ -f " + FAMILIAR_FILE + " ] && read -r f < " + FAMILIAR_FILE + "; "
     "case \"$f\" in [1-3]) ;; *) f=0;; esac; echo \"FAM $f\";; "
     "obsz|obsmz) "
@@ -786,13 +846,25 @@ class RemoteLink:
         return int(status[4:])
 
     def fetch_discipline(self):
-        """The discipline selected in the game (0-11), or None for none."""
+        """The discipline selected in the game (0-15), or None for none."""
         status, _ = self._request("dsc")
         value = status[4:] if status.startswith("DSC ") else ""
         if not value.isdigit():
             raise OSError(f"discipline unavailable ({status})")
         n = int(value)
-        return n if n < 12 else None
+        return n if n < len(CLASS_NAMES) else None
+
+    def fetch_party_disciplines(self):
+        """Saved Girl and Sprite disciplines, or None for an unset slot."""
+        status, _ = self._request("dpc")
+        fields = status.split()
+        if len(fields) != 3 or fields[0] != "DPC":
+            raise OSError(f"party disciplines unavailable ({status})")
+        try:
+            values = [int(value) for value in fields[1:]]
+        except ValueError as exc:
+            raise OSError(f"party disciplines unavailable ({status})") from exc
+        return [value if value < len(CLASS_NAMES) else None for value in values]
 
     def show_message(self, text: str) -> None:
         """Ask the proxy to draw a short two-line message box ('|' = new line)."""
@@ -822,7 +894,9 @@ class RemoteLink:
 
     def send_control(self, command: str) -> None:
         """Experimental proxy commands that only tools (never Qwen) may send."""
-        if command not in CONTROL_COMMANDS and not BLINK_COMMAND.fullmatch(command):
+        if (command not in CONTROL_COMMANDS and not BLINK_COMMAND.fullmatch(command)
+                and not PARTY_ORDER_COMMAND.fullmatch(command)
+                and not ALLY_CLASS_COMMAND.fullmatch(command)):
             raise ValueError(f"refusing unknown control command {command!r}")
         status, _ = self._request("act " + command)
         if status != "OK":
@@ -961,7 +1035,8 @@ class AndroidRelayLink:
             with self.condition: self.message = clean
 
     def send_control(self, command: str) -> None:
-        if command not in CONTROL_COMMANDS:
+        if (command not in CONTROL_COMMANDS and not PARTY_ORDER_COMMAND.fullmatch(command)
+                and not ALLY_CLASS_COMMAND.fullmatch(command)):
             raise ValueError(f"refusing unknown control command {command!r}")
         self._respond(command)
 
@@ -1142,7 +1217,7 @@ def hide_familiar(observation, slot):
             enemy["familiar"] = True
 
 
-def direct_candy(link, raw, timeout=1.5):
+def direct_candy(link, raw, timeout=1.5, who=0):
     """Candy without the ring: the proxy's use_candy queues the game's own
     heal (hero +0x1F3) and removes one Candy, the last one too (the ring
     calibration only knows a one-item ring); True once a Candy is gone and
@@ -1150,15 +1225,16 @@ def direct_candy(link, raw, timeout=1.5):
     if raw is None or candy_count(WRAM(raw)) < 1:
         return False
     before = WRAM(raw)
-    count, hp = candy_count(before), before.character(0)["hp"]
+    count, hp = candy_count(before), before.character(who)["hp"]
     try:
-        link.send_control("use_candy")
+        link.send_control("use_candy" if who == 0 else f"use_candy_{who}")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             time.sleep(0.25)
             now = WRAM(link.fetch_wram(False))
-            if candy_count(now) < count and now.character(0)["hp"] > hp:
-                print(f"[candy] used without the ring: +{now.character(0)['hp'] - hp} HP, "
+            if candy_count(now) < count:
+                gained = max(0, now.character(who)["hp"] - hp)
+                print(f"[candy] used on party slot {who + 1}: +{gained} HP observed, "
                       f"{candy_count(now)} left", flush=True)
                 return True
     except (OSError, subprocess.SubprocessError):
@@ -1267,14 +1343,29 @@ def apply_gambits(planner, play_loop, weights):
         play_loop.leave_fraction = min(0.85, max(0.3, 0.6 + 0.08 * (inn - fight)))
 
 
-def candy_wanted(observation, fraction=0.5):
-    """Use Candy below `fraction` of max HP when no enemy is within weapon reach."""
+def candy_recipient(observation, fraction=0.5):
+    """Prefer the active party member closest to being knocked out."""
+    if not isinstance(observation, dict) or not observation.get("candy_count"):
+        return None
+    endangered = [(hero["hp"] / hero["max_hp"], index)
+                  for index, hero in enumerate((observation.get("party") or [])[:3])
+                  if hero.get("availability_byte") == 1 and
+                  0 < (hero.get("hp") or 0) <= (hero.get("max_hp") or 0) * min(fraction, 0.35)]
+    if endangered:
+        return min(endangered)[1]
+    return 0 if candy_wanted(observation, fraction) else None
+
+
+def candy_wanted(observation, fraction=0.5, emergency=False):
+    """Ring use needs space. Direct use can rescue a hero at critical HP."""
     if not isinstance(observation, dict) or not observation.get("candy_count"):
         return False
     hero = (observation.get("party") or [{}])[0]
     hp, max_hp = hero.get("hp", 0), hero.get("max_hp", 0)
-    if not max_hp or hp > max_hp * fraction:
+    if not max_hp or not 0 < hp <= max_hp * fraction:
         return False
+    if emergency and hp * 4 <= max_hp:
+        return True
     actor = ((observation.get("tile_context") or {}).get("actor") or {})
     for enemy in observation.get("enemy_slots", []):
         if (enemy.get("active") and isinstance(actor.get("x_px"), int) and
@@ -1355,11 +1446,16 @@ def main() -> int:
                              "0 never saves")
     parser.add_argument("--no-npc-talk", action="store_true",
                         help="Do not initiate conversations with nearby NPCs")
+    parser.add_argument("--potos-story", action="store_true",
+                        help="practice the Mantis Ant fight and head for the road out of Potos")
     parser.add_argument("--visit-map", type=int,
                         help="Travel to this map, then stay and talk to nearby NPCs")
     parser.add_argument("--policy", choices=("hybrid", "memory", "qwen"), default="hybrid",
                         help="hybrid uses Qwen for intentions and WRAM planning for execution")
     parser.add_argument("--objective", default="Explore slowly and attack occasionally")
+    parser.add_argument("--party-ai", choices=("auto", "support", "independent"), default="auto",
+                        help="Coordinate companion class moves in hybrid/memory play, "
+                             "favor healing, or leave class moves fully autonomous")
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--interval", type=float, default=0.25)
     parser.add_argument("--dry-run", action="store_true")
@@ -1390,6 +1486,12 @@ def main() -> int:
     parser.add_argument("--start-timeout", type=float, default=300.0,
                         help="Seconds to wait for Action Grid start when --ring-control is used")
     args = parser.parse_args()
+    if args.potos_story and (args.policy != "memory" or not args.history_db or
+                            args.play_loop or args.visit_map is not None or
+                            not (args.wram_remote or args.wram_file) or
+                            (not args.dry_run and not args.ring_control)):
+        parser.error("--potos-story needs --policy memory, --history-db and WRAM "
+                     "(live use requires --ring-control); omit --play-loop and --visit-map")
     if args.visit_map is not None and not 0 <= args.visit_map <= 511:
         parser.error("visit-map must be 0..511")
     if not (0 <= args.steps <= 30) or args.interval < 0.1:
@@ -1467,8 +1569,8 @@ def main() -> int:
     print("[shop] " + (f"Candy shop known, buying from {args.shop_gold} GP"
                        if isinstance(shop, dict) else
                        "no shop taught: run tools/som_teach_shop.py once"), flush=True)
-    print("[candy] " + ("enabled from ring calibration" if calibration else
-                        "disabled: run tools/som_ring_probe.py once to enable"), flush=True)
+    print("[candy] direct use enabled" + (" with ring fallback" if calibration else ""),
+          flush=True)
     messages = link is not None and not args.no_messages
     personality = (Personality(args.personality) if messages and
                    not args.no_personality else None)
@@ -1525,6 +1627,8 @@ def main() -> int:
     play_loop = None
     save_disabled = False
     last_loop_goal = None
+    last_story_status = ""
+    story_finished = False
     npc_hint_key, npc_hint_until = None, -1
     block_learner = None
     boss_recorder = BossRecorder(log=lambda line: print(line, flush=True)) if args.wram_remote else None
@@ -1533,6 +1637,15 @@ def main() -> int:
     # once it guarded after swings and when hit; guarding costs swings.
     planner.build = None              # log the hero's build once it is read
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
+    party_class_directors = {who: ClassDirector(min_hold=COMPANION_HOLD_S) for who in (1, 2)}
+    for party_director in party_class_directors.values():
+        party_director.cooldown = COMPANION_HOLD_S
+    # The player's own picks outlive a bridge restart (PICK_KEEP_S).
+    stored_picks = history.get_agent_state("class_picks") if history is not None else None
+    stored_picks = stored_picks if isinstance(stored_picks, dict) else {}
+    discipline_initialized = False
+    party_discipline_initialized = False
+    party_discipline_checked_at = None
     player_plan = parse_classes(args.wanted_classes)
     if player_plan:
         class_director.set_plan(player_plan, fixed=True)
@@ -1546,6 +1659,7 @@ def main() -> int:
     charge_settle_until = 0.0                     # an instant charge still running
     grass_restore, grass_clear_steps = None, 0   # weapon to put back after cutting
     tool_out = "sword"                           # tool weapon taken out (sword/whip)
+    rope = RopeTactics()                          # Magic Rope out of dungeons
     weapon_tactics = WeaponTactics()              # B/Y weapon by distance, HP, levels
     # Which weapon suits which monster type: learned from kills, kept.
     stored_records = history.get_agent_state("weapon_vs_enemy") if history is not None else None
@@ -1590,6 +1704,8 @@ def main() -> int:
                              (args.gp_reward, args.hp_penalty) if isinstance(gold, dict)
                              else "GP not calibrated (run tools/som_teach_shop.py); "
                              "only HP loss is penalized"), flush=True)
+    last_party_order = None
+    party_order_sent_at = float("-inf")
     step = 0
     while args.steps == 0 or step < args.steps:
         try:
@@ -1636,6 +1752,8 @@ def main() -> int:
                         pass
                 hide_familiar(observation, familiar_slot)
                 map_guard.apply(observation)
+                if args.potos_story and tactic_learner is not None:
+                    tactic_learner.settle(observation)
                 if boss_recorder is not None and raw is not None:
                     try:
                         boss_recorder.observe(raw, WRAM(raw))
@@ -1821,7 +1939,8 @@ def main() -> int:
                 # inputs (som_event_escape.py) instead of waiting forever.
                 # The respawn handler `continue`s when it presses, so it keeps
                 # priority; waiting on it alone deadlocked on KO text pages.
-                if raw is not None:
+                if raw is not None and (not args.potos_story or
+                                        observation.get("map_id") in (MANTIS_MAP, POTOS_MAP)):
                     escape = event_escape.observe(WRAM(raw))
                     if escape is not None:
                         escape_action, reason = escape
@@ -1883,13 +2002,17 @@ def main() -> int:
                     announce("AI: poisoned|Medical Herb")
                     previous = "wait"
                     continue
-            if (link and not candy_disabled and args.policy in ("hybrid", "memory") and
-                    time.monotonic() >= candy_retry_at and gambit(GAMBIT_CANDY) and
-                    candy_wanted(observation, candy_fraction(gambits)) and mode == "field"):
+            if (link and not args.dry_run and args.policy in ("hybrid", "memory") and
+                    time.monotonic() >= candy_retry_at and gambit(GAMBIT_CANDY) and mode == "field"
+                    and (recipient := candy_recipient(observation, candy_fraction(gambits))) is not None):
                 if learner is not None:
                     learner.cancel("Candy macro")
                 announce("AI: HP low|using Candy")
-                if direct_candy(link, raw):
+                if direct_candy(link, raw, who=recipient):
+                    previous = "wait"
+                    continue
+                if recipient or candy_disabled or not candy_wanted(observation, candy_fraction(gambits)):
+                    candy_retry_at = time.monotonic() + CANDY_RETRY_S
                     previous = "wait"
                     continue
                 try:
@@ -1981,6 +2104,9 @@ def main() -> int:
                     planner.charge_disabled = charge_failed or style["charge"] == 0
                     class_director.cooldown = (None if style["classes"] == 0 else
                                                150.0 / style["classes"])
+                    for party_director in party_class_directors.values():
+                        party_director.cooldown = (None if style["classes"] == 0 else
+                                                   COMPANION_HOLD_S)
                     weapon_tactics.cooldown = (None if style["weapons"] == 0 else
                                                12.0 / style["weapons"])
                     if style["weapons"]:
@@ -2144,7 +2270,44 @@ def main() -> int:
                 planner.escape_dodge = planner.evade_past      # escapes evade along the route
                 planner.blink = isinstance(link, RemoteLink)    # the Steam Link proxy
                 planner.fuma_swap = planner.blink and class_director.current == NINJA
-                decision = planner.decide(observation, previous, directive, errand)
+                if args.potos_story:
+                    stage = story_stage(wram_now, observation)
+                    if stage == "road_reached":
+                        print("[story] Potos road reached after the Mantis Ant", flush=True)
+                        story_finished = True
+                        break
+                    planner.mantis_lesson = stage == "fight"
+                    planner.no_retreat = planner.fight_all = planner.mantis_lesson
+                    errand = None
+                    if stage == "leave" and any(
+                            wp["next_map"] == ROAD_MAP
+                            for wp in history.exit_waypoints(POTOS_MAP, ROAD_MAP)):
+                        directive = "explore_unknown"
+                        errand = {"place": "potos_road", "anchor": {"map_id": ROAD_MAP}}
+                    elif stage == "leave":
+                        print("[story] banishment complete; no verified direct road exit", flush=True)
+                        story_finished = True
+                        break
+                    if stage != last_story_status:
+                        print(f"[story] {stage or 'waiting for a verified Potos checkpoint'}",
+                              flush=True)
+                        last_story_status = stage
+                if args.potos_story and not (planner.mantis_lesson or errand):
+                    decision = PlannerDecision("wait", "waiting for a Potos checkpoint", "observe")
+                else:
+                    if args.potos_story and planner.mantis_lesson:
+                        directive = "engage_enemy"
+                    decision = planner.decide(observation, previous, directive, errand)
+                    if (args.potos_story and errand and decision.intention in
+                            ("explore_frontier", "leave_room", "replan", "stuck")):
+                        print(f"[story] banishment complete; road route interrupted: "
+                              f"{decision.reason}", flush=True)
+                        story_finished = True
+                        break
+                    if (args.potos_story and decision.intention in
+                            ("explore_frontier", "leave_room", "stuck")):
+                        decision = PlannerDecision("wait", "waiting for a reachable story objective",
+                                                   "observe")
                 # Missing a taught inn/save macro must NOT freeze the hero.
                 # The play-loop phase stays committed, but the deterministic
                 # planner may explore, fight or evade while the interaction is
@@ -2164,7 +2327,8 @@ def main() -> int:
                     decision = PlannerDecision(side[0] if side else "wait",
                                                "an NPC stands in front: no swing (it would "
                                                "talk); stepping aside", "replan")
-                if (npc_dialogue is not None and not args.no_npc_talk and gambit(GAMBIT_TALK) and
+                if (npc_dialogue is not None and not args.potos_story and
+                        not args.no_npc_talk and gambit(GAMBIT_TALK) and
                         (gambits[GAMBIT_TALK] > gambits[GAMBIT_FIGHT] or
                          not enemy_within(observation, DASH_ENEMY_PX)) and
                         decision.intention in ("explore_frontier", "leave_room", "replan", "stuck", "visit_map")):
@@ -2183,6 +2347,26 @@ def main() -> int:
                         print(f"[inn] map {context['map_id']} looks like the taught inn "
                               f"({score:.0%} of tiles); teach it to use it", flush=True)
                         announce("AI: this looks like an inn|teach it to use it")
+                if link and not args.dry_run and mode == "field":
+                    order = companion_order(args.party_ai, observation, decision,
+                                            planner._get_intention(), directive)
+                    now = time.monotonic()
+                    elapsed = now - party_order_sent_at
+                    if (elapsed >= PARTY_ORDER_MIN_INTERVAL_S and
+                            (order != last_party_order or
+                             (order and elapsed >= PARTY_ORDER_REFRESH_S))):
+                        party_order_sent_at = now
+                        try:
+                            link.send_control(order or "party_release")
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[party] order unavailable: {exc}", flush=True)
+                        else:
+                            if order != last_party_order:
+                                print(f"[party] {order or 'released'}", flush=True)
+                            last_party_order = order
+                            # The order shares the device's one-command mailbox.
+                            time.sleep(max(args.interval, 0.12))
+                            continue
                 if (link and wram_now is not None and not args.dry_run and
                         mode == "field"):
                     hero0 = (observation.get("party") or [{}])[0] or {}
@@ -2248,8 +2432,19 @@ def main() -> int:
                             selected = link.fetch_discipline()
                         except (OSError, subprocess.SubprocessError) as exc:
                             selected = class_director.current
+                            read_ok = False
                             print(f"[class] discipline read failed: {exc}", flush=True)
-                        if class_director.adopt(selected):
+                        else:
+                            read_ok = True
+                        if not discipline_initialized:
+                            if read_ok:
+                                class_director.initialize(selected, stored_picks.get("0"))
+                                discipline_initialized = True
+                                print("[class] starting as " +
+                                      (CLASS_NAMES[selected] if selected is not None else "unassigned") +
+                                      (" (the player's pick)" if class_director.pinned else ""),
+                                      flush=True)
+                        elif class_director.adopt(selected):
                             print(f"[class] player picked {CLASS_NAMES[selected]}: "
                                   f"the AI keeps it", flush=True)
                     actor_now = context.get("actor") or {}
@@ -2257,7 +2452,9 @@ def main() -> int:
                             if e.get("active") and not e.get("familiar")]
                     gaps = [max(abs(e["x_px"] - actor_now.get("x_px", 0)),
                                 abs(e["y_px"] - actor_now.get("y_px", 0))) for e in foes]
-                    pick = class_director.choose(
+                    # Until the game's class is known, a pick would overwrite it.
+                    pick = None if (hasattr(link, "fetch_discipline") and
+                                    not discipline_initialized) else class_director.choose(
                         build, levels, max_mp, False,
                         enemy_within(observation, CLASS_CONTACT_PX) or grass_restore is not None,
                         hp_fraction=(hero0.get("hp") or 0) / max(1, hero0.get("max_hp") or 1),
@@ -2276,6 +2473,101 @@ def main() -> int:
                                 continue
                         except (OSError, subprocess.SubprocessError, ValueError) as exc:
                             print(f"[class] switch failed: {exc}", flush=True)
+                    # The game's saved Girl/Sprite class is independent of the
+                    # active hero. Give each AI-controlled companion its own
+                    # director and class decision, using that member's build,
+                    # weapon levels, HP, and MP.
+                    if (hasattr(link, "fetch_party_disciplines") and
+                            (party_discipline_checked_at is None or
+                             time.monotonic() - party_discipline_checked_at >= DISCIPLINE_CHECK_S)):
+                        party_discipline_checked_at = time.monotonic()
+                        try:
+                            party_classes = link.fetch_party_disciplines()
+                        except (OSError, subprocess.SubprocessError) as exc:
+                            party_classes = None
+                            print(f"[class] companion discipline read failed: {exc}", flush=True)
+                        if party_classes is not None:
+                            if not party_discipline_initialized:
+                                for who, selected in enumerate(party_classes, 1):
+                                    party_class_directors[who].initialize(
+                                        selected, stored_picks.get(str(who)))
+                                party_discipline_initialized = True
+                            else:
+                                for who, selected in enumerate(party_classes, 1):
+                                    if party_class_directors[who].adopt(selected):
+                                        print(f"[class] player picked {CLASS_NAMES[selected]} for the "
+                                              f"{'Girl' if who == 1 else 'Sprite'}: the AI keeps it",
+                                              flush=True)
+                    if party_discipline_initialized and party_discipline_checked_at is not None:
+                        companion_switched = False
+                        for who in (1, 2):
+                            member = next((p for p in observation.get("party", [])
+                                           if p.get("slot") == who + 1), None)
+                            if (not member or member.get("availability_byte") != 1 or
+                                    member.get("controller_binding") != 0 or
+                                    (member.get("hp") or 0) <= 0):
+                                continue
+                            member_hp = member.get("hp") or 0
+                            member_max_hp = member.get("max_hp") or 0
+                            member_max_mp = member.get("max_mp") or 0
+                            member_build = classify_build(member.get("stats"))
+                            member_levels = (member.get("weapon") or {}).get("levels") or {}
+                            member_director = party_class_directors[who]
+                            member_pick = member_director.choose(
+                                member_build, member_levels, member_max_mp, False,
+                                False,  # companions can change roles during a fight
+                                hp_fraction=member_hp / max(1, member_max_hp),
+                                enemies=len(foes), nearest=min(gaps) if gaps else None,
+                                toughest=max((e.get("max_hp") or 0 for e in foes
+                                              if e.get("hp_plausible")), default=0))
+                            if member_pick is not None:
+                                index, why = member_pick
+                                try:
+                                    link.send_control(f"ally_class_{who}_{index}")
+                                    member_director.switched(index)
+                                    print(f"[class] {('Girl' if who == 1 else 'Sprite')} -> "
+                                          f"{CLASS_NAMES[index]}: {why}", flush=True)
+                                    companion_switched = True
+                                    break
+                                except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                                    print(f"[class] companion switch failed: {exc}", flush=True)
+                        if companion_switched:
+                            # The order shares the device's one-command mailbox.
+                            time.sleep(max(args.interval, 0.12))
+                            previous = "wait"
+                            continue
+                    if history is not None:
+                        picks = dict(stored_picks)
+                        known = ({0: class_director} if discipline_initialized else {})
+                        if party_discipline_initialized:
+                            known.update(party_class_directors)
+                        for who, director in known.items():
+                            state = director.pick_state()
+                            if state is None:
+                                picks.pop(str(who), None)
+                            else:
+                                picks[str(who)] = state
+                        if picks != stored_picks:
+                            stored_picks = picks
+                            history.set_agent_state("class_picks", picks)
+                    # The Magic Rope: out of a dungeon we only circle in, or
+                    # on the way to the inn or the shop.
+                    rope_line = rope.see_map(context.get("map_id"))
+                    if rope_line:
+                        print(f"[rope] {rope_line}", flush=True)
+                    rope_why = rope.decide(wram_now, context.get("map_id"), decision.intention,
+                                           enemy_within(observation, CLASS_CONTACT_PX), foes)
+                    if rope_why is not None:
+                        try:
+                            link.send_control("use_rope")
+                            rope.used(context.get("map_id"))
+                            print(f"[rope] Magic Rope: {rope_why}", flush=True)
+                            announce("AI: Magic Rope!|" + rope_why[:28])
+                            time.sleep(max(args.interval, 0.12))
+                            previous = "wait"
+                            continue
+                        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                            print(f"[rope] use failed: {exc}", flush=True)
                     hp, max_hp = hero0.get("hp") or 0, hero0.get("max_hp") or 0
                     # Alternate the class's two weapons (som_weapon_tactics):
                     # reach against the nearest enemy, low HP, training.
@@ -2289,12 +2581,24 @@ def main() -> int:
                         actor = context.get("actor") or {}
                         near = sorted(((max(abs(e["x_px"] - actor.get("x_px", 0)),
                                              abs(e["y_px"] - actor.get("y_px", 0))),
-                                         e.get("identity"))
+                                         e.get("identity"), e.get("max_hp") or 0)
                                         for e in observation.get("enemy_slots", [])
                                         if e.get("active") and not e.get("familiar")),
                                       key=lambda item: item[0])
-                        gaps = [gap for gap, _ in near]
+                        gaps = [gap for gap, _, _ in near]
                         foe_type = near[0][1] if near else None
+                        # Carry the boss-training lesson into ordinary fights:
+                        # favor reach when the party is under pressure, not
+                        # only when the target crosses the old boss HP cutoff.
+                        party = observation.get("party") or []
+                        wounded_allies = any(
+                            member.get("max_hp", 0) and 0 < member.get("hp", 0) <=
+                            member["max_hp"] * 0.60 for member in party)
+                        dangerous_target = bool(near and hero0.get("max_hp") and
+                                                near[0][2] >= hero0["max_hp"])
+                        ranged_pressure = bool(near and (
+                            len(foes) > 1 or wounded_allies or dangerous_target or
+                            (max_hp and hp / max_hp < 0.60)))
                         primary, secondary = CLASS_WEAPONS[class_director.current]
                         # B chains (Taijutsu, Weapon Flow): the proxy swaps
                         # the weapon on B itself; any of the chain's is B.
@@ -2305,10 +2609,11 @@ def main() -> int:
                                                      hp / max_hp if max_hp else 1.0, levels,
                                                      third=THIRD_WEAPONS.get(
                                                          class_director.current),
-                                                     enemy=foe_type)
+                                                     enemy=foe_type, prefer_range=ranged_pressure)
                         if swap is not None and swap[0] == b_held:
                             swap = None
                         if (swap is not None and decision.action == "attack" and
+                                not (ranged_pressure and weapon_reach(swap[0]) > weapon_reach(held)) and
                                 not (weapon_reach(swap[0]) < weapon_reach(held) and
                                      gaps and min(gaps) <= weapon_reach(swap[0]))):
                             weapon_tactics.refused()     # swing now; reconsider next look
@@ -2373,8 +2678,15 @@ def main() -> int:
                     command = None
                     if (class_director.current is not None and now >= spell_ready_at and
                             style["magic"] > 0 and (hero0.get("mp") or 0) >= 2):
-                        if (class_director.current in HEALERS and max_hp and
-                                hp < max_hp * 0.40):
+                        party = observation.get("party") or []
+                        if (class_director.current == 4 and any(
+                                member.get("max_hp", 0) and member.get("hp") == 0
+                                for member in party[1:])):
+                            command = "cast_revive"
+                        elif class_director.current in HEALERS and any(
+                                member.get("max_hp", 0) and
+                                0 < member.get("hp", 0) < member["max_hp"] * 0.40
+                                for member in party):
                             command = "cast_heal"
                         elif (class_director.current in BUFF_CLASSES and
                               now >= buff_ready_at and
@@ -2764,7 +3076,11 @@ def main() -> int:
                 if block_learner is not None and observation is not None:
                     block_learner.record(observation, sent_action)
                 if tactic_learner is not None and observation is not None:
-                    tactic_learner.record(observation)
+                    if not args.potos_story:
+                        tactic_learner.record(observation)
+                    elif (planner.mantis_trial and sent_action == decision.action and
+                          decision.intention in ("engage_enemy", "kite_enemy", "defend_enemy")):
+                        tactic_learner.record_trial(observation, planner.mantis_trial)
                 if class_record is not None and observation is not None:
                     class_record.record(observation, class_director.current,
                                         class_director.wanted)
@@ -2791,7 +3107,8 @@ def main() -> int:
         learner.cancel("session ended")
     if link:
         link.close()
-    if args.ring_control and not args.android_listen and args.steps != 0 and step >= args.steps:
+    if (args.ring_control and not args.android_listen and
+            (story_finished or (args.steps != 0 and step >= args.steps))):
         clear_remote_ring_ai(args.host)
     if history is not None:
         history.close()

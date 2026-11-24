@@ -307,6 +307,46 @@ class TestMultiMapTravel(unittest.TestCase):
             self.assertEqual((decision.action, decision.reason), ("wait", "on exit to map 130"))
             history.close()
 
+    def test_travel_route_goes_around_another_maps_door(self):
+        # Map 144, 2026-11-21: the way to map 170 crossed the exit to map
+        # 16, so every trip bounced 16>144>16 and never got past 144.
+        with tempfile.TemporaryDirectory() as directory:
+            history = ObservationHistory(Path(directory) / "doors.sqlite")
+            history.rom_tables = RomTables.from_rom(potos_rom())
+            history.record(crossing_state(130, (32, 11), (1, 0)))
+            history.record(crossing_state(129, (15, 61)))
+            exits = [{"layer": 1, "x": 0, "y": 3, "tile_id": 0xC0, "to_map": 130,
+                      "to_tile": [27, 31], "to_layer": 1},
+                     {"layer": 1, "x": 1, "y": 3, "tile_id": 0xC1, "to_map": 99,
+                      "to_tile": [5, 5], "to_layer": 1}]
+            history.remember_exits(131, exits)
+            for x in range(8):
+                for y in range(8):
+                    history.connection.execute(
+                        "INSERT OR REPLACE INTO world_cells VALUES(131,1,?,?,'open',1,0)",
+                        (x, y))
+            state = {"weapons_enabled": True, "enemy_slots": [],
+                     "party": [{"hp": 80, "max_hp": 100, "weapon_recharge": 0}],
+                     "tile_context": {
+                         "runtime_verified": True, "game_mode": "field", "radius": 1,
+                         "map_id": 131, "map_size_tiles": [8, 8], "actor_tile": [2, 3],
+                         "actor": {"x_px": 40, "y_px": 56, "layer": 1},
+                         "passability_rows": ["...", ".@.", "..."]}}
+            errand = {"place": "waterfall", "anchor": {"map_id": 128, "layer": 1,
+                                                       "target": [30, 30]}}
+            decision = MemoryPlanner(history).decide(state, errand=errand)
+            self.assertIn(decision.action, ("step_up", "step_down"))
+            self.assertIn("exit to map 130", decision.reason)
+            # Walled in by the other door: crossing it beats no way at all.
+            for x, y in [(x, y) for y in (2, 4) for x in range(4)] + [(3, 3)]:
+                history.connection.execute(
+                    "INSERT OR REPLACE INTO world_cells VALUES(131,1,?,?,'blocked',1,0)",
+                    (x, y))
+            state["tile_context"]["passability_rows"] = ["###", ".@#", "###"]
+            decision = MemoryPlanner(history).decide(state, errand=errand)
+            self.assertEqual(decision.action, "step_left", decision.reason)
+            history.close()
+
     def test_unrouted_exit_explores_the_known_edge_nearest_it(self):
         # Exit to map 144 lay past unknown ground: a blocked straight step
         # handed over to unrelated frontier exploring, which undid the trip.

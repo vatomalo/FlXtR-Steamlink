@@ -186,6 +186,16 @@ class Server:
             words = self._first_line(self.disciplines).split()
             n = words[1] if len(words) > 1 and words[0] == "v1" and words[1].isdigit() else "255"
             return ("DSC %s\n" % n).encode()
+        if cmd == "dpc":            # saved Girl and Sprite disciplines
+            words = self._first_line(self.disciplines).split()
+            try:
+                marker = words.index("p")
+                girl, sprite = words[marker + 1:marker + 3]
+            except (ValueError, IndexError):
+                girl, sprite = "255", "255"
+            if not girl.isdigit() or not sprite.isdigit():
+                girl, sprite = "255", "255"
+            return ("DPC %s %s\n" % (girl, sprite)).encode()
         if cmd == "fam":
             f = self._first_line(self.familiar)
             return ("FAM %s\n" % (f if f in ("1", "2", "3") else "0")).encode()

@@ -151,6 +151,63 @@ class WantedBuildTest(unittest.TestCase):
         self.assertEqual(record.stats(), {10: (1, 20, 5)})
 
 
+class PickTest(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+        self.director = ClassDirector(clock=lambda: self.now)
+
+    def test_companion_hold_is_shorter(self):
+        from som_class_director import COMPANION_HOLD_S
+        d = ClassDirector(clock=lambda: self.now, min_hold=COMPANION_HOLD_S)
+        d.cooldown = COMPANION_HOLD_S
+        d.initialize(0)
+        self.now = COMPANION_HOLD_S - 1
+        self.assertIsNone(d.choose("skirmisher", {"bow": 9}, 0))
+        self.now = COMPANION_HOLD_S + 1
+        self.assertIsNotNone(d.choose("skirmisher", {"bow": 9}, 0))
+
+    def test_startup_class_is_not_a_pick(self):
+        self.director.initialize(3)
+        self.assertFalse(self.director.adopt(3))
+        self.assertFalse(self.director.pinned)
+        self.assertIsNone(self.director.pick_state())
+
+    def test_lag_after_a_switch_is_not_a_pick(self):
+        d = self.director
+        d.initialize(3)
+        d.switched(11)
+        self.now = 5
+        self.assertFalse(d.adopt(3))
+        self.assertEqual(d.current, 11)
+        self.now = 20                       # the switch never took
+        self.assertFalse(d.adopt(3))
+        self.assertEqual((d.current, d.pinned), (3, False))
+
+    def test_player_reverting_a_confirmed_switch_is_a_pick(self):
+        d = self.director
+        d.initialize(3)
+        d.switched(11)
+        d.adopt(11)
+        self.now = 5
+        self.assertTrue(d.adopt(3))
+        self.assertTrue(d.pinned)
+
+    def test_pick_survives_a_restart_but_not_forever(self):
+        from som_class_director import PICK_KEEP_S
+        self.director.initialize(3)
+        self.assertTrue(self.director.adopt(1))
+        saved = self.director.pick_state(now=1000)
+        later = ClassDirector()
+        later.initialize(1, saved, now=2000)
+        self.assertTrue(later.pinned)
+        self.assertEqual(later.pick_state(now=2000), saved)   # no endless renewal
+        for selected, when in ((2, 2000), (None, 2000), (1, 1000 + PICK_KEEP_S)):
+            later.initialize(selected, saved, now=when)
+            self.assertFalse(later.pinned)
+        later.initialize(1, {"class": 1}, now=2000)
+        self.assertFalse(later.pinned)
+
+
 class TeamPlanTest(unittest.TestCase):
     def test_archetype_names_expand_to_their_team(self):
         from som_class_director import parse_classes

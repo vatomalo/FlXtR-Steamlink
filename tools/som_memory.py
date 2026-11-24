@@ -51,9 +51,12 @@ def walk_step(action):
     return action
 
 
-ITEM_NAMES = ("candy", "medical_herb", "cup_of_wishes", "faerie_walnut",
-              "royal_jam", "chocolate", "barrel", "magic_rope",
-              "flammie_drum", "moogle_belt", "midge_mallet", "unknown_curative")
+# Turbo's order: its own name table (2026-11-23) and som-decomp
+# items-shops.md. The order used before was wrong (the rope read as a barrel,
+# and use_herb took Chocolate).
+ITEM_NAMES = ("candy", "chocolate", "royal_jam", "faerie_walnut",
+              "medical_herb", "cup_of_wishes", "magic_rope", "flammie_drum",
+              "moogle_belt", "midge_mallet", "barrel", "unknown_curative")
 
 
 class WRAM:
@@ -528,12 +531,40 @@ def grid_cells(state):
     return cells
 
 
-def detect_cuts(previous, current):
-    """Attributes of tiles next to the hero that turned from blocking to open.
+def sword_cut_signature(context, tile_id, attributes):
+    """A native sword-cut descriptor scoped to its map, layer, and tile ID."""
+    if not context.get("runtime_verified"):
+        return None
+    map_id = context.get("map_id")
+    layer = (context.get("actor") or {}).get("layer")
+    if not isinstance(map_id, int) or layer not in (1, 2):
+        return None
+    try:
+        tile = int(tile_id, 16)
+        values = bytes.fromhex(attributes)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= tile < 256 or len(values) != 4 or values[2] not in (0xC1, 0xC8):
+        return None
+    return f"{map_id}:{layer}:{tile:02x}:{values.hex()}"
 
-    That is what cutting grass (or breaking a pot) looks like in WRAM: the
-    tile in front of the hero is replaced by a different, walkable tile.
-    """
+
+def confirmed_sword_cut(context, tile_id, attributes, learned):
+    key = sword_cut_signature(context, tile_id, attributes)
+    if key is None:
+        return False
+    # Potos Falls tile 05, documented in the decomp and exercised by a sword.
+    return key in learned or (key.startswith("128:1:05:13") and key.endswith("c85f"))
+
+
+def world_cell_kind(kind):
+    if kind == "cuttable":
+        return "blocked"  # stale atlas rows classified by shared attributes
+    return "cuttable" if kind == "verified_cuttable" else kind
+
+
+def detect_cuts(previous, current):
+    """Native sword-cut tiles that changed to their declared replacement."""
     if not isinstance(previous, dict) or not isinstance(current, dict):
         return []
     before_context = previous.get("tile_context") or {}
@@ -554,8 +585,9 @@ def detect_cuts(previous, current):
             continue
         dx = min((x - hero[0]) % size[0], (hero[0] - x) % size[0])
         dy = min((y - hero[1]) % size[1], (hero[1] - y) % size[1])
-        if dx + dy == 1:
-            found.append(old[2])
+        key = sword_cut_signature(before_context, old[1], old[2])
+        if dx + dy == 1 and key and tile_id.lower() == key[-2:]:
+            found.append(key)
     return found
 
 
@@ -769,6 +801,13 @@ class ObservationHistory:
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS cuttable_signatures "
             "(attributes TEXT PRIMARY KEY, seen INTEGER NOT NULL, last_ts REAL NOT NULL)")
+        # Tiles that did not cut after the planner's attacks (2026-11-22:
+        # trees and stones share grass's attributes, 1300c85f): never cut or
+        # routed through again, whatever their signature says.
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS cut_failures "
+            "(map_id INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, "
+            "fails INTEGER NOT NULL, last_ts REAL NOT NULL, PRIMARY KEY(map_id,x,y))")
         # Whip crossings seen (som_memory.detect_whip_crossing): from this
         # tile, facing `action`, a whip swing lands the hero at (to_x, to_y).
         self.connection.execute(
@@ -820,6 +859,7 @@ class ObservationHistory:
         self._reward_previous = None
         self._reward_enemy = None
         self.rom_tables = None
+        self._world_grid = None          # (tables, WorldGrid) built on first use
         self._last_verified_state = None
         self._last_verified = None
         self._anchor_misses = 0
@@ -999,7 +1039,7 @@ class ObservationHistory:
                 "ORDER BY map_id,layer,y,x"):
             entry = maps.setdefault(str(map_id), {"known_cells": [], "places": []})
             entry["known_cells"].append(
-                {"layer": layer, "x": x, "y": y, "kind": kind, "seen": seen})
+                {"layer": layer, "x": x, "y": y, "kind": world_cell_kind(kind), "seen": seen})
         for place in self.place_summary():
             maps.setdefault(str(place["map_id"]),
                             {"known_cells": [], "places": []})["places"].append(place)
@@ -1042,7 +1082,9 @@ class ObservationHistory:
         terrain_rows = context.get("terrain_rows")
         proven = self.passable_signatures()
         cuttable = self.cuttable_signatures()
+        failed = self.failed_cut_tiles(context["map_id"])
         attribute_rows = context.get("attribute_rows") or []
+        tile_id_rows = context.get("tile_id_rows") or []
         special = {tuple(cell["offset"]): cell.get("attributes")
                    for cell in context.get("special_cells") or []
                    if isinstance(cell.get("offset"), list)}
@@ -1050,6 +1092,8 @@ class ObservationHistory:
         for row_index, row in enumerate(rows):
             if not isinstance(row, str):
                 continue
+            attrs = attribute_rows[row_index].split() if row_index < len(attribute_rows) else []
+            ids = tile_id_rows[row_index].split() if row_index < len(tile_id_rows) else []
             for column, marker in enumerate(row):
                 kind = kinds.get(marker)
                 if kind is None:
@@ -1060,12 +1104,12 @@ class ObservationHistory:
                 if (kind == "conditional" and
                         special.get((column - radius, row_index - radius)) in proven):
                     kind = "open"
-                attributes = (attribute_rows[row_index].split()[column]
-                              if row_index < len(attribute_rows) else None)
-                if kind in ("blocked", "conditional", "h1", "h2") and attributes in cuttable:
-                    kind = "cuttable"
                 x = (center[0] + column - radius) % width
                 y = (center[1] + row_index - radius) % height
+                if (kind in ("blocked", "conditional", "h1", "h2") and (x, y) not in failed and
+                        column < min(len(attrs), len(ids)) and
+                        confirmed_sword_cut(context, ids[column], attrs[column], cuttable)):
+                    kind = "verified_cuttable"
                 self.connection.execute(
                     "INSERT INTO world_cells(map_id,layer,x,y,kind,seen,last_ts) "
                     "VALUES(?,?,?,?,?,1,?) ON CONFLICT(map_id,layer,x,y) DO UPDATE SET "
@@ -1079,7 +1123,7 @@ class ObservationHistory:
         rows = self.connection.execute(
             "SELECT x,y,kind FROM world_cells WHERE map_id=? AND layer=?",
             (map_id, layer)).fetchall()
-        cells = {(x, y): kind for x, y, kind in rows}
+        cells = {(x, y): world_cell_kind(kind) for x, y, kind in rows}
         # Standing on a tile proves it walkable, but not its height: a walked
         # bridge deck relabelled "open" (height 0) let routes step from the
         # deck onto height-2 banks the game refuses, so the hero swung
@@ -1089,6 +1133,9 @@ class ObservationHistory:
         for position in self.walked_cells(map_id):
             if cells.get(position) not in WALKABLE_KINDS:
                 cells[position] = "pass"
+        for position in self.failed_cut_tiles(map_id):      # stored before it failed
+            if cells.get(position) == "cuttable":
+                cells[position] = "blocked"
         return cells
 
     @staticmethod
@@ -1184,6 +1231,17 @@ class ObservationHistory:
     def whip_post_signatures(self):
         return {row[0] for row in self.connection.execute(
             "SELECT attributes FROM whip_post_signatures")}
+
+    def remember_cut_failure(self, map_id, x, y):
+        self.connection.execute(
+            "INSERT INTO cut_failures(map_id,x,y,fails,last_ts) VALUES(?,?,?,1,?) "
+            "ON CONFLICT(map_id,x,y) DO UPDATE SET fails=fails+1,last_ts=excluded.last_ts",
+            (map_id, x, y, time.time()))
+        self.connection.commit()
+
+    def failed_cut_tiles(self, map_id):
+        return {(x, y) for x, y in self.connection.execute(
+            "SELECT x,y FROM cut_failures WHERE map_id=?", (map_id,))}
 
     def cuttable_signatures(self):
         return {row[0] for row in self.connection.execute(
@@ -1428,6 +1486,37 @@ class ObservationHistory:
                             "inn", "taught innkeeper tile", "player_demonstration")
         return anchor
 
+    def teach_cannon(self, state, face):
+        """Store the tile in front of a cannon NPC (one per map)."""
+        position = self._verified_position(state, None)
+        if position is None:
+            raise ValueError("the tile under the hero is not runtime-verified")
+        if face not in ("step_up", "step_down", "step_left", "step_right"):
+            raise ValueError(f"unknown facing {face!r}")
+        anchor = {"map_id": position["map_id"], "layer": position["layer"],
+                  "target": position["target"], "face": face, "taught": True}
+        cannons = [c for c in self.cannons() if c.get("map_id") != anchor["map_id"]]
+        self.set_agent_state("cannons", cannons + [anchor])
+        self.remember_place(anchor["map_id"], anchor["layer"], *anchor["target"],
+                            "cannon", "taught cannon NPC tile", "player_demonstration")
+        return anchor
+
+    def cannons(self):
+        cannons = self.get_agent_state("cannons")
+        return [dict(c) for c in cannons] if isinstance(cannons, list) else []
+
+    def record_cannon_flight(self, flight):
+        """Remember one ride's landing (default destination) on its cannon."""
+        cannons = self.cannons()
+        for cannon in cannons:
+            if cannon.get("map_id") == flight["from_map"]:
+                lands = set(cannon.get("lands_on") or []) | {flight["to_map"]}
+                cannon["lands_on"] = sorted(lands)
+                if flight.get("heard"):
+                    cannon["heard"] = flight["heard"][-40:]
+        self.set_agent_state("cannons", cannons)
+        return cannons
+
     def teach_shop(self, state, face, buttons, price, gold):
         """Store the shopkeeper tile, facing, recorded purchase and gold byte."""
         position = self._verified_position(state, None)
@@ -1622,16 +1711,17 @@ class ObservationHistory:
             "SELECT x,y FROM map_edges WHERE from_map=? AND layer=?", (map_id, layer)))
         return {(int(x), int(y)) for x, y in tiles}
 
-    def exits_by_destination(self, map_id):
+    def exits_by_destination(self, map_id, rom_only=False):
         """{to_map: {(layer, x, y)}} of map_id's known exits: ROM exit triggers
         (even before their runtime cross-check, so only use this to avoid
         doors, never to route through them) plus learned crossings that were
-        not rejected."""
+        not rejected (left out with rom_only: their recorded tile is the
+        floor before the door, often a corridor)."""
         result = {}
         rows = self.connection.execute(
             "SELECT to_map,layer,x,y FROM map_exits WHERE map_id=?", (map_id,)).fetchall()
         rejected = self.rejected_edges()
-        rows += [row for row in self.connection.execute(
+        rows += [] if rom_only else [row for row in self.connection.execute(
             "SELECT to_map,layer,x,y FROM map_edges WHERE from_map=?", (map_id,)).fetchall()
             if f"{map_id}>{row[0]}" not in rejected]
         for to_map, layer, x, y in rows:
@@ -1662,6 +1752,19 @@ class ObservationHistory:
         self.connection.commit()
         return len(exits)
 
+    @property
+    def world_grid(self):
+        """som_world_grid.WorldGrid of the attached ROM tables, or None."""
+        tables = self.rom_tables
+        if tables is None or not hasattr(tables, "maps"):
+            return None
+        if self._world_grid is None or self._world_grid[0] is not tables:
+            from som_world_grid import WorldGrid
+            rows = self.connection.execute(
+                "SELECT map_id,x,y,to_map FROM map_exits").fetchall()
+            self._world_grid = (tables, WorldGrid.from_rom(tables, rows))
+        return self._world_grid[1]
+
     def map_path(self, current_map, target_map):
         """Shortest chain of maps [current, ..., target] or None.
 
@@ -1674,6 +1777,13 @@ class ObservationHistory:
         # A complete route through cross-checked ROM exits takes precedence
         # over those shortcuts, regardless of how many hops it requires.
         if self.rom_exits_trusted():
+            # Measured in walked tiles on the world grid, not in map hops:
+            # a hop through a 129-tile field is not a hop through a hut.
+            grid = self.world_grid
+            measured = (grid.route(current_map, target_map, self.rom_tables.neighbours)
+                        if grid is not None else None)
+            if measured is not None:
+                return measured[0]
             parents = {current_map: None}
             queue = deque([current_map])
             while queue:

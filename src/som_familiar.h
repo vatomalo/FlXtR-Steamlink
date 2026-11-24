@@ -27,6 +27,7 @@
 #define SOM_FAMILIAR_SWITCH 24          /* px closer before switching target */
 #define SOM_FAMILIAR_STRIKE_FRAMES 36ul /* 0.6 s at 60 fps */
 #define SOM_FAMILIAR_DAMAGE 8
+#define SOM_FAMILIAR_SPARED 0x0400u   /* status word +0x190: no hit resolves */
 
 typedef struct {
     int slot;                 /* monster slot 0..2, -1 = none */
@@ -63,6 +64,13 @@ static inline int som_familiar_tick(SomFamiliar *f, uint8_t *ram, unsigned long 
      * game applies it and HP stays full (the player killed the first one). */
     me[0x1F1] = 0;
     som_fam_put16(me + 0x182, som_fam_u16(me + 0x184));
+    /* Status 0x0400: the game resolves no hit on it at all (no damage, no
+     * number, no flinch: som-decomp hit-reactions.md 3) and the ally AI's
+     * "valid monster" test (no status of 0x8460, hero-ai.md 3) skips it,
+     * so neither the player's swings nor the companions treat it as an
+     * enemy (player, 2026-11-23). Unlike 0x0020 / 0x0040 it holds no
+     * animation (FE holds on 0x7B). Unverified live. */
+    me[0x191] |= SOM_FAMILIAR_SPARED >> 8;
     me[0x1AC] = 0xFF;          /* no hero target */
     me[0x1ED] = 0x7F;          /* bite never ready */
     me[0x06] = me[0x07] = 0;   /* no native movement */

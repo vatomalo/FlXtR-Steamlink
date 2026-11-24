@@ -17,7 +17,9 @@ final class SomAiRelay implements AutoCloseable {
         "dash_right","dash_left","dash_up","dash_down","wait","block","charge",
         "ai_off","clone_enemy","undo_spawn","summon_familiar","dismiss_familiar",
         "telekinesis","class_none","evade","flykick","iai_3","iai_4",
-        "kawarimi","shunshin","fuma_swap","cast_attack","cast_heal","cast_buff"));
+        "kawarimi","shunshin","fuma_swap","cast_attack","cast_heal","cast_buff","party_release"));
+    private static final java.util.regex.Pattern PARTY_ORDER=
+        java.util.regex.Pattern.compile("party_order_[0-9]{1,3}_[0-3]_[0-9]{1,3}");
     static {for(int cls=0;cls<16;cls++)ACTIONS.add("class_"+cls);}
     private final Context context;
     private volatile boolean running;
@@ -40,7 +42,8 @@ final class SomAiRelay implements AutoCloseable {
                 if(response.optInt("protocol")!=PROTOCOL)throw new java.io.IOException("Update the SkyLoft AI service");
                 String action=response.optString("action","");
                 String message=response.optString("message","");
-                if(ACTIONS.contains(action))RetroActivity.queueSomCommand(action);
+                if(ACTIONS.contains(action)||PARTY_ORDER.matcher(action).matches())
+                    RetroActivity.queueSomCommand(action);
                 if(!announced){RetroActivity.queueSomMessage("AI bridge v2|new planner active");announced=true;}
                 else if(!message.isEmpty()&&message.length()<=95)RetroActivity.queueSomMessage(message);
                 reported=false;

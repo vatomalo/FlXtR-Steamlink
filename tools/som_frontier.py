@@ -18,6 +18,7 @@ gate, an unwalkable ROM exit) and maps where it died DEATH_LIMIT times are
 skipped. Failures persist in agent_state "frontier".
 """
 import sqlite3
+import time
 from collections import deque
 
 from som_game_over import deaths_by_map
@@ -28,6 +29,26 @@ EASY_HP_FRACTION = 0.003
 OVERVISITED = 6000            # tile visits + fight decisions
 FRONTIER_TRIES = 2
 DEATH_LIMIT = 2
+TOLD_FRESH_S = 6 * 3600      # a villager's heading counts this long after it was heard
+
+
+def told_heading(history, grid):
+    """(map heard on, compass word) of the newest villager heading, or None."""
+    if grid is None:
+        return None
+    try:
+        from som_npc_knowledge import hear_npc_clues
+        clues = hear_npc_clues(history)
+    except Exception:            # hearsay is optional: no table, odd rows
+        return None
+    now = time.time()
+    for clue in sorted(clues, key=lambda c: -(c.get("seen") or 0)):
+        if now - (clue.get("seen") or 0) > TOLD_FRESH_S:
+            break                # old hearsay: the story has moved on since
+        for direction in clue.get("directions") or ():
+            if direction in ("north", "south", "east", "west"):
+                return clue["map_id"], direction
+    return None
 
 
 def map_stats(history):
@@ -119,7 +140,6 @@ class Frontier:
                 if entry is None or entry["visits"] + entry["fights"] == 0:
                     if not blocked(nxt):
                         leads_on = len(neighbours(self.history, nxt, rejected) - {current})
-                        # Corridors and hubs first; then the nearest.
                         frontier.append((0 if leads_on else 1, hops[nxt], nxt))
                     continue            # unknown ground: don't plan through it
                 if not (too_easy(entry, max_hp) or overvisited(entry) or blocked(nxt)):
@@ -135,9 +155,28 @@ class Frontier:
                 path.append(parents[path[-1]])
             return ">".join(str(m) for m in reversed(path))
 
-        for _, _, map_id in sorted(frontier):
+        grid = getattr(self.history, "world_grid", None)
+        walked = (grid.distances(here, lambda m: neighbours(self.history, m, rejected))
+                  if grid is not None else {})
+        told = told_heading(self.history, grid)
+
+        def rank(item):
+            # A heading a villager gave first, then corridors and hubs, then
+            # the nearest measured in walked tiles on the world grid.
+            leads, hop, map_id = item
+            toward = told is not None and grid.toward(told[0], map_id, told[1])
+            return (not toward, leads, walked.get(map_id, hop * 64), hop, map_id)
+
+        for item in sorted(frontier, key=rank):
+            map_id = item[2]
             if reachable(map_id):
-                return self._pick(map_id, f"new place, {hops[map_id]} maps away via {route(map_id)}")
+                where = grid.describe(here, map_id) if grid is not None else ""
+                why = f"new place, {hops[map_id]} maps away via {route(map_id)}"
+                if where:
+                    why += f" ({where} on the world grid)"
+                if told is not None and grid.toward(told[0], map_id, told[1]):
+                    why += f"; map {told[0]} said {told[1]}"
+                return self._pick(map_id, why)
         for _, _, map_id in sorted(keep):
             if map_id == here or reachable(map_id):
                 entry = stats[map_id]

@@ -8,11 +8,32 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from som_qwen_bridge import (REMOTE_LOOP, AndroidRelayLink, RemoteLink,
     allowed_directives, build_director_prompt, guard_tile_action, parse_action,
     parse_directive, prefer_open_step, extend_clear_exploration,
-    objective_directive, shop_errand)
+    companion_order, objective_directive, shop_errand)
+
+
+class TestCompanionOrder(unittest.TestCase):
+    def test_follow_hero_target_and_prioritize_support_on_retreat(self):
+        ally = {"slot": 2, "availability_byte": 1, "controller_binding": 0, "hp": 30}
+        enemy = {"slot": 2, "identity": 7, "active": True}
+        observation = {"party": [ally], "tile_context": {"map_id": 130},
+                       "enemy_slots": [enemy]}
+        decision = SimpleNamespace(intention="engage_enemy")
+        intention = {"kind": "engage", "enemy": 2}
+        self.assertEqual(companion_order("auto", observation, decision, intention, ""),
+                         "party_order_130_1_7")
+        enemy["familiar"] = True
+        self.assertIsNone(companion_order("auto", observation, decision, intention, ""))
+        decision.intention = "survive"
+        self.assertEqual(companion_order("auto", observation, decision, intention, ""),
+                         "party_order_130_3_0")
+        self.assertIsNone(companion_order("independent", observation, decision, intention, ""))
+        ally["controller_binding"] = 2
+        self.assertIsNone(companion_order("support", observation, decision, intention, ""))
 
 
 class TestAndroidRelay(unittest.TestCase):
@@ -409,6 +430,25 @@ class TestRemoteLink(unittest.TestCase):
         nothing = Link(image(6, 40))
         self.assertFalse(bridge.direct_candy(nothing, image(6, 40), timeout=0.3))  # not confirmed
 
+    def test_direct_emergency_candy_does_not_need_room_to_open_a_ring(self):
+        import som_qwen_bridge as bridge
+        hero = {"hp": 25, "max_hp": 100}
+        obs = {"candy_count": 1, "party": [hero],
+               "tile_context": {"actor": {"x_px": 100, "y_px": 100}},
+               "enemy_slots": [{"active": True, "x_px": 104, "y_px": 100}]}
+        self.assertFalse(bridge.candy_wanted(obs))
+        self.assertTrue(bridge.candy_wanted(obs, emergency=True))
+        hero["hp"] = 0
+        self.assertFalse(bridge.candy_wanted(obs, emergency=True))
+
+    def test_candy_targets_the_most_endangered_living_companion(self):
+        import som_qwen_bridge as bridge
+        obs = {"candy_count": 1, "party": [
+            {"availability_byte": 1, "hp": 70, "max_hp": 100},
+            {"availability_byte": 1, "hp": 0, "max_hp": 100},
+            {"availability_byte": 1, "hp": 20, "max_hp": 150}]}
+        self.assertEqual(bridge.candy_recipient(obs), 2)
+
     def test_evade_when_guarding_keeps_failing_or_hp_is_low(self):
         import som_qwen_bridge as bridge
         self.assertFalse(bridge.guard_failing(4, True, False, []))
@@ -426,7 +466,7 @@ class TestRemoteLink(unittest.TestCase):
             ram = bytearray(0x20000)
             ram[0xCC48:0xCC48 + 11] = b"\xff" * 11
             if herbs:
-                ram[0xCC48] = (herbs * 2) << 4 | 1             # item 1 = Medical Herb
+                ram[0xCC48] = (herbs * 2) << 4 | 4             # item 4 = Medical Herb
             ram[0xE190], ram[0xE191] = 0x01, 0x20 if poisoned else 0
             return bytes(ram)
         class Link:

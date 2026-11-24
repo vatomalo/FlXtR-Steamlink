@@ -50,6 +50,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'input_enable_hotkey_btn = "4"' in (root/'game-runtime.cfg').read_text()
     assert 'input_player1_joypad_index = "0"' in (root/'game-runtime.cfg').read_text()
     assert 'input_player2_joypad_index = "1"' in (root/'game-runtime.cfg').read_text()
+    assert 'savestate_auto_load = "false"' in (root/'game-runtime.cfg').read_text()
     # Bundled builds never replace system cores; explicit choices take priority.
     bundled=root/'cores';bundled.mkdir()
     fast=bundled/'snes9x2005_flxtr_libretro.so';fast.write_bytes(b'fixture')

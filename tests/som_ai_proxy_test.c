@@ -2179,6 +2179,13 @@ int main(void){
                 hero[2]=180;hero[4]=170;mocked_buttons=upb;som_input_poll();
                 assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP)==1&&
                        som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==1);
+                /* Every dodge profile reuses lock-on's translated tangent:
+                 * the same input circles with evade, Cartwheel, Ukemi, or Blink. */
+                {
+                    int dx=0,dy=0;
+                    assert(som_lock_evasion_direction(&dx,&dy));
+                    assert(dx==-1&&dy==-1);
+                }
                 /* Toward it (down, from up here): a plain walk, the radius follows. */
                 mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);som_input_poll();
                 assert(!lock_orbiting);
@@ -2769,7 +2776,7 @@ int main(void){
         {
             uint8_t keep_oam[0x220];memcpy(keep_oam,ram+0x0800,sizeof(keep_oam));
             const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D];
-            assert(SOM_HUD_LABEL_DY>=16); /* class begins below both native rows */
+            assert(SOM_HUD_LABEL_DY>=26); /* class begins below both native rows */
             ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=SOM_HUD_LEGACY_LIFT_PX;ram[0x41]=0;hud_lifted=0;
             uint8_t *e=ram+0x0800;e[0]=88;e[1]=199;e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
             uint8_t *m=ram+0x0804;m[0]=60;m[1]=200;m[2]=0x40;m[3]=0x30;   /* a monster low on screen */

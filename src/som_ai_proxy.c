@@ -1127,6 +1127,7 @@ static unsigned lock_who;
  * enemy"): som_lock_steer, som_lock_orbit_after. */
 static int lock_orbiting,lock_radius;
 static uint16_t lock_dpad_out;
+static int som_lock_evasion_direction(int *dx,int *dy);
 static void som_lock_steer(uint8_t *ram,uint16_t dirs);
 static unsigned lock_map;
 static void som_lock_toggle(uint8_t *ram);
@@ -3798,6 +3799,7 @@ static int som_blink_dash_raw(uint8_t *ram,int dx,int dy){
         som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
+    (void)som_lock_evasion_direction(&dx,&dy);
     if(!dx&&!dy){
         const unsigned facing=hero[0x010];
         if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;else if(facing==0x01u)dy=1;else dy=-1;
@@ -4103,6 +4105,20 @@ static int som_cart_ground(const uint8_t *ram,int x,int y,unsigned place){
     const uint8_t *a=ram+(layer2?0x1BC00u:0x1B800u)+id*4u;
     return !(a[0]&8u)&&(a[0]&7u)!=3u;
 }
+/* During lock-on the player's D-pad has already been translated into the
+ * same tangent used by lock-on walking.  Reuse that world direction for
+ * every dodge, so pressing a direction with evade/cartwheel/Blink circles
+ * the locked enemy while preserving each discipline's own move and art. */
+static int som_lock_evasion_direction(int *dx,int *dy){
+    if(!dx||!dy||lock_slot<0||lock_who!=som_actor||!lock_dpad_out)return 0;
+    const uint16_t left=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT);
+    const uint16_t right=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);
+    const uint16_t up=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_UP);
+    const uint16_t down=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);
+    *dx=((lock_dpad_out&right)?1:0)-((lock_dpad_out&left)?1:0);
+    *dy=((lock_dpad_out&down)?1:0)-((lock_dpad_out&up)?1:0);
+    return *dx||*dy;
+}
 static void som_cart_flip_after(uint8_t *ram){
     if(!cart_flip_y)return;
     uint8_t *hero=ram?SOM_ACT(ram):NULL;
@@ -4298,11 +4314,12 @@ static int som_evade_start_raw(uint8_t *ram){
     if(!dodge.speed)return 0;
     /* The held direction, else back from (or, forward: toward) the facing. */
     int dx=evade_dir_x,dy=evade_dir_y;
+    const int orbit=som_lock_evasion_direction(&dx,&dy);
     if(!dx&&!dy){
         const unsigned facing=hero[0x010];
         if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;
         else if(facing==0x01u)dy=1;else dy=-1;
-        if(!dodge.forward){dx=-dx;dy=-dy;}
+        if(!orbit&&!dodge.forward){dx=-dx;dy=-dy;}
     }
     /* Dodge Mastery lengthens the move, not the grace. */
     const unsigned move=dodge.frames+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);

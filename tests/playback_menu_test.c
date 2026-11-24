@@ -42,7 +42,16 @@ int main(void){
     menu_row=7;menu_command('a');assert(!stopped);menu_servers=1;menu_command('a');assert(request(4)==10);
     menu_row=8;menu_command('a');assert(!stopped);menu_episodes=1;menu_command('a');assert(request(5)==0);
     menu_row=9;menu_command('a');assert(request(6)==0);
-    menu_row=2;menu_command('l');assert(menu_subtitles==4&&request(1)==10);
+    /* Subtitles: changing them in the menu does nothing to the video; the
+     * choice is applied once, when the menu closes. */
+    menu_row=2;menu_command('l');assert(!stopped&&menu_subtitles==0&&menu_subtitle_choice==4);
+    menu_command('l');assert(!stopped&&menu_subtitle_choice==3);
+    menu_command('m');assert(!menu_open&&menu_subtitles==3&&menu_subtitle_choice<0&&request(1)==10);
+    menu_command('m');menu_row=2;menu_command('r');menu_command('l');
+    menu_command('b');assert(!menu_open&&!stopped&&menu_subtitle_choice<0);      /* back to what it was */
+    menu_command('m');menu_row=2;menu_command('r');menu_row=6;menu_command('r');
+    assert(request(2)==10&&menu_subtitles==4&&menu_subtitle_choice<0);           /* a restart carries it */
+    menu_subtitles=0;
     menu_row=4;for(int i=0;i<20;i++)menu_command('l');assert(subtitle_delay==-5);
     menu_command('b');assert(!menu_open&&!stopped);menu_command('b');assert(request(7)==10);
     /* Switch to Moonlight requires a last-game marker and must save the timestamp. */

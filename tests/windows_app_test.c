@@ -43,15 +43,14 @@ static int test_main(int argc,char **argv){
     FILE *f=fopen("playback-request","rb");int action=-1;if(f){fscanf(f,"%d",&action);fclose(f);}
     if(action!=7){fprintf(stderr,"FAIL: controller response\n");return 1;}
     puts("PASS: actual UI player launch, inherited handle whitelist, preload gate and controller response");
-    if(access("music-runtime/bin/python.exe",X_OK))return 1;
     strcpy(music_query,"https://invalid.example/");
-    music_spawn(1);if(music_pid<=0)return 1;began=SDL_GetTicks();
-    while(music_pid){
+    music_spawn(1);if(music_lookup_pid<=0)return 1;began=SDL_GetTicks();
+    while(music_lookup_pid){
         music_poll();
-        if(SDL_GetTicks()-began>15000){music_stop();return 1;}SDL_Delay(10);
+        if(SDL_GetTicks()-began>15000){music_lookup_stop();return 1;}SDL_Delay(10);
     }
-    if(access("music-cache/error.txt",R_OK)){fprintf(stderr,"FAIL: native music worker\n");return 1;}
-    puts("PASS: UI music worker, packaged Python path and nested worker Job Object");
+    if(access("music-browse.log",R_OK)){fprintf(stderr,"FAIL: native music lookup worker\n");return 1;}
+    puts("PASS: UI music lookup worker and packaged Python path");
     player_pid=0;
     char reply[200];
     strcpy(phone_pending,"url");snprintf(phone_value,sizeof(phone_value),"%s",argv[1]);

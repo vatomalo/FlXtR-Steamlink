@@ -7,6 +7,20 @@ static unsigned char display_ascii(unsigned long code){
     if(code==0x2013||code==0x2014||code==0x2212||code==0x96||code==0x97)return '-';
     if(code==0xa0)return ' ';
     if(code==0x2026)return '.';
+    /* Accented Latin letters as plain ones (the font is ASCII): Latin-1 and
+     * Latin Extended-A, then Romanian's comma letters. '?' has no letter. */
+    static const char latin1[]="AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
+    static const char extended[]="AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+    if(code>=0xc0&&code<=0xff)return (unsigned char)latin1[code-0xc0];
+    if(code>=0x100&&code<=0x17f)return (unsigned char)extended[code-0x100];
+    if(code==0x218||code==0x219)return code==0x218?'S':'s';
+    if(code==0x21a||code==0x21b)return code==0x21a?'T':'t';
+    if(code>=0x1ea0&&code<=0x1ef9){                  /* Vietnamese: even = capital */
+        const char *pair=code<0x1eb8?"Aa":code<0x1ec8?"Ee":code<0x1ecc?"Ii":code<0x1ee4?"Oo":code<0x1ef2?"Uu":"Yy";
+        return (unsigned char)pair[code&1];
+    }
+    if(code==0x1a0||code==0x1a1)return code==0x1a0?'O':'o';
+    if(code==0x1af||code==0x1b0)return code==0x1af?'U':'u';
     return code<128?(unsigned char)code:'?';
 }
 static unsigned char display_next(const char **input){

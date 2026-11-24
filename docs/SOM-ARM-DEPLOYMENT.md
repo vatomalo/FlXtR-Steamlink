@@ -5,7 +5,7 @@ Branch `perf/som-steamlink-arm-stabilization-20261115`. Two independent pieces:
 | Piece | Where it runs | Needs a game restart | Rollback |
 | --- | --- | --- | --- |
 | `tools/som_wram_server.py` (observation server) | Steam Link, one Python process per AI / living-world SSH session | no: bridges pick it up on their next SSH session (restart the PC services) | move the file aside, or `SOM_AI_SHELL_LOOP=1` for the AI bridge |
-| `som_ai_proxy_libretro.so`, `som_weapon_masks.bin`, and `som_ai_weapon_masks_on` | inside RetroArch | yes: refused while RetroArch runs the proxy | restore the prior files or roll back |
+| `som_ai_proxy_libretro.so`, `som_weapon_masks.bin`, `som_cartwheel_frames.bin`, and `som_ai_weapon_masks_on` | inside RetroArch | yes: refused while RetroArch runs the proxy | restore the prior files or roll back |
 | PC side (`som_qwen_bridge.py`, `som_living_world.py`) | SkyLoft services, run from this worktree | restart `flxtr-som-ai` / `flxtr-som-living-world` | `git checkout` the previous commit, restart |
 
 ## Procedure

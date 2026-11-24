@@ -2,13 +2,14 @@
 typedef struct {int64_t start,end;char text[512];} SubtitleCue;
 /* External text subtitle tracks may contain a complete episode of cues. */
 #define SUBTITLE_MAX_CUES 4096
-static SubtitleCue subtitle_cues[SUBTITLE_MAX_CUES];
+static SubtitleCue subtitle_first_cues[SUBTITLE_MAX_CUES];
+static SubtitleCue *subtitle_cues=subtitle_first_cues;   /* swapped when another track is loaded */
 static int subtitle_external;
 static int64_t subtitle_seek_us;
 static CSLVideoOverlay *subtitle_overlay;
 static int subtitle_size=2,subtitle_delay,subtitle_visible=-1;
 #include "subtitle_text.h"
-static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *packet){
+static void subtitle_decode_into(SubtitleCue *cues,AVCodecContext *decoder,AVStream *stream,AVPacket *packet){
     AVSubtitle sub={0};int got=0;
     if(avcodec_decode_subtitle2(decoder,&sub,&got,packet)<0||!got){avsubtitle_free(&sub);return;}
     int64_t start=packet->pts==AV_NOPTS_VALUE?0:av_rescale_q(packet->pts,stream->time_base,AV_TIME_BASE_Q);
@@ -28,11 +29,14 @@ static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *p
     for(unsigned i=0;i<sub.num_rects;i++){
         const char *text=sub.rects[i]->text?sub.rects[i]->text:sub.rects[i]->ass;
         if(!text)continue;
-        int slot=0;for(int j=1;j<SUBTITLE_MAX_CUES;j++)if(subtitle_cues[j].end<subtitle_cues[slot].end)slot=j;
-        subtitle_cues[slot].start=start;subtitle_cues[slot].end=start+duration;
-        subtitle_text(subtitle_cues[slot].text,sizeof(subtitle_cues[slot].text),text,!sub.rects[i]->text);
-        if(subtitle_visible==slot)subtitle_visible=-2;
+        int slot=0;for(int j=1;j<SUBTITLE_MAX_CUES;j++)if(cues[j].end<cues[slot].end)slot=j;
+        cues[slot].start=start;cues[slot].end=start+duration;
+        subtitle_text(cues[slot].text,sizeof(cues[slot].text),text,!sub.rects[i]->text);
+        if(cues==subtitle_cues&&subtitle_visible==slot)subtitle_visible=-2;
     }avsubtitle_free(&sub);
+}
+static void subtitle_decode(AVCodecContext *decoder,AVStream *stream,AVPacket *packet){
+    subtitle_decode_into(subtitle_cues,decoder,stream,packet);
 }
 static void subtitle_draw(void){
     /* Keep the last visible cue while the decoder waits for more media. */

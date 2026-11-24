@@ -173,6 +173,7 @@ static int kiss_direct(const char *html,char *out,size_t cap){
         if(!strncmp(url,"https://",8)&&(strstr(url,".m3u8")||strstr(url,".mp4"))){snprintf(out,cap,"%s",url);return 1;}
     }}return 0;
 }
+#include "subtitle_catalog.h"
 #include "megaplay.h"
 static int kiss_source(int id,int episode,const char *server){
     char url[2048];snprintf(url,sizeof(url),KISS"/?p=%d",id);char *html=kiss_fetch(url);if(!html)return -1;
@@ -197,9 +198,11 @@ static int kiss_source(int id,int episode,const char *server){
         html=b.data;if(!html)return -1;
         snprintf(referer,sizeof(referer),"%s",url);
         char direct[2048];
+        subtitle_catalog_count=0;
         char sub_en[1024]={0},sub_no[1024]={0},sub_es[1024]={0};
         int resolved=kiss_direct(html,direct,sizeof(direct));
         if(!resolved&&!strncmp(url,"https://megaplay.buzz/",22))resolved=mega_source(html,referer,direct,sizeof(direct),sub_en,sub_no,sub_es);
+        if(resolved)subtitle_catalog_write(direct);
         if(resolved){Entry *e=&entries[used++];strcpy(e->title,"AUTO");strcpy(e->meta,"KISSANIME");strcpy(e->kind,"source");strcpy(e->url,direct);strcpy(e->subs_eng,sub_en);strcpy(e->subs_nor,sub_no);strcpy(e->subs_spa,sub_es);e->id=id;e->episode=episode;total=1;free(html);return 0;}
         if(strstr(html,"id=\"megaplay-player\"")&&strstr(html,"data-realid=")){
             fprintf(stderr,"KissAnime: MegaPlay source API failed or returned an unsupported response\n");

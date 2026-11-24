@@ -22,6 +22,7 @@
 #include <math.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <pthread.h>
 #include "hardware_layout.h"
 #include "steamlink_video_stats.h"
 #include "font.h"
@@ -98,12 +99,19 @@ static void apply_view(int notify) {
         if(notify)show_view(view_names[viewing]);
     }
 }
+#include "subtitle_tracks.h"
+#define PLAYBACK_SUBTITLE_COUNT() subtitle_choice_count()
+#define PLAYBACK_SUBTITLE_CURRENT() subtitle_wanted
+#define PLAYBACK_SUBTITLE_NAME(choice,out,size) subtitle_choice_name(choice,out,size)
+#define PLAYBACK_SUBTITLE_APPLY(choice) do{subtitle_choose(choice);menu_subtitles=subtitle_choice_language(subtitle_wanted);}while(0)
+#define MENU_KEEP_SUBTITLES() do{if(menu_subtitle_choice>=0){subtitle_choose(menu_subtitle_choice);menu_subtitle_choice=-1;menu_subtitles=subtitle_choice_language(subtitle_wanted);}}while(0)
 #include "playback_menu.h"
 #include "playback_started.h"
 static void playback_controls(void) {
     int64_t controls_began=av_gettime_relative();
     timing_poll();
     menu_poll();
+    if(!stopped&&!menu_open)subtitle_switch_poll();
     if(av_gettime_relative()-controls_began>250000)adaptive_resume_at=av_gettime_relative();
     /* Atomic, rate-limited position checkpoint for TV resume. */
     static Uint32 last_checkpoint;
@@ -334,13 +342,18 @@ static int playback_seek(double position){
     }
     menu_restart(1,position);return 0;
 }
-static int load_external_subtitles(const char *url){
+/* A download has its own limit (the reader thread owns `deadline`) and ends
+ * at once when playback does. One runs at a time. */
+static int64_t subtitle_deadline;
+static int subtitle_interrupt(void *opaque){(void)opaque;return stopped||subtitle_cancel||av_gettime_relative()>subtitle_deadline;}
+static int subtitle_fetch(const char *url,SubtitleCue *cues){
+    subtitle_deadline=av_gettime_relative()+30000000;
     int local=phone_local_media(url);const char *ext=url?strrchr(url,'.'):NULL;
     if(!url||(!local&&strncmp(url,"https://",8))||strlen(url)>1023||strpbrk(url,"\r\n\t"))return -1;
     if(local&&(!ext||(strcasecmp(ext,".srt")&&strcasecmp(ext,".vtt"))))return -1;
     AVFormatContext *subfmt=avformat_alloc_context();
     if(!subfmt)return -1;
-    subfmt->interrupt_callback.callback=interrupt_io;
+    subfmt->interrupt_callback.callback=subtitle_interrupt;
     AVDictionary *options=NULL;
     /* MegaPlay caption endpoints enforce the same origin headers as video. */
     if(megaplay){
@@ -375,30 +388,34 @@ static int load_external_subtitles(const char *url){
     if(packet){
         /* Cap downloads to avoid untrusted subtitle playlists or endless streams. */
         int64_t start=av_gettime_relative();
-        while(packets<4096&&av_gettime_relative()-start<12000000&&!stopped){
+        while(packets<4096&&av_gettime_relative()-start<12000000&&!stopped&&!subtitle_cancel){
             rc=av_read_frame(subfmt,packet);
             if(rc<0)break;
-            if(packet->stream_index==stream){subtitle_decode(context,subfmt->streams[stream],packet);packets++;}
+            if(packet->stream_index==stream){subtitle_decode_into(cues,context,subfmt->streams[stream],packet);packets++;}
             av_packet_unref(packet);
         }
         av_packet_free(&packet);
     }
     avcodec_free_context(&context);avformat_close_input(&subfmt);
     if(!packets)return -1;
-    subtitle_external=1;
     fprintf(stderr,"External subtitle loaded: %d packets\n",packets);
+    return 0;
+}
+static int load_external_subtitles(const char *url){
+    if(subtitle_fetch(url,subtitle_cues)<0)return -1;
+    subtitle_external=1;
     return 0;
 }
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"--version")){puts(FLXTR_VERSION);return 0;}
     fprintf(stderr,"Native player build: %s\n",FLXTR_VERSION);
     DiskBuffer *buffer=NULL;
-    AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL,*sub_decoder=NULL;AVBSFContext *bsf=NULL;
+    AVFormatContext *fmt=NULL;AVCodecContext *audio=NULL;AVBSFContext *bsf=NULL;
     AVPacket *packet=NULL,*filtered=NULL;AVFrame *frame=NULL;SwrContext *swr=NULL;
     CSLVideoContext *context=NULL;CSLVideoStream *video=NULL;
     int audio_period=1024;
     SDL_AudioDeviceID device=0;AVDictionary *opts=NULL;int result=1,vi=-1,ai=-1,rc=0;
-    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=32,si=-1;const char *sub_language="auto";
+    unsigned frames=0;double limit=0;int height_limit=720,buffer_secs=15,buffer_mb=32;const char *sub_language="auto";
     if(argc<2){fprintf(stderr,"Usage: greenlink-player URL [test-seconds] [--view fit|stretch|pixel] | --probe URL\n");return 2;}
     int preload_fd=-1;
     int buffer_probe=!strcmp(argv[1],"--probe-buffer");
@@ -423,7 +440,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--start")&&i+1<argc){char *end;playback_start=strtod(argv[++i],&end);if(*end||!isfinite(playback_start)||playback_start<0||playback_start>86400)return 2;}
         else if(!strcmp(argv[i],"--buffer-seconds")&&i+1<argc){buffer_secs=atoi(argv[++i]);if(buffer_secs!=5&&buffer_secs!=15&&buffer_secs!=20&&buffer_secs!=25&&buffer_secs!=30&&buffer_secs!=45&&buffer_secs!=60&&buffer_secs!=80&&buffer_secs!=128)return 2;}
         else if(!strcmp(argv[i],"--buffer-mb")&&i+1<argc){buffer_mb=atoi(argv[++i]);if(buffer_mb!=16&&buffer_mb!=32&&buffer_mb!=64&&buffer_mb!=128&&buffer_mb!=256)return 2;}
-        else if(!strcmp(argv[i],"--subtitles")&&i+1<argc){sub_language=argv[++i];if(strcmp(sub_language,"off")&&strcmp(sub_language,"auto")&&strcmp(sub_language,"eng")&&strcmp(sub_language,"nor")&&strcmp(sub_language,"spa"))return 2;}
+        else if(!strcmp(argv[i],"--subtitles")&&i+1<argc){sub_language=argv[++i];int known=0;for(int n=0;n<SUBTITLE_LANGUAGES;n++)known|=!strcmp(sub_language,subtitle_language_table[n].code);if(!known)return 2;}
         else if(!strcmp(argv[i],"--subtitle-size")&&i+1<argc){subtitle_size=atoi(argv[++i]);if(subtitle_size<2||subtitle_size>3)return 2;}
         else if(!strcmp(argv[i],"--subtitle-delay")&&i+1<argc){subtitle_delay=atoi(argv[++i]);if(subtitle_delay< -5||subtitle_delay>5)return 2;}
         else {char *end;limit=strtod(argv[i],&end);if(*end||limit<=0)return 2;}
@@ -440,7 +457,7 @@ int main(int argc,char **argv) {
     megaplay=getenv("FLXTR_MEDIA_PROVIDER")&&!strcmp(getenv("FLXTR_MEDIA_PROVIDER"),"megaplay");
     /* All providers use at least 15 seconds of bounded compressed RAM prefill. */
     if(megaplay)fprintf(stderr,"MegaPlay: honoring configured prebuffer of %d seconds (RAM cap %d MiB)\n",buffer_secs,buffer_mb);
-    menu_height=height_limit;for(int i=0;i<5;i++)if(!strcmp(sub_language,(const char*[]){"off","auto","eng","nor","spa"}[i]))menu_subtitles=i;
+    menu_height=height_limit;for(int i=0;i<SUBTITLE_LANGUAGES;i++)if(!strcmp(sub_language,subtitle_language_table[i].code))menu_subtitles=i;
     signal(SIGINT,stop);signal(SIGTERM,stop);signal(SIGUSR1,next_view);av_log_set_level(AV_LOG_ERROR);avformat_network_init();
     if(SDL_Init(SDL_INIT_TIMER)){fprintf(stderr,"SDL timer: %s\n",SDL_GetError());goto done;}
     fmt=avformat_alloc_context();if(!fmt)goto done;
@@ -483,50 +500,29 @@ int main(int argc,char **argv) {
     if(ai<0){fprintf(stderr,"No decodable audio track; try another server\n");goto done;}
     AVCodecParameters *sound=fmt->streams[ai]->codecpar;
     fprintf(stderr,"Audio: %s; %d channels; %d Hz\n",avcodec_get_name(sound->codec_id),sound->channels,sound->sample_rate);
-    /* Prefer requested language, but use unlabelled tracks when hosts omit metadata. */
-    if(strcmp(sub_language,"off"))for(int pass=0;pass<2&&si<0;pass++)for(unsigned i=0;i<fmt->nb_streams;i++){
-        AVCodecParameters *sp=fmt->streams[i]->codecpar;
-        if(sp->codec_type!=AVMEDIA_TYPE_SUBTITLE||!(sp->codec_id==AV_CODEC_ID_SUBRIP||sp->codec_id==AV_CODEC_ID_WEBVTT||sp->codec_id==AV_CODEC_ID_MOV_TEXT||sp->codec_id==AV_CODEC_ID_ASS||sp->codec_id==AV_CODEC_ID_SSA))continue;
-        AVDictionaryEntry *language=av_dict_get(fmt->streams[i]->metadata,"language",NULL,0);
-        const char *lang=language?language->value:"";
-        int matching=!strcmp(sub_language,"auto")||!strcmp(lang,sub_language)||
-            (!strcmp(sub_language,"eng")&&(!strcmp(lang,"en")||!strcmp(lang,"en-US")||!strcmp(lang,"en-GB")))||
-            (!strcmp(sub_language,"nor")&&(!strcmp(lang,"nb")||!strcmp(lang,"nob")||!strcmp(lang,"no")||!strcmp(lang,"nn")))||
-            (!strcmp(sub_language,"spa")&&(!strcmp(lang,"es")||!strcmp(lang,"spa")||!strncmp(lang,"es-",3)));
-        if(pass==0&&!matching)continue;
-        if(pass==1&&(*lang||!strcmp(sub_language,"auto")))continue;
-        const AVCodec *codec=avcodec_find_decoder(sp->codec_id);if(!codec)continue;
-        sub_decoder=avcodec_alloc_context3(codec);if(!sub_decoder)break;
-        if(avcodec_parameters_to_context(sub_decoder,sp)<0||avcodec_open2(sub_decoder,codec,NULL)<0){avcodec_free_context(&sub_decoder);continue;}
-        sub_decoder->pkt_timebase=fmt->streams[i]->time_base;si=(int)i;break;
-    }
-    fprintf(stderr,"Subtitle mode: %s, selected track: %d%s\n",sub_language,si,si<0?" (no supported embedded text subtitle track)":"");
-    /* Prefer a compatible embedded text track, then external captions. */
+    /* Every text track in the video and every one the resolver found. The
+     * saved language starts; the menu can switch to any while it plays. */
+    subtitle_tracks_find(fmt);
     const char *english=getenv("FLXTR_SUBTITLE_ENGLISH");
     const char *norwegian=getenv("FLXTR_SUBTITLE_NORWEGIAN");
-    const char *spanish=getenv("FLXTR_SUBTITLE_SPANISH");
-    const char *external=NULL;
-    if(strcmp(sub_language,"off")){
-        if(!strcmp(sub_language,"nor"))external=norwegian;
-        else if(!strcmp(sub_language,"spa"))external=spanish;
-        else external=english;
-        if((!external||!*external)&&!strcmp(sub_language,"auto"))external=norwegian;
-        if((!external||!*external)&&!strcmp(sub_language,"auto"))external=spanish;
+    int first_track=subtitle_track_for(menu_subtitles);
+    for(int tries=0;first_track>=0&&tries<2;tries++){
+        SubtitleTrack *t=&subtitle_tracks[first_track];
+        int ready=t->stream>=0?!subtitle_open_stream(t->stream):!load_external_subtitles(t->url);
+        player_subtitle_log(ready?"loaded":t->stream>=0?"decoder-failed":"download-failed",english,norwegian,t->stream>=0?"embedded":t->url);
+        if(ready)break;
+        first_track=-1;
+        for(int i=0;tries==0&&i<subtitle_track_count;i++)      /* another of the same language */
+            if(&subtitle_tracks[i]!=t&&subtitle_tracks[i].language==t->language&&t->language>=2){first_track=i;break;}
     }
-    fprintf(stderr,"External subtitle handoff: English %s, Norwegian %s, selected %s\n",
-        english&&*english?"available":"absent",norwegian&&*norwegian?"available":"absent",
-        external&&*external?"available":"absent");
-    player_subtitle_log("handoff",english,norwegian,external);
-    if(si<0&&external&&*external){
-        if(load_external_subtitles(external)==0){
-            player_subtitle_log("loaded",english,norwegian,external);
-            avcodec_free_context(&sub_decoder);si=-1;
-            subtitle_seek_us=(int64_t)(playback_start*AV_TIME_BASE);
-        }else {player_subtitle_log("download-failed",english,norwegian,external);
-            fprintf(stderr,"External subtitles failed, falling back to embedded track\\n");}
-    }
+    subtitle_choice=subtitle_wanted=first_track<0?SUBTITLE_CHOICE_OFF:
+        menu_subtitles==1?SUBTITLE_CHOICE_AUTO:SUBTITLE_CHOICE_FIRST+first_track;
+    if(subtitle_external)subtitle_seek_us=(int64_t)(playback_start*AV_TIME_BASE);
+    fprintf(stderr,"Subtitles: setting %s, %d tracks available, showing %s\n",sub_language,subtitle_track_count,
+        first_track<0?"none":subtitle_tracks[first_track].name);
 
-    for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai||(int)i==si)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
+    for(unsigned i=0;i<fmt->nb_streams;i++)fmt->streams[i]->discard=((int)i==vi||(int)i==ai)?AVDISCARD_DEFAULT:AVDISCARD_ALL;
+    subtitle_discard();
     AVStream *vs=fmt->streams[vi];AVCodecParameters *vp=vs->codecpar;
     const AVPixFmtDescriptor *pix=av_pix_fmt_desc_get(vp->format);
     if(vp->codec_id!=AV_CODEC_ID_H264||vp->width>1920||vp->height>1080||
@@ -551,7 +547,7 @@ int main(int argc,char **argv) {
     }
     if(probe){
         if(buffer_probe){
-            deadline=0;buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
+            deadline=0;buffer=disk_start(fmt,vi,ai,subtitle_stream,buffer_secs,buffer_mb);if(!buffer)goto done;
             packet=av_packet_alloc();if(!packet)goto done;int video_packets=0,audio_packets=0;
             for(int i=0;i<200;i++){rc=disk_packet(buffer,packet);if(rc<0)break;if(packet->stream_index==vi)video_packets++;if(packet->stream_index==ai)audio_packets++;av_packet_unref(packet);}
             fprintf(stderr,"Buffered packet test: %d video / %d audio\n",video_packets,audio_packets);
@@ -560,7 +556,7 @@ int main(int argc,char **argv) {
         result=0;goto done;
     }
     if(preload_fd>=0){
-        deadline=0;buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);if(!buffer)goto done;
+        deadline=0;buffer=disk_start(fmt,vi,ai,subtitle_stream,buffer_secs,buffer_mb);if(!buffer)goto done;
         fprintf(stderr,"TV preloading compressed packets; hardware decoder remains closed\n");
         int ready=0;int64_t until=av_gettime_relative()+1800000000LL;
         while(!stopped&&av_gettime_relative()<until){
@@ -618,7 +614,7 @@ int main(int argc,char **argv) {
     packet=av_packet_alloc();filtered=av_packet_alloc();frame=av_frame_alloc();
     if(!packet||!filtered||!frame)goto done;
     deadline=0;
-    if(!buffer)buffer=disk_start(fmt,vi,ai,si,buffer_secs,buffer_mb);
+    if(!buffer)buffer=disk_start(fmt,vi,ai,subtitle_stream,buffer_secs,buffer_mb);
     if(!buffer){fprintf(stderr,"RAM packet buffer allocation failed\n");goto done;}
     fprintf(stderr,"RAM buffer: %d MiB / %d seconds prefill\n",buffer_mb,buffer_secs);
     active_buffer=buffer;
@@ -631,7 +627,7 @@ int main(int argc,char **argv) {
             SDL_ClearQueuedAudio(device);avcodec_flush_buffers(audio);
             swr_close(swr);if(swr_init(swr)<0)goto done;
             av_bsf_flush(bsf);subtitle_seek_us=target;
-            if(sub_decoder)avcodec_flush_buffers(sub_decoder);
+            if(subtitle_decoder)avcodec_flush_buffers(subtitle_decoder);
             SLVideo_FreeStream(video);video=SLVideo_CreateStream(context,k_ESLVideoFormatH264,0);
             if(!video)goto done;
             if(fps.num>0&&fps.den>0)SLVideo_SetStreamTargetFramerate(video,fps.num,fps.den);
@@ -650,7 +646,7 @@ int main(int argc,char **argv) {
             break;
         }
         int track=packet->stream_index;
-        if(track==si&&sub_decoder){subtitle_decode(sub_decoder,fmt->streams[si],packet);av_packet_unref(packet);if(!menu_open)subtitle_draw();continue;}
+        if(track==subtitle_stream&&subtitle_decoder){subtitle_decode(subtitle_decoder,fmt->streams[track],packet);av_packet_unref(packet);if(!menu_open)subtitle_draw();continue;}
         if(track!=vi&&track!=ai){av_packet_unref(packet);continue;}
         /* Log anomalous decode/presentation timestamp separation without
          * changing decode-order submission to the H.264 hardware. */
@@ -734,7 +730,7 @@ done:
     if(!frames){const char *ack=getenv("FLXTR_HANDOFF_ACK");if(ack&&strlen(ack)==48&&!strncmp(ack,"handoff/",8)&&strspn(ack+8,"0123456789abcdef")==32&&!strcmp(ack+40,"/started")){char failed[64];snprintf(failed,sizeof(failed),"%.40s/failed",ack);FILE *out=fopen(failed,"w");if(out){fputs(rc==AVERROR_HTTP_FORBIDDEN?"TV source returned HTTP 403. Retry the anime source.":"TV player could not start this stream. See player.log.",out);fclose(out);}}}
     fprintf(stderr,"Hardware frames submitted: %u; result: %d\n",frames,result);
     if(subtitle_overlay){SLVideo_HideOverlay(subtitle_overlay);SLVideo_FreeOverlay(subtitle_overlay);subtitle_overlay=NULL;}
-    avcodec_free_context(&sub_decoder);
+    subtitle_switch_close();
     fprintf(stderr,"Audio samples queued: %llu\n",(unsigned long long)audio_samples);
     if(view_overlay){SLVideo_HideOverlay(view_overlay);SLVideo_FreeOverlay(view_overlay);view_overlay=NULL;}
     restore_viewport();view_context=NULL;

@@ -56,9 +56,10 @@ if [ "$what" = proxy ] || [ "$what" = all ]; then
   so=build/som-ai/som_ai_proxy_libretro.so
   [ -f "$so" ] || { echo "build it first: bash scripts/build-som-ai-proxy.sh" >&2; exit 1; }
   masks=build/som-ai/som_weapon_masks.bin
+  cartwheel=build/som-ai/som_cartwheel_frames.bin
   marker=build/som-ai/som_ai_weapon_masks_on
-  [ -f "$masks" ] && [ -f "$marker" ] || {
-    echo "build the ROM-derived weapon mask pack first with SOM_ROM_PATH set" >&2; exit 1;
+  [ -f "$masks" ] && [ -f "$cartwheel" ] && [ -f "$marker" ] || {
+    echo "build the local ROM-derived animation and weapon packs first with SOM_ROM_PATH set" >&2; exit 1;
   }
   file "$so" | grep -q 'ARM, EABI5' || { echo "refusing: $so is not an ARM EABI5 build" >&2; exit 1; }
   # 2./3. active core path, and never while RetroArch has the proxy loaded
@@ -76,6 +77,7 @@ fi
 if [ "$what" = proxy ] || [ "$what" = all ]; then
   install_file build/som-ai/som_ai_proxy_libretro.so "$E/som_ai_proxy_libretro.so" 755
   install_file build/som-ai/som_weapon_masks.bin "$E/som_weapon_masks.bin" 644
+  install_file build/som-ai/som_cartwheel_frames.bin "$E/som_cartwheel_frames.bin" 644
   install_file build/som-ai/som_ai_weapon_masks_on "$E/som_ai_weapon_masks_on" 644
 fi
 echo "rollback: bash scripts/rollback-som-arm-performance.sh${host:+ --host $host}"

@@ -10,9 +10,8 @@
 | **L1 (tap)** | Toggle enemy lock-on. Only targeting, independent of B/Y. Native L1 is suppressed during active field play so it cannot open the wrong ring. |
 | **R1 (tap)** | Cycle the currently selected class's **three FlXtR weapon styles** (fast -> balanced -> heavy -> fast). Native R1 no longer blocks. |
 | **L3 + B** | Legacy L1+B style-cycle shortcut, moved to L3. B is suppressed so it cannot accidentally attack or start a combo. |
-| **L3 + Y/X** | Native weapon/item or magic ring shortcut, formerly using L2. The proxy sends native L2+Y/X and does not trigger a class attack/spell on release. |
 | **L2 or R3 held alone for 1 s, release** | Start AI mode. A long R2 block no longer starts AI. |
-| **Start** | Party class editor (also inside the ring: for the ring's owner). The L2+R2 alias was removed 2026-11-21. |
+| **Start** | Open the native ring. From the settings ring, highlight **Classes** and press B to open the party class editor. |
 | **L2 + R1 / L2 + L1** | Next / previous class for the boy (all 16, wrapping). L1 alone still locks on. |
 
 Outside active field play, the base game's menu buttons remain unchanged.
@@ -142,8 +141,7 @@ Do not replace class weapon switching with artificial ring menu input.
 
 ### Manual Class Progress and stall recovery (14 November)
 
-- Open the Disciplines menu during **manual gameplay** with L2+R2 together (hold L2 and tap R2 also works). Up/Down selects a discipline; B selects its appearance specialization; A closes. While open, physical P1 inputs are swallowed by the proxy so the native ring menu does not open. No AI activation required.
-- With AI running, use a button to open Gambits, then L/R to switch to Disciplines.
+- Press Start during manual play and open the Classes icon from the settings ring. Up/Down highlights a class, B equips it, and A closes the editor.
 - The SkyLoft bridge no longer turns missing `inn_ready` / `save_ready` into an unconditional infinite `wait`. The strategic phase stays `inn` or `save`; the deterministic planner may still explore/defend while the taught interaction is unavailable. Once available, it resumes the committed trip. This avoids immobilizing the hero for thousands of decisions.
 - These changes require **rebuilding/deploying the proxy** for the menu and **restarting the SkyLoft AI service** for bridge changes. Switching Git branches alone does not replace the installed Steam Link libretro core or a running Python process.
 - Test with `make test-som-ai-proxy test-som-ai-player2`, plus Python tests. Do not deploy until the tests pass.
@@ -159,7 +157,7 @@ Do not replace class weapon switching with artificial ring menu input.
 
 
 - `src/som_disciplines.h`: nine independent, classless discipline XP tracks and a specialisation marker. Selection has no gameplay effects, no level restrictions, no palette changes, and no persistence yet.
-- Disciplines overlay renders next to the Gambits overlay when the AI is controlling the leader. L/R toggles the tab; Up/Down moves; B selects/deselects a specialization; A closes. All control interception is inside the **AI overlay mode**, so the normal game's ring controls are deliberately untouched.
+- The party editor opens from the Classes icon in the settings ring during manual play.
 - `som_disc_award` rejects unverified and duplicate event IDs. It is *not yet hooked to real combat outcomes*, so no XP is currently earned from playing. XP is not yet stored to disk.
 - Existing friendly familiar, its targeting/anti-friendly-fire, tint, and cross-map restore are unchanged.
 
@@ -176,7 +174,7 @@ Do not replace class weapon switching with artificial ring menu input.
 | L2 + Y | Item ring access | Proposed remap, must remain accessible |
 | L2 + X | Magic ring access | Proposed remap, must remain accessible |
 | R2 or R3 long hold | Existing AI on/off toggle | Preserve |
-| L/R in AI overlay | Gambits / Disciplines tabs | Implemented |
+| L/R in AI overlay | Gambit pages | Implemented |
 
 `src/som_ai_actions.h` currently maps Y to `open_ring`, X to `menu_x`, A to `cancel` and dash as A+direction; the live bridge's taught Candy/shop/inn/save macros depend on these logical actions. Do not change `som_action_button` blindly. Introduce a **physical -> logical virtual controller** layer, distinguish game/field/menu states and translate only while game state is verified. Maintain logical `open_ring` and `menu_x` for the bridge.
 
@@ -341,6 +339,10 @@ stack 13 %, state_guard 7 %). Changes:
 
 ## Gambit pages and situational classes (2026-11-15)
 
+- On the Actions page, **AI debug messages** defaults to off. Turning it on shows the
+  bridge's blue `AI:` status banners and class-selection debug bubbles; contextual AI
+  speech bubbles remain enabled either way. Player 2 can open and operate the Gambit
+  menu from controller 2 while AI play is active, including **Exit gambits: you play**.
 - The AI overlay now has three pages cycled with **L1/R1**: **Gambits: Actions** (the six
   activities, file `som_ai_gambits`, unchanged format), **Gambits: Combat** (file
   `som_ai_combat`, 8 digits: press the attack, keep distance, guard and counter, evade,
@@ -898,16 +900,37 @@ KATANA                    <- boy: class weapon or spell set; companions: their c
 The energy name (Ki, Chakra...) is no longer printed; it still appears in the "Not enough"
 message. A member without a class shows no panel.
 
-### The ring's party menu (2026-11-20)
+### Party Classes in the settings ring
 
-Turbo's ring has no Action Grid (strategy screen): its config ring, for every member, is
-Equip, Targeting, Status, Weapon/Magic Levels, Controller Settings, Window Edit (6 entries,
-`7E:180B`). **Controller Settings** (entry 4, which would only remap the SNES buttons under
-FlXtR's own layout) is taken over: its title bar reads PARTY CLASSES, and B on it opens the
-party class editor for the ring's owner (`7E:1808`: boy, girl or sprite). **Start** anywhere
-in the ring does the same. X in the editor still switches member; A closes it and the ring
-is still open underneath (the pad is held back from the game until every button is let go).
-The overlay font gained `*` (the class mark, blank before) and `&`.
+From the field, press **Start** and use Up or Down to reach the ring with Equip
+and Status. **Classes** uses the Action Grid icon in the native ring, between Window Edit
+and Equip. Press Left from Window Edit or Right from Equip to highlight it, then
+press **B**. The editor opens for the ring's owner. X switches party member,
+B equips the highlighted class, Y starts reordering, and A returns to the ring.
+L1 or R1 switches between Classes and Music. Controller Settings is available
+in its usual slot. The editor uses the native Status background tiles and palette.
+Press **Select** in Classes to open the highlighted class's guide. Up/Down browses
+the classes, and A or Select goes back. L1/R1 opens the separate Music page. Weapon
+percentages describe the current
+style or class weapon, where 100% is the unscaled weapon value. Available move
+previews use the existing hero animation pack.
+
+Player 2 keeps **Start** for joining; after joining, Start and the stick clicks
+do not open a second ring menu. In field combat, Player 2 uses the same class
+bindings as Player 1: **R2** guards, **R1** changes style, **L3+B** is the style
+shortcut, **L2+R1/L1** changes the controlled member's class, **Y** uses the
+class's second weapon or spell, and **X** casts or uses its class action. **L2+X**
+requests the actor-specific class move. Party class setup remains in Player 1's
+Classes editor.
+**L2+X** requests the companion class technique for the Girl or Sprite.
+
+## Enemy scaling
+
+Regular enemies keep their native level or scale to two levels above the
+highest-level party member, whichever is higher. Their HP, attack and defenses
+also rise. A level increase preserves the enemy's remaining HP percentage.
+Bosses, chests and familiar allies use their existing rules. Ranked enemies
+apply their rank bonus to the scaled HP when they are promoted.
 
 ## Mixed-weapon B strings (2026-11-23)
 

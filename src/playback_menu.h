@@ -7,10 +7,23 @@
 #ifndef PLAYBACK_AUDIO_PAUSE
 #define PLAYBACK_AUDIO_PAUSE(value) do{if(menu_audio)SDL_PauseAudioDevice(menu_audio,value);}while(0)
 #endif
+/* Subtitle choices. A player that can switch tracks while the video runs
+ * defines these; the default restarts for the five fixed settings. Either
+ * way nothing happens until the menu closes. */
+#ifndef PLAYBACK_SUBTITLE_COUNT
+#define PLAYBACK_SUBTITLE_COUNT() 5
+#define PLAYBACK_SUBTITLE_CURRENT() menu_subtitles
+#define PLAYBACK_SUBTITLE_NAME(choice,out,size) snprintf(out,size,"%s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN","SPANISH"}[choice])
+#define PLAYBACK_SUBTITLE_APPLY(choice) do{menu_subtitles=(choice);menu_restart(1,playback_position());}while(0)
+#endif
 /* Single hardware overlay plane: the menu owns it while visible. */
 #include <sys/stat.h>
+/* A restart for another reason (quality, server) carries the choice along. */
+#ifndef MENU_KEEP_SUBTITLES
+#define MENU_KEEP_SUBTITLES() do{if(menu_subtitle_choice>=0){menu_subtitles=menu_subtitle_choice;menu_subtitle_choice=-1;}}while(0)
+#endif
 static int control_fd=-1,menu_open,menu_row,menu_info,paused,requested_action;
-static int menu_height=720,menu_subtitles,menu_episodes,menu_servers;
+static int menu_height=720,menu_subtitles,menu_subtitle_choice=-1,menu_episodes,menu_servers;
 static int seek_scrubbing,seek_was_paused;
 static double seek_target;
 static double playback_start,media_duration;
@@ -74,7 +87,9 @@ static void menu_draw(void){
     snprintf(heading,sizeof(heading),"FLXTR  %02d:%02d:%02d / %d MIN",seconds/3600,seconds/60%60,seconds%60,(int)(media_duration/60));
     snprintf(rows[0],80,"%s",paused?"RESUME":"PAUSE");
     snprintf(rows[1],80,"%s",seek_scrubbing?"SEEK PREVIEW: LEFT/RIGHT / A PLAY / B CANCEL":"SEEK: LEFT/RIGHT PREVIEW / A PLAY");
-    snprintf(rows[2],80,"SUBTITLES: %s",(const char*[]){"OFF","AUTO","ENGLISH","NORWEGIAN","SPANISH"}[menu_subtitles]);
+    char language[60];
+    PLAYBACK_SUBTITLE_NAME(menu_subtitle_choice>=0?menu_subtitle_choice:PLAYBACK_SUBTITLE_CURRENT(),language,sizeof(language));
+    snprintf(rows[2],80,"SUBTITLES: %s",language);
     snprintf(rows[3],80,"SUBTITLE SIZE: %s",subtitle_size==2?"NORMAL":"LARGE");
     snprintf(rows[4],80,"SUBTITLE DELAY: %+d SEC",subtitle_delay);
     snprintf(rows[5],80,"VIDEO SIZE: %s",view_names[viewing]);
@@ -118,6 +133,7 @@ static void menu_draw(void){
     SLVideo_SetOverlayDisplayArea(menu_overlay,0.0f,0.0f,1.0f,1.0f);SLVideo_ShowOverlay(menu_overlay);
 }
 static void menu_restart(int action,double position){
+    MENU_KEEP_SUBTITLES();
     if(position<0)position=0;
     if(media_duration>1&&position>=media_duration)position=media_duration-1;
     FILE *f=fopen("playback-request.next","w");
@@ -150,6 +166,12 @@ static void seek_cancel(void){
         PLAYBACK_AUDIO_PAUSE(0);
     }
 }
+/* The menu is closing: the subtitle chosen in it now takes effect. */
+static void menu_apply_subtitles(void){
+    const int choice=menu_subtitle_choice;
+    menu_subtitle_choice=-1;
+    if(choice>=0&&choice!=PLAYBACK_SUBTITLE_CURRENT())PLAYBACK_SUBTITLE_APPLY(choice);
+}
 static void menu_command(char c){
     if(menu_info){if(c=='b'||c=='m'||c=='a'){menu_info=0;menu_draw();}return;}
     if(c=='n'){if(menu_episodes)menu_restart(6,0);return;}
@@ -169,7 +191,7 @@ static void menu_command(char c){
     if(seek_scrubbing&&(c=='b'||c=='m')){seek_cancel();menu_draw();return;}
     if(c=='m'||(c=='b'&&menu_open)){
         menu_open=!menu_open;
-        if(!menu_open){if(menu_overlay)SLVideo_HideOverlay(menu_overlay);subtitle_visible=-2;}else menu_draw();
+        if(!menu_open){if(menu_overlay)SLVideo_HideOverlay(menu_overlay);subtitle_visible=-2;menu_apply_subtitles();}else menu_draw();
         return;
     }
     if(c=='b'){menu_restart(7,playback_position());return;}
@@ -209,7 +231,11 @@ static void menu_command(char c){
                 if(media_duration>1&&seek_target>=media_duration)seek_target=media_duration-1;
             }
             break;
-        case 2:menu_subtitles=(menu_subtitles+direction+5)%5;menu_restart(1,playback_position());break;
+        case 2:{
+            const int count=PLAYBACK_SUBTITLE_COUNT();
+            const int from=menu_subtitle_choice>=0?menu_subtitle_choice:PLAYBACK_SUBTITLE_CURRENT();
+            menu_subtitle_choice=(from+direction+count)%count;break;
+        }
         case 3:subtitle_size=subtitle_size==2?3:2;subtitle_visible=-2;break;
         case 4:subtitle_delay+=direction;if(subtitle_delay>5)subtitle_delay=5;if(subtitle_delay< -5)subtitle_delay=-5;subtitle_visible=-2;break;
         case 5:viewing=(viewing+direction+VIEW_COUNT)%VIEW_COUNT;apply_view(0);break;

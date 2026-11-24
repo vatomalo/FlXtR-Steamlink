@@ -14,6 +14,7 @@
 #include "som_overlay.h"
 #include "som_gambit.h"
 #include "som_disciplines.h"
+#include "som_class_guide.h"
 #include "som_magic.h"
 #include "som_energy.h"
 #include "som_ally_moves.h"
@@ -195,6 +196,8 @@ static const char *combat_file=SOM_COMBAT_FILE;
 static const char *quest_file=SOM_QUEST_FILE;
 #define SOM_BRAIN_FILE "/home/apps/retroarch/cores/experimental/som_ai_brain"
 static const char *brain_file=SOM_BRAIN_FILE;
+#define SOM_DEBUG_MESSAGES_FILE "/home/apps/retroarch/cores/experimental/som_ai_debug_messages"
+static const char *debug_messages_file=SOM_DEBUG_MESSAGES_FILE;
 /* Independent from the six Gambit priority digits, shared with the
  * external song-id -> yt-dlp playback bridge. */
 #define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
@@ -202,7 +205,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},{3,3},0,0,1};
+    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0};
 static SomDisciplines disciplines;
 /* The acting hero (2026-11-22, "write them with companions in mind"): the
  * player's moves (X class moves, L2 specials, throw, bash, Blink, portals,
@@ -362,8 +365,17 @@ static void som_hero_palette_frame(uint8_t *ram){
     if(!ram)return;
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)som_member_palette_frame(ram,who);
 }
-static int som_menu_disciplines;
 static int som_manual_disciplines;
+static int class_guide_open;
+static uint16_t pad2_raw,pad2_wanted,pad2_pressed;
+static unsigned pad2_actor=SOM_PARTY_MEMBERS,pad2_combo_actor=SOM_PARTY_MEMBERS;
+static unsigned pad2_spell_cursor,pad2_spell_class=SOM_DISCIPLINE_NONE;
+static unsigned long pad2_x_start;
+static int pad2_x_tapped;
+static unsigned pad2_guard_hp,pad2_guard_map;
+static uint16_t auto_target_enemy_hp[3],auto_target_party_hp[3];
+static uint8_t auto_target_enemy_id[3],auto_target_enemy_live[3],auto_target_ready;
+static unsigned auto_target_map;
 /* After the menu closes, the game sees no button until all are let go (the
  * closing A must not also close the ring under it). */
 static int menu_hold_until_release,menu_was_open;
@@ -372,14 +384,23 @@ static int menu_hold_until_release,menu_was_open;
 #define SOM_START_RING_FRAMES 3ul
 static int start_ring_held;
 static unsigned long start_ring_until;
-#define SOM_RING_PARTY_ENTRY 4u     /* Controller Settings */
-#define SOM_RING_CONFIG_ENTRIES 6u
+#define SOM_RING_CONFIG_ENTRIES 7u
+#define SOM_RING_CLASSES_DESCRIPTOR 0x9276u
 static int som_ring_open_idle(const uint8_t *ram){
-    return ram&&ram[0xE000]==1&&ram[0x7D]==1&&ram[0xD0]==0&&ram[0x1812]==0&&ram[0x1809]!=0x55u;
+    /* Bit 7 is set in native submenus such as Status and Equipment. */
+    return ram&&ram[0xE000]==1&&ram[0x7D]==1&&ram[0xD0]==0&&
+        !(ram[0x1801]&0x80u)&&ram[0x1812]==0&&ram[0x1809]!=0x55u;
 }
-static int som_ring_on_party_entry(const uint8_t *ram){
-    return ram&&ram[0xE000]==1&&ram[0x7D]==1&&ram[0xD0]==0&&ram[0x1812]==0&&
-        ram[0x1809]==2u&&ram[0x180B]==SOM_RING_CONFIG_ENTRIES&&ram[0x180A]==SOM_RING_PARTY_ENTRY;
+static int classes_ring_enabled;
+static uint16_t ring_hidden;
+static SomStatusTexture classes_background;
+static int som_ring_on_classes(const uint8_t *ram){
+    if(!classes_ring_enabled||!som_ring_open_idle(ram)||ram[0x1809]!=2u||
+       ram[0x180B]!=SOM_RING_CONFIG_ENTRIES||ram[0x180A]>=SOM_RING_CONFIG_ENTRIES)return 0;
+    /* Native Status remembers its descriptor and can rotate the list when
+     * reopened. Read the live descriptor under the cursor, not its index. */
+    const uint8_t *entry=ram+0x1880u+2u*ram[0x180A];
+    return (entry[0]|((unsigned)entry[1]<<8))==SOM_RING_CLASSES_DESCRIPTOR;
 }
 /* The Start menu's MUSIC page (src/som_jukebox.h): requests go to the Steam
  * Link's music bridge, its answer is read while the page is open. */
@@ -441,6 +462,10 @@ static void som_gambit_load(void){
     in=fopen(brain_file,"r");
     if(in){if(!fgets(brain,sizeof(brain),in))brain[0]=0;fclose(in);}
     som_brain_parse(&gambits,brain[0]?brain:NULL);
+    char debug[8]={0};
+    in=fopen(debug_messages_file,"r");
+    if(in){if(!fgets(debug,sizeof(debug),in))debug[0]=0;fclose(in);}
+    gambits.debug_messages=debug[0]=='1';
 }
 static void som_gambit_write(const char *path,const char *text){
     char temp[256];
@@ -462,6 +487,7 @@ static void som_gambit_save(void){
     char brain[16];
     som_brain_format(&gambits,brain);
     som_gambit_write(brain_file,brain);
+    som_gambit_write(debug_messages_file,gambits.debug_messages?"1":"0");
 }
 #define SOM_MENU_SCAN_START 0x1800u
 #define SOM_MENU_SCAN_LENGTH 0x0200u
@@ -811,6 +837,7 @@ static int som_equip_ally_weapon(uint8_t *ram,unsigned who,unsigned type);
 #define SOM_EQUIP_REFUSED (-1)          /* will not work: use the ring */
 static int som_cast_spell(uint8_t *ram,unsigned spell);
 static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell);
+static const uint8_t *som_rom_at(uint32_t snes,size_t length);
 #define SOM_QUICK_CAST_FRAMES 240ul      /* quick cast: how long the skip may wait */
 static unsigned long quick_cast_until[3];   /* per hero: 0 none */
 typedef struct {
@@ -1094,15 +1121,19 @@ static int som_kusarigama_art_ready(void);
 #define SOM_LOCK_DROP 220
 static int lock_slot=-1;
 static uint8_t lock_identity;
+static unsigned lock_who;
 /* Locked on, the D-pad circles the target (player, 2026-11-23: "when
  * targeting player will walk in a circle around the radius of targetted
  * enemy"): som_lock_steer, som_lock_orbit_after. */
 static int lock_orbiting,lock_radius;
 static uint16_t lock_dpad_out;
+static int som_lock_evasion_direction(int *dx,int *dy);
 static void som_lock_steer(uint8_t *ram,uint16_t dirs);
 static unsigned lock_map;
 static void som_lock_toggle(uint8_t *ram);
 static void som_lock_frame(uint8_t *ram);
+static void som_lock_toggle_for(uint8_t *ram,unsigned who);
+static void som_auto_target_frame(uint8_t *ram);
 static void som_class_x_frame(uint8_t *ram);
 static void som_hundred_frame(uint8_t *ram);
 static void som_issen_cut(uint8_t *ram,int x,int y);
@@ -1303,8 +1334,8 @@ static unsigned som_pad1_member(void){
     if(!ram)return 0;
     return som_pad1_member_in(ram);
 }
-static void som_class_cycle(int dir){
-    const unsigned who=som_pad1_member();
+static void som_class_cycle_member(unsigned who,int dir){
+    if(who>=SOM_PARTY_MEMBERS||dir==0)return;
     /* Through the player's class order (the menu's Y moves a class). */
     const unsigned cur=som_disc_member_class(&disciplines,who);
     const unsigned next=som_disc_order_step(&disciplines,cur,dir);
@@ -1328,6 +1359,7 @@ static void som_class_cycle(int dir){
     som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] DISCIPLINE selected=%u by L2+%s (saved)\n",next,dir>0?"R1":"L1");
 }
+static void som_class_cycle(int dir){som_class_cycle_member(som_pad1_member(),dir);}
 static void som_class_selected(void){
     class_supply_pending=disciplines.selected<SOM_DISCIPLINE_COUNT;
     class_equip_pending=class_supply_pending;
@@ -1666,28 +1698,179 @@ static void som_net_pad_frame(void){
     }
     net_pad_was_active=active;
 }
-/* Field-only input translation; never affect original menus or AI pad.
- * Physical R2 is handled by the proxy. L1 is exclusive lock-on, R1 cycles
- * styles, L3+Y/X opens the native ring, L3+B cycles the old style shortcut. */
-static inline uint16_t som_manual_pad_layout(uint16_t raw){
-    const uint16_t r=1u<<RETRO_DEVICE_ID_JOYPAD_R,r2=1u<<RETRO_DEVICE_ID_JOYPAD_R2;
-    const uint16_t l=1u<<RETRO_DEVICE_ID_JOYPAD_L,l2=1u<<RETRO_DEVICE_ID_JOYPAD_L2;
-    const uint16_t l3=1u<<RETRO_DEVICE_ID_JOYPAD_L3;
-    const uint16_t b=1u<<RETRO_DEVICE_ID_JOYPAD_B;
-    const uint16_t y=1u<<RETRO_DEVICE_ID_JOYPAD_Y,x=1u<<RETRO_DEVICE_ID_JOYPAD_X;
-    uint16_t native=(uint16_t)(raw&~(r|r2|l|l3));
-    if((raw&l3)&&(raw&(x|y)))native|=l2;
-    if((raw&l2)&&(raw&(b|y|l|r)))native&=(uint16_t)~l2;
-    return native;
+/* Field combat translates X/Y before the game sees the pad. Reserve
+ * native ring input for the synthetic Y pulse generated by Start. */
+static inline uint16_t som_manual_pad_hidden(uint16_t raw){
+    const uint16_t hidden=(1u<<RETRO_DEVICE_ID_JOYPAD_R)|(1u<<RETRO_DEVICE_ID_JOYPAD_R2)|
+        (1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_L3)|
+        (1u<<RETRO_DEVICE_ID_JOYPAD_X)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
+    const uint16_t l2_chord=(1u<<RETRO_DEVICE_ID_JOYPAD_B)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y)|
+        (1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R);
+    return (uint16_t)(hidden|((raw&l2_chord)?1u<<RETRO_DEVICE_ID_JOYPAD_L2:0u));
 }
+static uint16_t som_pad2_buttons(void){
+    if(net_pad.fd>=0&&som_net_pad_active(&net_pad,som_now_ms()))
+        return som_net_pad_buttons(&net_pad,som_now_ms());
+    uint16_t buttons=0;
+    for(unsigned key=0;physical_state&&key<16u;key++)
+        if(physical_state(1,RETRO_DEVICE_JOYPAD,0,key))buttons|=(uint16_t)(1u<<key);
+    return buttons;
+}
+
+static unsigned som_pad2_member(const uint8_t *ram){
+    if(!ram)return SOM_PARTY_MEMBERS;
+    const unsigned binding=(ram[0xDA]&7u)&~(ram[0xD9]&7u);
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)
+        if(binding==(1u<<who)&&ram[0xE000u+0x200u*who]==1u)return who;
+    return SOM_PARTY_MEMBERS;
+}
+
+/* Keep Player 2's X cycle within spells the direct cast path can target. */
+static int som_cast_target_kind(const uint8_t *row){
+    if(!row)return -1;
+    const unsigned kind=row[8]&~0x50u;
+    return kind==0x81u||kind==0x01u||row[8]==0u?(int)kind:-1;
+}
+
+static unsigned som_pad2_spell_index(unsigned cls,unsigned start){
+    const unsigned count=som_class_spell_count(cls);
+    for(unsigned i=0;i<count;i++){
+        const unsigned index=(start+i)%count,spell=som_class_spell(cls,index);
+        if(som_cast_target_kind(som_rom_at(0xD02AD0u+64u*spell,16u))>=0)return index;
+    }
+    return start;
+}
+
+static void som_pad2_poll(void){
+    const uint16_t raw=som_pad2_buttons(),previous=pad2_raw;
+    pad2_raw=raw;pad2_wanted=raw;pad2_pressed=(uint16_t)(raw&~previous);
+    pad2_guard_hp=0;pad2_combo_actor=SOM_PARTY_MEMBERS;
+    uint8_t *ram=som_field_ram();
+    const unsigned who=som_pad2_member(ram);
+    if(who!=pad2_actor){pad2_x_tapped=0;pad2_spell_class=SOM_DISCIPLINE_NONE;pad2_actor=who;}
+    /* While the AI owns play, Player 2's separate controller can still open
+     * and operate the AI menu; never leak those menu presses to the game. */
+    if(ring_ai_enabled){pad2_wanted=0;return;}
+    if(!ram||som_manual_disciplines||menu_hold_until_release)return;
+
+    const uint16_t b=1u<<RETRO_DEVICE_ID_JOYPAD_B,y=1u<<RETRO_DEVICE_ID_JOYPAD_Y;
+    const uint16_t x=1u<<RETRO_DEVICE_ID_JOYPAD_X,l2=1u<<RETRO_DEVICE_ID_JOYPAD_L2;
+    const uint16_t l1=1u<<RETRO_DEVICE_ID_JOYPAD_L,r1=1u<<RETRO_DEVICE_ID_JOYPAD_R;
+    const uint16_t r2=1u<<RETRO_DEVICE_ID_JOYPAD_R2;
+    const uint16_t l3=1u<<RETRO_DEVICE_ID_JOYPAD_L3;
+    const uint16_t start=1u<<RETRO_DEVICE_ID_JOYPAD_START;
+    pad2_wanted&=(uint16_t)~(x|y|l2|r1|r2);
+    /* Start remains the native join button when no actor is bound. */
+    if(who>=SOM_PARTY_MEMBERS)return;
+    /* Player 2 has no ring-menu shortcut after joining. */
+    pad2_wanted&=(uint16_t)~start;
+
+    const uint8_t *hero=ram+0xE000u+0x200u*who;
+    if(raw&r2){
+        pad2_guard_hp=som_word(hero+0x182);pad2_guard_map=som_word(ram+0xDC);
+    }
+    const unsigned cls=som_disc_member_class(&disciplines,who);
+    if(cls>=SOM_DISCIPLINE_COUNT)return;
+    if((raw&l2)&&!(raw&r2)&&(raw&(l1|r1))){
+        if(pad2_pressed&(l2|l1|r1))
+            som_class_cycle_member(who,(raw&r1)?1:-1);
+        pad2_wanted&=(uint16_t)~(l2|l1|r1);
+        pad2_x_tapped=0;return;
+    }
+    if((raw&(l3|b))==(l3|b)){
+        if(pad2_pressed&b)som_style_cycle(-1,who);
+        pad2_wanted&=(uint16_t)~b;
+        return;
+    }
+    const uint16_t dpad=(1u<<RETRO_DEVICE_ID_JOYPAD_UP)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|
+        (1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);
+    if((pad2_pressed&l1)&&!(raw&(l2|r2))){
+        som_lock_toggle_for(ram,who);
+        pad2_wanted&=(uint16_t)~l1;
+    }
+    if(lock_slot>=0&&lock_who==who){
+        som_lock_steer(ram,(uint16_t)(raw&dpad));
+        pad2_wanted=(uint16_t)((pad2_wanted&~dpad)|lock_dpad_out);
+    }
+    if((pad2_pressed&r1)&&!(raw&(l2|r2)))som_style_cycle(-1,who);
+    if((raw&l2)&&(raw&x)&&(pad2_pressed&(l2|x))){
+        pad2_x_tapped=0;
+        if(who>0u)pad2_combo_actor=who;
+        return;
+    }
+    const unsigned role=som_disc_x_role(cls);
+    const int caster=som_disc_caster(cls);
+    if((raw&(b|y))&&!(raw&l2)){
+        const unsigned slot=(raw&y)!=0;
+        if(caster){
+            /* The native B jab launches the caster's bolt on either pad. */
+            if(slot){
+                pad2_wanted&=(uint16_t)~b;
+                if(pad2_pressed&y)som_cast_spell_by(ram,who,som_caster_spell(cls,1u));
+            }
+        }else{
+            const SomWeaponStyle *style=som_style_of(&styles,cls,NULL);
+            const unsigned type=slot||!style?som_disc_weapons[cls][slot]:style->weapon;
+            const int equip=who?som_equip_ally_weapon(ram,who,type):
+                som_equip_weapon_direct(ram,type);
+            if(equip==SOM_EQUIP_OK)pad2_wanted|=b;
+            else if(slot||equip==SOM_EQUIP_BUSY)pad2_wanted&=(uint16_t)~b;
+        }
+    }
+    if(raw&(l2|r2)){
+        if(raw&l2)pad2_wanted&=(uint16_t)~b;
+        pad2_x_tapped=0;return;
+    }
+    if(role==SOM_X_THIRD_WEAPON&&(raw&x)){
+        const unsigned type=som_disc_third_weapon(cls);
+        const int equip=who?som_equip_ally_weapon(ram,who,type):som_equip_weapon_direct(ram,type);
+        if(equip==SOM_EQUIP_OK)pad2_wanted|=b;
+    }else if(role==SOM_X_SPELLS){
+        const unsigned count=som_class_spell_count(cls);
+        if(!count)return;
+        if(pad2_spell_class!=cls){
+            pad2_spell_class=cls;
+            pad2_spell_cursor=som_pad2_spell_index(cls,caster?2u%count:0u);
+            pad2_x_tapped=0;
+        }
+        if(pad2_pressed&x){pad2_x_tapped=1;pad2_x_start=frame_number;}
+        if((raw&x)&&pad2_x_tapped==1&&frame_number-pad2_x_start>=SOM_X_HOLD_FRAMES){
+            pad2_x_tapped=2;
+            pad2_spell_cursor=som_pad2_spell_index(cls,(pad2_spell_cursor+1u)%count);
+            char message[64];
+            snprintf(message,sizeof(message),"^%s|tap X: cast",
+                     som_class_spell_label(cls,som_class_spell(cls,pad2_spell_cursor)));
+            som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES/2u);
+        }
+        if(!(raw&x)&&(previous&x)){
+            if(pad2_x_tapped==1)som_cast_spell_by(ram,who,som_class_spell(cls,pad2_spell_cursor));
+            pad2_x_tapped=0;
+        }
+    }else if((pad2_pressed&x)&&who>0u)pad2_combo_actor=who;
+}
+
+static void som_pad2_guard_finish(void){
+    if(!pad2_guard_hp)return;
+    uint8_t *ram=som_field_ram();
+    if(!ram||som_word(ram+0xDC)!=pad2_guard_map||som_pad2_member(ram)!=pad2_actor)return;
+    uint8_t *hero=ram+0xE000u+0x200u*pad2_actor;
+    const unsigned hp=som_word(hero+0x182);
+    if(hp&&hp<pad2_guard_hp)
+        som_put_word(hero+0x182,(uint16_t)(hp+(pad2_guard_hp-hp+1u)/2u));
+}
+
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
-    if(port==1&&index==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&
-       net_pad.fd>=0&&som_net_pad_active(&net_pad,som_now_ms())){
-        const uint16_t remote=som_net_pad_buttons(&net_pad,som_now_ms());
-        if(bitmask)return (int16_t)remote;
-        return id<16u&&(remote&(1u<<id))?1:0;
+    if(port==1&&index==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD){
+        if(on_turbo){
+            const uint16_t buttons=som_manual_disciplines||menu_hold_until_release?0u:pad2_wanted;
+            return bitmask?(int16_t)buttons:(id<16u&&(buttons&(1u<<id))?1:0);
+        }
+        if(net_pad.fd>=0&&som_net_pad_active(&net_pad,som_now_ms())){
+            const uint16_t remote=som_net_pad_buttons(&net_pad,som_now_ms());
+            return bitmask?(int16_t)remote:(id<16u&&(remote&(1u<<id))?1:0);
+        }
     }
     if((ring_ai_enabled||som_manual_disciplines||menu_hold_until_release)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0)
@@ -1705,7 +1888,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         return id<16u&&(want&(1u<<id))?1:0;
     }
     /* With a discipline, Y attacks with its second weapon: the game sees B
-     * (so holding Y charges) and never Y; L2+Y still opens the ring. */
+     * (so holding Y charges) and never the physical Y. */
     if((special_stage||special_suppress)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         if(special_stage){
@@ -1726,7 +1909,8 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         if(bitmask)actual=(int16_t)(actual&~a);
         else if(id<16u&&(a&(1u<<id)))actual=0;
     }
-    if(lock_orbiting&&port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
+    if(lock_orbiting&&lock_who==som_pad1_member()&&port==0&&
+       (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         const uint16_t dpad=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
@@ -1761,24 +1945,12 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
         else if(id==RETRO_DEVICE_ID_JOYPAD_Y)actual=0;
         else if(id==RETRO_DEVICE_ID_JOYPAD_B)actual=1;
     }
-    if(port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0&&
-       on_turbo&&!ring_ai_enabled&&!som_manual_disciplines&&som_overlay_field()){
-        if(bitmask)actual=(int16_t)som_manual_pad_layout((uint16_t)actual);
-        else if(id==RETRO_DEVICE_ID_JOYPAD_R||id==RETRO_DEVICE_ID_JOYPAD_R2||
-                id==RETRO_DEVICE_ID_JOYPAD_L||id==RETRO_DEVICE_ID_JOYPAD_L2||
-                id==RETRO_DEVICE_ID_JOYPAD_L3){
-            /* Identical behavior on per-button and bitmask-based cores. */
-            static const unsigned watched[]={
-                RETRO_DEVICE_ID_JOYPAD_R,RETRO_DEVICE_ID_JOYPAD_R2,
-                RETRO_DEVICE_ID_JOYPAD_L,RETRO_DEVICE_ID_JOYPAD_L2,
-                RETRO_DEVICE_ID_JOYPAD_L3,RETRO_DEVICE_ID_JOYPAD_B,
-                RETRO_DEVICE_ID_JOYPAD_Y,RETRO_DEVICE_ID_JOYPAD_X};
-            uint16_t raw=0;
-            for(unsigned k=0;k<sizeof(watched)/sizeof(watched[0]);k++)
-                if(physical_state&&physical_state(0,RETRO_DEVICE_JOYPAD,0,watched[k]))
-                    raw|=(uint16_t)(1u<<watched[k]);
-            actual=(som_manual_pad_layout(raw)&(1u<<id))?1:0;
-        }
+    if(port==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0&&on_turbo){
+        uint16_t hidden=ring_hidden;
+        if(!ring_ai_enabled&&!som_manual_disciplines&&som_overlay_field())
+            hidden|=som_manual_pad_hidden(last_physical_buttons);
+        if(bitmask)actual=(int16_t)((uint16_t)actual&~hidden);
+        else if(id<16u&&(hidden&(1u<<id)))actual=0;
     }
     if((start_ring_held||frame_number<start_ring_until)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
@@ -1816,6 +1988,7 @@ static void som_input_poll(void){
     if(physical_poll)physical_poll();
     som_actor_update();
     som_net_pad_frame();
+    if(on_turbo)som_pad2_poll();
     /* Observe physical attack edges without mutating the game's inputs. */
     if(physical_state && on_turbo){
         uint16_t current=0;
@@ -1882,12 +2055,12 @@ static void som_input_poll(void){
         y_weapon_swap=0;y_weapon_blocked=0;b_weapon_blocked=0;x_spell_blocked=0;x_weapon_swap=0;
         uint8_t *wram=field?attack_ram:NULL;
         /* L1 is lock-on only. R1 tap cycles next style. L3+B retains the
-         * previous L1+B modifier, while L3+Y/X accesses the native rings. */
+         * previous L1+B modifier. The former L3 ring chords are consumed. */
         const uint16_t l1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
         const uint16_t l3_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L3);
         const uint16_t r1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
-        const uint16_t x_ring_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
-        const int native_ring=(current&l3_bit)&&(current&(x_ring_bit|y_bit));
+        const uint16_t x_chord_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
+        const int retired_ring_chord=(current&l3_bit)&&(current&(x_chord_bit|y_bit));
         style_b_hidden=field&&(current&(l3_bit|b_bit))==(l3_bit|b_bit)&&
             !ring_ai_enabled&&!som_manual_disciplines&&
             som_actor_class()<SOM_DISCIPLINE_COUNT;
@@ -1910,12 +2083,13 @@ static void som_input_poll(void){
            som_throw_back_pressed(wram,pressed))
             som_throw_start(wram);
         /* Locked on: the D-pad strafes round the target (not with L2's seals). */
-        som_lock_steer(!(current&l2_bit)?wram:NULL,(uint16_t)(current&dpad));
+        if(lock_slot<0||lock_who==som_pad1_member())
+            som_lock_steer(!(current&l2_bit)?wram:NULL,(uint16_t)(current&dpad));
         /* Ordinary attacks follow the controller binding. The proxy move
          * owner can still be finishing a move on a different party member. */
         const unsigned driver=som_pad1_member_in(attack_ram);
         const unsigned driver_cls=som_disc_member_class(&disciplines,driver);
-        const int caster=attack_ram&&som_disc_caster(driver_cls)&&!native_ring;
+        const int caster=attack_ram&&som_disc_caster(driver_cls)&&!retired_ring_chord;
         if(wram)som_monk_glove(wram);
         /* B passes through for the mage bolt. Y starts the native spell. */
         const int caster_talk=caster&&(current&b_bit)&&!(current&y_bit)&&
@@ -1928,7 +2102,7 @@ static void som_input_poll(void){
                         som_class_spell_label(driver_cls,spell));
         }
         if(attack_ram&&driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!caster&&
-           !native_ring&&!style_b_hidden&&(current&(y_bit|b_bit))&&
+           !retired_ring_chord&&!style_b_hidden&&(current&(y_bit|b_bit))&&
            !(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
             unsigned want=som_disc_weapons[driver_cls][which];
@@ -1941,7 +2115,7 @@ static void som_input_poll(void){
             else if(result==SOM_EQUIP_BUSY)b_weapon_blocked=1;
         }
         if(attack_ram&&!driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!caster&&
-           !style_b_hidden&&!native_ring&&(current&(y_bit|b_bit))&&
+           !style_b_hidden&&!retired_ring_chord&&(current&(y_bit|b_bit))&&
            !(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
             unsigned want=som_disc_weapons[driver_cls][which];
@@ -2003,7 +2177,7 @@ static void som_input_poll(void){
            !som_manual_disciplines&&!(current&(l2_bit|r2)))
             som_monk_chain_dirs(attack_ram,driver,(uint16_t)(pressed&dpad));
         if(attack_ram&&string_weapon!=SOM_NO_WEAPON&&!ring_ai_enabled&&
-           !som_manual_disciplines&&!native_ring&&!style_b_hidden&&!special_suppress&&
+           !som_manual_disciplines&&!retired_ring_chord&&!style_b_hidden&&!special_suppress&&
            !(current&(l2_bit|r2|y_bit))&&(current&b_bit)&&
            (attack_ram[0xE000u+0x200u*driver+0x1E4u]==string_weapon||
             (som_blade_string(driver_cls)&&som_monk_in_string(driver)))&&
@@ -2122,7 +2296,7 @@ static void som_input_poll(void){
         if(x_role==SOM_X_THIRD_WEAPON){
             /* Weapon Flow: X equips the third weapon and attacks with it
              * (the game sees B, so holding X charges it). */
-            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
+            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress){
                 const unsigned want=som_disc_third_weapon(som_actor_class());
                 const int result=SOM_ACT(xram)[0x1E4]==want?SOM_EQUIP_OK:
                     som_actor?som_equip_ally_weapon(xram,som_actor,want):
@@ -2131,7 +2305,7 @@ static void som_input_poll(void){
             }
         }else if(x_role==SOM_X_FLYING_KICK){
             /* Martial Arts: X is the flying kick (the game never sees X). */
-            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
+            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress){
                 x_spell_blocked=1;
                 if(pressed&x_bit)som_flykick_start(xram);
             }
@@ -2139,7 +2313,7 @@ static void som_input_poll(void){
             /* Hunter, Necromancer, Artificer, Mentalist: X is the class move.
              * Artificer: a tap (on release) is the bomb, a hold a portal. */
             const int artificer=som_actor_class()==SOM_DISC_ARTIFICER;
-            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
+            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress){
                 x_spell_blocked=1;
                 if(!artificer){if(pressed&x_bit)som_class_x(xram);}
                 else if(pressed&x_bit){x_press_frame=frame_number;portal_x_used=0;x_tap_armed=1;}
@@ -2147,14 +2321,14 @@ static void som_input_poll(void){
                     portal_x_used=1;som_portal_place(xram);
                 }
             }else if(artificer&&x_tap_armed&&xram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
-                     !(current&(l2_bit|r2))&&!native_ring&&!special_suppress&&!x_l2_chord){
+                     !(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress&&!x_l2_chord){
                 if(!portal_x_used)som_class_x(xram);
                 portal_x_used=0;
             }
         }else if(x_role==SOM_X_IAI){
             /* Bushido: release X for Iaijutsu, katana charge level 3; held
              * SOM_X_HOLD_FRAMES or longer, level 4. No spells. */
-            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
+            if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress){
                 x_spell_blocked=1;
                 if(pressed&x_bit){x_press_frame=frame_number;x_cycled=0;x_tap_armed=1;}
                 else if(x_tap_armed&&!x_cycled&&frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
@@ -2162,13 +2336,13 @@ static void som_input_poll(void){
                     som_overlay_set(&overlay,"^Iaijutsu|level 4: release X",SOM_MESSAGE_FRAMES/2u);
                 }
             }else if(x_tap_armed&&xram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
-                     !(current&(l2_bit|r2))&&!native_ring&&!special_suppress&&!x_l2_chord){
+                     !(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress&&!x_l2_chord){
                 som_iai_start(x_cycled?SOM_IAI_HELD_LEVEL:SOM_IAI_LEVEL);
                 x_cycled=0;
             }
         }else
         /* Tap X: cast on release. Hold X: next spell every 0.5 s. */
-        if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!native_ring&&!special_suppress){
+        if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress){
             x_spell_blocked=1;
             if(pressed&x_bit){x_press_frame=frame_number;x_cycled=0;x_tap_armed=1;}
             else if(x_tap_armed&&frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
@@ -2179,7 +2353,7 @@ static void som_input_poll(void){
                 som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
             }
         }else if(x_tap_armed&&xram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
-                 !(current&(l2_bit|r2))&&!native_ring&&!special_suppress&&!x_l2_chord){
+                 !(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress&&!x_l2_chord){
             if(!x_cycled){
                 if(som_actor_class()==SOM_DISC_NINJUTSU&&evade_a_hidden){
                     x_cast_at=frame_number+SOM_X_A_WINDOW;x_cast_spell=som_current_spell();
@@ -2233,15 +2407,11 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] SHUNSHIN from L2+X\n");
         }
         if(!(current&x_bit))x_l2_chord=x_tap_armed=0;
-        /* The ring's Controller Settings (config ring entry 4; Turbo has no
-         * Action Grid: its config ring is Equip, Targeting, Status, Levels,
-         * Controller Settings, Window Edit, live 2026-11-20) opens the party
-         * class editor instead, for the ring's owner (7E:1808). The game
-         * never sees that B, and the ring is still open after A. */
         uint8_t *ring_ram=som_live_wram();
-        const int ring_party=ring_ram&&!ring_ai_enabled&&!som_manual_disciplines&&(
-            ((pressed&b_bit)&&som_ring_on_party_entry(ring_ram))||
-            ((pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_START))&&som_ring_open_idle(ring_ram)));
+        const uint16_t menu_pressed=pressed;
+        ring_hidden=som_ring_open_idle(ring_ram)?1u<<RETRO_DEVICE_ID_JOYPAD_START:0u;
+        const int ring_party=!ring_ai_enabled&&!som_manual_disciplines&&!menu_hold_until_release&&
+            (pressed&b_bit)&&som_ring_on_classes(ring_ram);
         if(ring_party){
             som_manual_disciplines=1;
             disciplines.open=1;
@@ -2252,11 +2422,7 @@ static void som_input_poll(void){
             fprintf(stderr,"[som-ai] PARTY menu opened from the ring (%s)\n",
                     som_party_names[disciplines.who]);
         }
-        /* Start opens the game's ring again (player, 2026-11-22): the game
-         * sees a short Y (its open_ring) and never the Start. Our menu lives
-         * inside the ring: Start in the open ring, or B on its Controller
-         * Settings entry (above). While our menu is open, all pad input is
-         * consumed by the overlay. */
+        /* The field's Start press becomes the native ring's Y pulse. */
         const uint16_t class_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
         if(!(current&class_start))start_ring_held=0;
         if(ring_party){
@@ -2265,23 +2431,36 @@ static void som_input_poll(void){
            (pressed&class_start)){
             start_ring_held=1;start_ring_until=frame_number+SOM_START_RING_FRAMES;
             fprintf(stderr,"[som-ai] START opens the ring\n");
-        }else if(som_manual_disciplines && pressed &&
-                 (pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R)))&&
+        }else if(som_manual_disciplines&&class_guide_open&&menu_pressed){
+            const unsigned select=1u<<RETRO_DEVICE_ID_JOYPAD_SELECT;
+            const unsigned back=1u<<RETRO_DEVICE_ID_JOYPAD_A;
+            const unsigned up=(1u<<RETRO_DEVICE_ID_JOYPAD_UP)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT);
+            const unsigned down=(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);
+            if(menu_pressed&(select|back))class_guide_open=0;
+            else if(menu_pressed&up)
+                disciplines.cursor=(disciplines.cursor+SOM_DISCIPLINE_COUNT-1u)%SOM_DISCIPLINE_COUNT;
+            else if(menu_pressed&down)
+                disciplines.cursor=(disciplines.cursor+1u)%SOM_DISCIPLINE_COUNT;
+        }else if(som_manual_disciplines&&!jukebox.open&&!disciplines.grab&&
+                 (menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT))){
+            class_guide_open=1;
+        }else if(som_manual_disciplines && menu_pressed &&
+                 (menu_pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R)))&&
                  !jukebox.typing){
             /* L1/R1: CLASSES <-> MUSIC. */
             if(!jukebox_ready){som_juke_init(&jukebox);jukebox_ready=1;}
             jukebox.open=!jukebox.open;
             disciplines.open=!jukebox.open;
             if(jukebox.open)som_juke_refresh();
-        }else if(som_manual_disciplines && pressed && jukebox.open){
+        }else if(som_manual_disciplines && menu_pressed && jukebox.open){
             char request[160];
-            if(!jukebox.typing&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A))){
+            if(!jukebox.typing&&(menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A))){
                 jukebox.open=0;disciplines.open=0;som_manual_disciplines=0;
                 fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
-            }else if(som_juke_press(&jukebox,pressed,request,sizeof(request)))
+            }else if(som_juke_press(&jukebox,menu_pressed,request,sizeof(request)))
                 som_juke_send(request);
-        }else if(som_manual_disciplines && pressed){
-            int result=som_disc_press(&disciplines,pressed);
+        }else if(som_manual_disciplines && menu_pressed){
+            int result=som_disc_press(&disciplines,menu_pressed);
             if(result==SOM_DISC_CLOSED){
                 som_manual_disciplines=0;
                 fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
@@ -2300,12 +2479,12 @@ static void som_input_poll(void){
         {   /* A closed menu: hold the pad back from the game until let go. */
             if(menu_was_open&&!som_manual_disciplines)menu_hold_until_release=1;
             menu_was_open=som_manual_disciplines;
-            if(menu_hold_until_release&&!som_manual_disciplines&&!current)menu_hold_until_release=0;
+            if(menu_hold_until_release&&!som_manual_disciplines&&!current&&!pad2_raw)menu_hold_until_release=0;
         }
         if(recording)som_record_presses(pressed);
         last_physical_buttons=current;
         if(test_enabled)som_guard_begin();
-        if(current){last_input_frame=frame_number;idle_started=0;}
+        if(current||pad2_raw){last_input_frame=frame_number;idle_started=0;}
         const uint16_t ai_switch=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L2)|
                                             (1u<<RETRO_DEVICE_ID_JOYPAD_R3));
         if(current&&!(current&~ai_switch)){
@@ -2331,35 +2510,32 @@ static void som_input_poll(void){
          * exit): never keep swallowing the player's buttons after that. */
         if(!direct_transport&&ring_ai_enabled&&frame_number%30u==0&&access(ring_ai_file,F_OK)!=0){
             ally_order.until=0;
-            ring_ai_enabled=0;gambits.open=0;disciplines.open=0;som_menu_disciplines=0;
+            ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
             som_overlay_set(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
         }
-        if(ring_ai_enabled&&pressed&&frame_number>=ring_ai_grace_until){
+        const uint16_t gambit_buttons=(uint16_t)(pressed|pad2_pressed);
+        const uint16_t p2_start=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+        const uint16_t p2_l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
+        const int p2_quit_chord=(pad2_raw&(p2_start|p2_l2))==(p2_start|p2_l2)&&
+            (pad2_pressed&(p2_start|p2_l2));
+        if(ring_ai_enabled&&p2_quit_chord&&frame_number>=ring_ai_grace_until){
+            /* Player 2 deliberately holds L2 and presses Start to exit AI;
+             * Start alone stays swallowed and cannot interrupt a session. */
+            ally_order.until=0;
+            ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
+            som_manual_disciplines=0;jukebox.open=0;
+            unlink(ring_ai_file);
+            som_overlay_set(&overlay,"You play|L2 + Start stopped AI",SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] PLAYER 2 L2+START: controls back to the player\n");
+        }else if(ring_ai_enabled&&gambit_buttons&&frame_number>=ring_ai_grace_until){
             /* Shoulder tabs switch the overlay page, never reach the game. */
             const uint16_t tabs=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_L)|
                                            (1u<<RETRO_DEVICE_ID_JOYPAD_R));
-            if(pressed&tabs){
-                /* L1/R1 cycle Actions -> Combat -> Quest -> Disciplines. */
-                const int forward=(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R))!=0;
-                if(som_menu_disciplines){
-                    som_menu_disciplines=0;
-                    gambits.page=forward?SOM_PAGE_ACTIONS:SOM_GAMBIT_PAGES-1u;gambits.cursor=0;
-                }else if((forward&&gambits.page==SOM_GAMBIT_PAGES-1u)||
-                         (!forward&&gambits.page==SOM_PAGE_ACTIONS)){
-                    som_menu_disciplines=1;
-                }else som_gambit_turn_page(&gambits,forward);
-                gambits.open=!som_menu_disciplines;
-                disciplines.open=som_menu_disciplines;
-            }else if(som_menu_disciplines){
-                int result=som_disc_press(&disciplines,pressed);
-                if(result==SOM_DISC_SELECTED){
-                    som_disc_save();
-                    som_class_selected();
-                    fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
-                        (unsigned)som_actor_class());
-                }else if(result==SOM_DISC_PARTY_SELECTED)som_party_class_saved();
-            }else switch(som_gambit_press(&gambits,pressed)){
+            if(gambit_buttons&tabs){
+                som_gambit_turn_page(&gambits,(gambit_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R))!=0);
+                gambits.open=1;
+            }else switch(som_gambit_press(&gambits,gambit_buttons)){
             case SOM_GAMBIT_GENRE_CHANGED:
                 som_music_genre_save();
                 fprintf(stderr,"[som-ai] MUSIC genre %s (%u)\n",
@@ -2380,6 +2556,11 @@ static void som_input_poll(void){
                 break;
             case SOM_GAMBIT_TEST_SWITCH:
                 som_infinite_mp_changed();
+                break;
+            case SOM_GAMBIT_DEBUG_CHANGED:
+                som_gambit_write(debug_messages_file,gambits.debug_messages?"1":"0");
+                som_overlay_set(&overlay,gambits.debug_messages?"AI debug on|speech stays on":
+                                "AI debug off|speech stays on",SOM_MESSAGE_FRAMES);
                 break;
             case SOM_GAMBIT_EXIT:
                 ally_order.until=0;
@@ -3216,8 +3397,8 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
      * Energy 0x51, Burst 0xC1, Dispel 0xD1 in Turbo) read as "may also take
      * everyone": cast on one, as the ring's default single choice
      * (unverified live, 2026-11-22). Remedy's 0xE0 stays refused. */
-    const unsigned kind=!row?0xFFu:row[8]==0x00u?0x00u:(unsigned)(row[8]&~0x50u);
-    if(!row||(kind!=0x81u&&kind!=0x01u&&kind!=0x00u)||(kind==0x00u&&row[8])){
+    const int kind=som_cast_target_kind(row);
+    if(kind<0){
         fprintf(stderr,"[som-ai] CAST refused: spell %#04x has unsupported targets\n",spell);
         return 0;
     }
@@ -3621,6 +3802,7 @@ static int som_blink_dash_raw(uint8_t *ram,int dx,int dy){
         som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
+    (void)som_lock_evasion_direction(&dx,&dy);
     if(!dx&&!dy){
         const unsigned facing=hero[0x010];
         if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;else if(facing==0x01u)dy=1;else dy=-1;
@@ -3926,6 +4108,20 @@ static int som_cart_ground(const uint8_t *ram,int x,int y,unsigned place){
     const uint8_t *a=ram+(layer2?0x1BC00u:0x1B800u)+id*4u;
     return !(a[0]&8u)&&(a[0]&7u)!=3u;
 }
+/* During lock-on the player's D-pad has already been translated into the
+ * same tangent used by lock-on walking.  Reuse that world direction for
+ * every dodge, so pressing a direction with evade/cartwheel/Blink circles
+ * the locked enemy while preserving each discipline's own move and art. */
+static int som_lock_evasion_direction(int *dx,int *dy){
+    if(!dx||!dy||lock_slot<0||lock_who!=som_actor||!lock_dpad_out)return 0;
+    const uint16_t left=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT);
+    const uint16_t right=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT);
+    const uint16_t up=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_UP);
+    const uint16_t down=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);
+    *dx=((lock_dpad_out&right)?1:0)-((lock_dpad_out&left)?1:0);
+    *dy=((lock_dpad_out&down)?1:0)-((lock_dpad_out&up)?1:0);
+    return *dx||*dy;
+}
 static void som_cart_flip_after(uint8_t *ram){
     if(!cart_flip_y)return;
     uint8_t *hero=ram?SOM_ACT(ram):NULL;
@@ -4121,11 +4317,12 @@ static int som_evade_start_raw(uint8_t *ram){
     if(!dodge.speed)return 0;
     /* The held direction, else back from (or, forward: toward) the facing. */
     int dx=evade_dir_x,dy=evade_dir_y;
+    const int orbit=som_lock_evasion_direction(&dx,&dy);
     if(!dx&&!dy){
         const unsigned facing=hero[0x010];
         if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;
         else if(facing==0x01u)dy=1;else dy=-1;
-        if(!dodge.forward){dx=-dx;dy=-dy;}
+        if(!orbit&&!dodge.forward){dx=-dx;dy=-dy;}
     }
     /* Dodge Mastery lengthens the move, not the grace. */
     const unsigned move=dodge.frames+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
@@ -4554,7 +4751,9 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     SomAllyTech *t=&ally_tech[who-1u];
     uint8_t *o=som_ally_obj(ram,who);
     const unsigned cls=som_disc_member_class(&disciplines,who);
-    if(cls>=SOM_DISCIPLINE_COUNT||!som_ally_alive(o)||o[0x2C]!=0||
+    const int manual=som_pad2_member(ram)==who;
+    const int manual_move=manual&&(pad2_combo_actor==who||t->dashing||t->hits_left);
+    if(cls>=SOM_DISCIPLINE_COUNT||!som_ally_alive(o)||(!manual_move&&(manual||o[0x2C]!=0))||
        som_pad1_member_in(ram)==who){
         if(cls<SOM_DISCIPLINE_COUNT&&som_ally_alive(o)){     /* the player drives her: */
             const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);   /* her bar refills */
@@ -4569,13 +4768,13 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         t->cls=cls;t->hits_left=0;t->dashing=t->dodging=0;
     }
     if(o[0x60]||o[0x1C]==0x40||o[0x1C]==0x80)return;
-    if(cls==SOM_DISC_CLERIC&&som_try_revivifier(ram,who,0))return;
+    if(!manual&&cls==SOM_DISC_CLERIC&&som_try_revivifier(ram,who,0))return;
     const SomAllyMove *mv=&som_ally_moves[cls];
     const unsigned level=disciplines.level[cls];
     const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
     som_energy_tick(&t->en,cls,level,x==t->lx&&y==t->ly);
     t->lx=x;t->ly=y;
-    const int ordered=frame_number<ally_order.until&&
+    const int ordered=!manual&&frame_number<ally_order.until&&
         (som_word(ram+0xDC)&0x1FFu)==ally_order.map;
     const int support=ordered&&ally_order.slot==SOM_ALLY_SUPPORT_SLOT;
     if(support){
@@ -4583,7 +4782,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         t->hits_left=0;t->dashing=t->dodging=0;
         if(mv->kind!=SOM_AM_HEAL&&mv->kind!=SOM_AM_HEAL_ALL)return;
     }
-    if(cls==SOM_DISC_PSIONICS&&som_energy_can(&t->en,cls,10u,0u)&&
+    if(!manual&&cls==SOM_DISC_PSIONICS&&som_energy_can(&t->en,cls,10u,0u)&&
        som_telekinesis_rescue(ram,who,1)){
         som_energy_take(&t->en,cls,10u,0u);
         return;
@@ -4637,7 +4836,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     /* Her evade: ranged and caster classes keep their distance; a melee
      * class only when badly hurt (the game's AI must stand close to hit). */
     const unsigned own_pct=som_word(o+0x184)?som_word(o+0x182)*100u/som_word(o+0x184):100u;
-    if(!support&&nearest>=0&&best<=SOM_ALLY_DODGE_NEAR&&som_ally_dodges(cls)&&frame_number>=t->dodge_ready&&
+    if(!manual&&!support&&nearest>=0&&best<=SOM_ALLY_DODGE_NEAR&&som_ally_dodges(cls)&&frame_number>=t->dodge_ready&&
        (!som_weapon_short_range(som_disc_weapons[cls][0])||som_disc_caster(cls)||own_pct<40u)&&
        som_energy_can(&t->en,cls,0u,SOM_ALLY_DODGE_AP)){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)nearest;
@@ -4649,7 +4848,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         fprintf(stderr,"[som-ai] ALLY %s %s\n",som_party_names[who],som_disc_dodge(cls,0u).name);
         return;
     }
-    if(!support&&!(cls==SOM_DISC_CLERIC&&worst<SOM_ALLY_HEAL_BELOW_PCT+15u)&&
+    if(!manual&&!support&&!(cls==SOM_DISC_CLERIC&&worst<SOM_ALLY_HEAL_BELOW_PCT+15u)&&
        nearest>=0&&best<SOM_ALLY_KEEP_PX&&som_ally_keeps_back(cls)&&
        o[0x1C]==0&&o[0x60]==0&&som_pad1_member_in(ram)!=who){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)nearest;
@@ -6773,7 +6972,7 @@ static int som_handle_command(const char *command){
         if(disciplines.selected!=n){
             disciplines.selected=(uint8_t)n;
             som_disc_save();som_class_selected();
-            if(n<SOM_DISCIPLINE_COUNT){
+            if(gambits.debug_messages&&n<SOM_DISCIPLINE_COUNT){
                 char text[64];
                 snprintf(text,sizeof(text),"^%s|AI chose this class",som_discipline_names[n]);
                 som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
@@ -6910,6 +7109,13 @@ static void som_check_message(void){
     int have=fgets(text,sizeof(text),input)!=NULL;
     fclose(input);
     unlink(message_file);
+    if(have){
+        const char *content=text+(text[0]=='^');
+        /* Bridge status messages are debug by default. A leading ^ changes
+         * their visual style, but not their category; ordinary ^ speech is
+         * always retained. */
+        if(!gambits.debug_messages&&!strncmp(content,"AI:",3))return;
+    }
     if(have&&som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES))
         fprintf(stderr,"[som-ai] MESSAGE %s\n",text);
 }
@@ -7392,6 +7598,91 @@ static int som_general_label_at(const uint8_t *ram,unsigned i,int *x,int *y){
     *y=(int16_t)(som_gen_u16(o+4)-som_gen_u16(ram+cam+2u))-o[0x45]-30;
     return *x>=0&&*x<256&&*y>=0&&*y<224;
 }
+static void som_class_guide_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    if(width<256u*sx||height<224u*sy)return;
+    const unsigned cls=som_disc_cursor_class(&disciplines);
+    const SomClassGuide *guide=&som_class_guide[cls];
+    const SomWeaponStyle *style=som_style_of(&styles,cls,NULL);
+    const uint32_t white=som_overlay_color(pixel_format,255,255,255);
+    const uint32_t gold=som_overlay_color(pixel_format,255,223,143);
+    char line[42];
+
+    som_status_texture_draw(&classes_background,pixels,pitch,pixel_format,sx,sy);
+    som_disc_window(pixels,width,height,pitch,pixel_format,4,8,248,39);
+    som_disc_window(pixels,width,height,pitch,pixel_format,4,50,248,78);
+    som_disc_window(pixels,width,height,pitch,pixel_format,4,131,248,66);
+    snprintf(line,sizeof(line),"%s  Lv%u",som_discipline_names[cls],(unsigned)disciplines.level[cls]);
+    som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,17,0,gold);
+    som_overlay_label(pixels,width,height,pitch,pixel_format,guide->role,12,32,0,white);
+    if(som_disc_caster(cls)){
+        snprintf(line,sizeof(line),"Bare hands / %s",style->name);
+        som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,59,0,gold);
+        for(unsigned slot=0;slot<2u;slot++){
+            snprintf(line,sizeof(line),"%s %s",slot?"Y":"B Bolt",
+                     som_class_spell_label(cls,som_caster_spell(cls,slot)));
+            som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,73+(int)slot*14,0,white);
+        }
+    }else{
+        snprintf(line,sizeof(line),"B %s  Power %u%%",style->name,(unsigned)style->power_pct);
+        som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,59,0,gold);
+        snprintf(line,sizeof(line),"  Speed %u%%  Reach %+d px",(unsigned)style->speed_pct,
+                 (int)style->reach_bonus);
+        som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,73,0,white);
+        for(unsigned slot=1;slot<3u&&som_class_arms[cls][slot].grade<=8u;slot++){
+            snprintf(line,sizeof(line),"%c %s  Power %u%%",slot==1u?'Y':'X',
+                     som_custom_weapon_name(&styles,cls,slot),(unsigned)som_class_arms[cls][slot].power_pct);
+            som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,87+(int)(slot-1u)*14,0,white);
+        }
+    }
+    snprintf(line,sizeof(line),"%s cap %u  |  Base stats unchanged",
+             som_energy_name(cls),som_energy_max(disciplines.level[cls]));
+    som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,115,0,white);
+    const uint8_t *ram=som_live_wram();
+    const unsigned partner=som_pad2_member(ram);
+    const int pad2_guide=partner<SOM_PARTY_MEMBERS&&ram[0x1808]==partner;
+    som_overlay_label(pixels,width,height,pitch,pixel_format,
+                      pad2_guide?"Player 2 Moves":"Moves & Combos",12,140,0,gold);
+    if(pad2_guide){
+        const unsigned role=som_disc_x_role(cls);
+        snprintf(line,sizeof(line),"X %s",role==SOM_X_SPELLS?"Cast / hold to cycle":
+                 role==SOM_X_THIRD_WEAPON?"Attack with the bow":partner>0u?som_ally_moves[cls].name:"No companion technique");
+        som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,154,0,white);
+        if(partner>0u){
+            snprintf(line,sizeof(line),"L2+X  %s",som_ally_moves[cls].name);
+            som_overlay_label(pixels,width,height,pitch,pixel_format,line,12,166,0,white);
+        }
+        som_overlay_label(pixels,width,height,pitch,pixel_format,"R1 Style   R2 Guard",
+                          12,178,0,white);
+        som_overlay_label(pixels,width,height,pitch,pixel_format,"L2+R1/L1 Change class",
+                          12,190,0,white);
+    }else{
+        for(unsigned i=0;i<3u;i++)
+            som_overlay_label(pixels,width,height,pitch,pixel_format,guide->moves[i],12,154+(int)i*12,0,white);
+    }
+    som_overlay_label(pixels,width,height,pitch,pixel_format,"Up/Dn Class    A or Select Back",
+                      128,206,1,white);
+
+    const unsigned kind=cls==SOM_DISC_MARTIAL?SOM_FLYKICK_KIND:
+        cls==SOM_DISC_NINJUTSU||cls==SOM_DISC_BUSHIDO?SOM_UKEMI_DRAW_KIND:
+        cls==SOM_DISC_ROGUE||cls==SOM_DISC_SWORD?SOM_FORWARD_CART_KIND:0u;
+    if(!kind||pad2_guide)return;
+    if(!cartwheel_pack_tried){
+        cartwheel_pack_tried=1;
+        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
+    }
+    SomNpcWorkState preview={0};
+    const unsigned who=disciplines.who%SOM_PARTY_MEMBERS;
+    const unsigned facing=2u;
+    if(!som_work_find(cartwheel_pack,cartwheel_pack_size,kind+who,facing,&preview.entry))return;
+    preview.active=1;
+    preview.no_rest=1;
+    preview.profile=som_disc_class_profile(cls);
+    const char *move=kind==SOM_FLYKICK_KIND?"Flying Kick":kind==SOM_UKEMI_DRAW_KIND?"Ukemi":"Cartwheel";
+    som_overlay_label(pixels,width,height,pitch,pixel_format,move,217,73,1,gold);
+    som_npc_work_draw_at(&preview,NULL,frame_number/2ul,221,106,pixels,width,height,pitch,pixel_format);
+}
+
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch);
 /* The MUSIC page, drawn like the CLASSES page. */
 static void som_juke_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format){
@@ -7484,7 +7775,8 @@ static void som_portal_frame(uint8_t *ram){
  * HUD sprites (tiles 0x1E0-0x1FF near the bottom) in the OAM buffer
  * 7E:0800 the NMI uploads. Applied at the frame's end; the next frame shows
  * it. Dialogs and events (7E:00D0 set) and menus get the HUD back as it was. */
-#define SOM_HUD_LIFT_PX 10u
+#define SOM_HUD_LIFT_PX 26u
+#define SOM_HUD_LEGACY_LIFT_PX 10u
 static int hud_lifted;
 static void som_hud_lift(uint8_t *ram,int menu){
     const int field=ram&&!menu&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
@@ -7494,19 +7786,27 @@ static void som_hud_lift(uint8_t *ram,int menu){
         hud_lifted=0;
         return;
     }
-    if(ram[0x40]!=0&&!(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;  /* the game's own scroll */
+    /* Upgrade the previous 10 px HUD position in an existing save state;
+     * leave any unrelated game scroll untouched. */
+    if(ram[0x40]!=0&&ram[0x40]!=SOM_HUD_LEGACY_LIFT_PX&&
+       !(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;
+    const int upgrading_legacy=ram[0x40]==SOM_HUD_LEGACY_LIFT_PX;
     ram[0x40]=SOM_HUD_LIFT_PX;ram[0x41]=0;
     hud_lifted=1;
     for(unsigned i=0;i<128u;i++){
         uint8_t *e=ram+0x0800u+4u*i;
         const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-        if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]>=196u&&e[1]<0xE0u)e[1]=(uint8_t)(e[1]-SOM_HUD_LIFT_PX);
+        if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]<0xE0u){
+            if(upgrading_legacy&&e[1]>=186u&&e[1]<196u)
+                e[1]=(uint8_t)(e[1]-(SOM_HUD_LIFT_PX-SOM_HUD_LEGACY_LIFT_PX));
+            else if(e[1]>=196u)e[1]=(uint8_t)(e[1]-SOM_HUD_LIFT_PX);
+        }
     }
 }
 /* Party panels, Seiken Densetsu 3 style (player, 2026-11-20): under each
  * member's HUD portrait (tile 0x1E8 + 2*who in palette who + 1, live OAM
  * 2026-11-20: x 8 / 88 / 168), in that member's 80 px column:
- *   class title, right of the portrait, under the game's HP numbers;
+ *   class title below the portrait and the native HP/MP rows;
  *   the weapon (boy: class weapon or spell set; companions: their class
  *   move), from the portrait's left edge under it;
  *   a gauge: the class energy bar and the AP pips, no text.
@@ -7546,10 +7846,11 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         if(cls>=SOM_DISCIPLINE_COUNT||!som_hud_member_portrait(ram,who,&px,&py))continue;
         char line[24];
         const unsigned chars=(unsigned)(SOM_PANEL_COLUMN/6);
-        som_panel_text(line,sizeof(line),som_discipline_titles[cls],(unsigned)((SOM_PANEL_COLUMN-SOM_HUD_LABEL_DX)/6));
+        const int class_y=py+SOM_HUD_LABEL_DY;
+        som_panel_text(line,sizeof(line),som_discipline_titles[cls],chars);
         for(char *c=line;*c;c++)if(*c>='a'&&*c<='z')*c=(char)(*c-32);
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                          px+SOM_HUD_LABEL_DX,py+SOM_HUD_LABEL_DY,0,
+                          px,class_y,0,
                           som_overlay_color(pixel_format,255,255,255));
         /* Line 2. */
         char second[48]="";uint32_t ink=som_overlay_color(pixel_format,255,214,96);
@@ -7568,13 +7869,13 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         }
         som_panel_text(line,sizeof(line),second,chars);
         if(line[0])som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                                     px,py+SOM_HUD_LABEL_DY+8,0,ink);
+                                     px,class_y+8,0,ink);
         /* Line 3: the gauge. */
         const unsigned max=som_energy_max(disciplines.level[cls]);
         const SomEnergy *en=who==0u?&energy:&ally_tech[who-1u].en;
         const int fresh=who&&!ally_tech_ready;
         const unsigned have=fresh||!en->started[cls]?max:en->energy[cls];
-        som_panel_gauge(width,height,pitch,px+1,py+SOM_HUD_LABEL_DY+18,have,max,
+        som_panel_gauge(width,height,pitch,px+1,class_y+17,have,max,
                         fresh?SOM_AP_MAX:en->ap);
     }
 }
@@ -7624,27 +7925,36 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         lock_y=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))-o[0x45]-34;
         if(lock_x<0||lock_x>=256||lock_y<0||lock_y>=224)lock_x=-1;
     }
-    const int ring_title=!menu&&backend_retro_get_memory_data&&
-        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE&&
-        som_ring_on_party_entry((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    const int draw_classes=som_manual_disciplines&&!jukebox.open&&
+        (height==224u||height==448u)&&(width==256u||width==512u);
+    const uint8_t *ring_owner_ram=som_live_wram();
+    const int classes_icon=!menu&&on_turbo&&som_ring_on_classes(ring_owner_ram)&&
+        ring_owner_ram[0x1808]==som_pad1_member_in(ring_owner_ram);
     if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0&&
-        !ring_title)||!data||data==RETRO_HW_FRAME_BUFFER_VALID||
+        !classes_icon)||(!data&&!draw_classes)||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
         return;
     }
-    /* Copy only the visible pixels into a tightly packed frame: Snes9x 2005
-     * hands over a 1024-byte pitch for a 256-pixel picture, so copying
-     * height*pitch moved 229 KB per frame (0.6 ms on the Steam Link) where
-     * 114 KB are visible (0.16 ms). Everything after this uses the new pitch. */
+    /* Status uses 512 horizontal pixels even when the underlying ring is
+     * 256 pixels wide. Render its background at that resolution directly. */
+    const unsigned source_width=width;
+    if(draw_classes)width=512u;
     const size_t row=(size_t)width*(pixel_format==1?4u:2u);
-    if(row>pitch){som_frontend_video(data,width,height,pitch);return;}
-    size_t size=(size_t)height*row;
+    if(!draw_classes&&row>pitch){som_frontend_video(data,width,height,pitch);return;}
+    const size_t size=(size_t)height*row;
     if(size>overlay_frame_size){
         uint8_t *grown=realloc(overlay_frame,size);
-        if(!grown){som_frontend_video(data,width,height,pitch);return;}
+        if(!grown){som_frontend_video(data,source_width,height,pitch);return;}
         overlay_frame=grown;overlay_frame_size=size;
     }
+    if(draw_classes){
+        if(class_guide_open)som_class_guide_draw(overlay_frame,width,height,row);
+        else som_disc_draw(overlay_frame,width,height,row,pixel_format,&disciplines,&classes_background);
+        som_frontend_video(overlay_frame,width,height,row);
+        return;
+    }
+    /* Copy only the visible pixels from the core's padded scanlines. */
     if(row==pitch)memcpy(overlay_frame,data,size);
     else for(unsigned y=0;y<height;y++)
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
@@ -7695,18 +8005,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(class_title)som_party_panels(overlay_frame,width,height,pitch,
         (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    /* The ring's Controller Settings is the party class editor: its title
-     * bar says so (bar inside 0,0,88 at y 15-30, title from x 18, measured
-     * on a Turbo screenshot 2026-11-20). */
-    if(ring_title){
-        const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
-        if(200u*sx<width&&31u*sy<height){
-            som_overlay_fill(overlay_frame,pitch,pixel_format,16u*sx,15u*sy,184u*sx,15u*sy,
-                             som_overlay_color(pixel_format,0,0,88));
-            som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"Party Classes",
-                              19,19,0,som_overlay_color(pixel_format,255,255,255));
-        }
-    }
+    if(classes_icon)
+        som_ring_classes_title(overlay_frame,width,height,pitch,pixel_format);
     /* Artificer portals: a ring at each (A blue, B orange). */
     if(!menu&&portals.count&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE){
@@ -7735,8 +8035,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(menu){
         if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
-        else if(som_manual_disciplines||som_menu_disciplines)
-            som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines);
+        else if(class_guide_open)
+            som_class_guide_draw(overlay_frame,width,height,pitch);
+        else if(som_manual_disciplines)
+            som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines,&classes_background);
         else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
     }
     som_frontend_video(overlay_frame,width,height,pitch);
@@ -7861,11 +8163,36 @@ static size_t som_apply_rom_patches(uint8_t *rom,size_t size){
     fclose(input);
     return applied;
 }
+/* Turbo truncates its fixed configuration descriptors to six. Enable the
+ * existing seventh descriptor and let the game handle projection and rotation. */
+static int som_enable_classes_ring(uint8_t *rom,size_t size){
+    const size_t header=size%0x8000u==512u?512u:0u;
+    const size_t builder=header+0x10D1AEu,entries=header+0x18FF08u;
+    const size_t icon_base=header+0x128400u,icon_size=96u;
+    const uint8_t original_icon=0xACu,classes_icon=(uint8_t)SOM_RING_CLASSES_DESCRIPTOR;
+    const uint8_t empty_icon[96]={0};
+    const uint8_t expected_code[]={0xAD,0x28,0x18,0xAA,0xA9,0x06,0x00,0x48,0xBF,0x60,0xFD,0xD8};
+    const uint8_t expected_entries[]={
+        0x09,0x90,0xA9,0x8F,0xAA,0x90,0xAB,0x91,0xAD,0x93,0xAE,0x94,0xAC,0x92
+    };
+    if(size<entries+sizeof(expected_entries)||
+       memcmp(rom+builder,expected_code,sizeof(expected_code))||
+       memcmp(rom+entries,expected_entries,sizeof(expected_entries))||
+       memcmp(rom+icon_base+classes_icon*icon_size,empty_icon,sizeof(empty_icon))||
+       !som_status_texture_load(&classes_background,rom+header,size-header))return 0;
+    memcpy(rom+icon_base+classes_icon*icon_size,rom+icon_base+original_icon*icon_size,icon_size);
+    rom[entries+sizeof(expected_entries)-2u]=classes_icon;
+    rom[builder+5u]=SOM_RING_CONFIG_ENTRIES;
+    return 1;
+}
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
-    frame_number=0;start_ring_held=0;start_ring_until=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
+    frame_number=0;classes_ring_enabled=0;ring_hidden=0;start_ring_held=0;start_ring_until=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
+    pad2_raw=pad2_pressed=pad2_wanted=0;pad2_actor=pad2_combo_actor=SOM_PARTY_MEMBERS;
+    pad2_guard_hp=0;pad2_x_tapped=0;pad2_spell_class=SOM_DISCIPLINE_NONE;
+    lock_slot=-1;lock_who=SOM_PARTY_MEMBERS;lock_dpad_out=0;auto_target_ready=0;
     last_physical_buttons=0;x_tap_armed=x_l2_chord=0;x_cast_at=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
     kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
@@ -7893,7 +8220,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     ring_ai_selector_open=0;ring_ai_pending=0;ring_ai_enabled=0;
     ring_ai_initial_cell=0;ring_ai_grace_until=0;
     switch_holding=switch_spoiled=0;switch_hold_start=0;
-    som_disc_init(&disciplines);som_menu_disciplines=0;som_manual_disciplines=0;menu_hold_until_release=0;menu_was_open=0;
+    som_disc_init(&disciplines);som_manual_disciplines=0;class_guide_open=0;menu_hold_until_release=0;menu_was_open=0;
     som_disc_load();
     som_styles_load();style_atk_active=0;style_carry=0;style_cut_pending=0;style_swing_prev=0;
     style_dirty=0;style_b_hidden=0;throw_active=0;throw_slot=-1;throw_ready=0;
@@ -7930,7 +8257,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
         npc_rom_verified?"verified":"NOT verified; npc_walk disabled");
     if(on_turbo&&game&&game->data&&game->size&&(patched_rom=malloc(game->size))){
         memcpy(patched_rom,game->data,game->size);
-        if(som_apply_rom_patches(patched_rom,game->size)){
+        const size_t map_patches=som_apply_rom_patches(patched_rom,game->size);
+        classes_ring_enabled=som_enable_classes_ring(patched_rom,game->size);
+        if(map_patches||classes_ring_enabled){
             patched_game=*game;patched_game.data=patched_rom;load_info=&patched_game;
         }
     }
@@ -8271,6 +8600,69 @@ static void som_clone_tick(void){
     if(som_clone_enemy()){clone_pending_until=0;som_familiar_bind();return;}
     if(!clone_no_slot){clone_pending_until=0;familiar_pending=0;}
 }
+/* Use floors from the original species record. WRAM contains the current
+ * values on both fresh spawns and save-state loads, so repeated frames
+ * and loading a scaled save cannot compound the bonuses. */
+static void som_enemy_scale(uint8_t *enemy,const uint8_t *base,unsigned party_level){
+    const unsigned level=party_level<97u?party_level+2u:98u;
+    const unsigned delta=level>base[0]?level-base[0]:0u;
+    if(enemy[0x181]<level)enemy[0x181]=(uint8_t)level;
+
+    const unsigned native_hp=som_word(base+1);
+    const unsigned current_max=som_word(enemy+0x184);
+    const unsigned hp=som_word(enemy+0x182);
+    unsigned target_hp=native_hp+(native_hp+2u)/3u+7u*delta;
+    if(target_hp>9999u)target_hp=9999u;
+    if(current_max&&hp&&hp<=current_max&&target_hp>current_max){
+        som_put_word(enemy+0x182,(uint16_t)((hp*target_hp+current_max-1u)/current_max));
+        som_put_word(enemy+0x184,(uint16_t)target_hp);
+    }
+
+    /* Combat recalculates attack as strength plus the active weapon row.
+     * Raise strength too so switching attack animations keeps the bonus. */
+    unsigned strength=base[4]+4u+delta*2u;
+    if(strength>99u)strength=99u;
+    const uint8_t *weapon=som_rom_at(0xD01000u+12u*enemy[0x1E3],12u);
+    if(weapon&&enemy[0x1E3]>=72u){
+        unsigned attack=strength+weapon[8];
+        if(attack>255u)attack=255u;
+        if(enemy[0x198]<attack)enemy[0x198]=(uint8_t)attack;
+    }
+    if(enemy[0x188]<strength)enemy[0x188]=(uint8_t)strength;
+    for(unsigned stat=0;stat<2u;stat++){
+        unsigned mind=base[6u+stat]+3u+delta;
+        if(mind>99u)mind=99u;
+        if(enemy[0x18Bu+stat]<mind)enemy[0x18Bu+stat]=(uint8_t)mind;
+    }
+    const unsigned defense=som_word(base+9)+2u+delta/2u;
+    const unsigned magic_defense=som_word(base+12)+2u+delta/2u;
+    if(som_word(enemy+0x1A5)<defense) som_put_word(enemy+0x1A5,(uint16_t)defense);
+    if(som_word(enemy+0x1A8)<magic_defense) som_put_word(enemy+0x1A8,(uint16_t)magic_defense);
+}
+
+static void som_enemy_scaling_frame(void){
+    uint8_t *ram=som_field_ram();
+    if(!ram||!som_rom)return;
+    unsigned party_level=0;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *hero=ram+0xE000u+0x200u*who;
+        if(hero[0]==1u&&som_word(hero+0x184)&&hero[0x181]<=98u&&hero[0x181]>party_level)
+            party_level=hero[0x181];
+    }
+    for(unsigned slot=0;slot<3u;slot++){
+        uint8_t *enemy=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        const unsigned species=enemy[0x180];
+        if(species>=0x54u||(int)slot==familiar.slot||!som_bun_monster_alive(enemy)||
+           !som_word(enemy+0x182)||!som_word(enemy+0x184))continue;
+        int general=0;
+        for(unsigned i=0;i<general_count;i++)
+            if(generals_live[i].slot==(int)slot&&
+               generals_live[i].map==(som_word(ram+0xDC)&0x1FFu))general=1;
+        if(general)continue;
+        const uint8_t *base=som_rom_at(0xD01C00u+29u*species,29u);
+        if(base&&som_word(base+1)&&base[0]<=98u)som_enemy_scale(enemy,base,party_level);
+    }
+}
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     const uint64_t perf_t0=som_perf_frame_begin(frame_number);
@@ -8283,6 +8675,7 @@ RETRO_API void retro_run(void){
     som_npc_work_frame();
     som_clone_tick();
     som_familiar_frame();
+    if(test_enabled&&on_turbo)som_enemy_scaling_frame();
     som_generals_frame();
     /* No automatic hero VRAM caching: old monster-style snapshots garbled art. */
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
@@ -8356,7 +8749,9 @@ RETRO_API void retro_run(void){
         if(shadow){memcpy(oam_shown,shadow+0x0800u,sizeof(oam_shown));oam_shown_valid=1;}
     }
     backend_run();
+    if(on_turbo)som_auto_target_frame(som_live_wram());
     som_guard_finish();
+    som_pad2_guard_finish();
     if(test_enabled&&on_turbo)som_revival_frame(som_live_wram());
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
     if(test_enabled&&on_turbo)som_combo_frame();
@@ -8607,10 +9002,11 @@ static int som_isqrt(long v){
     long r=0;while((r+1)*(r+1)<=v)r++;return (int)r;
 }
 static void som_lock_steer(uint8_t *ram,uint16_t dirs){
-    lock_orbiting=0;lock_keep_radius=0;
+    lock_orbiting=0;lock_keep_radius=0;lock_dpad_out=0;
     if(!dirs){lock_orbit_dirs=0;lock_orbit_sign=0;}
     if(!ram||lock_slot<0||ring_ai_enabled||evade_active||!dirs)return;
-    const uint8_t *hero=SOM_ACT(ram);
+    if(lock_who>=SOM_PARTY_MEMBERS)return;
+    const uint8_t *hero=ram+0xE000u+0x200u*lock_who;
     if(hero[0]!=1||hero[0x01C])return;                /* busy: the game ignores the pad */
     const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
     const long vx=(long)som_bun_u16(m+2)-(long)som_bun_u16(hero+2);
@@ -8646,7 +9042,8 @@ static void som_lock_steer(uint8_t *ram,uint16_t dirs){
 }
 /* After the game's frame: keep the radius while circling, else take it. */
 static void som_lock_orbit_after(uint8_t *ram){
-    uint8_t *hero=SOM_ACT(ram);
+    if(lock_who>=SOM_PARTY_MEMBERS)return;
+    uint8_t *hero=ram+0xE000u+0x200u*lock_who;
     const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
     const long vx=(long)som_bun_u16(m+2)-(long)som_bun_u16(hero+2);
     const long vy=(long)som_bun_u16(m+4)-(long)som_bun_u16(hero+4);
@@ -8671,15 +9068,27 @@ static void som_lock_release(const char *why){
     if(lock_slot<0)return;
     fprintf(stderr,"[som-ai] LOCK off (monster slot %d): %s\n",lock_slot+1,why);
     lock_slot=-1;
-    lock_orbiting=0;lock_radius=0;
+    lock_who=SOM_PARTY_MEMBERS;
+    lock_orbiting=0;lock_radius=0;lock_dpad_out=0;
 }
-static void som_lock_toggle(uint8_t *ram){
+static int som_lock_acquire(uint8_t *ram,unsigned slot,unsigned who){
+    if(!ram||slot>=3u||who>=SOM_PARTY_MEMBERS||(int)slot==familiar.slot)return 0;
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    const uint8_t *hero=ram+0xE000u+0x200u*who;
+    if(!som_bun_monster_alive(m)||!som_ally_alive(hero))return 0;
+    lock_slot=(int)slot;lock_identity=m[0x180];lock_who=who;
+    lock_map=som_bun_u16(ram+0xDC);lock_radius=0;
+    return 1;
+}
+static void som_lock_toggle_for(uint8_t *ram,unsigned who){
+    if(who>=SOM_PARTY_MEMBERS)return;
     if(lock_slot>=0){
         som_lock_release("let go");
         som_overlay_set(&overlay,"^Lock off",SOM_MESSAGE_FRAMES/4u);
         return;
     }
-    const uint8_t *hero=SOM_ACT(ram);
+    if(!ram)return;
+    const uint8_t *hero=ram+0xE000u+0x200u*who;
     const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
     int best=-1;long best_d=0;
     for(unsigned slot=0;slot<3u;slot++){
@@ -8690,21 +9099,22 @@ static void som_lock_toggle(uint8_t *ram){
         if(dist<=SOM_LOCK_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
     }
     if(best<0){som_overlay_set(&overlay,"^Nothing to lock on",SOM_MESSAGE_FRAMES/4u);return;}
-    lock_slot=best;
-    lock_identity=ram[SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)best+0x180u];
-    lock_map=som_bun_u16(ram+0xDC);
+    if(!som_lock_acquire(ram,(unsigned)best,who))return;
     som_overlay_set(&overlay,"^Locked on",SOM_MESSAGE_FRAMES/4u);
     fprintf(stderr,"[som-ai] LOCK on monster slot %d (%ld px)\n",best+1,best_d);
 }
+static void som_lock_toggle(uint8_t *ram){som_lock_toggle_for(ram,som_pad1_member_in(ram));}
 static void som_lock_frame(uint8_t *ram){
     if(lock_slot<0||!ram)return;
     if(ring_ai_enabled){som_lock_release("the AI plays");return;}
+    if(lock_who>=SOM_PARTY_MEMBERS){som_lock_release("invalid actor");return;}
     const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
     if(som_bun_u16(ram+0xDC)!=lock_map){som_lock_release("map changed");return;}
     if(!som_bun_monster_alive(m)||m[0x180]!=lock_identity||lock_slot==familiar.slot){
         som_lock_release("target gone");return;
     }
-    uint8_t *hero=SOM_ACT(ram);
+    uint8_t *hero=ram+0xE000u+0x200u*lock_who;
+    if(!som_ally_alive(hero)){som_lock_release("actor unavailable");return;}
     if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return;
     const int dx=(int)som_bun_u16(m+2)-(int)som_bun_u16(hero+2);
     const int dy=(int)som_bun_u16(m+4)-(int)som_bun_u16(hero+4);
@@ -8713,6 +9123,60 @@ static void som_lock_frame(uint8_t *ram){
     /* Not during a dodge or a pose the game is playing on its own. */
     if(evade_active||hero[0x01C]==0x40u||hero[0x01C]==0x30u)return;
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
+}
+static void som_auto_target_frame(uint8_t *ram){
+    if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]!=0u||ram[0x7D]==1u){
+        auto_target_ready=0;return;
+    }
+    const unsigned map=som_bun_u16(ram+0xDC);
+    if(!auto_target_ready||map!=auto_target_map){
+        auto_target_ready=1;auto_target_map=map;
+        for(unsigned i=0;i<3u;i++){
+            const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
+            auto_target_enemy_hp[i]=(uint16_t)som_word(m+0x182);
+            auto_target_enemy_id[i]=m[0x180];auto_target_enemy_live[i]=(uint8_t)som_bun_monster_alive(m);
+        }
+        for(unsigned i=0;i<SOM_PARTY_MEMBERS;i++)
+            auto_target_party_hp[i]=(uint16_t)som_word(ram+0xE000u+0x200u*i+0x182u);
+        som_lock_frame(ram);return;
+    }
+    unsigned hitter=som_pad1_member_in(ram);
+    if(pad2_actor<SOM_PARTY_MEMBERS&&
+       (pad2_combo_actor==pad2_actor||
+        (pad2_raw&((1u<<RETRO_DEVICE_ID_JOYPAD_B)|(1u<<RETRO_DEVICE_ID_JOYPAD_X)|
+                   (1u<<RETRO_DEVICE_ID_JOYPAD_Y)))))hitter=pad2_actor;
+    for(unsigned i=0;i<3u;i++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
+        const unsigned hp=som_word(m+0x182);
+        const int live=som_bun_monster_alive(m)&&hp>0;
+        if((familiar.slot<0||(int)i!=familiar.slot)&&live&&
+           auto_target_enemy_live[i]&&m[0x180]==auto_target_enemy_id[i]&&
+           hp<auto_target_enemy_hp[i])
+            som_lock_acquire(ram,i,hitter);
+        auto_target_enemy_hp[i]=(uint16_t)hp;
+        auto_target_enemy_id[i]=m[0x180];auto_target_enemy_live[i]=(uint8_t)live;
+    }
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *hero=ram+0xE000u+0x200u*who;
+        const unsigned hp=som_word(hero+0x182);
+        if(som_ally_alive(hero)&&auto_target_party_hp[who]&&hp<auto_target_party_hp[who]){
+            const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+            int best=-1,best_d=SOM_LOCK_RANGE+1;
+            const int touching=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,
+                                                SOM_BUN_HERO_TOUCH_Y*2,familiar.slot);
+            if(touching>=0)best=touching;
+            else for(unsigned i=0;i<3u;i++){
+                const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
+                if((int)i==familiar.slot||!som_bun_monster_alive(m)||
+                   (m[0x0B]&0x80u)!=(hero[0x0B]&0x80u))continue;
+                const int d=abs((int)som_bun_u16(m+2)-hx)+abs((int)som_bun_u16(m+4)-hy);
+                if(d<=SOM_LOCK_RANGE&&d<best_d){best=(int)i;best_d=d;}
+            }
+            if(best>=0)som_lock_acquire(ram,(unsigned)best,who);
+        }
+        auto_target_party_hp[who]=(uint16_t)hp;
+    }
+    som_lock_frame(ram);
 }
 
 /* ---- ROM-derived weapon masks (Tanto, Dai Katana, Kusarigama) ---- */

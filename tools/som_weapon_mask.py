@@ -13,7 +13,7 @@ SOMWORK1: one packed, cropped colour-index image per (style, row, frame).
 Pixels 1..5 = opaque weapon palette, 6..10 = 25%-opacity FX pixels.
 Kinds 0xD4 Tanto and 0xD5 Dai Katana, weapon = native row, facing = frame.
 Kusarigama entries pair the sword's level-2 body animation with matching
-whip poses. The pack is generated on the user's build machine; no ROM is
+whip poses. Kinds 0xD7 and 0xD8 are short sword and native fallback. The pack is generated on the user's build machine; no ROM is
 bundled.
 """
 import argparse
@@ -27,6 +27,8 @@ import som_villager_work as V
 KIND_TANTO = 0xD4
 KIND_DAI = 0xD5
 KIND_KUSARIGAMA = 0xD6
+KIND_NATIVE = 0xD8
+KIND_SHORT_SWORD = 0xD7
 SWORD_ROWS = tuple(range(9, 18))
 KUSARIGAMA_WHIP_ROW = 36       # Ninjutsu's default Leather Lash artwork
 CANVAS = 224
@@ -165,17 +167,28 @@ def masked_style(image, body, style, foot=ORIGIN, donor=None):
     return out
 
 
-def sword_frames(gfx):
-    """Stable original frame numbers; left mirrors at runtime as before."""
-    out = {}
+def sword_poses(gfx):
+    """Native script references, retaining direction and entry flags."""
+    poses = set()
     for anim in range(64):
         for direction in V.FACINGS:
             try:
                 for flags, frame, _ in gfx.script("sword", anim, direction):
-                    out.setdefault(frame, flags)
+                    poses.add((direction, frame, flags))
             except (IndexError, KeyError, ValueError, struct.error):
                 continue
-    return sorted(out.items())
+    return sorted(poses)
+
+
+def sword_frames(gfx):
+    """One stable record key per native frame number."""
+    by_frame = {}
+    for _, frame, flags in sword_poses(gfx):
+        # Bit 5 mirrors horizontally. The runtime mirrors the normalized
+        # art just once from the live actor flags. Bit 6 flips vertically.
+        by_frame.setdefault(frame, set()).add(flags & 0x40)
+    return sorted((frame, next(iter(variants))) for frame, variants in by_frame.items()
+                  if len(variants) == 1)
 
 
 def kusarigama_frames(gfx):
@@ -228,8 +241,17 @@ def pack(gfx, rows=SWORD_ROWS, dagger=None, kusarigama=False):
             gfx.render("boy", wp, image=weapon, origin=ORIGIN, source=tiles)
             gfx.render("boy", gfx.pieces("boy", "sword", frame, flags),
                        image=body, origin=ORIGIN)
-            for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI)):
-                art = masked_style(weapon, body, style, donor=dagger if style=="tanto" else None)
+            for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI),
+                                ("native", KIND_NATIVE), ("short", KIND_SHORT_SWORD)):
+                if style == "native":
+                    # Only encode native art representable by this pack.
+                    # Higher palette indices would alias the FX alpha channel.
+                    if any(pixel > 5 for line in weapon for pixel in line):
+                        continue
+                    art = weapon
+                else:
+                    blade_style = "tanto" if style == "short" else style
+                    art = masked_style(weapon, body, blade_style, donor=dagger if style=="tanto" else None)
                 record = cropped(art) if art else None
                 if record is None:
                     continue

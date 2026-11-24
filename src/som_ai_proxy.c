@@ -17,6 +17,7 @@
 #include "som_magic.h"
 #include "som_energy.h"
 #include "som_ally_moves.h"
+#include "som_party_ai.h"
 #include "som_familiar.h"
 #include "som_npc_walk.h"
 #include "som_npc_work.h"
@@ -1073,15 +1074,17 @@ static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried,weapon_mask_faulted;
 static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
-static uint32_t *weapon_mask_index;    /* [Tanto,Dai,Kusarigama][72][256] */
+static uint32_t *weapon_mask_index;    /* [5][9][256], byte offsets + 1 */
 static uint8_t weapon_native_tiles[0x800];
 static int weapon_tiles_hidden;
+static unsigned weapon_tiles_who;
 static SomNpcWorkState weapon_masked;
+static int som_weapon_mask_restore(uint8_t *ram);
+static void som_weapon_mask_frame(uint8_t *ram);
+static void som_weapon_mask_pick(uint8_t *ram);
 static int kusarigama_attack_active,kusarigama_attack_released,kusarigama_swing_seen;
 static unsigned kusarigama_attack_who;
 static unsigned long kusarigama_attack_started;
-static void som_weapon_mask_frame(uint8_t *ram);
-static void som_weapon_mask_pick(const uint8_t *ram);
 static int som_kusarigama_art_ready(void);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
  * style): tap L1 to lock onto the nearest
@@ -1280,6 +1283,7 @@ static unsigned ally_equip_pending=6u;
 static unsigned long ally_equip_tried;
 static void som_party_class_saved(void){
     som_disc_save();
+    som_prog_write();
     ally_equip_pending|=1u<<(disciplines.who%SOM_PARTY_MEMBERS);
     ally_equip_tried=0;
     const unsigned who=disciplines.who,cls=som_disc_member_class(&disciplines,who);
@@ -2752,7 +2756,7 @@ static int som_weapon_gfx_matches(const uint8_t *ram){
         som_word(hero+0x065)==m.f065&&som_word(hero+0x06A)==m.f06a&&
         som_word(hero+0x07E)==m.f07e&&som_word(hero+0x02A)==m.f02a&&
         /* A scaled style blanks the buffer: its saved copy is the game's art. */
-        memcmp(weapon_tiles_hidden?weapon_native_tiles:ram+SOM_WEAPON_BUF,m.tiles,
+        memcmp(weapon_tiles_hidden&&!weapon_tiles_who?weapon_native_tiles:ram+SOM_WEAPON_BUF,m.tiles,
                sizeof(m.tiles))==0;
 }
 static int som_field_actor_idle(const uint8_t *ram,unsigned who){
@@ -4314,7 +4318,9 @@ static void som_hop_step(void){
     }
     {
         uint8_t *art=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-        if(art)som_weapon_mask_frame(art);
+        if(art&&backend_retro_get_memory_size&&
+           backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+            som_weapon_mask_frame(art);
     }
     if(holy_until||bomb_at||mind_until||telekinesis.slot>=0||
        mine_live[0]||mine_live[1]||mine_live[2]){
@@ -4414,8 +4420,14 @@ typedef struct {
     SomEnergy en;
     unsigned long ready,dodge_ready,next_hit;
     int dashing,dodging,target,tx,ty,lx,ly;
-    unsigned hits_left,amount,dodge_left,cls;
+    unsigned hits_left,amount,dodge_left,cls,target_kind,map;
     int ddx,ddy;
+    struct {
+        unsigned slot,identity,hp,map,cls;
+        unsigned long queued_at;
+        int active,heal;
+    } credit;
+    unsigned long xp_ready;
 } SomAllyTech;
 static SomAllyTech ally_tech[2];
 static SomEnergy *som_actor_energy(void){
@@ -4435,19 +4447,71 @@ static int som_ally_keeps_back(unsigned cls){
     return cls<SOM_DISCIPLINE_COUNT&&
         (!som_weapon_short_range(som_disc_weapons[cls][0])||som_disc_caster(cls));
 }
-static uint8_t *som_ally_obj(uint8_t *ram,unsigned who){return ram+0xE000u+0x200u*who;}
 static int som_ally_alive(const uint8_t *o){
-    return o[0]==1&&(o[0x184]|o[0x185])&&(o[0x182]|o[0x183]);
+    return o[0]==1&&(o[0x184]|o[0x185])&&(o[0x182]|o[0x183])&&!(o[0x191]&0x80u);
 }
-static void som_ally_hurt(uint8_t *ram,unsigned slot,unsigned damage){
-    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
-    const unsigned pending=m[0x1F1]+damage;
-    m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+static uint8_t *som_ally_obj(uint8_t *ram,unsigned who){return ram+0xE000u+0x200u*who;}
+static void som_ally_cancel(SomAllyTech *t){
+    t->dashing=t->dodging=0;
+    t->hits_left=0;
+    t->target=-1;
+}
+static const uint8_t *som_ally_attack_target(const uint8_t *ram,const SomAllyTech *t){
+    if(t->target<0||t->target>=3||t->target==familiar.slot)return NULL;
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t->target;
+    return som_bun_monster_alive(m)&&m[0x180]==t->target_kind?m:NULL;
+}
+/* Only actions that begin with an empty native queue can claim XP.
+ * Observe the queue being consumed and HP moving in the intended direction. */
+static void som_ally_queue(uint8_t *ram,unsigned who,unsigned slot,unsigned amount,int heal){
+    uint8_t *target=som_ally_obj(ram,slot);
+    const unsigned offset=heal?0x1F3u:0x1F1u;
+    SomAllyTech *t=&ally_tech[who-1u];
+    const unsigned hp=som_word(target+0x182);
+    if(!target[offset]&&!t->credit.active&&frame_number>=t->xp_ready&&hp&&amount&&
+       (!heal||hp<som_word(target+0x184))){
+        t->credit.slot=slot;
+        t->credit.identity=target[0x180];
+        t->credit.hp=hp;
+        t->credit.map=som_word(ram+0xDC);
+        t->credit.cls=t->cls;
+        t->credit.queued_at=frame_number;
+        t->credit.heal=heal;
+        t->credit.active=1;
+    }
+    const unsigned queued=target[offset]+amount;
+    target[offset]=(uint8_t)(queued>0xFFu?0xFFu:queued);
+}
+static void som_ally_hurt(uint8_t *ram,unsigned who,unsigned slot,unsigned damage){
+    uint8_t *m=som_ally_obj(ram,slot+3u);
+    som_ally_queue(ram,who,slot+3u,damage,0);
     som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
 }
-static void som_ally_heal(uint8_t *o,unsigned amount){
-    const unsigned queued=o[0x1F3]+amount;
-    o[0x1F3]=(uint8_t)(queued>0xFFu?0xFFu:queued);
+static void som_ally_xp_frame(const uint8_t *ram){
+    if(!ram||!ally_tech_ready)return;
+    for(unsigned i=0;i<2u;i++){
+        SomAllyTech *t=&ally_tech[i];
+        if(!t->credit.active)continue;
+        const unsigned slot=t->credit.slot;
+        const uint8_t *actor=ram+0xE000u+0x200u*(i+1u);
+        const uint8_t *target=ram+0xE000u+0x200u*slot;
+        if(ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]||
+           t->credit.map!=som_word(ram+0xDC)||frame_number-t->credit.queued_at>12u||
+           target[0]!=1u||target[0x180]!=t->credit.identity||
+           (!t->credit.heal&&(int)slot-3==familiar.slot)||
+           !som_party_member_alive(actor,i+1u)||!som_party_ai_owned(ram,actor,i+1u)){
+            t->credit.active=0;
+            continue;
+        }
+        if(target[t->credit.heal?0x1F3u:0x1F1u])continue;
+        const unsigned hp=som_word(target+0x182);
+        const int changed=t->credit.heal?hp>t->credit.hp:hp<t->credit.hp;
+        if(changed&&som_disc_award_member(&disciplines,i+1u,t->credit.cls,10u)){
+            xp_dirty=1;
+            t->xp_ready=frame_number+30u;
+        }
+        t->credit.active=0;
+    }
 }
 /* One step of a carried move (dash or dodge): px toward the goal, only onto
  * open ground. 0 when blocked or there. */
@@ -4554,24 +4618,23 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     SomAllyTech *t=&ally_tech[who-1u];
     uint8_t *o=som_ally_obj(ram,who);
     const unsigned cls=som_disc_member_class(&disciplines,who);
-    if(cls>=SOM_DISCIPLINE_COUNT||!som_ally_alive(o)||o[0x2C]!=0||
-       som_pad1_member_in(ram)==who){
-        if(cls<SOM_DISCIPLINE_COUNT&&som_ally_alive(o)){     /* the player drives her: */
-            const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);   /* her bar refills */
-            som_energy_tick(&t->en,cls,disciplines.level[cls],x==t->lx&&y==t->ly);
-            t->lx=x;t->ly=y;
-        }
-        if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
-        t->dashing=t->dodging=0;t->hits_left=0;return;
+    if(cls>=SOM_DISCIPLINE_COUNT||!som_party_member_alive(o,who)||
+       !som_party_ai_owned(ram,o,who)||som_pad1_member_in(ram)==who){
+        if(cls<SOM_DISCIPLINE_COUNT&&som_party_member_alive(o,who))
+            som_energy_tick(&t->en,cls,som_disc_member_level(&disciplines,who,cls),1);
+        som_ally_cancel(t);
+        return;
     }
-    if(cls!=t->cls){
-        if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
-        t->cls=cls;t->hits_left=0;t->dashing=t->dodging=0;
+    const unsigned map=som_bun_u16(ram+0xDCu);
+    if(cls!=t->cls||map!=t->map){
+        som_ally_cancel(t);
+        t->cls=cls;
+        t->map=map;
     }
-    if(o[0x60]||o[0x1C]==0x40||o[0x1C]==0x80)return;
+    if(!som_party_action_ready(o)||o[0x1C]==0x40||o[0x1C]==0x80)return;
     if(cls==SOM_DISC_CLERIC&&som_try_revivifier(ram,who,0))return;
     const SomAllyMove *mv=&som_ally_moves[cls];
-    const unsigned level=disciplines.level[cls];
+    const unsigned level=som_disc_member_level(&disciplines,who,cls);
     const int x=(int)som_bun_u16(o+2),y=(int)som_bun_u16(o+4);
     som_energy_tick(&t->en,cls,level,x==t->lx&&y==t->ly);
     t->lx=x;t->ly=y;
@@ -4579,8 +4642,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         (som_word(ram+0xDC)&0x1FFu)==ally_order.map;
     const int support=ordered&&ally_order.slot==SOM_ALLY_SUPPORT_SLOT;
     if(support){
-        if(t->dashing)o[0x0E]&=(uint8_t)~0x80u;
-        t->hits_left=0;t->dashing=t->dodging=0;
+        som_ally_cancel(t);
         if(mv->kind!=SOM_AM_HEAL&&mv->kind!=SOM_AM_HEAL_ALL)return;
     }
     if(cls==SOM_DISC_PSIONICS&&som_energy_can(&t->en,cls,10u,0u)&&
@@ -4595,24 +4657,23 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         return;
     }
     if(t->dashing){
+        const uint8_t *m=som_ally_attack_target(ram,t);
+        if(!m){som_ally_cancel(t);return;}
         const int dx=som_clamp_step(t->tx-x,SOM_ALLY_DASH_SPEED),dy=som_clamp_step(t->ty-y,SOM_ALLY_DASH_SPEED);
         if(som_ally_step(ram,o,dx,dy))return;
         t->dashing=0;                                     /* there, or blocked: cut */
-        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t->target;
-        if(t->target>=0&&som_bun_monster_alive(m)&&
-           som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,40,40))
-            som_ally_hurt(ram,(unsigned)t->target,t->amount);
-        o[0x0E]&=(uint8_t)~0x80u;                          /* seen again */
+        if(som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,40,40))
+            som_ally_hurt(ram,who,(unsigned)t->target,t->amount);
         return;
     }
     if(t->hits_left){
         if(frame_number<t->next_hit)return;
-        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t->target;
-        if(t->target<0||!som_bun_monster_alive(m)||
+        const uint8_t *m=som_ally_attack_target(ram,t);
+        if(!m||
            !som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),x,y,mv->reach+16,mv->reach+16)){
             t->hits_left=0;return;
         }
-        som_ally_hurt(ram,(unsigned)t->target,t->amount);
+        som_ally_hurt(ram,who,(unsigned)t->target,t->amount);
         t->hits_left--;t->next_hit=frame_number+SOM_ALLY_HIT_GAP;
         return;
     }
@@ -4629,8 +4690,8 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     unsigned worst=100u;int worst_who=-1;
     for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
         const uint8_t *p=som_ally_obj(ram,k);
-        if(!som_ally_alive(p))continue;
-        const unsigned hp=som_word(p+0x182),max=som_word(p+0x184);
+        if(!som_party_member_alive(p,k))continue;
+        const unsigned hp=som_word(p+0x182)+p[0x1F3],max=som_word(p+0x184);
         const unsigned pct=max?hp*100u/max:100u;
         if(pct<worst){worst=pct;worst_who=(int)k;}
     }
@@ -4679,12 +4740,12 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
             const uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
             if((int)slot!=familiar.slot&&som_bun_monster_alive(e)&&
                som_bun_near((int)som_bun_u16(e+2),(int)som_bun_u16(e+4),x,y,mv->reach,mv->reach))
-                som_ally_hurt(ram,slot,t->amount);
+                som_ally_hurt(ram,who,slot,t->amount);
         }
         som_bun_boom(bunshin_booms,x,y,0,frame_number);
         break;
     case SOM_AM_MULTI:
-        t->target=nearest;t->hits_left=mv->hits;t->next_hit=frame_number;
+        t->target=nearest;t->target_kind=m[0x180];t->hits_left=mv->hits;t->next_hit=frame_number;
         break;
     case SOM_AM_DASH:{                     /* to the far side, else the near side */
         const int sx=mx>=x?1:-1,sy=my>=y?1:-1;
@@ -4693,12 +4754,16 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
         if(!som_bun_spot_open(ram,gx,gy,som_hero_place(o))){
             gx=horizontal?mx-sx*20:mx;gy=horizontal?my:my-sy*20;
         }
-        t->target=nearest;t->tx=gx;t->ty=gy;t->dashing=1;
-        o[0x0E]|=0x80u;                    /* a blur: hidden while she travels */
+        t->target=nearest;t->target_kind=m[0x180];t->tx=gx;t->ty=gy;t->dashing=1;
         som_bun_boom(bunshin_booms,x,y,1,frame_number);
         break;}
     case SOM_AM_BOLT:
-        som_bun_blast(ram,mx,my,t->amount,familiar.slot);
+        for(unsigned slot=0;slot<3u;slot++){
+            const uint8_t *e=som_ally_obj(ram,slot+3u);
+            if((int)slot!=familiar.slot&&som_bun_monster_alive(e)&&
+               som_bun_near((int)som_word(e+2),(int)som_word(e+4),mx,my,SOM_BUN_BLAST_X,SOM_BUN_BLAST_Y))
+                som_ally_queue(ram,who,slot+3u,t->amount,0);
+        }
         som_bun_boom(bunshin_booms,mx,my,0,frame_number);
         break;
     case SOM_AM_RANGED:{
@@ -4707,21 +4772,21 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
             const uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
             if((int)slot!=familiar.slot&&som_bun_monster_alive(e)&&
                abs((int)som_bun_u16(e+2)-x)+abs((int)som_bun_u16(e+4)-y)<=mv->reach){
-                som_ally_hurt(ram,slot,t->amount);shots++;
+                som_ally_hurt(ram,who,slot,t->amount);shots++;
             }
         }
         break;}
     case SOM_AM_HEAL:
         if(worst_who<0)return;
-        som_ally_heal(som_ally_obj(ram,(unsigned)worst_who),t->amount);
+        som_ally_queue(ram,who,(unsigned)worst_who,t->amount,1);
         som_bun_boom(bunshin_booms,(int)som_bun_u16(som_ally_obj(ram,(unsigned)worst_who)+2),
                      (int)som_bun_u16(som_ally_obj(ram,(unsigned)worst_who)+4),0,frame_number);
         break;
     case SOM_AM_HEAL_ALL:
         for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
             uint8_t *member=som_ally_obj(ram,k);
-            if(som_ally_alive(member)&&som_word(member+0x182)<som_word(member+0x184))
-                som_ally_heal(member,t->amount);
+            if(som_party_member_alive(member,k)&&som_word(member+0x182)+member[0x1F3]<som_word(member+0x184))
+                som_ally_queue(ram,who,k,t->amount,1);
         }
         som_bun_boom(bunshin_booms,x,y,0,frame_number);
         break;
@@ -4744,7 +4809,11 @@ static void som_ally_tech_frame(uint8_t *ram){
             som_energy_init(&ally_tech[i].en);ally_tech[i].target=-1;ally_tech[i].cls=SOM_DISCIPLINE_NONE;}
         ally_tech_ready=1;
     }
-    if(ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return;
+    if(ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1||
+       som_manual_disciplines){
+        for(unsigned i=0;i<2u;i++)som_ally_cancel(&ally_tech[i]);
+        return;
+    }
     if(ring_ai_enabled&&som_pad1_member_in(ram)==0u&&disciplines.selected==SOM_DISC_PSIONICS&&
        som_energy_can(&energy,SOM_DISC_PSIONICS,10u,0u)&&som_telekinesis_rescue(ram,0u,1))
         som_energy_take(&energy,SOM_DISC_PSIONICS,10u,0u);
@@ -5693,7 +5762,7 @@ static void som_ally_equip_frame(uint8_t *ram){
         const uint8_t *o=ram+0xE000u+0x200u*who;
         const unsigned cls=som_disc_member_class(&disciplines,who);
         if(cls>=SOM_DISCIPLINE_COUNT){ally_equip_pending&=~(1u<<who);continue;}
-        if(o[0]!=1||!(o[0x184]|o[0x185]))continue;          /* not joined yet: later */
+        if(!som_party_member_alive(o,who))continue;
         unsigned type=som_disc_weapons[cls][0];
         const SomWeaponStyle *st=som_disc_caster(cls)?NULL:som_style_of(&styles,cls,NULL);
         if(st)type=st->weapon;                  /* her style's weapon (Kusarigama: whip) */
@@ -6061,7 +6130,8 @@ static int som_use_candy(uint8_t *ram,unsigned who){
     }
     const int left=som_item_take(ram,SOM_ITEM_CANDY);
     if(left<0){fprintf(stderr,"[som-ai] CANDY refused: no Candy\n");return 0;}
-    som_ally_heal(hero,SOM_CANDY_HEAL);
+    const unsigned heal=hero[0x1F3]+SOM_CANDY_HEAL;
+    hero[0x1F3]=(uint8_t)(heal>0xFFu?0xFFu:heal);
     fprintf(stderr,"[som-ai] CANDY for %s: %d left, +%u HP queued\n",
             som_party_names[who],left,SOM_CANDY_HEAL);
     return 1;
@@ -6690,10 +6760,16 @@ static int som_handle_command(const char *command){
         if((!strcmp(command,"companion")||
             (!strncmp(command,"companion_",10)&&sscanf(command+10,"%2u%c",&cls,&tail)==1))&&
            cls<SOM_DISCIPLINE_COUNT){
-            companion.cls=cls;
-            if(companion.active)return 1;               /* a new class for her */
+            const char *test_mode=getenv("FLXTR_SOM_TEST_COMMANDS");
+            if(!test_mode||strcmp(test_mode,"1")){
+                disciplines.party[0]=(uint8_t)cls;
+                disciplines.who=1u;
+                som_party_class_saved();
+                return 1;
+            }
+            if(companion.active){companion.cls=cls;return 1;}
+            if(familiar.slot>=0||familiar_carry.valid||familiar_pending)return 0;
             memset(&companion,0,sizeof(companion));companion.cls=cls;companion.active=1;
-            if(familiar.slot>=0||familiar_carry.valid)return 1;    /* she takes it over */
             familiar_pending=1;
             fprintf(stderr,"[som-ai] COMPANION as %s\n",som_discipline_names[cls]);
             if(som_clone_enemy()){som_familiar_bind();return 1;}
@@ -7484,7 +7560,8 @@ static void som_portal_frame(uint8_t *ram){
  * HUD sprites (tiles 0x1E0-0x1FF near the bottom) in the OAM buffer
  * 7E:0800 the NMI uploads. Applied at the frame's end; the next frame shows
  * it. Dialogs and events (7E:00D0 set) and menus get the HUD back as it was. */
-#define SOM_HUD_LIFT_PX 10u
+#define SOM_HUD_LIFT_PX 26u
+#define SOM_HUD_LEGACY_LIFT_PX 10u
 static int hud_lifted;
 static void som_hud_lift(uint8_t *ram,int menu){
     const int field=ram&&!menu&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
@@ -7494,7 +7571,10 @@ static void som_hud_lift(uint8_t *ram,int menu){
         hud_lifted=0;
         return;
     }
-    if(ram[0x40]!=0&&!(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;  /* the game's own scroll */
+    /* Existing field save states may carry the previous proxy's BG3 lift.
+     * The native game rebuilds the portrait OAM on the next frame. */
+    const unsigned scroll=som_word(ram+0x40);
+    if(scroll&&scroll!=SOM_HUD_LEGACY_LIFT_PX&&scroll!=SOM_HUD_LIFT_PX)return;
     ram[0x40]=SOM_HUD_LIFT_PX;ram[0x41]=0;
     hud_lifted=1;
     for(unsigned i=0;i<128u;i++){
@@ -7506,7 +7586,7 @@ static void som_hud_lift(uint8_t *ram,int menu){
 /* Party panels, Seiken Densetsu 3 style (player, 2026-11-20): under each
  * member's HUD portrait (tile 0x1E8 + 2*who in palette who + 1, live OAM
  * 2026-11-20: x 8 / 88 / 168), in that member's 80 px column:
- *   class title, right of the portrait, under the game's HP numbers;
+ *   class title below the portrait and the native HP/MP rows;
  *   the weapon (boy: class weapon or spell set; companions: their class
  *   move), from the portrait's left edge under it;
  *   a gauge: the class energy bar and the AP pips, no text.
@@ -7546,10 +7626,11 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         if(cls>=SOM_DISCIPLINE_COUNT||!som_hud_member_portrait(ram,who,&px,&py))continue;
         char line[24];
         const unsigned chars=(unsigned)(SOM_PANEL_COLUMN/6);
-        som_panel_text(line,sizeof(line),som_discipline_titles[cls],(unsigned)((SOM_PANEL_COLUMN-SOM_HUD_LABEL_DX)/6));
+        const int class_y=py+SOM_HUD_LABEL_DY;
+        som_panel_text(line,sizeof(line),som_discipline_titles[cls],chars);
         for(char *c=line;*c;c++)if(*c>='a'&&*c<='z')*c=(char)(*c-32);
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                          px+SOM_HUD_LABEL_DX,py+SOM_HUD_LABEL_DY,0,
+                          px,class_y,0,
                           som_overlay_color(pixel_format,255,255,255));
         /* Line 2. */
         char second[48]="";uint32_t ink=som_overlay_color(pixel_format,255,214,96);
@@ -7568,13 +7649,13 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         }
         som_panel_text(line,sizeof(line),second,chars);
         if(line[0])som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                                     px,py+SOM_HUD_LABEL_DY+8,0,ink);
+                                     px,class_y+8,0,ink);
         /* Line 3: the gauge. */
-        const unsigned max=som_energy_max(disciplines.level[cls]);
+        const unsigned max=som_energy_max(som_disc_member_level(&disciplines,who,cls));
         const SomEnergy *en=who==0u?&energy:&ally_tech[who-1u].en;
         const int fresh=who&&!ally_tech_ready;
         const unsigned have=fresh||!en->started[cls]?max:en->energy[cls];
-        som_panel_gauge(width,height,pitch,px+1,py+SOM_HUD_LABEL_DY+18,have,max,
+        som_panel_gauge(width,height,pitch,px+1,class_y+17,have,max,
                         fresh?SOM_AP_MAX:en->ap);
     }
 }
@@ -7603,8 +7684,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
-    if(backend_retro_get_memory_data)
-        som_weapon_mask_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    if(weapon_tiles_hidden&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_weapon_mask_pick(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    else weapon_masked.active=0;
     const int worker=(npc_work.active||flykick.active||weapon_masked.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
@@ -7863,6 +7946,7 @@ static size_t som_apply_rom_patches(uint8_t *rom,size_t size){
 }
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
+    ally_tech_ready=0;
     frame_number=0;start_ring_held=0;start_ring_until=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;
@@ -8014,6 +8098,7 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
     const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
     if(core&&data&&size==core+SOM_PROG_TRAILER_SIZE){
         if(!backend_retro_unserialize(data,core))return false;
+        ally_tech_ready=0;
         SomProgress loaded;
         if(som_prog_trailer_read((const uint8_t*)data+core,&loaded)==SOM_PROG_OK){
             prog=loaded;som_prog_to_disc(&prog,&disciplines);
@@ -8023,7 +8108,9 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
         }else fprintf(stderr,"[som-ai] PROGRESS trailer of the save state unreadable\n");
         return true;
     }
-    return backend_retro_unserialize&&backend_retro_unserialize(data,size);
+    const bool ok=backend_retro_unserialize&&backend_retro_unserialize(data,size);
+    if(ok)ally_tech_ready=0;
+    return ok;
 }
 static char som_auto_state_path[1024];
 static void som_auto_state_path_set(const char *rom){
@@ -8356,9 +8443,15 @@ RETRO_API void retro_run(void){
         if(shadow){memcpy(oam_shown,shadow+0x0800u,sizeof(oam_shown));oam_shown_valid=1;}
     }
     backend_run();
+    if(weapon_tiles_hidden&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_weapon_mask_restore(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     som_guard_finish();
     if(test_enabled&&on_turbo)som_revival_frame(som_live_wram());
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
+        som_ally_xp_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo)som_combo_frame();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
@@ -8715,137 +8808,7 @@ static void som_lock_frame(uint8_t *ram){
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
 }
 
-/* ---- ROM-derived weapon masks (Tanto, Dai Katana, Kusarigama) ---- */
-static void som_weapon_mask_load(void){
-    if(weapon_mask_tried)return;
-    weapon_mask_tried=1;
-    som_load_pack_file(weapon_mask_file,"weapon style masks",
-                       &weapon_mask_pack,&weapon_mask_pack_size);
-    if(!weapon_mask_pack||weapon_mask_pack_size<10u||
-       memcmp(weapon_mask_pack,"SOMWORK1",8u))return;
-    weapon_mask_index=calloc(3u*72u*256u,sizeof(*weapon_mask_index));
-    if(!weapon_mask_index)return;
-    const uint8_t *p=weapon_mask_pack+10u,*end=weapon_mask_pack+weapon_mask_pack_size;
-    const unsigned entries=weapon_mask_pack[8]|(unsigned)weapon_mask_pack[9]<<8;
-    unsigned count=0;
-    for(unsigned e=0;e<entries;e++){
-        if(end-p<44)goto malformed;
-        const uint8_t *next=p+44u;
-        for(unsigned frame=0;frame<p[3];frame++){
-            next=som_work_next_frame(next,end);
-            if(!next)goto malformed;
-        }
-        if(p[0]>=0xD4u&&p[0]<=0xD6u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
-            weapon_mask_index[((p[0]-0xD4u)*72u+p[1])*256u+p[2]]=
-                (uint32_t)(p-weapon_mask_pack)+1u;
-            count++;
-        }
-        p=next;
-    }
-    fprintf(stderr,"[som-ai] weapon styles: indexed %u masked frames\\n",count);
-    return;
-malformed:
-    free(weapon_mask_index);weapon_mask_index=NULL;
-    fprintf(stderr,"[som-ai] weapon style: malformed mask pack ignored\\n");
-}
-/* -1 = native, 0 = Tanto, 1 = Dai Katana, 2 = Kusarigama strike. */
-static int som_weapon_mask_mode(const uint8_t *ram,unsigned who){
-    if(!weapon_mask_on_checked||frame_number-weapon_mask_on_checked>=120ul){
-        weapon_mask_on_checked=frame_number?frame_number:1ul;
-        weapon_mask_on=access(weapon_mask_on_file,F_OK)==0;
-    }
-    if(weapon_mask_faulted||!weapon_mask_on)return -1;
-    const uint8_t *actor=ram+0xE000u+0x200u*who;
-    if(kusarigama_attack_active&&who==kusarigama_attack_who&&
-       som_disc_member_class(&disciplines,who)==SOM_DISC_NINJUTSU&&
-       styles.selected[SOM_DISC_NINJUTSU]==SOM_STYLE_HEAVY&&actor[0x1E4]==1u)
-        return 2;
-    if(who!=0u||disciplines.selected!=SOM_DISC_BUSHIDO||actor[0x1E4]!=1u)return -1;
-    const unsigned style=styles.selected[SOM_DISC_BUSHIDO]%SOM_STYLES_PER_CLASS;
-    return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
-}
-static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_mask_index||mode>2u||row<9u||row>=18u||frame>255u)return 0;
-    const uint32_t at=weapon_mask_index[(mode*72u+row)*256u+frame];
-    if(!at)return 0;
-    const uint8_t *p=weapon_mask_pack+at-1u;
-    out->kind=p[0];out->weapon=p[1];out->facing=p[2];out->frames=p[3];
-    for(unsigned i=0;i<20u;i++)out->colours[i]=(uint16_t)(p[4+2u*i]|p[5+2u*i]<<8);
-    out->first=p+44u;
-    return 1;
-}
-/* Only start the hybrid move when the opt-in ROM-derived whip art covers
- * the native sword level-2 frames. An old Bushido-only pack leaves normal
- * Kusarigama whip attacks untouched. */
-static int som_kusarigama_art_ready(void){
-    if(!weapon_mask_on||weapon_mask_faulted||!weapon_mask_index)return 0;
-    static const unsigned frames[]={171u,172u,173u,174u,175u,176u,177u,178u,179u};
-    for(unsigned row=9u;row<18u;row++)for(unsigned f=0;f<sizeof(frames)/sizeof(frames[0]);f++)
-        if(weapon_mask_index[(2u*72u+row)*256u+frames[f]])return 1;
-    return 0;
-}
-/* Hide native effects only when a matching mask exists for the current
- * sword row and animation frame. On a missing mask, restore the original
- * effect tiles byte-for-byte, rather than showing an invisible weapon. */
-static void som_weapon_mask_frame(uint8_t *ram){
-    if(!ram)return;
-    som_weapon_mask_load();
-    if(kusarigama_attack_active){
-        const uint8_t *owner=ram+0xE000u+0x200u*kusarigama_attack_who;
-        if(frame_number-kusarigama_attack_started>420ul||
-           som_disc_member_class(&disciplines,kusarigama_attack_who)!=SOM_DISC_NINJUTSU||
-           styles.selected[SOM_DISC_NINJUTSU]!=SOM_STYLE_HEAVY){
-            kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
-        }else if(kusarigama_attack_released&&owner[0x01C])kusarigama_swing_seen=1;
-        else if(kusarigama_swing_seen&&!owner[0x01C])
-            kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
-    }
-    const unsigned who=kusarigama_attack_active?kusarigama_attack_who:0u;
-    const uint8_t *actor=ram+0xE000u+0x200u*who;
-    const int field=actor[0]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
-    const int mode=field?som_weapon_mask_mode(ram,who):-1;
-    SomWorkEntry entry;
-    const int want=mode>=0&&som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],
-                                                  actor[0x026u]>>1,&entry);
-    uint8_t *tiles=ram+SOM_WEAPON_BUF;
-    int blank=1;
-    for(unsigned i=0;i<sizeof(weapon_native_tiles);i++)if(tiles[i]){blank=0;break;}
-    if(want){
-        if(!blank){
-            memcpy(weapon_native_tiles,tiles,sizeof(weapon_native_tiles));
-            memset(tiles,0,sizeof(weapon_native_tiles));
-        }
-        weapon_tiles_hidden=1;
-    }else if(weapon_tiles_hidden){
-        if(blank)memcpy(tiles,weapon_native_tiles,sizeof(weapon_native_tiles));
-        weapon_tiles_hidden=0;
-    }
-}
-/* The runtime image is composited using the mask-specific alpha-aware
- * renderer, keeping original hero animation and camera coordinates. */
-static void som_weapon_mask_pick(const uint8_t *ram){
-    weapon_masked.active=0;
-    if(!ram||!weapon_tiles_hidden)return;
-    const unsigned who=kusarigama_attack_active?kusarigama_attack_who:0u;
-    const uint8_t *actor=ram+0xE000u+0x200u*who;
-    const int mode=som_weapon_mask_mode(ram,who);
-    SomWorkEntry entry;
-    if(mode<0)return;
-    if(!som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],
-                               actor[0x026u]>>1,&entry)){
-        /* The SNES animation may advance after the pre-frame availability
-         * check. Fail closed for the rest of the session instead of
-         * continuing to blank frames with missing replacement art. */
-        weapon_mask_faulted=1;
-        fprintf(stderr,"[som-ai] BUSHIDO mask frame missing: row %u frame %u, disabling masks for this session\\n",
-                (unsigned)actor[0x1E3u],(unsigned)(actor[0x026u]>>1));
-        return;
-    }
-    memset(&weapon_masked,0,sizeof(weapon_masked));
-    weapon_masked.active=1;weapon_masked.slot=(uint8_t)who;weapon_masked.kind=actor[0x180u];
-    weapon_masked.dir=(actor[0x028u]&0x40u)?3u:2u;
-    weapon_masked.entry=entry;weapon_masked.start=frame_number;weapon_masked.length=2u;
-}
+#include "som_weapon_renderer.h"
 
 /* ---- Costs (FlXtR MP/AP): each technique is paid only when it goes off. ---- */
 static int som_energy_pay(unsigned e,unsigned ap,const char *what){

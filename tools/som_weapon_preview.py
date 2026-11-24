@@ -54,7 +54,7 @@ def unpack(data):
     for _ in range(count):
         if ptr+44>end:raise ValueError("truncated weapon mask entry")
         kind,row,frame,nframes=struct.unpack_from("<BBBB",data,ptr)
-        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_KUSARIGAMA) or row not in M.SWORD_ROWS or nframes!=1:
+        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_NATIVE,M.KIND_SHORT_SWORD,M.KIND_KUSARIGAMA) or row not in M.SWORD_ROWS or nframes!=1:
             raise ValueError("not a supported weapon-mask pack")
         palette=struct.unpack_from("<20H",data,ptr+4)
         if any(c&0x8000 for c in palette):
@@ -115,9 +115,10 @@ def render_cell(gfx,row,frame,flags,record=None):
     x0=M.ORIGIN[0]+dx
     y0=M.ORIGIN[1]+V.HERO_HEIGHT+dy
     blade=[rgb555(c) for c in pal[:5]]
+    if flags & 0x20:
+        weapon = [line[::-1] for line in weapon]
+        x0 = 2*M.ORIGIN[0]-x0-w
     paste(image,blade,weapon,offset=(x0,y0),index_start=1)
-    # Subtractive overlay needs its independent quarter-alpha mask; never
-    # apply transparency to the actual blade.
     paste(image,blade,weapon,offset=(x0,y0),index_start=6,alpha=64)
     return image
 
@@ -179,6 +180,21 @@ def contact_sheet(gfx,records,row,frames):
     return pic
 
 
+def direction_coverage(gfx, records, row, poses):
+    """Count replacement and emergency fallback for every visible script pose."""
+    counts = {}
+    for direction, frame, flags in poses:
+        if not gfx.weapon_pieces(row, frame, flags):
+            continue
+        row_counts = counts.setdefault(direction, [0, 0, 0, 0])
+        row_counts[0] += 1
+        for i, kind in enumerate((M.KIND_TANTO, M.KIND_DAI, M.KIND_NATIVE), 1):
+            row_counts[i] += (kind, row, frame) in records
+    if "side" in counts:
+        counts["left (mirrored side)"] = counts["side"][:]
+    return counts
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("rom",help="original local Turbo ROM")
@@ -186,19 +202,20 @@ def main():
     parser.add_argument("png",help="output contact-sheet PNG")
     parser.add_argument("--row",type=int,default=14,help="sword row (9..17)")
     parser.add_argument("--max-frames",type=int,default=10)
+    parser.add_argument("--direction",choices=("up","down","side"),default="side")
     args=parser.parse_args()
     if args.row not in M.SWORD_ROWS:parser.error("row must be 9..17")
     if args.max_frames<1 or args.max_frames>MAX_COLS:parser.error("max-frames must be 1..12")
     gfx=H.HeroGfx.load(args.rom)
     records=unpack(Path(args.mask).read_bytes())
-    # Preview only observed native attack animation frames, not meaningless
-    # guessed frame numbers or poses with no native weapon pieces.
-    frames=[]
-    for animation in (0,2):
-        for flags,frame,_ in gfx.script("sword",animation,"side"):
-            if frame not in [f for f,_ in frames] and (animation==2 or
-                    gfx.weapon_pieces(args.row,frame,flags)):
-                frames.append((frame,flags))
+    # Include both modified and rejected native poses in the small sheet.
+    poses=M.sword_poses(gfx)
+    frames=list(dict.fromkeys((frame,flags) for direction,frame,flags in poses
+                              if direction==args.direction and gfx.weapon_pieces(args.row,frame,flags)))
+    covered=[pair for pair in frames if (M.KIND_TANTO,args.row,pair[0]) in records]
+    rejected=[pair for pair in frames if (M.KIND_TANTO,args.row,pair[0]) not in records]
+    if covered and rejected and args.max_frames>1:
+        frames=[covered[0],rejected[0],*covered[1:],*rejected[1:]]
     frames=frames[:args.max_frames]
     pic=contact_sheet(gfx,records,args.row,frames)
     png(args.png,pic)
@@ -207,12 +224,16 @@ def main():
            "Red marker: mask unavailable, show native sword; no red marker: masked replacement",
            "Only the weapon silhouette is replaced. Hero body stays native.",
            ""]
-    for frame,_ in frames:
+    for frame,flags in frames:
         a=(M.KIND_TANTO,args.row,frame) in records
         b=(M.KIND_DAI,args.row,frame) in records
         k=(M.KIND_KUSARIGAMA,args.row,frame) in records
-        lines.append(f"frame {frame}: Tanto {'yes' if a else 'native fallback'}, Dai {'yes' if b else 'native fallback'}, Kusarigama {'yes' if k else 'native fallback'}")
+        lines.append(f"frame {frame}, flags {flags:#04x}: Tanto {'yes' if a else 'native fallback'}, Dai {'yes' if b else 'native fallback'}, Kusarigama {'yes' if k else 'native fallback'}")
     lines.append("")
+    for direction, (total, tanto, dai, native) in direction_coverage(
+            gfx, records, args.row, poses).items():
+        lines.append(f"{direction}: {total} visible poses, Tanto {tanto}, Dai {dai}, "
+                     f"native fallback {native}")
     lines.append(f"Pack entries: {len(records)}; previewed frames: {len(frames)}")
     Path(str(args.png)+".txt").write_text("\n".join(lines)+"\n")
     print("\n".join(lines))

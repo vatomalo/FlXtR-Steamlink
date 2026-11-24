@@ -340,23 +340,41 @@ int main(void){
         prog_enter(0x10);
         assert(!prog.owner&&disciplines.level[2]==1);
         disciplines.level[0]=3;disciplines.experience[0]=20;
+        disciplines.party[0]=SOM_DISC_BUSHIDO;
+        assert(som_disc_award_member(&disciplines,1,SOM_DISC_BUSHIDO,100));
+        assert(som_disc_award_member(&disciplines,2,SOM_DISC_MAGIC,17));
         assert(!som_prog_write());
         /* The game saves to slot 1: a record for that exact block. */
         prog_game_saves(0,0x10,1);
         assert(prog.owner==som_prog_slot_fingerprint(mocked_sram,0)&&prog.slot==0);
         const uint64_t slot1=prog.owner;
         SomProgress check;assert(som_prog_read(slot1,&check)==SOM_PROG_OK&&check.level[0]==3);
+        /* Older v2 records preserve Boy and use the configured party choices. */
+        SomProgress legacy=check;
+        legacy.party_present=0;
+        char legacy_text[SOM_PROG_TEXT_MAX];
+        const size_t legacy_len=som_prog_format(&legacy,legacy_text,sizeof(legacy_text));
+        assert(legacy_len&&som_prog_parse(legacy_text,legacy_len,&legacy)==SOM_PROG_OK);
+        SomDisciplines migrated;som_disc_init(&migrated);
+        som_prog_to_disc(&legacy,&migrated);
+        assert(migrated.level[0]==3&&migrated.experience[0]==20);
+        assert(migrated.party[0]==SOM_GIRL_DEFAULT_CLASS&&migrated.party_level[0][0]==1);
         /* Another playthrough in slot 2: no inherited XP. */
         for(unsigned i=4;i<0x400;i++)mocked_sram[0x400+i]=(uint8_t)(0x80+i);
         frame_number+=30;som_prog_frame();                   /* a slot changed, not ours */
         assert(prog.owner==slot1);
         prog_enter(0x80+4);
         assert(prog.slot==1&&prog.owner!=slot1&&disciplines.level[0]==1);
+        assert(som_disc_member_level(&disciplines,1,SOM_DISC_BUSHIDO)==1);
+        assert(disciplines.party_xp[1][SOM_DISC_MAGIC]==0);
         disciplines.level[1]=4;
         prog_game_saves(1,0x80+4,2);
         /* Back to slot 1: its own progression, not slot 2's. */
         prog_enter(0x10);
         assert(prog.owner==slot1&&disciplines.level[0]==3&&disciplines.level[1]==1);
+        assert(disciplines.party[0]==SOM_DISC_BUSHIDO);
+        assert(som_disc_member_level(&disciplines,1,SOM_DISC_BUSHIDO)==2);
+        assert(disciplines.party_xp[1][SOM_DISC_MAGIC]==17);
         /* A damaged record falls back to the previous generation. */
         disciplines.level[0]=5;assert(som_prog_write());       /* now .prev holds level 3 */
         char path[300];som_prog_path(slot1,"",path,sizeof(path));
@@ -376,7 +394,9 @@ int main(void){
         disciplines.level[3]=7;fake_core_state[0]=42;
         assert(retro_serialize(state,sizeof(state)));
         disciplines.level[3]=1;fake_core_state[0]=0;
+        disciplines.party[0]=SOM_GIRL_DEFAULT_CLASS;disciplines.party_xp[1][SOM_DISC_MAGIC]=0;
         assert(retro_unserialize(state,sizeof(state))&&fake_core_state[0]==42&&disciplines.level[3]==7);
+        assert(disciplines.party[0]==SOM_DISC_BUSHIDO&&disciplines.party_xp[1][SOM_DISC_MAGIC]==17);
         assert(retro_unserialize(state,16)&&disciplines.level[3]==7);        /* old state */
         state[16+20]^=1;assert(retro_unserialize(state,sizeof(state)));      /* bad trailer */
         assert(disciplines.level[3]==7);
@@ -1428,7 +1448,7 @@ int main(void){
             const unsigned keep_boy_weapon=hero[0x1E4];
             const int saved_verified=weapon_gfx_verified;
             memcpy(girl,hero,sizeof(saved_girl));
-            girl[0x182]=girl[0x184]=50;
+            girl[0x180]=0x81;girl[0x182]=girl[0x184]=50;
             SomWeaponModel girl_model;
             assert(som_weapon_model_for(girl,girl[0x1E3],&girl_model,1u));
             ram[0xD070]=girl_model.graphics;
@@ -2110,11 +2130,13 @@ int main(void){
         {
             char mask_path[]="/tmp/flxtr-weapon-mask-test-XXXXXX";
             const int fd=mkstemp(mask_path);assert(fd>=0);
-            uint8_t pack[10+44+6];memset(pack,0,sizeof(pack));
-            memcpy(pack,"SOMWORK1",8);pack[8]=1;
+            uint8_t pack[10+2*(44+6)];memset(pack,0,sizeof(pack));
+            memcpy(pack,"SOMWORK1",8);pack[8]=2;
             pack[10]=0xD5;pack[11]=14;pack[12]=10;pack[13]=1;
             pack[14]=0x1F;                       /* mask palette #1 red */
             pack[54]=1;pack[57]=1;pack[58]=1;pack[59]=1;
+            memcpy(pack+60,pack+10,50);
+            pack[60]=0xD8;pack[62]=11;
             assert(write(fd,pack,sizeof(pack))==(ssize_t)sizeof(pack));close(fd);
             weapon_mask_file=mask_path;weapon_mask_tried=0;
             weapon_mask_on_file=mask_path;weapon_mask_on_checked=0;
@@ -2126,10 +2148,22 @@ int main(void){
             assert(weapon_tiles_hidden&&ram[0x2000]==0&&ram[0x27FF]==0);
             som_weapon_mask_pick(ram);
             assert(weapon_masked.active&&weapon_masked.entry.weapon==14u&&weapon_masked.dir==3u);
+            disciplines.selected=SOM_DISC_NINJUTSU;
+            styles.selected[SOM_DISC_NINJUTSU]=SOM_STYLE_HEAVY;
+            assert(som_weapon_mask_mode(ram,0)<0); /* Kusarigama is a whip. */
+            styles.selected[SOM_DISC_NINJUTSU]=SOM_STYLE_FAST;
+            assert(som_weapon_mask_mode(ram,0)==3);
+            styles.selected[SOM_DISC_NINJUTSU]=SOM_STYLE_BALANCED;
+            disciplines.selected=SOM_DISC_BUSHIDO;
             hero[0x026]=22;som_weapon_mask_pick(ram);
+            assert(weapon_masked.active&&weapon_masked.entry.kind==0xD8&&!weapon_mask_faulted);
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            hero[0x026]=20;som_weapon_mask_frame(ram);
+            hero[0x026]=24;som_weapon_mask_pick(ram);
             assert(!weapon_masked.active&&weapon_mask_faulted);
-            /* A later frame must restore native art and leave the mask
-             * disabled rather than repeatedly exposing a blank weapon. */
+            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            /* Older packs missing the native frame are disabled, with the
+             * original tiles already restored in the video callback. */
             som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
             styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;
@@ -2677,11 +2711,12 @@ int main(void){
             portals.count=0;hero[2]=200;hero[4]=200;hero[0x0E]=0;
             disciplines.selected=keep;
         }
-        /* The game's HUD lifted 10 px in field play: BG3 scroll (7E:0040)
+        /* The game's HUD lifted in field play: BG3 scroll (7E:0040)
          * and the portrait sprite; once only; undone for a dialog. */
         {
             uint8_t keep_oam[0x220];memcpy(keep_oam,ram+0x0800,sizeof(keep_oam));
             const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D];
+            assert(SOM_HUD_LABEL_DY>=16); /* Class starts below both native rows. */
             ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=0;ram[0x41]=0;hud_lifted=0;
             uint8_t *e=ram+0x0800;e[0]=88;e[1]=199;e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
             uint8_t *m=ram+0x0804;m[0]=60;m[1]=200;m[2]=0x40;m[3]=0x30;   /* a monster low on screen */
@@ -2691,7 +2726,11 @@ int main(void){
             assert(e[1]==199-SOM_HUD_LIFT_PX);                         /* not twice */
             ram[0xD0]=0x83;som_hud_lift(ram,0);                         /* a dialog */
             assert(ram[0x40]==0&&!hud_lifted);
-            ram[0x40]=0x30;ram[0xD0]=0;som_hud_lift(ram,0);             /* a scroll of the game's own */
+            ram[0x40]=SOM_HUD_LEGACY_LIFT_PX;ram[0xD0]=0;e[1]=199;
+            som_hud_lift(ram,0);
+            assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX);
+            hud_lifted=0;
+            ram[0x40]=0x30;som_hud_lift(ram,0);             /* a scroll of the game's own */
             assert(ram[0x40]==0x30&&!hud_lifted);
             ram[0x40]=0;ram[0xD0]=keep_d0;ram[0x7D]=keep_7d;
             memcpy(ram+0x0800,keep_oam,sizeof(keep_oam));
@@ -2765,6 +2804,7 @@ int main(void){
             memcpy(keep_girl,girl,0x200);memcpy(keep_spr,spr,0x200);
             memcpy(keep_buf,ram+0x3000,sizeof(keep_buf));
             memset(girl,0,0x200);memset(spr,0,0x200);
+            girl[0x180]=0x81;spr[0x180]=0x82;ram[0xD9]=1;ram[0xDA]=ram[0xDB]=0;
             girl[0]=spr[0]=1;girl[0x182]=spr[0x182]=40;girl[0x184]=spr[0x184]=50;
             girl[0x186]=spr[0x186]=9;
             spr[0x20]=hero[0x20];spr[0x21]=hero[0x21];spr[0x22]=hero[0x22];spr[0x23]=hero[0x23];
@@ -3461,9 +3501,9 @@ int main(void){
         const unsigned px[3]={200,220,240};
         for(unsigned who=0;who<3;who++){
             uint8_t *o=ram+0xE000+0x200*who;
-            o[0]=1;o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who==0u?30:who==2u?65:100;
+            o[0]=1;o[0x180]=(uint8_t)(0x80u+who);o[2]=(uint8_t)px[who];o[4]=200;o[0x184]=100;o[0x182]=who==0u?30:who==2u?65:100;
         }
-        uint8_t *m=ram+0xE600;m[0]=1;som_put_word(m+2,240+50);m[4]=200;        /* 50 px from the sprite */
+        uint8_t *m=ram+0xE600;m[0]=1;som_put_word(m+2,240+50);m[4]=200;m[0x182]=50; /* 50 px from the sprite */
         som_disc_init(&disciplines);familiar.slot=-1;ally_tech_ready=0;
         const unsigned long saved_frame=frame_number;frame_number=1000;
         som_ally_tech_frame(ram);
@@ -3473,6 +3513,14 @@ int main(void){
         frame_number++;som_ally_tech_frame(ram);
         assert(ram[0xE1F3]==heal&&m[0x1F1]==hurt);                /* cooldown */
         assert(ally_tech[0].en.energy[4]<som_energy_max(1));      /* her own energy paid */
+        som_ally_xp_frame(ram);
+        assert(disciplines.party_xp[0][4]==0&&disciplines.party_xp[1][3]==0);
+        ram[0xE1F3]=0;ram[0xE182]+=heal;
+        m[0x1F1]=0;m[0x182]-=hurt;
+        som_ally_xp_frame(ram);
+        assert(disciplines.party_xp[0][4]==10&&disciplines.party_xp[1][3]==10);
+        som_ally_xp_frame(ram);
+        assert(disciplines.party_xp[0][4]==10&&disciplines.experience[4]==0);
         uint8_t *focus=ram+0xE800;
         focus[0]=1;focus[0x180]=7;focus[4]=200;som_put_word(focus+2,340);
         ally_order.map=0;ally_order.slot=1;ally_order.identity=7;
@@ -3499,6 +3547,18 @@ int main(void){
         assert(!ally_tech[0].dashing);
         assert(som_bun_u16(ram+0xE202)==220+60+20);               /* the far side */
         assert(m[0x1F1]>0&&!(ram[0xE20E]&0x80));                  /* cut, seen again */
+        /* A human taking over a dash immediately gets the native controls. */
+        ally_tech_ready=0;m[0x1F1]=0;som_put_word(m+2,220+60);som_put_word(ram+0xE202,220);
+        frame_number++;som_ally_tech_frame(ram);assert(ally_tech[0].dashing);
+        ram[0xE22C]=2;
+        frame_number++;som_ally_tech_frame(ram);
+        assert(!ally_tech[0].dashing&&som_word(ram+0xE202)==220&&m[0x1F1]==0);
+        ram[0xE22C]=0;
+        ally_tech_ready=0;
+        frame_number++;som_ally_tech_frame(ram);assert(ally_tech[0].dashing);
+        ram[0xDC]++;
+        frame_number++;som_ally_tech_frame(ram);
+        assert(!ally_tech[0].dashing&&som_word(ram+0xE202)==220&&m[0x1F1]==0);
         /* Keep-back: an Archer sprite with a monster 20 px away walks off
          * 2 px a frame; not while she swings, nor while the player drives her. */
         {

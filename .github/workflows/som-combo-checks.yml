@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main
+      - feature/som-ultimate-combat-overhaul
       - feature/som-bushido-blade-masks-20261120
       - feature/som-disciplines-controls-20261114
       - fix/som-ai-brain-20261119

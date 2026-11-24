@@ -909,6 +909,25 @@ in the ring does the same. X in the editor still switches member; A closes it an
 is still open underneath (the pad is held back from the game until every button is let go).
 The overlay font gained `*` (the class mark, blank before) and `&`.
 
+The mask preview accepts `--direction up|down|side` and reports script-pose
+coverage for each direction. Left uses the mirrored side art. New private packs
+include native-frame recovery entries. If the backend advances to an uncovered
+replacement during video rendering, the proxy immediately restores the native
+effect buffer and can draw the current native pose from that entry. If the
+native pose is also unavailable, the session returns to native art and the
+already-rendered transition frame may still miss the weapon. The pack remains
+opt-in and the Katana remains native.
+
+Girl and Sprite each have their own class levels and experience. Their class
+selection and progression are included in the existing save-slot record and
+save-state trailer. Older records retain Boy's progression and start the
+companions at level 1 without changing their configured disciplines.
+
+The same opt-in pack provides shortened and extended sword profiles for
+Swordsmanship, Roguecraft and Weapon Flow, and a short Kunai profile for
+Ninjutsu. The profiles only engage when the selected style and equipped weapon
+are both swords. Kusarigama keeps its whip mechanics and the existing optional hybrid swing art. Balanced
+styles keep native art. Imported Tanto artwork is confined to Bushido.
 ## Mixed-weapon B strings (2026-11-23)
 
 Swordsmanship, Ninjutsu, Weapon Flow and Roguecraft have a B string like the monk's, played by

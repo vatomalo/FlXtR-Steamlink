@@ -122,9 +122,11 @@ typedef struct {
     uint32_t experience[SOM_DISCIPLINE_COUNT];
     uint64_t last_event[SOM_DISCIPLINE_COUNT];
     /* The companions' classes (player, 2026-11-20): party[0] the girl,
-     * party[1] the sprite. Levels are the party's, shared with the boy.
+     * party[1] the sprite. Progression is stored separately for each.
      * who: whose class the menu shows (0 boy, 1 girl, 2 sprite). */
     uint8_t party[2];
+    uint16_t party_level[2][SOM_DISCIPLINE_COUNT];
+    uint32_t party_xp[2][SOM_DISCIPLINE_COUNT];
     uint8_t who;
     /* The player's class order (2026-11-22): menu row r shows class
      * order[r], and L2+R1/L1 step through the classes in this order. The
@@ -142,6 +144,10 @@ enum {SOM_DISC_NONE, SOM_DISC_OPENED, SOM_DISC_CLOSED, SOM_DISC_SELECTED,
 static inline unsigned som_disc_member_class(const SomDisciplines *d,unsigned who){
     if(!d)return SOM_DISCIPLINE_NONE;
     return who==0u?d->selected:who<SOM_PARTY_MEMBERS?d->party[who-1u]:SOM_DISCIPLINE_NONE;
+}
+static inline unsigned som_disc_member_level(const SomDisciplines *d,unsigned who,unsigned cls){
+    if(who>=SOM_PARTY_MEMBERS||cls>=SOM_DISCIPLINE_COUNT)return 1u;
+    return who?d->party_level[who-1u][cls]:d->level[cls];
 }
 static inline unsigned som_disc_class_profile(unsigned cls){
     switch(cls){
@@ -211,9 +217,8 @@ static inline int som_hud_member_portrait(const uint8_t *ram,unsigned who,int *x
     }
     return 0;
 }
-/* The class title sits right of the portrait, under the HP numbers. */
-#define SOM_HUD_LABEL_DX 18
-#define SOM_HUD_LABEL_DY 9
+/* Leave room for the portrait and both native stat rows. */
+#define SOM_HUD_LABEL_DY 17
 /* Pixels below the hero's position (base SNES pixels) for the label top. */
 #define SOM_CLASS_LABEL_DROP_PX 3
 /* The class title, centred under the hero at base screen position
@@ -230,7 +235,7 @@ static inline void som_disc_init(SomDisciplines *d){
     memset(d,0,sizeof(*d));
     d->selected=SOM_DISCIPLINE_NONE;
     d->party[0]=SOM_GIRL_DEFAULT_CLASS;d->party[1]=SOM_SPRITE_DEFAULT_CLASS;
-    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++){d->level[i]=1u;d->order[i]=(uint8_t)i;}
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++){d->level[i]=d->party_level[0][i]=d->party_level[1][i]=1u;d->order[i]=(uint8_t)i;}
 }
 /* order[] holds every class exactly once. */
 static inline int som_disc_order_valid(const uint8_t *order){
@@ -260,6 +265,17 @@ static inline unsigned som_disc_order_step(const SomDisciplines *d,unsigned cur,
 static inline uint32_t som_disc_next_xp(unsigned level){
     return 100u+25u*(level>100u?100u:level-1u);
 }
+static inline int som_disc_add_xp(uint16_t *level,uint32_t *xp,unsigned amount){
+    if(*level>=100u)return 0;
+    if(amount>100u)amount=100u;
+    *xp+=amount;
+    while(*level<100u&&
+          *xp>=som_disc_next_xp(*level)){
+        *xp-=som_disc_next_xp(*level);
+        (*level)++;
+    }
+    return 1;
+}
 /* Verified event IDs must be stable and distinct across events.
  * A single event cannot award experience twice within a discipline. */
 static inline int som_disc_award(SomDisciplines *d,unsigned skill,unsigned amount,
@@ -267,16 +283,13 @@ static inline int som_disc_award(SomDisciplines *d,unsigned skill,unsigned amoun
     if(!d||skill>=SOM_DISCIPLINE_COUNT||!verified||!event_id||!amount||
        d->last_event[skill]==event_id)return 0;
     d->last_event[skill]=event_id;
-    if(d->level[skill]>=100u)return 0;
-    if(amount>100u)amount=100u;
-    d->experience[skill]+=amount;
-    while(d->level[skill]<100u&&
-          d->experience[skill]>=som_disc_next_xp(d->level[skill])){
-        d->experience[skill]-=som_disc_next_xp(d->level[skill]);
-        d->level[skill]++;
-    }
-    return 1;
+    return som_disc_add_xp(&d->level[skill],&d->experience[skill],amount);
 }
+static inline int som_disc_award_member(SomDisciplines *d,unsigned who,unsigned cls,unsigned amount){
+    if(!who||who>=SOM_PARTY_MEMBERS||cls>=SOM_DISCIPLINE_COUNT||!amount)return 0;
+    return som_disc_add_xp(&d->party_level[who-1u][cls],&d->party_xp[who-1u][cls],amount);
+}
+
 /* User-facing menu only. L/R changes page outside this function.
  * Y picks the cursor's class up; Up/Down then carry it through the list,
  * and Y, B or A put it down (the order is the caller's to save). */
@@ -330,7 +343,7 @@ static inline int som_disc_line(const SomDisciplines *d,unsigned line,char out[3
     const unsigned row=line-1u,i=d->order[row]%SOM_DISCIPLINE_COUNT;
     snprintf(out,33,"%c%c %-17s Lv%3u",
         d->cursor==row?(d->grab?'=':'>'):' ',som_disc_member_class(d,who)==i?'*':' ',
-        som_discipline_names[i],(unsigned)d->level[i]);
+        som_discipline_names[i],som_disc_member_level(d,who,i));
     return 1;
 }
 static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,

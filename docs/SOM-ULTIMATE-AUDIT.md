@@ -83,3 +83,8 @@ promotion on events); shared companion framework for familiar/summon/Player 2.
 **Phase F - attributes and living world.** Attribute-driven saves/resistances using the
 existing stat bytes, stamina/morale, NPC relationships and reactions on top of the
 existing schedules.
+
+The weapon renderer validates palette indices, dimensions and duplicate
+records before it hides native tiles. Verify visual fallback separately from
+tile restoration. A successful unit test of the WRAM buffer does not prove
+that every already-rendered frame has a drawable native pose.

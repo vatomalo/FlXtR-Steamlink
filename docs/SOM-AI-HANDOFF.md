@@ -216,3 +216,13 @@ rest of the run; any failure is now reported and the goal kept. Goals older than
 (`DIRECTOR_MAX_AGE`) are ignored like goals for another map. Tests:
 `tools/test_som_qwen_failures.py` (fake Ollama: good, off-allowlist, malformed, non-object,
 timeout). Not re-verified live this sprint.
+
+Native party techniques check both the actor controller binding and global
+pad assignment. A bound human-controlled character retains native inputs.
+Continuous techniques cancel when the actor is interrupted or the target
+becomes a familiar or changes identity. The observation bridge continues to
+control the Boy independently.
+
+If bounded game-over recovery times out, the bridge pauses autonomous gameplay
+until it observes a live Boy in a settled field. Other planners cannot issue
+inputs to the unresolved death menu during that pause.

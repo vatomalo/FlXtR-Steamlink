@@ -154,3 +154,17 @@ class GameOverLoadTest(unittest.TestCase):
         results = self.play(load, clock, [("field", 0, FakeScreen("field"), 1),
                                           ("event", 0, FakeScreen("event", 0x83), 120)])
         self.assertEqual(results, ["confirm"] * LOAD_MAX_PRESSES + ["stuck"])
+
+    def test_timeout_latches_until_a_verified_live_field(self):
+        from som_game_over import GameOverLoad, LOAD_WINDOW_S
+        clock = Clock()
+        load = GameOverLoad(clock)
+        self.assertEqual(load.observe(load_observation("field", 0), FakeScreen("field"))[0], "hold")
+        clock.now += LOAD_WINDOW_S + 1
+        self.assertEqual(load.observe(load_observation("field", 0), FakeScreen("field"))[0], "stuck")
+        self.assertEqual(load.observe(load_observation("field", 20), None)[0], "hold")
+        loading = load_observation("field", 20)
+        loading["tile_context"]["map_loading"] = True
+        self.assertEqual(load.observe(loading, FakeScreen("field"))[0], "hold")
+        self.assertIsNone(load.observe(load_observation("field", 20), FakeScreen("field")))
+        self.assertFalse(load.gave_up)

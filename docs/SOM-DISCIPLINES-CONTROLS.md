@@ -998,8 +998,15 @@ Orbs:** three homing orbs, one back every 54 frames, a weak spark without one.
 **Warlock, Hex Chain:** binds the nearest monster and drinks a share of the
 damage. **Summoner, Wisp:** flies out and back, may hit both ways.
 **Necromancer, Bone Spikes:** run through every monster in line. Monk (+130 %),
-Archer (+35 %), Hunter (+30 %) and Artificer (+60 %) deal a share more on
-weapon hits; the boy's attack value is 86 % as Weapon Flow and 130 % as Bushido.
+Archer (+35 %) and Artificer (+60 %) deal a share more on weapon hits; any
+hero's attack value is 86 % as Weapon Flow and 130 % as Bushido.
+
+**Vampire Hunting string:** whip from afar, silver sword up close, axe to end
+it; mid-string the whip takes over when nobody is near. Thrown weapon looks:
+the hunter's is a painted holy cross (+50 % on undead), the ninja's the ring
+menu's shuriken icon. **Execution:** a finisher kills a monster (no boss) left
+under a fifth of its HP. The Classes menu shows the marked class's weapon icons.
+A weapon mask frame without art shows the game's own for that frame only.
 
 **Whacked:** a critical hit (the game's "gets whacked!") that kills an enemy
 makes the camera punch in on it; AI menu, *Whacked camera*, turns it off.

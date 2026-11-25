@@ -2345,11 +2345,13 @@ int main(void){
             som_weapon_mask_pick(ram);
             assert(weapon_masked.active&&weapon_masked.entry.weapon==14u&&weapon_masked.dir==3u);
             hero[0x026]=22;som_weapon_mask_pick(ram);
-            assert(!weapon_masked.active&&weapon_mask_faulted);
-            /* A later frame must restore native art and leave the mask
-             * disabled rather than repeatedly exposing a blank weapon. */
+            assert(!weapon_masked.active);            /* this frame only */
+            /* The next check restores the game's art, and a frame with
+             * replacement art is masked again. */
             som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            hero[0x026]=20;som_weapon_mask_frame(ram);som_weapon_mask_pick(ram);
+            assert(weapon_tiles_hidden&&weapon_masked.active);
             styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;
             som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
@@ -2358,7 +2360,6 @@ int main(void){
             weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;weapon_mask_on_checked=0;
             free(weapon_mask_pack);weapon_mask_pack=NULL;weapon_mask_pack_size=0;
             free(weapon_mask_index);weapon_mask_index=NULL;
-            weapon_mask_faulted=0;
             disciplines.selected=keep;styles.selected[SOM_DISC_BUSHIDO]=old;
         }
         /* L2+X Whirlwind (swordsman) cuts what is around him; Volley

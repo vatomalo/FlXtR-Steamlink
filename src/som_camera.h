@@ -113,7 +113,7 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
             SomCamBox all=box;
             for(unsigned i=0;i<3u;i++){
                 const uint8_t *m=ram+0xE600u+0x200u*i;
-                if(m[0x180]<0x80u&&!(som_cam_u16(m+0x190)&0x8000u)&&som_cam_u16(m+0x182)&&
+                if(m[0x180]<0x80u&&!(som_cam_u16(m+0x190)&0x8400u)&&som_cam_u16(m+0x182)&&
                    som_cam_object(ram,0xE600u+0x200u*i,&x,&y)){som_cam_add(&all,x,y);monsters++;}
             }
             for(unsigned i=0;i<3u;i++)

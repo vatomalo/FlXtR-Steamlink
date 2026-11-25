@@ -982,3 +982,6 @@ class it grows from: Ninjutsu (Rogue), Bushido and Weapon Flow (Swordsmanship),
 Dark Arts and Summoning (Magic), Vampire Hunting and Artifice (Archery),
 Psionics (Divine Arts), Necromancy (Dark Arts). A passive works only for a
 class that hero has or has had; the girl and the sprite have passives too. Saves made before this rule keep everything.
+
+The ring's Classes menu has more pages on L1/R1: Music, then the AI menu
+(ACTIONS, COMBAT, QUEST). Its last row starts the AI.

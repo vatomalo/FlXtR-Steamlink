@@ -216,7 +216,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0};
+    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0};
 static SomDisciplines disciplines;
 /* The acting hero (2026-11-22, "write them with companions in mind"): the
  * player's moves (X class moves, L2 specials, throw, bash, Blink, portals,
@@ -390,6 +390,9 @@ static void som_string_swap(int reset);    /* ... and B string */
 static int som_class_x(uint8_t *ram);
 static int som_pad2_borrow(unsigned who);
 static void som_p2ai_switched(void);
+static int act_ai;                     /* the ring menu's AI page is open */
+static void som_gambit_result(int result);
+static int som_handle_command(const char *command);
 static int som_actor_busy(void);
 static unsigned pad2_actor=SOM_PARTY_MEMBERS,pad2_combo_actor=SOM_PARTY_MEMBERS;
 static unsigned pad2_spell_cursor,pad2_spell_class=SOM_DISCIPLINE_NONE;
@@ -1623,11 +1626,19 @@ static unsigned som_perk_bonus(unsigned who,unsigned slot,unsigned damage,const 
 /* After a hero hit lowered monster `slot` by `drop` to `hp_after`. */
 static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,unsigned hp_after){
     if(!ram||slot>2u)return;
+    /* Bonus damage we added earlier lands as a drop too: it is not a new hit
+     * to earn a bonus on (it snowballed, 2026-11-25). */
+    static unsigned owed[3];
+    static unsigned long owed_at[3];
+    if(frame_number-owed_at[slot]>90ul)owed[slot]=0;
+    const unsigned ours=owed[slot]<drop?owed[slot]:drop;
+    owed[slot]-=ours;drop-=ours;
     if(drop)perk_last_hit_damage=drop;
     uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     if(hp_after){
         const unsigned bonus=som_perk_bonus(who,slot,drop,"hit");
         if(bonus){
+            owed[slot]+=bonus;owed_at[slot]=frame_number;
             const unsigned pending=m[0x1F1]+bonus;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
         }
@@ -2015,6 +2026,52 @@ static uint16_t som_p2ai_buttons(const uint8_t *ram){
         return 0;
     }
     return out;
+}
+/* What a press in the AI menu did, from the AI's own menu or the ring's page. */
+static void som_gambit_result(int result){
+    switch(result){
+    case SOM_GAMBIT_GENRE_CHANGED:
+        som_music_genre_save();
+        fprintf(stderr,"[som-ai] MUSIC genre %s (%u)\n",
+                som_music_genre_names[gambits.music_genre],gambits.music_genre);
+        break;
+    case SOM_GAMBIT_CHANGED:
+        som_gambit_save();
+        {char text[SOM_GAMBIT_COUNT+1],combat[SOM_COMBAT_COUNT+1],
+              quest[SOM_QUEST_COUNT+1];
+         som_gambit_format(&gambits,text);som_combat_format(&gambits,combat);
+         som_quest_format(&gambits,quest);
+         fprintf(stderr,"[som-ai] GAMBITS %s COMBAT %s QUEST %s\n",text,combat,quest);}
+        break;
+    case SOM_GAMBIT_BRAIN_CHANGED:
+        som_gambit_save();
+        fprintf(stderr,"[som-ai] BRAIN model %s, critic %s\n",
+                som_ai_model_names[gambits.ai_model],gambits.critic?"on":"off");
+        break;
+    case SOM_GAMBIT_TEST_SWITCH:
+        som_infinite_mp_changed();
+        break;
+    case SOM_GAMBIT_DEBUG_CHANGED:
+        som_gambit_write(debug_messages_file,gambits.debug_messages?"1":"0");
+        som_overlay_say(&overlay,gambits.debug_messages?"AI debug on|bubbles shown":
+                        "AI debug off|bubbles hidden",SOM_MESSAGE_FRAMES);
+        break;
+    case SOM_GAMBIT_P2_CHANGED:som_p2ai_switched();break;
+    case SOM_GAMBIT_EXIT:
+        if(act_ai){                        /* from the ring menu: the AI starts */
+            act_ai=0;gambits.open=0;gambits.resting=0;
+            som_manual_disciplines=0;disciplines.open=0;menu_hold_until_release=1;
+            som_handle_command("ai_on");
+            break;
+        }
+        ally_order.until=0;
+        ring_ai_enabled=0;unlink(ring_ai_file);
+        som_overlay_say(&overlay,"You play|hold L3 1s: AI plays",
+                        SOM_MESSAGE_FRAMES);
+        fprintf(stderr,"[som-ai] GAMBIT EXIT: controls back to the player\n");
+        break;
+    default:break;
+    }
 }
 static void som_pad2_poll(void){
     const uint16_t previous=pad2_raw,human=som_pad2_buttons();
@@ -2839,16 +2896,25 @@ static void som_input_poll(void){
             else if(menu_pressed&down)
                 disciplines.cursor=(disciplines.cursor+1u)%SOM_DISCIPLINE_COUNT;
         }else if(som_manual_disciplines&&!jukebox.open&&!disciplines.grab&&
-                 (menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT))){
+                 !act_ai&&(menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT))){
             class_guide_open=1;
         }else if(som_manual_disciplines && menu_pressed &&
                  (menu_pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R)))&&
                  !jukebox.typing){
-            /* L1/R1: CLASSES <-> MUSIC. */
+            /* L1/R1: CLASSES, MUSIC, AI ACTIONS, COMBAT, QUEST. */
             if(!jukebox_ready){som_juke_init(&jukebox);jukebox_ready=1;}
-            jukebox.open=!jukebox.open;
-            disciplines.open=!jukebox.open;
+            const unsigned pages=2u+SOM_GAMBIT_PAGES;
+            unsigned page=act_ai?2u+gambits.page:jukebox.open?1u:0u;
+            page=(page+((menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R))?1u:pages-1u))%pages;
+            disciplines.open=page==0u;jukebox.open=page==1u;act_ai=page>=2u;
+            gambits.open=gambits.resting=act_ai;
+            if(act_ai){gambits.page=page-2u;gambits.cursor=0;}
             if(jukebox.open)som_juke_refresh();
+        }else if(som_manual_disciplines&&menu_pressed&&act_ai){
+            const int result=som_gambit_press(&gambits,menu_pressed);
+            if(result==SOM_GAMBIT_CLOSED){
+                act_ai=0;gambits.resting=0;som_manual_disciplines=0;disciplines.open=0;
+            }else som_gambit_result(result);
         }else if(som_manual_disciplines && menu_pressed && jukebox.open){
             char request[160];
             if(!jukebox.typing&&(menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A))){
@@ -2873,6 +2939,7 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] CLASS ORDER saved\n");
             }
         }
+        if(act_ai&&!som_manual_disciplines){act_ai=0;gambits.open=0;gambits.resting=0;}
         if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
         {   /* A closed menu: hold the pad back from the game until let go. */
             if(menu_was_open&&!som_manual_disciplines)menu_hold_until_release=1;
@@ -2935,43 +3002,7 @@ static void som_input_poll(void){
             if(gambit_buttons&tabs){
                 som_gambit_turn_page(&gambits,(gambit_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R))!=0);
                 gambits.open=1;
-            }else switch(som_gambit_press(&gambits,gambit_buttons)){
-            case SOM_GAMBIT_GENRE_CHANGED:
-                som_music_genre_save();
-                fprintf(stderr,"[som-ai] MUSIC genre %s (%u)\n",
-                        som_music_genre_names[gambits.music_genre],gambits.music_genre);
-                break;
-            case SOM_GAMBIT_CHANGED:
-                som_gambit_save();
-                {char text[SOM_GAMBIT_COUNT+1],combat[SOM_COMBAT_COUNT+1],
-                      quest[SOM_QUEST_COUNT+1];
-                 som_gambit_format(&gambits,text);som_combat_format(&gambits,combat);
-                 som_quest_format(&gambits,quest);
-                 fprintf(stderr,"[som-ai] GAMBITS %s COMBAT %s QUEST %s\n",text,combat,quest);}
-                break;
-            case SOM_GAMBIT_BRAIN_CHANGED:
-                som_gambit_save();
-                fprintf(stderr,"[som-ai] BRAIN model %s, critic %s\n",
-                        som_ai_model_names[gambits.ai_model],gambits.critic?"on":"off");
-                break;
-            case SOM_GAMBIT_TEST_SWITCH:
-                som_infinite_mp_changed();
-                break;
-            case SOM_GAMBIT_DEBUG_CHANGED:
-                som_gambit_write(debug_messages_file,gambits.debug_messages?"1":"0");
-                som_overlay_say(&overlay,gambits.debug_messages?"AI debug on|bubbles shown":
-                                "AI debug off|bubbles hidden",SOM_MESSAGE_FRAMES);
-                break;
-            case SOM_GAMBIT_P2_CHANGED:som_p2ai_switched();break;
-            case SOM_GAMBIT_EXIT:
-                ally_order.until=0;
-                ring_ai_enabled=0;unlink(ring_ai_file);
-                som_overlay_say(&overlay,"You play|hold L3 1s: AI plays",
-                                SOM_MESSAGE_FRAMES);
-                fprintf(stderr,"[som-ai] GAMBIT EXIT: controls back to the player\n");
-                break;
-            default:break;
-            }
+            }else som_gambit_result(som_gambit_press(&gambits,gambit_buttons));
         }
         if(autonomous_mode && current && !som_manual_disciplines){
             autonomous_mode=0;armed=0;cancelled=1;
@@ -8421,7 +8452,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         (void)som_lock_marker(&lock_x,&lock_y);
         som_lock_swap(0);(void)som_lock_marker(&lock2_x,&lock2_y);som_lock_swap(0);
     }
-    const int draw_classes=som_manual_disciplines&&!jukebox.open&&
+    const int draw_classes=som_manual_disciplines&&!jukebox.open&&!act_ai&&
         (height==224u||height==448u)&&(width==256u||width==512u);
     const uint8_t *ring_owner_ram=som_live_wram();
     const uint8_t *cam_ram=NULL,*cam_vram=NULL;
@@ -8608,7 +8639,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         overlay.frames_left--;
     }
     if(menu){
-        if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
+        if(act_ai)som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
+        else if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
         else if(class_guide_open)
             som_class_guide_draw(overlay_frame,width,height,pitch);
         else if(som_manual_disciplines)
@@ -9489,7 +9521,7 @@ static int som_class_x_raw(uint8_t *ram){
         int best=-1;long best_d=0;
         for(unsigned slot=0;slot<3u;slot++){
             const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
-            if(!som_bun_monster_alive(m)||m[0x180]>=0x57u)continue;     /* no bosses */
+            if((int)slot==familiar.slot||!som_bun_monster_alive(m)||m[0x180]>=0x57u)continue;   /* no bosses */
             const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
             if(dist<=SOM_MIND_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
         }

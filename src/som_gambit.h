@@ -107,6 +107,7 @@ typedef struct {
     int critic;           /* the critic model judges and coaches the play */
     int debug_messages;   /* AI status/debug overlays and speech bubbles */
     int player2;          /* the AI plays player 2, saved */
+    int resting;          /* opened from the ring while the player plays */
 } SomGambits;
 
 enum { SOM_GAMBIT_NONE, SOM_GAMBIT_OPENED, SOM_GAMBIT_CLOSED,
@@ -309,7 +310,7 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
         if (item > count) return 0;
         const char *mark = g->cursor == item ? ">" : " ";
         if (item == count) {
-            snprintf(out, 33, "%s Exit gambits: you play", mark);
+            snprintf(out, 33, "%s %s", mark, g->resting ? "Start AI: it plays" : "Exit gambits: you play");
             return 1;
         }
         char bar[SOM_GAMBIT_MAX_WEIGHT + 1];
@@ -352,7 +353,7 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
         return 1;
     }
     if (item == SOM_GAMBIT_EXIT_ITEM) {
-        snprintf(out, 33, "%s Exit gambits: you play", mark);
+        snprintf(out, 33, "%s %s", mark, g->resting ? "Start AI: it plays" : "Exit gambits: you play");
         return 1;
     }
     char bar[SOM_GAMBIT_MAX_WEIGHT + 1];

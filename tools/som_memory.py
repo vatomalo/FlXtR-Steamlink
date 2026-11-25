@@ -361,7 +361,11 @@ class WRAM:
         # exactly 1, identity +180 is a monster (< 0x80), and +191 bit 7 is
         # clear. HP plausibility is reported separately, not used to invent
         # occupancy.
-        targetable = active_byte == 1 and identity < 0x80 and alive
+        # Status 0x0400: no hit resolves. The proxy keeps it on the hero's
+        # familiar (src/som_familiar.h) in whatever slot that has; bosses
+        # (0x57 and up) keep their own use of it.
+        familiar = active_byte == 1 and identity < 0x57 and bool(status & 0x0400)
+        targetable = active_byte == 1 and identity < 0x80 and alive and not familiar
         return {
             "slot": index + 1,
             "active_byte": active_byte,
@@ -376,6 +380,7 @@ class WRAM:
             "status": status,
             "alive": alive,
             "active": targetable,
+            "familiar": familiar,
         }
 
     def inventory(self):

@@ -211,6 +211,23 @@ int main(void){
     mocked_buttons=0;som_input_poll();
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
     assert(disciplines.selected==1);
+    {   /* R1: Music, then the three AI pages, then back to Classes */
+        const uint16_t r1=1u<<RETRO_DEVICE_ID_JOYPAD_R,l1=1u<<RETRO_DEVICE_ID_JOYPAD_L;
+        for(unsigned k=0;k<5u;k++){
+            mocked_buttons=0;som_input_poll();mocked_buttons=r1;som_input_poll();
+            assert(som_manual_disciplines&&jukebox.open==(k==0u)&&act_ai==(k>=1u&&k<4u)&&disciplines.open==(k==4u));
+            if(act_ai)assert(gambits.open&&gambits.resting&&gambits.page==k-1u);
+            else assert(!gambits.open);
+        }
+        mocked_buttons=0;som_input_poll();mocked_buttons=l1;som_input_poll();
+        assert(act_ai&&gambits.page==SOM_PAGE_QUEST);
+        char row[33];assert(som_gambit_line(&gambits,SOM_QUEST_COUNT+1u,row)&&strstr(row,"Start AI"));
+        for(unsigned k=0;k<2u;k++){mocked_buttons=0;som_input_poll();mocked_buttons=l1;som_input_poll();}
+        assert(act_ai&&gambits.page==SOM_PAGE_ACTIONS&&!ring_ai_enabled);
+        for(unsigned k=0;k<2u;k++){mocked_buttons=0;som_input_poll();mocked_buttons=l1;som_input_poll();}
+        assert(!act_ai&&disciplines.open&&!jukebox.open&&!gambits.open&&!gambits.resting);
+        assert(disciplines.selected==1);
+    }
     mocked_buttons=0;som_input_poll();
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
     assert(!som_manual_disciplines&&!disciplines.open);
@@ -1157,7 +1174,7 @@ int main(void){
     /* Gambit menu text and drawing. */
     {
         SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
-            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0};
+            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         /* Quest page: two weights + exit, changed with Right, saved as digits. */

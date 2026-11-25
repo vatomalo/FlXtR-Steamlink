@@ -1193,6 +1193,9 @@ static const char *weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;
 #define SOM_WEAPON_MASK_CUSTOM_FILE "/home/apps/retroarch/cores/experimental/som_weapon_masks_custom.bin"
 #define SOM_WEAPON_MASK_OFF_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_masks_off"
 static int weapon_mask_generated;
+static int som_duel_foe(const uint8_t *ram,unsigned who);
+static int som_duel_hit(uint8_t *ram,unsigned who,unsigned damage);
+static int som_duel_cast(uint8_t *ram,unsigned who,unsigned spell,const uint8_t *row);
 static int arena_enabled,arena_back=-1,arena_pending;
 static unsigned arena_door,arena_rope;
 static unsigned long arena_since,arena_at;
@@ -4014,6 +4017,13 @@ static int som_class_attack(uint8_t *ram,unsigned who,unsigned cls,unsigned map)
     hero[0x1C]=0;hero[0x11]=3;hero[0x30]=0xFF;
     if(hero[0x1ED]<46u)hero[0x1ED]=46u;
     no_jab_until[who]=frame_number+20ul;       /* the fist's hit box outlives the swing */
+    const int foe=cls==SOM_DISC_CLERIC||cls==7u||cls==5u?som_duel_foe(ram,who):-1;
+    if(foe>=0){                                      /* a duel: these three reach, not throw */
+        const uint8_t *o=ram+0xE000u+0x200u*(unsigned)foe;
+        if(labs((long)som_word(o+2)-(long)som_word(hero+2))+
+           labs((long)som_word(o+4)-(long)som_word(hero+4))<=48)
+            som_duel_hit(ram,who,som_mage_bolt_damage(hero,cls)/2u);
+    }
     if(cls==SOM_DISC_CLERIC)som_cleric_touch(ram,who,map);
     else if(cls==7u)som_dancer_ribbon(ram,who,map);
     else if(cls==5u)som_warlock_chain(ram,who,map);
@@ -4140,7 +4150,20 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
         SomBolt *b=&mage_bolts[i];
         if(!b->active)continue;
         if(!field){b->active=0;continue;}
+        const int foe=b->burst||b->kind>=SOM_BOLT_RIBBON?-1:som_duel_foe(ram,b->who);
         const int slot=som_bolt_step(b,ram,map,familiar.slot,frame_number);
+        if(foe>=0&&b->active&&!b->burst){            /* a duel: the other player's hero */
+            const uint8_t *o=ram+0xE000u+0x200u*(unsigned)foe;
+            const int ex=(int)som_word(o+2)-b->x,ey=(int)som_word(o+4)-b->y;
+            if(b->kind==SOM_BOLT_ORB&&abs(ex)+abs(ey)<=SOM_ORB_SEEK){
+                b->x+=ex>4?4:ex<-4?-4:ex;b->y+=ey>4?4:ey<-4?-4:ey;
+            }
+            if(abs(ex)<=SOM_BOLT_HIT_X+(b->big?6:0)&&abs(ey)<=SOM_BOLT_HIT_Y+(b->big?6:0)&&!(b->hits&8u)){
+                b->hits|=8u;
+                if(b->kind!=SOM_BOLT_SPIKE&&b->kind!=SOM_BOLT_WISP)b->burst=frame_number;
+                som_duel_hit(ram,b->who,b->damage/2u);
+            }
+        }
         if(slot>=0){
             const uint8_t *m=ram+SOM_BOLT_MONSTER_BASE+SOM_BOLT_OBJECT*(unsigned)slot;
             monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=b->who%SOM_PARTY_MEMBERS;
@@ -4203,6 +4226,7 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
     const int hostile=kind==0x81u;
     char message[64];
     const unsigned cost=row[15];
+    if(hostile&&som_duel_foe(ram,who)>=0)return som_duel_cast(ram,who,spell,row);
     if(hero[0x186]<cost){
         snprintf(message,sizeof(message),"^%s: not enough MP|%u/%u",
                  som_spell_name(spell),(unsigned)hero[0x186],cost);
@@ -8787,10 +8811,78 @@ static void som_arena_waves(uint8_t *ram,int bosses){
     else{arena_phase=0;arena_at=frame_number+(bosses?600ul:300ul);}
 }
 /* Player 1's hero against player 2's, best of three; nobody can die. */
-static void som_arena_duel(uint8_t *ram){
-    const unsigned pair[2]={som_pad1_member_in(ram),som_pad2_member(ram)};
+static int som_duel_pair(const uint8_t *ram,unsigned pair[2]){
+    pair[0]=som_pad1_member_in(ram);pair[1]=som_pad2_member(ram);
+    return pair[1]<SOM_PARTY_MEMBERS&&pair[0]!=pair[1];
+}
+/* The hero `who` fights in a running round, else -1. */
+static int som_duel_foe(const uint8_t *ram,unsigned who){
+    unsigned pair[2];
+    if(!ram||arena_mode!=SOM_ARENA_DUEL||arena_phase!=2||!ram[0xCF00u+SOM_ARENA_KEEP]||
+       (som_word(ram+0xDC)&0x1FFu)!=SOM_ARENA_MAP||!som_duel_pair(ram,pair))return -1;
+    return who==pair[0]?(int)pair[1]:who==pair[1]?(int)pair[0]:-1;
+}
+/* `who` hits the other: 0 = he was still reeling or dodging. */
+static int som_duel_hit(uint8_t *ram,unsigned who,unsigned damage){
+    unsigned pair[2];
+    const int foe=som_duel_foe(ram,who);
+    if(foe<0||!som_duel_pair(ram,pair))return 0;
+    const unsigned i=who==pair[0]?0u:1u;
+    uint8_t *b=ram+0xE000u+0x200u*(unsigned)foe;
+    if(frame_number<arena_hurt[1u-i]||(evade_active&&(unsigned)foe==som_actor))return 0;
+    if(som_guard_up(ram,(unsigned)foe))damage=(damage+1u)/2u;
+    if(damage<1u)damage=1u;
+    const unsigned hp=som_word(b+0x182);
+    arena_hurt[1u-i]=frame_number+18ul;
+    fprintf(stderr,"[som-ai] ARENA duel: player %u hits for %u (%u HP)\n",i+1u,damage,hp);
+    if(hp>damage){
+        som_queue_damage(b,damage);                  /* the game's own number */
+        return 1;
+    }
     char text[64];
-    if(pair[1]>=SOM_PARTY_MEMBERS||pair[0]==pair[1]){
+    som_put_word(b+0x182,1u);
+    b[0x1F1]=b[0x1F2]=0;
+    arena_wins[i]++;
+    if(arena_wins[i]>=2u){
+        snprintf(text,sizeof(text),"Player %u wins|%u to %u",i+1u,arena_wins[i],arena_wins[1u-i]);
+        arena_phase=3;arena_at=frame_number+600ul;
+        som_arena_heal(ram,100u);
+    }else{
+        snprintf(text,sizeof(text),"Player %u takes the round",i+1u);
+        arena_phase=0;arena_at=frame_number+240ul;
+    }
+    memset(mage_bolts,0,sizeof(mage_bolts));
+    som_arena_say(text);
+    return 1;
+}
+/* An attack spell in a duel: its MP, and a homing ball of its element. */
+static int som_duel_cast(uint8_t *ram,unsigned who,unsigned spell,const uint8_t *row){
+    uint8_t *hero=ram+0xE000u+0x200u*who;
+    const unsigned element=som_spell_element(spell),nibbles=hero[0x1C4u+element/2u];
+    const unsigned level=element%2u?(nibbles&15u):(nibbles>>4);
+    /* A hero without MP of his own (the boy) casts by the cooldown alone. */
+    static unsigned long ready[SOM_PARTY_MEMBERS];
+    const unsigned cost=hero[0x187]?row[15]:0u;
+    if(frame_number<ready[who]&&ready[who]-frame_number<=90ul)return 0;
+    if(hero[0x186]<cost){
+        som_arena_say("Not enough MP");
+        return 0;
+    }
+    const unsigned damage=som_mage_bolt_damage(hero,som_disc_member_class(&disciplines,who))+
+        row[10]/2u+4u*level;
+    const int slot=som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),(int)som_word(hero+4),
+                                 hero[0x10],damage,som_word(ram+0xDC)&0x1FFu,frame_number);
+    if(slot<=0)return 0;
+    mage_bolts[slot-1].kind=SOM_BOLT_ORB;mage_bolts[slot-1].big=1;
+    hero[0x186]=(uint8_t)(hero[0x186]-cost);
+    ready[who]=frame_number+90ul;
+    fprintf(stderr,"[som-ai] ARENA duel: %s casts %s (%u)\n",som_party_names[who],som_spell_name(spell),damage);
+    return 1;
+}
+static void som_arena_duel(uint8_t *ram){
+    unsigned pair[2];
+    char text[64];
+    if(!som_duel_pair(ram,pair)){
         if(arena_phase!=3)som_arena_say("A duel needs player 2|press Start on pad 2");
         arena_phase=3;arena_at=0;return;
     }
@@ -8803,6 +8895,7 @@ static void som_arena_duel(uint8_t *ram){
         for(unsigned i=0;i<2u;i++){
             uint8_t *o=ram+0xE000u+0x200u*pair[i];
             som_put_word(o+0x182,som_word(o+0x184));
+            o[0x186]=o[0x187];                       /* and the MP for spells */
             arena_struck[i]=0;arena_hurt[i]=0;
         }
         snprintf(text,sizeof(text),"Round %u: fight!",arena_wins[0]+arena_wins[1]+1u);
@@ -8811,34 +8904,27 @@ static void som_arena_duel(uint8_t *ram){
         return;
     }
     if(arena_phase!=2)return;
-    for(unsigned i=0;i<2u;i++){
+    for(unsigned i=0;i<2u&&arena_phase==2;i++){
         uint8_t *a=ram+0xE000u+0x200u*pair[i],*b=ram+0xE000u+0x200u*pair[1u-i];
         if(!a[0x1C])arena_struck[i]=0;               /* one hit per swing */
         const int hit=som_arena_hit(ram,pair[i],pair[1u-i]);
-        if(!hit||(hit==2&&arena_struck[i])||frame_number<arena_hurt[1u-i]||evade_active)continue;
-        if(hit==2)arena_struck[i]=1;
-        unsigned damage=som_arena_damage(a,b);
-        if(som_guard_up(ram,pair[1u-i]))damage=(damage+1u)/2u;
-        const unsigned hp=som_word(b+0x182);
-        arena_hurt[1u-i]=frame_number+18ul;
-        fprintf(stderr,"[som-ai] ARENA duel: player %u hits for %u (%u HP)\n",i+1u,damage,hp);
-        if(hp>damage){
-            b[0x1F1]=(uint8_t)(damage>0xFFu?0xFFu:damage);   /* the game's own number */
-            continue;
-        }
-        som_put_word(b+0x182,1u);
-        arena_wins[i]++;
-        if(arena_wins[i]>=2u){
-            snprintf(text,sizeof(text),"Player %u wins|%u to %u",i+1u,arena_wins[i],arena_wins[1u-i]);
-            arena_phase=3;arena_at=frame_number+600ul;
-            som_arena_heal(ram,100u);
-        }else{
-            snprintf(text,sizeof(text),"Player %u takes the round",i+1u);
-            arena_phase=0;arena_at=frame_number+240ul;
-        }
-        som_arena_say(text);
-        return;
+        if(!hit||(hit==2&&arena_struck[i]))continue;
+        if(som_duel_hit(ram,pair[i],som_arena_damage(a,b))&&hit==2)arena_struck[i]=1;
     }
+}
+/* All three down among waves or bosses: back to Watts, no game over. */
+static void som_arena_defeat(uint8_t *ram){
+    if(!ram||!ram[0xCF00u+SOM_ARENA_KEEP]||arena_pending==2||ram[0xE000]!=1||
+       (som_word(ram+0xDC)&0x1FFu)!=SOM_ARENA_MAP||!som_arena_all_down(ram))return;
+    som_arena_clear_list(ram);
+    for(unsigned k=0;k<3u;k++){
+        uint8_t *m=ram+0xE600u+0x200u*k;
+        if(m[0]==1&&m[0x180]<0x57u)m[0]=0x80;
+    }
+    if(!som_arena_carry_home(ram,arena_back>=0?(unsigned)arena_back:SOM_ARENA_HOME))return;
+    arena_pending=2;arena_phase=3;
+    som_arena_say("Beaten!|Watts carries you out");
+    fprintf(stderr,"[som-ai] ARENA beaten: home by transition %03X\n",arena_back>=0?(unsigned)arena_back:SOM_ARENA_HOME);
 }
 /* Watts' arena (som_arena.h): the trip there on a yes, and back when the lead
  * hero stands in the gate and Down is held. */
@@ -9982,6 +10068,7 @@ RETRO_API void retro_run(void){
         som_bash_tick();
         if(fuma.active)som_fuma_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(blink_active)som_blink_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        if(arena_enabled)som_arena_defeat(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(arena_enabled)som_arena_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(portals.count)som_portal_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(monk_glove_raised>=0||disciplines.selected==SOM_DISC_MARTIAL_ARTS)

@@ -267,4 +267,34 @@ static inline unsigned som_arena_damage(const uint8_t *a,const uint8_t *b){
     damage/=2u;                                      /* a duel lasts a while */
     return damage<2u?2u:damage;
 }
+/* All three down in the arena: stand the party up (the game's own recovery,
+ * som-decomp cutscene-ending.md event 41E) and take it home. Overrides the
+ * game-over event in its first frame. */
+static inline int som_arena_all_down(const uint8_t *ram){
+    unsigned members=0;
+    for(unsigned who=0;who<3u;who++){
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(!(o[0x184]|o[0x185]))continue;            /* not in the party */
+        members++;
+        if(o[0x182]|o[0x183])return 0;
+    }
+    return members!=0;
+}
+static inline int som_arena_carry_home(uint8_t *ram,unsigned transition){
+    if(ram[0xE4]!=1||ram[0xE6]!=0x0F||transition>=0x400u)return 0;
+    uint8_t *s=ram+SOM_ARENA_SCRIPT;
+    unsigned n=0;
+    for(unsigned who=0;who<3u;who++)for(unsigned b=0x90u;b<=0x91u;b++){
+        s[n++]=0x39;s[n++]=(uint8_t)who;s[n++]=(uint8_t)b;s[n++]=0;
+    }
+    s[n++]=0x2F;s[n++]=0x04;s[n++]=0x2F;s[n++]=0x84;s[n++]=0x2F;s[n++]=0x44;
+    s[n++]=(uint8_t)(0x18u|transition>>8);s[n++]=(uint8_t)transition;s[n]=0;
+    for(unsigned who=0;who<3u;who++){
+        uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0x184]|o[0x185]){o[0x182]=1;o[0x183]=0;o[0x191]&=0x7Fu;o[0x1F1]=o[0x1F2]=0;}
+    }
+    ram[0xD1]=(uint8_t)SOM_ARENA_SCRIPT;ram[0xD2]=(uint8_t)(SOM_ARENA_SCRIPT>>8);ram[0xD3]=0x7E;
+    ram[0xD0]=1;
+    return 1;
+}
 #endif

@@ -40,6 +40,13 @@ int main(int argc,char **argv){
     assert(!som_arena_hit(ram,0u,1u));                      /* spent */
     a[0x198]=62;b[0x1A5]=22;assert(som_arena_damage(a,b)==25u);
     b[0x1A5]=255;assert(som_arena_damage(a,b)==6u);
+    for(unsigned k=0;k<3u;k++){ram[0xE184+0x200*k]=100;ram[0xE182+0x200*k]=0;ram[0xE183+0x200*k]=0;}
+    assert(som_arena_all_down(ram));
+    ram[0xE584]=0;ram[0xE585]=0;ram[0xE382]=1;assert(!som_arena_all_down(ram));
+    ram[0xE382]=0;assert(som_arena_all_down(ram));
+    ram[0xD0]=0x82;assert(som_arena_carry_home(ram,0xFCu)&&ram[0xD0]==1&&ram[0xE182]==1&&ram[0xE582]==0);
+    const uint8_t home[]={0x39,0,0x90,0,0x39,0,0x91,0};
+    assert(!memcmp(ram+SOM_ARENA_SCRIPT,home,sizeof(home))&&ram[SOM_ARENA_SCRIPT+30]==0x18&&ram[SOM_ARENA_SCRIPT+31]==0xFC);
     /* Another ROM is left alone. */
     uint8_t *rom=calloc(1,0x400000u);
     assert(rom&&!som_arena_patch(rom,0x400000u));

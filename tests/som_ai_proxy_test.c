@@ -2810,7 +2810,7 @@ int main(void){
             assert(som_bun_u16(hero+2)==200+26&&hero[0x010]==0x02);
             /* Facing up, right + A: drawn facing where he goes (the game's
              * cartwheel would turn him round); the facing is kept. Facing
-             * right, left + A (backward): the game's own, never drawn. */
+             * right, left + A: the same, only A alone jumps backward. */
             hero[2]=200;hero[3]=0;hero[0x010]=0x00;hero[0x0E]=0;hero[0x1E5]=0xFF;
             mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
             som_input_poll();mocked_buttons=0;som_input_poll();
@@ -2820,7 +2820,7 @@ int main(void){
             hero[2]=200;hero[3]=0;hero[0x010]=0x02;hero[0x0E]=0;hero[0x1E5]=0xFF;
             mocked_buttons=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT));
             som_input_poll();mocked_buttons=0;som_input_poll();
-            assert(evade_active&&!ukemi_draw.active);
+            assert(evade_active&&ukemi_draw.active&&ukemi_draw.dir==3u&&hop_dx==-2);
             for(unsigned f=0;f<60u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
             hero[0x1E5]=0xFF;hero[0x010]=0x02;
             /* Up/down + A: drawn with the game's down-cartwheel look, carried
@@ -2831,7 +2831,7 @@ int main(void){
                     (1u<<(sgn>0?RETRO_DEVICE_ID_JOYPAD_DOWN:RETRO_DEVICE_ID_JOYPAD_UP)));
                 som_input_poll();mocked_buttons=0;som_input_poll();
                 assert(evade_active&&!cartwheel_native&&ukemi_draw.active&&
-                       ukemi_draw.dir==SOM_UPDOWN_CART_DIR&&hop_dy==2*sgn&&hero[0x1E5]==0xFF);
+                       ukemi_draw.dir==2u&&hop_dy==2*sgn&&hero[0x1E5]==0xFF);
                 for(unsigned f=0;f<40u;f++){som_hop_step();som_ukemi_frame(ram);som_evade_tick();frame_number++;}
                 assert(!evade_active&&som_bun_u16(hero+4)==(unsigned)(200+26*sgn)&&hero[0x010]==0x02);
             }

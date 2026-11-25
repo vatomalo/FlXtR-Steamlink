@@ -42,6 +42,11 @@ UKEMI_TIMING = (2, 3, 3, 3, 3, 4)
 FORWARD_KIND_BASE = 0xC8
 FORWARD_WEAPON = 0xF9
 FORWARD_FRAMES = ((0, 65), (0, 66), (0, 67), (0xC0, 66), (0, 65))
+# The game's own back and front cartwheel (pose 0x93 facing up and down), for
+# maps where it refuses the reaction (2026-11-25). Facing 0 up, 1 down, 2 side.
+FORWARD_BY_FACING = {0: ((0, 47), (0, 42), (0, 48), (0, 42), (0, 47)),
+                     1: ((0, 49), (0, 50), (0, 50), (0, 50), (0, 49)),
+                     2: FORWARD_FRAMES}
 HEROES = ("boy", "girl", "sprite")
 TURNS = (0, 1, 2, 3, 0)         # quarter turns clockwise per step
 TICKS = 1                       # one actor tick (5 frames) per step
@@ -115,11 +120,11 @@ def somersault(gfx, hero, direction):
     return frames
 
 
-def forward_cartwheel(gfx, hero):
+def forward_cartwheel(gfx, hero, facing=2):
     """[(image, ticks)] of the game's cartwheel frames, facing right."""
     return [(gfx.render(hero, gfx.pieces(hero, None, frame, flags),
                         size=V.CELL, origin=V.ORIGIN), 1)
-            for flags, frame in FORWARD_FRAMES]
+            for flags, frame in FORWARD_BY_FACING[facing]]
 
 
 def flying_kick(gfx, hero, frame_ids):
@@ -198,13 +203,14 @@ def pack(gfx):
                 dx, dy, w, h, data = V.crop(image)
                 out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
             entries += 1
-        frames = forward_cartwheel(gfx, hero)
-        out += struct.pack("<4B20H", FORWARD_KIND_BASE + i, FORWARD_WEAPON, 2, len(frames),
-                           *colours)
-        for image, ticks in frames:
-            dx, dy, w, h, data = V.crop(image)
-            out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
-        entries += 1
+        for facing in sorted(FORWARD_BY_FACING):
+            frames = forward_cartwheel(gfx, hero, facing)
+            out += struct.pack("<4B20H", FORWARD_KIND_BASE + i, FORWARD_WEAPON, facing,
+                               len(frames), *colours)
+            for image, ticks in frames:
+                dx, dy, w, h, data = V.crop(image)
+                out += struct.pack("<BbbBB", ticks, dx, dy, w, h) + data
+            entries += 1
         for facing, frame_ids in KICK_FRAMES.items():
             frames = flying_kick(gfx, hero, frame_ids)
             out += struct.pack("<4B20H", KICK_KIND_BASE + i, KICK_WEAPON, facing, len(frames),

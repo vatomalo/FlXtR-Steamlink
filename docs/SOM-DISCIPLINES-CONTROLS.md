@@ -808,9 +808,9 @@ tier 0. (A held B keeps that press's weapon for charging.)
   animation to the collision-checked dodge and mirrors the side roll for left.
 - **Cartwheel** (Swordsmanship, Roguecraft). Forward cartwheels use drawn frames.
   Backward cartwheels can use the game's native pose on combat maps.
-- **Up/down + A** (cartwheel classes, 2026-11-21): the game's own cartwheel with the hero
-  facing up (player's choice), travelling the way pressed: down plays as the game does; up
-  has the game's motion mirrored each frame (walls stop it). Off combat maps, where the game
+- **Up/down + A** (cartwheel classes, 2026-11-25): the game's own cartwheel facing the way
+  pressed, front picture down and back picture up, its motion mirrored each frame (walls
+  stop it). A alone is always the backward jump, facing kept. Off combat maps, where the game
   refuses its cartwheel, it is drawn. **Left/right** drawn cartwheels: mirrored to the left
   only (flipped from before, player). Verified on map 130: up -23 px, down +25 px.
 

@@ -1272,7 +1272,6 @@ static int cartwheel_pack_tried;
 #define SOM_SIDE_CART_FRAMES 13u
 /* Ukemi's up/down tumble is the cannon-flight ball: drawn this size, about
  * the feet, so it rolls on the ground rather than flying (player, 2026-11-20). */
-#define SOM_UPDOWN_CART_DIR 2u     /* which mirroring matches the game's down cartwheel */
 static SomNpcWorkState ukemi_draw;
 static int ukemi_hid;
 static unsigned ukemi_map;
@@ -4859,6 +4858,7 @@ static void som_ukemi_frame(uint8_t *ram){
  * each frame's step (and any camera scroll with it) is turned the other
  * way, onto open ground only. */
 static int cart_flip_y;
+static int evade_hop_back;                 /* a string's hop away: a backward jump, facing kept */
 static unsigned cart_last_y,cart_last_cam;
 static unsigned som_hero_place(const uint8_t *hero);
 /* Walls only (terrain 3, layer switches): the full box check refused
@@ -5081,6 +5081,7 @@ static int som_evade_start_raw(uint8_t *ram){
     /* The held direction, else back from (or, forward: toward) the facing. */
     int dx=evade_dir_x,dy=evade_dir_y;
     const int orbit=som_lock_evasion_direction(&dx,&dy);
+    const int pressed_way=(dx||dy)&&!evade_hop_back;
     if(!dx&&!dy){
         const unsigned facing=hero[0x010];
         if(facing==0x02u)dx=1;else if(facing==0x82u)dx=-1;
@@ -5107,28 +5108,30 @@ static int som_evade_start_raw(uint8_t *ram){
      * and right mirrored opposite"): the game's cartwheel only travels away
      * from the facing, so it turned him round and he wheeled away with his
      * back to where he went. Only a backward cartwheel is the game's own. */
-    const int backward=(dx>0&&facing_before==0x82u)||(dx<0&&facing_before==0x02u);
+    /* Only A alone (or a string's hop back) is a backward jump; with a
+     * direction he faces where he goes (player, 2026-11-25). */
+    const int backward=!pressed_way&&((dx>0&&facing_before==0x82u)||(dx<0&&facing_before==0x02u));
     const int forward_cart=!ukemi_roll&&(dodge.cartwheel==SOM_REACT_CARTWHEEL||ukemi_class)&&dx&&!backward&&
         som_move_begin_draw(ram,dx,0,SOM_FORWARD_CART_KIND);
     /* Mirrored to the left (player, 2026-11-21: both the cartwheel classes'
      * and Ukemi's faced the wrong way the other way round). */
     if(forward_cart)ukemi_draw.dir=dx<0?3u:2u;
-    /* Up/down (cartwheel classes): always the game's own cartwheel with
-     * the hero facing up (its back-view picture, player 2026-11-21). It
-     * travels away from the facing, so down plays as it is and up has its
-     * motion mirrored after each game frame (som_cart_flip_after). Off
-     * combat maps the game refuses it: drawn instead (it was a bare slide). */
+    /* Up/down (cartwheel classes): the game's own cartwheel, its front
+     * picture going down and its back picture going up (player, 2026-11-25).
+     * It travels away from the facing, so a pressed direction has its motion
+     * mirrored after each game frame (som_cart_flip_after); A alone is the
+     * game's as it is. Off combat maps the game refuses it: drawn instead. */
     const int vertical_cart=!dx&&dy&&dodge.cartwheel==SOM_REACT_CARTWHEEL;
     int updown_native=0;
     if(vertical_cart&&!forward_cart){
-        updown_native=som_cartwheel_request(ram,0,1,SOM_REACT_CARTWHEEL);   /* faces up */
-        cart_flip_y=updown_native&&dy<0;
+        updown_native=som_cartwheel_request(ram,0,pressed_way?-dy:dy,SOM_REACT_CARTWHEEL);
+        cart_flip_y=updown_native&&pressed_way;
         cart_last_y=som_word(hero+4);cart_last_cam=som_word(ram+0xAA);
     }
     const int updown_cart=vertical_cart&&!forward_cart&&!updown_native&&
-        som_move_begin_draw(ram,1,0,SOM_FORWARD_CART_KIND);
+        (som_move_begin_draw(ram,0,pressed_way?dy:-dy,SOM_FORWARD_CART_KIND)||
+         som_move_begin_draw(ram,1,0,SOM_FORWARD_CART_KIND));      /* an older pack: the side */
     if(updown_cart){
-        ukemi_draw.dir=SOM_UPDOWN_CART_DIR;
         hop_dx=0;hop_dy=dy*(int)SOM_SIDE_CART_SPEED;
         hop_frames_left=SOM_SIDE_CART_FRAMES+(unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES);
         evade_frames=hop_frames_left+SOM_DODGE_GRACE;
@@ -5155,7 +5158,7 @@ static int som_evade_start_raw(uint8_t *ram){
                      (unsigned)som_perk(SOM_EFFECT_DODGE_FRAMES)+SOM_DODGE_GRACE;
         /* Steering it (forward + A: the cartwheel travels away from the
          * facing) turned him round: he faces the old way again after. */
-        if(hero[0x010]!=facing_before)native_restore_facing=(int)facing_before;
+        if(hero[0x010]!=facing_before&&!(vertical_cart&&pressed_way))native_restore_facing=(int)facing_before;
     }
     /* A drawn pose (tumble, forward / up-down cartwheel) plays to its end:
      * the short move is over sooner, and the hero holds still (the D-pad is
@@ -6366,7 +6369,9 @@ static int som_blade_play(uint8_t *ram,unsigned who,const SomBladeMove *m,int ca
         int ex,ey;(void)som_monk_enemy(ram,o,&ex,&ey);
         const int keep_x=evade_dir_x,keep_y=evade_dir_y,sign=m->hop==1u?-1:1;
         evade_dir_x=sign*ex;evade_dir_y=sign*ey;
+        evade_hop_back=sign<0;
         const int hopped=som_evade_start_raw(ram);
+        evade_hop_back=0;
         evade_dir_x=keep_x;evade_dir_y=keep_y;
         if(hopped){blade_hop_move=m;blade_wait_at=frame_number;return 1;}
     }

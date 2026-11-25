@@ -108,7 +108,7 @@ static inline const SomWeaponStyle *som_style_of(const SomStyles *s,unsigned cls
 static const char *const som_class_extra_weapon_names[SOM_DISCIPLINE_COUNT][2]={
     {"War Axe",""},        /* Swordsmanship */
     {"Monk Spear",""},     /* Martial Arts */
-    {"Chakram",""},        /* Ninjutsu */
+    {"Shuriken",""},        /* Ninjutsu */
     {"",""},               /* Magic: casts, no Y weapon */
     {"",""},               /* Divine Arts: casts, no Y weapon */
     {"",""},               /* Dark Arts: casts, no Y weapon */

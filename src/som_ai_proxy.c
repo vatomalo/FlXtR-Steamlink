@@ -822,7 +822,7 @@ static void som_infinite_mp_changed(void){
 static const uint8_t som_disc_weapons[SOM_DISCIPLINE_COUNT][2]={
     {1,2},   /* Swordsmanship: sword, axe */
     {0,3},   /* Martial Arts: glove, spear */
-    {1,6},   /* Ninjutsu: sword, chakram (boomerang engine slot) */
+    {1,6},   /* Ninjutsu: sword, shuriken (boomerang engine slot) */
     /* Casters hold no weapon: bare hands (the glove); B and Y cast. */
     {0,0},   /* Magic */
     {0,0},   /* Divine Arts */
@@ -5042,7 +5042,7 @@ static void som_blink_bring_party(uint8_t *ram){
     }
 }
 /* A (and the AI's "evade"): the class's plain dodge hop. A ninja with the
- * long-range weapon (chakram/boomerang) casts Kage Bunshin instead, and with clones out A swaps
+ * long-range weapon (shuriken/boomerang) casts Kage Bunshin instead, and with clones out A swaps
  * him into one. Holding A arms Kawarimi after the hop, and L2+X is
  * Shunshin (also AI commands "kawarimi" / "shunshin"). */
 static int som_evade_start_raw(uint8_t *ram){
@@ -6295,8 +6295,8 @@ static const SomBladeString som_blade_strings[]={
     {SOM_DISC_NINJUTSU,
      {{0,0,1,0,0,0,0,0,0,NULL},{0,0,0,0,0,0,0,0,0,NULL},{1,0,0,0,0,0,0,0,0,NULL},
       {0,0,3,0,0,0,0,0,0,NULL},{0,1,0,1,1,0,0,0,0,"Taijutsu"}},
-     {{6,0,0,0,1,0,0,0,0,"Chakram"},{1,4,0,2,2,0,0,0,0,"Dash Cut"},
-      {6,0,0,0,1,1,0,0,0,"Retreat Chakram"},{1,5,0,2,2,0,0,0,0,"Shadow Spin"}},
+     {{6,0,0,0,1,0,0,0,0,"Shuriken"},{1,4,0,2,2,0,0,0,0,"Dash Cut"},
+      {6,0,0,0,1,1,0,0,0,"Retreat Shuriken"},{1,5,0,2,2,0,0,0,0,"Shadow Spin"}},
      {1,7,0,3,3,0,SOM_BX_SHUNSHIN,0,0,"Shunshin Cut"},
      {0,6,0,3,3,0,SOM_BX_KAWARIMI,0,0,"Kawarimi Fist"}},
     {SOM_DISC_WEAPON_FLOW,

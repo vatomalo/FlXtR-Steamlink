@@ -46,7 +46,7 @@ static inline unsigned som_xp_weapon_discipline(unsigned weapon,unsigned selecte
         SOM_DISC_MARTIAL,  /* spear */
         SOM_DISC_SUPPORT,  /* whip */
         SOM_DISC_ARCHERY,  /* bow */
-        SOM_DISC_NINJUTSU, /* boomerang / chakram */
+        SOM_DISC_NINJUTSU, /* boomerang / shuriken */
         SOM_DISC_ARCHERY,  /* javelin */
     };
     return weapon<8u?home[weapon]:SOM_DISC_SWORD;

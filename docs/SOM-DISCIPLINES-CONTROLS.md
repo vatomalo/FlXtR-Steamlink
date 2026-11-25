@@ -282,7 +282,7 @@ be added as disciplines first. Every other discipline has no dodge roll.
   `cast_attack` from the class list, and uses `special_<n>` instead of holding for
   charged attacks.
 - **Ninjutsu jutsu on A**, by the weapon in hand: sword = **Shunshin** (native forward
-  leap pose 0x9E, 85 px, untouchable while it plays); chakram/boomerang = **Kage Bunshin**
+  leap pose 0x9E, 85 px, untouchable while it plays); shuriken/boomerang = **Kage Bunshin**
   (the back roll, then two cosmetic shadow clones 24 px either side for 6 s: copies of the
   boy's OAM entries, tiles 0x1C0-0x1D7 palette 1, written into free entries of the OAM
   shadow 7E:0800 before each frame, two frames on and two off for a ghostly look, since
@@ -376,7 +376,7 @@ stack 13 %, state_guard 7 %). Changes:
   to 14 frames (~42 px) or until a monster is within 22 px, one frame of release, then
   the game's own sword swing (B) with the run gauge `E1ED` cleared so it hits at full.
   R1/D-pad/Y/X are hidden from the game meanwhile. Refused while `E1ED` is still loading.
-- **Kage Bunshin** (ninja + chakram, A; `src/som_bunshin.h`, `src/som_bunshin_draw.h`):
+- **Kage Bunshin** (ninja + shuriken, A; `src/som_bunshin.h`, `src/som_bunshin_draw.h`):
   the old clones were written into the OAM shadow before the frame and the game rebuilt
   OAM over them, so they never showed. Clones are now positions the proxy keeps (two,
   across the facing, open ground only, 10 s), copying each hero step per axis and stopped
@@ -490,7 +490,7 @@ not scripted; the shield path is unit-tested), camera/followers after a swap, Tu
 specials above level 1. Hardware procedure (2 minutes, ask the player): load the save, walk
 to the Rabites west of Potos, as Swordsman hit one Rabite three times then hold B (expect
 "N-hit combo / level 1 finisher"); stand still until a Rabite lunges and press A just before
-it lands (expect no HP loss); as Ninja with the chakram press A and let a Rabite walk into a
+it lands (expect no HP loss); as Ninja with the shuriken press A and let a Rabite walk into a
 clone (expect "Bunshin Daibakuha!"). Then copy `/home/apps/greenlink/game.log` lines
 `[som-ai] XP|COMBO|EVADE|BUNSHIN` into this section as hardware results.
 
@@ -949,7 +949,7 @@ at any time: toward, toward + B and away, toward + B. A pause of 1.5 s starts ov
 | Class | B x4 | Heavy | Finisher: none / toward / away / sideways | toward, toward | away, toward |
 |---|---|---|---|---|---|
 | Swordsmanship | sword | Axe Cleave | Saber Wave / Thrust / Step-Back Cut / Wide Sweep | Bash Cut | Parry Cut |
-| Ninjutsu | fist, fist, sword, fist | Taijutsu | Chakram / Dash Cut / Retreat Chakram / Shadow Spin | Shunshin Cut | Kawarimi Fist |
+| Ninjutsu | fist, fist, sword, fist | Taijutsu | Shuriken / Dash Cut / Retreat Shuriken / Shadow Spin | Shunshin Cut | Kawarimi Fist |
 | Weapon Flow | sword, axe, spear, whip | Javelin Step | Axe Breaker / Javelin Leap / Whip Guard / Spear Wheel | Spear Charge | Triple Shot |
 | Roguecraft | sword | Quick Shot (bow) | Sleep Flower / Backstab / Cartwheel Shot / Side Stab | Slip Past | Smoke Hop |
 

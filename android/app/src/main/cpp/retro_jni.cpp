@@ -146,7 +146,7 @@ extern "C" JNIEXPORT jdoubleArray JNICALL Java_org_flxtr_android_RetroActivity_s
         CORE_FUNCTIONS(BUILTIN)
 #undef BUILTIN
     }else{
-        if(lib.size()>=18&&lib.compare(lib.size()-18,18,"libflxtr_som_ai.so")==0){size_t slash=lib.find_last_of('/');std::string base=(slash==std::string::npos?std::string():lib.substr(0,slash+1))+"libflxtr_snes9x.so";setenv("FLXTR_AI_BASE_CORE",base.c_str(),1);setenv("FLXTR_SOM_AI_DIRECT","1",1);}
+        if(lib.size()>=18&&lib.compare(lib.size()-18,18,"libflxtr_som_ai.so")==0){size_t slash=lib.find_last_of('/');std::string base=(slash==std::string::npos?std::string():lib.substr(0,slash+1))+"libflxtr_snes9x.so";setenv("FLXTR_AI_BASE_CORE",base.c_str(),1);setenv("FLXTR_SOM_AI_DIRECT","1",1);std::string data=saveDirectory+"/som";mkdir(data.c_str(),0700);setenv("FLXTR_SOM_DATA_DIR",data.c_str(),1);}
         coreHandle=dlopen(lib.c_str(),RTLD_NOW|RTLD_LOCAL);if(!coreHandle){__android_log_print(ANDROID_LOG_ERROR,"FlXtR-Libretro","Core load failed: %s",dlerror());return nullptr;}
 #define RESOLVE(name) core.name=reinterpret_cast<decltype(core.name)>(dlsym(coreHandle,"retro_" #name));if(!core.name){cleanup();return nullptr;}
         CORE_FUNCTIONS(RESOLVE)

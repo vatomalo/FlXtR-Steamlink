@@ -32,7 +32,7 @@ jobs:
       - name: Build native Linux diagnostic proxy
         run: |
           mkdir -p build/som-ai
-          cc -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared src/som_ai_proxy.c -o build/som-ai/som_ai_proxy_libretro-linux.so -ldl
+          cc -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared src/som_ai_proxy.c -o build/som-ai/som_ai_proxy_libretro-linux.so -ldl -lm
           file build/som-ai/som_ai_proxy_libretro-linux.so
       - uses: actions/upload-artifact@v4
         with:

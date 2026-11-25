@@ -98,6 +98,8 @@ class BladeMaskTests(unittest.TestCase):
     def test_pack_header_and_palette_are_somwork_compatible(self):
         class Fake:
             def weapon_tiles(self,row): return b""
+            def w16(self,bank,at): return 0
+            rom=b"\x81"*0x400000
             def weapon_group(self,row): return 0,bytes([0,0,0,0,0])
             def weapon_palette(self,palette_id): return [(0,0,0)]*16
             def weapon_pieces(self,row,frame,flags): return [(0,0,0,0,[0,0,0,0])]
@@ -119,11 +121,11 @@ class BladeMaskTests(unittest.TestCase):
         finally:
             masks.sword_frames=old
         self.assertEqual(result[:8],b"SOMWORK1")
-        self.assertEqual(struct.unpack_from("<H",result,8)[0],3)
+        self.assertEqual(struct.unpack_from("<H",result,8)[0],len(masks.LOOKS))
         self.assertEqual([result[10],result[result.find(b"SOMWORK1")+10]], [masks.KIND_TANTO]*2)
         # Both masks contain only palette indices 0..10; no soft blade pixels.
         offset=10
-        for kind in (masks.KIND_TANTO,masks.KIND_DAI,masks.KIND_KATANA):
+        for kind in (k for _,k in masks.LOOKS):
             self.assertEqual((result[offset],result[offset+1],result[offset+2]),(kind,14,10))
             w,h=result[offset+47],result[offset+48]
             data=result[offset+49:offset+49+w*h]

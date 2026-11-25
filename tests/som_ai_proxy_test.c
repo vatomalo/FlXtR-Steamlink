@@ -2338,28 +2338,28 @@ int main(void){
             weapon_mask_on_file=mask_path;weapon_mask_on_checked=0;
             const uint8_t keep=disciplines.selected,old=styles.selected[SOM_DISC_BUSHIDO];
             disciplines.selected=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_HEAVY;
-            hero[0x1E4]=1;hero[0x1E3]=14;hero[0x026]=20;hero[0x027]=0;hero[0x024]=0x40;hero[0x028]=0x40;
+            hero[0x1E4]=1;hero[0x1E3]=14;hero[0x026]=20;hero[0x027]=0;hero[0x024]=0x81;hero[0x028]=0x40;
             for(unsigned i=0;i<0x800;i++)ram[0x2000+i]=(uint8_t)(i*7u+1u);
             som_weapon_mask_frame(ram);
-            assert(weapon_tiles_hidden&&ram[0x2000]==0&&ram[0x27FF]==0);
+            assert(weapon_tiles_hidden[0]&&ram[0x2000]==0&&ram[0x27FF]==0);
             som_weapon_mask_pick(ram);
-            assert(weapon_masked.active&&weapon_masked.entry.weapon==14u&&weapon_masked.dir==3u);
+            assert(weapon_masked[0].draw.active&&weapon_masked[0].draw.entry.weapon==14u&&weapon_masked[0].draw.dir==3u);
             hero[0x026]=22;som_weapon_mask_pick(ram);
-            assert(!weapon_masked.active);            /* this frame only */
+            assert(!weapon_masked[0].draw.active);            /* this frame only */
             /* The next check restores the game's art, and a frame with
              * replacement art is masked again. */
             som_weapon_mask_frame(ram);
-            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
+            assert(!weapon_tiles_hidden[0]&&ram[0x2000]==1&&ram[0x2001]==8);
             hero[0x026]=20;som_weapon_mask_frame(ram);som_weapon_mask_pick(ram);
-            assert(weapon_tiles_hidden&&weapon_masked.active);
-            hero[0x027]=1;som_weapon_mask_pick(ram);assert(!weapon_masked.active);   /* pose 138 */
+            assert(weapon_tiles_hidden[0]&&weapon_masked[0].draw.active);
+            hero[0x027]=1;som_weapon_mask_pick(ram);assert(!weapon_masked[0].draw.active);   /* pose 138 */
             hero[0x027]=0;hero[0x024]=0;som_weapon_mask_pick(ram);
-            assert(!weapon_masked.active);            /* weapon not shown */
-            hero[0x024]=0x40;
+            assert(!weapon_masked[0].draw.active);            /* weapon not shown */
+            hero[0x024]=0x81;
             styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;
             som_weapon_mask_frame(ram);
-            assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
-            som_weapon_mask_pick(ram);assert(!weapon_masked.active);
+            assert(!weapon_tiles_hidden[0]&&ram[0x2000]==1&&ram[0x2001]==8);
+            som_weapon_mask_pick(ram);assert(!weapon_masked[0].draw.active);
             unlink(mask_path);weapon_mask_file=SOM_WEAPON_MASK_FILE;weapon_mask_tried=0;
             weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;weapon_mask_on_checked=0;
             free(weapon_mask_pack);weapon_mask_pack=NULL;weapon_mask_pack_size=0;

@@ -54,7 +54,7 @@ def unpack(data):
     for _ in range(count):
         if ptr+44>end:raise ValueError("truncated weapon mask entry")
         kind,row,frame,nframes=struct.unpack_from("<BBBB",data,ptr)
-        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_KUSARIGAMA,M.KIND_KATANA) or row not in M.SWORD_ROWS or nframes!=1:
+        if not (kind==M.KIND_KUSARIGAMA or kind in dict(M.LOOKS).values()) or row not in M.SWORD_ROWS or nframes!=1:
             raise ValueError("not a supported weapon-mask pack")
         palette=struct.unpack_from("<20H",data,ptr+4)
         if any(c&0x8000 for c in palette):
@@ -161,7 +161,7 @@ def contact_sheet(gfx,records,row,frames):
             stamp(pic,x0+panel-20,y0-14,f"{frame:02d}")
             kind=(M.KIND_TANTO if which==0 else M.KIND_DAI if which==2 else
                   M.KIND_KUSARIGAMA if which==3 else M.KIND_KATANA)
-            rec=records.get((kind,row,frame)) if kind is not None else None
+            rec=records.get((kind,row,frame),records.get((kind,M.SWORD_ROWS[0],frame)))
             img=render_cell(gfx,row,frame,flags,rec)
             # Red missing-frame marker means the native weapon was used.
             if rec is None:
@@ -208,9 +208,9 @@ def main():
            "Only the weapon silhouette is replaced. Hero body stays native.",
            ""]
     for frame,_ in frames:
-        a=(M.KIND_TANTO,args.row,frame) in records
-        b=(M.KIND_DAI,args.row,frame) in records
-        k=(M.KIND_KUSARIGAMA,args.row,frame) in records
+        a=(M.KIND_TANTO,M.SWORD_ROWS[0],frame) in records
+        b=(M.KIND_DAI,M.SWORD_ROWS[0],frame) in records
+        k=(M.KIND_KUSARIGAMA,M.SWORD_ROWS[0],frame) in records
         lines.append(f"frame {frame}: Tanto {'yes' if a else 'native fallback'}, Dai {'yes' if b else 'native fallback'}, Kusarigama {'yes' if k else 'native fallback'}")
     lines.append("")
     lines.append(f"Pack entries: {len(records)}; previewed frames: {len(frames)}")

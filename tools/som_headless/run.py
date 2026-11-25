@@ -112,7 +112,7 @@ def build(work, run_dir, remote):
     cc_proxy, cc_harness = compiler(remote)
     commands = [
         cc_proxy + " -Os -std=c99 -Wall -Wextra -fPIC -shared src/som_ai_proxy.c"
-                   " -o som_ai_proxy_test.so -ldl",
+                   " -o som_ai_proxy_test.so -ldl -lm",
         cc_harness + " -O1 -std=gnu99 -Wall -o som-harness tools/som_headless/som_harness.c -ldl",
     ]
     for command in commands:

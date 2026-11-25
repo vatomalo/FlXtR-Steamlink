@@ -20,12 +20,15 @@ source "$sdk/setenv.sh"
 set -u
 mkdir -p build/som-ai
 $CC -Os -std=c99 -Wall -Wextra -Werror -fPIC -shared \
-  src/som_ai_proxy.c -o build/som-ai/som_ai_proxy_libretro.so -ldl
+  src/som_ai_proxy.c -o build/som-ai/som_ai_proxy_libretro.so -ldl -lm
 "$STRIP" build/som-ai/som_ai_proxy_libretro.so
 file build/som-ai/som_ai_proxy_libretro.so
 sha256sum build/som-ai/som_ai_proxy_libretro.so
 echo "Staged only: build/som-ai/som_ai_proxy_libretro.so"
-# Opt-in ROM-derived animation pack: never bundle or modify the ROM itself.
+# The core makes its sword and hero-move art from the running ROM
+# (src/som_art_gen.h): these packs are the reference (tools/test_som_art_gen.py)
+# and a fallback. Only a pack with your own dagger picture needs installing.
+# Never bundle or modify the ROM itself.
 # Point SOM_ROM_PATH at your own Secret of Mana Turbo .smc/.sfc when building.
 if [[ -n "${SOM_ROM_PATH:-}" ]]; then
   if [[ ! -f "$SOM_ROM_PATH" ]]; then
@@ -35,7 +38,6 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
   python3 tools/som_cartwheel.py "$SOM_ROM_PATH" \
     build/som-ai/som_cartwheel_frames.bin
   echo "Staged animation pack: build/som-ai/som_cartwheel_frames.bin"
-  echo "Install the pack beside the proxy as cores/experimental/som_cartwheel_frames.bin"
   # Bushido sprite masks: a locally extracted SD3 dagger is optional.
   # Donor images and the ROM are never committed or bundled.
   dagger_args=()
@@ -48,6 +50,10 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
     --kusarigama "${dagger_args[@]}"
   echo "Staged Bushido and Kusarigama mask art: build/som-ai/som_weapon_masks.bin"
   : > build/som-ai/som_ai_weapon_masks_on
+  if [[ ${#dagger_args[@]} -gt 0 ]]; then
+    cp build/som-ai/som_weapon_masks.bin build/som-ai/som_weapon_masks_custom.bin
+    echo "Your dagger: install build/som-ai/som_weapon_masks_custom.bin beside the proxy"
+  fi
   python3 tools/som_weapon_preview.py "$SOM_ROM_PATH" \
     build/som-ai/som_weapon_masks.bin build/som-ai/som_weapon_preview.png
   echo "Review first: build/som-ai/som_weapon_preview.png (Bushido blades and Kusarigama)"

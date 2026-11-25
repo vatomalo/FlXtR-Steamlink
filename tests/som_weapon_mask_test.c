@@ -42,7 +42,7 @@ int main(void){
         const uint32_t under=som_overlay_color(fmt,0,0,120);
         som_overlay_put(buffer,pitch,fmt,20,20,under);
         som_overlay_put(buffer,pitch,fmt,21,20,under);
-        assert(som_weapon_mask_draw(&sprite,ram,buffer,48,48,pitch,fmt));
+        assert(som_weapon_mask_draw(&sprite,ram,buffer,48,48,pitch,fmt,0,0));
         const uint32_t solid=fmt==1?
              ((uint32_t*)(void*)(buffer+20*pitch))[20]:
              ((uint16_t*)(void*)(buffer+20*pitch))[20];

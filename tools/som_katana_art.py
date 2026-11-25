@@ -1,4 +1,4 @@
-"""Katana family drawn over the game's own sword frames (2026-11-25).
+"""Sword styles drawn over the game's own sword frames (2026-11-25).
 
 Colour numbers are the weapon palette's own, used as the native sword uses
 them: 4 = dark outline, 1 = bright edge, 2 = blade, 3 = shade, 5 = slash trail.
@@ -7,10 +7,28 @@ is drawn at its hilt, along its axis. Frames where the sword points at the
 viewer stay native."""
 import math
 
+from collections import namedtuple
+
 BLADE = 15.0                       # the native sword's blade, px
-LENGTH = {"tanto": 0.42, "katana": 1.15, "dai": 1.75}
-GRIP = {"tanto": 3.0, "katana": 5.0, "dai": 7.0}
-SAG = {"tanto": 0.2, "katana": 1.6, "dai": 3.0}
+# length (of the native blade), grip px, sag px (bend to the back), half width
+# at the guard and at the tip, point px, guard half width, guard kind.
+# edges 1: single-edged (bright edge, shaded back); 2: both edges bright
+# around a shaded fuller. thin: a one-pixel blade.
+Blade = namedtuple("Blade", "length grip sag base tip point guard kind edges")
+STYLES = {
+    "tanto":     Blade(0.42, 3, 0.2, 1.00, 1.00, 2.0, 2.0, "tsuba", 1),
+    "katana":    Blade(1.15, 5, 1.6, 1.00, 1.00, 2.0, 2.0, "tsuba", 1),
+    "dai":       Blade(1.75, 7, 3.0, 1.00, 1.00, 2.0, 2.0, "tsuba", 1),
+    "rapier":    Blade(1.35, 3, 0.0, 0.55, 0.55, 1.0, 2.2, "cup", 2),
+    "longsword": Blade(1.25, 5, 0.0, 1.55, 1.35, 3.0, 4.0, "cross", 2),
+    "claymore":  Blade(1.75, 7, 0.0, 2.50, 1.90, 4.0, 5.0, "cross", 2),
+    "gladius":   Blade(0.75, 3, 0.0, 1.50, 2.10, 4.0, 2.2, "cross", 2),
+    "arming":    Blade(1.00, 3, 0.0, 1.55, 1.10, 3.0, 3.2, "cross", 2),
+    "bastard":   Blade(1.45, 6, 0.0, 2.05, 1.40, 4.0, 4.0, "cross", 2),
+    "dagger":    Blade(0.50, 3, 0.0, 1.10, 0.90, 3.0, 2.2, "cross", 2),
+    "cutlass":   Blade(0.95, 3, 2.6, 1.10, 1.90, 3.5, 2.0, "basket", 1),
+    "estoc":     Blade(1.50, 5, 0.0, 1.05, 0.50, 2.0, 3.0, "cross", 2),
+}
 TRAIL = 5
 
 
@@ -35,7 +53,8 @@ def hilt_of(image):
     pts = [(x, y) for y, row in enumerate(image) for x, c in enumerate(row) if 1 <= c <= 4]
     if not pts:
         return None
-    group = max(islands(pts), key=len)
+    # equal islands: the one whose top-left pixel is lowest (som_art_gen.h too)
+    group = max(islands(pts), key=lambda g: (len(g), min((y, x) for x, y in g)))
     n = len(group)
     if n < 20:
         return None
@@ -81,27 +100,41 @@ def draw(image, style):
         cross = -tx*uy+ty*ux
         if abs(cross) > 1:
             side = -1.0 if cross > 0 else 1.0
-    length, grip, sag = BLADE*LENGTH[style], GRIP[style], SAG[style]
+    b = STYLES[style]
+    length = BLADE*b.length
     out = [[c if c == TRAIL else 0 for c in row] for row in image]
     core = {}
-    def local(x, y):
-        dx, dy = x-gx, y-gy
-        t, v = dx*ux+dy*uy, (-dx*uy+dy*ux)*side                 # v > 0: the edge
-        bow = sag*(max(0.0, t)/length)**2 if length else 0.0
-        return t, v+bow                                         # bends to the back
-    reach = int(length+sag+grip+4)
+    reach = int(length+b.sag+b.grip+8)
     for y in range(max(0, int(gy)-reach), min(height, int(gy)+reach+1)):
         for x in range(max(0, int(gx)-reach), min(width, int(gx)+reach+1)):
-            t, v = local(x, y)
-            if abs(t) <= 0.75 and abs(v) <= 2.0:                # tsuba
-                core[x, y] = 3 if abs(v) > 1.1 else 2
-            elif -grip <= t < -0.75 and abs(v) <= 0.75:         # wrapped grip
+            dx, dy = x-gx, y-gy
+            t, v = dx*ux+dy*uy, (-dx*uy+dy*ux)*side             # v > 0: the edge
+            v += b.sag*(max(0.0, t)/length)**2                  # bends to the back
+            thick = 1.4 if b.kind == "cup" else 0.75
+            if abs(t) <= thick and abs(v) <= b.guard:           # guard
+                core[x, y] = 3 if abs(v) > b.guard-0.9 else 2
+            elif b.kind == "basket" and -b.grip-0.5 <= t < -0.5 and 1.7 <= v <= 2.6:
+                core[x, y] = 2                                  # knuckle bow
+            elif -b.grip <= t < 0 and abs(v) <= 0.75:           # wrapped grip
                 core[x, y] = 3 if int(-t) % 3 == 1 else 4
-            elif 0.75 < t <= length and -0.95 <= v <= 1.05:
+            elif b.kind == "cross" and b.grip > 4 and abs(t+b.grip+1) <= 1.1 and abs(v) <= 1.2:
+                core[x, y] = 2                                  # pommel
+            elif 0 < t <= length:
                 left = length-t
-                if left < 2.0 and v > left-0.6:                 # the point, cut from the edge
-                    continue
-                core[x, y] = 1 if v > 0.0 else 2 if t < length*0.55 else 3
+                half = b.base+(b.tip-b.base)*t/length
+                if b.edges == 1:
+                    if not (-0.95 <= v <= half+0.05):
+                        continue
+                    if left < b.point and v > left-0.6:         # cut from the edge
+                        continue
+                    core[x, y] = 1 if v > half-1.0 else 2 if t < length*0.55 else 3
+                else:
+                    if left < b.point:
+                        half *= max(0.35, left/b.point)
+                    if abs(v) > half:
+                        continue
+                    core[x, y] = (1 if half < 0.8 or v > 0.45 else
+                                  2 if v < -0.45 or half < 1.3 else 3)
     if not core:
         return None
     edge = {(x+i, y+j) for x, y in core for i, j in ((1, 0), (-1, 0), (0, 1), (0, -1))}-set(core)

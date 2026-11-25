@@ -28,6 +28,12 @@ KIND_TANTO = 0xD4
 KIND_DAI = 0xD5
 KIND_KUSARIGAMA = 0xD6
 KIND_KATANA = 0xD7
+# Every sword row has the same shapes: a blade is stored once, as row 9, and
+# the proxy colours it with the held row's palette. Order = SOM_LOOK_*.
+LOOKS = (("tanto", KIND_TANTO), ("dai", KIND_DAI), ("katana", KIND_KATANA),
+         ("rapier", 0xD8), ("longsword", 0xD9), ("claymore", 0xDA), ("gladius", 0xDB),
+         ("arming", 0xDC), ("bastard", 0xDD), ("dagger", 0xDE), ("cutlass", 0xDF),
+         ("estoc", 0xE0))
 SWORD_ROWS = tuple(range(9, 18))
 KUSARIGAMA_WHIP_ROW = 36       # Ninjutsu's default Leather Lash artwork
 CANVAS = 224
@@ -176,7 +182,21 @@ def sword_frames(gfx):
                     out.setdefault(frame, flags)
             except (IndexError, KeyError, ValueError, struct.error):
                 continue
+    # walking and resting poses show the sword too
+    size = len(gfx.weapon_tiles(SWORD_ROWS[0]))//32
+    for frame in range(256):
+        pieces = gfx.weapon_pieces(SWORD_ROWS[0], frame, 0)
+        if frame not in out and pieces and all(
+                t is None or t < size for piece in pieces for t in piece[4]):
+            out[frame] = 0
     return sorted(out.items())
+
+
+def behind_body(gfx, row, frame):
+    """Weapon list header bit 7 clear: the hero's body covers the weapon."""
+    group, _ = gfx.weapon_group(row)
+    table = gfx.w16(0xD4, 0xC000+4*group+2)
+    return not gfx.rom[H.off(0xD4, gfx.w16(0xD4, table+2*frame))] & 0x80
 
 
 def kusarigama_frames(gfx):
@@ -215,7 +235,7 @@ def cropped(image):
     return dx, dy, x1-x0, y1-y0, bytes(c for row in image[y0:y1] for c in row[x0:x1])
 
 
-def pack(gfx, rows=SWORD_ROWS, dagger=None, kusarigama=False):
+def pack(gfx, rows=SWORD_ROWS[:1], dagger=None, kusarigama=False):
     entries, encoded = 0, bytearray()
     for row in rows:
         tiles = gfx.weapon_tiles(row)
@@ -229,10 +249,13 @@ def pack(gfx, rows=SWORD_ROWS, dagger=None, kusarigama=False):
             gfx.render("boy", wp, image=weapon, origin=ORIGIN, source=tiles)
             gfx.render("boy", gfx.pieces("boy", "sword", frame, flags),
                        image=body, origin=ORIGIN)
-            for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI),
-                                ("katana", KIND_KATANA)):
+            behind = behind_body(gfx, row, frame)
+            for style, kind in LOOKS:
                 art = (masked_style(weapon, body, style, donor=dagger)
                        if style == "tanto" and dagger else K.draw(weapon, style))
+                if art and behind:
+                    art = [[0 if b else c for c, b in zip(line, under)]
+                           for line, under in zip(art, body)]
                 record = cropped(art) if art else None
                 if record is None:
                     continue

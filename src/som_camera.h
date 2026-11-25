@@ -228,11 +228,25 @@ static inline int som_cam_box_up(const uint8_t *ram,const uint8_t *vram){
     for(unsigned i=32u;i<9u*32u;i++)if(som_cam_u16(vram+tm+2u*i))return 1;
     return 0;
 }
-/* The misplaced part of the box, on the 256x224 picture: ground from below. */
-static inline void som_cam_box_erase(const uint8_t *ram,uint8_t *px,size_t pitch,unsigned bytes){
-    const unsigned scroll=som_cam_u16(ram+0x40);
-    for(unsigned y=0;y+scroll<72u&&y<SOM_CAM_H;y++)
-        memcpy(px+(size_t)y*pitch,px+(size_t)(2u*(72u-scroll)-y)*pitch,SOM_CAM_W*bytes);
+/* The misplaced part of the box, on the 256x224 picture: ground from just
+ * below it. Only the rows the box really inks (a box of one line reaches row
+ * 9 or so): mirroring all rows up to 72 - scroll showed under and around the
+ * box, over half the screen when zoomed (player, 2026-11-25). */
+static inline void som_cam_box_erase(const uint8_t *ram,const uint8_t *vram,uint8_t *px,size_t pitch,unsigned bytes){
+    const unsigned tm=0xB000u+((ram[0xE8]&1u)?0x800u:0u),scroll=som_cam_u16(ram+0x40);
+    unsigned rows=0;
+    for(unsigned y=0;y+scroll+1u<72u;y++){
+        const unsigned v=y+scroll+1u;
+        for(unsigned col=0;col<32u;col++){
+            const unsigned w=som_cam_u16(vram+tm+2u*((v>>3)*32u+col));
+            if(!w)continue;
+            const unsigned ty=(w&0x8000u)?7u-(v&7u):v&7u;
+            const unsigned a=(0x8000u+(w&0x3FFu)*16u+ty*2u)&0xFFFFu;
+            if(vram[a]|vram[a+1u]){rows=y+1u;break;}
+        }
+    }
+    for(unsigned y=0;y<rows;y++)
+        memcpy(px+(size_t)y*pitch,px+(size_t)(2u*rows-1u-y)*pitch,SOM_CAM_W*bytes);
 }
 static inline void som_cam_box_draw(const uint8_t *ram,const uint8_t *vram,uint8_t *px,size_t pitch,
                                     int format,unsigned scale){

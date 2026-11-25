@@ -31,7 +31,7 @@ static inline uint32_t som_mask_mix25(uint32_t dst,uint32_t src,int format){
  * deliberate 25% blend. The pack contains no hero pixels or background. */
 static inline int som_weapon_mask_draw(const SomNpcWorkState *sprite,const uint8_t *ram,
                                        uint8_t *pixels,unsigned width,unsigned height,
-                                       size_t pitch,int format){
+                                       size_t pitch,int format,int ox0,int oy0){
     if(!sprite||!sprite->active||!ram||!pixels)return 0;
     const unsigned obj=SOM_NPC_OBJECT(sprite->slot);
     const unsigned cam=(ram[obj+0x0Bu]&0x80u)?0xACu:0xA8u;
@@ -41,7 +41,7 @@ static inline int som_weapon_mask_draw(const SomNpcWorkState *sprite,const uint8
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u;
     const int bw=(int)(width/sx),bh=(int)(height/sy);
     const uint8_t *record=sprite->entry.first;
-    const int dx=(int8_t)record[1],dy=(int8_t)record[2];
+    const int dx=(int8_t)record[1]+ox0,dy=(int8_t)record[2]+oy0;
     const unsigned w=record[3],h=record[4];
     const uint8_t *image=record+5u;
     uint32_t colours[6]={0};

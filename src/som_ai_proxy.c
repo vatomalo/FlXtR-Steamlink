@@ -9,6 +9,7 @@
  * Exact usage and safety caveats: docs/secret-of-mana-ai-input-bridge.md
  */
 #define _POSIX_C_SOURCE 200809L
+#include "som_paths.h"
 #include "vendor/libretro.h"
 #include "som_ai_actions.h"
 #include "som_overlay.h"
@@ -40,6 +41,7 @@
 #include "som_perks.h"
 #include "som_weapon_styles.h"
 #include "som_weapon_mask.h"
+#include "som_art_gen.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include <time.h>
@@ -330,6 +332,7 @@ static void som_disc_load(void){
 }
 /* One party member's tint: the boy (slot 0) and, since 2026-11-20, the
  * girl (1) and the sprite (2), each in their own class colours. */
+static unsigned som_pad1_member_in(const uint8_t *ram);
 static void som_member_palette_frame(uint8_t *ram,unsigned who){
     uint8_t *o=ram+0xE000u+0x200u*who;
     /* Not in the party (no object, no HP yet): leave that palette alone. */
@@ -341,16 +344,18 @@ static void som_member_palette_frame(uint8_t *ram,unsigned who){
     uint8_t *orig=member_pal_orig[who],*written=member_pal_written[who];
     if(member_pal_have[who]&&addr!=member_pal_addr[who])member_pal_have[who]=0;
     uint8_t *working=ram+0x0700u+pal*32u;
-    const int field_play=ram[0xE4]==1&&ram[0xE6]==0x0F;
+    /* The heroes the two pads play (and the boy) never glow. */
+    const int held=ram[0xE4]==1&&ram[0xE6]==0x0F&&
+        (who==0u||who==som_pad1_member_in(ram)||who==som_pad2_member(ram));
     if(profile==SOM_PAL_ORIGINAL&&who!=1u){     /* the girl still gets her hair */
         if(member_pal_have[who]&&!memcmp(current,written,32)){
             memcpy(current,orig,32);
             if(!memcmp(working,written,32))memcpy(working,orig,32);
         }
         member_pal_have[who]=0;
-        /* No discipline: still no block/dash glow on the boy. The shadow
+        /* No discipline: still no block/dash glow on a player's hero. The shadow
          * keeps the plain colours (the glow only touches the shown buffer). */
-        if(who==0u&&field_play)memcpy(working,current,32);
+        if(held)memcpy(working,current,32);
         return;
     }
     if(!member_pal_have[who]||memcmp(current,written,32)){
@@ -371,14 +376,14 @@ static void som_member_palette_frame(uint8_t *ram,unsigned who){
     /* The game works on (and sends to the screen) a second buffer,
      * 7E:0700 + palette*32 (live trace 2026-11-14: hero palette 1 at 7E:0720
      * equals 7E:DF20, and only it changes during dash/block flashes).
-     * For the boy it is held at the tint every frame of field play: the
+     * For the boy and the players' heroes it is held at the tint every frame of field play: the
      * dash/block glow is the attack-palette routine $C1:CA04 (cidwel/som-decomp
      * actor-attack-palette.md), which reloads the 15 ROM colours (the
      * "old palette" coming back) and then flashes them. retro_run ends at
      * vblank, so this write is what the NMI sends to CGRAM: no glow, no
-     * relapse. The companions keep their flashes (hit, cast): only plain
+     * relapse. The AI's companions keep their flashes (hit, cast): only plain
      * or tinted colours are replaced, which also undoes the ROM reload. */
-    if((who==0u&&field_play)||!memcmp(working,orig,32)||!memcmp(working,written,32))
+    if(held||!memcmp(working,orig,32)||!memcmp(working,written,32))
         memcpy(working,dressed,32);
     memcpy(written,dressed,32);
 }
@@ -1182,18 +1187,31 @@ static int som_class_x_raw(uint8_t *ram);
 #define SOM_WEAPON_MASK_ON_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_masks_on"
 static const char *weapon_mask_file=SOM_WEAPON_MASK_FILE;
 static const char *weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;
+/* A pack with the player's own dagger picture wins over the generated one;
+ * the marker turns the sword looks off. */
+#define SOM_WEAPON_MASK_CUSTOM_FILE "/home/apps/retroarch/cores/experimental/som_weapon_masks_custom.bin"
+#define SOM_WEAPON_MASK_OFF_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_masks_off"
+static int weapon_mask_generated;
 static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried;
 static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
-static uint32_t *weapon_mask_index;    /* [Tanto,Dai,Kusarigama,Katana][72][256] */
-static uint8_t weapon_native_tiles[0x800];
-static int weapon_tiles_hidden;
-static SomNpcWorkState weapon_masked;
+/* Blade looks, in pack order (kind 0xD4 + look; tools/som_weapon_mask.py). */
+enum {SOM_LOOK_TANTO,SOM_LOOK_DAI,SOM_LOOK_KUSARIGAMA,SOM_LOOK_KATANA,SOM_LOOK_RAPIER,
+      SOM_LOOK_LONGSWORD,SOM_LOOK_CLAYMORE,SOM_LOOK_GLADIUS,SOM_LOOK_ARMING,SOM_LOOK_BASTARD,
+      SOM_LOOK_DAGGER,SOM_LOOK_CUTLASS,SOM_LOOK_ESTOC,SOM_LOOKS};
+#define SOM_MASK_ROWS 9u               /* sword rows 9..17 */
+#define SOM_MASK_AT(look,row,pose) (((look)*SOM_MASK_ROWS+(row)-9u)*256u+(pose))
+static uint32_t *weapon_mask_index;    /* SOM_MASK_AT; row 9 stands for every row */
+static uint8_t weapon_native_tiles[SOM_PARTY_MEMBERS][0x800];
+static int weapon_tiles_hidden[SOM_PARTY_MEMBERS];
+typedef struct {SomNpcWorkState draw;int dx,dy;} SomMaskDraw;
+static SomMaskDraw weapon_masked[SOM_PARTY_MEMBERS];
 static int kusarigama_attack_active,kusarigama_attack_released,kusarigama_swing_seen;
 static unsigned kusarigama_attack_who;
 static unsigned long kusarigama_attack_started;
 static void som_weapon_mask_frame(uint8_t *ram);
+static void som_weapon_mask_load(void);
 static void som_weapon_mask_pick(const uint8_t *ram);
 static int som_kusarigama_art_ready(void);
 /* Lock-on targeting (player's request, 2026-11-20, Ocarina of Time
@@ -1260,6 +1278,8 @@ static unsigned long bash_started;
  * cartwheel, unused since the game's own plays): see tools/som_cartwheel.py. */
 #define SOM_CARTWHEEL_PACK_FILE "/home/apps/retroarch/cores/experimental/som_cartwheel_frames.bin"
 static void som_load_pack_file(const char *path,const char *what,uint8_t **pack,size_t *size);
+static const uint8_t *som_art_rom(size_t *size);
+static void som_cartwheel_load(void);
 static uint8_t *cartwheel_pack;
 static size_t cartwheel_pack_size;
 static int cartwheel_pack_tried;
@@ -3338,6 +3358,26 @@ static const uint8_t *som_rom_at(uint32_t snes,size_t length){
     if(offset>som_rom_size||length>som_rom_size-offset)return NULL;
     return som_rom+offset;
 }
+/* The running ROM without a copier header, for som_art_gen.h. */
+static const uint8_t *som_art_rom(size_t *size){
+    const size_t header=som_rom_size%0x8000u==512u?512u:0u;
+    if(!som_rom||som_rom_size<=header)return NULL;
+    *size=som_rom_size-header;
+    return som_rom+header;
+}
+static void som_cartwheel_load(void){
+    if(cartwheel_pack_tried)return;
+    cartwheel_pack_tried=1;
+    size_t size=0;
+    const uint8_t *rom=som_art_rom(&size);
+    SomArtOut art;
+    if(rom&&som_art_hero_moves(rom,size,&art)){
+        cartwheel_pack=art.data;cartwheel_pack_size=art.n;
+        fprintf(stderr,"[som-ai] Hero moves made from the ROM (%lu bytes)\n",(unsigned long)art.n);
+        return;
+    }
+    som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
+}
 /* Turbo's plane converters, one per hero ($C1:C599 picks by actor): the
  * boy's masked ($C1:C5D1), the girl's xor ($C1:C731), the sprite's
  * inverted ($C1:C8A9), each into its own buffer 7E:2000 + who*0x1000.
@@ -3410,7 +3450,7 @@ static int som_weapon_gfx_matches(const uint8_t *ram){
         som_word(hero+0x065)==m.f065&&som_word(hero+0x06A)==m.f06a&&
         som_word(hero+0x07E)==m.f07e&&som_word(hero+0x02A)==m.f02a&&
         /* A scaled style blanks the buffer: its saved copy is the game's art. */
-        memcmp(weapon_tiles_hidden?weapon_native_tiles:ram+SOM_WEAPON_BUF,m.tiles,
+        memcmp(weapon_tiles_hidden[0]?weapon_native_tiles[0]:ram+SOM_WEAPON_BUF,m.tiles,
                sizeof(m.tiles))==0;
 }
 static int som_field_actor_idle(const uint8_t *ram,unsigned who){
@@ -3524,7 +3564,8 @@ static int som_equip_ally_weapon(uint8_t *ram,unsigned who,unsigned type){
     if(!old_row||!som_weapon_model_for(hero,hero[0x1E3],&m,who)||
        m.type!=current||hero[0x068]!=m.type||ram[0xD030u+0x40u*who]!=m.graphics||
        som_word(hero+0x07E)!=m.f07e||som_word(hero+0x06A)!=m.f06a||
-       memcmp(ram+SOM_WEAPON_BUF+0x1000u*who,m.tiles,sizeof(m.tiles))){
+       memcmp(weapon_tiles_hidden[who]?weapon_native_tiles[who]:ram+SOM_WEAPON_BUF+0x1000u*who,
+              m.tiles,sizeof(m.tiles))){
         fprintf(stderr,"[som-ai] ALLY %u weapon art model does not match the game's: refused\n",who);
         return SOM_EQUIP_REFUSED;
     }
@@ -4410,10 +4451,7 @@ static int som_flykick_start_raw(uint8_t *ram){
     if(!ram||som_actor_class()!=SOM_DISC_MARTIAL_ARTS||flykick.active)return 0;
     bash_kick=1;
     if(!som_bash_start(ram)){bash_kick=0;return 0;}
-    if(!cartwheel_pack_tried){
-        cartwheel_pack_tried=1;
-        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
-    }
+    som_cartwheel_load();
     uint8_t *hero=SOM_ACT(ram);
     const unsigned id=hero[0x180],facing=hero[0x010];
     const unsigned pack_facing=(facing&0x7Fu)==0x02u?2u:facing==0x01u?1u:0u;
@@ -4450,10 +4488,7 @@ static void som_flykick_frame(uint8_t *ram){
 }
 static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base){
     if(!ram||fuma.active||frame_number<fuma_ready||slot>2u||!base)return;
-    if(!cartwheel_pack_tried){
-        cartwheel_pack_tried=1;
-        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
-    }
+    som_cartwheel_load();
     const uint8_t *hero=ram+0xE000u,*m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     const unsigned id=hero[0x180];
     if(!cartwheel_pack||id<0x80u||id>0x82u)return;
@@ -4650,10 +4685,7 @@ static void som_companion_frame(uint8_t *ram){
         return;                                    /* carried across a map */
     }
     if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F)return;
-    if(!cartwheel_pack_tried){
-        cartwheel_pack_tried=1;
-        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
-    }
+    som_cartwheel_load();
     if(!cartwheel_pack)return;
     const unsigned slot=3u+(unsigned)familiar.slot;
     uint8_t *o=ram+SOM_NPC_OBJECT(slot);
@@ -4824,11 +4856,7 @@ static int som_ukemi_begin_draw(uint8_t *ram,int dx,int dy,unsigned move){
     return 1;
 }
 static int som_move_begin_draw(uint8_t *ram,int dx,int dy,unsigned kind_base){
-    if(!cartwheel_pack_tried){
-        cartwheel_pack_tried=1;
-        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",
-                           &cartwheel_pack,&cartwheel_pack_size);
-    }
+    som_cartwheel_load();
     uint8_t *hero=SOM_ACT(ram);
     const unsigned id=hero[0x180u];
     if(!cartwheel_pack||id<0x80u||id>0x82u)return 0;
@@ -8592,10 +8620,7 @@ static void som_class_guide_draw(uint8_t *pixels,unsigned width,unsigned height,
         cls==SOM_DISC_NINJUTSU||cls==SOM_DISC_BUSHIDO?SOM_UKEMI_DRAW_KIND:
         cls==SOM_DISC_ROGUE||cls==SOM_DISC_SWORD?SOM_FORWARD_CART_KIND:0u;
     if(!kind||pad2_guide)return;
-    if(!cartwheel_pack_tried){
-        cartwheel_pack_tried=1;
-        som_load_pack_file(SOM_CARTWHEEL_PACK_FILE,"Hero moves",&cartwheel_pack,&cartwheel_pack_size);
-    }
+    som_cartwheel_load();
     SomNpcWorkState preview={0};
     const unsigned who=disciplines.who%SOM_PARTY_MEMBERS;
     const unsigned facing=2u;
@@ -8846,11 +8871,12 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
     /* WRAM is one frame ahead of this picture: draw the blade picked last time. */
-    static SomNpcWorkState weapon_drawn;
-    weapon_drawn=weapon_masked;
+    static SomMaskDraw weapon_drawn[SOM_PARTY_MEMBERS];
+    memcpy(weapon_drawn,weapon_masked,sizeof(weapon_drawn));
+    const int blades=weapon_drawn[0].draw.active||weapon_drawn[1].draw.active||weapon_drawn[2].draw.active;
     if(backend_retro_get_memory_data)
         som_weapon_mask_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    const int worker=(npc_work.active||flykick.active||weapon_drawn.active||ukemi_draw.active||companion.draw.active||
+    const int worker=(npc_work.active||flykick.active||blades||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -8903,7 +8929,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             fprintf(stderr,"[som-ai] CAMERA %s\n",som_shot_names[shot]);
         }
         if(!(cam_ram[0xD0]&0x80u))camera.window=0;
-    }else som_cam_reset(&camera);
+    }else if(data)som_cam_reset(&camera);         /* NULL = the last picture again */
     const int cam_on=cam_vram&&!menu&&som_cam_active(&camera);
     /* also with the camera off: the HUD lift itself hides the box */
     const uint8_t *box_vram=!menu&&data&&width==SOM_CAM_W&&height==SOM_CAM_H&&hud_lifted&&ring_owner_ram&&
@@ -8962,7 +8988,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     else for(unsigned y=0;y<height;y++)
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
     pitch=row;
-    if(box_up)som_cam_box_erase(ring_owner_ram,overlay_frame,pitch,cam_bytes);
+    if(box_up)som_cam_box_erase(ring_owner_ram,box_vram,overlay_frame,pitch,cam_bytes);
     if(cam_look)
         cam_texts=som_cam_save(&camera,cam_ram,cam_vram,oam_shown_valid?oam_shown:NULL,overlay_frame,
                                pitch,cam_bytes,cam_mask,cam_text,SOM_CAM_W*SOM_CAM_H);
@@ -8989,9 +9015,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
-            if(weapon_drawn.active)
-                som_weapon_mask_draw(&weapon_drawn,ram,overlay_frame,width,height,
-                                     pitch,pixel_format);
+            for(unsigned who=0;blades&&who<SOM_PARTY_MEMBERS;who++)
+                if(weapon_drawn[who].draw.active)
+                    som_weapon_mask_draw(&weapon_drawn[who].draw,ram,overlay_frame,width,height,
+                                         pitch,pixel_format,weapon_drawn[who].dx,weapon_drawn[who].dy);
             if(ukemi_draw.active)
                 som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
@@ -9317,6 +9344,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_rom_size=som_rom?game->size:0;
     weapon_gfx_verified=0;weapon_gfx_last_check=0;equip_notice_frame=0;
     game_loaded=backend_load_game(load_info);
+    if(game_loaded&&som_rom){som_weapon_mask_load();som_cartwheel_load();}   /* 0.3 s, not mid-game */
     if(game_loaded&&on_turbo)som_music_publish_rate();
     som_song_load(&song_names,song_file);song_last=0x100u;
     if(backend_skip_music){
@@ -10314,11 +10342,23 @@ static void som_auto_target_frame(uint8_t *ram){
 static void som_weapon_mask_load(void){
     if(weapon_mask_tried)return;
     weapon_mask_tried=1;
-    som_load_pack_file(weapon_mask_file,"weapon style masks",
-                       &weapon_mask_pack,&weapon_mask_pack_size);
+    if(access(SOM_WEAPON_MASK_CUSTOM_FILE,F_OK)==0)
+        som_load_pack_file(SOM_WEAPON_MASK_CUSTOM_FILE,"weapon style masks",
+                           &weapon_mask_pack,&weapon_mask_pack_size);
+    size_t rom_size=0;
+    const uint8_t *rom=som_art_rom(&rom_size);
+    SomArtOut art;
+    if(!weapon_mask_pack&&rom&&som_art_weapon_masks(rom,rom_size,&art)){
+        weapon_mask_pack=art.data;weapon_mask_pack_size=art.n;
+        fprintf(stderr,"[som-ai] weapon style masks made from the ROM (%lu bytes)\n",(unsigned long)art.n);
+    }
+    weapon_mask_generated=weapon_mask_pack!=NULL;
+    if(!weapon_mask_pack)
+        som_load_pack_file(weapon_mask_file,"weapon style masks",
+                           &weapon_mask_pack,&weapon_mask_pack_size);
     if(!weapon_mask_pack||weapon_mask_pack_size<10u||
        memcmp(weapon_mask_pack,"SOMWORK1",8u))return;
-    weapon_mask_index=calloc(4u*72u*256u,sizeof(*weapon_mask_index));
+    weapon_mask_index=calloc(SOM_LOOKS*SOM_MASK_ROWS*256u,sizeof(*weapon_mask_index));
     if(!weapon_mask_index)return;
     const uint8_t *p=weapon_mask_pack+10u,*end=weapon_mask_pack+weapon_mask_pack_size;
     const unsigned entries=weapon_mask_pack[8]|(unsigned)weapon_mask_pack[9]<<8;
@@ -10330,8 +10370,8 @@ static void som_weapon_mask_load(void){
             next=som_work_next_frame(next,end);
             if(!next)goto malformed;
         }
-        if(p[0]>=0xD4u&&p[0]<=0xD7u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
-            weapon_mask_index[((p[0]-0xD4u)*72u+p[1])*256u+p[2]]=
+        if(p[0]>=0xD4u&&p[0]<0xD4u+SOM_LOOKS&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
+            weapon_mask_index[SOM_MASK_AT(p[0]-0xD4u,p[1],p[2])]=
                 (uint32_t)(p-weapon_mask_pack)+1u;
             count++;
         }
@@ -10343,11 +10383,12 @@ malformed:
     free(weapon_mask_index);weapon_mask_index=NULL;
     fprintf(stderr,"[som-ai] weapon style: malformed mask pack ignored\\n");
 }
-/* -1 = native, 0 = Tanto, 1 = Dai Katana, 2 = Kusarigama strike. */
+/* -1 = the game's own sword, else SOM_LOOK_*. */
 static int som_weapon_mask_mode(const uint8_t *ram,unsigned who){
     if(!weapon_mask_on_checked||frame_number-weapon_mask_on_checked>=120ul){
         weapon_mask_on_checked=frame_number?frame_number:1ul;
-        weapon_mask_on=access(weapon_mask_on_file,F_OK)==0;
+        weapon_mask_on=access(SOM_WEAPON_MASK_OFF_FILE,F_OK)!=0&&
+            (weapon_mask_generated||access(weapon_mask_on_file,F_OK)==0);
     }
     if(!weapon_mask_on)return -1;
     const uint8_t *actor=ram+0xE000u+0x200u*who;
@@ -10355,29 +10396,48 @@ static int som_weapon_mask_mode(const uint8_t *ram,unsigned who){
        som_disc_member_class(&disciplines,who)==SOM_DISC_NINJUTSU&&
        styles.selected[SOM_DISC_NINJUTSU]==SOM_STYLE_HEAVY&&actor[0x1E4]==1u)
         return 2;
-    if(who!=0u||actor[0x1E4]!=1u)return -1;
-    const unsigned cls=disciplines.selected;
-    if(cls==SOM_DISC_BUSHIDO){
-        const unsigned style=styles.selected[cls]%SOM_STYLES_PER_CLASS;
-        return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:3;
+    if(actor[0x1E4]!=1u)return -1;
+    const unsigned cls=som_disc_member_class(&disciplines,who);
+    if(cls>=SOM_DISCIPLINE_COUNT)return -1;
+    const unsigned style=styles.selected[cls]%SOM_STYLES_PER_CLASS;
+    switch(cls){                                /* fast, balanced, heavy */
+    case SOM_DISC_SWORD:return (int)SOM_LOOK_RAPIER+(int)style;
+    case SOM_DISC_WEAPON_FLOW:return (int)SOM_LOOK_GLADIUS+(int)style;
+    case SOM_DISC_ROGUE:return (int)SOM_LOOK_DAGGER+(int)style;
+    case SOM_DISC_BUSHIDO:return style==SOM_STYLE_FAST?SOM_LOOK_TANTO:
+                                 style==SOM_STYLE_HEAVY?SOM_LOOK_DAI:SOM_LOOK_KATANA;
+    case SOM_DISC_NINJUTSU:return style==SOM_STYLE_FAST?SOM_LOOK_TANTO:SOM_LOOK_KATANA;
+    default:return -1;
     }
-    /* The ninja's and the rogue's Kusanagi (sword row 11) is a katana too;
-     * their fast style (Kunai, Dagger) is the short blade. */
-    if((cls==SOM_DISC_NINJUTSU||cls==SOM_DISC_ROGUE)&&actor[0x1E3]==11u)
-        return styles.selected[cls]%SOM_STYLES_PER_CLASS==SOM_STYLE_FAST?0:3;
-    return -1;
 }
-/* The pose's picture number is the word at +0x26, halved; +0x24 bit 6 is
- * set while the game shows the weapon (measured 2026-11-25). */
+/* The pose's picture number is the word at +0x26, halved; +0x24 is its weapon
+ * list's header: pieces in the low nibble, bit 7 = in front of the body, bit 6
+ * = a swing. Walking and resting poses have a sword too (2026-11-25). */
 static unsigned som_mask_pose(const uint8_t *actor){return som_word(actor+0x026u)>>1;}
-static int som_mask_shown(const uint8_t *actor){return (actor[0x024u]&0x40u)!=0;}
+static int som_mask_shown(const uint8_t *actor,int mode){
+    return (actor[0x024u]&(mode==SOM_LOOK_KUSARIGAMA?0x40u:0x0Fu))!=0;
+}
 static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_mask_index||mode>3u||row<9u||row>=18u||frame>255u)return 0;
-    const uint32_t at=weapon_mask_index[(mode*72u+row)*256u+frame];
+    if(!weapon_mask_index||mode>=SOM_LOOKS||row<9u||row>=18u||frame>255u)return 0;
+    uint32_t at=weapon_mask_index[SOM_MASK_AT(mode,row,frame)];
+    /* Every sword has the same shapes: one stored blade, the row's colours. */
+    const uint8_t *colours=NULL;
+    if(!at){
+        at=weapon_mask_index[SOM_MASK_AT(mode,9u,frame)];
+        const uint8_t *r=mode!=SOM_LOOK_KUSARIGAMA?som_rom_at(0xD01000u+12u*row,12u):NULL;
+        if(r)colours=som_rom_at(0xD1F600u+10u*r[4],10u);
+    }
     if(!at)return 0;
     const uint8_t *p=weapon_mask_pack+at-1u;
     out->kind=p[0];out->weapon=p[1];out->facing=p[2];out->frames=p[3];
     for(unsigned i=0;i<20u;i++)out->colours[i]=(uint16_t)(p[4+2u*i]|p[5+2u*i]<<8);
+    /* An imported dagger keeps its own colours: only native ones follow. */
+    const uint8_t *base=colours?som_rom_at(0xD01000u+12u*9u,12u):NULL;
+    if(base)base=som_rom_at(0xD1F600u+10u*base[4],10u);
+    for(unsigned i=0;base&&i<5u;i++)
+        if(out->colours[i]!=((unsigned)(base[2u*i]|base[2u*i+1u]<<8)&0x7FFFu))base=NULL;
+    if(colours&&base)for(unsigned i=0;i<10u;i++)
+        out->colours[i]=(uint16_t)((colours[2u*(i%5u)]|colours[2u*(i%5u)+1u]<<8)&0x7FFFu);
     out->first=p+44u;
     return 1;
 }
@@ -10388,12 +10448,37 @@ static int som_kusarigama_art_ready(void){
     if(!weapon_mask_on||!weapon_mask_index)return 0;
     static const unsigned frames[]={171u,172u,173u,174u,175u,176u,177u,178u,179u};
     for(unsigned row=9u;row<18u;row++)for(unsigned f=0;f<sizeof(frames)/sizeof(frames[0]);f++)
-        if(weapon_mask_index[(2u*72u+row)*256u+frames[f]])return 1;
+        if(weapon_mask_index[SOM_MASK_AT((unsigned)SOM_LOOK_KUSARIGAMA,row,frames[f])])return 1;
     return 0;
 }
 /* Hide native effects only when a matching mask exists for the current
  * sword row and animation frame. On a missing mask, restore the original
  * effect tiles byte-for-byte, rather than showing an invisible weapon. */
+static void som_weapon_mask_hide(uint8_t *ram,unsigned who){
+    const uint8_t *actor=ram+0xE000u+0x200u*who;
+    const int field=actor[0]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
+    const int mode=field?som_weapon_mask_mode(ram,who):-1;
+    SomWorkEntry entry;
+    /* Not shown yet: already hidden, so a swing's first frame has no sword. */
+    const int want=mode>=0&&(som_mask_shown(actor,mode)?
+        som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],som_mask_pose(actor),&entry):
+        weapon_mask_index!=NULL);
+    if(!want&&!weapon_tiles_hidden[who])return;
+    uint8_t *tiles=ram+SOM_WEAPON_BUF+0x1000u*who,*native=weapon_native_tiles[who];
+    const size_t size=sizeof(weapon_native_tiles[who]);
+    int blank=1;
+    for(size_t i=0;i<size;i++)if(tiles[i]){blank=0;break;}
+    if(want){
+        if(!blank){
+            memcpy(native,tiles,size);
+            memset(tiles,0,size);
+        }
+        weapon_tiles_hidden[who]=1;
+    }else{
+        if(blank)memcpy(tiles,native,size);
+        weapon_tiles_hidden[who]=0;
+    }
+}
 static void som_weapon_mask_frame(uint8_t *ram){
     if(!ram)return;
     som_weapon_mask_load();
@@ -10407,57 +10492,47 @@ static void som_weapon_mask_frame(uint8_t *ram){
         else if(kusarigama_swing_seen&&!owner[0x01C])
             kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
     }
-    const unsigned who=kusarigama_attack_active?kusarigama_attack_who:0u;
-    const uint8_t *actor=ram+0xE000u+0x200u*who;
-    const int field=actor[0]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
-    const int mode=field?som_weapon_mask_mode(ram,who):-1;
-    SomWorkEntry entry;
-    /* Not shown yet: already hidden, so a swing's first frame has no sword. */
-    const int want=mode>=0&&(som_mask_shown(actor)?
-        som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],som_mask_pose(actor),&entry):
-        weapon_mask_index!=NULL);
-    uint8_t *tiles=ram+SOM_WEAPON_BUF;
-    int blank=1;
-    for(unsigned i=0;i<sizeof(weapon_native_tiles);i++)if(tiles[i]){blank=0;break;}
-    if(want){
-        if(!blank){
-            memcpy(weapon_native_tiles,tiles,sizeof(weapon_native_tiles));
-            memset(tiles,0,sizeof(weapon_native_tiles));
-        }
-        weapon_tiles_hidden=1;
-    }else if(weapon_tiles_hidden){
-        if(blank)memcpy(tiles,weapon_native_tiles,sizeof(weapon_native_tiles));
-        weapon_tiles_hidden=0;
-    }
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)som_weapon_mask_hide(ram,who);
 }
 /* The runtime image is composited using the mask-specific alpha-aware
  * renderer, keeping original hero animation and camera coordinates. */
-static void som_weapon_mask_pick(const uint8_t *ram){
-    weapon_masked.active=0;
-    if(!ram||!weapon_tiles_hidden)return;
-    const unsigned who=kusarigama_attack_active?kusarigama_attack_who:0u;
+static void som_weapon_mask_pick_one(const uint8_t *ram,unsigned who){
+    SomMaskDraw *m=&weapon_masked[who];
+    m->draw.active=0;
+    if(!ram||!weapon_tiles_hidden[who])return;
     const uint8_t *actor=ram+0xE000u+0x200u*who;
     const int mode=som_weapon_mask_mode(ram,who);
     SomWorkEntry entry;
-    if(mode<0||!som_mask_shown(actor))return;
-    if(!som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],som_mask_pose(actor),&entry)){
+    if(mode<0||!som_mask_shown(actor,mode))return;
+    const unsigned pose=som_mask_pose(actor);
+    if(!som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],pose,&entry)){
         /* The SNES animation may advance after the pre-frame availability
          * check: this frame has no replacement art, the next check restores
          * the game's own. One missing frame no longer ends the session's
          * masks (2026-11-25). */
         static uint32_t told[8];
-        const uint32_t key=((uint32_t)actor[0x1E3u]<<9)|som_mask_pose(actor);
+        const uint32_t key=((uint32_t)actor[0x1E3u]<<9)|pose;
         if(told[key&7u]!=key+1u){
             told[key&7u]=key+1u;
             fprintf(stderr,"[som-ai] weapon mask: row %u frame %u shows the game's own\n",
-                    (unsigned)actor[0x1E3u],som_mask_pose(actor));
+                    (unsigned)actor[0x1E3u],pose);
         }
         return;
     }
-    memset(&weapon_masked,0,sizeof(weapon_masked));
-    weapon_masked.active=1;weapon_masked.slot=(uint8_t)who;weapon_masked.kind=actor[0x180u];
-    weapon_masked.dir=(actor[0x028u]&0x40u)?3u:2u;
-    weapon_masked.entry=entry;weapon_masked.start=frame_number;weapon_masked.length=2u;
+    memset(m,0,sizeof(*m));
+    m->draw.active=1;m->draw.slot=(uint8_t)who;m->draw.kind=actor[0x180u];
+    m->draw.dir=(actor[0x028u]&0x40u)?3u:2u;
+    m->draw.entry=entry;m->draw.start=frame_number;m->draw.length=2u;
+    /* The girl and the sprite hold it elsewhere: the game's own per-pose
+     * offsets, signed nibbles x (low) and y (high) at D1:[+0x7E + pose]. */
+    const uint8_t *offset=who?som_rom_at(0xD10000u+som_word(actor+0x07Eu)+pose,1u):NULL;
+    if(offset){
+        m->dx=(int)((offset[0]&15u)^8u)-8;
+        m->dy=(int)((offset[0]>>4)^8u)-8;
+    }
+}
+static void som_weapon_mask_pick(const uint8_t *ram){
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)som_weapon_mask_pick_one(ram,who);
 }
 
 /* ---- Costs (FlXtR MP/AP): each technique is paid only when it goes off. ---- */

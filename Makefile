@@ -34,7 +34,7 @@ test-text-cursor:
 
 test-som-ai-proxy:
 	@mkdir -p build
-	$(CC) $(CFLAGS) tests/som_ai_proxy_test.c -o build/som-ai-proxy-test -ldl
+	$(CC) $(CFLAGS) tests/som_ai_proxy_test.c -o build/som-ai-proxy-test -ldl -lm
 	./build/som-ai-proxy-test
 
 .PHONY: test-som-ai-proxy

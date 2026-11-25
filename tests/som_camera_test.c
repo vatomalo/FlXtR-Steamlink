@@ -132,6 +132,19 @@ int main(void){
         ram[0x602]=0x1F;ram[0x603]=0;                     /* red */
         assert(som_cam_box_up(ram,vram));
         ram[0xD0]=0x83;assert(!som_cam_box_up(ram,vram));ram[0xD0]=0;
+        {   /* only the box's own rows are replaced, not the 46 above row 72 - scroll */
+            const unsigned keep=ram[0x40];ram[0x40]=26;
+            memset(px,0,sizeof(px));
+            for(unsigned y=0;y<224u;y++)memset((uint8_t*)px+y*512u,(int)y,512u);
+            static uint8_t v2[0x10000];
+            memset(v2,0,sizeof(v2));
+            for(unsigned col=0;col<32u;col++){v2[0xB000u+2u*(4u*32u+col)]=1;}   /* BG row 32-39 */
+            memset(v2+0x8010,0xFF,16);
+            som_cam_box_erase(ram,v2,(uint8_t*)px,512,2);
+            const uint8_t *b=(const uint8_t*)px;         /* screen rows 0..12 */
+            assert(b[12u*512u]==13u&&b[0]==25u&&b[13u*512u]==13u&&b[45u*512u]==45u);
+            ram[0x40]=(uint8_t)keep;
+        }
         memset(px,0,sizeof(px));som_cam_box_draw(ram,vram,(uint8_t*)px,512,2,1);
         for(int y=0;y<224;y++)for(int x=0;x<256;x++)
             assert(px[y*256+x]==(y>=15&&y<23&&x>=8&&x<248?0xF800:0));

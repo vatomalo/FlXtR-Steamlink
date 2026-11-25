@@ -52,8 +52,9 @@ static const char *const som_ai_model_names[SOM_AI_MODEL_COUNT] = {
 #define SOM_GAMBIT_INFINITE_MP (SOM_GAMBIT_COUNT + 3u) /* test switch row */
 #define SOM_GAMBIT_DEBUG_ITEM (SOM_GAMBIT_COUNT + 4u)
 #define SOM_GAMBIT_P2_ITEM (SOM_GAMBIT_COUNT + 5u)     /* the AI plays player 2 */
-#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 6u)
-#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 7u)       /* + model, critic, music, test, debug, p2, exit */
+#define SOM_GAMBIT_WHACK_ITEM (SOM_GAMBIT_COUNT + 6u)  /* the whacked camera */
+#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 7u)
+#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 8u)       /* + model, critic, music, test, debug, p2, exit */
 #define SOM_GAMBIT_MAX_WEIGHT 5u
 
 /* Activities only; how the AI fights or moves is not a gambit. The order is
@@ -107,13 +108,14 @@ typedef struct {
     int critic;           /* the critic model judges and coaches the play */
     int debug_messages;   /* AI status/debug overlays and speech bubbles */
     int player2;          /* the AI plays player 2, saved */
+    int no_whack;         /* the whacked camera is off, saved */
     int resting;          /* opened from the ring while the player plays */
 } SomGambits;
 
 enum { SOM_GAMBIT_NONE, SOM_GAMBIT_OPENED, SOM_GAMBIT_CLOSED,
        SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT, SOM_GAMBIT_TEST_SWITCH,
        SOM_GAMBIT_GENRE_CHANGED, SOM_GAMBIT_BRAIN_CHANGED, SOM_GAMBIT_DEBUG_CHANGED,
-       SOM_GAMBIT_P2_CHANGED };
+       SOM_GAMBIT_P2_CHANGED, SOM_GAMBIT_WHACK_CHANGED };
 
 /* "<model> <critic>\n"; invalid text keeps model 0 with the critic on. */
 static inline void som_brain_parse(SomGambits *g, const char *text) {
@@ -275,6 +277,12 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
             g->player2 = !g->player2;
             return SOM_GAMBIT_P2_CHANGED;
         }
+    } else if (g->cursor == SOM_GAMBIT_WHACK_ITEM) {
+        if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_B) | (1u << RETRO_DEVICE_ID_JOYPAD_LEFT) |
+                       (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT))) {
+            g->no_whack = !g->no_whack;
+            return SOM_GAMBIT_WHACK_CHANGED;
+        }
     } else if (g->cursor == SOM_GAMBIT_EXIT_ITEM) {
         if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_B)) {
             g->open = 0;
@@ -352,6 +360,10 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
         snprintf(out, 33, "%s %-19s %s", mark, "Player 2 AI", g->player2 ? "ON" : "off");
         return 1;
     }
+    if (item == SOM_GAMBIT_WHACK_ITEM) {
+        snprintf(out, 33, "%s %-19s %s", mark, "Whacked camera", g->no_whack ? "off" : "ON");
+        return 1;
+    }
     if (item == SOM_GAMBIT_EXIT_ITEM) {
         snprintf(out, 33, "%s %s", mark, g->resting ? "Start AI: it plays" : "Exit gambits: you play");
         return 1;
@@ -393,6 +405,7 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
              (line - 1u == SOM_GAMBIT_INFINITE_MP && !g->infinite_mp) ||
              (line - 1u == SOM_GAMBIT_DEBUG_ITEM && !g->debug_messages) ||
              (line - 1u == SOM_GAMBIT_P2_ITEM && !g->player2) ||
+             (line - 1u == SOM_GAMBIT_WHACK_ITEM && g->no_whack) ||
              (line - 1u == SOM_GAMBIT_CRITIC_ITEM && !g->critic)));
         for (unsigned i = 0; text[i]; i++) {
             unsigned char c = (unsigned char)text[i];

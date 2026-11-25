@@ -1174,7 +1174,7 @@ int main(void){
     /* Gambit menu text and drawing. */
     {
         SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
-            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0};
+            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0,0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         /* Quest page: two weights + exit, changed with Right, saved as digits. */
@@ -1238,6 +1238,8 @@ int main(void){
             assert(m.cursor==SOM_GAMBIT_P2_ITEM&&!m.player2);
             assert(som_gambit_line(&m,SOM_GAMBIT_P2_ITEM+1u,text)&&strstr(text,"Player 2 AI")&&strstr(text,"off"));
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_P2_CHANGED&&m.player2);
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_WHACK_CHANGED&&m.no_whack);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(m.cursor==SOM_GAMBIT_EXIT_ITEM);
         }
@@ -3260,7 +3262,7 @@ int main(void){
                 /* An AI companion mage throws at a monster in line out of
                  * reach of her fist: she turns to it and jabs. */
                 uint8_t *spr2=ram+0xE400;uint8_t keep_s[0x200];memcpy(keep_s,spr2,0x200);
-                const uint8_t keep_party2=disciplines.party[1];disciplines.party[1]=SOM_DISC_PSIONICS;
+                const uint8_t keep_party2=disciplines.party[1];disciplines.party[1]=5u;
                 memset(spr2,0,0x200);spr2[0]=1;spr2[0x182]=20;spr2[0x184]=20;
                 spr2[2]=(uint8_t)hx;spr2[3]=(uint8_t)(hx>>8);
                 const unsigned sy=hy+60u;spr2[4]=(uint8_t)sy;spr2[5]=(uint8_t)(sy>>8);
@@ -3270,6 +3272,29 @@ int main(void){
                 assert(spr2[0x01C]==0x20&&spr2[0x011]==SOM_GLOVE_JAB&&spr2[0x010]==0x02);
                 assert(som_bolts_active(mage_bolts));
                 assert(!som_mage_ally_throw(ram,2));                  /* busy, waits */
+                /* The class attacks: no jab is left, and each does its own. */
+                for(unsigned pick=0;pick<3u;pick++){
+                    const unsigned c2=pick==0u?SOM_DISC_PSIONICS:pick==1u?SOM_DISC_CLERIC:7u;
+                    memset(mage_bolts,0,sizeof(mage_bolts));memset(judged_until,0,sizeof(judged_until));
+                    const uint8_t keep_id=m[0x180];const uint8_t keep_x[4]={m[2],m[3],m[4],m[5]};
+                    som_put_word(m+2,hx+20u);som_put_word(m+4,sy);m[0x180]=0x14;m[0x1F1]=0;m[0x190]=m[0x191]=0;m[0x1AA]=m[0x1AB]=0;
+                    spr2[0x1C]=0x20;spr2[0x10]=2;spr2[0x1ED]=0;
+                    assert(som_class_attack(ram,2u,c2,som_word(ram+0xDC)&0x1FFu));
+                    assert(!spr2[0x1C]&&spr2[0x1ED]>=46u);
+                    unsigned kinds=0;for(unsigned q=0;q<SOM_BOLTS;q++)if(mage_bolts[q].active)kinds|=1u<<mage_bolts[q].kind;
+                    if(pick==0u)assert(kinds==1u<<SOM_BOLT_PETAL&&!m[0x1F1]);
+                    if(pick==1u)assert(kinds==1u<<SOM_BOLT_TOUCH&&!m[0x1F1]&&(judged_until[0]||judged_until[1]||judged_until[2]));
+                    if(pick==2u)assert(kinds==1u<<SOM_BOLT_RIBBON&&m[0x1F1]&&(m[0x190]&4u));
+                    m[0x180]=keep_id;memcpy(m+2,keep_x,4);m[0x190]=m[0x191]=0;m[0x1F1]=0;
+                }
+                {   /* sleep: not on the immune, not on bosses */
+                    uint8_t o2[0x200]={0};o2[0x180]=0x14;
+                    assert(som_class_status(o2,0x10u,60u)&&(o2[0x190]&0x10)&&o2[0x1B2]==60u);
+                    o2[0x190]=0;o2[0x1AA]=0x10;assert(!som_class_status(o2,0x10u,60u));
+                    o2[0x1AA]=0;o2[0x180]=0x60;assert(!som_class_status(o2,0x10u,60u));
+                    o2[0x180]=0x14;o2[0x191]=4;assert(!som_class_status(o2,0x10u,60u));   /* familiar */
+                }
+                memset(mage_bolts,0,sizeof(mage_bolts));memset(judged_until,0,sizeof(judged_until));
                 memcpy(spr2,keep_s,0x200);disciplines.party[1]=keep_party2;
                 memset(mage_bolts,0,sizeof(mage_bolts));
                 memcpy(ram+0xE600,keep_m,sizeof(keep_m));

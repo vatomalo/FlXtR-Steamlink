@@ -26,11 +26,19 @@
 #define SOM_BOLT_HIT_Y 12
 #define SOM_BOLT_BURST_FRAMES 10u /* the splash where it hits or fades */
 #define SOM_BOLT_ELEMENTS 8u
+/* Looks (player, 2026-11-25: "give them other types"): the ball; Dream
+ * Petal (Mentalist), a slow lotus; Ribbon (Dancer) and Healing Touch
+ * (Cleric), shown where they happen and never flying. */
+enum { SOM_BOLT_BALL, SOM_BOLT_PETAL, SOM_BOLT_RIBBON, SOM_BOLT_TOUCH };
+#define SOM_PETAL_SPEED 3
+#define SOM_PETAL_FRAMES 34u
+#define SOM_SHOW_FRAMES 18u
 
 typedef struct {
     int active, x, y, dx, dy;     /* x, y: map pixels of the ball (the hero's feet frame) */
     unsigned who, element, damage, map;
     int big;                      /* Y's ball: larger (the class's second spell) */
+    int kind;                     /* SOM_BOLT_* below: the class's own look */
     unsigned long start, burst;   /* burst: frame of the splash, 0 none */
 } SomBolt;
 
@@ -65,7 +73,7 @@ static inline int som_bolt_fire(SomBolt b[SOM_BOLTS], unsigned who, unsigned ele
         o->y = y + o->dy * SOM_BOLT_LEAD;
         o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
         o->damage = damage; o->map = map;
-        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1; o->big = 0;
+        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1; o->big = 0; o->kind = SOM_BOLT_BALL;
         return (int)i + 1;
     }
     return 0;
@@ -79,7 +87,7 @@ static inline int som_bolt_sparkle(SomBolt b[SOM_BOLTS], unsigned who, unsigned 
         SomBolt *o = &b[i];
         o->dx = o->dy = 0; o->x = x; o->y = y;
         o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
-        o->damage = 0; o->map = map; o->big = 1;
+        o->damage = 0; o->map = map; o->big = 1; o->kind = SOM_BOLT_BALL;
         o->start = o->burst = frame ? frame : 1u; o->active = 1;
         return 1;
     }
@@ -111,9 +119,14 @@ static inline int som_bolt_step(SomBolt *o, uint8_t *ram, unsigned map, int skip
         if (frame - o->burst >= SOM_BOLT_BURST_FRAMES) o->active = 0;
         return -1;
     }
-    if (frame - o->start >= SOM_BOLT_FRAMES) { o->burst = frame; return -1; }
-    o->x += o->dx * SOM_BOLT_SPEED;
-    o->y += o->dy * SOM_BOLT_SPEED;
+    if (o->kind >= SOM_BOLT_RIBBON) {          /* a picture only */
+        if (frame - o->start >= SOM_SHOW_FRAMES) o->active = 0;
+        return -1;
+    }
+    const int petal = o->kind == SOM_BOLT_PETAL;
+    if (frame - o->start >= (petal ? SOM_PETAL_FRAMES : SOM_BOLT_FRAMES)) { o->burst = frame; return -1; }
+    o->x += o->dx * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);
+    o->y += o->dy * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);
     for (int slot = 0; slot < 3; slot++) {
         if (slot == skip) continue;
         uint8_t *m = ram + SOM_BOLT_MONSTER_BASE + (unsigned)slot * SOM_BOLT_OBJECT;
@@ -133,6 +146,17 @@ static inline int som_bolts_active(const SomBolt b[SOM_BOLTS]) {
     return 0;
 }
 
+static inline void som_bolt_dot(uint8_t *pixels, unsigned width, unsigned height, size_t pitch,
+                                int format, int x, int y, int r, uint32_t c) {
+    const unsigned sx = width >= 512 ? 2u : 1u, sy = height >= 400 ? 2u : 1u;
+    for (int oy = -r; oy <= r; oy++) for (int ox = -r; ox <= r; ox++) {
+        if (ox * ox + oy * oy > r * r + 1) continue;
+        if (x + ox < 0 || y + oy < 0 || x + ox >= (int)(width / sx) || y + oy >= (int)(height / sy)) continue;
+        som_overlay_fill(pixels, pitch, format, (unsigned)(x + ox) * sx, (unsigned)(y + oy) * sy, sx, sy, c);
+    }
+}
+/* Eight compass steps, scaled by 8 (a turn without sin). */
+static const int8_t som_bolt_ring[8][2] = {{8,0},{6,6},{0,8},{-6,6},{-8,0},{-6,-6},{0,-8},{6,-6}};
 /* Paint one ball centred on base pixel (cx, cy): a glowing orb with a tail
  * behind it, or its splash (age frames into the burst). */
 static inline void som_bolt_draw(uint8_t *pixels, unsigned width, unsigned height,
@@ -146,6 +170,44 @@ static inline void som_bolt_draw(uint8_t *pixels, unsigned width, unsigned heigh
     const uint32_t glow = som_overlay_color(format, rgb[1][0], rgb[1][1], rgb[1][2]);
     const uint32_t rim = som_overlay_color(format, rgb[2][0], rgb[2][1], rgb[2][2]);
     const unsigned long age = frame - (o->burst ? o->burst : o->start);
+    if (o->kind == SOM_BOLT_PETAL) {    /* five petals round a pale heart; it opens on a hit */
+        const uint32_t pink = som_overlay_color(format, 255, 170, 230);
+        const uint32_t pale = som_overlay_color(format, 255, 236, 250);
+        const uint32_t deep = som_overlay_color(format, 176, 92, 210);
+        const int spread = o->burst ? 5 + (int)age : 4;
+        for (unsigned k = 0; k < 8u; k++) {
+            const int8_t *v = som_bolt_ring[(k + age / 4u) & 7u];
+            som_bolt_dot(pixels, width, height, pitch, format, cx + v[0] * spread / 8,
+                         cy + v[1] * spread / 8 + (o->burst ? 0 : (int)((age / 6u) & 1u)),
+                         o->burst ? 1 : 2, (k & 1u) ? pink : deep);
+        }
+        if (!o->burst) som_bolt_dot(pixels, width, height, pitch, format, cx, cy, 2, pale);
+        return;
+    }
+    if (o->kind == SOM_BOLT_RIBBON) {   /* a ribbon swept through the half circle in front */
+        const uint32_t rose = som_overlay_color(format, 255, 96, 160);
+        const uint32_t light = som_overlay_color(format, 255, 214, 232);
+        for (int t = 0; t < 22; t++) {
+            const int a = (int)age * 3 - t;
+            if (a < 0 || a > 40) continue;
+            const int along = 18 + ((a * 7) & 7), across = (a - 20) * 2;
+            const int lift = 20 - abs(a - 20);
+            const int x = cx + (o->dx ? o->dx * (along + lift) : across);
+            const int y = cy + (o->dx ? across / 2 : o->dy * (along + lift / 2));
+            som_bolt_dot(pixels, width, height, pitch, format, x, y, t < 6 ? 2 : 1, t & 1 ? light : rose);
+        }
+        return;
+    }
+    if (o->kind == SOM_BOLT_TOUCH) {    /* rising sparks round the healed (or judged) one */
+        const uint32_t gold = som_overlay_color(format, 255, 236, 150);
+        const uint32_t white = som_overlay_color(format, 255, 255, 255);
+        for (unsigned k = 0; k < 8u; k++) {
+            const int8_t *v = som_bolt_ring[(k + age / 3u) & 7u];
+            som_bolt_dot(pixels, width, height, pitch, format, cx + v[0] * 11 / 8,
+                         cy + v[1] * 5 / 8 - (int)age, (k & 1u) ? 1 : 0, (k & 1u) ? gold : white);
+        }
+        return;
+    }
     if (o->burst) {                     /* splash: a ring that grows and thins */
         const int r = 4 + (int)age + (o->big ? 3 : 0);
         for (int oy = -r; oy <= r; oy++) for (int ox = -r; ox <= r; ox++) {

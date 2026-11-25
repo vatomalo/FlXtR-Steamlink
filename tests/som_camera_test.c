@@ -108,6 +108,11 @@ int main(void){
     obj(0xE200,250,40);run(&c,200,0);assert(!som_cam_active(&c)&&!c.hd);  /* too far apart */
     obj(0xE200,130,108);run(&c,300,0);assert(c.hd);hd_ok=0;run(&c,200,0);
     assert(!c.hd&&!som_cam_active(&c));               /* governor */
+    {   /* whacked: in fast, crisp, over, and back */
+        ram[0xE600]=0;obj(0xE600,120,110);run(&c,200,0);som_cam_whack(&c,ram+0xE600);ram[0xE600]=0;
+        run(&c,40,0);assert(c.shot==SOM_SHOT_WHACK);crisp(&c);
+        obj(0xE000,101,130);run(&c,150,0);assert(c.shot!=SOM_SHOT_WHACK&&!som_cam_active(&c));
+    }
     /* text is 2x2 in hd */
     text[0].at=10*512+2*20;text[0].ink=0xABCD;memset(big,0,sizeof(big));
     som_cam_restore_hd((uint8_t*)big,512,2,text,1);

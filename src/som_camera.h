@@ -24,8 +24,8 @@
 #define SOM_CAM_DEAD 12.0f           /* px the aim may drift before the view follows */
 #define SOM_CAM_TALK_HOLD 45u
 #define SOM_CAM_WRAM 0x20000u
-enum {SOM_SHOT_WIDE,SOM_SHOT_TALK,SOM_SHOT_FIGHT,SOM_SHOT_IDLE,SOM_SHOT_COUNT};
-static const char *const som_shot_names[SOM_SHOT_COUNT]={"wide","talk","fight","idle"};
+enum {SOM_SHOT_WIDE,SOM_SHOT_TALK,SOM_SHOT_FIGHT,SOM_SHOT_IDLE,SOM_SHOT_WHACK,SOM_SHOT_COUNT};
+static const char *const som_shot_names[SOM_SHOT_COUNT]={"wide","talk","fight","idle","whacked"};
 typedef struct {
     float zoom,cx,cy;                /* view centre, screen pixels */
     float want_zoom,want_cx,want_cy;
@@ -33,6 +33,8 @@ typedef struct {
     float last_zoom;
     unsigned fight_seen,fight_hold;
     int hd;                          /* drawing 512x448 now */
+    unsigned whack;                  /* frames left of a whacked shot */
+    int whack_x,whack_y,whack_layer; /* the map spot it looks at */
     int shot,hero_x,hero_y;
     unsigned map,still,talked,window;      /* window = screen row below the dialogue window, 0 none */
 } SomCamera;
@@ -81,6 +83,13 @@ static inline void som_cam_clamp(SomCamera *c){
     const float low=(float)c->window*(1.0f-1.0f/c->zoom)+hh;
     if(c->window&&c->cy<low)c->cy=low;
 }
+/* A critical hit killed an enemy ("gets whacked!"): punch in on the spot. */
+#define SOM_CAM_WHACK_FRAMES 54u
+static inline void som_cam_whack(SomCamera *c,const uint8_t *object){
+    c->whack=SOM_CAM_WHACK_FRAMES;
+    c->whack_x=(int)som_cam_u16(object+2);c->whack_y=(int)som_cam_u16(object+4)-12;
+    c->whack_layer=(object[0x0B]&0x80u)!=0;
+}
 /* One frame. `lead` = the hero being followed; `busy` = our own menus. */
 static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,int busy,int allow_hd){
     const unsigned map=som_cam_u16(ram+0xDC);
@@ -107,6 +116,15 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
                 if(who>=0x600u&&who<0x1800u&&!(who&0x1FFu)&&som_cam_object(ram,0xE000u+who,&x,&y))
                     som_cam_add(&box,x,y);
                 if(som_cam_aim(c,&box,talk_zoom,16,72,216))shot=SOM_SHOT_TALK;
+            }
+        }else if(ram[0xD0]==0&&c->whack){
+            const unsigned cam=c->whack_layer?0xACu:0xA8u;
+            c->whack--;
+            SomCamBox spot;memset(&spot,0,sizeof(spot));
+            x=(int16_t)(c->whack_x-(int)som_cam_u16(ram+cam));y=(int16_t)(c->whack_y-(int)som_cam_u16(ram+cam+2u));
+            if(x>=0&&x<SOM_CAM_W&&y>=0&&y<SOM_CAM_H){
+                som_cam_add(&spot,x,y);
+                if(som_cam_aim(c,&spot,2.0f,12,8,SOM_CAM_HUD_TOP))shot=SOM_SHOT_WHACK;
             }
         }else if(ram[0xD0]==0){
             int monsters=0;
@@ -149,9 +167,9 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
         if(c->zoom<=1.0f){c->at_x=c->aim_cx;c->at_y=c->aim_cy;c->vx=c->vy=0.0f;}
         if(c->aim_zoom==1.5f)c->hd=1;
     }else c->aim_zoom=1.0f;
-    if(!allow_hd)c->hd=0;
+    if(!allow_hd||shot==SOM_SHOT_WHACK)c->hd=0;
     /* Critically damped: soft start, soft stop, then exactly on the mark. */
-    const float quick=shot==SOM_SHOT_WIDE&&(busy||choice||ram[0x7D]==1)?0.35f:0.10f;
+    const float quick=shot==SOM_SHOT_WIDE&&(busy||choice||ram[0x7D]==1)?0.35f:shot==SOM_SHOT_WHACK?0.32f:0.10f;
     c->vz+=(c->aim_zoom-c->zoom)*quick*quick-2.0f*quick*c->vz;c->zoom+=c->vz;
     if(c->aim_zoom-c->zoom<.004f&&c->zoom-c->aim_zoom<.004f){c->zoom=c->aim_zoom;c->vz=0.0f;}
     const float wp=0.065f;

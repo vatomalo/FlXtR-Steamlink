@@ -122,6 +122,9 @@ static int som_perk_of(unsigned who,unsigned effect);
 static unsigned som_perk_bonus(unsigned who,unsigned slot,unsigned damage,const char *what);
 static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,unsigned hp_after);
 static void som_monster_hit(unsigned slot);
+static void som_judged_hit(uint8_t *ram,unsigned who,unsigned slot);
+static void som_whack_frame(const uint8_t *ram);
+static const char *som_class_attack_name(unsigned cls);
 static unsigned som_pad2_member(const uint8_t *ram);
 static void som_perks_frame(uint8_t *ram);
 static uint16_t som_word(const uint8_t *p);
@@ -209,6 +212,8 @@ static const char *brain_file=SOM_BRAIN_FILE;
 static const char *debug_messages_file=SOM_DEBUG_MESSAGES_FILE;
 #define SOM_P2_AI_FILE "/home/apps/retroarch/cores/experimental/som_ai_player2"
 static const char *p2_ai_file=SOM_P2_AI_FILE;
+#define SOM_WHACK_OFF_FILE "/home/apps/retroarch/cores/experimental/som_ai_whack_off"
+static const char *whack_off_file=SOM_WHACK_OFF_FILE;
 /* Independent from the six Gambit priority digits, shared with the
  * external song-id -> yt-dlp playback bridge. */
 #define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
@@ -216,7 +221,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0};
+    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0,0};
 static SomDisciplines disciplines;
 /* The acting hero (2026-11-22, "write them with companions in mind"): the
  * player's moves (X class moves, L2 specials, throw, bash, Blink, portals,
@@ -496,6 +501,7 @@ static void som_gambit_load(void){
     in=fopen(p2_ai_file,"r");
     if(in){if(!fgets(second,sizeof(second),in))second[0]=0;fclose(in);}
     gambits.player2=second[0]=='1';
+    gambits.no_whack=access(whack_off_file,F_OK)==0;
 }
 static void som_gambit_write(const char *path,const char *text){
     char temp[256];
@@ -1644,6 +1650,7 @@ static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,u
         }
     }
     monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=who;
+    som_judged_hit(ram,who,slot);
 }
 /* The guard is up: the AI's block action, or physical R2. */
 static int som_guarding(void){
@@ -2057,6 +2064,10 @@ static void som_gambit_result(int result){
                         "AI debug off|bubbles hidden",SOM_MESSAGE_FRAMES);
         break;
     case SOM_GAMBIT_P2_CHANGED:som_p2ai_switched();break;
+    case SOM_GAMBIT_WHACK_CHANGED:
+        if(gambits.no_whack){FILE *off=fopen(whack_off_file,"w");if(off)fclose(off);}
+        else unlink(whack_off_file);
+        break;
     case SOM_GAMBIT_EXIT:
         if(act_ai){                        /* from the ring menu: the AI starts */
             act_ai=0;gambits.open=0;gambits.resting=0;
@@ -3688,11 +3699,23 @@ static int som_cast_spell(uint8_t *ram,unsigned spell){return som_cast_spell_by(
  * range, so she throws from where she stands: a monster in a straight line
  * (up, down, left or right) within the reach, and she turns to it and
  * jabs, the game's own swing (+0x1C 0x20, animation 1, script restart). */
+#define SOM_RIBBON_REACH 46
 static int som_mage_ally_throw(uint8_t *ram,unsigned who){
     uint8_t *o=ram+0xE000u+0x200u*who;
     if(o[0x2C]||som_pad1_member_in(ram)==who||!som_ally_idle(ram,who)||
        o[0x1ED]||frame_number<mage_ally_next[who])return 0;
     const int x=(int)som_word(o+2),y=(int)som_word(o+4);
+    if(som_disc_member_class(&disciplines,who)==SOM_DISC_CLERIC)
+        for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+            const uint8_t *a=ram+0xE000u+0x200u*k;
+            const unsigned hp=som_word(a+0x182),max=som_word(a+0x184);
+            if(k==who||a[0]!=1||!hp||hp*10u>=max*8u||
+               abs((int)som_word(a+2)-x)+abs((int)som_word(a+4)-y)>48)continue;
+            o[0x1C]=0x20;o[0x11]=SOM_GLOVE_JAB;o[0x30]=0xFF;
+            o[0x06]=o[0x07]=o[0x08]=0;
+            mage_ally_next[who]=frame_number+SOM_BOLT_ALLY_GAP;
+            return 1;
+        }
     int best=-1;unsigned facing=0;
     for(int slot=0;slot<3;slot++){
         if(slot==familiar.slot)continue;
@@ -3702,6 +3725,7 @@ static int som_mage_ally_throw(uint8_t *ram,unsigned who){
         int along,across;unsigned f;
         if(abs(dx)>=abs(dy)){along=abs(dx);across=dy;f=dx>=0?0x02u:0x82u;}
         else{along=abs(dy);across=dx;f=dy>=0?0x01u:0x00u;}
+        if(som_disc_member_class(&disciplines,who)==7u&&along>SOM_RIBBON_REACH)continue;   /* Dancer */
         if(along>SOM_BOLT_ALLY_REACH||abs(across)>SOM_BOLT_ALLY_ACROSS)continue;
         if(best<0||along<best){best=along;facing=f;}
     }
@@ -3740,6 +3764,207 @@ static int som_most_hurt_hero(const uint8_t *ram,unsigned spell){
     }
     return best;
 }
+/* ---- Class B attacks (player, 2026-11-25). Mentalist: Dream Petal, a
+ * critical puts the monster to sleep. Cleric: Healing Touch, no damage but
+ * to the undead; a monster in reach is judged: heroes who hit it heal.
+ * Dancer: Ribbon, light damage in front, slows monsters, readies allies. */
+#define SOM_TOUCH_REACH 48
+#define SOM_JUDGE_REACH 100
+#define SOM_JUDGE_FRAMES 480ul
+#define SOM_RHYTHM_REACH 110
+#define SOM_RHYTHM_GAUGE 24u
+#define SOM_CRIT_PCT 12u
+static unsigned long judged_until[3],sleep_at[3];
+static uint8_t judged_id[3],sleep_id[3];
+static unsigned long no_jab_until[SOM_PARTY_MEMBERS];
+static unsigned class_rng=0x1234567u;
+static unsigned class_roll(void){
+    class_rng^=class_rng<<13;class_rng&=0xFFFFFFFFu;class_rng^=class_rng>>17;class_rng^=class_rng<<5;
+    class_rng&=0xFFFFFFFFu;
+    return (class_rng>>8)%100u;
+}
+static const char *som_class_attack_name(unsigned cls){
+    return cls==SOM_DISC_PSIONICS?"Dream Petal":cls==SOM_DISC_CLERIC?"Healing Touch":
+        cls==7u?"Ribbon":NULL;
+}
+static int som_undead(unsigned id){
+    return id==0x09u||id==0x12u||id==0x30u||id==0x35u||id==0x36u;
+}
+static void som_queue_damage(uint8_t *m,unsigned damage){
+    const unsigned pending=m[0x1F1]+damage;
+    m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+}
+static void som_queue_heal(uint8_t *hero,unsigned amount){
+    som_put_word(hero+0x1F3,(uint16_t)(som_word(hero+0x1F3)+amount));
+}
+/* A game status on an ordinary monster, within its immunity (+0x1AA) and
+ * with the game's timer (+0x1B2); never on bosses or familiars. */
+static int som_class_status(uint8_t *m,unsigned bit,unsigned ticks){
+    if(m[0x180]>=0x57u||(som_word(m+0x1AA)&bit)||(som_word(m+0x190)&0x8460u))return 0;
+    som_put_word(m+0x190,(uint16_t)((som_word(m+0x190)&~0x001Cu)|bit));
+    m[0x1B2]=(uint8_t)(ticks>0xFFu?0xFFu:ticks);
+    return 1;
+}
+static void som_class_show(unsigned who,int kind,int x,int y,unsigned facing,unsigned map){
+    const int slot=som_bolt_fire(mage_bolts,who,7u,x,y,facing,0u,map,frame_number);
+    if(slot<=0)return;
+    mage_bolts[slot-1].kind=kind;mage_bolts[slot-1].x=x;mage_bolts[slot-1].y=y;
+}
+/* A hero's hit on a judged monster heals that hero. */
+static void som_judged_hit(uint8_t *ram,unsigned who,unsigned slot){
+    if(slot>2u||who>=SOM_PARTY_MEMBERS||frame_number>=judged_until[slot])return;
+    uint8_t *hero=ram+0xE000u+0x200u*who;
+    if(judged_id[slot]!=ram[0xE780u+0x200u*slot]||hero[0]!=1||!som_word(hero+0x182)||
+       som_word(hero+0x182)>=som_word(hero+0x184))return;
+    const unsigned heal=3u+disciplines.level[SOM_DISC_CLERIC]/4u;
+    som_queue_heal(hero,heal);
+    fprintf(stderr,"[som-ai] JUDGEMENT %s heals %u\n",som_party_names[who],heal);
+}
+static void som_cleric_touch(uint8_t *ram,unsigned who,unsigned map){
+    uint8_t *me=ram+0xE000u+0x200u*who;
+    const int x=(int)som_word(me+2),y=(int)som_word(me+4);
+    const unsigned level=disciplines.level[SOM_DISC_CLERIC];
+    int best=-1;unsigned long share=1000ul;
+    for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+        const uint8_t *o=ram+0xE000u+0x200u*k;
+        const unsigned hp=som_word(o+0x182),max=som_word(o+0x184);
+        if(k==who||o[0]!=1||!hp||hp>=max||abs((int)som_word(o+2)-x)+abs((int)som_word(o+4)-y)>SOM_TOUCH_REACH)continue;
+        const unsigned long at=(unsigned long)hp*1000ul/max;
+        if(best<0||at<share){best=(int)k;share=at;}
+    }
+    if(best>=0){
+        uint8_t *o=ram+0xE000u+0x200u*(unsigned)best;
+        const unsigned heal=10u+me[0x181]/2u+level/2u;
+        som_queue_heal(o,heal);
+        som_class_show(who,SOM_BOLT_TOUCH,(int)som_word(o+2),(int)som_word(o+4),me[0x10],map);
+        som_xp_give(SOM_DISC_CLERIC,SOM_XP_SPELL,0x7Fu,SOM_XPK_SPELL,"healing touch");
+        fprintf(stderr,"[som-ai] TOUCH %s heals %s %u\n",som_party_names[who],som_party_names[best],heal);
+        return;
+    }
+    int slot=-1;long near=0;
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
+        if((int)k==familiar.slot||!som_bun_monster_alive(m))continue;
+        const long d=labs((long)som_word(m+2)-x)+labs((long)som_word(m+4)-y);
+        if(d<=SOM_JUDGE_REACH&&(slot<0||d<near)){slot=(int)k;near=d;}
+    }
+    if(slot>=0){
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)slot;
+        if(som_undead(m[0x180])&&near<=SOM_TOUCH_REACH){
+            const unsigned damage=som_mage_bolt_damage(me,SOM_DISC_CLERIC);
+            som_queue_damage(m,damage);monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=who;
+            fprintf(stderr,"[som-ai] TOUCH %s burns the undead for %u\n",som_party_names[who],damage);
+        }else{
+            judged_until[slot]=frame_number+SOM_JUDGE_FRAMES;judged_id[slot]=m[0x180];
+            fprintf(stderr,"[som-ai] JUDGEMENT %s marks monster %d\n",som_party_names[who],slot);
+        }
+        som_class_show(who,SOM_BOLT_TOUCH,(int)som_word(m+2),(int)som_word(m+4),me[0x10],map);
+        return;
+    }
+    if(som_word(me+0x182)<som_word(me+0x184)){
+        som_queue_heal(me,4u+level/4u);
+        som_class_show(who,SOM_BOLT_TOUCH,x,y,me[0x10],map);
+        fprintf(stderr,"[som-ai] TOUCH %s self %u\n",som_party_names[who],4u+level/4u);
+    }
+}
+static void som_dancer_ribbon(uint8_t *ram,unsigned who,unsigned map){
+    uint8_t *me=ram+0xE000u+0x200u*who;
+    const int x=(int)som_word(me+2),y=(int)som_word(me+4);
+    int dx,dy;som_bolt_dir(me[0x10],&dx,&dy);
+    const unsigned damage=som_mage_bolt_damage(me,7u)*3u/10u;
+    for(unsigned k=0;k<3u;k++){
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
+        if((int)k==familiar.slot||!som_bun_monster_alive(m))continue;
+        const int mx=(int)som_word(m+2)-x,my=(int)som_word(m+4)-y;
+        const int along=mx*dx+my*dy,across=dx?abs(my):abs(mx);
+        if(along<-8||along>SOM_RIBBON_REACH||across>SOM_RIBBON_REACH-10)continue;
+        som_queue_damage(m,damage);monster_hit_frame[k]=frame_number;monster_hit_who[k]=who;
+        const int slowed=som_class_status(m,0x0004u,40u);
+        som_judged_hit(ram,who,k);
+        som_xp_give(7u,SOM_XP_SPELL/2u,m[0x180],SOM_XPK_SPELL,"ribbon");
+        fprintf(stderr,"[som-ai] RIBBON %s hits monster %u for %u%s\n",som_party_names[who],k,damage,
+                slowed?" and slows it":"");
+    }
+    for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){     /* rhythm: allies swing sooner */
+        uint8_t *o=ram+0xE000u+0x200u*k;
+        if(k==who||o[0]!=1||!som_word(o+0x182)||!o[0x1ED]||
+           abs((int)som_word(o+2)-x)+abs((int)som_word(o+4)-y)>SOM_RHYTHM_REACH)continue;
+        o[0x1ED]=(uint8_t)(o[0x1ED]>SOM_RHYTHM_GAUGE?o[0x1ED]-SOM_RHYTHM_GAUGE:0u);
+    }
+    som_class_show(who,SOM_BOLT_RIBBON,x,y,me[0x10],map);
+}
+/* The class's own B. 1 = it replaces the jab and the ball. */
+static int som_class_attack(uint8_t *ram,unsigned who,unsigned cls,unsigned map){
+    uint8_t *hero=ram+0xE000u+0x200u*who;
+    if(!som_class_attack_name(cls))return 0;
+    /* no punch: the swing ends here, its recovery stays */
+    hero[0x1C]=0;hero[0x11]=3;hero[0x30]=0xFF;
+    if(hero[0x1ED]<46u)hero[0x1ED]=46u;
+    no_jab_until[who]=frame_number+20ul;       /* the fist's hit box outlives the swing */
+    if(cls==SOM_DISC_CLERIC)som_cleric_touch(ram,who,map);
+    else if(cls==7u)som_dancer_ribbon(ram,who,map);
+    else{
+        const unsigned damage=som_mage_bolt_damage(hero,cls)/2u;
+        const int slot=som_bolt_fire(mage_bolts,who,4u,(int)som_word(hero+2),(int)som_word(hero+4),
+                                     hero[0x10],damage,map,frame_number);
+        if(slot>0){
+            mage_bolts[slot-1].kind=SOM_BOLT_PETAL;
+            fprintf(stderr,"[som-ai] PETAL %s (%u)\n",som_party_names[who],damage);
+        }
+    }
+    return 1;
+}
+/* A petal landed: the critical doubles it and brings sleep. */
+static void som_petal_hit(uint8_t *ram,const SomBolt *b,unsigned slot){
+    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    const unsigned level=disciplines.level[SOM_DISC_PSIONICS];
+    unsigned pct=SOM_CRIT_PCT+level/5u;if(pct>30u)pct=30u;
+    const int asleep=(som_word(m+0x190)&0x0010u)!=0;
+    if(asleep)som_queue_damage(m,b->damage/2u);          /* dreamers feel it more */
+    if(class_roll()>=pct)return;
+    som_queue_damage(m,b->damage);
+    sleep_at[slot]=frame_number+8ul;sleep_id[slot]=m[0x180];   /* after the damage: it would wake it */
+    fprintf(stderr,"[som-ai] PETAL critical on monster %u\n",slot);
+}
+static void som_class_attack_frame(uint8_t *ram){
+    for(unsigned k=0;k<3u;k++){
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
+        for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)      /* +0x59: hits queued, bit = hero */
+            if(frame_number<no_jab_until[who])m[0x59]&=(uint8_t)~(1u<<who);
+        if(judged_until[k]&&(m[0x180]!=judged_id[k]||!som_bun_monster_alive(m)))judged_until[k]=0;
+        if(!sleep_at[k]||frame_number<sleep_at[k])continue;
+        sleep_at[k]=0;
+        if(m[0x180]==sleep_id[k]&&som_bun_monster_alive(m)&&som_word(m+0x182)&&
+           som_class_status(m,0x0010u,60u+disciplines.level[SOM_DISC_PSIONICS]))
+            fprintf(stderr,"[som-ai] LULL monster %u sleeps\n",k);
+    }
+}
+/* "... gets whacked!" (the game's critical notice) and that monster dead:
+ * the camera punches in on it. */
+static void som_whack_frame(const uint8_t *ram){
+    static const uint8_t text[]={0x80,0x87,0x85,0x94,0x93,0x80,0x97,0x88,0x81,0x83,0x8B,0x85,0x84};
+    static uint8_t seen[0xC0];
+    static unsigned whack_id=0xFFu;
+    static unsigned long whack_at;
+    static uint8_t live[3],ids[3];
+    for(unsigned i=0;i+2u+sizeof(text)<0xC0u;i++){
+        const uint8_t *q=ram+0xFE00u+i;
+        const int here=q[0]==0x54u&&!memcmp(q+2,text,sizeof(text));
+        if(here&&seen[i]!=q[1]+1u){whack_id=q[1];whack_at=frame_number;}
+        seen[i]=here?(uint8_t)(q[1]+1u):0u;
+    }
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
+        const int now=m[0]==1&&m[0x180]<0x80u&&som_word(m+0x182)!=0;
+        if(live[k]&&!now&&ids[k]==whack_id&&frame_number-whack_at<30ul&&(int)k!=familiar.slot){
+            whack_id=0xFFu;
+            fprintf(stderr,"[som-ai] WHACKED monster %u\n",k);
+            if(!gambits.no_whack)som_cam_whack(&camera,m);
+        }
+        live[k]=(uint8_t)now;
+        if(now)ids[k]=m[0x180];
+    }
+}
 static void som_mage_bolt_frame(uint8_t *ram,int after){
     if(!ram)return;
     const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
@@ -3762,6 +3987,9 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
             fprintf(stderr,"[som-ai] MAGE JAB for %s's kick/lunge\n",som_party_names[who]);
         }
         const int swing=hero[0x1C]==0x20u&&!hero[0x60];
+        if(swing&&mage_swing_prev[who]!=0x20u&&som_class_attack(ram,who,cls,map)){
+            mage_swing_prev[who]=0;continue;
+        }
         if(swing&&mage_swing_prev[who]!=0x20u){
             const unsigned spell=som_caster_spell(cls,0u);
             const unsigned element=som_spell_element(spell),damage=som_mage_bolt_damage(hero,cls);
@@ -3773,6 +4001,7 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
         mage_swing_prev[who]=hero[0x1C];
     }
     if(!after)return;
+    if(field)som_class_attack_frame(ram);
     for(unsigned i=0;i<SOM_BOLTS;i++){
         SomBolt *b=&mage_bolts[i];
         if(!b->active)continue;
@@ -3780,6 +4009,9 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
         const int slot=som_bolt_step(b,ram,map,familiar.slot,frame_number);
         if(slot>=0){
             const uint8_t *m=ram+SOM_BOLT_MONSTER_BASE+SOM_BOLT_OBJECT*(unsigned)slot;
+            monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=b->who%SOM_PARTY_MEMBERS;
+            som_judged_hit(ram,b->who,(unsigned)slot);
+            if(b->kind==SOM_BOLT_PETAL)som_petal_hit(ram,b,(unsigned)slot);
             if(b->who==0u&&disciplines.selected<SOM_DISCIPLINE_COUNT)
                 som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
                             m[0x180],SOM_XPK_SPELL,"mage bolt hit");
@@ -8387,7 +8619,7 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         /* Line 2. */
         char second[48]="";uint32_t ink=som_overlay_color(pixel_format,255,214,96);
         if(who==0u&&som_disc_caster(cls)){
-            snprintf(second,sizeof(second),"%s/%s",som_class_spell_label(cls,som_caster_spell(cls,0)),
+            snprintf(second,sizeof(second),"%s/%s",som_class_attack_name(cls)?som_class_attack_name(cls):som_class_spell_label(cls,som_caster_spell(cls,0)),
                      som_class_spell_label(cls,som_caster_spell(cls,1)));
             ink=som_overlay_color(pixel_format,170,200,255);
         }else if(who==0u){
@@ -9371,7 +9603,10 @@ RETRO_API void retro_run(void){
         som_style_after((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(style_dirty&&frame_number-style_saved_frame>=3600ul)som_styles_save();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data)
+    {
         som_perks_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        som_whack_frame((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    }
     if(test_enabled&&on_turbo&&frame_number%30u==0u){som_prog_frame();som_unlock_frame(som_live_wram());}
     if(test_enabled&&on_turbo)som_special_tick();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&

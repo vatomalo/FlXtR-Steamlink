@@ -985,3 +985,15 @@ class that hero has or has had; the girl and the sprite have passives too. Saves
 
 The ring's Classes menu has more pages on L1/R1: Music, then the AI menu
 (ACTIONS, COMBAT, QUEST). Its last row starts the AI.
+
+## Class attacks and Whacked
+
+B is no jab for these casters. **Mentalist, Dream Petal:** a slow lotus; a
+critical (12 % + level/5, at most 30 %) doubles it and puts an ordinary monster
+to sleep. **Cleric, Healing Touch:** heals the most hurt ally in reach; burns
+the undead; judges any other monster (heroes who hit it heal); else a small
+self-heal. **Dancer, Ribbon:** light damage in front, slows monsters, readies
+allies' weapon gauges. Bosses and familiars are never put to sleep or slowed.
+
+**Whacked:** a critical hit (the game's "gets whacked!") that kills an enemy
+makes the camera punch in on it; AI menu, *Whacked camera*, turns it off.

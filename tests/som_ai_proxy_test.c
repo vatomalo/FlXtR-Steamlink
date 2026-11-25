@@ -2338,7 +2338,7 @@ int main(void){
             weapon_mask_on_file=mask_path;weapon_mask_on_checked=0;
             const uint8_t keep=disciplines.selected,old=styles.selected[SOM_DISC_BUSHIDO];
             disciplines.selected=SOM_DISC_BUSHIDO;styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_HEAVY;
-            hero[0x1E4]=1;hero[0x1E3]=14;hero[0x026]=20;hero[0x028]=0x40;
+            hero[0x1E4]=1;hero[0x1E3]=14;hero[0x026]=20;hero[0x027]=0;hero[0x024]=0x40;hero[0x028]=0x40;
             for(unsigned i=0;i<0x800;i++)ram[0x2000+i]=(uint8_t)(i*7u+1u);
             som_weapon_mask_frame(ram);
             assert(weapon_tiles_hidden&&ram[0x2000]==0&&ram[0x27FF]==0);
@@ -2352,6 +2352,10 @@ int main(void){
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);
             hero[0x026]=20;som_weapon_mask_frame(ram);som_weapon_mask_pick(ram);
             assert(weapon_tiles_hidden&&weapon_masked.active);
+            hero[0x027]=1;som_weapon_mask_pick(ram);assert(!weapon_masked.active);   /* pose 138 */
+            hero[0x027]=0;hero[0x024]=0;som_weapon_mask_pick(ram);
+            assert(!weapon_masked.active);            /* weapon not shown */
+            hero[0x024]=0x40;
             styles.selected[SOM_DISC_BUSHIDO]=SOM_STYLE_BALANCED;
             som_weapon_mask_frame(ram);
             assert(!weapon_tiles_hidden&&ram[0x2000]==1&&ram[0x2001]==8);

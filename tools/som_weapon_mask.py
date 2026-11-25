@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Weapon masks built from the player's own Secret of Mana Turbo ROM.
 
-Tanto: remove only the distal part of the blade. Dai Katana: extend its
-one/two-pixel edge and rebuild the tip. Katana stays native. The grip,
-guard, hero, and slash animation are NEVER resized or translated.
+Tanto, Katana and Dai Katana are drawn in the sword's own palette at the
+native sword's hilt and angle (som_katana_art.py, 2026-11-25); the slash
+trail is kept as it is. A donor dagger still uses the older blade mask.
 
-A frame is accepted only when a blade can be identified near the hero's
-actual pixels. Unsafe/ambiguous frames are omitted: the runtime restores
+Frames where the sword's hilt cannot be found are omitted: the runtime restores
 native weapon art instead of displaying a detached or invisible weapon.
 
 SOMWORK1: one packed, cropped colour-index image per (style, row, frame).
@@ -23,10 +22,12 @@ import struct
 import som_hero_gfx as H
 from som_donor_dagger import import_dagger, place_dagger
 import som_villager_work as V
+import som_katana_art as K
 
 KIND_TANTO = 0xD4
 KIND_DAI = 0xD5
 KIND_KUSARIGAMA = 0xD6
+KIND_KATANA = 0xD7
 SWORD_ROWS = tuple(range(9, 18))
 KUSARIGAMA_WHIP_ROW = 36       # Ninjutsu's default Leather Lash artwork
 CANVAS = 224
@@ -228,8 +229,10 @@ def pack(gfx, rows=SWORD_ROWS, dagger=None, kusarigama=False):
             gfx.render("boy", wp, image=weapon, origin=ORIGIN, source=tiles)
             gfx.render("boy", gfx.pieces("boy", "sword", frame, flags),
                        image=body, origin=ORIGIN)
-            for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI)):
-                art = masked_style(weapon, body, style, donor=dagger if style=="tanto" else None)
+            for style, kind in (("tanto", KIND_TANTO), ("dai", KIND_DAI),
+                                ("katana", KIND_KATANA)):
+                art = (masked_style(weapon, body, style, donor=dagger)
+                       if style == "tanto" and dagger else K.draw(weapon, style))
                 record = cropped(art) if art else None
                 if record is None:
                     continue

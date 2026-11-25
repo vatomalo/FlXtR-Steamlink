@@ -54,7 +54,7 @@ def unpack(data):
     for _ in range(count):
         if ptr+44>end:raise ValueError("truncated weapon mask entry")
         kind,row,frame,nframes=struct.unpack_from("<BBBB",data,ptr)
-        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_KUSARIGAMA) or row not in M.SWORD_ROWS or nframes!=1:
+        if kind not in (M.KIND_TANTO,M.KIND_DAI,M.KIND_KUSARIGAMA,M.KIND_KATANA) or row not in M.SWORD_ROWS or nframes!=1:
             raise ValueError("not a supported weapon-mask pack")
         palette=struct.unpack_from("<20H",data,ptr+4)
         if any(c&0x8000 for c in palette):
@@ -160,11 +160,11 @@ def contact_sheet(gfx,records,row,frames):
             stamp(pic,x0,y0-14,title,(235,225,196))
             stamp(pic,x0+panel-20,y0-14,f"{frame:02d}")
             kind=(M.KIND_TANTO if which==0 else M.KIND_DAI if which==2 else
-                  M.KIND_KUSARIGAMA if which==3 else None)
+                  M.KIND_KUSARIGAMA if which==3 else M.KIND_KATANA)
             rec=records.get((kind,row,frame)) if kind is not None else None
             img=render_cell(gfx,row,frame,flags,rec)
             # Red missing-frame marker means the native weapon was used.
-            if which!=1 and rec is None:
+            if rec is None:
                 for i in range(8):
                     for j in range(i+1):pic[y0+i][x0+j]=(235,55,75)
             base_x=M.ORIGIN[0]-VIEW//2
@@ -203,7 +203,7 @@ def main():
     pic=contact_sheet(gfx,records,args.row,frames)
     png(args.png,pic)
     lines=["Weapon masks, native frame numbers, sword grade row "+str(args.row),
-           "Rows: Tanto, native Katana, Dai Katana, Kusarigama whip overlay",
+           "Rows: Tanto, Katana, Dai Katana, Kusarigama whip overlay",
            "Red marker: mask unavailable, show native sword; no red marker: masked replacement",
            "Only the weapon silhouette is replaced. Hero body stays native.",
            ""]

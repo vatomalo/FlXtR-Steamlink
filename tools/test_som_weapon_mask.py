@@ -78,6 +78,23 @@ class BladeMaskTests(unittest.TestCase):
         dx,dy,w,h,pixels = masks.cropped(fixed)
         self.assertEqual((dx,dy,w,h,pixels),(10,-18-14,1,1,bytes([2])))
 
+    def test_katana_family_length_and_trail(self):
+        K = masks.K
+        img = [[0]*96 for _ in range(96)]
+        for x in range(30, 48):
+            img[50][x] = 1; img[51][x] = 4; img[49][x] = 4
+        for y in range(46, 55):
+            img[y][32] = 3
+        img[10][80] = 5
+        ends = []
+        for style in ("tanto", "katana", "dai"):
+            art = K.draw(img, style)
+            self.assertEqual(art[10][80], 5)          # the trail stays
+            self.assertTrue(all(c <= 5 for row in art for c in row))
+            ends.append(max(x for row in art[20:] for x, c in enumerate(row) if c))
+        self.assertTrue(ends[0] < 45 < ends[1] < ends[2])
+        self.assertIsNone(K.draw([[0]*96 for _ in range(96)], "dai"))
+
     def test_pack_header_and_palette_are_somwork_compatible(self):
         class Fake:
             def weapon_tiles(self,row): return b""
@@ -90,6 +107,7 @@ class BladeMaskTests(unittest.TestCase):
                 x0,y0=masks.ORIGIN
                 if kwargs.get("source") is not None:
                     for x in range(x0+6,x0+31): image[y0-18][x]=2
+                    for y in range(y0-21,y0-14): image[y][x0+8]=3      # guard
                 else:
                     for y in range(y0-20,y0-12):
                         for x in range(x0,x0+8):image[y][x]=3
@@ -101,11 +119,11 @@ class BladeMaskTests(unittest.TestCase):
         finally:
             masks.sword_frames=old
         self.assertEqual(result[:8],b"SOMWORK1")
-        self.assertEqual(struct.unpack_from("<H",result,8)[0],2)
+        self.assertEqual(struct.unpack_from("<H",result,8)[0],3)
         self.assertEqual([result[10],result[result.find(b"SOMWORK1")+10]], [masks.KIND_TANTO]*2)
         # Both masks contain only palette indices 0..10; no soft blade pixels.
         offset=10
-        for kind in (masks.KIND_TANTO,masks.KIND_DAI):
+        for kind in (masks.KIND_TANTO,masks.KIND_DAI,masks.KIND_KATANA):
             self.assertEqual((result[offset],result[offset+1],result[offset+2]),(kind,14,10))
             w,h=result[offset+47],result[offset+48]
             data=result[offset+49:offset+49+w*h]

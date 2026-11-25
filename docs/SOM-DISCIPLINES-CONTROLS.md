@@ -685,12 +685,12 @@ the proxy **does not scale the entire weapon** any more.
 
 The pack carries Bushido's blade masks and the Ninjutsu Kusarigama hybrid:
 
-- **Tanto:** shortened native sword silhouette, optionally replaced with a
-  user-extracted Seiken Densetsu 3 dagger PNG. The PNG must have a transparent
+- **Tanto / Katana / Dai Katana (2026-11-25):** drawn in the sword's own
+  palette and outline at its hilt and angle (`tools/som_katana_art.py`): 0.42,
+  1.15 and 1.75 times the native blade. Samurai, all three styles; the boy as
+  Ninja or Rogue with Kusanagi: Tanto in the fast style, else Katana. The slash
+  trail stays native. A Tanto may instead be a user-extracted Seiken Densetsu 3 dagger PNG. The PNG must have a transparent
   background and be cropped to just the dagger.
-- **Katana:** untouched native Secret of Mana weapon art and animations.
-- **Dai Katana:** extended solid blade with a reconstructed narrow tip, **not**
-  a doubled hilt, thick pixel resize, or scaled attack trail.
 - **Kusarigama (Ninjutsu heavy style):** normal B taps still use the whip. Hold
   B after its recovery to charge the sword's native level-2 attack; the
   level-2 body animation is paired with whip frames extracted from the local

@@ -1186,7 +1186,7 @@ static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried;
 static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
-static uint32_t *weapon_mask_index;    /* [Tanto,Dai,Kusarigama][72][256] */
+static uint32_t *weapon_mask_index;    /* [Tanto,Dai,Kusarigama,Katana][72][256] */
 static uint8_t weapon_native_tiles[0x800];
 static int weapon_tiles_hidden;
 static SomNpcWorkState weapon_masked;
@@ -8840,9 +8840,12 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);
+    /* WRAM is one frame ahead of this picture: draw the blade picked last time. */
+    static SomNpcWorkState weapon_drawn;
+    weapon_drawn=weapon_masked;
     if(backend_retro_get_memory_data)
         som_weapon_mask_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    const int worker=(npc_work.active||flykick.active||weapon_masked.active||ukemi_draw.active||companion.draw.active||
+    const int worker=(npc_work.active||flykick.active||weapon_drawn.active||ukemi_draw.active||companion.draw.active||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -8981,8 +8984,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
-            if(weapon_masked.active)
-                som_weapon_mask_draw(&weapon_masked,ram,overlay_frame,width,height,
+            if(weapon_drawn.active)
+                som_weapon_mask_draw(&weapon_drawn,ram,overlay_frame,width,height,
                                      pitch,pixel_format);
             if(ukemi_draw.active)
                 som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
@@ -10310,7 +10313,7 @@ static void som_weapon_mask_load(void){
                        &weapon_mask_pack,&weapon_mask_pack_size);
     if(!weapon_mask_pack||weapon_mask_pack_size<10u||
        memcmp(weapon_mask_pack,"SOMWORK1",8u))return;
-    weapon_mask_index=calloc(3u*72u*256u,sizeof(*weapon_mask_index));
+    weapon_mask_index=calloc(4u*72u*256u,sizeof(*weapon_mask_index));
     if(!weapon_mask_index)return;
     const uint8_t *p=weapon_mask_pack+10u,*end=weapon_mask_pack+weapon_mask_pack_size;
     const unsigned entries=weapon_mask_pack[8]|(unsigned)weapon_mask_pack[9]<<8;
@@ -10322,7 +10325,7 @@ static void som_weapon_mask_load(void){
             next=som_work_next_frame(next,end);
             if(!next)goto malformed;
         }
-        if(p[0]>=0xD4u&&p[0]<=0xD6u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
+        if(p[0]>=0xD4u&&p[0]<=0xD7u&&p[1]>=9u&&p[1]<18u&&p[3]==1u){
             weapon_mask_index[((p[0]-0xD4u)*72u+p[1])*256u+p[2]]=
                 (uint32_t)(p-weapon_mask_pack)+1u;
             count++;
@@ -10347,12 +10350,24 @@ static int som_weapon_mask_mode(const uint8_t *ram,unsigned who){
        som_disc_member_class(&disciplines,who)==SOM_DISC_NINJUTSU&&
        styles.selected[SOM_DISC_NINJUTSU]==SOM_STYLE_HEAVY&&actor[0x1E4]==1u)
         return 2;
-    if(who!=0u||disciplines.selected!=SOM_DISC_BUSHIDO||actor[0x1E4]!=1u)return -1;
-    const unsigned style=styles.selected[SOM_DISC_BUSHIDO]%SOM_STYLES_PER_CLASS;
-    return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:-1;
+    if(who!=0u||actor[0x1E4]!=1u)return -1;
+    const unsigned cls=disciplines.selected;
+    if(cls==SOM_DISC_BUSHIDO){
+        const unsigned style=styles.selected[cls]%SOM_STYLES_PER_CLASS;
+        return style==SOM_STYLE_FAST?0:style==SOM_STYLE_HEAVY?1:3;
+    }
+    /* The ninja's and the rogue's Kusanagi (sword row 11) is a katana too;
+     * their fast style (Kunai, Dagger) is the short blade. */
+    if((cls==SOM_DISC_NINJUTSU||cls==SOM_DISC_ROGUE)&&actor[0x1E3]==11u)
+        return styles.selected[cls]%SOM_STYLES_PER_CLASS==SOM_STYLE_FAST?0:3;
+    return -1;
 }
+/* The pose's picture number is the word at +0x26, halved; +0x24 bit 6 is
+ * set while the game shows the weapon (measured 2026-11-25). */
+static unsigned som_mask_pose(const uint8_t *actor){return som_word(actor+0x026u)>>1;}
+static int som_mask_shown(const uint8_t *actor){return (actor[0x024u]&0x40u)!=0;}
 static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_mask_index||mode>2u||row<9u||row>=18u||frame>255u)return 0;
+    if(!weapon_mask_index||mode>3u||row<9u||row>=18u||frame>255u)return 0;
     const uint32_t at=weapon_mask_index[(mode*72u+row)*256u+frame];
     if(!at)return 0;
     const uint8_t *p=weapon_mask_pack+at-1u;
@@ -10392,8 +10407,10 @@ static void som_weapon_mask_frame(uint8_t *ram){
     const int field=actor[0]==1u&&ram[0xE4u]==1u&&ram[0xE6u]==0x0Fu;
     const int mode=field?som_weapon_mask_mode(ram,who):-1;
     SomWorkEntry entry;
-    const int want=mode>=0&&som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],
-                                                  actor[0x026u]>>1,&entry);
+    /* Not shown yet: already hidden, so a swing's first frame has no sword. */
+    const int want=mode>=0&&(som_mask_shown(actor)?
+        som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],som_mask_pose(actor),&entry):
+        weapon_mask_index!=NULL);
     uint8_t *tiles=ram+SOM_WEAPON_BUF;
     int blank=1;
     for(unsigned i=0;i<sizeof(weapon_native_tiles);i++)if(tiles[i]){blank=0;break;}
@@ -10417,19 +10434,18 @@ static void som_weapon_mask_pick(const uint8_t *ram){
     const uint8_t *actor=ram+0xE000u+0x200u*who;
     const int mode=som_weapon_mask_mode(ram,who);
     SomWorkEntry entry;
-    if(mode<0)return;
-    if(!som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],
-                               actor[0x026u]>>1,&entry)){
+    if(mode<0||!som_mask_shown(actor))return;
+    if(!som_weapon_mask_entry((unsigned)mode,actor[0x1E3u],som_mask_pose(actor),&entry)){
         /* The SNES animation may advance after the pre-frame availability
          * check: this frame has no replacement art, the next check restores
          * the game's own. One missing frame no longer ends the session's
          * masks (2026-11-25). */
         static uint32_t told[8];
-        const uint32_t key=((uint32_t)actor[0x1E3u]<<8)|(actor[0x026u]>>1);
+        const uint32_t key=((uint32_t)actor[0x1E3u]<<9)|som_mask_pose(actor);
         if(told[key&7u]!=key+1u){
             told[key&7u]=key+1u;
             fprintf(stderr,"[som-ai] weapon mask: row %u frame %u shows the game's own\n",
-                    (unsigned)actor[0x1E3u],(unsigned)(actor[0x026u]>>1));
+                    (unsigned)actor[0x1E3u],som_mask_pose(actor));
         }
         return;
     }

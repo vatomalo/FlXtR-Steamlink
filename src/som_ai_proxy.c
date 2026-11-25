@@ -1195,7 +1195,9 @@ static const char *weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;
 static int weapon_mask_generated;
 static int arena_enabled,arena_back=-1,arena_pending;
 static unsigned arena_door,arena_rope;
-static unsigned long arena_since;
+static unsigned long arena_since,arena_at;
+static unsigned arena_mode,arena_wave,arena_phase,arena_seen,arena_wins[2],arena_struck[2];
+static unsigned long arena_hurt[2];
 static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried;
 static uint8_t *weapon_mask_pack;
@@ -8704,6 +8706,140 @@ static int som_portal_place_raw(uint8_t *ram){
 }
 /* Each frame: a hero who steps into one portal comes out of the other. He
  * must have left both first (no bouncing back and forth). */
+/* The arena's fights. Phases: 0 wait, 1 sent in, 2 fighting, 3 over. */
+static unsigned som_arena_random(void){
+    static uint32_t seed=0x5A17u;
+    seed=seed*1664525u+1013904223u+(uint32_t)frame_number;
+    return seed>>16;
+}
+static unsigned som_arena_alive(const uint8_t *ram){
+    unsigned n=0;
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+0xE600u+0x200u*k;
+        if((int)k==familiar.slot)continue;
+        n+=m[0]==1&&m[0x180]<0x80u&&!(som_word(m+0x190)&0x8000u)&&som_word(m+0x182);
+    }
+    return n;
+}
+static void som_arena_heal(uint8_t *ram,unsigned percent){
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        uint8_t *o=ram+0xE000u+0x200u*who;
+        const unsigned max=som_word(o+0x184);
+        unsigned hp=som_word(o+0x182);
+        if(o[0]!=1||!hp)continue;
+        hp+=max*percent/100u;
+        som_put_word(o+0x182,(uint16_t)(hp>max?max:hp));
+    }
+}
+static void som_arena_clear_list(uint8_t *ram){
+    for(unsigned k=0;k<3u;k++)som_arena_list(ram,k,0,0u,16u,12u);
+}
+static void som_arena_say(const char *text){som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);}
+static void som_arena_waves(uint8_t *ram,int bosses){
+    char text[64];
+    if(arena_phase==0){
+        if(frame_number<arena_at)return;
+        if(bosses){
+            const int b=som_arena_boss_pick(ram,som_arena_random());
+            if(b<0){som_arena_say("No boss beaten yet");arena_phase=3;return;}
+            som_arena_clear_list(ram);
+            som_arena_list(ram,0u,1,som_arena_bosses[b].id,16u,13u);
+            snprintf(text,sizeof(text),"Rematch!");
+        }else{
+            const uint8_t *records=som_rom_at(0xD01C00u,29u*SOM_ARENA_MONSTERS);
+            if(!records){arena_phase=3;return;}
+            const unsigned target=som_arena_wave_level(ram[0xE181u]+1u,arena_wave);
+            static const uint8_t spots[3][2]={{13,12},{16,13},{19,12}};
+            for(unsigned k=0;k<3u;k++)
+                som_arena_list(ram,k,1,som_arena_species(records,target,som_arena_random()),spots[k][0],spots[k][1]);
+            snprintf(text,sizeof(text),"Wave %u of %u",arena_wave,SOM_ARENA_WAVE_COUNT);
+        }
+        static const uint8_t refresh[2]={0x09,0x00};
+        if(!som_arena_script(ram,refresh,2u))return;
+        som_arena_say(text);
+        fprintf(stderr,"[som-ai] ARENA %s\n",text);
+        arena_phase=1;arena_seen=0;arena_at=frame_number+300ul;
+        return;
+    }
+    if(arena_phase==1){                              /* they come in; nobody comes back */
+        const unsigned alive=som_arena_alive(ram);
+        if(alive>arena_seen)arena_seen=alive;
+        if(arena_seen>=(bosses?1u:3u)||(arena_seen&&frame_number>=arena_at)){
+            for(unsigned k=0;k<3u;k++)ram[SOM_ARENA_LIST+16u*k+9u]=0xFF;
+            arena_phase=2;arena_at=0;
+        }else if(frame_number>=arena_at){arena_phase=0;arena_at=frame_number+60ul;}
+        return;
+    }
+    if(arena_phase!=2)return;
+    if(som_arena_alive(ram)){arena_at=0;return;}
+    if(!arena_at){arena_at=frame_number+120ul;return;}      /* the last one is falling */
+    if(frame_number<arena_at)return;
+    const unsigned gold=bosses?1500u:arena_wave==SOM_ARENA_WAVE_COUNT?3000u:100u*arena_wave;
+    const uint8_t pay[4]={0x36,(uint8_t)gold,(uint8_t)(gold>>8),0x00};
+    if(!som_arena_script(ram,pay,4u))return;
+    som_arena_heal(ram,bosses?100u:30u);
+    if(bosses)snprintf(text,sizeof(text),"Boss beaten|%u GP",gold);
+    else if(arena_wave==SOM_ARENA_WAVE_COUNT)snprintf(text,sizeof(text),"Arena champion!|%u GP",gold);
+    else snprintf(text,sizeof(text),"Wave %u cleared|%u GP",arena_wave,gold);
+    som_arena_say(text);
+    fprintf(stderr,"[som-ai] ARENA %s\n",text);
+    if(!bosses&&arena_wave++==SOM_ARENA_WAVE_COUNT)arena_phase=3;
+    else{arena_phase=0;arena_at=frame_number+(bosses?600ul:300ul);}
+}
+/* Player 1's hero against player 2's, best of three; nobody can die. */
+static void som_arena_duel(uint8_t *ram){
+    const unsigned pair[2]={som_pad1_member_in(ram),som_pad2_member(ram)};
+    char text[64];
+    if(pair[1]>=SOM_PARTY_MEMBERS||pair[0]==pair[1]){
+        if(arena_phase!=3)som_arena_say("A duel needs player 2|press Start on pad 2");
+        arena_phase=3;arena_at=0;return;
+    }
+    if(arena_phase==3){                              /* he joined, or another match */
+        if(arena_at&&frame_number<arena_at)return;
+        arena_wins[0]=arena_wins[1]=0;arena_phase=0;arena_at=frame_number+120ul;
+    }
+    if(arena_phase==0){
+        if(frame_number<arena_at)return;
+        for(unsigned i=0;i<2u;i++){
+            uint8_t *o=ram+0xE000u+0x200u*pair[i];
+            som_put_word(o+0x182,som_word(o+0x184));
+            arena_struck[i]=0;arena_hurt[i]=0;
+        }
+        snprintf(text,sizeof(text),"Round %u: fight!",arena_wins[0]+arena_wins[1]+1u);
+        som_arena_say(text);
+        arena_phase=2;
+        return;
+    }
+    if(arena_phase!=2)return;
+    for(unsigned i=0;i<2u;i++){
+        uint8_t *a=ram+0xE000u+0x200u*pair[i],*b=ram+0xE000u+0x200u*pair[1u-i];
+        if(!a[0x1C])arena_struck[i]=0;               /* one hit per swing */
+        const int hit=som_arena_hit(ram,pair[i],pair[1u-i]);
+        if(!hit||(hit==2&&arena_struck[i])||frame_number<arena_hurt[1u-i]||evade_active)continue;
+        if(hit==2)arena_struck[i]=1;
+        unsigned damage=som_arena_damage(a,b);
+        if(som_guard_up(ram,pair[1u-i]))damage=(damage+1u)/2u;
+        const unsigned hp=som_word(b+0x182);
+        arena_hurt[1u-i]=frame_number+18ul;
+        fprintf(stderr,"[som-ai] ARENA duel: player %u hits for %u (%u HP)\n",i+1u,damage,hp);
+        if(hp>damage){
+            b[0x1F1]=(uint8_t)(damage>0xFFu?0xFFu:damage);   /* the game's own number */
+            continue;
+        }
+        som_put_word(b+0x182,1u);
+        arena_wins[i]++;
+        if(arena_wins[i]>=2u){
+            snprintf(text,sizeof(text),"Player %u wins|%u to %u",i+1u,arena_wins[i],arena_wins[1u-i]);
+            arena_phase=3;arena_at=frame_number+600ul;
+            som_arena_heal(ram,100u);
+        }else{
+            snprintf(text,sizeof(text),"Player %u takes the round",i+1u);
+            arena_phase=0;arena_at=frame_number+240ul;
+        }
+        som_arena_say(text);
+        return;
+    }
+}
 /* Watts' arena (som_arena.h): the trip there on a yes, and back when the lead
  * hero stands in the gate and Down is held. */
 static void som_arena_frame(uint8_t *ram){
@@ -8720,17 +8856,23 @@ static void som_arena_frame(uint8_t *ram){
         arena_pending=0;arena_back=-1;
     }
     if(ram[0xCF00u+SOM_ARENA_FLAG]){
+        const unsigned mode=ram[0xCF00u+SOM_ARENA_FLAG]&15u;
         ram[0xCF00u+SOM_ARENA_FLAG]=0;
         const int back=som_arena_transition_to(table,map,som_word(ram+0x10E));
         arena_rope=som_word(ram+0x108);
         if(map!=SOM_ARENA_MAP&&back>=0&&som_arena_go(ram,SOM_ARENA_TRANSITION,1)){
             arena_back=back;arena_pending=1;arena_since=frame_number;
+            arena_mode=mode;arena_wave=1;arena_phase=0;arena_at=0;arena_wins[0]=arena_wins[1]=0;
             fprintf(stderr,"[som-ai] ARENA enter from map %u, back by transition %03X\n",map,(unsigned)back);
         }
         return;
     }
     if(map!=SOM_ARENA_MAP){arena_door=0;return;}
     if(!visiting)return;                             /* the story's own visit */
+    if(!arena_at&&arena_phase==0)arena_at=frame_number+180ul;
+    if(arena_mode==SOM_ARENA_DUEL)som_arena_duel(ram);
+    else if(arena_mode)som_arena_waves(ram,arena_mode==SOM_ARENA_BOSSES);
+    if(ram[0xD0])return;                             /* a script just started */
     const uint8_t *hero=ram+0xE000u+0x200u*som_pad1_member_in(ram);
     const int gate=som_word(hero+4)/16u>=SOM_ARENA_DOOR_Y&&
         (last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));

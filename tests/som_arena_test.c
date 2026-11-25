@@ -18,6 +18,28 @@ int main(int argc,char **argv){
     assert(!memcmp(ram+SOM_ARENA_SCRIPT,want,sizeof(want)));
     assert(!som_arena_go(ram,0x2C2u,1));                  /* an event runs */
     ram[0xD0]=0;assert(som_arena_go(ram,0xF7u,0)&&ram[SOM_ARENA_SCRIPT]==0x18);
+    /* Fights */
+    uint8_t records[29*0x54]={0};
+    for(unsigned id=0;id<0x54u;id++)records[29u*id]=(uint8_t)id;
+    for(unsigned roll=0;roll<50u;roll++){
+        const unsigned id=som_arena_species(records,20u,roll);
+        assert(id>=17u&&id<=23u);
+    }
+    assert(som_arena_wave_level(21u,1u)==14u&&som_arena_wave_level(21u,10u)==27u&&som_arena_wave_level(99u,10u)==0x40u);
+    memset(ram+0xCF00,0,0x100);
+    assert(som_arena_boss_pick(ram,7u)==0);                 /* the Mantis Ant only */
+    ram[0xCF2C]=3;assert(som_arena_boss_pick(ram,1u)==3);
+    som_arena_list(ram,1u,1,0x57u,16u,13u);
+    assert(ram[0xC81D]==0x57&&ram[0xC81E]==0&&ram[0xC819]==0x0F&&ram[0xC81A]==0x90);
+    uint8_t *a=ram+0xE000,*b=ram+0xE200;
+    memset(a,0,0x400);a[2]=100;a[4]=100;b[2]=110;b[4]=100;
+    a[0xC2]=20;a[0xC3]=20;a[0xC1]=0xF2;
+    assert(!som_arena_hit(ram,0u,1u));a[0x1C]=0x20;assert(som_arena_hit(ram,0u,1u)==2);
+    b[2]=180;assert(!som_arena_hit(ram,0u,1u));
+    ram[0xD000]=1;ram[0xD002]=180;ram[0xD004]=86;assert(som_arena_hit(ram,0u,1u)==1&&ram[0xD007]==8);
+    assert(!som_arena_hit(ram,0u,1u));                      /* spent */
+    a[0x198]=62;b[0x1A5]=22;assert(som_arena_damage(a,b)==25u);
+    b[0x1A5]=255;assert(som_arena_damage(a,b)==6u);
     /* Another ROM is left alone. */
     uint8_t *rom=calloc(1,0x400000u);
     assert(rom&&!som_arena_patch(rom,0x400000u));

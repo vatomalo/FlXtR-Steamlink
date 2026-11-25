@@ -997,8 +997,9 @@ allies' weapon gauges. Bosses and familiars are never put to sleep or slowed. **
 Orbs:** three homing orbs, one back every 54 frames, a weak spark without one.
 **Warlock, Hex Chain:** binds the nearest monster and drinks a share of the
 damage. **Summoner, Wisp:** flies out and back, may hit both ways.
-**Necromancer, Bone Spikes:** run through every monster in line. Monk (+70 %),
-Archer (+35 %) and Hunter (+30 %) deal a share more on weapon hits.
+**Necromancer, Bone Spikes:** run through every monster in line. Monk (+130 %),
+Archer (+35 %), Hunter (+30 %) and Artificer (+60 %) deal a share more on
+weapon hits; the boy's attack value is 86 % as Weapon Flow and 130 % as Bushido.
 
 **Whacked:** a critical hit (the game's "gets whacked!") that kills an enemy
 makes the camera punch in on it; AI menu, *Whacked camera*, turns it off.

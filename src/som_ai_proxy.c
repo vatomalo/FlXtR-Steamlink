@@ -1639,7 +1639,13 @@ static unsigned som_perk_bonus(unsigned who,unsigned slot,unsigned damage,const 
 /* Balance, measured 2026-11-25 (B only, level 10): the share of a weapon
  * hit's damage these classes deal on top. */
 static unsigned som_class_boost(unsigned cls){
-    return cls==SOM_DISC_MARTIAL?70u:cls==SOM_DISC_ARCHERY?35u:cls==12u?30u:0u;   /* 12: Hunter */
+    switch(cls){
+    case SOM_DISC_MARTIAL:return 130u;
+    case SOM_DISC_ARCHERY:return 35u;
+    case SOM_DISC_HUNTER:return 30u;
+    case SOM_DISC_ARTIFICER:return 60u;
+    default:return 0u;
+    }
 }
 /* After a hero hit lowered monster `slot` by `drop` to `hp_after`. */
 static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,unsigned hp_after){
@@ -6874,6 +6880,12 @@ static void som_style_give(unsigned species){
     }else style_dirty=1;
 }
 /* Before the game's frame: pin the tier, write the attack. */
+/* Balance (2026-11-25): the attack value of every weapon a class swings,
+ * scaled before the hit lands, so the number on screen is the real one.
+ * Combos, speed and stats are not touched. */
+static unsigned som_class_attack_pct(unsigned cls){
+    return cls==SOM_DISC_WEAPON_FLOW?86u:cls==SOM_DISC_BUSHIDO?130u:100u;
+}
 static void som_style_frame(uint8_t *ram){
     if(!ram||!som_rom)return;
     uint8_t *hero=ram+0xE000u;
@@ -6921,19 +6933,21 @@ static void som_style_frame(uint8_t *ram){
             st=&arm;
         }
     }
-    if(!st){som_style_restore_attack(hero);return;}
+    const unsigned pct=som_class_attack_pct(cls);
+    if(!st&&pct==100u){som_style_restore_attack(hero);return;}
     const uint8_t *row=som_rom_at(0xD01000u+12u*hero[0x1E3],12u);
     if(!row||hero[0x1E3]>=72u)return;
     const unsigned game=style_atk_active&&hero[0x198]==style_written_atk?style_game_atk:hero[0x198];
     const unsigned base=game>row[8]?game-row[8]:0u;
-    const unsigned want=base+som_style_attack(st,arm_level?arm_level:styles.level[index],
+    const unsigned want=!st?game:base+som_style_attack(st,arm_level?arm_level:styles.level[index],
         som_style_row_attack(st->weapon,0u),som_style_row_attack(st->weapon,som_style_top_tier(st->weapon)));
-    const uint8_t value=(uint8_t)(want>255u?255u:want);
+    const unsigned scaled=want*pct/100u;
+    const uint8_t value=(uint8_t)(scaled>255u?255u:scaled);
     if(!style_atk_active||hero[0x198]!=value){
         style_game_atk=(uint8_t)game;style_written_atk=value;hero[0x198]=value;
         if(!style_atk_active)
-            fprintf(stderr,"[som-ai] STYLE %s Lv%u attack %u (game %u)\n",st->name,
-                    arm_level?arm_level:(unsigned)styles.level[index],(unsigned)value,game);
+            fprintf(stderr,"[som-ai] STYLE %s Lv%u attack %u (game %u)\n",st?st->name:"class weapon",
+                    !st?0u:arm_level?arm_level:(unsigned)styles.level[index],(unsigned)value,game);
         style_atk_active=1;
     }
 }

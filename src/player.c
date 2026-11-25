@@ -477,7 +477,12 @@ int main(int argc,char **argv) {
     av_dict_set(&opts,"probesize","2097152",0);av_dict_set(&opts,"analyzeduration","3000000",0);
     deadline=av_gettime_relative()+20000000;
     rc=avformat_open_input(&fmt,url,NULL,&opts);av_dict_free(&opts);
-    if(rc<0){fprintf(stderr,"Could not open stream (%d)\n",rc);goto done;}
+    if(rc<0){
+        fprintf(stderr,"Could not open stream (%d)\n",rc);
+        /* Tell the shell the host answered and refused, so it can say so. */
+        if(rc==AVERROR_HTTP_BAD_REQUEST||rc==AVERROR_HTTP_UNAUTHORIZED||rc==AVERROR_HTTP_FORBIDDEN)result=48;
+        goto done;
+    }
     rc=avformat_find_stream_info(fmt,NULL);if(rc<0){fprintf(stderr,"Could not inspect stream (%d)\n",rc);goto done;}
     int best_w=0,best_h=0,available=0;
     for(unsigned i=0;i<fmt->nb_streams;i++){

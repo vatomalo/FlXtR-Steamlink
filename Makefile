@@ -212,6 +212,8 @@ test: all
 	./build/auto-server-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/tv_source_failure_test.c -o build/tv-source-failure-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/tv-source-failure-test
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/refused_source_test.c -o build/refused-source-test $(SDL_LIBS) -lSDL2_image -lcurl
+	./build/refused-source-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/library_preferences_test.c -o build/library-preferences-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/library-preferences-test
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/preview_settings_test.c -o build/preview-settings-test $(SDL_LIBS) -lSDL2_image -lcurl

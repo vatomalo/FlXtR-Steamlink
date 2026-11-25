@@ -432,7 +432,7 @@ static Browse prefetch_browse;
 static int prefetch_left;
 static Uint32 controller_activity;
 static int controller_slept;
-static int auto_active,auto_count,auto_index;
+static int auto_active,auto_count,auto_index,auto_refused;
 static char auto_servers[40][32];
 static char playback_server[32];
 static Title auto_title;
@@ -1280,6 +1280,19 @@ static void tv_source_failed(void){
     }
     tv_joining=0;
 }
+/* Player exit 48: the video host refused the link (HTTP 400, 401 or 403).
+ * Flixer mirrors share hosts, so after three refusals skip the rest of them. */
+static void auto_next(void);
+static void auto_player_failed(int refused){
+    const char *server=auto_index<auto_count?auto_servers[auto_index]:"";
+    auto_index++;
+    if(refused){
+        auto_refused++;
+        if(strcmp(auto_title.kind,"kiss-episode")&&auto_refused>=3&&!provider_rank(server))
+            while(auto_index<auto_count&&!provider_rank(auto_servers[auto_index]))auto_index++;
+    }
+    auto_next();
+}
 static void auto_next(void){
     if(auto_index>=auto_count&&auto_count>0&&
        !strcmp(auto_title.kind,"kiss-episode")&&!kiss_1080_pass){
@@ -1287,7 +1300,7 @@ static void auto_next(void){
         auto_index=0;
         fprintf(stderr,"KissAnime: all sources exhausted; trying 1080p across all servers\n");
     }
-    if(auto_index>=auto_count){auto_active=0;tv_source_failed();snprintf(status,sizeof(status),auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
+    if(auto_index>=auto_count){auto_active=0;tv_source_failed();snprintf(status,sizeof(status),auto_refused?"VIDEO HOST REFUSED THE LINKS - TRY AGAIN LATER":auto_count?"ALL SOURCES FAILED - SEE CATALOG.LOG / PLAYER.LOG":"NO SERVER OPTIONS - SEE CATALOG.LOG");return;}
     Browse next={6,1,auto_title.id,auto_title.season,auto_title.episode,0,"",""};
     strcpy(next.query,auto_servers[auto_index]);auto_request(next);
     if(auto_active)snprintf(status,sizeof(status),"TRYING SERVER %d OF %d - B TO CANCEL",auto_index+1,auto_count);
@@ -2334,7 +2347,7 @@ static void play(void) {
         if(next.mode==6){snprintf(next.query,sizeof(next.query),"%.31s",t->title);snprintf(next.name,sizeof(next.name),"%s",browse.name);}
         if(next.mode==5){
             if(access("./greenlink-player",X_OK)){snprintf(status,sizeof(status),"PLAYER NOT INSTALLED");return;}
-            auto_title=*t;auto_active=1;auto_count=auto_index=0;kiss_1080_pass=0;auto_request(next);
+            auto_title=*t;auto_active=1;auto_count=auto_index=auto_refused=0;kiss_1080_pass=0;auto_request(next);
         }else request_catalog(next,1,0);
         return;
     }
@@ -2347,7 +2360,7 @@ static void tv_candidate(void){
     Title *t=&titles[visible[0]];if(strcmp(t->kind,"episode")||t->id<1)return;
     tv_recent_add(t->id,t->season,t->episode);
     fprintf(stderr,"TV selected %d S%d E%d: %s\n",t->id,t->season,t->episode,t->title);
-    auto_title=*t;auto_count=auto_index=0;kiss_1080_pass=0;auto_resume=restart_position=0;
+    auto_title=*t;auto_count=auto_index=auto_refused=0;kiss_1080_pass=0;auto_resume=restart_position=0;
     FILE *guide=fopen("catalog-cache/result.tsv","r");char guide_line[128];tv_air_start=(long long)time(NULL);
     if(guide){while(fgets(guide_line,sizeof(guide_line),guide))if(sscanf(guide_line,"# tv-start=%lld",&tv_air_start)==1)break;fclose(guide);}
     auto_active=1;
@@ -2815,7 +2828,7 @@ static void finish_player(int code){
         snprintf(status,sizeof(status),"BACK TO TV / SELECTING NEXT PROGRAM");return;
     }
     if(WIFEXITED(code)&&WEXITSTATUS(code)==44){auto_active=0;snprintf(status,sizeof(status),"SERVER CANNOT SEEK - SELECT TITLE TO RESTART");return;}
-    if(auto_active&&!cancelled&&(!WIFEXITED(code)||WEXITSTATUS(code))){auto_index++;auto_next();return;}
+    if(auto_active&&!cancelled&&(!WIFEXITED(code)||WEXITSTATUS(code))){auto_player_failed(WIFEXITED(code)&&WEXITSTATUS(code)==48);return;}
     auto_active=0;
     if(series_autoplay&&!tv_active&&!cancelled&&WIFEXITED(code)&&!WEXITSTATUS(code)&&
        (!strcmp(playing_title.kind,"episode")||!strcmp(playing_title.kind,"kiss-episode"))){series_advance(1);return;}

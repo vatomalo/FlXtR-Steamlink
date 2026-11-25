@@ -113,10 +113,16 @@ static uint8_t perk_monster_live[3];
 static uint8_t perk_monster_species[3];   /* what lived in each slot (Raise Dead) */
 static int last_kill_species=-1;
 #define SOM_KILL_CREDIT_FRAMES 120ul    /* a death this soon after our hit is our kill */
-static int perk_first_hit_used;
-static unsigned perk_hero_hp_prev,perk_last_hit_damage=8u;
-static unsigned som_perk_bonus(unsigned slot,unsigned damage,const char *what);
-static void som_perk_hit(uint8_t *ram,unsigned slot,unsigned drop,unsigned hp_after);
+static int perk_first_hit_used[3],perk_swing_done[3];
+static unsigned perk_hero_hp_prev[3],perk_last_hit_damage=8u;
+static unsigned monster_hit_who[3];       /* whose hit it was: his kill heal */
+static uint16_t perk_enemy_hp[3];
+static uint8_t perk_enemy_id[3];
+static int som_perk_of(unsigned who,unsigned effect);
+static unsigned som_perk_bonus(unsigned who,unsigned slot,unsigned damage,const char *what);
+static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,unsigned hp_after);
+static void som_monster_hit(unsigned slot);
+static unsigned som_pad2_member(const uint8_t *ram);
 static void som_perks_frame(uint8_t *ram);
 static uint16_t som_word(const uint8_t *p);
 static void som_put_word(uint8_t *p,uint16_t v);
@@ -1548,7 +1554,8 @@ static void som_combo_frame(void){
             som_style_give(e[0x180]);
             if(sel==SOM_DISC_NINJUTSU&&weapon==6u&&!fuma.active)   /* Fuma: boomerang hit */
                 som_fuma_start(ram,i,combo_hp[i]-hp);
-            som_perk_hit((uint8_t*)ram,i,combo_hp[i]-hp,hp);
+            som_perk_hit((uint8_t*)ram,pad2_combo_actor<SOM_PARTY_MEMBERS?pad2_combo_actor:
+                         som_pad1_member_in(ram),i,combo_hp[i]-hp,hp);
             if(sel==SOM_DISC_ROGUE&&frame_number<backstab_until){          /* Backstab */
                 uint8_t *m=(uint8_t*)ram+0xE600u+0x200u*i;
                 const unsigned bonus=12u+2u*disciplines.level[SOM_DISC_ROGUE];
@@ -1583,41 +1590,49 @@ static void som_combo_frame(void){
     if(xp_spell_slot>=0&&frame_number-xp_spell_frame>SOM_XP_SPELL_WINDOW)xp_spell_slot=-1;
     som_combo_tick(&combo,frame_number,combo_input_held);
 }
-static int som_perk(unsigned effect){return som_perk_value(effect,&disciplines,perks_enabled);}
+static int som_perk_of(unsigned who,unsigned effect){
+    return som_perk_value_for(effect,&disciplines,who,perks_enabled);
+}
+/* The acting hero's passive (his or her own moves). */
+static int som_perk(unsigned effect){return som_perk_of(som_actor,effect);}
+static void som_monster_hit(unsigned slot){
+    if(slot>2u)return;
+    monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=som_actor;
+}
 /* Extra damage from Coup de Grace (the monster still reels from a hit) and
  * Last Resort (hero below a quarter of max HP), as a share of `damage`. */
-static unsigned som_perk_bonus(unsigned slot,unsigned damage,const char *what){
-    if(slot>2u||!damage||!backend_retro_get_memory_data)return 0;
+static unsigned som_perk_bonus(unsigned who,unsigned slot,unsigned damage,const char *what){
+    if(slot>2u||who>=SOM_PARTY_MEMBERS||!damage||!backend_retro_get_memory_data)return 0;
     const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram)return 0;
     int pct=0;
     const char *names="";
     if(monster_hit_frame[slot]&&frame_number-monster_hit_frame[slot]<=SOM_REEL_FRAMES){
-        const int coup=som_perk(SOM_EFFECT_REELING_BONUS);
+        const int coup=som_perk_of(who,SOM_EFFECT_REELING_BONUS);
         if(coup){pct+=coup;names="Coup de Grace";}
     }
-    const unsigned hp=som_word(ram+0xE182),max=som_word(ram+0xE184);
+    const unsigned hp=som_word(ram+0xE182u+0x200u*who),max=som_word(ram+0xE184u+0x200u*who);
     if(max&&hp*4u<max){
-        const int last=som_perk(SOM_EFFECT_LOW_HP_BONUS);
+        const int last=som_perk_of(who,SOM_EFFECT_LOW_HP_BONUS);
         if(last){pct+=last;names=*names?"Coup de Grace + Last Resort":"Last Resort";}
     }
     const unsigned bonus=damage*(unsigned)pct/100u;
-    if(bonus)fprintf(stderr,"[som-ai] PERK %s: +%u on the %s (monster %u)\n",names,bonus,what,slot);
+    if(bonus)fprintf(stderr,"[som-ai] PERK %s %s: +%u on the %s (monster %u)\n",som_party_names[who],names,bonus,what,slot);
     return bonus;
 }
 /* After a hero hit lowered monster `slot` by `drop` to `hp_after`. */
-static void som_perk_hit(uint8_t *ram,unsigned slot,unsigned drop,unsigned hp_after){
+static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,unsigned hp_after){
     if(!ram||slot>2u)return;
     if(drop)perk_last_hit_damage=drop;
     uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     if(hp_after){
-        const unsigned bonus=som_perk_bonus(slot,drop,"hit");
+        const unsigned bonus=som_perk_bonus(who,slot,drop,"hit");
         if(bonus){
             const unsigned pending=m[0x1F1]+bonus;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
         }
     }
-    monster_hit_frame[slot]=frame_number;
+    monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=who;
 }
 /* The guard is up: the AI's block action, or physical R2. */
 static int som_guarding(void){
@@ -1658,35 +1673,35 @@ static void som_guard_finish(void){
         som_guard_note(1u,guard_hp-hp,(guard_hp-hp+1u)/2u);
     }
 }
-/* After each frame: Uncanny Dodge (the first hit of a fight is cut) and
- * Tiger Drop (a hit landing on the guard is countered). */
-static void som_perks_frame(uint8_t *ram){
-    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
-        perk_hero_hp_prev=0;return;
-    }
-    uint8_t *hero=ram+0xE000u;
+static int som_guard_up(const uint8_t *ram,unsigned who){
+    if(som_pad1_member_in(ram)==who&&som_guarding())return 1;
+    return pad2_actor==who&&som_pad2_member(ram)==who&&pad2_guard_hp!=0;
+}
+/* After each frame, per hero: Uncanny Dodge (the first hit of a fight is
+ * cut), the class parries and Tiger Drop (a hit landing on the guard is
+ * countered). */
+static void som_perks_hero(uint8_t *ram,unsigned who){
+    uint8_t *hero=ram+0xE000u+0x200u*who;
+    const unsigned hp=som_word(hero+0x182),max=som_word(hero+0x184),prev=perk_hero_hp_prev[who];
+    if(hero[0]!=1||!max){perk_hero_hp_prev[who]=0;return;}
     const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
-    const unsigned hp=som_word(hero+0x182),max=som_word(hero+0x184);
-    if(som_bun_toucher(ram,hx,hy,SOM_FIGHT_NEAR_PX,SOM_FIGHT_NEAR_PX,familiar.slot)>=0)perk_quiet=0;
-    else if(perk_quiet<SOM_FIGHT_QUIET_FRAMES)perk_quiet++;
-    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)perk_first_hit_used=0;   /* a new fight */
-    const int hurt=perk_hero_hp_prev&&hp&&hp<perk_hero_hp_prev&&!evade_active;
+    const int hurt=prev&&hp&&hp<prev&&!(evade_active&&som_actor==who);
     unsigned now_hp=hp;
-    if(hurt&&!perk_first_hit_used){
-        perk_first_hit_used=1;
-        const int pct=som_perk(SOM_EFFECT_FIRST_HIT_CUT);
-        const unsigned back=(perk_hero_hp_prev-hp)*(unsigned)pct/100u;
+    if(hurt&&!perk_first_hit_used[who]){
+        perk_first_hit_used[who]=1;
+        const int pct=som_perk_of(who,SOM_EFFECT_FIRST_HIT_CUT);
+        const unsigned back=(prev-hp)*(unsigned)pct/100u;
         if(back){
             now_hp=hp+back>max?max:hp+back;
-            hero[0x182]=(uint8_t)now_hp;hero[0x183]=(uint8_t)(now_hp>>8);
-            fprintf(stderr,"[som-ai] PERK Uncanny Dodge: first hit of the fight %u -> %u\n",
-                    perk_hero_hp_prev-hp,perk_hero_hp_prev-hp-back);
+            som_put_word(hero+0x182,(uint16_t)now_hp);
+            fprintf(stderr,"[som-ai] PERK %s Uncanny Dodge: first hit of the fight %u -> %u\n",
+                    som_party_names[who],prev-hp,prev-hp-back);
         }
     }
-    const int boy_guarding=som_pad1_member_in(ram)==0u&&som_guarding();
-    const int samurai=disciplines.selected==SOM_DISC_BUSHIDO;
-    const int monk=disciplines.selected==SOM_DISC_MARTIAL;
-    if((samurai||monk)&&boy_guarding&&frame_number>=(samurai?iai_ready:palm_ready)&&
+    const int guarding=som_guard_up(ram,who);
+    const unsigned cls=som_disc_member_class(&disciplines,who);
+    const int samurai=cls==SOM_DISC_BUSHIDO,monk=cls==SOM_DISC_MARTIAL;
+    if((samurai||monk)&&guarding&&frame_number>=(samurai?iai_ready:palm_ready)&&
        (hero[0x059]||hero[0x1F1]||hero[0x1F2])){
         const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,
                                       familiar.slot);
@@ -1697,49 +1712,94 @@ static void som_perks_frame(uint8_t *ram){
             const unsigned pending=m[0x1F1]+damage;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
             hero[0x059]=0;hero[0x1F1]=hero[0x1F2]=0;     /* the hit is parried */
-            if(hurt){hero[0x182]=(uint8_t)perk_hero_hp_prev;hero[0x183]=(uint8_t)(perk_hero_hp_prev>>8);
-                     now_hp=perk_hero_hp_prev;}
-            monster_hit_frame[foe]=frame_number;
+            if(hurt){som_put_word(hero+0x182,(uint16_t)prev);now_hp=prev;}
+            monster_hit_frame[foe]=frame_number;monster_hit_who[foe]=who;
             if(samurai)iai_ready=frame_number+SOM_IAI_COOLDOWN_FRAMES;
             else palm_ready=frame_number+SOM_PALM_COOLDOWN;
             som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
             som_overlay_say(&overlay,samurai?"^Iai counter!":"^Counter palm!",SOM_MESSAGE_FRAMES/3u);
-            fprintf(stderr,"[som-ai] %s: parried, hit monster %d for %u\n",
+            fprintf(stderr,"[som-ai] %s %s: parried, hit monster %d for %u\n",som_party_names[who],
                     samurai?"IAI COUNTER":"COUNTER PALM",foe,damage);
         }
     }
-    const int counter=som_perk(SOM_EFFECT_GUARD_COUNTER);
-    if(counter&&boy_guarding&&frame_number>=tiger_ready&&
+    const int counter=som_perk_of(who,SOM_EFFECT_GUARD_COUNTER);
+    if(counter&&guarding&&frame_number>=tiger_ready&&
        (hurt||hero[0x059]||hero[0x1F1]||hero[0x1F2])){
         const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,
                                       familiar.slot);
         if(foe>=0){
             uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)foe;
             unsigned damage=perk_last_hit_damage*(2u+2u*(unsigned)counter)/2u;
-            damage+=som_perk_bonus((unsigned)foe,damage,"Tiger Drop");
+            damage+=som_perk_bonus(who,(unsigned)foe,damage,"Tiger Drop");
             const unsigned pending=m[0x1F1]+damage;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-            monster_hit_frame[foe]=frame_number;
+            monster_hit_frame[foe]=frame_number;monster_hit_who[foe]=who;
             tiger_ready=frame_number+SOM_TIGER_COOLDOWN;
             som_overlay_say(&overlay,"^Tiger Drop!",SOM_MESSAGE_FRAMES/3u);
-            fprintf(stderr,"[som-ai] PERK Tiger Drop: guarded hit countered for %u on monster %d\n",
-                    damage,foe);
+            fprintf(stderr,"[som-ai] PERK %s Tiger Drop: guarded hit countered for %u on monster %d\n",
+                    som_party_names[who],damage,foe);
         }
     }
-    /* Battle Rhythm: a monster we hit (sword, boomerang, Fuma clone, Tiger
-     * Drop) that dies within SOM_KILL_CREDIT_FRAMES heals the hero. */
+    perk_hero_hp_prev[who]=now_hp;
+}
+/* Hits the combo watcher does not see: a hero swinging near a monster that
+ * lost HP. One credit per swing, so a bonus cannot feed itself. */
+static void som_perks_swings(uint8_t *ram){
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)
+        if(!(ram[0xE01Cu+0x200u*who]&0xA0u))perk_swing_done[who]=0;
+    for(unsigned slot=0;slot<3u;slot++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        const unsigned hp=som_word(m+0x182),before=perk_enemy_hp[slot];
+        const int same=m[0x180]==perk_enemy_id[slot];
+        perk_enemy_hp[slot]=(uint16_t)hp;perk_enemy_id[slot]=m[0x180];
+        if(!same||hp>=before||(int)slot==familiar.slot||m[0]!=1||m[0x180]>=0x80u||
+           monster_hit_frame[slot]==frame_number)continue;
+        int best=-1;long best_d=0;
+        for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+            const uint8_t *o=ram+0xE000u+0x200u*who;
+            if(o[0]!=1||!(o[0x1C]&0xA0u)||perk_swing_done[who])continue;
+            const long d=labs((long)som_bun_u16(m+2)-(long)som_bun_u16(o+2))+
+                         labs((long)som_bun_u16(m+4)-(long)som_bun_u16(o+4));
+            if(d>(som_weapon_long_range(o[0x1E4])?160:64))continue;
+            if(best<0||d<best_d){best=(int)who;best_d=d;}
+        }
+        if(best<=0||som_pad1_member_in(ram)==(unsigned)best)continue;   /* the lead: combo watcher */
+        perk_swing_done[best]=1;
+        som_perk_hit(ram,(unsigned)best,slot,before-hp,hp);
+    }
+}
+static void som_perks_frame(uint8_t *ram){
+    if(!ram||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
+        memset(perk_hero_hp_prev,0,sizeof(perk_hero_hp_prev));return;
+    }
+    int near=0;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0]==1&&som_bun_toucher(ram,(int)som_bun_u16(o+2),(int)som_bun_u16(o+4),
+                                    SOM_FIGHT_NEAR_PX,SOM_FIGHT_NEAR_PX,familiar.slot)>=0)near=1;
+    }
+    if(near)perk_quiet=0;
+    else if(perk_quiet<SOM_FIGHT_QUIET_FRAMES)perk_quiet++;
+    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)                          /* a new fight */
+        memset(perk_first_hit_used,0,sizeof(perk_first_hit_used));
+    som_perks_swings(ram);
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)som_perks_hero(ram,who);
+    /* Battle Rhythm: a monster a hero hit that dies within
+     * SOM_KILL_CREDIT_FRAMES heals that hero. */
     for(unsigned slot=0;slot<3u;slot++){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
         const int live=som_bun_monster_alive(m)&&som_word(m+0x182)>0;
         if(perk_monster_live[slot]&&!live&&(int)slot!=familiar.slot&&monster_hit_frame[slot]&&
            frame_number-monster_hit_frame[slot]<=SOM_KILL_CREDIT_FRAMES){
-            const unsigned heal=max*(unsigned)som_perk(SOM_EFFECT_KILL_HEAL)/100u;
+            const unsigned who=monster_hit_who[slot]%SOM_PARTY_MEMBERS;
+            uint8_t *hero=ram+0xE000u+0x200u*who;
+            const unsigned heal=hero[0]==1&&som_word(hero+0x182)?
+                som_word(hero+0x184)*(unsigned)som_perk_of(who,SOM_EFFECT_KILL_HEAL)/100u:0u;
             if(heal){
-                const unsigned pending=som_word(hero+0x1F3)+heal;
-                hero[0x1F3]=(uint8_t)pending;hero[0x1F4]=(uint8_t)(pending>>8);
-                fprintf(stderr,"[som-ai] PERK Battle Rhythm: kill heals %u HP\n",heal);
+                som_put_word(hero+0x1F3,(uint16_t)(som_word(hero+0x1F3)+heal));
+                fprintf(stderr,"[som-ai] PERK %s Battle Rhythm: kill heals %u HP\n",som_party_names[who],heal);
             }
-            if(disciplines.selected==SOM_DISC_BUSHIDO&&frame_number<iai_ready){
+            if(som_disc_member_class(&disciplines,who)==SOM_DISC_BUSHIDO&&frame_number<iai_ready){
                 iai_ready=frame_number;                    /* Zanshin */
                 som_overlay_say(&overlay,"^Zanshin|Iaijutsu ready",SOM_MESSAGE_FRAMES/3u);
                 fprintf(stderr,"[som-ai] ZANSHIN: kill readies Iaijutsu\n");
@@ -1752,7 +1812,6 @@ static void som_perks_frame(uint8_t *ram){
         if(live)perk_monster_species[slot]=m[0x180];
         perk_monster_live[slot]=(uint8_t)live;
     }
-    perk_hero_hp_prev=now_hp;
 }
 static unsigned som_combo_effective_level(void){
     const unsigned base=som_combo_level(&combo);
@@ -4085,8 +4144,8 @@ static void som_fuma_frame(uint8_t *ram){
         uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)fuma_target;
         if(som_bun_monster_alive(m)&&m[0x180]==fuma_target_id){
             /* The boomerang just hit it: Coup de Grace and Last Resort apply. */
-            fuma_damage+=som_perk_bonus((unsigned)fuma_target,fuma_damage,"fuma strike");
-            monster_hit_frame[fuma_target]=frame_number;
+            fuma_damage+=som_perk_bonus(0u,(unsigned)fuma_target,fuma_damage,"fuma strike");
+            som_monster_hit((unsigned)fuma_target);
             const unsigned pending=m[0x1F1]+fuma_damage;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
             som_xp_give(SOM_DISC_NINJUTSU,SOM_XP_HIT,m[0x180],SOM_XPK_HIT,"fuma strike");
@@ -4935,7 +4994,7 @@ static void som_issen_cut(uint8_t *ram,int x,int y){
         const unsigned damage=16u+2u*disciplines.level[SOM_DISC_BUSHIDO];
         const unsigned pending=m[0x1F1]+damage;
         m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-        issen_hit|=1u<<slot;monster_hit_frame[slot]=frame_number;
+        issen_hit|=1u<<slot;som_monster_hit((unsigned)slot);
         som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
         fprintf(stderr,"[som-ai] ISSEN cut monster %u for %u\n",slot,damage);
     }
@@ -4944,7 +5003,7 @@ static void som_class_damage(uint8_t *ram,unsigned slot,unsigned damage){
     uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     const unsigned pending=m[0x1F1]+damage;
     m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-    monster_hit_frame[slot]=frame_number;
+    som_monster_hit((unsigned)slot);
     som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
 }
 /* ---- Companion class moves (src/som_ally_moves.h) ----
@@ -5338,7 +5397,7 @@ static int som_class_move_raw(uint8_t *ram){
             const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
             if(som_bun_monster_alive(m)&&som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),
                                                       hx,hy,SOM_BUN_BLAST_X,SOM_BUN_BLAST_Y))
-                monster_hit_frame[slot]=frame_number;
+                som_monster_hit((unsigned)slot);
         }
         static const int ring[4][2]={{-20,0},{20,0},{0,-20},{0,20}};
         for(unsigned k=0;k<4u;k++)som_bun_boom(bunshin_booms,hx+ring[k][0],hy+ring[k][1],1,frame_number);
@@ -5434,7 +5493,7 @@ static void som_hundred_frame(uint8_t *ram){
         const unsigned damage=3u+disciplines.level[SOM_DISC_MARTIAL]/2u;
         const unsigned pending=m[0x1F1]+damage;
         m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-        monster_hit_frame[slot]=frame_number;
+        som_monster_hit((unsigned)slot);
     }
 }
 /* L2+X (samurai): Issen, the dash-cut. */
@@ -6574,7 +6633,7 @@ static void som_style_after(uint8_t *ram){
         unsigned damage=perk_last_hit_damage?perk_last_hit_damage:hero[0x198]/2u+1u;
         const unsigned pending=m[0x1F1]+damage;
         m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-        monster_hit_frame[i]=frame_number;
+        som_monster_hit((unsigned)i);
         fprintf(stderr,"[som-ai] STYLE %s long cut: %u on monster %u\n",st->name,damage,i);
         break;
     }
@@ -6642,7 +6701,7 @@ static void som_throw_frame(uint8_t *ram){
     if(t>=SOM_THROW_FRAMES){
         const unsigned pending=m[0x1F1]+throw_damage;
         m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-        monster_hit_frame[throw_slot]=frame_number;
+        som_monster_hit((unsigned)throw_slot);
         som_xp_give(SOM_DISC_BUSHIDO,SOM_XP_HIT,m[0x180],SOM_XPK_HIT,"throw");
         fprintf(stderr,"[som-ai] THROW landed: %u on monster %d\n",throw_damage,throw_slot);
         throw_active=0;

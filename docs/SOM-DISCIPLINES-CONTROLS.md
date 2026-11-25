@@ -981,4 +981,4 @@ Divine Arts WIS, Support & Dance WIS/AGI. Second tier at level 15, after the
 class it grows from: Ninjutsu (Rogue), Bushido and Weapon Flow (Swordsmanship),
 Dark Arts and Summoning (Magic), Vampire Hunting and Artifice (Archery),
 Psionics (Divine Arts), Necromancy (Dark Arts). A passive works only for a
-class the boy has or has had. Saves made before this rule keep everything.
+class that hero has or has had; the girl and the sprite have passives too. Saves made before this rule keep everything.

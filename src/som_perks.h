@@ -71,38 +71,46 @@ static inline const SomPerk *som_perk_find(unsigned id){
     for(size_t i=0;i<SOM_PERK_COUNT;i++)if(som_perks[i].id==id)return &som_perks[i];
     return NULL;
 }
-static inline unsigned som_perk_level(const SomDisciplines *d,unsigned discipline){
-    if(discipline==SOM_PERK_CLASS)discipline=d->selected;
+/* Perks are per hero: who 0 the boy, 1 the girl, 2 the sprite. The levels
+ * are the party's; "the class" and the classes held are the hero's own. */
+static inline unsigned som_perk_level(const SomDisciplines *d,unsigned who,unsigned discipline){
+    if(discipline==SOM_PERK_CLASS)discipline=som_disc_member_class(d,who);
     return discipline<SOM_DISCIPLINE_COUNT?d->level[discipline]:0u;
 }
-static inline unsigned som_perk_rank(const SomPerk *p,const SomDisciplines *d){
-    if(!p||!d||!p->levels_per_rank)return 0;
-    /* A passive belongs to its class: the boy must have (had) that class. */
+static inline unsigned som_perk_rank_for(const SomPerk *p,const SomDisciplines *d,unsigned who){
+    if(!p||!d||!p->levels_per_rank||who>=SOM_PARTY_MEMBERS)return 0;
+    /* A passive belongs to its class: the hero must have (had) that class. */
     if(d->classless){
-        const unsigned own=p->discipline==SOM_PERK_CLASS?d->selected:p->discipline;
-        if(own>=SOM_DISCIPLINE_COUNT||!(d->held[0]>>own&1u))return 0;
-        if(p->req_discipline!=SOM_PERK_NONE&&!(d->held[0]>>(p->req_discipline&15u)&1u))return 0;
+        const unsigned own=p->discipline==SOM_PERK_CLASS?som_disc_member_class(d,who):p->discipline;
+        if(own>=SOM_DISCIPLINE_COUNT||!(d->held[who]>>own&1u))return 0;
+        if(p->req_discipline!=SOM_PERK_NONE&&!(d->held[who]>>(p->req_discipline&15u)&1u))return 0;
     }
-    const unsigned level=som_perk_level(d,p->discipline);
+    const unsigned level=som_perk_level(d,who,p->discipline);
     if(!level||level<p->min_level)return 0;
-    if(p->req_discipline!=SOM_PERK_NONE&&som_perk_level(d,p->req_discipline)<p->req_level)return 0;
+    if(p->req_discipline!=SOM_PERK_NONE&&som_perk_level(d,who,p->req_discipline)<p->req_level)return 0;
     const unsigned rank=1u+(level-p->min_level)/p->levels_per_rank;
     return rank>p->max_rank?p->max_rank:rank;
 }
-/* Sum of one effect over all perks, each capped; 0 when disabled. */
-static inline int som_perk_value(unsigned effect,const SomDisciplines *d,int enabled){
+static inline unsigned som_perk_rank(const SomPerk *p,const SomDisciplines *d){
+    return som_perk_rank_for(p,d,0u);
+}
+/* Sum of one effect over all of a hero's perks, each capped; 0 when disabled. */
+static inline int som_perk_value_for(unsigned effect,const SomDisciplines *d,unsigned who,int enabled){
     if(!enabled)return 0;
     int total=0;
     for(size_t i=0;i<SOM_PERK_COUNT;i++){
         const SomPerk *p=&som_perks[i];
         if(p->effect!=effect)continue;
-        int v=(int)som_perk_rank(p,d)*p->per_rank;
+        int v=(int)som_perk_rank_for(p,d,who)*p->per_rank;
         if(v>p->cap)v=p->cap;
         total+=v;
     }
     return total;
 }
-/* Bit i+1 set for every perk with rank >= 1 (stored in saves). */
+static inline int som_perk_value(unsigned effect,const SomDisciplines *d,int enabled){
+    return som_perk_value_for(effect,d,0u,enabled);
+}
+/* Bit id set for every perk with rank >= 1 (stored in saves: the boy's). */
 static inline uint32_t som_perk_bits(const SomDisciplines *d){
     uint32_t bits=0;
     for(size_t i=0;i<SOM_PERK_COUNT;i++)

@@ -173,6 +173,11 @@ int main(void){
     pd.level[0]=5;assert(som_perk_rank(som_perk_find(1),&pd)==1&&som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==2);
     pd.classless=1;assert(som_perk_rank(som_perk_find(1),&pd)==0);    /* never had the class */
     pd.held[0]=1u<<(pd.selected&15u);assert(som_perk_rank(som_perk_find(1),&pd)==1);
+    pd.party[0]=pd.selected;                                  /* the girl: her own class, her own past */
+    assert(som_perk_rank_for(som_perk_find(1),&pd,1)==0);
+    pd.held[1]=1u<<(pd.selected&15u);assert(som_perk_rank_for(som_perk_find(1),&pd,1)==1);
+    assert(som_perk_rank_for(som_perk_find(1),&pd,2)==0&&som_perk_rank_for(som_perk_find(1),&pd,3)==0);
+    pd.held[1]=0;
     pd.classless=0;pd.held[0]=0;
     pd.level[0]=14;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==4);
     pd.level[0]=100;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==6);   /* max rank / cap */

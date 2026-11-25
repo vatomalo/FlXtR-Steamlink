@@ -258,6 +258,9 @@ static unsigned member_pal_addr[SOM_PARTY_MEMBERS];
 #define SOM_DISCIPLINES_V1 9u          /* disciplines before rogue/samurai/archer */
 static const char *disc_file=SOM_DISC_FILE;
 static void som_disc_save(void){
+    /* The device file belongs to the older saves: a classless game keeps its
+     * classes in its own progression record. */
+    if(disciplines.classless)return;
     char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",disc_file);
     FILE *out=fopen(temp,"w");
     if(!out)return;
@@ -638,6 +641,10 @@ static int som_prog_write(void){
     rename(temp,path);
     return 1;
 }
+/* Back from a classless game: the device's classes again. */
+static void som_disc_init_keep(void){
+    som_disc_init(&disciplines);som_disc_load();
+}
 /* Called every 30 frames: notice a save the game just wrote (a slot block
  * changed and matches the game in play) and the moment a save is loaded or
  * a new game starts (field play entered). */
@@ -666,6 +673,8 @@ static void som_prog_frame(void){
             const uint64_t fp=prog_seen[in_play];
             SomProgress loaded;
             const int got=som_prog_read(fp,&loaded);
+            const int was_classless=disciplines.classless;
+            if(was_classless)som_disc_init_keep();
             if(got==SOM_PROG_OK){prog=loaded;som_prog_to_disc(&prog,&disciplines);}
             else{
                 som_prog_fresh(&prog,prog_rom);
@@ -676,6 +685,11 @@ static void som_prog_frame(void){
             fprintf(stderr,"[som-ai] PROGRESS slot %d loaded (%016llx): %s\n",in_play+1,
                     (unsigned long long)fp,got==SOM_PROG_OK?"its progression restored":
                     "no record, fresh progression");
+        }else if(in_play<0&&ram[0xE181]==0&&(prog_session_first||prog.owner||!disciplines.classless)){
+            /* Level 1 and no save: a new game, and new games are classless. */
+            som_prog_fresh(&prog,prog_rom);som_prog_classless(&prog);
+            som_prog_to_disc(&prog,&disciplines);
+            fprintf(stderr,"[som-ai] PROGRESS new game: classless\n");
         }else if(in_play<0&&prog_session_first){
             const uint8_t keep=disciplines.selected;
             som_prog_fresh(&prog,prog_rom);som_prog_to_disc(&prog,&disciplines);
@@ -685,6 +699,30 @@ static void som_prog_frame(void){
         prog_session_first=0;
     }
     prog_was_field=field;
+}
+/* Classless games, every 30 frames: what each hero may become (level and
+ * stats), what they have been, and a note when the first choice opens. */
+static void som_unlock_frame(const uint8_t *ram){
+    if(!disciplines.classless||!ram||ram[0xE4]!=1||ram[0xE6]!=0x0F)return;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0]!=1||!(o[0x184]|o[0x185]))continue;
+        const uint16_t had=disciplines.can[who];
+        disciplines.can[who]=som_unlock_mask(o[0x181]+1u,o+0x188,disciplines.held[who]);
+        const unsigned cls=som_disc_member_class(&disciplines,who);
+        if(cls<SOM_DISCIPLINE_COUNT&&!(disciplines.held[who]>>cls&1u)){
+            disciplines.held[who]|=(uint16_t)(1u<<cls);
+            fprintf(stderr,"[som-ai] CLASS %s becomes %s\n",som_party_names[who],som_discipline_titles[cls]);
+            if(prog.owner)som_prog_write();
+        }
+        if(!had&&disciplines.can[who]&&!disciplines.held[who]){
+            char text[64];
+            snprintf(text,sizeof(text),"%s can choose a class|R3 ring: Classes, or L2+R1",som_party_names[who]);
+            som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] CLASS %s may choose: %04x\n",som_party_names[who],
+                    (unsigned)disciplines.can[who]);
+        }
+    }
 }
 /* Explicit migration: apply the preserved device-wide v1 levels to the save
  * in play (never automatic). */
@@ -1372,7 +1410,11 @@ static void som_class_cycle_member(unsigned who,int dir){
     if(who>=SOM_PARTY_MEMBERS||dir==0)return;
     /* Through the player's class order (the menu's Y moves a class). */
     const unsigned cur=som_disc_member_class(&disciplines,who);
-    const unsigned next=som_disc_order_step(&disciplines,cur,dir);
+    const unsigned next=som_disc_order_step_for(&disciplines,who,cur,dir);
+    if(next>=SOM_DISCIPLINE_COUNT||next==cur){
+        if(next>=SOM_DISCIPLINE_COUNT)som_overlay_say(&overlay,"No class yet|Level 5 opens the first",SOM_MESSAGE_FRAMES/2u);
+        return;
+    }
     if(who){                        /* the girl or the sprite: her own class */
         disciplines.party[who-1u]=(uint8_t)next;disciplines.who=(uint8_t)who;
         som_party_class_saved();
@@ -1958,7 +2000,19 @@ static void som_pad2_poll(void){
         if(!(raw&l2))pad2_wanted|=r1;      /* the game's block pose */
     }
     const unsigned cls=som_disc_member_class(&disciplines,who);
-    if(cls>=SOM_DISCIPLINE_COUNT)return;
+    if(cls>=SOM_DISCIPLINE_COUNT&&(!(raw&l2)||(raw&r2)||!(raw&(l1|r1)))){
+        /* classless: the game's weapon, block, target and evade */
+        const uint16_t a0=1u<<RETRO_DEVICE_ID_JOYPAD_A;
+        pad2_wanted&=(uint16_t)~(a0|l1);
+        if((pad2_pressed&l1)&&!(raw&(l2|r2))){som_lock_swap(0);som_lock_toggle_for(ram,who);som_lock_swap(0);}
+        if((pad2_pressed&a0)&&!(raw&(l2|r2|l3))&&som_pad2_borrow(who)){
+            evade_dir_x=(raw&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:(raw&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
+            evade_dir_y=(raw&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))?1:(raw&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?-1:0;
+            som_lock_swap(0);som_evade_start(ram);som_lock_swap(0);
+            evade_dir_x=evade_dir_y=0;
+        }
+        return;
+    }
     if((raw&l2)&&!(raw&r2)&&(raw&(l1|r1))){
         if(pad2_pressed&(l2|l1|r1))
             som_class_cycle_member(who,(raw&r1)?1:-1);
@@ -2336,6 +2390,8 @@ static void som_input_poll(void){
         }
         y_weapon_swap=0;y_weapon_blocked=0;b_weapon_blocked=0;x_spell_blocked=0;x_weapon_swap=0;
         uint8_t *wram=field?attack_ram:NULL;
+        /* what everybody can do, class or not: target and evade */
+        uint8_t *basic=attack_ram&&!borrowed?attack_ram:NULL;
         /* L1 is lock-on only. R1 tap cycles next style. L3+B retains the
          * previous L1+B modifier. The former L3 ring chords are consumed. */
         const uint16_t l1_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L);
@@ -2352,8 +2408,8 @@ static void som_input_poll(void){
            (current&l2_bit)&&!(current&r2)&&class_shoulders&&
            (pressed&(l2_bit|class_shoulders))&&!special_stage&&!bash_stage)
             som_class_cycle((class_shoulders&r1_bit)?1:-1);
-        else if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&(pressed&l1_bit)&&!(current&l2_bit))
-            som_lock_toggle(wram); /* immediate L1 tap, no B/Y dependency */
+        else if(basic&&!ring_ai_enabled&&!som_manual_disciplines&&(pressed&l1_bit)&&!(current&l2_bit))
+            som_lock_toggle(basic); /* immediate L1 tap, no B/Y dependency */
         if(wram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (pressed&r1_bit)&&!(current&(l2_bit|r2)))
             som_style_cycle(-1,som_pad1_member());
@@ -2366,7 +2422,7 @@ static void som_input_poll(void){
             som_throw_start(wram);
         /* Locked on: the D-pad strafes round the target (not with L2's seals). */
         if(lock_slot<0||lock_who==som_pad1_member())
-            som_lock_steer(!(current&l2_bit)?wram:NULL,(uint16_t)(current&dpad));
+            som_lock_steer(!(current&l2_bit)?basic:NULL,(uint16_t)(current&dpad));
         /* Ordinary attacks follow the controller binding. The proxy move
          * owner can still be finishing a move on a different party member. */
         const unsigned driver=som_pad1_member_in(attack_ram);
@@ -2484,8 +2540,8 @@ static void som_input_poll(void){
          * dash is gone for them until dash is re-added. Other classes keep
          * the native A. Field play only (menus keep A as cancel). */
         const uint16_t a_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
-        evade_a_hidden=wram&&!ring_ai_enabled&&!som_manual_disciplines&&
-            som_actor_class()<SOM_DISCIPLINE_COUNT&&som_disc_has_dodge(som_actor_class());
+        evade_a_hidden=basic&&!ring_ai_enabled&&!som_manual_disciplines&&
+            som_disc_has_dodge(som_actor_class());
         if(evade_a_hidden&&(pressed&a_bit)){
             a_press_frame=frame_number;a_hold_done=0;
             if(x_cast_at&&som_actor_class()==SOM_DISC_NINJUTSU){
@@ -2511,7 +2567,7 @@ static void som_input_poll(void){
                             (current&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
                 evade_dir_y=(current&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))?1:
                             (current&(1u<<RETRO_DEVICE_ID_JOYPAD_UP))?-1:0;
-                som_evade_start(wram);
+                som_evade_start(basic);
                 evade_dir_x=evade_dir_y=0;
             }
         }
@@ -2752,6 +2808,7 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] DISCIPLINE selected=%u (saved)\n",
                         (unsigned)som_actor_class());
             }else if(result==SOM_DISC_PARTY_SELECTED)som_party_class_saved();
+            else if(result==SOM_DISC_LOCKED)fprintf(stderr,"[som-ai] CLASS locked\n");
             else if(result==SOM_DISC_ORDERED){
                 som_disc_save();
                 fprintf(stderr,"[som-ai] CLASS ORDER saved\n");
@@ -4585,7 +4642,7 @@ static void som_blink_bring_party(uint8_t *ram){
  * Shunshin (also AI commands "kawarimi" / "shunshin"). */
 static int som_evade_start_raw(uint8_t *ram){
     if(!ram||evade_active)return 0;
-    if(som_actor_class()>=SOM_DISCIPLINE_COUNT||!som_disc_has_dodge(som_actor_class())){
+    if(!som_disc_has_dodge(som_actor_class())){
         som_overlay_say(&overlay,"^No evade|this class cannot dodge",SOM_MESSAGE_FRAMES);
         return 0;
     }
@@ -4698,9 +4755,9 @@ static int som_evade_start_raw(uint8_t *ram){
     som_overlay_say(&overlay,dodge_text,SOM_MESSAGE_FRAMES/2u);
     if(cartwheel_native)
         fprintf(stderr,"[som-ai] EVADE %s as %s: the game's own (pose %02x) toward %d,%d\n",dodge.name,
-                som_discipline_names[som_actor_class()],0x80u|native_code,dx,dy);
+                som_actor_class()<SOM_DISCIPLINE_COUNT?som_discipline_names[som_actor_class()]:"no class",0x80u|native_code,dx,dy);
     else fprintf(stderr,"[som-ai] EVADE %s as %s: %d,%d px per frame for %u frames\n",
-                 dodge.name,som_discipline_names[som_actor_class()],hop_dx,hop_dy,move);
+                 dodge.name,som_actor_class()<SOM_DISCIPLINE_COUNT?som_discipline_names[som_actor_class()]:"no class",hop_dx,hop_dy,move);
     return 1;
 }
 /* AI "kawarimi": arm the substitution for SOM_KAWARIMI_ARM_FRAMES (the
@@ -7262,6 +7319,7 @@ static int som_handle_command(const char *command){
         unsigned who=0,cls=0;char tail;
         if(!strncmp(command,"ally_class_",11)&&sscanf(command+11,"%1u_%2u%c",&who,&cls,&tail)==2&&
            who>=1u&&who<=2u&&cls<SOM_DISCIPLINE_COUNT){
+            if(!som_disc_may(&disciplines,who,cls))return 0;
             disciplines.party[who-1u]=(uint8_t)cls;disciplines.who=(uint8_t)who;
             som_party_class_saved();
             return 1;
@@ -7352,6 +7410,7 @@ static int som_handle_command(const char *command){
         const unsigned long n=!strcmp(command+6,"none")?SOM_DISCIPLINE_NONE:
             strtoul(command+6,&end,10);
         if(n!=SOM_DISCIPLINE_NONE&&(!end||*end||end==command+6||n>=SOM_DISCIPLINE_COUNT))return 0;
+        if(!som_disc_may(&disciplines,0u,(unsigned)n))return 0;
         if(disciplines.selected!=n){
             disciplines.selected=(uint8_t)n;
             som_disc_save();som_class_selected();
@@ -8802,6 +8861,7 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
         if(!backend_retro_unserialize(data,core))return false;
         SomProgress loaded;
         if(som_prog_trailer_read((const uint8_t*)data+core,&loaded)==SOM_PROG_OK){
+            if(disciplines.classless&&!loaded.classless)som_disc_init_keep();
             prog=loaded;som_prog_to_disc(&prog,&disciplines);
             prog_session_first=0;prog_was_field=1;
             fprintf(stderr,"[som-ai] PROGRESS restored from the save state (slot %u)\n",
@@ -9221,7 +9281,7 @@ RETRO_API void retro_run(void){
     if(style_dirty&&frame_number-style_saved_frame>=3600ul)som_styles_save();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data)
         som_perks_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    if(test_enabled&&on_turbo&&frame_number%30u==0u)som_prog_frame();
+    if(test_enabled&&on_turbo&&frame_number%30u==0u){som_prog_frame();som_unlock_frame(som_live_wram());}
     if(test_enabled&&on_turbo)som_special_tick();
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)

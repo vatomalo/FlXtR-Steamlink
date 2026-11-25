@@ -34,6 +34,7 @@ static inline int som_disc_has_dodge(unsigned discipline){
     switch(discipline){
     case 0: case 1: case 2: case 3: case 9: case 10: case 11: case 12: case 14:
         return 1;                                   /* 3: Blink step */
+    case SOM_DISCIPLINE_NONE: return 1;             /* classless: a plain evade */
     default: return 0;
     }
 }
@@ -110,6 +111,7 @@ static inline SomDodge som_disc_dodge(unsigned discipline,unsigned weapon){
     case 3: d.speed=6u;d.frames=5u;d.name="Blink step";break;            /* mage: 30 px, hidden */
     case 12: d.speed=2u;d.frames=14u;d.name="Backflip";break;            /* hunter: 28 px back */
     case 14: d.speed=2u;d.frames=12u;d.name="Evade";break;               /* artificer: 24 px */
+    case SOM_DISCIPLINE_NONE: d.speed=2u;d.frames=12u;d.name="Evade";break;
     default:break;
     }
     return d;
@@ -131,13 +133,77 @@ typedef struct {
      * cursor is a row. grab: Y picked the cursor's row up, Up/Down carry it. */
     uint8_t order[SOM_DISCIPLINE_COUNT];
     uint8_t grab;
+    /* Classless games (2026-11-25): everybody starts without a class. held
+     * = classes a hero has had (bit = class), can = classes the level and
+     * stats allow now. classless 0 = an older save: everything is open. */
+    uint8_t classless;
+    uint16_t held[3],can[3];
 } SomDisciplines;
+/* First-tier classes from level 5, second-tier from level 15 after the
+ * class they grow out of. A class asks for a main stat near the hero's best
+ * (within SOM_UNLOCK_MAIN) and a second one not far behind. Stats are
+ * +0x188..18C: strength, agility, constitution, intelligence, wisdom. */
+#define SOM_UNLOCK_LEVEL 5u
+#define SOM_UNLOCK_LEVEL2 15u
+#define SOM_UNLOCK_MAIN 2
+#define SOM_UNLOCK_SECOND 6
+enum {SOM_STAT_STR,SOM_STAT_AGI,SOM_STAT_CON,SOM_STAT_INT,SOM_STAT_WIS,SOM_STAT_ANY};
+typedef struct {uint8_t main,second,from;} SomUnlock;      /* from: class held, or NONE = tier 1 */
+static const SomUnlock som_unlocks[SOM_DISCIPLINE_COUNT]={
+    {SOM_STAT_STR,SOM_STAT_CON,SOM_DISCIPLINE_NONE},       /* Swordsmanship */
+    {SOM_STAT_STR,SOM_STAT_AGI,SOM_DISCIPLINE_NONE},       /* Martial Arts */
+    {SOM_STAT_AGI,SOM_STAT_STR,9u},                        /* Ninjutsu < Rogue */
+    {SOM_STAT_INT,SOM_STAT_ANY,SOM_DISCIPLINE_NONE},       /* Magic */
+    {SOM_STAT_WIS,SOM_STAT_ANY,SOM_DISCIPLINE_NONE},       /* Divine Arts */
+    {SOM_STAT_INT,SOM_STAT_ANY,3u},                        /* Dark Arts < Magic */
+    {SOM_STAT_INT,SOM_STAT_ANY,3u},                        /* Summoning < Magic */
+    {SOM_STAT_WIS,SOM_STAT_AGI,SOM_DISCIPLINE_NONE},       /* Support & Dance */
+    {SOM_STAT_STR,SOM_STAT_AGI,0u},                        /* Weapon Flow < Swordsmanship */
+    {SOM_STAT_AGI,SOM_STAT_STR,SOM_DISCIPLINE_NONE},       /* Roguecraft */
+    {SOM_STAT_STR,SOM_STAT_AGI,0u},                        /* Bushido < Swordsmanship */
+    {SOM_STAT_AGI,SOM_STAT_ANY,SOM_DISCIPLINE_NONE},       /* Archery */
+    {SOM_STAT_AGI,SOM_STAT_ANY,11u},                       /* Vampire Hunting < Archery */
+    {SOM_STAT_INT,SOM_STAT_ANY,5u},                        /* Necromancy < Dark Arts */
+    {SOM_STAT_AGI,SOM_STAT_ANY,11u},                       /* Artifice < Archery */
+    {SOM_STAT_WIS,SOM_STAT_ANY,4u},                        /* Psionics < Divine Arts */
+};
+/* Bits of the classes this level (as the game shows it) and stats allow. */
+static inline uint16_t som_unlock_mask(unsigned level,const uint8_t stats[5],uint16_t held){
+    unsigned best=0;uint16_t mask=0;
+    for(unsigned i=0;i<5u;i++)if(stats[i]>best)best=stats[i];
+    if(!best)return 0;
+    for(unsigned c=0;c<SOM_DISCIPLINE_COUNT;c++){
+        const SomUnlock *u=&som_unlocks[c];
+        const int second_tier=u->from<SOM_DISCIPLINE_COUNT;
+        if(level<(second_tier?SOM_UNLOCK_LEVEL2:SOM_UNLOCK_LEVEL))continue;
+        if(second_tier&&!(held>>u->from&1u))continue;
+        if((int)stats[u->main]+SOM_UNLOCK_MAIN<(int)best)continue;
+        if(u->second<SOM_STAT_ANY&&(int)stats[u->second]+SOM_UNLOCK_SECOND<(int)best)continue;
+        mask|=(uint16_t)(1u<<c);
+    }
+    return mask;
+}
+/* May this hero take the class? Older saves: always. No class: always. */
+static inline int som_disc_may(const SomDisciplines *d,unsigned who,unsigned cls){
+    if(!d||!d->classless||cls>=SOM_DISCIPLINE_COUNT)return 1;
+    return who<3u&&((d->held[who]|d->can[who])>>cls&1u);
+}
+/* The short reason a class is closed, for the menu. */
+static inline const char *som_unlock_reason(unsigned cls){
+    static const char *const main_names[5]={"STR","AGI","CON","INT","WIS"};
+    static char text[16];
+    const SomUnlock *u=&som_unlocks[cls%SOM_DISCIPLINE_COUNT];
+    snprintf(text,sizeof(text),"%s%2u",main_names[u->main%5u],
+             u->from<SOM_DISCIPLINE_COUNT?SOM_UNLOCK_LEVEL2:SOM_UNLOCK_LEVEL);
+    return text;
+}
 #define SOM_PARTY_MEMBERS 3u
 #define SOM_GIRL_DEFAULT_CLASS 4u       /* Divine Arts: she heals */
 #define SOM_SPRITE_DEFAULT_CLASS 3u     /* Magic: he casts the attack spells */
 static const char *const som_party_names[SOM_PARTY_MEMBERS]={"BOY","GIRL","SPRITE"};
 enum {SOM_DISC_NONE, SOM_DISC_OPENED, SOM_DISC_CLOSED, SOM_DISC_SELECTED,
-      SOM_DISC_WHO, SOM_DISC_PARTY_SELECTED, SOM_DISC_ORDERED};
+      SOM_DISC_WHO, SOM_DISC_PARTY_SELECTED, SOM_DISC_ORDERED,
+      SOM_DISC_LOCKED};
 /* Member 0 the boy, 1 the girl, 2 the sprite: that member's class. */
 static inline unsigned som_disc_member_class(const SomDisciplines *d,unsigned who){
     if(!d)return SOM_DISCIPLINE_NONE;
@@ -248,6 +314,16 @@ static inline unsigned som_disc_row_of(const SomDisciplines *d,unsigned cls){
 static inline unsigned som_disc_cursor_class(const SomDisciplines *d){
     return d->order[d->cursor%SOM_DISCIPLINE_COUNT];
 }
+/* The next class in order that this hero may take; cur when there is none. */
+static inline unsigned som_disc_order_step(const SomDisciplines *d,unsigned cur,int dir);
+static inline unsigned som_disc_order_step_for(const SomDisciplines *d,unsigned who,unsigned cur,int dir){
+    unsigned next=cur;
+    for(unsigned i=0;i<SOM_DISCIPLINE_COUNT;i++){
+        next=som_disc_order_step(d,next,dir);
+        if(som_disc_may(d,who,next))return next;
+    }
+    return cur;
+}
 /* The class after (dir > 0) or before cur in the player's order; from no
  * class, the first (or the last). */
 static inline unsigned som_disc_order_step(const SomDisciplines *d,unsigned cur,int dir){
@@ -309,6 +385,7 @@ static inline int som_disc_press(SomDisciplines *d,uint16_t pressed){
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))d->cursor=(d->cursor+1u)%n;
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_B)){
         const uint8_t cls=d->order[d->cursor];
+        if(som_disc_member_class(d,d->who)!=cls&&!som_disc_may(d,d->who,cls))return SOM_DISC_LOCKED;
         if(d->who){
             uint8_t *c=&d->party[d->who-1u];
             *c=*c==cls?SOM_DISCIPLINE_NONE:cls;
@@ -411,7 +488,7 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
     const uint32_t gold=som_overlay_color(format,255,223,143);
     som_status_texture_draw(texture,pixels,pitch,format,sx,sy);
 
-    char text[32];
+    char text[40];
     som_disc_window(pixels,width,height,pitch,format,3,10,101,85);
     som_disc_window(pixels,width,height,pitch,format,3,99,101,99);
     som_disc_window(pixels,width,height,pitch,format,107,10,146,188);
@@ -434,11 +511,14 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
     som_overlay_label(pixels,width,height,pitch,format,"Lv",235,21,0,gold);
     for(unsigned row=0;row<SOM_DISCIPLINE_COUNT;row++){
         const unsigned cls=d->order[row]%SOM_DISCIPLINE_COUNT;
-        snprintf(text,sizeof(text),"%c%c %-16s %3u",
+        const int open=som_disc_may(d,who,cls);
+        if(open)snprintf(text,sizeof(text),"%c%c %-16s %3u",
                  row==d->cursor?(d->grab?'=':'>'):' ',cls==equipped?'*':' ',
                  som_discipline_names[cls],(unsigned)d->level[cls]);
-        som_overlay_label(pixels,width,height,pitch,format,text,112,36+(int)row*9,0,
-                          row==d->cursor?gold:white);
+        else snprintf(text,sizeof(text),"%c  %-14.14s %s",
+                 row==d->cursor?(d->grab?'=':'>'):' ',som_discipline_names[cls],
+                 som_unlock_reason(cls));
+        som_overlay_label(pixels,width,height,pitch,format,text,112,36+(int)row*9,0,!open?som_overlay_color(format,110,122,118):row==d->cursor?gold:white);
     }
 }
 #endif

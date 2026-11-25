@@ -77,6 +77,12 @@ static inline unsigned som_perk_level(const SomDisciplines *d,unsigned disciplin
 }
 static inline unsigned som_perk_rank(const SomPerk *p,const SomDisciplines *d){
     if(!p||!d||!p->levels_per_rank)return 0;
+    /* A passive belongs to its class: the boy must have (had) that class. */
+    if(d->classless){
+        const unsigned own=p->discipline==SOM_PERK_CLASS?d->selected:p->discipline;
+        if(own>=SOM_DISCIPLINE_COUNT||!(d->held[0]>>own&1u))return 0;
+        if(p->req_discipline!=SOM_PERK_NONE&&!(d->held[0]>>(p->req_discipline&15u)&1u))return 0;
+    }
     const unsigned level=som_perk_level(d,p->discipline);
     if(!level||level<p->min_level)return 0;
     if(p->req_discipline!=SOM_PERK_NONE&&som_perk_level(d,p->req_discipline)<p->req_level)return 0;

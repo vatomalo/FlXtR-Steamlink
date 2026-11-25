@@ -970,3 +970,15 @@ Speech bubbles show only with **AI debug messages** on; plain boxes always do.
 
 **Player 2 AI** (AI menu, ACTIONS page): the AI joins as player 2, follows and
 fights. A press on pad 2 while you play takes over for good; the switch goes off.
+
+## Classless games
+
+A new game starts all three heroes without a class: plain weapons, block (R2),
+evade (A) and target (L1). At level 5 a hero may choose the first-tier classes
+the stats allow (main stat within 2 of the best, second within 6): Swordsmanship
+STR/CON, Martial Arts STR/AGI, Roguecraft AGI/STR, Archery AGI, Magic INT,
+Divine Arts WIS, Support & Dance WIS/AGI. Second tier at level 15, after the
+class it grows from: Ninjutsu (Rogue), Bushido and Weapon Flow (Swordsmanship),
+Dark Arts and Summoning (Magic), Vampire Hunting and Artifice (Archery),
+Psionics (Divine Arts), Necromancy (Dark Arts). A passive works only for a
+class the boy has or has had. Saves made before this rule keep everything.

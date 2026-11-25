@@ -102,5 +102,26 @@ int main(void){
         o.order[3]=o.order[4];assert(!som_disc_order_valid(o.order));
         (void)DOWN;
     }
+    {   /* classless rules: level, stats, tiers, passives, old saves */
+        const uint8_t boy[5]={18,18,17,7,9},girl[5]={11,11,11,7,15},sprite[5]={8,13,9,15,5};
+        assert(som_unlock_mask(4,boy,0)==0);
+        uint16_t m=som_unlock_mask(5,boy,0);
+        assert(m==((1u<<0)|(1u<<1)|(1u<<9)|(1u<<11)));          /* sword, monk, rogue, archer */
+        assert(som_unlock_mask(5,girl,0)==((1u<<4)|(1u<<7)));   /* cleric, dancer */
+        assert(som_unlock_mask(5,sprite,0)==((1u<<3)|(1u<<11)));/* mage, archer */
+        assert(!(som_unlock_mask(14,boy,1u)>>10&1u)&&(som_unlock_mask(15,boy,1u)>>10&1u));
+        assert(!(som_unlock_mask(99,boy,0)>>10&1u));            /* samurai needs swordsman */
+        SomDisciplines d;som_disc_init(&d);
+        for(unsigned c=0;c<SOM_DISCIPLINE_COUNT;c++)assert(som_disc_may(&d,0,c)); /* old save */
+        d.classless=1;d.party[0]=d.party[1]=SOM_DISCIPLINE_NONE;
+        for(unsigned c=0;c<SOM_DISCIPLINE_COUNT;c++)assert(!som_disc_may(&d,0,c));
+        d.open=1;d.cursor=0;
+        assert(som_disc_press(&d,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_DISC_LOCKED&&d.selected==SOM_DISCIPLINE_NONE);
+        assert(som_disc_order_step_for(&d,0,SOM_DISCIPLINE_NONE,1)==SOM_DISCIPLINE_NONE);
+        d.can[0]=m;
+        assert(som_disc_press(&d,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_DISC_SELECTED&&d.selected==0);
+        assert(som_disc_order_step_for(&d,0,0,1)==1&&som_disc_order_step_for(&d,0,1,1)==9);
+        assert(som_disc_has_dodge(SOM_DISCIPLINE_NONE)&&som_disc_dodge(SOM_DISCIPLINE_NONE,1).speed);
+    }
     return 0;
 }

@@ -36,6 +36,8 @@ typedef struct {
     uint16_t level[SOM_DISCIPLINE_COUNT];
     uint32_t experience[SOM_DISCIPLINE_COUNT];
     uint32_t perks[4];       /* reserved for unlocks (bit sets) */
+    uint8_t classless,party[2];   /* 0 in records from before classless games */
+    uint16_t held[3];
 } SomProgress;
 
 static inline uint64_t som_prog_hash(const uint8_t *data,size_t size){
@@ -66,14 +68,25 @@ static inline void som_prog_fresh(SomProgress *p,uint64_t rom){
 }
 static inline void som_prog_from_disc(SomProgress *p,const SomDisciplines *d){
     p->selected=d->selected;
+    p->classless=d->classless;memcpy(p->party,d->party,sizeof(p->party));
+    memcpy(p->held,d->held,sizeof(p->held));
     memcpy(p->level,d->level,sizeof(p->level));
     memcpy(p->experience,d->experience,sizeof(p->experience));
 }
 static inline void som_prog_to_disc(const SomProgress *p,SomDisciplines *d){
     d->selected=p->selected;
+    d->classless=p->classless;
+    memcpy(d->held,p->held,sizeof(d->held));memset(d->can,0,sizeof(d->can));
+    if(p->classless)memcpy(d->party,p->party,sizeof(d->party));
     memcpy(d->level,p->level,sizeof(d->level));
     memcpy(d->experience,p->experience,sizeof(d->experience));
     memset(d->last_event,0,sizeof(d->last_event));
+}
+/* A new game in the classless rules: nobody has a class. */
+static inline void som_prog_classless(SomProgress *p){
+    p->classless=1;p->selected=SOM_DISCIPLINE_NONE;
+    p->party[0]=p->party[1]=SOM_DISCIPLINE_NONE;
+    memset(p->held,0,sizeof(p->held));
 }
 /* Text form; the last line is "sum <fnv of everything before it>". Returns
  * the length written, 0 if it did not fit. */
@@ -93,6 +106,12 @@ static inline size_t som_prog_format(const SomProgress *p,char *out,size_t cap){
                (unsigned long)p->perks[1],(unsigned long)p->perks[2],(unsigned long)p->perks[3]);
     if(w<0||(size_t)w>=cap-n)return 0;
     n+=(size_t)w;
+    if(p->classless){
+        w=snprintf(out+n,cap-n,"classless %04x %04x %04x %u %u\n",(unsigned)p->held[0],
+                   (unsigned)p->held[1],(unsigned)p->held[2],(unsigned)p->party[0],(unsigned)p->party[1]);
+        if(w<0||(size_t)w>=cap-n)return 0;
+        n+=(size_t)w;
+    }
     const uint64_t sum=som_prog_hash((const uint8_t*)out,n);
     w=snprintf(out+n,cap-n,"sum %016llx\n",(unsigned long long)sum);
     if(w<0||(size_t)w>=cap-n)return 0;
@@ -114,10 +133,16 @@ static inline int som_prog_parse(const char *text,size_t len,SomProgress *p){
     unsigned long long owner=0,rom=0;unsigned slot=0,selected=0;
     const char *line=text;int seen=0;
     while(line&&line<sum_line){
-        unsigned i=0,level=0;unsigned long xp=0,k[4];
+        unsigned i=0,level=0,h[3],g=0,q2=0;unsigned long xp=0,k[4];
         if(sscanf(line,"save %llx",&owner)==1)seen|=1;
         else if(sscanf(line,"slot %u",&slot)==1)seen|=2;
         else if(sscanf(line,"rom %llx",&rom)==1)seen|=4;
+        else if(sscanf(line,"classless %x %x %x %u %u",&h[0],&h[1],&h[2],&g,&q2)==5){
+            if((g>=SOM_DISCIPLINE_COUNT&&g!=SOM_DISCIPLINE_NONE)||
+               (q2>=SOM_DISCIPLINE_COUNT&&q2!=SOM_DISCIPLINE_NONE))return SOM_PROG_CORRUPT;
+            q.classless=1;q.party[0]=(uint8_t)g;q.party[1]=(uint8_t)q2;
+            for(unsigned j=0;j<3u;j++)q.held[j]=(uint16_t)h[j];
+        }
         else if(sscanf(line,"selected %u",&selected)==1)seen|=8;
         else if(sscanf(line,"d %u %u %lu",&i,&level,&xp)==3){
             if(i>=SOM_DISCIPLINE_COUNT||level<1u||level>100u)return SOM_PROG_CORRUPT;

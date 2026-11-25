@@ -171,6 +171,9 @@ int main(void){
     assert(!som_perk_find(0)&&!som_perk_find(200)&&som_perk_find(1));
     assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==0);          /* level 1: locked */
     pd.level[0]=5;assert(som_perk_rank(som_perk_find(1),&pd)==1&&som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==2);
+    pd.classless=1;assert(som_perk_rank(som_perk_find(1),&pd)==0);    /* never had the class */
+    pd.held[0]=1u<<(pd.selected&15u);assert(som_perk_rank(som_perk_find(1),&pd)==1);
+    pd.classless=0;pd.held[0]=0;
     pd.level[0]=14;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==4);
     pd.level[0]=100;assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,1)==6);   /* max rank / cap */
     assert(som_perk_value(SOM_EFFECT_DODGE_FRAMES,&pd,0)==0);          /* perks off */

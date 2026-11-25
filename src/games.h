@@ -863,6 +863,9 @@ static int games_run(void){
     }
     #endif
     if(view!=GAME_PIXEL)game_native_sdl();
+    /* The Steam Controller receiver adds phantom joysticks that push the real
+     * pads off slots 0 and 1, so player 1 has no pad. */
+    setenv("SDL_HIDAPI_IGNORE_DEVICES","0x2dc8/0x3106,0x28de/0x1142",1);
     if(chdir(games_home()))return 2;
     setenv("HOME",home,1);
     /* Explicitly selecting the experimental core is the opt-in.

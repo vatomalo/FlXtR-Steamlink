@@ -255,7 +255,7 @@ int main(void){
     som_pad2_poll();
     assert(pad2_combo_actor==1u&&pad2_wanted==0);
     mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_R2;som_pad2_poll();
-    assert(pad2_guard_hp==40u&&pad2_wanted==0);
+    assert(pad2_guard_hp==40u&&pad2_wanted==(1u<<RETRO_DEVICE_ID_JOYPAD_R));
     mocked_wram[0xE382]=30;som_pad2_guard_finish();
     assert(mocked_wram[0xE382]==35u);
     mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L3)|(1u<<RETRO_DEVICE_ID_JOYPAD_START);
@@ -813,7 +813,12 @@ int main(void){
     assert(access(message_path,F_OK)!=0&&!overlay.line_count); /* debug hidden by default */
     note=fopen(message_path,"w");
     assert(note!=NULL&&fputs("^Hello there!|speech remains\n",note)>0&&fclose(note)==0);
-    som_check_message();assert(overlay.speech_bubble&&overlay.line_count==2);
+    som_check_message();assert(!overlay.line_count);        /* bubbles: debug only */
+    gambits.debug_messages=1;
+    som_overlay_say(&overlay,"^Hello there!|speech remains",60);
+    assert(overlay.speech_bubble&&overlay.line_count==2);
+    gambits.debug_messages=0;
+    som_overlay_say(&overlay,"Plain box",60);assert(overlay.line_count==1&&!overlay.speech_bubble);
     overlay.frames_left=0;
     note=fopen(message_path,"w");
     assert(note!=NULL&&fputs("AI: using Candy|line two\n",note)>0&&fclose(note)==0);
@@ -1152,7 +1157,7 @@ int main(void){
     /* Gambit menu text and drawing. */
     {
         SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
-            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0};
+            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         /* Quest page: two weights + exit, changed with Right, saved as digits. */
@@ -1212,6 +1217,10 @@ int main(void){
             assert(!m.infinite_mp);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(m.cursor==SOM_GAMBIT_DEBUG_ITEM);
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
+            assert(m.cursor==SOM_GAMBIT_P2_ITEM&&!m.player2);
+            assert(som_gambit_line(&m,SOM_GAMBIT_P2_ITEM+1u,text)&&strstr(text,"Player 2 AI")&&strstr(text,"off"));
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_P2_CHANGED&&m.player2);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(m.cursor==SOM_GAMBIT_EXIT_ITEM);
         }
@@ -1521,7 +1530,7 @@ int main(void){
         on_turbo=1;special_stage=special_suppress=0;
         physical_state=mocked_input_mask;mocked_buttons=0;last_physical_buttons=0;
         som_input_poll();
-        /* R2 is consumed by the proxy guard. R1 is an
+        /* R2 guards and holds the game's R (block pose). R1 is an
          * edge-triggered style cycle and never reaches the SNES core.
          * Per-button and bitmask reads must agree. */
         som_styles_init(&styles);
@@ -1534,11 +1543,11 @@ int main(void){
         const uint16_t style_r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
         mocked_buttons=guard_r2;som_input_poll();
         assert(som_guarding());
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==1);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2)==0);
-        assert((uint16_t)som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        assert((uint16_t)som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==style_r1);
         physical_state=mocked_input;pressed=RETRO_DEVICE_ID_JOYPAD_R2;
-        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==0);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R)==1);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2)==0);
         pressed=100;physical_state=mocked_input_mask;
         mocked_buttons=0;som_input_poll();assert(!som_guarding());

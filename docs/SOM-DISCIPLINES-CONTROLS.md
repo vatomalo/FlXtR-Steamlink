@@ -4,7 +4,7 @@
 
 | Physical input | Current behavior in active field play |
 | --- | --- |
-| **R2 (hold)** | **Block / guard**. The proxy halves nonlethal HP loss for the character on controller 1 without changing party poses. Samurai Iai parry and Monk Counter Palm/Tiger Drop use the same guard. Samurai R2 + backward D-pad throws; Swordsman R2 + A bashes. |
+| **R2 (hold)** | **Block / guard**. The player's hero holds the game's own block pose and the proxy halves nonlethal HP loss that gets through; other heroes' poses do not change. Samurai Iai parry and Monk Counter Palm/Tiger Drop use the same guard. Samurai R2 + backward D-pad throws; Swordsman R2 + A bashes. |
 | **L2 + D-pad signs, then B/Y** | Seals, charged specials and their level selection, moved from R2. L2+B is primary level 1 by default, L2+Y is secondary level 2. |
 | **L2 + X** | Existing discipline moves (Issen, Hundred Fists, Whirlwind, Telekinesis, etc.) remain in place; not a style switch. |
 | **L1 (tap)** | Toggle enemy lock-on. Only targeting, independent of B/Y. Native L1 is suppressed during active field play so it cannot open the wrong ring. |
@@ -958,10 +958,15 @@ its MP; when it cannot be cast the rogue plays Cruel Cut. The Kusarigama style k
 
 ## Camera
 
-The picture zooms and pans by itself (`src/som_camera.h`), at exactly 2x when
-settled so pixels stay even: on the speaker and the lead hero while a dialogue
-window is open (if both fit), and on the lead after 10 s standing still with no
-monsters about. Fights and walking stay at 1x. The HUD and text windows are
+The picture zooms and pans by itself (`src/som_camera.h`). Settled shots are
+crisp: 1.5x in a 512x448 picture (dialogue and fights that fit) or 2x (the
+lead after 10 s standing still with no monsters). If 1.5x slows the frames a
+governor turns it off for the session: dialogue then uses 2x, fights 1x. The HUD and text windows are
 the game's BG3 layer and keep their exact place and size. It changes only the
 picture. Off switch: an empty file `cores/experimental/som_ai_camera_off`, or
 the commands `camera_off` / `camera_on`.
+
+Speech bubbles show only with **AI debug messages** on; plain boxes always do.
+
+**Player 2 AI** (AI menu, ACTIONS page): the AI joins as player 2, follows and
+fights. A press on pad 2 while you play takes over for good; the switch goes off.

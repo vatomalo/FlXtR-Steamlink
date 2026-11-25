@@ -13,6 +13,7 @@
 #include "som_ai_actions.h"
 #include "som_overlay.h"
 #include "som_camera.h"
+#include "som_ai_player2.h"
 #include "som_gambit.h"
 #include "som_disciplines.h"
 #include "som_class_guide.h"
@@ -200,6 +201,8 @@ static const char *quest_file=SOM_QUEST_FILE;
 static const char *brain_file=SOM_BRAIN_FILE;
 #define SOM_DEBUG_MESSAGES_FILE "/home/apps/retroarch/cores/experimental/som_ai_debug_messages"
 static const char *debug_messages_file=SOM_DEBUG_MESSAGES_FILE;
+#define SOM_P2_AI_FILE "/home/apps/retroarch/cores/experimental/som_ai_player2"
+static const char *p2_ai_file=SOM_P2_AI_FILE;
 /* Independent from the six Gambit priority digits, shared with the
  * external song-id -> yt-dlp playback bridge. */
 #define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
@@ -207,7 +210,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0};
+    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0};
 static SomDisciplines disciplines;
 /* The acting hero (2026-11-22, "write them with companions in mind"): the
  * player's moves (X class moves, L2 specials, throw, bash, Blink, portals,
@@ -377,6 +380,7 @@ static void som_lock_swap(int reset);      /* player 2's own lock-on ... */
 static void som_string_swap(int reset);    /* ... and B string */
 static int som_class_x(uint8_t *ram);
 static int som_pad2_borrow(unsigned who);
+static void som_p2ai_switched(void);
 static int som_actor_busy(void);
 static unsigned pad2_actor=SOM_PARTY_MEMBERS,pad2_combo_actor=SOM_PARTY_MEMBERS;
 static unsigned pad2_spell_cursor,pad2_spell_class=SOM_DISCIPLINE_NONE;
@@ -476,6 +480,10 @@ static void som_gambit_load(void){
     in=fopen(debug_messages_file,"r");
     if(in){if(!fgets(debug,sizeof(debug),in))debug[0]=0;fclose(in);}
     gambits.debug_messages=debug[0]=='1';
+    char second[8]={0};
+    in=fopen(p2_ai_file,"r");
+    if(in){if(!fgets(second,sizeof(second),in))second[0]=0;fclose(in);}
+    gambits.player2=second[0]=='1';
 }
 static void som_gambit_write(const char *path,const char *text){
     char temp[256];
@@ -511,6 +519,13 @@ static const char *message_file="/tmp/flxtr-som-ai-message";
 static retro_video_refresh_t frontend_video;
 static int pixel_format; /* RETRO_PIXEL_FORMAT_0RGB1555 until the core says otherwise */
 static SomOverlay overlay;
+/* Speech bubbles ('^') are debug output: without AI debug messages they are
+ * accepted and dropped. Plain status boxes always show. */
+static int som_bubbles_shown(void);
+static int som_overlay_say(SomOverlay *o,const char *text,unsigned frames){
+    if(text&&text[0]=='^'&&!som_bubbles_shown())return text[1]!=0;
+    return som_overlay_set(o,text,frames);
+}
 /* Teaching: while the marker exists, physical presses are appended to a log
  * as the action names the bridge can replay. Nothing is injected. */
 static const char *record_marker="/tmp/flxtr-som-ai-record";
@@ -523,6 +538,7 @@ static size_t overlay_frame_size;
 static const char *camera_off_file=SOM_CAMERA_OFF_FILE;
 static SomCamera camera;
 static int camera_off=-1,camera_shot;
+static SomCamGovern camera_govern;
 static void load_backend(void); /* RetroArch may query core info before init. */
 static void som_auto_state_path_set(const char *rom);
 /* Every gameplay feature is gated on this: only the Turbo ROM by its file
@@ -740,7 +756,7 @@ static void som_infinite_mp_changed(void){
     uint8_t *ram=som_live_wram();
     if(!gambits.infinite_mp&&ram&&ram[0xE000]==1&&ram[0xE186]>ram[0xE187])
         ram[0xE186]=ram[0xE187];
-    som_overlay_set(&overlay,gambits.infinite_mp?"^Infinite MP ON|test only":
+    som_overlay_say(&overlay,gambits.infinite_mp?"^Infinite MP ON|test only":
                     "^Infinite MP off",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] TEST infinite MP %s\n",gambits.infinite_mp?"on":"off");
 }
@@ -826,7 +842,7 @@ static void som_xp_give(unsigned discipline,unsigned base,unsigned species,unsig
         char text[64];
         snprintf(text,sizeof(text),"^%s|level %u",som_discipline_names[discipline],
                  (unsigned)disciplines.level[discipline]);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
         som_disc_save();som_prog_write();xp_dirty=0;xp_saved_frame=frame_number;
     }
     fprintf(stderr,"[som-ai] XP %s +%u (%s) -> Lv%u %lu/%u\n",som_discipline_names[discipline],
@@ -1363,7 +1379,7 @@ static void som_class_cycle_member(unsigned who,int dir){
         char text[64];
         snprintf(text,sizeof(text),"^%s %s|Lv%u  L2+R1 next  L2+L1 back",
                  som_party_names[who],som_discipline_titles[next],(unsigned)disciplines.level[next]);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
         fprintf(stderr,"[som-ai] PARTY %s class=%u by L2+%s\n",som_party_names[who],next,
                 dir>0?"R1":"L1");
         return;
@@ -1374,7 +1390,7 @@ static void som_class_cycle_member(unsigned who,int dir){
     char text[64];
     snprintf(text,sizeof(text),"^%s|Lv%u  L2+R1 next  L2+L1 back",som_discipline_titles[next],
              (unsigned)disciplines.level[next]);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] DISCIPLINE selected=%u by L2+%s (saved)\n",next,dir>0?"R1":"L1");
 }
 static void som_class_cycle(int dir){som_class_cycle_member(som_pad1_member(),dir);}
@@ -1497,7 +1513,7 @@ static void som_combo_frame(void){
                 const unsigned pending=m[0x1F1]+bonus;
                 m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
                 backstab_until=0;
-                som_overlay_set(&overlay,"^Backstab!",SOM_MESSAGE_FRAMES/3u);
+                som_overlay_say(&overlay,"^Backstab!",SOM_MESSAGE_FRAMES/3u);
                 fprintf(stderr,"[som-ai] BACKSTAB: +%u on monster %u\n",bonus,i);
             }
             if(sel==SOM_DISC_MARTIAL&&combo.hits&&combo.hits%3u==0u){   /* Rising Dragon */
@@ -1505,7 +1521,7 @@ static void som_combo_frame(void){
                 const unsigned bonus=8u+disciplines.level[SOM_DISC_MARTIAL];
                 const unsigned pending=m[0x1F1]+bonus;
                 m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
-                som_overlay_set(&overlay,"^Rising Dragon!",SOM_MESSAGE_FRAMES/3u);
+                som_overlay_say(&overlay,"^Rising Dragon!",SOM_MESSAGE_FRAMES/3u);
                 fprintf(stderr,"[som-ai] RISING DRAGON: hit %u, +%u on monster %u\n",
                         combo.hits,bonus,i);
             }
@@ -1567,9 +1583,17 @@ static int som_guarding(void){
             frame_number>=start_frame&&frame_number-start_frame<action_frames)||
            (!ring_ai_enabled&&(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R2)));
 }
-/* Keep guard on the controller's actor. The native shoulder input can
+/* R2 also holds the game's own R on the player's pad: its block pose, and
+ * its block. What still gets through is halved here. Guard stays on the
+ * controller's actor; the native shoulder input can
  * change poses on other party members, so guard is handled without it. */
 static unsigned guard_who,guard_hp,guard_map;
+static int som_bubbles_shown(void){return gambits.debug_messages;}
+/* A guarded hit is logged (a bubble in debug). */
+static void som_guard_note(unsigned player,unsigned lost,unsigned back){
+    if(!overlay.frames_left)som_overlay_say(&overlay,"^Block!",SOM_MESSAGE_FRAMES/6u);
+    fprintf(stderr,"[som-ai] GUARD player %u: hit %u -> %u\n",player,lost,lost-back);
+}
 static void som_guard_begin(void){
     guard_hp=0;
     if(!som_guarding()||som_manual_disciplines||menu_hold_until_release)return;
@@ -1587,8 +1611,10 @@ static void som_guard_finish(void){
     if(!ram||som_word(ram+0xDC)!=guard_map||som_pad1_member_in(ram)!=guard_who)return;
     uint8_t *hero=ram+0xE000u+0x200u*guard_who;
     const unsigned hp=som_word(hero+0x182);
-    if(hero[0]==1&&hp&&hp<guard_hp)
+    if(hero[0]==1&&hp&&hp<guard_hp){
         som_put_word(hero+0x182,(uint16_t)(hp+(guard_hp-hp+1u)/2u));
+        som_guard_note(1u,guard_hp-hp,(guard_hp-hp+1u)/2u);
+    }
 }
 /* After each frame: Uncanny Dodge (the first hit of a fight is cut) and
  * Tiger Drop (a hit landing on the guard is countered). */
@@ -1635,7 +1661,7 @@ static void som_perks_frame(uint8_t *ram){
             if(samurai)iai_ready=frame_number+SOM_IAI_COOLDOWN_FRAMES;
             else palm_ready=frame_number+SOM_PALM_COOLDOWN;
             som_bun_boom(bunshin_booms,(int)som_bun_u16(m+2),(int)som_bun_u16(m+4),1,frame_number);
-            som_overlay_set(&overlay,samurai?"^Iai counter!":"^Counter palm!",SOM_MESSAGE_FRAMES/3u);
+            som_overlay_say(&overlay,samurai?"^Iai counter!":"^Counter palm!",SOM_MESSAGE_FRAMES/3u);
             fprintf(stderr,"[som-ai] %s: parried, hit monster %d for %u\n",
                     samurai?"IAI COUNTER":"COUNTER PALM",foe,damage);
         }
@@ -1653,7 +1679,7 @@ static void som_perks_frame(uint8_t *ram){
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
             monster_hit_frame[foe]=frame_number;
             tiger_ready=frame_number+SOM_TIGER_COOLDOWN;
-            som_overlay_set(&overlay,"^Tiger Drop!",SOM_MESSAGE_FRAMES/3u);
+            som_overlay_say(&overlay,"^Tiger Drop!",SOM_MESSAGE_FRAMES/3u);
             fprintf(stderr,"[som-ai] PERK Tiger Drop: guarded hit countered for %u on monster %d\n",
                     damage,foe);
         }
@@ -1673,7 +1699,7 @@ static void som_perks_frame(uint8_t *ram){
             }
             if(disciplines.selected==SOM_DISC_BUSHIDO&&frame_number<iai_ready){
                 iai_ready=frame_number;                    /* Zanshin */
-                som_overlay_set(&overlay,"^Zanshin|Iaijutsu ready",SOM_MESSAGE_FRAMES/3u);
+                som_overlay_say(&overlay,"^Zanshin|Iaijutsu ready",SOM_MESSAGE_FRAMES/3u);
                 fprintf(stderr,"[som-ai] ZANSHIN: kill readies Iaijutsu\n");
             }
             monster_hit_frame[slot]=0;
@@ -1708,10 +1734,10 @@ static void som_net_pad_frame(void){
         net_pad.joined=0;
         struct in_addr a;a.s_addr=htonl(net_pad.owner_ip);
         char text[64];snprintf(text,sizeof(text),"Player 2 joined|%s",inet_ntoa(a));
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] NETPAD player 2 joined from %s\n",inet_ntoa(a));
     }else if(net_pad_was_active&&!active){
-        som_overlay_set(&overlay,"Player 2 left",SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,"Player 2 left",SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] NETPAD player 2 left\n");
     }
     net_pad_was_active=active;
@@ -1816,8 +1842,89 @@ static void som_pad2_string(uint8_t *ram,unsigned who,uint16_t dirs,int press){
     p2_context=0;
     if(lent&&!som_actor_busy())som_actor=keep;
 }
+/* The AI plays player 2 (AI menu, "Player 2 AI"): pad 2's buttons come from
+ * som_ai_player2.h. It joins with Start like a player, follows the lead,
+ * fights what is close with the class's own B, and steps out when it is
+ * stuck far away, so the game walks the hero back. A press on the real
+ * pad 2 while the player plays takes over for good (the switch goes off). */
+#define SOM_P2AI_REACH 170
+static unsigned long p2ai_next_start,p2ai_next_b;
+static unsigned p2ai_start_left,p2ai_stuck;
+static int p2ai_leaving,p2ai_x,p2ai_y;
+static void som_p2ai_switched(void){
+    som_gambit_write(p2_ai_file,gambits.player2?"1":"0");
+    p2ai_leaving=!gambits.player2;p2ai_start_left=0;p2ai_next_start=frame_number+30ul;
+    som_overlay_say(&overlay,gambits.player2?"Player 2 AI on":"Player 2 AI off",SOM_MESSAGE_FRAMES/2u);
+    fprintf(stderr,"[som-ai] PLAYER 2 AI %s\n",gambits.player2?"on":"off");
+}
+static void som_p2ai_press_start(unsigned long wait){
+    p2ai_start_left=4u;p2ai_next_start=frame_number+wait;
+}
+static uint16_t som_p2ai_buttons(const uint8_t *ram){
+    const uint16_t start=1u<<RETRO_DEVICE_ID_JOYPAD_START;
+    if((!gambits.player2&&!p2ai_leaving&&!p2ai_start_left)||!ram||lead_swapped||som_manual_disciplines||
+       menu_hold_until_release||!(ram[0xD9]&7u)||(net_pad.fd>=0&&som_net_pad_active(&net_pad,som_now_ms()))){
+        p2ai_start_left=0;return 0;
+    }
+    if(p2ai_start_left){p2ai_start_left--;return start;}
+    const unsigned who=som_pad2_member(ram);
+    if(p2ai_leaving){
+        p2ai_leaving=0;
+        if(who<SOM_PARTY_MEMBERS)som_p2ai_press_start(60ul);
+        return 0;
+    }
+    if(who>=SOM_PARTY_MEMBERS){
+        unsigned others=0;
+        const unsigned lead=som_pad1_member_in(ram);
+        for(unsigned i=0;i<SOM_PARTY_MEMBERS;i++)
+            others+=i!=lead&&ram[0xE000u+0x200u*i]==1u&&som_word(ram+0xE182u+0x200u*i);
+        if(others&&frame_number>=p2ai_next_start)som_p2ai_press_start(240ul);
+        p2ai_stuck=0;
+        return 0;
+    }
+    const uint8_t *me=ram+0xE000u+0x200u*who,*lead=ram+0xE000u+0x200u*som_pad1_member_in(ram);
+    SomAiObservation o;memset(&o,0,sizeof(o));
+    o.verified_state=o.in_game=o.partner_controllable=1;
+    o.partner_alive=som_word(me+0x182)!=0;
+    o.partner_x=som_word(me+2);o.partner_y=som_word(me+4);
+    o.leader_x=som_word(lead+2);o.leader_y=som_word(lead+4);
+    long best=SOM_P2AI_REACH;
+    for(unsigned i=0;i<3u;i++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
+        if((int)i==familiar.slot||!som_bun_monster_alive(m)||!som_word(m+0x182))continue;
+        const long d=labs((long)som_word(m+2)-o.leader_x)+labs((long)som_word(m+4)-o.leader_y);
+        if(d<best){best=d;o.enemy_valid=1;o.enemy_x=som_word(m+2);o.enemy_y=som_word(m+4);}
+    }
+    o.can_attack=!me[0x1ED]&&!me[0x01C];
+    SomAiStrategy plan=som_ai_default_strategy();
+    const unsigned cls=som_disc_member_class(&disciplines,who);
+    if(cls<SOM_DISCIPLINE_COUNT&&(som_disc_caster(cls)||cls==SOM_DISC_ARCHERY))plan.attack_radius=80;
+    uint16_t out=som_ai_decide(o,plan).buttons;
+    if(out&SOM_PAD_B){                   /* separate presses, not a hold */
+        if(frame_number>=p2ai_next_b)p2ai_next_b=frame_number+30ul;
+        if(p2ai_next_b-frame_number<=27ul)out&=(uint16_t)~SOM_PAD_B;
+    }
+    const long far=labs((long)(o.leader_x-o.partner_x))+labs((long)(o.leader_y-o.partner_y));
+    const int moved=o.partner_x!=p2ai_x||o.partner_y!=p2ai_y;
+    p2ai_x=o.partner_x;p2ai_y=o.partner_y;
+    p2ai_stuck=far>90&&!moved?p2ai_stuck+1u:0u;
+    if(p2ai_stuck>=120u){
+        p2ai_stuck=0;som_p2ai_press_start(360ul);
+        fprintf(stderr,"[som-ai] PLAYER 2 AI stuck: stepping out\n");
+        return 0;
+    }
+    return out;
+}
 static void som_pad2_poll(void){
-    const uint16_t raw=som_pad2_buttons(),previous=pad2_raw;
+    const uint16_t previous=pad2_raw,human=som_pad2_buttons();
+    if(human&&gambits.player2&&!ring_ai_enabled&&!som_manual_disciplines&&!menu_hold_until_release){
+        gambits.player2=0;p2ai_start_left=0;
+        som_gambit_write(p2_ai_file,"0");
+        som_overlay_say(&overlay,"Player 2 takes over",SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] PLAYER 2 AI off: the pad took over\n");
+    }
+    const uint16_t robot=som_p2ai_buttons(som_field_ram());
+    const uint16_t raw=ring_ai_enabled||human?human:robot;
     pad2_raw=raw;pad2_wanted=raw;pad2_pressed=(uint16_t)(raw&~previous);
     pad2_guard_hp=0;pad2_combo_actor=SOM_PARTY_MEMBERS;
     uint8_t *ram=som_field_ram();
@@ -1828,7 +1935,7 @@ static void som_pad2_poll(void){
     /* A Start held while the AI stops must not reach the game afterwards. */
     const uint16_t start=1u<<RETRO_DEVICE_ID_JOYPAD_START;
     if(!(raw&start))pad2_start_block=0;
-    if(ring_ai_enabled){pad2_start_block=(raw&start)!=0;pad2_wanted=0;return;}
+    if(ring_ai_enabled){pad2_start_block=(raw&start)!=0;pad2_wanted=robot;return;}
     if(pad2_start_block)pad2_wanted&=(uint16_t)~start;
     if(!ram||som_manual_disciplines||menu_hold_until_release)return;
 
@@ -1848,6 +1955,7 @@ static void som_pad2_poll(void){
     const uint8_t *hero=ram+0xE000u+0x200u*who;
     if(raw&r2){
         pad2_guard_hp=som_word(hero+0x182);pad2_guard_map=som_word(ram+0xDC);
+        if(!(raw&l2))pad2_wanted|=r1;      /* the game's block pose */
     }
     const unsigned cls=som_disc_member_class(&disciplines,who);
     if(cls>=SOM_DISCIPLINE_COUNT)return;
@@ -1976,7 +2084,7 @@ static void som_pad2_poll(void){
             char message[64];
             snprintf(message,sizeof(message),"^%s|tap X: cast",
                      som_class_spell_label(cls,som_class_spell(cls,pad2_spell_cursor)));
-            som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES/2u);
+            som_overlay_say(&overlay,message,SOM_MESSAGE_FRAMES/2u);
         }
         if(!(raw&x)&&(previous&x)){
             if(pad2_x_tapped==1)som_cast_spell_by(ram,who,som_class_spell(cls,pad2_spell_cursor));
@@ -1992,8 +2100,10 @@ static void som_pad2_guard_finish(void){
     if(!ram||som_word(ram+0xDC)!=pad2_guard_map||som_pad2_member(ram)!=pad2_actor)return;
     uint8_t *hero=ram+0xE000u+0x200u*pad2_actor;
     const unsigned hp=som_word(hero+0x182);
-    if(hp&&hp<pad2_guard_hp)
+    if(hp&&hp<pad2_guard_hp){
         som_put_word(hero+0x182,(uint16_t)(hp+(pad2_guard_hp-hp+1u)/2u));
+        som_guard_note(2u,pad2_guard_hp-hp,(pad2_guard_hp-hp+1u)/2u);
+    }
 }
 
 /* After the swap, buttons already held are not new presses. */
@@ -2114,6 +2224,12 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
             hidden|=som_manual_pad_hidden(last_physical_buttons);
         if(bitmask)actual=(int16_t)((uint16_t)actual&~hidden);
         else if(id<16u&&(hidden&(1u<<id)))actual=0;
+        if(!ring_ai_enabled&&!som_manual_disciplines&&som_overlay_field()&&
+           (last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_R2))&&
+           !(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_L2))){   /* the block pose */
+            if(bitmask)actual=(int16_t)(actual|(1<<RETRO_DEVICE_ID_JOYPAD_R));
+            else if(id==RETRO_DEVICE_ID_JOYPAD_R)actual=1;
+        }
     }
     if((start_ring_held||frame_number<start_ring_until)&&port==0&&
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
@@ -2204,7 +2320,7 @@ static void som_input_poll(void){
                 char text[64];
                 snprintf(text,sizeof(text),"^%s seal|level %u: B or Y",
                          som_seal_names[sign],seal_count);
-                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
             }
         }else{seal_mode=0;seal_count=0;}
         /* L2+attack is handled before ordinary B/Y weapon switching. */
@@ -2309,7 +2425,7 @@ static void som_input_poll(void){
                         char text[48];
                         snprintf(text,sizeof(text),"^%s|power %u",som_weapon_types[taijutsu_want],
                                  special_stage);
-                        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+                        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);
                         fprintf(stderr,"[som-ai] CHAIN power %s level %u\n",
                                 som_weapon_types[taijutsu_want],special_stage);
                     }
@@ -2430,7 +2546,7 @@ static void som_input_poll(void){
                 kusarigama_swing_seen=0;kusarigama_attack_who=som_actor;
                 kusarigama_attack_started=frame_number;
                 special_chord=b_bit;special_suppress=1;
-                som_overlay_set(&overlay,"^Kusarigama|level 2 whip strike",SOM_MESSAGE_FRAMES/2u);
+                som_overlay_say(&overlay,"^Kusarigama|level 2 whip strike",SOM_MESSAGE_FRAMES/2u);
                 fprintf(stderr,"[som-ai] KUSARIGAMA level 2 sword attack with whip art\n");
             }
         }
@@ -2451,7 +2567,7 @@ static void som_input_poll(void){
                 special_chord=which?y_bit:b_bit;special_suppress=1;
                 char text[64];
                 snprintf(text,sizeof(text),"^%u-hit combo|level %u finisher",hits,level);
-                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
                 fprintf(stderr,"[som-ai] COMBO finisher: %u hits, level %u, %s\n",
                         hits,level,which?"Y":"B");
             }
@@ -2499,7 +2615,7 @@ static void som_input_poll(void){
                 if(pressed&x_bit){x_press_frame=frame_number;x_cycled=0;x_tap_armed=1;}
                 else if(x_tap_armed&&!x_cycled&&frame_number-x_press_frame>=SOM_X_HOLD_FRAMES){
                     x_cycled=1;
-                    som_overlay_set(&overlay,"^Iaijutsu|level 4: release X",SOM_MESSAGE_FRAMES/2u);
+                    som_overlay_say(&overlay,"^Iaijutsu|level 4: release X",SOM_MESSAGE_FRAMES/2u);
                 }
             }else if(x_tap_armed&&xram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
                      !(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress&&!x_l2_chord){
@@ -2516,7 +2632,7 @@ static void som_input_poll(void){
                 char text[64];
                 snprintf(text,sizeof(text),"^%s|tap X: cast",
                          som_class_spell_label(som_actor_class(),som_current_spell()));
-                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
             }
         }else if(x_tap_armed&&xram&&(last_physical_buttons&x_bit)&&!(current&x_bit)&&
                  !(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress&&!x_l2_chord){
@@ -2648,6 +2764,8 @@ static void som_input_poll(void){
             if(menu_hold_until_release&&!som_manual_disciplines&&!current&&!pad2_raw)menu_hold_until_release=0;
         }
         if(recording)som_record_presses(pressed);
+        if((pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R2))&&!ring_ai_enabled)
+            fprintf(stderr,"[som-ai] GUARD R2 held\n");
         last_physical_buttons=current;
         if(test_enabled)som_guard_begin();
         if(current||pad2_raw){last_input_frame=frame_number;idle_started=0;}
@@ -2665,7 +2783,7 @@ static void som_input_poll(void){
                 if(som_write_ring_ai_marker()){
                     ring_ai_enabled=1;ring_ai_grace_until=frame_number+30;
                     idle_started=1;
-                    som_overlay_set(&overlay,"AI ON|any button: gambits",SOM_MESSAGE_FRAMES);
+                    som_overlay_say(&overlay,"AI ON|any button: gambits",SOM_MESSAGE_FRAMES);
                     fprintf(stderr,"[som-ai] SWITCH-HOLD AI START signal ready at %s\n",
                         ring_ai_file);
                 }else fprintf(stderr,"[som-ai] SWITCH-HOLD AI start signal failed\n");
@@ -2676,7 +2794,7 @@ static void som_input_poll(void){
         if(!direct_transport&&ring_ai_enabled&&frame_number%30u==0&&access(ring_ai_file,F_OK)!=0){
             ally_order.until=0;
             ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
-            som_overlay_set(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
+            som_overlay_say(&overlay,"AI stopped|you play",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] AI marker gone: controls back to the player\n");
         }
         const uint16_t gambit_buttons=(uint16_t)(pressed|pad2_pressed);
@@ -2692,7 +2810,7 @@ static void som_input_poll(void){
             ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
             som_manual_disciplines=0;jukebox.open=0;
             unlink(ring_ai_file);
-            som_overlay_set(&overlay,"You play|L2 + Start stopped AI",SOM_MESSAGE_FRAMES);
+            som_overlay_say(&overlay,"You play|L2 + Start stopped AI",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] PLAYER %d L2+START: controls back to the player\n",p1_quit?1:2);
         }else if(ring_ai_enabled&&gambit_buttons&&frame_number>=ring_ai_grace_until){
             /* Shoulder tabs switch the overlay page, never reach the game. */
@@ -2725,13 +2843,14 @@ static void som_input_poll(void){
                 break;
             case SOM_GAMBIT_DEBUG_CHANGED:
                 som_gambit_write(debug_messages_file,gambits.debug_messages?"1":"0");
-                som_overlay_set(&overlay,gambits.debug_messages?"AI debug on|speech stays on":
-                                "AI debug off|speech stays on",SOM_MESSAGE_FRAMES);
+                som_overlay_say(&overlay,gambits.debug_messages?"AI debug on|bubbles shown":
+                                "AI debug off|bubbles hidden",SOM_MESSAGE_FRAMES);
                 break;
+            case SOM_GAMBIT_P2_CHANGED:som_p2ai_switched();break;
             case SOM_GAMBIT_EXIT:
                 ally_order.until=0;
                 ring_ai_enabled=0;unlink(ring_ai_file);
-                som_overlay_set(&overlay,"You play|hold L3 1s: AI plays",
+                som_overlay_say(&overlay,"You play|hold L3 1s: AI plays",
                                 SOM_MESSAGE_FRAMES);
                 fprintf(stderr,"[som-ai] GAMBIT EXIT: controls back to the player\n");
                 break;
@@ -2956,7 +3075,7 @@ static void som_familiar_raise_undead(uint8_t *ram,int slot){
     o[0x011]=0;o[0x01C]=0;o[0x030]=0xFF;
     o[0x1FA]|=0x01u;
     char text[40];snprintf(text,sizeof(text),"^Rise, %s!",som_undead_name(familiar_undead));
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] UNDEAD familiar in slot %d rises as %s (id 0x%02X)\n",
             slot+1,som_undead_name(familiar_undead),familiar_undead);
 }
@@ -3255,7 +3374,7 @@ static int som_equip_weapon(uint8_t *ram,unsigned type){
         snprintf(message,sizeof(message),weapon_gfx_verified?
                  "^%s: select it in the ring|direct switch unsupported":
                  "^%s: weapon art check pending|stand still a moment",som_weapon_types[type]);
-        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,message,SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] WEAPON switch to %s refused (%s)\n",som_weapon_types[type],
                 weapon_gfx_verified?"row needs native rebuild":"art model not verified");
     }
@@ -3574,7 +3693,7 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
     if(hero[0x186]<cost){
         snprintf(message,sizeof(message),"^%s: not enough MP|%u/%u",
                  som_spell_name(spell),(unsigned)hero[0x186],cost);
-        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,message,SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] CAST refused: MP %u < %u\n",(unsigned)hero[0x186],cost);
         return 0;
     }
@@ -3587,7 +3706,7 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
         snprintf(message,sizeof(message),spell==0x21u?"^%s: no fallen ally":
                  heal?"^%s: nobody is hurt":"^%s: no target",
                  som_spell_name(spell));
-        som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,message,SOM_MESSAGE_FRAMES);
         return 0;
     }
     static uint8_t spark[SOM_HERO_EFFECT_BYTES];
@@ -3653,7 +3772,7 @@ static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int di
     if(flee){
         bunshin.alive[i]=0;
         som_bunshin_explode(ram,hx,hy);
-        som_overlay_set(&overlay,"^Kawarimi no Jutsu!",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Kawarimi no Jutsu!",SOM_MESSAGE_FRAMES/2u);
     }else{
         bunshin.x[i]=hx;bunshin.y[i]=hy;
         som_bun_boom(bunshin_booms,hx,hy,1,frame_number);
@@ -3694,7 +3813,7 @@ static void som_bunshin_absorb_magic(uint8_t *ram){
         caster[0x186]=(uint8_t)(caster[0x186]>row[15]?caster[0x186]-row[15]:0);
         bunshin.alive[decoy]=0;
         som_bun_boom(bunshin_booms,bunshin.x[decoy],bunshin.y[decoy],1,frame_number);
-        som_overlay_set(&overlay,"^Kage Bunshin|spell absorbed",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Kage Bunshin|spell absorbed",SOM_MESSAGE_FRAMES/3u);
         fprintf(stderr,"[som-ai] BUNSHIN absorbed %s from enemy slot %u for %s\n",
                 som_spell_label(spell),slot,som_party_names[bunshin_owner]);
     }
@@ -3723,7 +3842,7 @@ static void som_bunshin_frame(uint8_t *ram){
                                               SOM_BUN_TOUCH_Y,familiar.slot)<0)continue;
         bunshin.alive[i]=0;
         som_bunshin_explode(ram,bunshin.x[i],bunshin.y[i]);
-        som_overlay_set(&overlay,"^Bunshin Daibakuha!",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Bunshin Daibakuha!",SOM_MESSAGE_FRAMES/2u);
     }
     if(!som_bun_alive(&bunshin)){bunshin_shunshin=0;return;}
     if(bunshin_shunshin){
@@ -3733,7 +3852,7 @@ static void som_bunshin_frame(uint8_t *ram){
         for(unsigned i=0;i<SOM_BUN_COUNT;i++)
             if(bunshin.alive[i])som_bunshin_explode(ram,bunshin.x[i],bunshin.y[i]);
         som_bun_clear(&bunshin);bunshin_shunshin=0;
-        som_overlay_set(&overlay,"^Shunshin|Daibakuha!",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Shunshin|Daibakuha!",SOM_MESSAGE_FRAMES/2u);
         return;
     }
     if(frame_number<bunshin.swap_ready)return;
@@ -3797,7 +3916,7 @@ static int som_bash_start_raw(uint8_t *ram){
     if(hero[0x060]||hero[0x01C]||hero[0x00A]||hero[0x01A]||hero[0x01B]||
        (som_word(hero+0x190)&0xC160u))return 0;
     if(hero[0x1ED]){
-        som_overlay_set(&overlay,"^Bash|catch your breath",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Bash|catch your breath",SOM_MESSAGE_FRAMES/2u);
         return 0;
     }
     const unsigned weapon=bash_kick?0u:1u;           /* glove for the kick, else sword */
@@ -3805,7 +3924,7 @@ static int som_bash_start_raw(uint8_t *ram){
         som_equip_weapon(ram,weapon);
     if(equipped!=SOM_EQUIP_OK)return 0;
     bash_stage=SOM_BASH_LUNGE;bash_started=frame_number;
-    som_overlay_set(&overlay,bash_kick?"^Flying kick!":"^Bash!",SOM_MESSAGE_FRAMES/3u);
+    som_overlay_say(&overlay,bash_kick?"^Flying kick!":"^Bash!",SOM_MESSAGE_FRAMES/3u);
     fprintf(stderr,"[som-ai] %s lunge\n",bash_kick?"FLYING KICK":"BASH");
     return 1;
 }
@@ -3895,7 +4014,7 @@ static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base){
     som_bun_boom(bunshin_booms,cx,cy,1,frame_number);
     char text[48];
     snprintf(text,sizeof(text),"^Fuma|shadow strike level %u",level);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] FUMA clone at %d,%d strikes monster %u: level %u, %u damage "
             "(boomerang hit %u)\n",cx,cy,slot,level,damage,base);
 }
@@ -3951,7 +4070,7 @@ static int som_blink_start_raw(uint8_t *ram,int tx,int ty){
         return 0;
     }
     som_blink_go(ram,x,y);
-    som_overlay_set(&overlay,"^Blink",SOM_MESSAGE_FRAMES/3u);
+    som_overlay_say(&overlay,"^Blink",SOM_MESSAGE_FRAMES/3u);
     fprintf(stderr,"[som-ai] BLINK from %d,%d to tile %d,%d (%d,%d)\n",x0,y0,tx,ty,x,y);
     return 1;
 }
@@ -3965,7 +4084,7 @@ static int som_blink_dash_raw(uint8_t *ram,int dx,int dy){
     if(frame_number<blink_ready){
         char text[48];
         snprintf(text,sizeof(text),"^Blink|ready in %lus",(blink_ready-frame_number+59ul)/60ul);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
     (void)som_lock_evasion_direction(&dx,&dy);
@@ -3982,11 +4101,11 @@ static int som_blink_dash_raw(uint8_t *ram,int dx,int dy){
         reach=d;
     }
     if(reach<24){
-        som_overlay_set(&overlay,"^Blink|no room",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Blink|no room",SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
     som_blink_go(ram,x0+dx*reach,y0+dy*reach);
-    som_overlay_set(&overlay,"^Blink",SOM_MESSAGE_FRAMES/3u);
+    som_overlay_say(&overlay,"^Blink",SOM_MESSAGE_FRAMES/3u);
     fprintf(stderr,"[som-ai] BLINK (X then A) %d px toward %d,%d\n",reach,dx,dy);
     return 1;
 }
@@ -4013,7 +4132,7 @@ static int som_fuma_swap(uint8_t *ram){
     fuma.active=0;fuma_target=-1;fuma_ready=frame_number+SOM_FUMA_COOLDOWN;
     som_blink_go(ram,x,y);
     blink_is_swap=1;               /* not a Blink: its cooldown is untouched */
-    som_overlay_set(&overlay,"^Fuma|swap",SOM_MESSAGE_FRAMES/3u);
+    som_overlay_say(&overlay,"^Fuma|swap",SOM_MESSAGE_FRAMES/3u);
     fprintf(stderr,"[som-ai] FUMA swap: hero takes the clone's place at %d,%d\n",x,y);
     return 1;
 }
@@ -4142,7 +4261,7 @@ static void som_bash_tick(void){
                 special_chord=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);special_suppress=1;
                 char text[64];
                 snprintf(text,sizeof(text),"^Flying kick|%u-hit combo, level %u",hits,level);
-                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
                 fprintf(stderr,"[som-ai] FLYING KICK finisher: %u hits, level %u\n",hits,level);
                 return;
             }
@@ -4173,7 +4292,7 @@ static int som_clone_jutsu_raw(uint8_t *ram,const char *jutsu){
     const unsigned made=som_bun_spawn(&bunshin,ram,(int)som_bun_u16(hero+2),
         (int)som_bun_u16(hero+4),hero[0x010],som_hero_place(hero),frame_number);
     if(!made){
-        som_overlay_set(&overlay,"^No room|for shadow clones",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^No room|for shadow clones",SOM_MESSAGE_FRAMES/2u);
         return 0;
     }
     for(unsigned i=0;i<SOM_BUN_COUNT;i++)
@@ -4181,7 +4300,7 @@ static int som_clone_jutsu_raw(uint8_t *ram,const char *jutsu){
     bunshin_owner=som_actor;
     bunshin_shunshin=!strcmp(jutsu,"Shunshin no Jutsu");
     char title[40];snprintf(title,sizeof(title),"^%s",jutsu);
-    som_overlay_set(&overlay,title,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,title,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] JUTSU %s: %u clone(s)\n",jutsu,made);
     return 1;
 }
@@ -4467,7 +4586,7 @@ static void som_blink_bring_party(uint8_t *ram){
 static int som_evade_start_raw(uint8_t *ram){
     if(!ram||evade_active)return 0;
     if(som_actor_class()>=SOM_DISCIPLINE_COUNT||!som_disc_has_dodge(som_actor_class())){
-        som_overlay_set(&overlay,"^No evade|this class cannot dodge",SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,"^No evade|this class cannot dodge",SOM_MESSAGE_FRAMES);
         return 0;
     }
     uint8_t *hero=SOM_ACT(ram);
@@ -4576,7 +4695,7 @@ static int som_evade_start_raw(uint8_t *ram){
     }
     char dodge_text[32];snprintf(dodge_text,sizeof(dodge_text),"^%s",
                                  evade_blink?"Blink step":dodge.name);
-    som_overlay_set(&overlay,dodge_text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,dodge_text,SOM_MESSAGE_FRAMES/2u);
     if(cartwheel_native)
         fprintf(stderr,"[som-ai] EVADE %s as %s: the game's own (pose %02x) toward %d,%d\n",dodge.name,
                 som_discipline_names[som_actor_class()],0x80u|native_code,dx,dy);
@@ -4595,7 +4714,7 @@ static int som_kawarimi_arm_raw(uint8_t *ram){
     const SomDodge dodge=som_disc_dodge(som_actor_class(),SOM_ACT(ram)[0x1E4]);
     if(!dodge.speed)return 0;
     kawarimi_armed_until=frame_number+SOM_KAWARIMI_ARM_FRAMES;
-    som_overlay_set(&overlay,"^" SOM_KAWARIMI_NAME "|ready",SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,"^" SOM_KAWARIMI_NAME "|ready",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] KAWARIMI armed as %s for %lu frames\n",
             som_discipline_names[som_actor_class()],SOM_KAWARIMI_ARM_FRAMES);
     return 1;
@@ -4657,7 +4776,7 @@ static int som_kawarimi_check(uint8_t *ram){
     kawarimi_log_map=som_bun_u16(ram+0xDC);
     som_bun_boom(bunshin_booms,x0,y0,1,frame_number);
     if(x!=x0||y!=y0)som_bun_boom(bunshin_booms,x,y,1,frame_number);
-    som_overlay_set(&overlay,"^" SOM_KAWARIMI_NAME "!",SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,"^" SOM_KAWARIMI_NAME "!",SOM_MESSAGE_FRAMES/2u);
     if(toucher>=0)
         som_xp_give(som_actor_class(),SOM_XP_DODGE,
                     ram[SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)toucher+0x180u],
@@ -4891,7 +5010,7 @@ static int som_telekinesis_rescue(uint8_t *ram,unsigned who,int automatic){
     rescue_ready[who]=frame_number+SOM_TK_COOLDOWN;
     char message[48];
     snprintf(message,sizeof(message),"^Telekinesis|%s rescued",som_party_names[picked]);
-    som_overlay_set(&overlay,message,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,message,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] TELEKINESIS %s blinked %s out of danger\n",
             som_party_names[who],som_party_names[picked]);
     return 1;
@@ -4911,7 +5030,7 @@ static int som_try_revivifier(uint8_t *ram,unsigned who,int switch_class){
     const int started=som_cast_spell_by(ram,who,0x21u);
     *selected=previous;
     if(started){
-        som_overlay_set(&overlay,"^Cleric|Revivifier",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Cleric|Revivifier",SOM_MESSAGE_FRAMES/3u);
         if(previous!=SOM_DISC_CLERIC)
             fprintf(stderr,"[som-ai] %s switched to Cleric to revive an ally\n",som_party_names[who]);
     }
@@ -5100,7 +5219,7 @@ static void som_ally_tech_one(uint8_t *ram,unsigned who){
     t->ready=frame_number+SOM_ALLY_MOVE_COOLDOWN;
     char text[48];
     snprintf(text,sizeof(text),"^%s|%s",som_party_names[who],mv->name);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);
     fprintf(stderr,"[som-ai] ALLY %s %s (%s %u)\n",som_party_names[who],mv->name,
             mv->kind>=SOM_AM_HEAL?"heal":"damage",t->amount);
 }
@@ -5136,7 +5255,7 @@ static int som_class_move_raw(uint8_t *ram){
         unsigned free_slot=SOM_MINES;
         for(unsigned i=0;i<SOM_MINES;i++)if(!mine_live[i]){free_slot=i;break;}
         if(free_slot==SOM_MINES||frame_number<class_move_ready){
-            som_overlay_set(&overlay,free_slot==SOM_MINES?"^Mines|all set":"^Mine|not ready",
+            som_overlay_say(&overlay,free_slot==SOM_MINES?"^Mines|all set":"^Mine|not ready",
                             SOM_MESSAGE_FRAMES/3u);
             return 0;
         }
@@ -5144,13 +5263,13 @@ static int som_class_move_raw(uint8_t *ram){
         mine_map[free_slot]=som_bun_u16(ram+0xDC);mine_live[free_slot]=1;
         class_move_ready=frame_number+SOM_MINE_COOLDOWN;
         som_bun_boom(bunshin_booms,mine_x[free_slot],mine_y[free_slot],1,frame_number);
-        som_overlay_set(&overlay,"^Mine set",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Mine set",SOM_MESSAGE_FRAMES/3u);
         fprintf(stderr,"[som-ai] MINE set at %d,%d\n",mine_x[free_slot],mine_y[free_slot]);
         return 1;
     }
     if(frame_number<class_move_ready){
         char text[40];snprintf(text,sizeof(text),"^%s|not ready",name);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);return 0;
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);return 0;
     }
     if(!som_jutsu_free(ram))return 0;
     uint8_t *hero=SOM_ACT(ram);
@@ -5191,14 +5310,14 @@ static int som_class_move_raw(uint8_t *ram){
             const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
             if(dist<=SOM_SHADOW_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
         }
-        if(best<0){som_overlay_set(&overlay,"^Shadowstep|no target",SOM_MESSAGE_FRAMES/3u);return 0;}
+        if(best<0){som_overlay_say(&overlay,"^Shadowstep|no target",SOM_MESSAGE_FRAMES/3u);return 0;}
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)best;
         const int mx=(int)som_bun_u16(m+2),my=(int)som_bun_u16(m+4);
         int bx=mx,by=my;
         if(abs(mx-hx)>=abs(my-hy))bx+=mx>=hx?SOM_SHADOW_BEHIND:-SOM_SHADOW_BEHIND;
         else by+=my>=hy?SOM_SHADOW_BEHIND:-SOM_SHADOW_BEHIND;
         if(!som_bun_spot_open(ram,bx,by,som_hero_place(hero))){
-            som_overlay_set(&overlay,"^Shadowstep|no room behind it",SOM_MESSAGE_FRAMES/3u);return 0;
+            som_overlay_say(&overlay,"^Shadowstep|no room behind it",SOM_MESSAGE_FRAMES/3u);return 0;
         }
         som_blink_go(ram,bx,by);
         backstab_until=frame_number+SOM_BACKSTAB_FRAMES;
@@ -5221,7 +5340,7 @@ static int som_class_move_raw(uint8_t *ram){
         class_move_ready=frame_number+SOM_VOLLEY_COOLDOWN;
     }
     char text[48];snprintf(text,sizeof(text),"^%s!",name);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] %s: %u target(s)\n",name,hit);
     return 1;
 }
@@ -5229,12 +5348,12 @@ static int som_class_move_raw(uint8_t *ram){
 static int som_hundred_start_raw(uint8_t *ram){
     if(!ram||som_actor_class()!=SOM_DISC_MARTIAL||hundred_until||evade_active)return 0;
     if(frame_number<hundred_ready){
-        som_overlay_set(&overlay,"^Hundred Fists|not ready",SOM_MESSAGE_FRAMES/3u);return 0;
+        som_overlay_say(&overlay,"^Hundred Fists|not ready",SOM_MESSAGE_FRAMES/3u);return 0;
     }
     if(!som_jutsu_free(ram))return 0;
     hundred_until=frame_number+SOM_HUNDRED_FRAMES;
     hundred_ready=frame_number+SOM_HUNDRED_COOLDOWN;
-    som_overlay_set(&overlay,"^Hundred Fists!",SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,"^Hundred Fists!",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] HUNDRED FISTS\n");
     return 1;
 }
@@ -5265,7 +5384,7 @@ static void som_hundred_frame(uint8_t *ram){
 static int som_issen_start_raw(uint8_t *ram){
     if(!ram||som_actor_class()!=SOM_DISC_BUSHIDO||evade_active)return 0;
     if(frame_number<issen_ready){
-        som_overlay_set(&overlay,"^Issen|not ready",SOM_MESSAGE_FRAMES/3u);return 0;
+        som_overlay_say(&overlay,"^Issen|not ready",SOM_MESSAGE_FRAMES/3u);return 0;
     }
     if(!som_jutsu_free(ram))return 0;
     uint8_t *hero=SOM_ACT(ram);
@@ -5278,7 +5397,7 @@ static int som_issen_start_raw(uint8_t *ram){
     evade_hp=som_word(hero+0x182);
     evade_active=1;evade_started=frame_number;evade_xp_given=0;
     issen_active=1;issen_hit=0;issen_ready=frame_number+SOM_ISSEN_COOLDOWN;
-    som_overlay_set(&overlay,"^Issen!",SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,"^Issen!",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] ISSEN dash-cut toward %d,%d\n",dx,dy);
     return 1;
 }
@@ -5384,7 +5503,7 @@ static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
         char text[64];
         snprintf(text,sizeof(text),"^%s level %u|not learned: level %u",
                  som_weapon_types[weapon],stage,(unsigned)SOM_ACT(ram)[0x19C]);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
         stage=SOM_ACT(ram)[0x19C];
     }
     special_stage=stage;special_weapon=weapon;special_started=frame_number;
@@ -5510,7 +5629,7 @@ static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned varian
     o[0x006]=o[0x007]=0;o[0x030]=0xFF;
     if(level){
         char text[32];snprintf(text,sizeof(text),"^%s|level %u",what,level);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/4u);
     }
     fprintf(stderr,"[som-ai] MONK %s level %u (animation %u)\n",what,level,(unsigned)o[0x011]);
 }
@@ -5622,7 +5741,7 @@ static int som_archer_play(uint8_t *ram,unsigned who,unsigned move,int hop_done)
     archer_free_at=frame_number+m->free+SOM_ARCHER_LATENCY;
     if(move!=SOM_ARC_SHOT){
         char text[32];snprintf(text,sizeof(text),"^%s",m->name);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/4u);
     }
     fprintf(stderr,"[som-ai] ARCHER %s (%s stage %u, animation %u) at frame %lu, step %u\n",m->name,
             m->weapon==7u?"javelin":"bow",(unsigned)m->level,(unsigned)o[0x011],frame_number,
@@ -5784,7 +5903,7 @@ static int som_blade_play(uint8_t *ram,unsigned who,const SomBladeMove *m,int ca
     blade_free_at=m->launch?frame_number+m->free+SOM_ARCHER_LATENCY:0;
     if(m->name){
         char text[32];snprintf(text,sizeof(text),"^%s",m->name);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/4u);
     }
     fprintf(stderr,"[som-ai] STRING %s: %s (weapon %u level %u, animation %u)\n",
             som_discipline_names[som_disc_member_class(&disciplines,who)],m->name?m->name:"strike",
@@ -6009,7 +6128,7 @@ static void som_string_swap(int reset){
 static int som_iai_start_raw(unsigned level){
     if(som_actor_class()!=SOM_DISC_BUSHIDO)return 0;
     if(frame_number<iai_ready){
-        som_overlay_set(&overlay,"^Iaijutsu|not ready",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Iaijutsu|not ready",SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
     if(!som_special_start(0,level))return 0;
@@ -6017,7 +6136,7 @@ static int som_iai_start_raw(unsigned level){
               (unsigned long)(100-som_perk(SOM_EFFECT_IAI_COOLDOWN_CUT))/100ul;   /* Iai Focus */
     special_chord=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);special_suppress=1;
     char text[40];snprintf(text,sizeof(text),"^Iaijutsu|level %u",special_stage);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] IAI level %u\n",special_stage);
     return 1;
 }
@@ -6070,7 +6189,7 @@ static int som_give_weapon(uint8_t *ram,unsigned type){
     }
     if(!som_take_undo())return 0;
     *owned=0x00;
-    som_overlay_set(&overlay,"^A new weapon appears!",SOM_MESSAGE_FRAMES);
+    som_overlay_say(&overlay,"^A new weapon appears!",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] WEAPON given: %s (tier 0); undo with undo_spawn\n",
             som_weapon_types[type]);
     return 1;
@@ -6118,7 +6237,7 @@ static void som_class_supply_frame(void){
     if(class_supply_pending){
         unsigned n=som_class_supply(ram,disciplines.selected);
         class_supply_pending=0;
-        if(n)som_overlay_set(&overlay,"^Class weapons unlocked!",SOM_MESSAGE_FRAMES);
+        if(n)som_overlay_say(&overlay,"^Class weapons unlocked!",SOM_MESSAGE_FRAMES);
     }
     if(class_equip_pending&&(!class_last_equip_attempt||
                              frame_number-class_last_equip_attempt>=120ul)){
@@ -6277,7 +6396,7 @@ static void som_style_cycle(int to,unsigned who){
     else snprintf(text,sizeof(text),"^%s%s%s|Lv%u %s",who?som_party_names[who]:"",who?" ":"",
              st->name,(unsigned)styles.level[index],
              st->speed_pct>100u?"fast":st->reach_bonus>0||st->power_pct>100u?"heavy":"balanced");
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] STYLE %s %s: %s Lv%u (speed %u%%, power %u%%, reach +%d)\n",
             som_party_names[who],som_discipline_names[cls],st->name,(unsigned)styles.level[index],
             (unsigned)st->speed_pct,(unsigned)st->power_pct,(int)st->reach_bonus);
@@ -6293,7 +6412,7 @@ static void som_style_give(unsigned species){
     if(som_style_award(&styles,index,SOM_STYLE_XP_HIT)){
         char text[64];
         snprintf(text,sizeof(text),"^%s|level %u",st->name,(unsigned)styles.level[index]);
-        som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] STYLE %s level %u\n",st->name,(unsigned)styles.level[index]);
         som_styles_save();
     }else style_dirty=1;
@@ -6449,7 +6568,7 @@ static int som_throw_start_raw(uint8_t *ram){
     throw_x0=mx;throw_y0=my;throw_x1=tx;throw_y1=ty;
     throw_damage=hero[0x198]/2u+disciplines.level[SOM_DISC_BUSHIDO]/2u+4u;
     throw_ready=frame_number+SOM_THROW_COOLDOWN;
-    som_overlay_set(&overlay,"^Throw!",SOM_MESSAGE_FRAMES/3u);
+    som_overlay_say(&overlay,"^Throw!",SOM_MESSAGE_FRAMES/3u);
     fprintf(stderr,"[som-ai] THROW monster %d from %d,%d to %d,%d\n",slot,mx,my,tx,ty);
     return 1;
 }
@@ -6560,7 +6679,7 @@ static int som_use_rope(uint8_t *ram){
     ram[0xD1]=(uint8_t)SOM_ROPE_SCRIPT;ram[0xD2]=(uint8_t)(SOM_ROPE_SCRIPT>>8);
     ram[0xD3]=(uint8_t)(SOM_ROPE_SCRIPT>>16);
     ram[0xD0]=1;
-    som_overlay_set(&overlay,"^Magic Rope",SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,"^Magic Rope",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] ROPE out of map %u by transition %03x\n",som_word(ram+0xDC)&0x1FFu,out);
     return 1;
 }
@@ -7069,6 +7188,11 @@ static void som_auto_tick(void){
 }
 static int som_handle_command(const char *command){
     if(!command||!*command||!test_enabled||!game_loaded||!on_turbo)return 0;
+    if(!strcmp(command,"p2_ai_on")||!strcmp(command,"p2_ai_off")){
+        const int want=!strcmp(command,"p2_ai_on");
+        if(gambits.player2!=want){gambits.player2=want;som_p2ai_switched();}
+        return 1;
+    }
     if(!strcmp(command,"camera_on")){unlink(camera_off_file);camera_off=0;return 1;}
     if(!strcmp(command,"camera_off")){
         FILE *off=fopen(camera_off_file,"w");
@@ -7109,7 +7233,7 @@ static int som_handle_command(const char *command){
                 (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
             if(!som_summon_allowed(ram)){
                 familiar_pending=0;
-                som_overlay_set(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
+                som_overlay_say(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
                 fprintf(stderr,"[som-ai] FAMILIAR refused: the leader is not a summoner\n");
                 return 0;
             }
@@ -7218,7 +7342,7 @@ static int som_handle_command(const char *command){
     if(!strcmp(command,"weapon_trace")){
         if(!som_weapon_trace_allocate())return 0;
         weapon_trace_on=1;som_weapon_trace_reset();
-        som_overlay_set(&overlay,"WEAPON TRACE ON|Equip via native ring",SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,"WEAPON TRACE ON|Equip via native ring",SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] WEAPON TRACE armed; equip via native ring\n");
         return 1;
     }
@@ -7234,7 +7358,7 @@ static int som_handle_command(const char *command){
             if(gambits.debug_messages&&n<SOM_DISCIPLINE_COUNT){
                 char text[64];
                 snprintf(text,sizeof(text),"^%s|AI chose this class",som_discipline_names[n]);
-                som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES);
             }
             fprintf(stderr,"[som-ai] DISCIPLINE selected=%lu by the AI (saved)\n",n);
         }
@@ -7321,7 +7445,7 @@ static int som_handle_command(const char *command){
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
     if(!strcmp(command,"pal_trace")){
         pal_trace_frames=0;pal_trace_on=1;
-        som_overlay_set(&overlay,"Recording 8 s: move now!",SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,"Recording 8 s: move now!",SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] PALETTE TRACE started\n");
         return 1;
     }
@@ -7375,7 +7499,7 @@ static void som_check_message(void){
          * always retained. */
         if(!gambits.debug_messages&&!strncmp(content,"AI:",3))return;
     }
-    if(have&&som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES))
+    if(have&&som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES))
         fprintf(stderr,"[som-ai] MESSAGE %s\n",text);
 }
 RETRO_API bool flxtr_som_ai_command(const char *command){
@@ -7383,7 +7507,7 @@ RETRO_API bool flxtr_som_ai_command(const char *command){
 }
 RETRO_API bool flxtr_som_ai_message(const char *text){
     return test_enabled&&game_loaded&&on_turbo&&text&&
-           som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES)!=0;
+           som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES)!=0;
 }
 RETRO_API bool flxtr_som_ai_enabled(void){return ring_ai_enabled!=0;}
 RETRO_API unsigned flxtr_som_ai_familiar(void){
@@ -8000,7 +8124,7 @@ static int som_portal_place_raw(uint8_t *ram){
     portals.x[i]=(int)som_bun_u16(hero+2);portals.y[i]=(int)som_bun_u16(hero+4);
     portals.map=map;portals.layer=layer;portals.count=i+1;portals.armed=0;
     som_bun_boom(bunshin_booms,portals.x[i],portals.y[i],1,frame_number);
-    som_overlay_set(&overlay,i?"^Portal B|step in to travel":"^Portal A|hold X again for B",
+    som_overlay_say(&overlay,i?"^Portal B|step in to travel":"^Portal A|hold X again for B",
                     SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] PORTAL %c at %d,%d map %u\n",i?'B':'A',portals.x[i],portals.y[i],map);
     return 1;
@@ -8195,7 +8319,24 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         cam_ram=ring_owner_ram;
         cam_vram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
         const int shot=som_cam_frame(&camera,cam_ram,som_pad1_member_in(cam_ram),
-                                     menu||portals.count!=0);
+                                     menu||portals.count!=0,
+                                     !camera_govern.off);
+        {   /* the time since the last frame belongs to how that one was drawn */
+            static int was_hd;
+            static float was_ms;
+            struct timespec t;
+            clock_gettime(CLOCK_MONOTONIC,&t);
+            const float ms=(float)(t.tv_sec%1000)*1000.0f+(float)(t.tv_nsec/10000)/100.0f;
+            if(som_cam_govern(&camera_govern,was_hd,ms-was_ms))
+                fprintf(stderr,"[som-ai] CAMERA hd off: %d -> %d ms/100 per frame\n",
+                        (int)(camera_govern.base*100.0f),(int)(camera_govern.hd*100.0f));
+            was_ms=ms;was_hd=camera.hd;
+            if(camera_govern.hd_n==300u&&camera.hd&&!camera_govern.off){
+                camera_govern.hd_n++;
+                fprintf(stderr,"[som-ai] CAMERA hd fine: %d -> %d ms/100 per frame\n",
+                        (int)(camera_govern.base*100.0f),(int)(camera_govern.hd*100.0f));
+            }
+        }
         if(shot!=camera_shot){
             camera_shot=shot;
             fprintf(stderr,"[som-ai] CAMERA %s\n",som_shot_names[shot]);
@@ -8203,11 +8344,16 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         if(!(cam_ram[0xD0]&0x80u))camera.window=0;
     }else som_cam_reset(&camera);
     const int cam_on=cam_vram&&!menu&&som_cam_active(&camera);
+    /* also with the camera off: the HUD lift itself hides the box */
+    const uint8_t *box_vram=!menu&&data&&width==SOM_CAM_W&&height==SOM_CAM_H&&hud_lifted&&ring_owner_ram&&
+        backend_retro_get_memory_data&&backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=0x10000u?
+        (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM):NULL;
+    const int box_up=box_vram&&som_cam_box_up(ring_owner_ram,box_vram);
     const int cam_look=cam_vram&&!menu&&(cam_on||(cam_ram[0xD0]&0x80u));
     const int classes_icon=!menu&&on_turbo&&som_ring_on_classes(ring_owner_ram)&&
         ring_owner_ram[0x1808]==som_pad1_member_in(ring_owner_ram);
     if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0&&lock2_x<0&&
-        !classes_icon&&!cam_look)||(!data&&!draw_classes)||data==RETRO_HW_FRAME_BUFFER_VALID||
+        !classes_icon&&!cam_look&&!box_up)||(!data&&!draw_classes)||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
         return;
@@ -8235,6 +8381,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     else for(unsigned y=0;y<height;y++)
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
     pitch=row;
+    if(box_up)som_cam_box_erase(ring_owner_ram,overlay_frame,pitch,cam_bytes);
     if(cam_look)
         cam_texts=som_cam_save(&camera,cam_ram,cam_vram,oam_shown_valid?oam_shown:NULL,overlay_frame,
                                pitch,cam_bytes,cam_mask,cam_text,SOM_CAM_W*SOM_CAM_H);
@@ -8272,8 +8419,21 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(cam_on){
         som_cam_clamp(&camera);
-        som_cam_scale(&camera,overlay_frame,(uint8_t*)cam_copy,pitch,cam_bytes);
-        som_cam_restore(overlay_frame,cam_bytes,cam_text,cam_texts);
+        const size_t hd_row=2u*SOM_CAM_W*cam_bytes,hd_size=hd_row*2u*SOM_CAM_H;
+        uint8_t *hd=NULL;
+        if(camera.hd&&hd_size>overlay_frame_size){
+            hd=realloc(overlay_frame,hd_size);
+            if(hd){overlay_frame=hd;overlay_frame_size=hd_size;}
+        }
+        if(camera.hd&&overlay_frame_size>=hd_size){
+            memcpy(cam_copy,overlay_frame,size);
+            som_cam_scale_hd(&camera,(const uint8_t*)cam_copy,pitch,overlay_frame,cam_bytes);
+            som_cam_restore_hd(overlay_frame,pitch,cam_bytes,cam_text,cam_texts);
+            width=2u*SOM_CAM_W;height=2u*SOM_CAM_H;pitch=hd_row;
+        }else{
+            som_cam_scale(&camera,overlay_frame,(uint8_t*)cam_copy,pitch,cam_bytes);
+            som_cam_restore(overlay_frame,cam_bytes,cam_text,cam_texts);
+        }
         som_cam_point(&camera,&hero_x,&hero_y);
         som_cam_point(&camera,&lock_x,&lock_y);
         som_cam_point(&camera,&lock2_x,&lock2_y);
@@ -8298,6 +8458,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                               hero_x,hero_y-SOM_COMBO_LABEL_RISE_PX,1,
                               som_overlay_color(pixel_format,255,208,64));
     }
+    if(box_up)som_cam_box_draw(ring_owner_ram,box_vram,overlay_frame,pitch,pixel_format,width/SOM_CAM_W);
     if(class_title)som_party_panels(overlay_frame,width,height,pitch,
         (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(classes_icon)
@@ -8355,7 +8516,7 @@ static void som_song_frame(const uint8_t *ram){
     char fallback[16],text[64];
     const char *name=som_song_name(&song_names,id,fallback);
     snprintf(text,sizeof(text),"Now playing|%s",name);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] SONG 0x%02X %s (map %u)\n",id,name,
             (unsigned)((ram[0xDC]|ram[0xDD]<<8)&0x1FFu));
 }
@@ -8760,7 +8921,7 @@ static void som_familiar_bind(void){
                 familiar_carry.tile_count);
     }
     som_familiar_publish();
-    som_overlay_set(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
+    som_overlay_say(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] FAMILIAR bound to monster slot %d\n",familiar.slot+1);
     if(familiar_undead)som_familiar_raise_undead((uint8_t*)ram,familiar.slot);
 }
@@ -8771,7 +8932,7 @@ static int som_summon_boss(void){
     const uint8_t *ram=backend_retro_get_memory_data?
         (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
     if(!som_summon_allowed(ram)){
-        som_overlay_set(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
+        som_overlay_say(&overlay,"^Only summoners can summon",SOM_MESSAGE_FRAMES);
         fprintf(stderr,"[som-ai] SUMMON refused: the leader is not a summoner\n");return 0;
     }
     FILE *in=fopen(summon_file,"rb");
@@ -8793,7 +8954,7 @@ static int som_summon_boss(void){
     som_familiar_tint(loaded.palette);
     loaded.valid=1;
     familiar_carry=loaded;familiar_arrived=0;familiar_pending=0;
-    som_overlay_set(&overlay,"^A summon answers your call!",SOM_MESSAGE_FRAMES);
+    som_overlay_say(&overlay,"^A summon answers your call!",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] SUMMON monster id %u is coming; undo with undo_spawn\n",
             (unsigned)loaded.object[0x180]);
     return 1;
@@ -8830,7 +8991,7 @@ static void som_familiar_frame(void){
             familiar_carry.valid=0;familiar_pending=1;
             if(som_clone_enemy()){
                 som_familiar_bind();
-                som_overlay_set(&overlay,"^Your familiar|takes a new shape",SOM_MESSAGE_FRAMES/2u);
+                som_overlay_say(&overlay,"^Your familiar|takes a new shape",SOM_MESSAGE_FRAMES/2u);
                 fprintf(stderr,"[som-ai] FAMILIAR re-formed on map %u (slot %d)\n",
                         familiar.map,familiar.slot+1);
                 return;
@@ -9105,22 +9266,22 @@ static int som_telekinesis_cast_raw(uint8_t *ram){
     if(som_actor_class()!=SOM_DISC_PSIONICS||!ram||!som_jutsu_free(ram))return 0;
     if(som_telekinesis_rescue(ram,som_actor,0))return 1;
     if(telekinesis.slot>=0){
-        som_overlay_set(&overlay,"^Telekinesis|already pulling",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Telekinesis|already pulling",SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
     if(frame_number<telekinesis_ready){
-        som_overlay_set(&overlay,"^Telekinesis|recharging",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Telekinesis|recharging",SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
     if(!som_tk_begin_by(&telekinesis,ram,frame_number,som_actor)){
-        som_overlay_set(&overlay,"^Telekinesis|no reachable chest",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Telekinesis|no reachable chest",SOM_MESSAGE_FRAMES/2u);
         return 0;
     }
     telekinesis_ready=frame_number+SOM_TK_COOLDOWN;
     const uint8_t *chest=ram+0xE000u+0x200u*(unsigned)telekinesis.slot;
     som_bun_boom(bunshin_booms,(int)som_bun_u16(chest+2u),
                  (int)som_bun_u16(chest+4u),1,frame_number);
-    som_overlay_set(&overlay,"^Telekinesis!|pulling treasure",SOM_MESSAGE_FRAMES/2u);
+    som_overlay_say(&overlay,"^Telekinesis!|pulling treasure",SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] TELEKINESIS pulling chest actor %d, map %u\\n",
             telekinesis.slot,telekinesis.map);
     return 1;
@@ -9134,7 +9295,7 @@ static void som_mind_release(uint8_t *ram){
                SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
         familiar.slot=familiar.target=-1;familiar_carry.valid=0;
         som_familiar_publish();
-        som_overlay_set(&overlay,"^The mind is free again",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^The mind is free again",SOM_MESSAGE_FRAMES/2u);
     }
     fprintf(stderr,"[som-ai] MIND CONTROL ends (monster slot %d)\n",mind_slot+1);
     mind_slot=-1;mind_until=0;familiar_is_native_control=0;
@@ -9148,12 +9309,12 @@ static int som_class_x_raw(uint8_t *ram){
         if(mind_slot>=0)som_mind_release(ram);
         else som_familiar_dismiss();
         x_move_ready=frame_number+30ul;                 /* not straight back on the same press */
-        som_overlay_set(&overlay,"^Released",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Released",SOM_MESSAGE_FRAMES/3u);
         fprintf(stderr,"[som-ai] BIND released by X\n");
         return 1;
     }
     if(frame_number<x_move_ready){
-        som_overlay_set(&overlay,"^Not ready",SOM_MESSAGE_FRAMES/3u);return 0;
+        som_overlay_say(&overlay,"^Not ready",SOM_MESSAGE_FRAMES/3u);return 0;
     }
     if(!som_jutsu_free(ram))return 0;
     uint8_t *hero=SOM_ACT(ram);
@@ -9161,42 +9322,42 @@ static int som_class_x_raw(uint8_t *ram){
         som_ahead(hero,SOM_HOLY_AHEAD,&holy_x,&holy_y);
         holy_until=frame_number+SOM_HOLY_FRAMES;x_move_ready=frame_number+SOM_HOLY_COOLDOWN;
         som_bun_boom(bunshin_booms,holy_x,holy_y,0,frame_number);
-        som_overlay_set(&overlay,"^Holy Water!",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Holy Water!",SOM_MESSAGE_FRAMES/2u);
         fprintf(stderr,"[som-ai] HOLY WATER at %d,%d\n",holy_x,holy_y);
         return 1;
     }
     if(d==SOM_DISC_ARTIFICER){
-        if(bomb_at){som_overlay_set(&overlay,"^Bomb|already set",SOM_MESSAGE_FRAMES/3u);return 0;}
+        if(bomb_at){som_overlay_say(&overlay,"^Bomb|already set",SOM_MESSAGE_FRAMES/3u);return 0;}
         som_ahead(hero,SOM_BOMB_AHEAD,&bomb_x,&bomb_y);
         bomb_at=frame_number+SOM_BOMB_FUSE;x_move_ready=frame_number+SOM_BOMB_COOLDOWN;
         som_bun_boom(bunshin_booms,bomb_x,bomb_y,1,frame_number);
-        som_overlay_set(&overlay,"^Bomb!|1 s fuse",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Bomb!|1 s fuse",SOM_MESSAGE_FRAMES/2u);
         fprintf(stderr,"[som-ai] BOMB set at %d,%d\n",bomb_x,bomb_y);
         return 1;
     }
     if(familiar.slot>=0||familiar_carry.valid){
-        som_overlay_set(&overlay,"^One ally at a time",SOM_MESSAGE_FRAMES/3u);return 0;
+        som_overlay_say(&overlay,"^One ally at a time",SOM_MESSAGE_FRAMES/3u);return 0;
     }
     if(d==5u||d==SOM_DISC_SUMMONING){                   /* a familiar: summon / shadow pact */
         familiar_undead=0;
         familiar_pending=1;
         x_move_ready=frame_number+SOM_RAISE_COOLDOWN;
-        som_overlay_set(&overlay,d==5u?"^Shadow Pact!":"^Summon!",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,d==5u?"^Shadow Pact!":"^Summon!",SOM_MESSAGE_FRAMES/2u);
         fprintf(stderr,"[som-ai] %s\n",d==5u?"SHADOW PACT":"SUMMON");
         if(som_clone_enemy()){som_familiar_bind();return 1;}
         if(clone_no_slot){clone_pending_until=frame_number+SOM_CLONE_WAIT_FRAMES;return 1;}
         familiar_pending=0;
-        som_overlay_set(&overlay,"^Nothing to bind",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Nothing to bind",SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
     if(d==SOM_DISC_NECRO){
         if(!last_kill_frame||frame_number-last_kill_frame>SOM_RAISE_WINDOW){
-            som_overlay_set(&overlay,"^Raise Dead|no fresh corpse",SOM_MESSAGE_FRAMES/3u);return 0;
+            som_overlay_say(&overlay,"^Raise Dead|no fresh corpse",SOM_MESSAGE_FRAMES/3u);return 0;
         }
         familiar_pending=1;
         familiar_undead=som_undead_for(last_kill_species);
         x_move_ready=frame_number+SOM_RAISE_COOLDOWN;
-        som_overlay_set(&overlay,"^Rise!",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Rise!",SOM_MESSAGE_FRAMES/2u);
         fprintf(stderr,"[som-ai] RAISE DEAD (species 0x%02X -> %s)\n",
                 last_kill_species<0?0u:(unsigned)last_kill_species,som_undead_name(familiar_undead));
         if(som_clone_enemy()){som_familiar_bind();return 1;}
@@ -9213,7 +9374,7 @@ static int som_class_x_raw(uint8_t *ram){
             const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
             if(dist<=SOM_MIND_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
         }
-        if(best<0){som_overlay_set(&overlay,"^Mind Control|no mind near",SOM_MESSAGE_FRAMES/3u);return 0;}
+        if(best<0){som_overlay_say(&overlay,"^Mind Control|no mind near",SOM_MESSAGE_FRAMES/3u);return 0;}
         memcpy(mind_palette,ram+SOM_MONSTER_PALETTE+(unsigned)best*SOM_MONSTER_PALETTE_SIZE,
                SOM_MONSTER_PALETTE_SIZE<sizeof(mind_palette)?SOM_MONSTER_PALETTE_SIZE:sizeof(mind_palette));
         familiar_is_native_control=1;clone_source_art.has_vram=0;
@@ -9221,7 +9382,7 @@ static int som_class_x_raw(uint8_t *ram){
         som_familiar_bind();
         mind_slot=best;mind_until=frame_number+SOM_MIND_FRAMES;
         x_move_ready=frame_number+SOM_MIND_COOLDOWN;
-        som_overlay_set(&overlay,"^Mind Control!|it fights for you",SOM_MESSAGE_FRAMES/2u);
+        som_overlay_say(&overlay,"^Mind Control!|it fights for you",SOM_MESSAGE_FRAMES/2u);
         fprintf(stderr,"[som-ai] MIND CONTROL: monster slot %d for %lu frames\n",best+1,SOM_MIND_FRAMES);
         return 1;
     }
@@ -9237,7 +9398,7 @@ static void som_class_x_frame(uint8_t *ram){
                          (int)som_bun_u16(o+4u),1,frame_number);
         }
         if(result==2){
-            som_overlay_set(&overlay,"^Treasure in reach",SOM_MESSAGE_FRAMES/2u);
+            som_overlay_say(&overlay,"^Treasure in reach",SOM_MESSAGE_FRAMES/2u);
             fprintf(stderr,"[som-ai] TELEKINESIS chest delivered to pickup range\\n");
         }else if(result<0)fprintf(stderr,"[som-ai] TELEKINESIS stopped (obstacle or event)\\n");
     }
@@ -9431,7 +9592,7 @@ static void som_lock_toggle_for(uint8_t *ram,unsigned who){
     if(who>=SOM_PARTY_MEMBERS)return;
     if(lock_slot>=0){
         som_lock_release("let go");
-        som_overlay_set(&overlay,"^Lock off",SOM_MESSAGE_FRAMES/4u);
+        som_overlay_say(&overlay,"^Lock off",SOM_MESSAGE_FRAMES/4u);
         return;
     }
     if(!ram)return;
@@ -9445,9 +9606,9 @@ static void som_lock_toggle_for(uint8_t *ram,unsigned who){
         const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
         if(dist<=SOM_LOCK_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
     }
-    if(best<0){som_overlay_set(&overlay,"^Nothing to lock on",SOM_MESSAGE_FRAMES/4u);return;}
+    if(best<0){som_overlay_say(&overlay,"^Nothing to lock on",SOM_MESSAGE_FRAMES/4u);return;}
     if(!som_lock_acquire(ram,(unsigned)best,who))return;
-    som_overlay_set(&overlay,"^Locked on",SOM_MESSAGE_FRAMES/4u);
+    som_overlay_say(&overlay,"^Locked on",SOM_MESSAGE_FRAMES/4u);
     fprintf(stderr,"[som-ai] LOCK on monster slot %d (%ld px)\n",best+1,best_d);
 }
 static void som_lock_toggle(uint8_t *ram){som_lock_toggle_for(ram,som_pad1_member_in(ram));}
@@ -9692,7 +9853,7 @@ static int som_energy_pay(unsigned e,unsigned ap,const char *what){
     char text[48];
     if(som_actor_energy()->ap<ap)snprintf(text,sizeof(text),"^No AP|%s",what);
     else snprintf(text,sizeof(text),"^Not enough %s|%s needs %u",som_energy_name(cls),what,e);
-    som_overlay_set(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);
     if(frame_number-energy_refused_at>=60ul){
         energy_refused_at=frame_number;
         fprintf(stderr,"[som-ai] ENERGY refused %s: %s %u/%u, AP %u/%u\n",what,som_energy_name(cls),
@@ -9772,7 +9933,7 @@ static int som_flykick_start(uint8_t *ram){
 }
 static int som_clone_jutsu(uint8_t *ram,const char *jutsu){
     if(som_actor){          /* the clones are drawn from the boy's art: his only */
-        som_overlay_set(&overlay,"^Clones|the boy's jutsu",SOM_MESSAGE_FRAMES/3u);
+        som_overlay_say(&overlay,"^Clones|the boy's jutsu",SOM_MESSAGE_FRAMES/3u);
         return 0;
     }
     if(!som_energy_pay(15u,0u,"clone jutsu"))return 0;

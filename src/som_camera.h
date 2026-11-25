@@ -396,17 +396,33 @@ static inline void som_cam_restore(uint8_t *px,unsigned bytes,const SomCamPixel 
     for(unsigned i=0;i<n;i++)memcpy(px+in[i].at,&in[i].ink,bytes);
 }
 /* Before scaling: rub the text out of the world, or its scaled ghost shows
- * next to the real one. Each masked pixel takes ground
- * from 48 rows up (a run of rows would smear), or the row above. */
+ * next to the real one. Each masked run takes the texture right beside
+ * it; a row masked from edge to edge takes the row above.
+ * (Copying from 48 rows up showed the scene twice: player, 2026-11-25.) */
 static inline void som_cam_rub(const uint8_t *mask,uint8_t *px,size_t pitch,unsigned bytes){
-    for(unsigned y=0;y<SOM_CAM_H;y++)if(memchr(mask+y*SOM_CAM_W,1,SOM_CAM_W))
-    for(unsigned x=0;x<SOM_CAM_W;x++){
-        if(!mask[y*SOM_CAM_W+x])continue;
-        unsigned from=y;
-        if(y>=48u)from=y-48u;                   /* ground from above the HUD */
-        else if(y>0)from=y-1u;                       /* already clean: rows go down */
-        else while(from<SOM_CAM_H-1u&&mask[from*SOM_CAM_W+x])from++;
-        memcpy(px+(size_t)y*pitch+x*bytes,px+(size_t)from*pitch+x*bytes,bytes);
+    for(unsigned y=0;y<SOM_CAM_H;y++){
+        const uint8_t *m=mask+y*SOM_CAM_W;
+        if(!memchr(m,1,SOM_CAM_W))continue;
+        uint8_t *row=px+(size_t)y*pitch;
+        if(!memchr(m,0,SOM_CAM_W)){
+            unsigned from=y;
+            if(y)from=y-1u;                          /* already clean: rows go down */
+            else while(from<SOM_CAM_H-1u&&!memchr(mask+from*SOM_CAM_W,0,SOM_CAM_W))from++;
+            if(from!=y)memcpy(row,px+(size_t)from*pitch,SOM_CAM_W*bytes);
+            continue;
+        }
+        for(unsigned x=0;x<SOM_CAM_W;){
+            if(!m[x]){x++;continue;}
+            unsigned end=x;
+            while(end<SOM_CAM_W&&m[end])end++;
+            for(unsigned k=x;k<end;k++){             /* the texture just left of it, already clean */
+                unsigned from=end;
+                if(2u*x>=k+1u&&x)from=2u*x-1u-k;
+                else if(x)from=x-1u-(k-x)%x;
+                memcpy(row+k*bytes,row+from*bytes,bytes);
+            }
+            x=end;
+        }
     }
 }
 #endif

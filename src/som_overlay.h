@@ -159,4 +159,31 @@ static inline int som_overlay_label(uint8_t *pixels,unsigned width,unsigned heig
         }
     return 1;
 }
+/* A 3x5 capital font for the HUD panels (player, 2026-11-25: a smaller font
+ * for class and weapon): ASCII 32-96, five rows of three bits, 4 px a letter. */
+static const uint16_t som_tiny_font[65]={
+    0x0000,0x2482,0x0000,0x0000,0x0000,0x52A5,0x2AAB,0x2400,0x1491,0x4494,0x0000,
+    0x05D0,0x0000,0x01C0,0x0002,0x12A4,0x7B6F,0x2C97,0x62A7,0x628E,0x5BC9,0x798E,
+    0x39EF,0x7252,0x7BEF,0x7BCE,0x0410,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
+    0x2BED,0x6BAE,0x3923,0x6B6E,0x79A7,0x79A4,0x396B,0x5BED,0x7497,0x126A,0x5BAD,
+    0x4927,0x5FED,0x6B6D,0x2B6A,0x6BA4,0x2B73,0x6BAD,0x388E,0x7492,0x5B6F,0x5B6A,
+    0x5BFD,0x5AAD,0x5A92,0x72A7,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
+};
+static inline void som_tiny_label(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,
+                                  const char *text,int x,int y,unsigned limit,uint32_t ink){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    const uint32_t edge=som_overlay_color(format,16,16,40);
+    for(int pass=0;pass<2;pass++)for(unsigned i=0;text[i]&&i<limit;i++){
+        unsigned c=(unsigned char)text[i];
+        if(c>='a'&&c<='z')c-=32u;
+        if(c<32u||c>96u)continue;
+        for(unsigned row=0;row<5u;row++)for(unsigned col=0;col<3u;col++){
+            if(!(som_tiny_font[c-32u]>>(14u-(row*3u+col))&1u))continue;
+            const int px=x+(int)(i*4u+col),py=y+(int)row;
+            if(px<1||py<1||(unsigned)(px+2)*sx>width||(unsigned)(py+2)*sy>height)continue;
+            if(pass==0)som_overlay_fill(pixels,pitch,format,(unsigned)(px-1)*sx,(unsigned)(py-1)*sy,3u*sx,3u*sy,edge);
+            else som_overlay_fill(pixels,pitch,format,(unsigned)px*sx,(unsigned)py*sy,sx,sy,ink);
+        }
+    }
+}
 #endif

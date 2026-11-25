@@ -61,6 +61,16 @@ int main(void){
     vram[0xB000+2*(20*32+5)]=2;vram[0x8000+2*16]=0x80;
     for(int i=0;i<16;i++)vram[0x8000+16+i]=0xFF;
     ram[0xD0]=0x83;obj(0xE000,128,100);obj(0xEA00,160,110);ram[0x3B]=0x0A;
+    {   /* masked letters take the ground beside them, nothing from elsewhere */
+        static uint8_t hole[256*224];
+        for(int y=0;y<224;y++)for(int x=0;x<256;x++)px[y*256+x]=(uint16_t)(y*256+x);
+        hole[180*256+10]=hole[180*256+11]=hole[180*256+12]=hole[180*256+13]=1;
+        hole[181*256]=hole[181*256+1]=1;hole[182*256+255]=1;
+        som_cam_rub(hole,(uint8_t*)px,512,2);
+        assert(px[180*256+10]==180*256+9&&px[180*256+11]==180*256+8&&
+               px[180*256+12]==180*256+7&&px[180*256+13]==180*256+6);
+        assert(px[181*256]==181*256+2&&px[181*256+1]==181*256+2&&px[182*256+255]==182*256+254);
+    }
     float last=1.0f;
     for(int f=0;f<200;f++){
         for(int i=0;i<256*224;i++)px[i]=(uint16_t)(i*7);

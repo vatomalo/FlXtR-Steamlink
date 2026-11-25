@@ -8997,8 +8997,7 @@ static void som_portal_frame(uint8_t *ram){
  * HUD sprites (tiles 0x1E0-0x1FF near the bottom) in the OAM buffer
  * 7E:0800 the NMI uploads. Applied at the frame's end; the next frame shows
  * it. Dialogs and events (7E:00D0 set) and menus get the HUD back as it was. */
-#define SOM_HUD_LIFT_PX 26u
-#define SOM_HUD_LEGACY_LIFT_PX 10u
+#define SOM_HUD_LIFT_PX 20u           /* compact panels since 2026-11-25; 26 before */
 static int hud_lifted;
 static void som_hud_lift(uint8_t *ram,int menu){
     const int field=ram&&!menu&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
@@ -9010,17 +9009,16 @@ static void som_hud_lift(uint8_t *ram,int menu){
     }
     /* Upgrade the previous 10 px HUD position in an existing save state;
      * leave any unrelated game scroll untouched. */
-    if(ram[0x40]!=0&&ram[0x40]!=SOM_HUD_LEGACY_LIFT_PX&&
-       !(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;
-    const int upgrading_legacy=ram[0x40]==SOM_HUD_LEGACY_LIFT_PX;
+    const int old=ram[0x40]==10u||ram[0x40]==26u?(int)ram[0x40]:0;
+    if(ram[0x40]!=0&&!old&&!(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;
     ram[0x40]=SOM_HUD_LIFT_PX;ram[0x41]=0;
     hud_lifted=1;
     for(unsigned i=0;i<128u;i++){
         uint8_t *e=ram+0x0800u+4u*i;
         const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
         if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]<0xE0u){
-            if(upgrading_legacy&&e[1]>=186u&&e[1]<196u)
-                e[1]=(uint8_t)(e[1]-(SOM_HUD_LIFT_PX-SOM_HUD_LEGACY_LIFT_PX));
+            if(old&&e[1]>=196u-(unsigned)old&&e[1]<206u-(unsigned)old)
+                e[1]=(uint8_t)((int)e[1]+old-(int)SOM_HUD_LIFT_PX);
             else if(e[1]>=196u)e[1]=(uint8_t)(e[1]-SOM_HUD_LIFT_PX);
         }
     }
@@ -9067,13 +9065,11 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         int px,py;
         if(cls>=SOM_DISCIPLINE_COUNT||!som_hud_member_portrait(ram,who,&px,&py))continue;
         char line[24];
-        const unsigned chars=(unsigned)(SOM_PANEL_COLUMN/6);
+        const unsigned chars=(unsigned)(SOM_PANEL_COLUMN/4);
         const int class_y=py+SOM_HUD_LABEL_DY;
         som_panel_text(line,sizeof(line),som_discipline_titles[cls],chars);
-        for(char *c=line;*c;c++)if(*c>='a'&&*c<='z')*c=(char)(*c-32);
-        som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                          px,class_y,0,
-                          som_overlay_color(pixel_format,255,255,255));
+        som_tiny_label(overlay_frame,width,height,pitch,pixel_format,line,px,class_y,chars,
+                       som_overlay_color(pixel_format,255,255,255));
         /* Line 2. */
         char second[48]="";uint32_t ink=som_overlay_color(pixel_format,255,214,96);
         if(who==0u&&som_disc_caster(cls)){
@@ -9090,14 +9086,13 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
             ink=som_overlay_color(pixel_format,170,230,200);
         }
         som_panel_text(line,sizeof(line),second,chars);
-        if(line[0])som_overlay_label(overlay_frame,width,height,pitch,pixel_format,line,
-                                     px,class_y+8,0,ink);
+        som_tiny_label(overlay_frame,width,height,pitch,pixel_format,line,px,class_y+6,chars,ink);
         /* Line 3: the gauge. */
         const unsigned max=som_energy_max(disciplines.level[cls]);
         const SomEnergy *en=who==0u?&energy:&ally_tech[who-1u].en;
         const int fresh=who&&!ally_tech_ready;
         const unsigned have=fresh||!en->started[cls]?max:en->energy[cls];
-        som_panel_gauge(width,height,pitch,px+1,class_y+17,have,max,
+        som_panel_gauge(width,height,pitch,px+1,class_y+12,have,max,
                         fresh?SOM_AP_MAX:en->ap);
     }
 }

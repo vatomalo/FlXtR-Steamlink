@@ -2907,12 +2907,14 @@ int main(void){
             uint8_t keep_oam[0x220];memcpy(keep_oam,ram+0x0800,sizeof(keep_oam));
             const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D];
             assert(SOM_HUD_LABEL_DY>=26); /* class begins below both native rows */
-            ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=SOM_HUD_LEGACY_LIFT_PX;ram[0x41]=0;hud_lifted=0;
+            ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=10;ram[0x41]=0;hud_lifted=0;
             uint8_t *e=ram+0x0800;e[0]=88;e[1]=199;e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
             uint8_t *m=ram+0x0804;m[0]=60;m[1]=200;m[2]=0x40;m[3]=0x30;   /* a monster low on screen */
             som_hud_lift(ram,0);
             assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX&&m[1]==200);
-            ram[0x40]=SOM_HUD_LEGACY_LIFT_PX;e[1]=189;hud_lifted=0;
+            ram[0x40]=26;e[1]=173;hud_lifted=0;som_hud_lift(ram,0);
+            assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX);   /* yesterday's lift */
+            ram[0x40]=10;e[1]=189;hud_lifted=0;
             som_hud_lift(ram,0);assert(e[1]==199-SOM_HUD_LIFT_PX); /* legacy saved OAM: shift by delta */
             som_hud_lift(ram,0);
             assert(e[1]==199-SOM_HUD_LIFT_PX);                         /* not twice */

@@ -251,7 +251,26 @@ static int local_category(const char *core,const char *rom){
     }
     return 10;
 }
+/* Is there a game set to the Secret of Mana AI core? Then it gets its own
+ * folder, first in the list (player, 2026-11-25). */
+static int games_have_som_ai(void){
+    json_object *games=games_read("games.json");
+    int found=0;
+    if(games&&json_object_is_type(games,json_type_array)){
+        int count=(int)json_object_array_length(games);
+        if(count>GAME_LIMIT)count=GAME_LIMIT;
+        for(int i=0;i<count&&!found;i++){
+            json_object *g=json_object_array_get_idx(games,i);
+            char effective[96];
+            game_effective_core_name(string(g,"rom"),string(g,"core"),i+1,string(g,"title"),effective,sizeof(effective));
+            found=rom_category_from_core(effective,string(g,"rom"))==ROM_CATEGORY_SOM_AI;
+        }
+    }
+    if(games)json_object_put(games);
+    return found;
+}
 static int games_folders(int page){
+    const int first=games_have_som_ai();
     total=13;
 #ifndef FLXTR_DESKTOP
     total=14;
@@ -259,7 +278,18 @@ static int games_folders(int page){
 #ifdef FLXTR_DESKTOP
     total=14;
 #endif
-    for(int slot=(page-1)*PAGE_SIZE;slot<total&&used<PAGE_SIZE;slot++){
+    total+=first;
+    for(int at=(page-1)*PAGE_SIZE;at<total&&used<PAGE_SIZE;at++){
+        const int slot=at-first;
+        if(slot<0){
+            Entry *e=&entries[used++];
+            strcpy(e->title,"SECRET OF MANA AI");
+            strcpy(e->meta,"AI PARTY / A OPEN");
+            strcpy(e->kind,"game-folder");
+            strcpy(e->poster,"gameart:FlXtR Console|SFC");
+            e->id=ROM_CATEGORY_SOM_AI;
+            continue;
+        }
         if(slot==0){
             Entry *e=&entries[used++];
             strcpy(e->title,"GAMEZ");
@@ -360,7 +390,7 @@ static int games_list_filtered(int page,int refresh,int folder){
         game_effective_core_name(rom_path,core,i+1,string(g,"title"),effective_core,sizeof(effective_core));
         int core_folder=rom_category_from_core(effective_core,rom_path);
         const char *system=core_folder==1?"Nintendo - Nintendo Entertainment System":
-            core_folder==2?"Nintendo - Super Nintendo Entertainment System":
+            core_folder==2||core_folder==ROM_CATEGORY_SOM_AI?"Nintendo - Super Nintendo Entertainment System":
             core_folder==3?"Nintendo - Game Boy":
             core_folder==4?"Nintendo - Game Boy Color":
             core_folder==5?"Nintendo - Game Boy Advance":
@@ -517,7 +547,7 @@ static int games_list_filtered(int page,int refresh,int folder){
 static int games_list(int page,int refresh){return games_list_filtered(page,refresh,0);}
 static int games_system(int page,int folder,int order,int genre){
     if(folder==11)return gamez_list(page,genre,order);
-    return folder>=1&&folder<=10?games_list_filtered(page,0,folder):-1;
+    return (folder>=1&&folder<=10)||folder==ROM_CATEGORY_SOM_AI?games_list_filtered(page,0,folder):-1;
 }
 static int game_pixel_geometry(const char *core,const char *rom,int output,int *width,int *height,int *dw,int *dh,double *aspect){
     char executable[PATH_MAX],system[PATH_MAX],save[PATH_MAX],cwd[PATH_MAX];

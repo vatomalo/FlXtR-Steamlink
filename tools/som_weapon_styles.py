@@ -47,7 +47,7 @@ STYLES = (
     _S("Spell Set III", 0, 0, 140, 80), _S("Spell Set I", 0, 0, 100, 100), _S("Spell Set II", 0, 0, 75, 130),
     _S("Spell Set III", 0, 0, 140, 80), _S("Spell Set I", 0, 0, 100, 100), _S("Spell Set II", 0, 0, 75, 130),
     _S("Spell Set III", 0, 0, 140, 80), _S("Spell Set I", 0, 0, 100, 100), _S("Spell Set II", 0, 0, 75, 130),
-    _S("Gladius", 1, 0, 145, 80, 75), _S("Arming Sword", 1, 0, 100, 100), _S("Bastard Sword", 1, 14, 75, 130, 150),
+    _S("Zweihander", 1, 0, 145, 80, 75), _S("Greatsword", 1, 0, 100, 100), _S("Colossus", 1, 14, 75, 130, 150),
     _S("Dagger", 1, 0, 165, 65, 55), _S("Cutlass", 1, 0, 100, 100), _S("Estoc", 1, 12, 85, 115, 150),
     _S("Tanto", 1, 0, 160, 70, 55), _S("Katana", 1, 0, 100, 100), _S("Dai Katana", 1, 20, 70, 135, 200),
     _S("Shortbow", 5, 0, 150, 75), _S("Recurve Bow", 5, 0, 100, 100), _S("Longbow", 5, 0, 70, 135),

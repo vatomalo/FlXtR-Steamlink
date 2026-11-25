@@ -14,9 +14,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Steam Link-style console folders, ROM covers and per-ROM options. */
 public final class GamesActivity extends Activity {
-    private static final String[] SYSTEMS={"all","nes","snes","gb","gbc","gba","ps","psp","dolphin","scummvm"};
-    private static final String[] LABELS={"ALL GAMES","NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","GAMECUBE / WII","SCUMMVM"};
-    private static final String[] CODES={"ALL","FC","SFC","GB","GBC","GBA","PS","PSP","GC / WII","SCUMMVM"};
+    private static final String[] SYSTEMS={"som_ai","all","nes","snes","gb","gbc","gba","ps","psp","dolphin","scummvm"};
+    private static final String[] LABELS={"SECRET OF MANA AI","ALL GAMES","NES","SNES","GAME BOY","GAME BOY COLOR","GAME BOY ADVANCE","PLAYSTATION","PSP","GAMECUBE / WII","SCUMMVM"};
+    private static final String[] CODES={"SOM AI","ALL","FC","SFC","GB","GBC","GBA","PS","PSP","GC / WII","SCUMMVM"};
     static final String[] SCALES={"FULLSCREEN FIT","INTEGER / PIXEL","FILL / CROP","STRETCH"};
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Gamepad gamepad=new Gamepad();
@@ -46,10 +46,10 @@ public final class GamesActivity extends Activity {
     private void launchScummVM(){try{File folder=library.directory();if(!folder.isDirectory()&&!folder.mkdirs())throw new java.io.IOException("Cannot create game folder");File launcher=new File(folder,"launcher.scummvm");if(!launcher.isFile())launcher.createNewFile();startActivity(new Intent(this,RetroActivity.class).putExtra("rom",launcher.getAbsolutePath()).putExtra("core","scummvm").putExtra("coreOnly",true));}catch(Exception failure){error(failure);}}
     private String[] coreLabels(String name){String[] cores=GameFormats.cores(name),labels=new String[cores.length+1];labels[0]="AUTOMATIC";for(int index=0;index<cores.length;index++)labels[index+1]=ConsoleMenu.coreName(cores[index]);return labels;}
     private void action(LinearLayout row,String label,Runnable click){Button b=menu.button(label,click);row.addView(b,new LinearLayout.LayoutParams(0,dp(46),1));actions.add(b);}
-private String system(JSONObject game){switch(game.optString("core")){case "ppsspp":return "psp";case "dolphin":return "dolphin";case "scummvm":return "scummvm";case "fceumm":return "nes";case "snes9x":return "snes";case "mgba":return "gba";case "pcsx_rearmed":return "ps";default:return game.optString("name").toLowerCase(Locale.ROOT).endsWith(".gbc")?"gbc":"gb";}}
+private String system(JSONObject game){switch(game.optString("core")){case "som_ai":return "som_ai";case "ppsspp":return "psp";case "dolphin":return "dolphin";case "scummvm":return "scummvm";case "fceumm":return "nes";case "snes9x":return "snes";case "mgba":return "gba";case "pcsx_rearmed":return "ps";default:return game.optString("name").toLowerCase(Locale.ROOT).endsWith(".gbc")?"gbc":"gb";}}
     private String systemLabel(String value){for(int i=0;i<SYSTEMS.length;i++)if(SYSTEMS[i].equals(value))return LABELS[i];return "ROM FOLDERS";}
     private void render(){int selected=grid.getSelectedItemPosition();tiles.clear();try{List<JSONObject> games=library.games();if(system.isEmpty()){
-            for(int i=0;i<SYSTEMS.length;i++){int count=0;for(JSONObject game:games)if(i==0||system(game).equals(SYSTEMS[i]))count++;tiles.add(new Tile(LABELS[i],count+" ROM"+(count==1?"":"S"),CODES[i],SYSTEMS[i],null));}
+            for(int i=0;i<SYSTEMS.length;i++){int count=0;for(JSONObject game:games)if(SYSTEMS[i].equals("all")||system(game).equals(SYSTEMS[i]))count++;if(count==0&&SYSTEMS[i].equals("som_ai"))continue;tiles.add(new Tile(LABELS[i],count+" ROM"+(count==1?"":"S"),CODES[i],SYSTEMS[i],null));}
         }else for(JSONObject game:games)if(system.equals("all")||system(game).equals(system)){String title=game.optString("name").replaceFirst("\\.[^.]+$","");tiles.add(new Tile(title,GameFormats.label(game.optString("core")).toUpperCase(Locale.ROOT),ConsoleMenu.coreName(game.optString("core")),"",game));}
         heading.setText(system.isEmpty()?"ROM FOLDERS":systemLabel(system));status.setText((system.isEmpty()?games.size():tiles.size())+" TITLES  /  "+(library.scanMessage.contains("unavailable")?library.scanMessage:system.isEmpty()?"CHOOSE A CONSOLE":tiles.isEmpty()?"NO ROMS HERE · ADD FILES TO YOUR GAME FOLDER":"TAP PLAY / HOLD ROM ACTIONS"));
         ((BaseAdapter)grid.getAdapter()).notifyDataSetChanged();if(!tiles.isEmpty())grid.setSelection(Math.max(0,Math.min(selected,tiles.size()-1)));

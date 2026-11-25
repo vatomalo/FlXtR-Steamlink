@@ -31,10 +31,16 @@ KIND_KATANA = 0xD7
 # Every sword row has the same shapes: a blade is stored once, as row 9, and
 # the proxy colours it with the held row's palette. Order = SOM_LOOK_*.
 LOOKS = (("tanto", KIND_TANTO), ("dai", KIND_DAI), ("katana", KIND_KATANA),
-         ("rapier", 0xD8), ("longsword", 0xD9), ("claymore", 0xDA), ("gladius", 0xDB),
-         ("arming", 0xDC), ("bastard", 0xDD), ("dagger", 0xDE), ("cutlass", 0xDF),
-         ("estoc", 0xE0))
+         ("rapier", 0xD8), ("longsword", 0xD9), ("claymore", 0xDA), ("zweihander", 0xDB),
+         ("greatsword", 0xDC), ("colossus", 0xDD), ("dagger", 0xDE), ("cutlass", 0xDF),
+         ("estoc", 0xE0),
+         ("kunai", 0xE1), ("ninjato", 0xE2), ("stake", 0xE3), ("silver", 0xE4),
+         ("kukri", 0xE5), ("rusty", 0xE6), ("broad", 0xE7), ("herald", 0xE8),
+         ("excalibur", 0xE9), ("gigas", 0xEA), ("flamberge", 0xEB), ("mana", 0xEC))
 SWORD_ROWS = tuple(range(9, 18))
+# Weapon Flow's giant axe and spear: the game's own art, doubled. Also stored
+# as row 9 (tier 0): (weapon, its first row, kind).
+GIANTS = (("axe", 18, 0xED), ("spear", 27, 0xEE))
 KUSARIGAMA_WHIP_ROW = 36       # Ninjutsu's default Leather Lash artwork
 CANVAS = 224
 ORIGIN = (112, 140)
@@ -172,24 +178,28 @@ def masked_style(image, body, style, foot=ORIGIN, donor=None):
     return out
 
 
-def sword_frames(gfx):
+def weapon_frames(gfx, weapon, row):
     """Stable original frame numbers; left mirrors at runtime as before."""
     out = {}
     for anim in range(64):
         for direction in V.FACINGS:
             try:
-                for flags, frame, _ in gfx.script("sword", anim, direction):
+                for flags, frame, _ in gfx.script(weapon, anim, direction):
                     out.setdefault(frame, flags)
             except (IndexError, KeyError, ValueError, struct.error):
                 continue
-    # walking and resting poses show the sword too
-    size = len(gfx.weapon_tiles(SWORD_ROWS[0]))//32
+    # walking and resting poses show the weapon too
+    size = len(gfx.weapon_tiles(row))//32
     for frame in range(256):
-        pieces = gfx.weapon_pieces(SWORD_ROWS[0], frame, 0)
+        pieces = gfx.weapon_pieces(row, frame, 0)
         if frame not in out and pieces and all(
                 t is None or t < size for piece in pieces for t in piece[4]):
             out[frame] = 0
     return sorted(out.items())
+
+
+def sword_frames(gfx):
+    return weapon_frames(gfx, "sword", SWORD_ROWS[0])
 
 
 def behind_body(gfx, row, frame):
@@ -260,7 +270,7 @@ def pack(gfx, rows=SWORD_ROWS[:1], dagger=None, kusarigama=False):
                 if record is None:
                     continue
                 dx, dy, w, h, pixels = record
-                colours = [V.bgr555(c) for c in dagger["palette"]] if style=="tanto" and dagger else blade
+                colours = [V.bgr555(c) for c in dagger["palette"]] if style=="tanto" and dagger else K.WOOD if style == "stake" else blade
                 palette = colours + colours + [0]*10
                 encoded += struct.pack("<4B20H", kind, row, frame, 1, *palette)
                 encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
@@ -282,6 +292,31 @@ def pack(gfx, rows=SWORD_ROWS[:1], dagger=None, kusarigama=False):
                 palette = whip_palette + whip_palette + [0]*10
                 encoded += struct.pack("<4B20H", KIND_KUSARIGAMA, row,
                                        sword_frame, 1, *palette)
+                encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
+                entries += 1
+    if kusarigama:
+        for weapon_name, row, kind in GIANTS:
+            tiles = gfx.weapon_tiles(row)
+            palette = [V.bgr555(c) for c in gfx.weapon_palette(gfx.weapon_group(row)[1][4])[1:6]]
+            for frame, flags in weapon_frames(gfx, weapon_name, row):
+                wp = gfx.weapon_pieces(row, frame, flags)
+                if not wp or any(t is not None and t >= 64 for piece in wp for t in piece[4]):
+                    continue
+                weapon = [[0]*CANVAS for _ in range(CANVAS)]
+                body = [[0]*CANVAS for _ in range(CANVAS)]
+                gfx.render("boy", wp, image=weapon, origin=ORIGIN, source=tiles)
+                gfx.render("boy", gfx.pieces("boy", weapon_name, frame, flags),
+                           image=body, origin=ORIGIN)
+                art = K.giant(weapon, body)
+                if art and behind_body(gfx, row, frame):
+                    art = [[0 if b else c for c, b in zip(line, under)]
+                           for line, under in zip(art, body)]
+                record = cropped(art) if art else None
+                if record is None:
+                    continue
+                dx, dy, w, h, pixels = record
+                encoded += struct.pack("<4B20H", kind, SWORD_ROWS[0], frame, 1,
+                                       *(palette + palette + [0]*10))
                 encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
                 entries += 1
     if entries > 65535:

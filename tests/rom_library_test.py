@@ -14,6 +14,7 @@ with tempfile.TemporaryDirectory() as directory:
   return result
  def page(kind,page=1,folder=0):return run(kind,page,'',folder,0,0).stdout
  rows=''.join(page('games-folders',n) for n in (1,2,3))
+ assert 'SECRET OF MANA AI' not in rows          # only with a game for it
  downloads=[row.split('\t') for row in rows.splitlines() if row.startswith('DOWNLOADS\t')]
  assert len(downloads)==1 and downloads[0][4]=='rom-downloads' and downloads[0][5]=='11'
  assert 'PSP\t' in rows
@@ -36,6 +37,15 @@ with tempfile.TemporaryDirectory() as directory:
  assert name in page('games-system',folder=2)
  assert Path(game['rom']).name=='Demo.sfc' and Path(game['rom']).read_bytes()==b'ROM fixture'
  assert json.loads((root/'rom-names.json').read_text())[key]==name
+ # The game set to the AI core has its own folder, first, and leaves SNES.
+ (root/'rom-cores.tsv').write_text(f'{key}\tsom_ai_proxy\n')
+ first=page('games-folders').splitlines()
+ at=next(i for i,row in enumerate(first) if 'SECRET OF MANA AI\t' in row)
+ assert first[at].split('\t')[4:6]==['game-folder','13'] and 'GAMEZ\t' in first[at+1],first
+ assert name in page('games-system',folder=13) and name not in page('games-system',folder=2)
+ rows=''.join(page('games-folders',n) for n in (1,2,3));assert 'SCUMMVM\t' in rows and rows.count('GAMEZ\t')==1
+ (root/'rom-cores.tsv').unlink()
+ assert name in page('games-system',folder=2)
  outside=root/'custom.sfc';outside.write_bytes(b'custom explicit import');games=json.loads((root/'games.json').read_text());games.append({'title':'Custom import','rom':str(outside),'core':game['core']});(root/'games.json').write_text(json.dumps(games))
  (root/'games-import-version').unlink();run('games',1,'',1,0,0)
  assert any(g['rom']==str(outside) for g in json.loads((root/'games.json').read_text()))

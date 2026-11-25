@@ -54,7 +54,7 @@ def unpack(data):
     for _ in range(count):
         if ptr+44>end:raise ValueError("truncated weapon mask entry")
         kind,row,frame,nframes=struct.unpack_from("<BBBB",data,ptr)
-        if not (kind==M.KIND_KUSARIGAMA or kind in dict(M.LOOKS).values()) or row not in M.SWORD_ROWS or nframes!=1:
+        if not (kind==M.KIND_KUSARIGAMA or kind in dict(M.LOOKS).values() or kind in [k for _,_,k in M.GIANTS]) or row not in M.SWORD_ROWS or nframes!=1:
             raise ValueError("not a supported weapon-mask pack")
         palette=struct.unpack_from("<20H",data,ptr+4)
         if any(c&0x8000 for c in palette):

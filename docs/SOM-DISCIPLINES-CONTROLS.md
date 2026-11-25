@@ -686,15 +686,17 @@ the proxy **does not scale the entire weapon** any more.
 The pack carries Bushido's blade masks and the Ninjutsu Kusarigama hybrid:
 
 - **Where the art comes from (2026-11-25):** the core makes the sword looks and
-  hero moves from the running ROM at game load (`src/som_art_gen.h`, 0.3 s CPU
+  hero moves from the running ROM at game load (`src/som_art_gen.h`, about half a second of CPU
   on the Steam Link), on Steam Link and Android alike; no art file is installed.
   `som_weapon_masks_custom.bin` (your own dagger) wins; the file
   `som_ai_weapon_masks_off` turns the looks off.
 - **Tanto / Katana / Dai Katana (2026-11-25):** drawn in the sword's own
   palette and outline at its hilt and angle (`tools/som_katana_art.py`): 0.42,
   1.15 and 1.75 times the native blade. Samurai, all three styles;
-  Ninja: Tanto in the fast style, else Katana. Swordsman: Rapier, Longsword,
-  Claymore; Weapon Flow: Gladius, Arming Sword, Bastard Sword; Rogue: Dagger,
+  Ninja: Kunai in the fast style, else Ninjato. Hunter (close hits only, the
+  whip stays): wooden stake, Silver Dagger, Kukri. Classless: each forged sword has its own look. Swordsman: Rapier, Longsword,
+  Claymore; Weapon Flow: Zweihander, Greatsword, Colossus, and a
+  giant axe and spear (the game's own, doubled); Rogue: Dagger,
   Cutlass, Estoc. Boy, girl and sprite alike. The slash
   trail stays native. A Tanto may instead be a user-extracted Seiken Densetsu 3 dagger PNG. The PNG must have a transparent
   background and be cropped to just the dagger.

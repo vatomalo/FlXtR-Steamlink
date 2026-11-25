@@ -219,22 +219,36 @@ static void som_art_frame(SomArtOut *o,const uint8_t *image,int size,int ox,int 
         som_art_put(o,image+(b->dy+oy+SOM_ART_HEIGHT+y)*size+b->dx+ox,(size_t)b->w);
 }
 /* ---- The sword styles (som_katana_art.py) ---- */
-enum {SOM_ART_TSUBA,SOM_ART_CUP,SOM_ART_CROSS,SOM_ART_BASKET};
-typedef struct {double length,grip,sag,base,tip,point,guard;int kind,edges;unsigned pack_kind;} SomArtBlade;
+enum {SOM_ART_TSUBA,SOM_ART_CUP,SOM_ART_CROSS,SOM_ART_BASKET,SOM_ART_WINGS,SOM_ART_RING,SOM_ART_STAKE};
+typedef struct {double length,grip,sag,base,tip,point,guard;int kind,edges;unsigned pack_kind;double belly,wave;int teeth;} SomArtBlade;
 static const SomArtBlade som_art_blades[]={
-    {0.42,3,0.2,1.00,1.00,2.0,2.0,SOM_ART_TSUBA,1,0xD4},    /* Tanto */
-    {1.75,7,3.0,1.00,1.00,2.0,2.0,SOM_ART_TSUBA,1,0xD5},    /* Dai Katana */
-    {1.15,5,1.6,1.00,1.00,2.0,2.0,SOM_ART_TSUBA,1,0xD7},    /* Katana */
-    {1.35,3,0.0,0.55,0.55,1.0,2.2,SOM_ART_CUP,2,0xD8},      /* Rapier */
-    {1.25,5,0.0,1.55,1.35,3.0,4.0,SOM_ART_CROSS,2,0xD9},    /* Longsword */
-    {1.75,7,0.0,2.50,1.90,4.0,5.0,SOM_ART_CROSS,2,0xDA},    /* Claymore */
-    {0.75,3,0.0,1.50,2.10,4.0,2.2,SOM_ART_CROSS,2,0xDB},    /* Gladius */
-    {1.00,3,0.0,1.55,1.10,3.0,3.2,SOM_ART_CROSS,2,0xDC},    /* Arming Sword */
-    {1.45,6,0.0,2.05,1.40,4.0,4.0,SOM_ART_CROSS,2,0xDD},    /* Bastard Sword */
-    {0.50,3,0.0,1.10,0.90,3.0,2.2,SOM_ART_CROSS,2,0xDE},    /* Dagger */
-    {0.95,3,2.6,1.10,1.90,3.5,2.0,SOM_ART_BASKET,1,0xDF},   /* Cutlass */
-    {1.50,5,0.0,1.05,0.50,2.0,3.0,SOM_ART_CROSS,2,0xE0},    /* Estoc */
+    {0.42,3,0.2,1.00,1.00,2.0,2.0,SOM_ART_TSUBA,1,0xD4,0,0,0},    /* Tanto */
+    {1.75,7,3.0,1.00,1.00,2.0,2.0,SOM_ART_TSUBA,1,0xD5,0,0,0},    /* Dai Katana */
+    {1.15,5,1.6,1.00,1.00,2.0,2.0,SOM_ART_TSUBA,1,0xD7,0,0,0},    /* Katana */
+    {1.35,3,0.0,0.55,0.55,1.0,2.2,SOM_ART_CUP,2,0xD8,0,0,0},      /* Rapier */
+    {1.25,5,0.0,1.55,1.35,3.0,4.0,SOM_ART_CROSS,2,0xD9,0,0,0},    /* Longsword */
+    {1.75,7,0.0,2.50,1.90,4.0,5.0,SOM_ART_CROSS,2,0xDA,0,0,0},    /* Claymore */
+    {2.00,6,0.0,2.60,2.00,7.0,4.6,SOM_ART_WINGS,2,0xDB,0,0,0},   /* Zweihander */
+    {2.15,7,0.0,3.60,3.00,6.0,5.2,SOM_ART_CROSS,2,0xDC,0,0,0},   /* Greatsword */
+    {2.40,8,0.8,3.60,5.20,7.0,4.2,SOM_ART_CROSS,1,0xDD,0,0,0},   /* Colossus */
+    {0.50,3,0.0,1.10,0.90,3.0,2.2,SOM_ART_CROSS,2,0xDE,0,0,0},    /* Dagger */
+    {0.95,3,2.6,1.10,1.90,3.5,2.0,SOM_ART_BASKET,1,0xDF,0,0,0},   /* Cutlass */
+    {1.50,5,0.0,1.05,0.50,2.0,3.0,SOM_ART_CROSS,2,0xE0,0,0,0},    /* Estoc */
+    {0.40,3,0.0,0.70,0.70,3.0,1.0,SOM_ART_RING,2,0xE1,1.1,0.0,0},   /* Kunai */
+    {0.88,5,0.0,1.00,1.00,1.0,2.4,SOM_ART_TSUBA,1,0xE2,0.0,0.0,0},   /* Ninjato */
+    {0.62,3,0.0,1.80,1.40,6.0,0.8,SOM_ART_STAKE,2,0xE3,0.0,0.0,0},   /* wooden stake */
+    {0.66,3,0.0,1.30,0.90,4.0,3.0,SOM_ART_WINGS,2,0xE4,0.5,0.0,0},   /* Silver Dagger */
+    {0.66,4,-2.8,0.90,1.00,3.0,1.2,SOM_ART_TSUBA,1,0xE5,1.5,0.0,0},   /* Kukri */
+    {0.95,3,0.0,1.50,1.20,2.0,3.0,SOM_ART_CROSS,2,0xE6,0.0,0.0,1},   /* Rusty Sword */
+    {0.95,3,0.0,2.50,2.30,4.0,3.2,SOM_ART_CROSS,2,0xE7,0.0,0.0,0},   /* Broad Sword */
+    {1.12,5,0.0,1.50,1.50,5.0,3.4,SOM_ART_WINGS,2,0xE8,0.0,0.0,0},   /* Herald Sword */
+    {1.35,5,0.0,2.10,1.30,6.0,4.6,SOM_ART_WINGS,2,0xE9,0.3,0.0,0},   /* Excalibur */
+    {1.60,7,1.0,2.20,3.60,5.0,3.0,SOM_ART_CROSS,1,0xEA,0.0,0.0,0},   /* Gigas Sword */
+    {1.60,7,0.0,1.70,1.30,4.0,4.0,SOM_ART_CROSS,2,0xEB,0.0,1.0,0},   /* Dragon Buster */
+    {1.40,5,0.0,1.20,0.80,6.0,5.0,SOM_ART_WINGS,2,0xEC,1.4,0.0,0},   /* Mana Sword */
 };
+/* A wooden stake keeps its own colours with any sword. */
+static const uint16_t som_art_wood[5]={28u|21u<<5|12u<<10,22u|14u<<5|7u<<10,15u|9u<<5|4u<<10,6u|3u<<5|1u<<10,30u|27u<<5|20u<<10};
 /* Python's sum(): compensated, so the point order does not matter. */
 typedef struct {double s,c;} SomArtSum;
 static void som_art_add(SomArtSum *a,double x){
@@ -333,12 +347,19 @@ static int som_art_hilt(const uint8_t *image,SomArtWindow w,SomArtScratch *s,Som
 static unsigned som_art_blade_pixel(const SomArtBlade *b,double length,double t,double v){
     const double thick=b->kind==SOM_ART_CUP?1.4:0.75,av=fabs(v);
     if(fabs(t)<=thick&&av<=b->guard)return av>b->guard-0.9?3u:2u;
+    if(b->kind==SOM_ART_STAKE&&-b->grip<=t&&t<0.0&&av<=1.5)return v>0.0?2u:3u;
     if(b->kind==SOM_ART_BASKET&&-b->grip-0.5<=t&&t<-0.5&&1.7<=v&&v<=2.6)return 2u;
     if(-b->grip<=t&&t<0.0&&av<=0.75)return (int)(-t)%3==1?3u:4u;
-    if(b->kind==SOM_ART_CROSS&&b->grip>4.0&&fabs(t+b->grip+1.0)<=1.1&&av<=1.2)return 2u;
+    if(b->kind==SOM_ART_WINGS&&0.0<t&&t<=2.4&&b->guard-1.3<=av&&av<=b->guard)return 3u;
+    if(b->kind==SOM_ART_RING){
+        const double at=t+b->grip+1.6,far=sqrt(at*at+v*v);
+        if(0.6<=far&&far<=1.9)return 2u;
+    }
+    if((b->kind==SOM_ART_CROSS||b->kind==SOM_ART_WINGS)&&b->grip>4.0&&fabs(t+b->grip+1.0)<=1.1&&av<=1.2)return 2u;
     if(!(0.0<t&&t<=length))return 0;
     const double left=length-t;
-    double half=b->base+(b->tip-b->base)*t/length;
+    double half=b->base+(b->tip-b->base)*t/length+b->belly*4.0*(t/length)*(1.0-t/length);
+    if(b->teeth&&(int)t%4==2)half-=0.7;
     if(b->edges==1){
         if(!(-0.95<=v&&v<=half+0.05)||(left<b->point&&v>left-0.6))return 0;
         return v>half-1.0?1u:t<length*0.55?2u:3u;
@@ -351,10 +372,11 @@ static unsigned som_art_blade_pixel(const SomArtBlade *b,double length,double t,
 static int som_art_blade(const uint8_t *image,const SomArtHilt *h,const SomArtBlade *b,uint8_t *out,uint8_t *core,SomArtWindow *w){
     const int W=SOM_ART_CANVAS;
     const double length=15.0*b->length;
-    const int reach=(int)(length+b->sag+b->grip+8.0);
+    const double bend=fabs(b->sag)*1.4+b->wave;
+    const int reach=(int)(length+fabs(b->sag)+b->grip+8.0);
     /* Only the turned rectangle the blade can ink: its corners' box, then per
      * row the pixels between its long edges. The bounds are generous. */
-    const double ta=-b->grip-3.0,tb=length+2.0,vb=7.5+b->sag*1.3;
+    const double ta=-b->grip-4.5,tb=length+2.0,vb=7.5+bend;
     double lx=h->gx,rx=h->gx,uy=h->gy,dy_=h->gy;
     for(int k=0;k<4;k++){
         const double t=k&1?tb:ta,v=k&2?vb:-vb;
@@ -398,11 +420,15 @@ static int som_art_blade(const uint8_t *image,const SomArtHilt *h,const SomArtBl
         }
         for(int x=(int)from,last=(int)to;x<=last;x++){
         const double dx=x-h->gx,t=dx*h->ux+dy*h->uy;
-        if(t>length+1.5||t<-b->grip-2.5)continue;       /* past both ends */
+        if(t>length+1.5||t<-b->grip-4.0)continue;       /* past both ends */
         const double v0=(-dx*h->uy+dy*h->ux)*h->side;
-        if(v0>6.0||v0<-6.0-b->sag*1.3)continue;
+        if(v0>6.0+bend||v0<-6.0-bend)continue;
         const double bow=(t>0.0?t:0.0)/length;
-        const double v=v0+b->sag*(bow*bow);
+        double v=v0+b->sag*(bow*bow);
+        if(b->wave!=0.0&&t>0.0){
+            const double turn=t/6.0-floor(t/6.0);
+            v+=b->wave*(1.0-4.0*fabs(turn-0.5));
+        }
         const unsigned c=som_art_blade_pixel(b,length,t,v);
         if(c){core[y*W+x]=(uint8_t)c;any=1;}
         }
@@ -416,6 +442,78 @@ static int som_art_blade(const uint8_t *image,const SomArtHilt *h,const SomArtBl
     }
     for(int y=y0;y<y1;y++)for(int x=x0;x<x1;x++)if(core[y*W+x])out[y*W+x]=core[y*W+x];
     return 1;
+}
+/* The native weapon at twice its size about the hands (Scale2x), outline thin. */
+static int som_art_at(const uint8_t *image,int x,int y){
+    return x>=0&&y>=0&&x<SOM_ART_CANVAS&&y<SOM_ART_CANVAS?image[y*SOM_ART_CANVAS+x]:0;
+}
+static int som_art_giant(const uint8_t *image,const uint8_t *body,uint8_t *big,uint8_t *out,SomArtWindow *w){
+    const int W=SOM_ART_CANVAS;
+    int x0=W,y0=W,x1=0,y1=0;
+    long sx=0,sy=0,n=0,bx=0,by=0,bn=0,any=0,best=-1;
+    int ax=0,ay=0;
+    for(int y=0;y<W;y++)for(int x=0;x<W;x++){
+        const int c=image[y*W+x];
+        if(body[y*W+x]){bx+=x;by+=y;bn++;}
+        if(c){
+            if(x<x0)x0=x;
+            if(y<y0)y0=y;
+            if(x+1>x1)x1=x+1;
+            y1=y+1;
+        }
+        if(c<1||c>4)continue;
+        any=1;
+        int held=0;
+        for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++)held|=som_art_at(body,x+i,y+j);
+        if(held){sx+=x;sy+=y;n++;}
+    }
+    if(!any)return 0;
+    if(n){ax=(int)(sx/n);ay=(int)(sy/n);}
+    else{
+        if(!bn)return 0;
+        bx/=bn;by/=bn;
+        for(int y=0;y<W;y++)for(int x=0;x<W;x++)if(image[y*W+x]>=1&&image[y*W+x]<=4){
+            const long d=(x-bx)*(x-bx)+(y-by)*(y-by);
+            if(best<0||d<best){best=d;ax=x;ay=y;}
+        }
+    }
+    memset(big,0,(size_t)(W*W));
+    for(int y=y0>0?y0-1:0;y<y1+1&&y<W;y++)for(int x=x0>0?x0-1:0;x<x1+1&&x<W;x++){
+        const int p=image[y*W+x],up=som_art_at(image,x,y-1),right=som_art_at(image,x+1,y);
+        const int left=som_art_at(image,x-1,y),down=som_art_at(image,x,y+1);
+        if(!(p|up|right|left|down))continue;
+        const int four[4]={left==up&&left!=down&&up!=right?up:p,up==right&&up!=left&&right!=down?right:p,
+                           down==left&&down!=right&&left!=up?left:p,right==down&&right!=up&&down!=left?down:p};
+        for(int k=0;k<4;k++){
+            const int px=2*x-ax+(k&1),py=2*y-ay+(k>>1);
+            if(four[k]&&px>=0&&py>=0&&px<W&&py<W)big[py*W+px]=(uint8_t)four[k];
+        }
+    }
+    w->x0=2*x0-ax-2>0?2*x0-ax-2:0;w->y0=2*y0-ay-2>0?2*y0-ay-2:0;
+    w->x1=2*x1-ax+2<W?2*x1-ax+2:W;w->y1=2*y1-ay+2<W?2*y1-ay+2:W;
+    for(int y=w->y0;y<w->y1;y++)for(int x=w->x0;x<w->x1;x++){
+        const uint8_t c=big[y*W+x];
+        if(!c){out[y*W+x]=0;continue;}
+        out[y*W+x]=c==4u&&!(som_art_at(big,x+1,y)&&som_art_at(big,x-1,y)&&
+                            som_art_at(big,x,y+1)&&som_art_at(big,x,y-1))?0u:c;
+    }
+    return 1;
+}
+/* Every frame of a weapon's attacks, then the walking and resting poses. */
+static void som_art_frames(SomArtRom *g,int weapon,unsigned row,uint8_t *have,uint8_t *flags){
+    SomArtStep steps[256];
+    SomArtPiece p[20];
+    memset(have,0,256u);memset(flags,0,256u);
+    for(unsigned anim=0;anim<64u;anim++)for(unsigned dir=0;dir<3u;dir++){
+        const unsigned n=som_art_script(g,som_art_attacks(weapon),anim,dir,steps);
+        for(unsigned i=0;i<n;i++)if(!have[steps[i].frame]){have[steps[i].frame]=1;flags[steps[i].frame]=steps[i].flags;}
+    }
+    for(unsigned f=0;f<256u;f++)if(!have[f]){
+        const unsigned n=som_art_weapon_pieces(g,row,f,0u,p);
+        int ok=n!=0;
+        for(unsigned i=0;i<n;i++)for(unsigned q=0;q<4u;q++)if(p[i].tile[q]>=64)ok=0;
+        have[f]=(uint8_t)ok;
+    }
 }
 /* ---- som_weapon_mask.py --kusarigama ---- */
 static void som_art_mask_entry(SomArtOut *o,const uint8_t *image,SomArtWindow w,unsigned kind,unsigned frame,const uint16_t *five){
@@ -439,16 +537,7 @@ static int som_art_weapon_masks(const uint8_t *rom,size_t size,SomArtOut *o){
         uint16_t five[5];
         SomArtStep steps[256],whips[256];
         SomArtPiece p[20];
-        for(unsigned anim=0;anim<64u;anim++)for(unsigned dir=0;dir<3u;dir++){
-            const unsigned n=som_art_script(&g,som_art_attacks(SOM_ART_SWORD),anim,dir,steps);
-            for(unsigned i=0;i<n;i++)if(!have[steps[i].frame]){have[steps[i].frame]=1;flags[steps[i].frame]=steps[i].flags;}
-        }
-        for(unsigned f=0;f<256u;f++)if(!have[f]){     /* walking and resting poses */
-            const unsigned n=som_art_weapon_pieces(&g,9u,f,0u,p);
-            int ok=n!=0;
-            for(unsigned i=0;i<n;i++)for(unsigned q=0;q<4u;q++)if(p[i].tile[q]>=64)ok=0;
-            have[f]=(uint8_t)ok;
-        }
+        som_art_frames(&g,SOM_ART_SWORD,9u,have,flags);
         som_art_weapon_tiles(&g,9u,tiles);
         som_art_weapon_colours(&g,9u,five);
         for(unsigned f=0;f<256u&&!g.bad;f++){
@@ -475,7 +564,7 @@ static int som_art_weapon_masks(const uint8_t *rom,size_t size,SomArtOut *o){
                 if(!som_art_blade(weapon,&hilt,&som_art_blades[k],art,core,&w))continue;
                 if(behind)for(int y=w.y0;y<w.y1;y++)for(int x=w.x0;x<w.x1;x++)
                     if(body[y*SOM_ART_CANVAS+x])art[y*SOM_ART_CANVAS+x]=0;
-                som_art_mask_entry(o,art,w,som_art_blades[k].pack_kind,f,five);
+                som_art_mask_entry(o,art,w,som_art_blades[k].pack_kind,f,som_art_blades[k].kind==SOM_ART_STAKE?som_art_wood:five);
             }
         }
         /* Kusarigama: each level-2 sword frame gets the whip's matching pose */
@@ -510,6 +599,28 @@ static int som_art_weapon_masks(const uint8_t *rom,size_t size,SomArtOut *o){
             if(!som_art_render(&g,p,n,weapon,SOM_ART_CANVAS,112,140,tiles,0)){g.bad=1;break;}
             const SomArtWindow all={0,0,SOM_ART_CANVAS,SOM_ART_CANVAS};
             som_art_mask_entry(o,weapon,all,0xD6u,f,five);
+        }
+        static const struct {int weapon;unsigned row,kind;} giants[2]={{2,18u,0xEDu},{3,27u,0xEEu}};
+        for(unsigned k=0;k<2u;k++){
+            const unsigned row=giants[k].row;
+            som_art_frames(&g,giants[k].weapon,row,have,flags);
+            som_art_weapon_tiles(&g,row,tiles);
+            som_art_weapon_colours(&g,row,five);
+            for(unsigned f=0;f<256u&&!g.bad;f++)if(have[f]){
+                unsigned n=som_art_weapon_pieces(&g,row,f,flags[f],p);
+                int ok=n!=0;
+                for(unsigned i=0;i<n;i++)for(unsigned q=0;q<4u;q++)if(p[i].tile[q]>=64)ok=0;
+                if(!ok)continue;
+                memset(weapon,0,2u*area);
+                som_art_render(&g,p,n,weapon,SOM_ART_CANVAS,112,140,tiles,0);
+                n=som_art_pieces(&g,0u,giants[k].weapon,f,flags[f],p);
+                som_art_render(&g,p,n,body,SOM_ART_CANVAS,112,140,NULL,0);
+                SomArtWindow w;
+                if(!som_art_giant(weapon,body,core,art,&w))continue;
+                if(!(som_art_8(&g,som_art_off(0xD4,som_art_weapon_list(&g,row,f)))&0x80u))
+                    for(size_t i=0;i<area;i++)if(body[i])art[i]=0;
+                som_art_mask_entry(o,art,w,giants[k].kind,f,five);
+            }
         }
     }
     free(mem);free(s);

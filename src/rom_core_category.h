@@ -15,8 +15,11 @@ static inline int rom_core_has(const char *haystack,const char *needle){
     return 0;
 }
 /* 1-based Games folder IDs: NES=1, SNES=2, GB=3, GBC=4,
- * GBA=5, PSX=6, PSP=7, NEO GEO=8, ARCADE=9, OTHER=10. */
+ * GBA=5, PSX=6, PSP=7, NEO GEO=8, ARCADE=9, OTHER=10; 11 and 12 are taken
+ * by GAMEZ/DOWNLOADS and SCUMMVM, SECRET OF MANA AI=13. */
+#define ROM_CATEGORY_SOM_AI 13
 static inline int rom_category_from_core(const char *core,const char *rom){
+    if(rom_core_has(core,"som_ai_proxy"))return ROM_CATEGORY_SOM_AI;
     if(rom_core_has(core,"ppsspp"))return 7;
     if(rom_core_has(core,"pcsx_rearmed")||rom_core_has(core,"mednafen_psx")||
        rom_core_has(core,"beetle_psx")||rom_core_has(core,"swanstation")||

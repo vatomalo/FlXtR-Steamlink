@@ -11,6 +11,8 @@ int main(void){
     assert(rom_category_from_core("gambatte","/roms/gb/rom.gb")==3);
     assert(rom_category_from_core("fbneo","/roms/mame/game.zip")==9);
     assert(rom_category_from_core("fbalpha2012_neogeo","/roms/mame/game.zip")==8);
+    assert(rom_category_from_core("som_ai_proxy","/roms/Snes/Secret of Mana, Turbo.smc")==ROM_CATEGORY_SOM_AI);
+    assert(rom_category_from_core("som_ai_proxy_libretro.so","/roms/x.smc")==ROM_CATEGORY_SOM_AI);
     assert(rom_category_from_core("unknown_core","/roms/psp/game.iso")==0);
     puts("PASS: recognized core takes precedence over ROM folder and extension");
     return 0;

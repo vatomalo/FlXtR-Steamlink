@@ -1198,8 +1198,10 @@ static uint8_t *weapon_mask_pack;
 static size_t weapon_mask_pack_size;
 /* Blade looks, in pack order (kind 0xD4 + look; tools/som_weapon_mask.py). */
 enum {SOM_LOOK_TANTO,SOM_LOOK_DAI,SOM_LOOK_KUSARIGAMA,SOM_LOOK_KATANA,SOM_LOOK_RAPIER,
-      SOM_LOOK_LONGSWORD,SOM_LOOK_CLAYMORE,SOM_LOOK_GLADIUS,SOM_LOOK_ARMING,SOM_LOOK_BASTARD,
-      SOM_LOOK_DAGGER,SOM_LOOK_CUTLASS,SOM_LOOK_ESTOC,SOM_LOOKS};
+      SOM_LOOK_LONGSWORD,SOM_LOOK_CLAYMORE,SOM_LOOK_ZWEIHANDER,SOM_LOOK_GREATSWORD,SOM_LOOK_COLOSSUS,
+      SOM_LOOK_DAGGER,SOM_LOOK_CUTLASS,SOM_LOOK_ESTOC,SOM_LOOK_KUNAI,SOM_LOOK_NINJATO,
+      SOM_LOOK_STAKE,SOM_LOOK_SILVER,SOM_LOOK_KUKRI,SOM_LOOK_RUSTY,SOM_LOOK_BROAD,SOM_LOOK_HERALD,
+      SOM_LOOK_EXCALIBUR,SOM_LOOK_GIGAS,SOM_LOOK_DRAGON,SOM_LOOK_MANA,SOM_LOOK_GIANT_AXE,SOM_LOOK_GIANT_SPEAR,SOM_LOOKS};
 #define SOM_MASK_ROWS 9u               /* sword rows 9..17 */
 #define SOM_MASK_AT(look,row,pose) (((look)*SOM_MASK_ROWS+(row)-9u)*256u+(pose))
 static uint32_t *weapon_mask_index;    /* SOM_MASK_AT; row 9 stands for every row */
@@ -10396,17 +10398,25 @@ static int som_weapon_mask_mode(const uint8_t *ram,unsigned who){
        som_disc_member_class(&disciplines,who)==SOM_DISC_NINJUTSU&&
        styles.selected[SOM_DISC_NINJUTSU]==SOM_STYLE_HEAVY&&actor[0x1E4]==1u)
         return 2;
-    if(actor[0x1E4]!=1u)return -1;
     const unsigned cls=som_disc_member_class(&disciplines,who);
-    if(cls>=SOM_DISCIPLINE_COUNT)return -1;
+    /* Weapon Flow's axe and spear are giants too. */
+    if(cls==SOM_DISC_WEAPON_FLOW&&(actor[0x1E4]==2u||actor[0x1E4]==3u))
+        return actor[0x1E4]==2u?SOM_LOOK_GIANT_AXE:SOM_LOOK_GIANT_SPEAR;
+    if(actor[0x1E4]!=1u)return -1;
+    if(cls>=SOM_DISCIPLINE_COUNT){              /* classless: the forged sword held */
+        static const uint8_t forged[SOM_MASK_ROWS]={SOM_LOOK_RUSTY,SOM_LOOK_BROAD,SOM_LOOK_HERALD,
+            SOM_LOOK_CLAYMORE,SOM_LOOK_EXCALIBUR,SOM_LOOK_KATANA,SOM_LOOK_GIGAS,SOM_LOOK_DRAGON,SOM_LOOK_MANA};
+        return actor[0x1E3]>=9u&&actor[0x1E3]<9u+SOM_MASK_ROWS?forged[actor[0x1E3]-9u]:-1;
+    }
     const unsigned style=styles.selected[cls]%SOM_STYLES_PER_CLASS;
     switch(cls){                                /* fast, balanced, heavy */
     case SOM_DISC_SWORD:return (int)SOM_LOOK_RAPIER+(int)style;
-    case SOM_DISC_WEAPON_FLOW:return (int)SOM_LOOK_GLADIUS+(int)style;
+    case SOM_DISC_WEAPON_FLOW:return (int)SOM_LOOK_ZWEIHANDER+(int)style;
     case SOM_DISC_ROGUE:return (int)SOM_LOOK_DAGGER+(int)style;
     case SOM_DISC_BUSHIDO:return style==SOM_STYLE_FAST?SOM_LOOK_TANTO:
                                  style==SOM_STYLE_HEAVY?SOM_LOOK_DAI:SOM_LOOK_KATANA;
-    case SOM_DISC_NINJUTSU:return style==SOM_STYLE_FAST?SOM_LOOK_TANTO:SOM_LOOK_KATANA;
+    case SOM_DISC_NINJUTSU:return style==SOM_STYLE_FAST?SOM_LOOK_KUNAI:SOM_LOOK_NINJATO;
+    case SOM_DISC_HUNTER:return (int)SOM_LOOK_STAKE+(int)style;   /* close up: stake, silver dagger, kukri */
     default:return -1;
     }
 }
@@ -10418,8 +10428,9 @@ static int som_mask_shown(const uint8_t *actor,int mode){
     return (actor[0x024u]&(mode==SOM_LOOK_KUSARIGAMA?0x40u:0x0Fu))!=0;
 }
 static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    if(!weapon_mask_index||mode>=SOM_LOOKS||row<9u||row>=18u||frame>255u)return 0;
-    uint32_t at=weapon_mask_index[SOM_MASK_AT(mode,row,frame)];
+    const unsigned first=mode==SOM_LOOK_GIANT_AXE?18u:mode==SOM_LOOK_GIANT_SPEAR?27u:9u;   /* the type's tier 0 */
+    if(!weapon_mask_index||mode>=SOM_LOOKS||row<first||row>=first+SOM_MASK_ROWS||frame>255u)return 0;
+    uint32_t at=weapon_mask_index[SOM_MASK_AT(mode,row-first+9u,frame)];
     /* Every sword has the same shapes: one stored blade, the row's colours. */
     const uint8_t *colours=NULL;
     if(!at){
@@ -10432,7 +10443,7 @@ static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWo
     out->kind=p[0];out->weapon=p[1];out->facing=p[2];out->frames=p[3];
     for(unsigned i=0;i<20u;i++)out->colours[i]=(uint16_t)(p[4+2u*i]|p[5+2u*i]<<8);
     /* An imported dagger keeps its own colours: only native ones follow. */
-    const uint8_t *base=colours?som_rom_at(0xD01000u+12u*9u,12u):NULL;
+    const uint8_t *base=colours?som_rom_at(0xD01000u+12u*first,12u):NULL;
     if(base)base=som_rom_at(0xD1F600u+10u*base[4],10u);
     for(unsigned i=0;base&&i<5u;i++)
         if(out->colours[i]!=((unsigned)(base[2u*i]|base[2u*i+1u]<<8)&0x7FFFu))base=NULL;

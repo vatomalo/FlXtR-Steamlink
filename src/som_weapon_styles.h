@@ -65,7 +65,7 @@ static const SomWeaponStyle som_weapon_styles[SOM_STYLE_COUNT]={
     /* Support & Dance: whip */
     {"Spell Set III",0,0,140,80,0},{"Spell Set I",0,0,100,100,0},{"Spell Set II",0,0,75,130,0},
     /* Weapon Flow: sword */
-    {"Gladius",1,0,145,80,75},{"Arming Sword",1,0,100,100,0},{"Bastard Sword",1,14,75,130,150},
+    {"Zweihander",1,0,145,80,75},{"Greatsword",1,0,100,100,0},{"Colossus",1,14,75,130,150},
     /* Roguecraft: sword */
     {"Dagger",1,0,165,65,55},{"Cutlass",1,0,100,100,0},{"Estoc",1,12,85,115,150},
     /* Bushido: sword */

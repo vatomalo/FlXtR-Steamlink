@@ -10,8 +10,8 @@
 | **L1 (tap)** | Toggle enemy lock-on. Only targeting, independent of B/Y. Native L1 is suppressed during active field play so it cannot open the wrong ring. |
 | **R1 (tap)** | Cycle the currently selected class's **three FlXtR weapon styles** (fast -> balanced -> heavy -> fast). Native R1 no longer blocks. |
 | **L3 + B** | Legacy L1+B style-cycle shortcut, moved to L3. B is suppressed so it cannot accidentally attack or start a combo. |
-| **L2 or R3 held alone for 1 s, release** | Start AI mode. A long R2 block no longer starts AI. |
-| **Start** | Open the native ring. From the settings ring, highlight **Classes** and press B to open the party class editor. |
+| **L3 held alone for 1 s, release** | Start AI mode. L2 and R2 holds never start it. |
+| **R3** | Open the native ring. From the settings ring, highlight **Classes** and press B to open the party class editor. |
 | **L2 + R1 / L2 + L1** | Next / previous class for the boy (all 16, wrapping). L1 alone still locks on. |
 
 Outside active field play, the base game's menu buttons remain unchanged.
@@ -90,7 +90,7 @@ the first hit and restore the weapon art when the hero is released.
 - Not reproduced: the `Fire Ball Lv.n` banner; the spark palette for frames
   0-59 (Turbo filters palettes through `$F0:4A46`; the game copies the cast
   palette itself at frame 60).
-- **Testing without MP:** turn the AI on (hold R2/R3 1 s), press a button
+- **Testing without MP:** turn the AI on (hold L3 1 s), press a button
   for Gambits, move to `Infinite MP (test)` and press B (or Left/Right), then
   `Exit gambits: you play`. While ON the proxy sets the boy's current MP
   (`+0x186`) to 99 every field frame; the game still pays each cast. Turning
@@ -173,7 +173,7 @@ Do not replace class weapon switching with artificial ring menu input.
 | L1 | Weapon flow modifier / quick swap | Proposed; may conflict with Turbo QuickSpell |
 | L2 + Y | Item ring access | Proposed remap, must remain accessible |
 | L2 + X | Magic ring access | Proposed remap, must remain accessible |
-| R2 or R3 long hold | Existing AI on/off toggle | Preserve |
+| L3 long hold | Existing AI on/off toggle | Preserve |
 | L/R in AI overlay | Gambit pages | Implemented |
 
 `src/som_ai_actions.h` currently maps Y to `open_ring`, X to `menu_x`, A to `cancel` and dash as A+direction; the live bridge's taught Candy/shop/inn/save macros depend on these logical actions. Do not change `som_action_button` blindly. Introduce a **physical -> logical virtual controller** layer, distinguish game/field/menu states and translate only while game state is verified. Maintain logical `open_ring` and `menu_x` for the bridge.
@@ -902,7 +902,7 @@ message. A member without a class shows no panel.
 
 ### Party Classes in the settings ring
 
-From the field, press **Start** and use Up or Down to reach the ring with Equip
+From the field, press **R3** and use Up or Down to reach the ring with Equip
 and Status. **Classes** uses the Action Grid icon in the native ring, between Window Edit
 and Equip. Press Left from Window Edit or Right from Equip to highlight it, then
 press **B**. The editor opens for the ring's owner. X switches party member,
@@ -915,11 +915,18 @@ percentages describe the current
 style or class weapon, where 100% is the unscaled weapon value. Available move
 previews use the existing hero animation pack.
 
-Player 2 keeps **Start** for joining; after joining, Start and the stick clicks
-do not open a second ring menu. In field combat, Player 2 uses the same class
+Player 2 uses **Start** to join and to leave (the hero goes back to the computer);
+Start and the stick clicks do not open a second ring menu. If Player 1 leaves or
+their hero dies, Player 2's pad takes over every Player 1 control until Player 1
+presses Start again. The first pad to press a button is Player 1, the next Player 2; a pad that drops
+gets its place back. **Select+Start** held on either pad quits with an auto-save.
+While the AI plays, **L2+Start** on either pad stops it. In field combat, Player 2 uses the same class
 bindings as Player 1: **R2** guards, **R1** changes style, **L3+B** is the style
 shortcut, **L2+R1/L1** changes the controlled member's class, **Y** uses the
-class's second weapon or spell, and **X** casts or uses its class action. **L2+X**
+class's second weapon or spell, and **X** casts or uses its class action. **A** evades
+with the class's own dodge and **L2 + D-pad signs, then B/Y** charges a special
+(one such move at a time between the two players). **B** runs the class's own string and
+**L1** locks on; both players keep their own string and target. **L2+X**
 requests the actor-specific class move. Party class setup remains in Player 1's
 Classes editor.
 **L2+X** requests the companion class technique for the Girl or Sprite.
@@ -948,3 +955,13 @@ at any time: toward, toward + B and away, toward + B. A pause of 1.5 s starts ov
 
 Shunshin and Kawarimi still cost their Chakra; without it the cut comes alone. Sleep Flower costs
 its MP; when it cannot be cast the rogue plays Cruel Cut. The Kusarigama style keeps its own B.
+
+## Camera
+
+The picture zooms and pans by itself (`src/som_camera.h`), at exactly 2x when
+settled so pixels stay even: on the speaker and the lead hero while a dialogue
+window is open (if both fit), and on the lead after 10 s standing still with no
+monsters about. Fights and walking stay at 1x. The HUD and text windows are
+the game's BG3 layer and keep their exact place and size. It changes only the
+picture. Off switch: an empty file `cores/experimental/som_ai_camera_off`, or
+the commands `camera_off` / `camera_on`.

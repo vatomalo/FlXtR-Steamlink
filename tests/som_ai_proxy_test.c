@@ -171,12 +171,12 @@ int main(void){
                                (1u<<RETRO_DEVICE_ID_JOYPAD_R2));
     som_input_poll();assert(!som_manual_disciplines);
     mocked_buttons=0;som_input_poll();
-    /* Start in the field opens the game's ring (player, 2026-11-22): the
-     * game sees a short Y and never the Start; our menu stays shut. */
-    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_START);
+    /* R3 in the field opens the game's ring (player, 2026-11-25): the
+     * game sees a short Y and never the R3; our menu stays shut. */
+    mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R3);
     som_input_poll();
     assert(!som_manual_disciplines);
-    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==0);
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R3)==0);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
     assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
            (int16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y));
@@ -260,7 +260,88 @@ int main(void){
     assert(mocked_wram[0xE382]==35u);
     mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L3)|(1u<<RETRO_DEVICE_ID_JOYPAD_START);
     som_pad2_poll();
-    assert(pad2_wanted==(1u<<RETRO_DEVICE_ID_JOYPAD_L3)); /* no P2 ring */
+    /* Start reaches the game, which hands the hero back (leave). */
+    assert(pad2_wanted==((1u<<RETRO_DEVICE_ID_JOYPAD_L3)|(1u<<RETRO_DEVICE_ID_JOYPAD_START)));
+    mocked_pad2=0;som_pad2_poll();
+    /* The press that stops the AI must not also make player 2 leave. */
+    ring_ai_enabled=1;mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_START;som_pad2_poll();
+    ring_ai_enabled=0;som_pad2_poll();assert(pad2_wanted==0);
+    mocked_pad2=0;som_pad2_poll();
+    mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_START;som_pad2_poll();
+    assert(pad2_wanted==(1u<<RETRO_DEVICE_ID_JOYPAD_START));
+    mocked_pad2=0;som_pad2_poll();
+    /* Start is the game's own for player 1 too, also with both bound. */
+    mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_START;som_input_poll();
+    assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==1);
+    mocked_buttons=0;som_input_poll();
+    {   /* Pads by permanent id: seats, reconnecting and the quit chord. */
+        SomPads t;som_pads_init(&t);
+        t.pad[0].fd=t.pad[1].fd=100;strcpy(t.pad[0].id,"aa");strcpy(t.pad[1].id,"bb");
+        assert(!som_pads_seats(&t)&&!t.seat[0][0]);          /* nobody pressed */
+        som_pads_event(&t.pad[1],EV_KEY,0x131,1);assert(!som_pads_seats(&t));
+        assert(!strcmp(t.seat[0],"bb")&&!t.seat[1][0]&&som_pads_buttons(&t,0)==1u);
+        som_pads_event(&t.pad[1],EV_KEY,0x131,0);
+        som_pads_event(&t.pad[0],EV_ABS,ABS_HAT0X,-1);(void)som_pads_seats(&t);
+        assert(!strcmp(t.seat[1],"aa")&&som_pads_buttons(&t,1)==(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT));
+        som_pads_event(&t.pad[0],EV_ABS,ABS_HAT0X,0);
+        /* Player 1's pad drops and returns on another node and slot. */
+        t.pad[1].fd=-1;(void)som_pads_seats(&t);
+        assert(som_pads_buttons(&t,0)==0&&!strcmp(t.seat[0],"bb"));
+        som_pads_event(&t.pad[0],EV_KEY,0x130,1);(void)som_pads_seats(&t);
+        assert(!strcmp(t.seat[1],"aa")&&!strcmp(t.seat[0],"bb")); /* 2 does not steal 1 */
+        som_pads_event(&t.pad[0],EV_KEY,0x130,0);
+        t.pad[3].fd=100;strcpy(t.pad[3].id,"bb");
+        som_pads_event(&t.pad[3],EV_ABS,ABS_RX,255);(void)som_pads_seats(&t);
+        assert(som_pads_buttons(&t,0)==(1u<<RETRO_DEVICE_ID_JOYPAD_L2));
+        som_pads_event(&t.pad[3],EV_ABS,ABS_RX,0);
+        /* A third pad takes the seat of one that is gone. */
+        t.pad[3].fd=-1;t.pad[2].fd=100;strcpy(t.pad[2].id,"cc");
+        som_pads_event(&t.pad[2],EV_KEY,0x132,1);(void)som_pads_seats(&t);
+        assert(!strcmp(t.seat[0],"cc")&&!strcmp(t.seat[1],"aa"));
+        som_pads_event(&t.pad[2],EV_KEY,0x132,0);
+        /* Either pad quits; the game does not see the chord. */
+        som_pads_event(&t.pad[0],EV_KEY,0x138,1);som_pads_event(&t.pad[0],EV_KEY,0x139,1);
+        assert(som_pads_buttons(&t,1)==0);
+        for(unsigned i=1;i<SOM_PADS_QUIT_FRAMES;i++)assert(!som_pads_seats(&t));
+        assert(som_pads_seats(&t)==1&&!som_pads_seats(&t));
+    }
+    {   /* Both play: pad 2 borrows the acting hero for its evade. */
+        const uint16_t a_key=1u<<RETRO_DEVICE_ID_JOYPAD_A,left=1u<<RETRO_DEVICE_ID_JOYPAD_LEFT;
+        const uint8_t saved=disciplines.party[0];
+        mocked_wram[0xD9]=1;mocked_wram[0xDA]=2;disciplines.party[0]=SOM_DISC_MARTIAL_ARTS;
+        mocked_pad2=0;som_input_poll();
+        assert(som_actor==0u&&!evade_active);
+        mocked_pad2=left|a_key;som_input_poll();
+        assert(som_actor==1u&&evade_active);
+        mocked_buttons=left;som_input_poll();
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT)==1); /* P1 free */
+        assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        mocked_buttons=mocked_pad2=0;
+        evade_active=0;ukemi_draw.active=0;som_input_poll();
+        assert(som_actor==0u);                             /* handed back */
+        som_energy_init(som_actor_energy());
+        disciplines.party[0]=saved;
+    }
+    {   /* Player 1 gone: pad 2 leads and drives the game's port 2. */
+        const uint16_t r3=1u<<RETRO_DEVICE_ID_JOYPAD_R3,st=1u<<RETRO_DEVICE_ID_JOYPAD_START;
+        frontend_state=mocked_input_mask;physical_state=som_lead_state;
+        mocked_wram[0xD9]=0;mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT;som_input_poll();
+        assert(lead_swapped&&som_pad1_member_in(mocked_wram)==1u);
+        assert(som_pad2_member(mocked_wram)==SOM_PARTY_MEMBERS);
+        assert(last_physical_buttons==(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT));
+        assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT)==0);
+        mocked_pad2=r3;som_input_poll();                  /* the ring, on port 2 */
+        assert(som_input_state(1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==1);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y)==0);
+        mocked_pad2=0;frame_number+=SOM_START_RING_FRAMES;som_input_poll();
+        mocked_buttons=st;som_input_poll();               /* pad 1 can rejoin */
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START)==1);
+        mocked_wram[0xD9]=1;som_input_poll();             /* back: no press from the held Start */
+        assert(!lead_swapped&&last_physical_buttons==st&&som_pad1_member_in(mocked_wram)==0u);
+        mocked_buttons=0;som_input_poll();
+        physical_state=mocked_input_mask;frontend_state=NULL;
+    }
     mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_R3;som_pad2_poll();
     assert(pad2_wanted==(1u<<RETRO_DEVICE_ID_JOYPAD_R3)); /* no synthetic Y */
     mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_R);
@@ -290,6 +371,13 @@ int main(void){
     mocked_pad2=(1u<<RETRO_DEVICE_ID_JOYPAD_L2)|(1u<<RETRO_DEVICE_ID_JOYPAD_START);
     som_input_poll();assert(!ring_ai_enabled&&!gambits.open); /* L2+Start is the explicit P2 exit */
     mocked_pad2=0;som_input_poll();
+    /* The same chord on slot 1; split across two pads it does nothing. */
+    ring_ai_enabled=1;gambits.open=0;mocked_buttons=1u<<RETRO_DEVICE_ID_JOYPAD_L2;
+    mocked_pad2=1u<<RETRO_DEVICE_ID_JOYPAD_START;som_input_poll();assert(ring_ai_enabled);
+    mocked_pad2=0;mocked_buttons|=1u<<RETRO_DEVICE_ID_JOYPAD_START;
+    som_input_poll();assert(!ring_ai_enabled&&!gambits.open);
+    mocked_buttons=0;som_input_poll();
+    assert(!ring_ai_enabled); /* letting go of L2 must not start the AI */
     memset(mocked_wram,0,sizeof(mocked_wram));
     {
         /* Scaled savestates can enter on any frame. Keep damage proportion
@@ -998,21 +1086,28 @@ int main(void){
     backend_retro_get_memory_size=mocked_memory_size;
     ring_ai_file=ring_ai_path;unlink(ring_ai_path);
     frame_number=500000ul;
-    pressed=RETRO_DEVICE_ID_JOYPAD_R3;som_input_poll();
+    pressed=RETRO_DEVICE_ID_JOYPAD_L3;som_input_poll();
     frame_number+=SOM_SWITCH_HOLD_FRAMES-1;som_input_poll();
     pressed=100;som_input_poll();
     assert(!ring_ai_enabled&&access(ring_ai_path,F_OK)!=0);      /* too short */
-    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_R3;som_input_poll();
+    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_L3;som_input_poll();
     frame_number+=SOM_SWITCH_HOLD_FRAMES;
     pressed=RETRO_DEVICE_ID_JOYPAD_B;som_input_poll();           /* another button */
     pressed=100;frame_number+=1;som_input_poll();
     assert(!ring_ai_enabled);
-    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_L2;som_input_poll();
+    static const unsigned never[]={RETRO_DEVICE_ID_JOYPAD_R3,RETRO_DEVICE_ID_JOYPAD_R2,RETRO_DEVICE_ID_JOYPAD_L2};
+    for(unsigned k=0;k<3u;k++){
+        frame_number+=10;pressed=never[k];som_input_poll();
+        frame_number+=SOM_SWITCH_HOLD_FRAMES;som_input_poll();
+        frame_number+=1;pressed=100;som_input_poll();
+        assert(!ring_ai_enabled);                                /* only L3 starts it */
+    }
+    frame_number+=10;pressed=RETRO_DEVICE_ID_JOYPAD_L3;som_input_poll();
     frame_number+=SOM_SWITCH_HOLD_FRAMES;som_input_poll();
     frame_number+=1;pressed=100;som_input_poll();
     assert(ring_ai_enabled&&access(ring_ai_path,F_OK)==0);       /* long hold: on */
     assert(overlay.frames_left>0&&strstr(overlay.lines[0],"AI ON"));
-    frame_number+=40;pressed=RETRO_DEVICE_ID_JOYPAD_R3;som_input_poll();
+    frame_number+=40;pressed=RETRO_DEVICE_ID_JOYPAD_L3;som_input_poll();
     assert(ring_ai_enabled&&gambits.open);                       /* press: gambit menu */
     frame_number+=SOM_SWITCH_HOLD_FRAMES*2;som_input_poll();
     frame_number+=1;pressed=100;som_input_poll();
@@ -3495,7 +3590,7 @@ int main(void){
             assert(disciplines.selected==3u&&disciplines.order[0]==0u&&disciplines.order[15]==15u);
             unlink(tmp);disc_file="/nonexistent/flxtr-disciplines";
         }
-        mocked_buttons=start;som_input_poll();                     /* Start opens the ring */
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R3);som_input_poll(); /* R3 opens the ring */
         assert(!som_manual_disciplines);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==
                (1u<<RETRO_DEVICE_ID_JOYPAD_Y));

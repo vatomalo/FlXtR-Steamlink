@@ -53,6 +53,10 @@ test-som-net-pad:
 
 .PHONY: test-som-net-pad
 
+test-som-arena:
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/som_arena_test.c -o build/som-arena-test
+	./build/som-arena-test
 test-som-camera:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_camera_test.c -o build/som-camera-test

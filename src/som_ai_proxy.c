@@ -42,6 +42,7 @@
 #include "som_weapon_styles.h"
 #include "som_weapon_mask.h"
 #include "som_art_gen.h"
+#include "som_arena.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include <time.h>
@@ -1192,6 +1193,9 @@ static const char *weapon_mask_on_file=SOM_WEAPON_MASK_ON_FILE;
 #define SOM_WEAPON_MASK_CUSTOM_FILE "/home/apps/retroarch/cores/experimental/som_weapon_masks_custom.bin"
 #define SOM_WEAPON_MASK_OFF_FILE "/home/apps/retroarch/cores/experimental/som_ai_weapon_masks_off"
 static int weapon_mask_generated;
+static int arena_enabled,arena_back=-1,arena_pending;
+static unsigned arena_door,arena_rope;
+static unsigned long arena_since;
 static unsigned long weapon_mask_on_checked;
 static int weapon_mask_on,weapon_mask_tried;
 static uint8_t *weapon_mask_pack;
@@ -8700,6 +8704,44 @@ static int som_portal_place_raw(uint8_t *ram){
 }
 /* Each frame: a hero who steps into one portal comes out of the other. He
  * must have left both first (no bouncing back and forth). */
+/* Watts' arena (som_arena.h): the trip there on a yes, and back when the lead
+ * hero stands in the gate and Down is held. */
+static void som_arena_frame(uint8_t *ram){
+    if(!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1){arena_door=0;return;}
+    const unsigned map=som_word(ram+0xDC)&0x1FFu;
+    const uint8_t *table=som_rom_at(0xC83000u,0x1000u);
+    if(!table)return;
+    const int visiting=ram[0xCF00u+SOM_ARENA_KEEP]!=0;
+    if(visiting&&map!=SOM_ARENA_MAP&&(!arena_since||frame_number-arena_since>600ul||arena_pending==2)){
+        som_arena_restore(ram);
+        if(arena_pending==2){                        /* home: the Magic Rope's spot too */
+            ram[0x108]=(uint8_t)arena_rope;ram[0x109]=(uint8_t)(arena_rope>>8);
+        }
+        arena_pending=0;arena_back=-1;
+    }
+    if(ram[0xCF00u+SOM_ARENA_FLAG]){
+        ram[0xCF00u+SOM_ARENA_FLAG]=0;
+        const int back=som_arena_transition_to(table,map,som_word(ram+0x10E));
+        arena_rope=som_word(ram+0x108);
+        if(map!=SOM_ARENA_MAP&&back>=0&&som_arena_go(ram,SOM_ARENA_TRANSITION,1)){
+            arena_back=back;arena_pending=1;arena_since=frame_number;
+            fprintf(stderr,"[som-ai] ARENA enter from map %u, back by transition %03X\n",map,(unsigned)back);
+        }
+        return;
+    }
+    if(map!=SOM_ARENA_MAP){arena_door=0;return;}
+    if(!visiting)return;                             /* the story's own visit */
+    const uint8_t *hero=ram+0xE000u+0x200u*som_pad1_member_in(ram);
+    const int gate=som_word(hero+4)/16u>=SOM_ARENA_DOOR_Y&&
+        (last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));
+    arena_door=gate?arena_door+1u:0u;
+    if(arena_door<SOM_ARENA_LEAVE_FRAMES)return;
+    arena_door=0;
+    if(som_arena_go(ram,arena_back>=0?(unsigned)arena_back:SOM_ARENA_HOME,0)){
+        arena_pending=2;
+        fprintf(stderr,"[som-ai] ARENA leave by transition %03X\n",arena_back>=0?(unsigned)arena_back:SOM_ARENA_HOME);
+    }
+}
 static void som_portal_frame(uint8_t *ram){
     if(!ram||!portals.count)return;
     const uint8_t *hero=SOM_ACT(ram);
@@ -9338,7 +9380,11 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
         memcpy(patched_rom,game->data,game->size);
         const size_t map_patches=som_apply_rom_patches(patched_rom,game->size);
         classes_ring_enabled=som_enable_classes_ring(patched_rom,game->size);
-        if(map_patches||classes_ring_enabled){
+        arena_enabled=som_arena_patch(patched_rom+(game->size%0x8000u==512u?512u:0u),
+                                      game->size-(game->size%0x8000u==512u?512u:0u));
+        arena_back=-1;arena_door=0;arena_pending=0;arena_since=0;
+        fprintf(stderr,"[som-ai] ARENA Watts %s\n",arena_enabled?"sends to the arena":"left as he is (scripts differ)");
+        if(map_patches||classes_ring_enabled||arena_enabled){
             patched_game=*game;patched_game.data=patched_rom;load_info=&patched_game;
         }
     }
@@ -9794,6 +9840,7 @@ RETRO_API void retro_run(void){
         som_bash_tick();
         if(fuma.active)som_fuma_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(blink_active)som_blink_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+        if(arena_enabled)som_arena_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(portals.count)som_portal_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         if(monk_glove_raised>=0||disciplines.selected==SOM_DISC_MARTIAL_ARTS)
             som_monk_glove(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));

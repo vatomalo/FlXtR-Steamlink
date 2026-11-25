@@ -993,7 +993,12 @@ critical (12 % + level/5, at most 30 %) doubles it and puts an ordinary monster
 to sleep. **Cleric, Healing Touch:** heals the most hurt ally in reach; burns
 the undead; judges any other monster (heroes who hit it heal); else a small
 self-heal. **Dancer, Ribbon:** light damage in front, slows monsters, readies
-allies' weapon gauges. Bosses and familiars are never put to sleep or slowed.
+allies' weapon gauges. Bosses and familiars are never put to sleep or slowed. **Mage, Arcane
+Orbs:** three homing orbs, one back every 54 frames, a weak spark without one.
+**Warlock, Hex Chain:** binds the nearest monster and drinks a share of the
+damage. **Summoner, Wisp:** flies out and back, may hit both ways.
+**Necromancer, Bone Spikes:** run through every monster in line. Monk (+70 %),
+Archer (+35 %) and Hunter (+30 %) deal a share more on weapon hits.
 
 **Whacked:** a critical hit (the game's "gets whacked!") that kills an enemy
 makes the camera punch in on it; AI menu, *Whacked camera*, turns it off.

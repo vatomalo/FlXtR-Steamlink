@@ -18,7 +18,7 @@
 #include <stdlib.h>
 #include "som_overlay.h"
 
-#define SOM_BOLTS 4u
+#define SOM_BOLTS 8u
 #define SOM_BOLT_SPEED 5          /* px per frame */
 #define SOM_BOLT_FRAMES 22u       /* flight: ~110 px */
 #define SOM_BOLT_LEAD 10          /* starts this far ahead of the hero (the fist) */
@@ -26,10 +26,17 @@
 #define SOM_BOLT_HIT_Y 12
 #define SOM_BOLT_BURST_FRAMES 10u /* the splash where it hits or fades */
 #define SOM_BOLT_ELEMENTS 8u
+/* Orb (Mage) homes in, spikes (Necromancer) run through everything, the
+ * wisp (Summoner) flies out and back, the chain (Warlock) is a picture. */
 /* Looks (player, 2026-11-25: "give them other types"): the ball; Dream
  * Petal (Mentalist), a slow lotus; Ribbon (Dancer) and Healing Touch
  * (Cleric), shown where they happen and never flying. */
-enum { SOM_BOLT_BALL, SOM_BOLT_PETAL, SOM_BOLT_RIBBON, SOM_BOLT_TOUCH };
+enum { SOM_BOLT_BALL, SOM_BOLT_PETAL, SOM_BOLT_ORB, SOM_BOLT_SPIKE, SOM_BOLT_WISP,
+       SOM_BOLT_RIBBON, SOM_BOLT_TOUCH, SOM_BOLT_CHAIN };
+#define SOM_ORB_FRAMES 46u
+#define SOM_ORB_SEEK 130
+#define SOM_WISP_OUT 18u
+#define SOM_WISP_FRAMES 60u
 #define SOM_PETAL_SPEED 3
 #define SOM_PETAL_FRAMES 34u
 #define SOM_SHOW_FRAMES 18u
@@ -39,6 +46,8 @@ typedef struct {
     unsigned who, element, damage, map;
     int big;                      /* Y's ball: larger (the class's second spell) */
     int kind;                     /* SOM_BOLT_* below: the class's own look */
+    unsigned hits;                /* monsters this pass has hit (bit = slot) */
+    int tx, ty;                   /* chain: the bound one; wisp: home */
     unsigned long start, burst;   /* burst: frame of the splash, 0 none */
 } SomBolt;
 
@@ -73,7 +82,7 @@ static inline int som_bolt_fire(SomBolt b[SOM_BOLTS], unsigned who, unsigned ele
         o->y = y + o->dy * SOM_BOLT_LEAD;
         o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
         o->damage = damage; o->map = map;
-        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1; o->big = 0; o->kind = SOM_BOLT_BALL;
+        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1; o->big = 0; o->kind = SOM_BOLT_BALL; o->hits = 0; o->tx = x; o->ty = y;
         return (int)i + 1;
     }
     return 0;
@@ -87,7 +96,7 @@ static inline int som_bolt_sparkle(SomBolt b[SOM_BOLTS], unsigned who, unsigned 
         SomBolt *o = &b[i];
         o->dx = o->dy = 0; o->x = x; o->y = y;
         o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
-        o->damage = 0; o->map = map; o->big = 1; o->kind = SOM_BOLT_BALL;
+        o->damage = 0; o->map = map; o->big = 1; o->kind = SOM_BOLT_BALL; o->hits = 0; o->tx = x; o->ty = y;
         o->start = o->burst = frame ? frame : 1u; o->active = 1;
         return 1;
     }
@@ -124,18 +133,44 @@ static inline int som_bolt_step(SomBolt *o, uint8_t *ram, unsigned map, int skip
         return -1;
     }
     const int petal = o->kind == SOM_BOLT_PETAL;
-    if (frame - o->start >= (petal ? SOM_PETAL_FRAMES : SOM_BOLT_FRAMES)) { o->burst = frame; return -1; }
-    o->x += o->dx * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);
-    o->y += o->dy * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);
+    const unsigned life = petal ? SOM_PETAL_FRAMES : o->kind == SOM_BOLT_ORB ? SOM_ORB_FRAMES :
+        o->kind == SOM_BOLT_WISP ? SOM_WISP_FRAMES : SOM_BOLT_FRAMES;
+    if (frame - o->start >= life) { o->burst = frame; return -1; }
+    if (o->kind == SOM_BOLT_ORB) {             /* toward the nearest monster */
+        int best = -1, gx = 0, gy = 0;
+        for (int slot = 0; slot < 3; slot++) {
+            const uint8_t *m = ram + SOM_BOLT_MONSTER_BASE + (unsigned)slot * SOM_BOLT_OBJECT;
+            if (slot == skip || !som_bolt_monster_alive(m)) continue;
+            const int ex = (int)som_bolt_u16(m + 2) - o->x, ey = (int)som_bolt_u16(m + 4) - o->y;
+            const int d = abs(ex) + abs(ey);
+            if (d <= SOM_ORB_SEEK && (best < 0 || d < best)) { best = d; gx = ex; gy = ey; }
+        }
+        if (best >= 0 && frame - o->start >= 6u) {
+            o->x += gx > 4 ? 4 : gx < -4 ? -4 : gx;
+            o->y += gy > 4 ? 4 : gy < -4 ? -4 : gy;
+        } else { o->x += o->dx * 4; o->y += o->dy * 4; }
+    } else if (o->kind == SOM_BOLT_WISP && frame - o->start >= SOM_WISP_OUT) {
+        const uint8_t *h = ram + 0xE000u + 0x200u * (o->who % 3u);     /* home to its master */
+        const int ex = (int)som_bolt_u16(h + 2) - o->x, ey = (int)som_bolt_u16(h + 4) - o->y;
+        if (frame - o->start == SOM_WISP_OUT) o->hits = 0;             /* may hit again */
+        if (abs(ex) + abs(ey) < 10) { o->burst = frame; return -1; }
+        o->x += ex > 5 ? 5 : ex < -5 ? -5 : ex;
+        o->y += ey > 5 ? 5 : ey < -5 ? -5 : ey;
+    } else {
+        o->x += o->dx * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);
+        o->y += o->dy * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);
+    }
+    const int through = o->kind == SOM_BOLT_SPIKE || o->kind == SOM_BOLT_WISP;
     for (int slot = 0; slot < 3; slot++) {
         if (slot == skip) continue;
         uint8_t *m = ram + SOM_BOLT_MONSTER_BASE + (unsigned)slot * SOM_BOLT_OBJECT;
-        if (!som_bolt_monster_alive(m)) continue;
+        if (!som_bolt_monster_alive(m) || (o->hits >> slot & 1u)) continue;
         if (abs((int)som_bolt_u16(m + 2) - o->x) > SOM_BOLT_HIT_X ||
             abs((int)som_bolt_u16(m + 4) - o->y) > SOM_BOLT_HIT_Y) continue;
         const unsigned pending = m[0x1F1] + o->damage;
         m[0x1F1] = (uint8_t)(pending > 0xFFu ? 0xFFu : pending);
-        o->burst = frame;
+        o->hits |= 1u << slot;
+        if (!through) o->burst = frame;
         return slot;
     }
     return -1;
@@ -182,6 +217,38 @@ static inline void som_bolt_draw(uint8_t *pixels, unsigned width, unsigned heigh
                          o->burst ? 1 : 2, (k & 1u) ? pink : deep);
         }
         if (!o->burst) som_bolt_dot(pixels, width, height, pitch, format, cx, cy, 2, pale);
+        return;
+    }
+    if (o->kind == SOM_BOLT_SPIKE) {    /* bones out of the ground, a few behind the front */
+        const uint32_t bone = som_overlay_color(format, 244, 238, 214);
+        const uint32_t dark = som_overlay_color(format, 120, 108, 92);
+        for (int t = 0; t < 4; t++) {
+            if ((int)age < t * 2) break;
+            const int x = cx - o->dx * t * 10 + (o->dy ? (t & 1 ? 4 : -4) : 0), y = cy - o->dy * t * 10 + 9;
+            const int tall = 12 - t * 3;
+            for (int h = 0; h < tall; h++)
+                som_bolt_dot(pixels, width, height, pitch, format, x + (h * 2) / 7, y - h,
+                             h < tall / 3 ? 1 : 0, h < tall / 4 ? dark : bone);
+        }
+        return;
+    }
+    if (o->kind == SOM_BOLT_WISP && !o->burst) {   /* a small flame with eyes */
+        const int bob = (int)((age / 4u) & 1u);
+        som_bolt_dot(pixels, width, height, pitch, format, cx, cy + bob, 5, rim);
+        som_bolt_dot(pixels, width, height, pitch, format, cx, cy + bob, 4, glow);
+        som_bolt_dot(pixels, width, height, pitch, format, cx, cy - 5 + bob, 2, glow);
+        som_bolt_dot(pixels, width, height, pitch, format, cx, cy - 8 + bob, 1, core);
+        som_bolt_dot(pixels, width, height, pitch, format, cx - 2, cy + bob, 0, rim);
+        som_bolt_dot(pixels, width, height, pitch, format, cx + 2, cy + bob, 0, rim);
+        return;
+    }
+    if (o->kind == SOM_BOLT_CHAIN) {    /* links from the caster to the bound one */
+        const int ex = o->tx - o->x, ey = o->ty - o->y;
+        for (int t = 0; t <= 14; t++) {
+            if (t > (int)age * 4) break;
+            som_bolt_dot(pixels, width, height, pitch, format, cx + ex * t / 14,
+                         cy + ey * t / 14 + (int)((t + age) & 1u), t & 1 ? 1 : 2, t & 1 ? glow : rim);
+        }
         return;
     }
     if (o->kind == SOM_BOLT_RIBBON) {   /* a ribbon swept through the half circle in front */

@@ -1217,7 +1217,14 @@ static unsigned lock_map;
 static void som_lock_toggle(uint8_t *ram);
 static void som_lock_frame(uint8_t *ram);
 static void som_lock_frame2(uint8_t *ram);
+#define SOM_ORBS 3u
+static unsigned mage_orbs[SOM_PARTY_MEMBERS]={SOM_ORBS,SOM_ORBS,SOM_ORBS};
 static int som_lock_marker(int *x,int *y);
+static int som_orbs_shown(void){
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)
+        if(mage_orbs[who]&&som_disc_member_class(&disciplines,who)==3u)return 1;
+    return 0;
+}
 static void som_lock_toggle_for(uint8_t *ram,unsigned who);
 static void som_auto_target_frame(uint8_t *ram);
 static void som_class_x_frame(uint8_t *ram);
@@ -1629,6 +1636,11 @@ static unsigned som_perk_bonus(unsigned who,unsigned slot,unsigned damage,const 
     if(bonus)fprintf(stderr,"[som-ai] PERK %s %s: +%u on the %s (monster %u)\n",som_party_names[who],names,bonus,what,slot);
     return bonus;
 }
+/* Balance, measured 2026-11-25 (B only, level 10): the share of a weapon
+ * hit's damage these classes deal on top. */
+static unsigned som_class_boost(unsigned cls){
+    return cls==SOM_DISC_MARTIAL?70u:cls==SOM_DISC_ARCHERY?35u:cls==12u?30u:0u;   /* 12: Hunter */
+}
 /* After a hero hit lowered monster `slot` by `drop` to `hp_after`. */
 static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,unsigned hp_after){
     if(!ram||slot>2u)return;
@@ -1642,7 +1654,8 @@ static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,u
     if(drop)perk_last_hit_damage=drop;
     uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     if(hp_after){
-        const unsigned bonus=som_perk_bonus(who,slot,drop,"hit");
+        const unsigned bonus=som_perk_bonus(who,slot,drop,"hit")+
+            drop*som_class_boost(som_disc_member_class(&disciplines,who))/100u;
         if(bonus){
             owed[slot]+=bonus;owed_at[slot]=frame_number;
             const unsigned pending=m[0x1F1]+bonus;
@@ -3783,9 +3796,14 @@ static unsigned class_roll(void){
     class_rng&=0xFFFFFFFFu;
     return (class_rng>>8)%100u;
 }
+/* The mage's orbs: three, each back SOM_ORB_RECHARGE frames after the last. */
+#define SOM_ORB_RECHARGE 54ul
+static unsigned long orb_back_at[SOM_PARTY_MEMBERS];
+#define SOM_CHAIN_REACH 96
 static const char *som_class_attack_name(unsigned cls){
     return cls==SOM_DISC_PSIONICS?"Dream Petal":cls==SOM_DISC_CLERIC?"Healing Touch":
-        cls==7u?"Ribbon":NULL;
+        cls==7u?"Ribbon":cls==3u?"Arcane Orbs":cls==5u?"Hex Chain":
+        cls==6u?"Wisp":cls==SOM_DISC_NECRO?"Bone Spikes":NULL;
 }
 static int som_undead(unsigned id){
     return id==0x09u||id==0x12u||id==0x30u||id==0x35u||id==0x36u;
@@ -3893,6 +3911,31 @@ static void som_dancer_ribbon(uint8_t *ram,unsigned who,unsigned map){
     }
     som_class_show(who,SOM_BOLT_RIBBON,x,y,me[0x10],map);
 }
+/* Hex Chain: the nearest monster, most of a ball's damage, a share drunk. */
+static void som_warlock_chain(uint8_t *ram,unsigned who,unsigned map){
+    uint8_t *me=ram+0xE000u+0x200u*who;
+    const int x=(int)som_word(me+2),y=(int)som_word(me+4);
+    int best=-1;long near=0;
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
+        if((int)k==familiar.slot||!som_bun_monster_alive(m)||(m[0x0B]&0x80u)!=(me[0x0B]&0x80u))continue;
+        const long d=labs((long)som_word(m+2)-x)+labs((long)som_word(m+4)-y);
+        if(d<=SOM_CHAIN_REACH&&(best<0||d<near)){best=(int)k;near=d;}
+    }
+    if(best<0)return;
+    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)best;
+    const unsigned damage=som_mage_bolt_damage(me,5u)*11u/10u;
+    som_queue_damage(m,damage);monster_hit_frame[best]=frame_number;monster_hit_who[best]=who;
+    som_judged_hit(ram,who,(unsigned)best);
+    if(som_word(me+0x182)<som_word(me+0x184)&&!som_undead(m[0x180]))som_queue_heal(me,damage/8u+1u);
+    som_xp_give(5u,SOM_XP_SPELL,m[0x180],SOM_XPK_SPELL,"hex chain");
+    const int slot=som_bolt_fire(mage_bolts,who,6u,x,y,me[0x10],0u,map,frame_number);
+    if(slot>0){
+        SomBolt *b=&mage_bolts[slot-1];
+        b->kind=SOM_BOLT_CHAIN;b->x=x;b->y=y;b->tx=(int)som_word(m+2);b->ty=(int)som_word(m+4);
+    }
+    fprintf(stderr,"[som-ai] CHAIN %s monster %d for %u\n",som_party_names[who],best,damage);
+}
 /* The class's own B. 1 = it replaces the jab and the ball. */
 static int som_class_attack(uint8_t *ram,unsigned who,unsigned cls,unsigned map){
     uint8_t *hero=ram+0xE000u+0x200u*who;
@@ -3903,6 +3946,23 @@ static int som_class_attack(uint8_t *ram,unsigned who,unsigned cls,unsigned map)
     no_jab_until[who]=frame_number+20ul;       /* the fist's hit box outlives the swing */
     if(cls==SOM_DISC_CLERIC)som_cleric_touch(ram,who,map);
     else if(cls==7u)som_dancer_ribbon(ram,who,map);
+    else if(cls==5u)som_warlock_chain(ram,who,map);
+    else if(cls==3u||cls==6u||cls==SOM_DISC_NECRO){
+        unsigned damage=som_mage_bolt_damage(hero,cls);
+        const int kind=cls==3u?SOM_BOLT_ORB:cls==6u?SOM_BOLT_WISP:SOM_BOLT_SPIKE;
+        if(cls==6u)damage=damage/2u;
+        else if(cls==SOM_DISC_NECRO)damage=damage*4u/5u;
+        else if(mage_orbs[who]){
+            mage_orbs[who]--;orb_back_at[who]=frame_number+SOM_ORB_RECHARGE;
+        }else damage=damage*3u/10u;                       /* out of orbs: a spark */
+        const unsigned element=cls==3u?som_spell_element(som_caster_spell(cls,0u)):cls==6u?4u:6u;
+        const int slot=som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),(int)som_word(hero+4),
+                                     hero[0x10],damage,map,frame_number);
+        if(slot>0){
+            mage_bolts[slot-1].kind=kind;
+            fprintf(stderr,"[som-ai] %s %s (%u)\n",cls==3u?"ORB":cls==6u?"WISP":"SPIKES",som_party_names[who],damage);
+        }
+    }
     else{
         const unsigned damage=som_mage_bolt_damage(hero,cls)/2u;
         const int slot=som_bolt_fire(mage_bolts,who,4u,(int)som_word(hero+2),(int)som_word(hero+4),
@@ -3927,6 +3987,10 @@ static void som_petal_hit(uint8_t *ram,const SomBolt *b,unsigned slot){
     fprintf(stderr,"[som-ai] PETAL critical on monster %u\n",slot);
 }
 static void som_class_attack_frame(uint8_t *ram){
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)
+        if(mage_orbs[who]<SOM_ORBS&&frame_number>=orb_back_at[who]){
+            mage_orbs[who]++;orb_back_at[who]=frame_number+SOM_ORB_RECHARGE;
+        }
     for(unsigned k=0;k<3u;k++){
         uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
         for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)      /* +0x59: hits queued, bit = hero */
@@ -4280,6 +4344,19 @@ static void som_bunshin_draw(uint8_t *pixels,unsigned width,unsigned height,size
         if(age>=SOM_BUN_BOOM_FRAMES){b->start=0;continue;}
         som_bun_draw_boom(pixels,width,height,pitch,pixel_format,
                           hero_x+(b->x-hx),hero_y+(b->y-hy)-8,(unsigned)age,b->smoke);
+    }
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0]!=1||!som_word(o+0x182)||som_disc_member_class(&disciplines,who)!=3u)continue;
+        const uint8_t (*rgb)[3]=som_bolt_rgb[som_spell_element(som_caster_spell(3u,0u))%SOM_BOLT_ELEMENTS];
+        const int ox=hero_x+((int)som_word(o+2)-hx),oy=hero_y+((int)som_word(o+4)-hy)-12;
+        for(unsigned k=0;k<mage_orbs[who];k++){
+            const int8_t *v=som_bolt_ring[(frame_number/5ul+k*3u)&7u];
+            som_bolt_dot(pixels,width,height,pitch,pixel_format,ox+v[0]*15/8,oy+v[1]*7/8,2,
+                         som_overlay_color(pixel_format,rgb[1][0],rgb[1][1],rgb[1][2]));
+            som_bolt_dot(pixels,width,height,pitch,pixel_format,ox+v[0]*15/8,oy+v[1]*7/8,0,
+                         som_overlay_color(pixel_format,rgb[0][0],rgb[0][1],rgb[0][2]));
+        }
     }
     for(unsigned i=0;i<SOM_BOLTS;i++)
         if(mage_bolts[i].active)
@@ -8664,7 +8741,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                0u,&hud_x,&hud_y)))class_title=NULL;
     char combo_text[24];som_combo_text_at(&combo,som_combo_effective_level(),combo_text);
     if(menu)combo_text[0]=0;
-    const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||som_bolts_active(mage_bolts)||
+    const int clones=!menu&&(som_bun_alive(&bunshin)||som_bunshin_booming()||som_bolts_active(mage_bolts)||som_orbs_shown()||
                              kawarimi_log_start||frame_number<=trail_until);
     int hero_x=-1,hero_y=-1;
     const int hero_drawn=(combo_text[0]||clones)&&som_hero_screen(&hero_x,&hero_y);

@@ -3206,16 +3206,13 @@ int main(void){
                 som_mage_bolt_frame(ram,1);assert(!som_bolts_active(mage_bolts));
                 hero[0x01C]=0x20;hero[0x011]=2;                      /* the kick */
                 som_mage_bolt_frame(ram,1);
-                assert(hero[0x011]==SOM_GLOVE_JAB&&hero[0x030]==0xFF);
+                assert(!hero[0x01C]&&hero[0x1ED]>=46u&&hero[0x030]==0xFF);   /* no jab: an orb */
+                assert(mage_bolts[0].kind==SOM_BOLT_ORB&&mage_orbs[0]==SOM_ORBS-1u);
                 assert(mage_bolts[0].active&&mage_bolts[0].dx==1&&mage_bolts[0].dy==0);
                 assert(mage_bolts[0].element==2u);                  /* Fire Ball: Salamando */
                 som_mage_bolt_frame(ram,1);assert(!mage_bolts[1].active);   /* one per swing */
-                /* A kick picked on a later frame of the swing, or a charge
-                 * built while attacking, is still turned into the jab. */
-                hero[0x011]=3;hero[0x030]=0;hero[0x19B]=2;
-                som_mage_bolt_frame(ram,0);assert(hero[0x19B]==0);
-                som_mage_bolt_frame(ram,1);
-                assert(hero[0x011]==SOM_GLOVE_JAB&&hero[0x030]==0xFF&&!mage_bolts[1].active);
+                hero[0x19B]=2;som_mage_bolt_frame(ram,0);assert(hero[0x19B]==0);   /* no charge */
+                som_mage_bolt_frame(ram,1);assert(!mage_bolts[1].active);
                 unsigned long guard=0;
                 while(!m[0x1F1]&&guard++<SOM_BOLT_FRAMES){frame_number++;som_mage_bolt_frame(ram,1);}
                 assert(m[0x1F1]==som_mage_bolt_damage(hero,3)&&mage_bolts[0].burst);
@@ -3269,7 +3266,7 @@ int main(void){
                 m[0x1F1]=0;m[4]=(uint8_t)(sy-0u);m[5]=(uint8_t)(sy>>8);   /* beside her, 40 px */
                 hero[0x01C]=0;mage_ally_next[2]=0;mage_swing_prev[2]=0;
                 som_mage_bolt_frame(ram,1);
-                assert(spr2[0x01C]==0x20&&spr2[0x011]==SOM_GLOVE_JAB&&spr2[0x010]==0x02);
+                assert(!spr2[0x01C]&&spr2[0x1ED]>=46u&&spr2[0x010]==0x02);
                 assert(som_bolts_active(mage_bolts));
                 assert(!som_mage_ally_throw(ram,2));                  /* busy, waits */
                 /* The class attacks: no jab is left, and each does its own. */
@@ -3286,6 +3283,24 @@ int main(void){
                     if(pick==1u)assert(kinds==1u<<SOM_BOLT_TOUCH&&!m[0x1F1]&&(judged_until[0]||judged_until[1]||judged_until[2]));
                     if(pick==2u)assert(kinds==1u<<SOM_BOLT_RIBBON&&m[0x1F1]&&(m[0x190]&4u));
                     m[0x180]=keep_id;memcpy(m+2,keep_x,4);m[0x190]=m[0x191]=0;m[0x1F1]=0;
+                }
+                for(unsigned pick=0;pick<4u;pick++){       /* orb, chain, wisp, spikes */
+                    static const unsigned cs[4]={3u,5u,6u,13u},want[4]={SOM_BOLT_ORB,SOM_BOLT_CHAIN,SOM_BOLT_WISP,SOM_BOLT_SPIKE};
+                    memset(mage_bolts,0,sizeof(mage_bolts));
+                    uint8_t keep_m[0x200];memcpy(keep_m,m,sizeof(keep_m));
+                    const uint8_t keep_layer=spr2[0x0B];spr2[0x0B]=m[0x0B];
+                    m[0]=1;m[0x180]=0x14;m[0x190]=m[0x191]=0;m[0x1F1]=0;som_put_word(m+2,hx+24u);som_put_word(m+4,sy);
+                    som_put_word(spr2+2,hx);som_put_word(spr2+4,sy);spr2[0x1C]=0x20;spr2[0x10]=2;
+                    assert(som_class_attack(ram,2u,cs[pick],som_word(ram+0xDC)&0x1FFu)&&!spr2[0x1C]);
+                    assert(mage_bolts[0].active&&mage_bolts[0].kind==(int)want[pick]);
+                    unsigned hits=0;
+                    for(unsigned f=1;f<70u;f++){
+                        som_put_word(spr2+2,hx);
+                        if(som_bolt_step(&mage_bolts[0],ram,som_word(ram+0xDC)&0x1FFu,-1,frame_number+f)>=0)hits++;
+                    }
+                    assert(!mage_bolts[0].active&&m[0x1F1]);          /* it ends, and it hurt */
+                    assert(hits==(pick==1u?0u:pick==2u?2u:1u));       /* the wisp hits both ways */
+                    memcpy(m,keep_m,sizeof(keep_m));spr2[0x0B]=keep_layer;
                 }
                 {   /* sleep: not on the immune, not on bosses */
                     uint8_t o2[0x200]={0};o2[0x180]=0x14;

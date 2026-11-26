@@ -9556,10 +9556,16 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
         int kx,ky;
         if(look.head>=0&&som_head_place(img,&kx,&ky)){
             const unsigned facing=ram[0xE000u+0x200u*who+0x10u];
-            for(int v=0;v<SOM_HEAD_H;v++)for(int u=0;u<SOM_HEAD_W;u++){
-                const char k=som_head_at((unsigned)look.head,facing,u,v,frame_number);
+            /* Hagane should sit within the hero's 16-pixel head, rather
+             * than stretching past both sides like the larger hats. */
+            const int hagane=look.head==SOM_HEAD_NINJA;
+            const int head_w=hagane?16:SOM_HEAD_W,head_h=hagane?12:SOM_HEAD_H;
+            if(hagane){kx+=(SOM_HEAD_W-head_w)/2;ky+=1;}
+            for(int v=0;v<head_h;v++)for(int u=0;u<head_w;u++){
+                const int art_u=u*SOM_HEAD_W/head_w,art_v=v*SOM_HEAD_H/head_h;
+                const char k=som_head_at((unsigned)look.head,facing,art_u,art_v,frame_number);
                 static const uint8_t glint[3]={255,250,226};
-                const uint8_t *col=(k=='G'||k=='a')&&som_head_glint(u,frame_number)?glint:
+                const uint8_t *col=(k=='G'||k=='a')&&som_head_glint(art_u,frame_number)?glint:
                                    som_head_colour((unsigned)look.head,k);
                 const int ox=x0+kx+u,oy=y0+ky+v;
                 if(!col||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy)||SOM_IN_FRONT(ox,oy))continue;

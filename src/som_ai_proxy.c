@@ -2809,7 +2809,7 @@ static void som_input_poll(void){
          * its weapon art with the matched whip frames from the local ROM. */
         if(wram&&(current&b_bit)&&!(current&y_bit)&&!special_stage&&!special_suppress&&
            !ring_ai_enabled&&!som_manual_disciplines&&!bash_stage&&!combo_hold_tried&&
-           som_actor_class()==SOM_DISC_NINJUTSU&&
+           !(current&(l2_bit|r2|l3_bit))&&som_actor_class()==SOM_DISC_NINJUTSU&&
            styles.selected[SOM_DISC_NINJUTSU]==SOM_STYLE_HEAVY&&
            (SOM_ACT(wram)[0x1C0]&0x0Fu)>=2u&&som_kusarigama_art_ready()&&
            frame_number-combo_hold_start>=SOM_COMBO_HOLD_FRAMES&&
@@ -2820,7 +2820,7 @@ static void som_input_poll(void){
                 kusarigama_swing_seen=0;kusarigama_attack_who=som_actor;
                 kusarigama_attack_started=frame_number;
                 special_chord=b_bit;special_suppress=1;
-                som_overlay_say(&overlay,"^Kusarigama|level 2 whip strike",SOM_MESSAGE_FRAMES/2u);
+                som_overlay_say(&overlay,"^Kusarigama|release B to strike",SOM_MESSAGE_FRAMES/2u);
                 fprintf(stderr,"[som-ai] KUSARIGAMA level 2 sword attack with whip art\n");
             }
         }
@@ -6789,6 +6789,8 @@ static void som_special_tick(void){
         SOM_ACT(ram)[0x01A]=0x2C;SOM_ACT(ram)[0x01B]=(uint8_t)special_stage;SOM_ACT(ram)[0x19B]=(uint8_t)special_stage;
     }
     if(SOM_ACT(ram)[0x19B]>=special_stage){
+        /* Kusarigama holds its native charged stance until physical B release. */
+        if(kusarigama_attack_active&&(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_B)))return;
         fprintf(stderr,"[som-ai] SPECIAL release %s level %u\n",
                 som_weapon_types[special_weapon],special_stage);
         if(kusarigama_attack_active)kusarigama_attack_released=1;

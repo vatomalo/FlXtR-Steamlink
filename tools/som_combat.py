@@ -58,12 +58,12 @@ class ChargeMacro:
         if wram.u8(RECHARGE) != 0 or wram.game_mode() != "field":
             raise ChargeFailed("weapon not ready or not in field mode")
         hp_before = wram.character(0)["hp"]
-        self.link.send_action("charge")
         started = self.clock()
         counted = False
         stage = 0
         enemy_before = None
         try:
+            self.link.send_action("charge")
             while True:
                 self.sleep(self.POLL)
                 wram = self._read()

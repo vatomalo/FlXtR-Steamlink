@@ -90,6 +90,17 @@ class TestChargeMacro(unittest.TestCase):
             charge.run()
         self.assertEqual(link.sent, ["charge", "wait"])
 
+    def test_uncertain_charge_send_still_attempts_release(self):
+        link, charge = macro([snapshot()])
+        def uncertain_send(action):
+            link.sent.append(action)
+            if action == "charge":
+                raise OSError("ack lost")
+        link.send_action = uncertain_send
+        with self.assertRaisesRegex(OSError, "ack lost"):
+            charge.run()
+        self.assertEqual(link.sent, ["charge", "wait"])
+
     def test_stage_above_the_weapon_level_is_refused_before_pressing(self):
         link, charge = macro([snapshot(level=1)], stage=2)
         with self.assertRaises(ChargeFailed):

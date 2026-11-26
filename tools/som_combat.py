@@ -58,11 +58,12 @@ class ChargeMacro:
         if wram.u8(RECHARGE) != 0 or wram.game_mode() != "field":
             raise ChargeFailed("weapon not ready or not in field mode")
         hp_before = wram.character(0)["hp"]
-        self.link.send_action("charge")
         started = self.clock()
         counted = False
         stage = 0
+        enemy_before = None
         try:
+            self.link.send_action("charge")
             while True:
                 self.sleep(self.POLL)
                 wram = self._read()
@@ -71,9 +72,9 @@ class ChargeMacro:
                 stage = wram.u8(CHARGE_STAGE)
                 counted = counted or wram.u8(CHARGE_COUNTER) > 0 or stage > 0
                 if wram.character(0)["hp"] < hp_before:
-                    self._release()
                     return {"stage": stage, "interrupted": True, "damage": None}
                 if stage >= self.target:
+                    enemy_before = self._enemy_hp(wram)
                     break
                 elapsed = self.clock() - started
                 if not counted and elapsed > START_TIMEOUT:
@@ -81,11 +82,10 @@ class ChargeMacro:
                 if elapsed > START_TIMEOUT + STAGE_TIMEOUT * self.target:
                     raise ChargeFailed(f"stage {stage} after {elapsed:.1f}s, wanted "
                                        f"{self.target}")
-        except ChargeFailed:
+        finally:
+            # Release on every exit, including transport/decoder errors.
+            # A lost bridge request otherwise leaves the proxy holding B.
             self._release()
-            raise
-        enemy_before = self._enemy_hp(wram)
-        self._release()
         deadline = self.clock() + RELEASE_TIMEOUT
         while True:
             self.sleep(self.POLL)

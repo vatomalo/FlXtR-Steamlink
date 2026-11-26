@@ -12,7 +12,7 @@ typedef enum {
     SOM_ACT_STEP_RIGHT, SOM_ACT_STEP_LEFT, SOM_ACT_STEP_UP, SOM_ACT_STEP_DOWN,
     SOM_ACT_WAIT, SOM_ACT_SNAPSHOT, SOM_ACT_MENU_X, SOM_ACT_CHARGE,
     SOM_ACT_DASH_RIGHT, SOM_ACT_DASH_LEFT, SOM_ACT_DASH_UP, SOM_ACT_DASH_DOWN,
-    SOM_ACT_BLOCK
+    SOM_ACT_BLOCK, SOM_ACT_SELECT
 } SomAction;
 /* Longest attack hold: past stage 8 (som-decomp weapons-melee.md: stage k
  * about swing + gauge + 90k frames). The bridge ends it earlier by sending
@@ -36,7 +36,7 @@ static inline SomAction som_parse_action(const char *command){
         {"charge",SOM_ACT_CHARGE},
         {"dash_right",SOM_ACT_DASH_RIGHT},{"dash_left",SOM_ACT_DASH_LEFT},
         {"dash_up",SOM_ACT_DASH_UP},{"dash_down",SOM_ACT_DASH_DOWN},
-        {"block",SOM_ACT_BLOCK}
+        {"block",SOM_ACT_BLOCK},{"select",SOM_ACT_SELECT}
     };
     for(unsigned i=0;i<sizeof(choices)/sizeof(choices[0]);i++)
         if(!strcmp(command,choices[i].name))return choices[i].action;
@@ -55,6 +55,7 @@ static inline unsigned som_action_button(SomAction action){
     case SOM_ACT_NEXT_RING:return RETRO_DEVICE_ID_JOYPAD_R;
     case SOM_ACT_PREV_RING:return RETRO_DEVICE_ID_JOYPAD_L;
     case SOM_ACT_MENU_X:return RETRO_DEVICE_ID_JOYPAD_X;
+    case SOM_ACT_SELECT:return RETRO_DEVICE_ID_JOYPAD_SELECT;
     default:return 16u;
     }
 }
@@ -90,7 +91,7 @@ static inline const char *som_action_name(SomAction action){
     static const char *const names[]={"none","right","left","up","down","attack","open_ring",
         "confirm","cancel","next_ring","prev_ring","step_right","step_left","step_up",
         "step_down","wait","snapshot","menu_x","charge",
-        "dash_right","dash_left","dash_up","dash_down","block"};
+        "dash_right","dash_left","dash_up","dash_down","block","select"};
     return (unsigned)action<sizeof(names)/sizeof(names[0])?names[action]:"invalid";
 }
 #endif

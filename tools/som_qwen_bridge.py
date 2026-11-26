@@ -56,6 +56,7 @@ from som_critic_link import (FINISHER_COOLDOWN_SCALE, critic_coach, critic_tags,
 from som_class_arts import KICK_COOLDOWN_S, FlyingKickTactics, IaiTactics
 from som_rope import RopeTactics
 from som_class_director import BUFF_CLASSES, BUSHIDO, MARTIAL_ARTS, THIRD_WEAPONS
+from som_party_assist import PartyAssist
 from som_class_director import B_CHAIN_WEAPONS
 from som_anticipate import AttackPredictor
 from som_boss import BossRecorder
@@ -69,7 +70,7 @@ ACTIONS = {
     "step_right", "step_left", "step_up", "step_down", "wait",
     "attack", "open_ring", "confirm", "cancel", "next_ring",
     "prev_ring", "snapshot", "menu_x", "charge", "block",
-    "dash_right", "dash_left", "dash_up", "dash_down",
+    "dash_right", "dash_left", "dash_up", "dash_down", "select",
 }
 # Held for many seconds and ended by the bridge: never offered to the model.
 CANDY_TRANSIENT = ("did not produce an open ring", "not in field mode")
@@ -102,7 +103,7 @@ SPOKEN_INTENTIONS = {"explore_frontier", "engage_enemy", "defend_enemy", "kite_e
 GUARD_REFRESHES = 2     # extra block presses per guard decision
 GUARD_REFRESH_S = 0.2   # 12 frames, inside the proxy's 15-frame R hold
 MODEL_ACTIONS = ACTIONS - {"charge", "block", "dash_right", "dash_left",
-                           "dash_up", "dash_down"}
+                           "dash_up", "dash_down", "select"}
 # Proxy commands for explicit tools only; never offered to the model.
 CONTROL_COMMANDS = {"clone_enemy", "undo_spawn", "ai_on", "ai_off",
                     "summon_familiar", "dismiss_familiar", "summon_boss", "vram_dump", "pal_trace", "use_candy", "use_candy_1", "use_candy_2", "use_herb", "use_rope",
@@ -1638,6 +1639,7 @@ def main() -> int:
     planner.build = None              # log the hero's build once it is read
     class_director = ClassDirector()  # picks the discipline that fits (class_<n>)
     party_class_directors = {who: ClassDirector(min_hold=COMPANION_HOLD_S) for who in (1, 2)}
+    party_assist = PartyAssist()
     for party_director in party_class_directors.values():
         party_director.cooldown = COMPANION_HOLD_S
     # The player's own picks outlive a bridge restart (PICK_KEEP_S).
@@ -1956,6 +1958,26 @@ def main() -> int:
             # ring before one bounded recovery attempt. Never touch events,
             # shops, ordinary dialogs or a non-ring mode.
             mode = ((observation or {}).get("tile_context") or {}).get("game_mode")
+            if (link and not args.dry_run and args.policy in ("hybrid", "memory") and
+                    mode == "field" and observation is not None):
+                assist = party_assist.step(observation,
+                    {who: party_class_directors[who].current for who in (1, 2)},
+                    time.monotonic())
+                if assist is not None:
+                    kind, command = assist
+                    try:
+                        if kind == "action":
+                            link.send_action(command)
+                        elif kind == "control":
+                            link.send_control(command)
+                    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                        print(f"[party] assist {kind} failed: {exc}", flush=True)
+                    else:
+                        if command:
+                            print(f"[party] assist {kind}: {command}", flush=True)
+                    previous = "wait"
+                    time.sleep(max(args.interval, 0.12))
+                    continue
             observed_ring = (raw is not None and mode == "ring" and
                              ring_open(WRAM(raw)))
             if mode == "field":

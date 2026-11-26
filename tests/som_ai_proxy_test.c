@@ -116,6 +116,8 @@ int main(void){
     assert(som_action_frames(SOM_ACT_MENU_X)==2);
     assert(som_action_frames(SOM_ACT_WAIT)==0);
     assert(som_parse_action("charge")==SOM_ACT_CHARGE);
+    assert(som_parse_action("select")==SOM_ACT_SELECT);
+    assert(som_action_mask(SOM_ACT_SELECT)==(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT));
     assert(som_action_button(SOM_ACT_CHARGE)==RETRO_DEVICE_ID_JOYPAD_B);
     assert(som_action_frames(SOM_ACT_CHARGE)==SOM_CHARGE_MAX_FRAMES);
     assert(!strcmp(som_action_name(SOM_ACT_CHARGE),"charge"));
@@ -1839,6 +1841,8 @@ int main(void){
                special_stage==(hero[0x19C]<3u?hero[0x19C]:3u));
         assert(!combo.hits&&special_suppress);                /* chain spent */
         mocked_buttons=0;som_input_poll();
+        assert(!special_stage&&!special_release_with_button);
+        assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         special_stage=0;special_suppress=0;hero[0x19C]=1;
         /* A: a proxy-driven dodge (the game's poses do not play in field
          * play). Divine Arts has no dodge: native A (dash). */

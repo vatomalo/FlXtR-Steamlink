@@ -157,6 +157,7 @@ static unsigned special_stage,special_weapon;
 static unsigned long special_started;
 static uint16_t special_chord;
 static int special_suppress;
+static int special_release_with_button; /* ordinary held combo, not a one-tap special */
 #define SOM_SPECIAL_TIMEOUT 360ul
 static int som_special_start(unsigned which,unsigned stage);
 static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet);
@@ -2611,9 +2612,18 @@ static void som_input_poll(void){
         const uint16_t l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
         const uint16_t r2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
         const int borrowed=pad2_actor<SOM_PARTY_MEMBERS&&som_actor==pad2_actor;
+        if(special_stage&&special_release_with_button&&
+           !(current&special_chord)){
+            /* A physical B/Y hold must end when its button is released,
+             * even if the native gauge never reached the requested stage. */
+            special_stage=0;special_release_with_button=0;
+            if(kusarigama_attack_active)kusarigama_attack_released=1;
+            fprintf(stderr,"[som-ai] SPECIAL released with attack button\n");
+        }
         if(special_stage&&!borrowed&&current&&(current&~special_chord)){
             fprintf(stderr,"[som-ai] SPECIAL cancelled by manual input\n");
             special_stage=0;special_suppress=0;
+            special_release_with_button=0;
             kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
         }
         if(special_suppress&&!((borrowed?pad2_raw:current)&special_chord))special_suppress=0;
@@ -2888,6 +2898,7 @@ static void som_input_poll(void){
                 kusarigama_swing_seen=0;kusarigama_attack_who=som_actor;
                 kusarigama_attack_started=frame_number;
                 special_chord=b_bit;special_suppress=1;
+                special_release_with_button=1;
                 som_overlay_say(&overlay,"^Kusarigama|release B to strike",SOM_MESSAGE_FRAMES/2u);
                 fprintf(stderr,"[som-ai] KUSARIGAMA level 2 sword attack with whip art\n");
             }
@@ -2907,6 +2918,7 @@ static void som_input_poll(void){
             combo_hold_tried=1;
             if(som_special_start(which,level)){
                 special_chord=which?y_bit:b_bit;special_suppress=1;
+                special_release_with_button=1;
                 char text[64];
                 snprintf(text,sizeof(text),"^%u-hit combo|level %u finisher",hits,level);
                 som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
@@ -3892,7 +3904,6 @@ static void som_quick_cast_frame(uint8_t *ram){
         som_quick_trace(who,hero,what);
     }
 }
-static int som_cast_spell(uint8_t *ram,unsigned spell){return som_cast_spell_by(ram,0u,spell);}
 /* Mage bolt (rule, player 2026-11-22; src/som_mage_bolt.h): every caster
  * (som_disc_caster), boy, girl or sprite, player, AI or the game's ally AI,
  * attacks with one glove punch and a painted ball of her B spell's element.
@@ -4403,6 +4414,7 @@ static int som_cast_spell_by(uint8_t *ram,unsigned who,unsigned spell){
             (unsigned)hero[0x186],cost);
     return 1;
 }
+static int som_cast_spell(uint8_t *ram,unsigned spell){return som_cast_spell_by(ram,0u,spell);}
 /* Kage Bunshin clones (src/som_bunshin.h). Explosion damage grows with
  * the Ninjutsu discipline level. */
 static unsigned som_bunshin_damage(void){
@@ -6206,6 +6218,7 @@ static int som_special_start_weapon(unsigned weapon,unsigned stage,int quiet){
         stage=SOM_ACT(ram)[0x19C];
     }
     special_stage=stage;special_weapon=weapon;special_started=frame_number;
+    special_release_with_button=0;
     som_combo_clear();
     fprintf(stderr,"[som-ai] SPECIAL charging %s level %u\n",
             som_weapon_types[weapon],stage);
@@ -7059,6 +7072,7 @@ static void som_special_tick(void){
        frame_number-special_started>SOM_SPECIAL_TIMEOUT){
         fprintf(stderr,"[som-ai] SPECIAL abort: state changed or charge timeout\n");
         special_stage=0;
+        special_release_with_button=0;
         kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
         return;
     }
@@ -7078,6 +7092,7 @@ static void som_special_tick(void){
                 som_weapon_types[special_weapon],special_stage);
         if(kusarigama_attack_active)kusarigama_attack_released=1;
         special_stage=0; /* B releases on next emulated frame */
+        special_release_with_button=0;
     }
 }
 /* Next owned weapon after the current one (Y while playing). */
@@ -8314,13 +8329,15 @@ static int som_handle_command(const char *command){
         }
         return 1;
     }
-    /* Cast a spell from the AI leader's class. */
+    /* Cast from the party member currently bound to pad 1. */
     if(!strncmp(command,"cast_",5)&&som_rom&&backend_retro_get_memory_data){
         uint8_t *ram=(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-        const unsigned d=disciplines.selected;
+        if(!ram)return 0;
+        const unsigned who=som_pad1_member_in(ram);
+        const unsigned d=som_disc_member_class(&disciplines,who);
         const int want_attack=!strcmp(command+5,"attack"),want_heal=!strcmp(command+5,"heal");
         if(!strcmp(command+5,"revive"))
-            return ram&&som_try_revivifier(ram,0u,ring_ai_enabled);
+            return som_try_revivifier(ram,who,ring_ai_enabled);
         if(!want_attack&&!want_heal&&strcmp(command+5,"buff"))return 0;
         for(unsigned i=0;i<som_class_spell_count(d);i++){
             const unsigned spell=som_class_spell(d,i);
@@ -8328,7 +8345,7 @@ static int som_handle_command(const char *command){
             if(!row)continue;
             const int heal=spell==0x0Bu;    /* Cure Water */
             if(want_attack?row[8]==0x81u:want_heal?heal:(row[8]!=0x81u&&!som_bolt_heal_spell(spell)))
-                return som_cast_spell(ram,spell);
+                return who?som_cast_spell_by(ram,who,spell):som_cast_spell(ram,spell);
         }
         return 0;
     }
@@ -10012,6 +10029,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_lock_swap(1);som_string_swap(1);pad2_string_waits=0;pad2_seals=0;
     last_physical_buttons=0;x_tap_armed=x_l2_chord=0;x_cast_at=0;last_attack_frame=0;som_combo_clear();
     special_stage=0;special_weapon=0;special_started=0;
+    special_release_with_button=0;
     kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
     kusarigama_attack_who=0;kusarigama_attack_started=0;
     evade_active=evade_a_hidden=0;a_running=0;a_hold_done=1;dda_down_prev=dda_down_last=0;evade_hp=0;evade_frames=0;trail_until=0;

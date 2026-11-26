@@ -4,11 +4,12 @@
  * ring menu's own shuriken icon, read from the player's ROM; the hunter's
  * is a painted holy cross. Only the picture: flight, hits and return stay
  * the game's. Projectile table 7E:D000 + 0x40*hero + 0x10*k
- * (weapons-ranged.md 3.2); its one sprite sits at (x - 8, y - 4). */
+ * (weapons-ranged.md 3.2); its sprite offset varies with facing. */
 #include <stdint.h>
 #include <string.h>
 #include "som_overlay.h"
 #define SOM_ICON_BYTES 96u
+#define SOM_THROW_MATCH_RADIUS 24
 enum {SOM_SKIN_NONE,SOM_SKIN_STAR,SOM_SKIN_CROSS};
 typedef struct {int kind,x,y;} SomThrowSkin;
 
@@ -74,14 +75,27 @@ static inline unsigned som_throw_skins(uint8_t *ram,const uint8_t look[3],SomThr
             const int x=(int16_t)((e[2]|e[3]<<8)-(ram[cam]|ram[cam+1u]<<8));
             const int y=(int16_t)((e[4]|e[5]<<8)-(ram[cam+2u]|ram[cam+3u]<<8));
             const unsigned tile=(unsigned)(e[14]|e[15]<<8)&0x1FFu;
-            int hidden=0;
-            for(unsigned i=0;i<128u&&!hidden;i++){
+            int best=-1,best_distance=SOM_THROW_MATCH_RADIUS*2+1;
+            int draw_x=0,draw_y=0;
+            for(unsigned i=0;i<128u;i++){
                 uint8_t *o=ram+0x0800u+4u*i;
                 if((unsigned)(o[2]|(o[3]&1u)<<8)!=tile||o[1]>=0xE0u)continue;
-                if(o[0]!=(uint8_t)(x-8)||o[1]!=(uint8_t)(y-4))continue;
-                o[1]=0xF0u;hidden=1;
+                /* The one-piece record carries directional offsets. Compare
+                 * near the projectile, then use the actual OAM position for
+                 * the replacement art rather than a side-facing constant. */
+                const int dx=(int)(int8_t)(o[0]-(uint8_t)(x-8));
+                const int dy=(int)(int8_t)(o[1]-(uint8_t)(y-4));
+                const int distance=(dx<0?-dx:dx)+(dy<0?-dy:dy);
+                if(dx<-SOM_THROW_MATCH_RADIUS||dx>SOM_THROW_MATCH_RADIUS||
+                   dy<-SOM_THROW_MATCH_RADIUS||dy>SOM_THROW_MATCH_RADIUS||
+                   distance>=best_distance)continue;
+                best=(int)i;best_distance=distance;
+                draw_x=x-8+dx;draw_y=y-4+dy;
             }
-            if(hidden&&n<9u){out[n].kind=look[who];out[n].x=x;out[n].y=y+4;n++;}
+            if(best>=0&&n<9u){
+                ram[0x0800u+4u*(unsigned)best+1u]=0xF0u;
+                out[n].kind=look[who];out[n].x=draw_x+8;out[n].y=draw_y+8;n++;
+            }
         }
     }
     return n;

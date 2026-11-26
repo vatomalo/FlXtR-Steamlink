@@ -46,6 +46,13 @@ test-som-depth-mask:
 
 .PHONY: test-som-depth-mask
 
+test-som-throw-skin:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_throw_skin_test.c -o build/som-throw-skin-test
+	./build/som-throw-skin-test
+
+.PHONY: test-som-throw-skin
+
 test-som-ai-player2:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_ai_player2_test.c -o build/som-ai-player2-test

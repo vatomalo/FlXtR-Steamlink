@@ -66,10 +66,12 @@ count/damage, finisher level cap, Weapon Flow combo bonus), then hybrid synergie
 same table (e.g. Ninjutsu 10 + Swordsmanship 10 -> Shunshin ends in a free swing). Block XP
 once the Turbo R-block intercept is traced (`pal_trace` during a block).
 
-**Phase C - enemy personalities (medium risk).** Per-species archetype table applied in
-the proxy each frame through the fields the familiar already drives safely (target slot
-`+0x1AC`, attack cooldown `+0x1ED`, velocity): engagement distance, retreat below an HP
-fraction, focus on the weakest hero, hold back while another attacks. No LLM per frame.
+**Phase C - enemy personalities (implemented, unverified live).** `src/som_enemy_tactics.h`:
+explicit species archetypes, individual personalities, footsies, whiff punishment, baiting,
+zoning, hit-and-run, okizeme, habit memory, pressure tokens, five difficulty levels and
+ranks. It bends the native monster AI through two levers measured on the Turbo ROM (velocity
+during native moves, weapon gauge raised only); details, measurements and limits in
+`docs/SOM-ENEMY-TACTICS.md`. No LLM per frame.
 
 **Phase D - one persistent General (medium-high risk).** One named elite of a chosen
 species in one region: identity keyed by (map, species), boosted HP via the record,

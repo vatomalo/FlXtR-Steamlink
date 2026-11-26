@@ -1446,6 +1446,17 @@ static struct {
 } ally_order;
 #define SOM_ALLY_ORDER_FRAMES 480ul
 #define SOM_ALLY_SUPPORT_SLOT 3u
+/* Towns (player, 2026-11-26): on every map that is not a combat map ($ED
+ * bit 7 clear: towns, houses, shops, inns) the heroes are the game's plain
+ * heroes, with no class controls, and bare hands (the glove); the class
+ * palette stays. The weapon each hero held comes back on the next combat
+ * map. town_weapon: 0xFF nothing put away, else the weapon type. */
+static int town_plain_enabled=1;
+static uint8_t town_weapon[3]={0xFFu,0xFFu,0xFFu};
+static int som_town_plain(const uint8_t *ram){
+    return town_plain_enabled&&ram&&!(ram[0xED]&0x80u);
+}
+static void som_town_frame(uint8_t *ram);
 /* Companions still to be handed their class weapon (bit who). */
 static unsigned ally_equip_pending=6u;
 static unsigned long ally_equip_tried;
@@ -2217,6 +2228,7 @@ static void som_pad2_poll(void){
     if(ring_ai_enabled){pad2_start_block=(raw&start)!=0;pad2_wanted=robot;return;}
     if(pad2_start_block)pad2_wanted&=(uint16_t)~start;
     if(!ram||som_manual_disciplines||menu_hold_until_release)return;
+    if(som_town_plain(ram))return;                 /* towns: the game's own pad */
 
     const uint16_t b=1u<<RETRO_DEVICE_ID_JOYPAD_B,y=1u<<RETRO_DEVICE_ID_JOYPAD_Y;
     const uint16_t x=1u<<RETRO_DEVICE_ID_JOYPAD_X,l2=1u<<RETRO_DEVICE_ID_JOYPAD_L2;
@@ -2591,6 +2603,7 @@ static void som_input_poll(void){
         const uint16_t l2_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
         const uint16_t b_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         uint8_t *attack_ram=ring_ai_enabled||som_manual_disciplines?NULL:som_field_ram();
+        if(som_town_plain(attack_ram))attack_ram=NULL;   /* towns: the game's own pad */
         const int field=attack_ram&&!borrowed&&som_actor_class()<SOM_DISCIPLINE_COUNT;
         /* Seals: with L2 held, D-pad signs become seals; B/Y charges.
          * R2 remains the independent physical guard. */
@@ -3596,6 +3609,36 @@ static int som_equip_weapon_row(uint8_t *ram,unsigned type,int force){
 }
 static int som_equip_weapon_direct(uint8_t *ram,unsigned type){
     return som_equip_weapon_row(ram,type,0);
+}
+static int som_equip_ally_weapon(uint8_t *ram,unsigned who,unsigned type);
+/* See town_weapon. Each hero once per visit: a weapon chosen in the ring
+ * in town is the player's and stays. A busy hero is tried again. */
+static void som_town_frame(uint8_t *ram){
+    if(!town_plain_enabled||!ram||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
+       ram[0xD0]!=0||ram[0x7D]==1||ring_ai_enabled)return;
+    const int town=som_town_plain(ram);
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0]!=1||(who&&!(o[0x184]|o[0x185])))continue;    /* not in the party */
+        if(!who&&!weapon_gfx_verified)continue;              /* the boy's art check first */
+        const unsigned held=o[0x1E4];
+        if(town&&town_weapon[who]==0xFFu&&held&&held<8u){
+            const int r=who?som_equip_ally_weapon(ram,who,0u):som_equip_weapon_direct(ram,0u);
+            if(r==SOM_EQUIP_OK){
+                town_weapon[who]=(uint8_t)held;
+                fprintf(stderr,"[som-ai] TOWN %s puts the %s away\n",som_party_names[who],
+                        som_weapon_types[held]);
+            }else if(r==SOM_EQUIP_REFUSED)town_weapon[who]=0xFEu;   /* keeps it */
+        }else if(!town&&town_weapon[who]!=0xFFu){
+            const unsigned type=town_weapon[who];
+            if(type>=8u||held!=0u){town_weapon[who]=0xFFu;continue;} /* changed meanwhile */
+            const int r=who?som_equip_ally_weapon(ram,who,type):som_equip_weapon_direct(ram,type);
+            if(r==SOM_EQUIP_BUSY)continue;
+            town_weapon[who]=0xFFu;
+            if(r==SOM_EQUIP_OK)fprintf(stderr,"[som-ai] TOWN over: %s takes the %s again\n",
+                                       som_party_names[who],som_weapon_types[type]);
+        }
+    }
 }
 /* The same switch for a companion (who 1 the girl, 2 the sprite): her own
  * actor fields, effect buffer 7E:2000+who*0x1000 and D030+who*0x40
@@ -6901,7 +6944,7 @@ static void som_class_supply_frame(void){
         class_supply_pending=0;
         if(n)som_overlay_say(&overlay,"^Class weapons unlocked!",SOM_MESSAGE_FRAMES);
     }
-    if(class_equip_pending&&(!class_last_equip_attempt||
+    if(class_equip_pending&&!som_town_plain(ram)&&(!class_last_equip_attempt||
                              frame_number-class_last_equip_attempt>=120ul)){
         class_last_equip_attempt=frame_number;
         unsigned primary=som_disc_weapons[disciplines.selected][0];
@@ -6918,6 +6961,7 @@ static void som_ally_equip_frame(uint8_t *ram){
     if(!ram||!(ally_equip_pending&6u)||!som_rom||
        (ally_equip_tried&&frame_number-ally_equip_tried<60ul))return;
     if(ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return;
+    if(som_town_plain(ram))return;                  /* bare hands in town */
     ally_equip_tried=frame_number;
     for(unsigned who=1;who<SOM_PARTY_MEMBERS;who++){
         if(!(ally_equip_pending&(1u<<who)))continue;
@@ -9706,7 +9750,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     memset(prog_seen,0,sizeof(prog_seen));
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
-    ally_equip_pending=6u;ally_equip_tried=0;
+    ally_equip_pending=6u;ally_equip_tried=0;memset(town_weapon,0xFF,sizeof(town_weapon));
     ally_order.until=0;ally_tech_ready=0;memset(revivals,0,sizeof(revivals));
     weapon_trace_on=0;som_weapon_trace_reset();
     memset(member_pal_have,0,sizeof(member_pal_have));
@@ -10380,6 +10424,7 @@ RETRO_API void retro_run(void){
         som_weapon_gfx_verify_frame((const uint8_t*)
             backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(test_enabled&&on_turbo){
+        som_town_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         som_class_supply_frame();
         som_ally_equip_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
         som_quick_cast_frame(backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));

@@ -90,6 +90,7 @@ static void reset_proxy(void){
 }
 int main(void){
     energy_free=1;              /* moves cost nothing here; the cost test turns it off */
+    town_plain_enabled=0;       /* most maps here have $ED clear; the town test turns it on */
     char path[]="/tmp/flxtr-ai-test-XXXXXX";
     char wram_path[]="/tmp/flxtr-wram-test-XXXXXX";
     char wram_tmp_path[]="/tmp/flxtr-wram-temp-test-XXXXXX";
@@ -1544,6 +1545,25 @@ int main(void){
         ram[0xCC55]=0x40;hero[0x1E3]=hero[0x1E8]=9;
         assert(som_cycle_weapon(ram)&&hero[0x1E4]==2);               /* next owned */
         assert(som_equip_weapon_direct(ram,1)==SOM_EQUIP_OK);
+        {   /* Towns: the sword is put away (glove), and comes back on the
+             * next combat map; a busy hero is tried again. */
+            const uint8_t keep_glove=ram[0xCC54],keep_ed=ram[0xED];
+            ram[0xCC54]=0x00;town_plain_enabled=1;ram[0xED]=0x00;
+            hero[0x01C]=0x20;som_town_frame(ram);
+            assert(hero[0x1E4]==1&&town_weapon[0]==0xFF);          /* busy: later */
+            hero[0x01C]=0;som_town_frame(ram);
+            assert(hero[0x1E4]==0&&town_weapon[0]==1);
+            som_town_frame(ram);assert(hero[0x1E4]==0&&town_weapon[0]==1);
+            ram[0xED]=0x80;som_town_frame(ram);
+            assert(hero[0x1E4]==1&&town_weapon[0]==0xFF&&hero[0x198]==25);
+            /* A weapon chosen in town stays the player's. */
+            ram[0xED]=0x00;som_town_frame(ram);assert(hero[0x1E4]==0);
+            assert(som_equip_weapon_direct(ram,2)==SOM_EQUIP_OK);
+            ram[0xED]=0x80;som_town_frame(ram);
+            assert(hero[0x1E4]==2&&town_weapon[0]==0xFF);
+            assert(som_equip_weapon_direct(ram,1)==SOM_EQUIP_OK);
+            town_plain_enabled=0;ram[0xED]=keep_ed;ram[0xCC54]=keep_glove;
+        }
 
         /* Buttons: Swordsmanship = sword on B, axe on Y. */
         som_disc_init(&disciplines);disciplines.selected=0;
@@ -1993,6 +2013,25 @@ int main(void){
             for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
             memcpy(ram+0xA8,camera,sizeof(camera));
+            /* Towns: the game's own pad, no evade, no Kawarimi; A, B and D-pad
+             * reach the game as pressed. */
+            {
+                const uint8_t keep_ed=ram[0xED];
+                town_plain_enabled=1;ram[0xED]=0x00;disciplines.selected=SOM_DISC_NINJUTSU;
+                mocked_buttons=down;som_input_poll();frame_number++;
+                mocked_buttons=0;som_input_poll();frame_number++;
+                mocked_buttons=down;som_input_poll();frame_number++;
+                mocked_buttons=(uint16_t)(down|a);som_input_poll();
+                assert(!evade_active&&!kawarimi_armed_until&&!evade_a_hidden);
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN)==1);
+                mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
+                assert(!monk_chain_active&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+                mocked_buttons=0;som_input_poll();
+                town_plain_enabled=0;ram[0xED]=keep_ed;
+                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+                memcpy(ram+0xA8,camera,sizeof(camera));
+            }
             /* Samurai: A with a monster in grab reach grabs and throws it. */
             disciplines.selected=SOM_DISC_BUSHIDO;throw_ready=0;
             foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x182]=50;

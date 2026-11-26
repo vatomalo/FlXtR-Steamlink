@@ -439,6 +439,16 @@ Shunshin stopped by a wall, trail drawn.
   Log: `[som-ai] SHUNSHIN from L2+X`.
 - The AI keeps its own commands `kawarimi` / `shunshin`.
 
+### Towns (2026-11-26)
+
+On every map that is not a combat map (`$ED` bit 7 clear: towns, houses, shops, inns) the
+heroes are the game's plain heroes: no class controls on either pad (A, B, X, Y, L1, R1, L2
+and the D-pad reach the game as pressed), and each hero puts their weapon away (the glove,
+bare hands; log `[som-ai] TOWN BOY puts the sword away`). The class palette stays. On the
+next combat map each hero takes the same weapon again (`TOWN over: ...`), unless the
+player chose another one in the ring meanwhile. Class weapons given at load or on a class
+change also wait for a combat map.
+
 ## Learning by doing: discipline XP (Phase B, 2026-11-15)
 
 Until now `som_disc_award` had no caller: no discipline ever gained XP. `src/som_xp.h` and

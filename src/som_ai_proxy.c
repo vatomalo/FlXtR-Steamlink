@@ -10257,6 +10257,13 @@ static void som_familiar_bind(void){
     som_familiar_publish();
     som_overlay_say(&overlay,"^A familiar joins you!",SOM_MESSAGE_FRAMES);
     fprintf(stderr,"[som-ai] FAMILIAR bound to monster slot %d\n",familiar.slot+1);
+    /* A Necromancer's familiar is always one of the undead, whatever raised
+     * it (X, the AI's summon_familiar, a re-forming on a new map): the
+     * species it was decides which (player, 2026-11-26: "necromancer should
+     * only raise undead ... regular monsters that are raised should become
+     * this"). */
+    if(ram&&!familiar_undead&&!familiar_is_native_control&&som_actor_class()==SOM_DISC_NECRO&&familiar.slot>=0)
+        familiar_undead=som_undead_for(ram[0xE600u+0x200u*(unsigned)familiar.slot+0x180u]);
     if(familiar_undead)som_familiar_raise_undead((uint8_t*)ram,familiar.slot);
 }
 static int som_summon_boss(void){
@@ -10338,6 +10345,7 @@ static void som_familiar_frame(void){
         familiar.slot=slot;familiar.target=-1;familiar.last_strike=0;
         familiar.map=(unsigned)(ram[0xDC]|ram[0xDD]<<8);
         som_familiar_publish();
+        if(familiar_undead)som_familiar_raise_undead(ram,slot);   /* the game loads its undead art here */
         fprintf(stderr,"[som-ai] FAMILIAR followed to map %u (slot %d)\n",familiar.map,slot+1);
         return;
     }

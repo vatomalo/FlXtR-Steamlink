@@ -1,0 +1,12 @@
+# A Necromancer's familiar is always undead, also through the AI's summon_familiar
+# (start: rabites.state from to_rabites.txt, map 130; a Rabite becomes a Beast Zombie).
+#! expect-log UNDEAD familiar in slot \d rises as Beast Zombie
+expect u16 00DC == 130
+cmd class_13
+frames 120
+monster 1 30 0
+poke E800 0
+cmd summon_familiar
+frames 120
+peek
+shot necro_familiar

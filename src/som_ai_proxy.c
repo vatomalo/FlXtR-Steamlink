@@ -6538,12 +6538,14 @@ static int som_blade_start(uint8_t *ram,unsigned who,uint16_t held_dirs,unsigned
             const long d=labs((long)som_word(e+2)-(long)som_word(o+2))+labs((long)som_word(e+4)-(long)som_word(o+4));
             if(near<0||d<near)near=d;
         }
-        if(!monk_chain_step&&near>=0&&near<=SOM_HUNTER_CLOSE)monk_chain_step=1u;
-        whip=monk_chain_step&&near>SOM_HUNTER_FAR;
+        /* B chooses reach on every strike, not just the opening combo step.
+         * With no enemy, keep the selected close-range blade. */
+        whip=near>SOM_HUNTER_CLOSE;
+        if(!whip&&(!monk_chain_step||monk_chain_step>=4u))monk_chain_step=1u;
     }
     const SomBladeMove *m;unsigned next=monk_chain_step+1u;
     if(cmd){m=cmd==7u?&str->toward:&str->away;next=0;}
-    else if(whip){m=&str->step[0];next=monk_chain_step;}
+    else if(whip){m=&str->step[0];next=1u;}
     else if(monk_chain_step<SOM_BLADE_STEPS)m=&str->step[monk_chain_step];
     else{m=&str->finish[som_monk_dir_of(ram,o,held_dirs)];next=0;}
     if(!monk_chain_active)blade_move=blade_hop_move=NULL;      /* none left from another class */

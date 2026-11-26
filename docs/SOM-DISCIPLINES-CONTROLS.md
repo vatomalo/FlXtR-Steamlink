@@ -20,6 +20,7 @@ During the AI gambit menu, L1/R1 still turn pages and do not change styles.
 **Weapon names:** the custom HUD under the class title shows **only FlXtR's
 own weapon/style names**: `Katana`, `Dai Katana`, `Yumi`, `Crossbow`, etc.
 It no longer displays compound vanilla names like `Masamune Katana`.
+When the Ninja uses the glove for the unarmed chain, the HUD says `Taijutsu`.
 Native in-ROM inventory/ring names are unchanged, since modifying them
 requires separate ROM text patching and validation.
 

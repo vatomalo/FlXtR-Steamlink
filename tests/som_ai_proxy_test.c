@@ -1582,6 +1582,9 @@ int main(void){
         assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_BUSHIDO,1u),"Yumi"));
         assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_ARTIFICER,1u),"Crossbow"));
         assert(!strcmp(som_custom_weapon_name(&styles,SOM_DISC_FLOW,2u),"War Bow"));
+        assert(!strcmp(som_class_weapon_display_name(&styles,SOM_DISC_NINJUTSU,0u),"Taijutsu"));
+        assert(!strcmp(som_class_weapon_display_name(&styles,SOM_DISC_NINJUTSU,6u),"Shuriken"));
+        assert(!strcmp(som_class_weapon_display_name(&styles,SOM_DISC_MARTIAL_ARTS,0u),"Cestus"));
         const uint16_t guard_r2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R2);
         const uint16_t style_r1=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);
         mocked_buttons=guard_r2;som_input_poll();

@@ -8990,37 +8990,21 @@ static void som_portal_frame(uint8_t *ram){
     blink_is_swap=1;                              /* not a Blink: no cooldown */
     fprintf(stderr,"[som-ai] PORTAL travel %c -> %c\n",inside?'B':'A',o?'B':'A');
 }
-/* The game's HUD lifted SOM_HUD_LIFT_PX (player, 2026-11-20: room below
- * for the class's weapon name and energy). In plain field play only: the
- * HP numbers are on BG3, whose vertical scroll the NMI takes from 7E:0040
- * (C0C170; 0 in the field, menus set it themselves), and the portraits are
- * HUD sprites (tiles 0x1E0-0x1FF near the bottom) in the OAM buffer
- * 7E:0800 the NMI uploads. Applied at the frame's end; the next frame shows
- * it. Dialogs and events (7E:00D0 set) and menus get the HUD back as it was. */
-#define SOM_HUD_LIFT_PX 20u           /* compact panels since 2026-11-25; 26 before */
-static int hud_lifted;
+/* Keep native BG3 at its original field scroll. Moving it also moves
+ * field message boxes, which previously required destructive framebuffer
+ * reconstruction. Migrate saves made with the former 10/20/26 px lift.
+ * Do not change scroll in menus, cutscenes or other non-field modes. */
 static void som_hud_lift(uint8_t *ram,int menu){
-    const int field=ram&&!menu&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&
-                    ram[0xD0]==0&&ram[0x7D]!=1;
-    if(!field){
-        if(hud_lifted&&ram&&ram[0x40]==SOM_HUD_LIFT_PX&&ram[0x41]==0)ram[0x40]=0;
-        hud_lifted=0;
-        return;
-    }
-    /* Upgrade the previous 10 px HUD position in an existing save state;
-     * leave any unrelated game scroll untouched. */
-    const int old=ram[0x40]==10u||ram[0x40]==26u?(int)ram[0x40]:0;
-    if(ram[0x40]!=0&&!old&&!(hud_lifted&&ram[0x40]==SOM_HUD_LIFT_PX))return;
-    ram[0x40]=SOM_HUD_LIFT_PX;ram[0x41]=0;
-    hud_lifted=1;
+    if(!ram||menu||ram[0xE000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
+       ram[0xD0]!=0||ram[0x7D]==1||ram[0x41]!=0)return;
+    const unsigned old=ram[0x40];
+    if(old!=10u&&old!=20u&&old!=26u)return;
+    ram[0x40]=0;
     for(unsigned i=0;i<128u;i++){
         uint8_t *e=ram+0x0800u+4u*i;
         const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-        if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]<0xE0u){
-            if(old&&e[1]>=196u-(unsigned)old&&e[1]<206u-(unsigned)old)
-                e[1]=(uint8_t)((int)e[1]+old-(int)SOM_HUD_LIFT_PX);
-            else if(e[1]>=196u)e[1]=(uint8_t)(e[1]-SOM_HUD_LIFT_PX);
-        }
+        if(tile>=0x1E0u&&tile<=0x1FFu&&e[1]>=196u-old&&e[1]<206u-old)
+            e[1]=(uint8_t)(e[1]+old);
     }
 }
 /* Party panels, Seiken Densetsu 3 style (player, 2026-11-20): under each
@@ -9066,7 +9050,7 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
         if(cls>=SOM_DISCIPLINE_COUNT||!som_hud_member_portrait(ram,who,&px,&py))continue;
         char line[24];
         const unsigned chars=(unsigned)(SOM_PANEL_COLUMN/4);
-        const int class_y=py+SOM_HUD_LABEL_DY;
+        const int class_y=py-24; /* compact panels above the untouched native HUD */
         som_panel_text(line,sizeof(line),som_discipline_titles[cls],chars);
         som_tiny_label(overlay_frame,width,height,pitch,pixel_format,line,px,class_y,chars,
                        som_overlay_color(pixel_format,255,255,255));
@@ -9197,12 +9181,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         }
         if(!(cam_ram[0xD0]&0x80u))camera.window=0;
     }else if(data)som_cam_reset(&camera);         /* NULL = the last picture again */
-    const int cam_on=cam_vram&&!menu&&som_cam_active(&camera);
-    /* also with the camera off: the HUD lift itself hides the box */
-    const uint8_t *box_vram=!menu&&data&&width==SOM_CAM_W&&height==SOM_CAM_H&&hud_lifted&&ring_owner_ram&&
-        backend_retro_get_memory_data&&backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=0x10000u?
-        (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM):NULL;
-    const int box_up=box_vram&&som_cam_box_up(ring_owner_ram,box_vram);
+    int cam_on=cam_vram&&!menu&&som_cam_active(&camera);
     const int cam_look=cam_vram&&!menu&&(cam_on||(cam_ram[0xD0]&0x80u));
     /* Thrown boomerangs with a look: the last frame's spots are what this
      * picture shows; the shadow holds the next one. */
@@ -9224,7 +9203,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     const int classes_icon=!menu&&on_turbo&&som_ring_on_classes(ring_owner_ram)&&
         ring_owner_ram[0x1808]==som_pad1_member_in(ring_owner_ram);
     if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0&&lock2_x<0&&
-        !classes_icon&&!cam_look&&!box_up&&!skins_shown)||(!data&&!draw_classes)||data==RETRO_HW_FRAME_BUFFER_VALID||
+        !classes_icon&&!cam_look&&!skins_shown)||(!data&&!draw_classes)||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
         return;
@@ -9255,11 +9234,13 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     else for(unsigned y=0;y<height;y++)
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
     pitch=row;
-    if(box_up)som_cam_box_erase(ring_owner_ram,box_vram,overlay_frame,pitch,cam_bytes);
+    /* The backend provides an already composited frame. Never invent world
+     * pixels behind its native UI. Until a clean world layer is exported,
+     * retain the original frame whenever a native HUD/window is present. */
     if(cam_look)
-        cam_texts=som_cam_save(&camera,cam_ram,cam_vram,oam_shown_valid?oam_shown:NULL,overlay_frame,
+        cam_texts=som_cam_save(&camera,cam_ram,cam_vram,oam_shown_valid?oam_shown:cam_ram+0x0800u,overlay_frame,
                                pitch,cam_bytes,cam_mask,cam_text,SOM_CAM_W*SOM_CAM_H);
-    if(cam_on)som_cam_rub(cam_mask,overlay_frame,pitch,cam_bytes);
+    if(cam_on&&(cam_texts||!oam_shown_valid||(cam_ram[0xD0]&0x80u)))cam_on=0;
     if(width==256u)for(unsigned i=0;i<skins_shown;i++){
         if(skins_now[i].kind==SOM_SKIN_STAR){
             const uint8_t *art=som_rom_at(0xD28400u+SOM_ICON_BYTES*0x7Bu,SOM_ICON_BYTES);
@@ -9344,7 +9325,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                               hero_x,hero_y-SOM_COMBO_LABEL_RISE_PX,1,
                               som_overlay_color(pixel_format,255,208,64));
     }
-    if(box_up)som_cam_box_draw(ring_owner_ram,box_vram,overlay_frame,pitch,pixel_format,width/SOM_CAM_W);
+    /* No relocated box redraw: the native BG3 is no longer scrolled. */
     if(class_title)som_party_panels(overlay_frame,width,height,pitch,
         (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(classes_icon)

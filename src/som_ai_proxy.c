@@ -9447,6 +9447,15 @@ static void som_class_icons(uint8_t *pixels,unsigned width,unsigned height,size_
         som_icon_draw(pixels,width,height,pitch,pixel_format,icon,78,108+(int)slot*20,0u);
     }
 }
+/* A saber on hero `who` (hits left +0x19D, spells-non-damage.md 5): the game
+ * reloads that hero's five weapon colours, sprite palette 0 colours
+ * 1+5*who .. 5+5*who in the CGRAM buffer 7E:0700 (measured: Flame Saber
+ * changes +0x069 0x18 -> 0x24 and 7E:0702-070B; the girl's and the sprite's
+ * slots follow the same layout, not yet measured). NULL: no saber. */
+static const uint8_t *som_saber_colours(const uint8_t *ram,unsigned who){
+    if(!ram||who>=SOM_PARTY_MEMBERS||!ram[0xE000u+0x200u*who+0x19Du])return NULL;
+    return ram+0x0702u+10u*who;
+}
 /* Bushido torso armour (src/som_armour.h): the hero's own sprite pieces are
  * composed from OAM and VRAM and the torso is found per frame by palette
  * index and body band. What each index looks like on screen is learned from
@@ -9695,7 +9704,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             for(unsigned who=0;blades&&who<SOM_PARTY_MEMBERS;who++)
                 if(weapon_drawn[who].draw.active)
                     som_weapon_mask_draw(&weapon_drawn[who].draw,ram,overlay_frame,width,height,
-                                         pitch,pixel_format,weapon_drawn[who].dx,weapon_drawn[who].dy);
+                                         pitch,pixel_format,weapon_drawn[who].dx,weapon_drawn[who].dy,
+                                         som_saber_colours(ram,who));
             if(ukemi_draw.active)
                 som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);

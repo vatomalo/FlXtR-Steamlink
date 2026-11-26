@@ -42,7 +42,7 @@ int main(void){
         const uint32_t under=som_overlay_color(fmt,0,0,120);
         som_overlay_put(buffer,pitch,fmt,20,20,under);
         som_overlay_put(buffer,pitch,fmt,21,20,under);
-        assert(som_weapon_mask_draw(&sprite,ram,buffer,48,48,pitch,fmt,0,0));
+        assert(som_weapon_mask_draw(&sprite,ram,buffer,48,48,pitch,fmt,0,0,NULL));
         const uint32_t solid=fmt==1?
              ((uint32_t*)(void*)(buffer+20*pitch))[20]:
              ((uint16_t*)(void*)(buffer+20*pitch))[20];
@@ -51,6 +51,13 @@ int main(void){
              ((uint16_t*)(void*)(buffer+20*pitch))[21];
         assert(solid==som_overlay_color(fmt,255,0,0));
         assert(faded==som_mask_mix25(under,solid,fmt));
+        /* A saber: the game's five live weapon colours replace the pack's. */
+        const uint8_t live[10]={0xE0,0x03};               /* green in BGR555 */
+        assert(som_weapon_mask_draw(&sprite,ram,buffer,48,48,pitch,fmt,0,0,live));
+        const uint32_t sabre=fmt==1?
+             ((uint32_t*)(void*)(buffer+20*pitch))[20]:
+             ((uint16_t*)(void*)(buffer+20*pitch))[20];
+        assert(sabre==som_overlay_color(fmt,0,255,0));
     }
     puts("Bushido mask compositor: PASS");
     return 0;

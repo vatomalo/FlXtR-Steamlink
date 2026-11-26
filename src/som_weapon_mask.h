@@ -29,9 +29,14 @@ static inline uint32_t som_mask_mix25(uint32_t dst,uint32_t src,int format){
 /* Draw a ROM-extracted, grip-aligned weapon mask on the FINAL Libretro frame.
  * Solid palette 1..5 keeps native SNES sharpness; indices 6..10 use a
  * deliberate 25% blend. The pack contains no hero pixels or background. */
+/* live5: five BGR555 words (the hero's own weapon colours in the game's
+ * sprite palette 0) used instead of the pack's while a saber is up, so the
+ * blade takes the saber's colour like the game's own weapons; NULL = the
+ * pack's colours. */
 static inline int som_weapon_mask_draw(const SomNpcWorkState *sprite,const uint8_t *ram,
                                        uint8_t *pixels,unsigned width,unsigned height,
-                                       size_t pitch,int format,int ox0,int oy0){
+                                       size_t pitch,int format,int ox0,int oy0,
+                                       const uint8_t *live5){
     if(!sprite||!sprite->active||!ram||!pixels)return 0;
     const unsigned obj=SOM_NPC_OBJECT(sprite->slot);
     const unsigned cam=(ram[obj+0x0Bu]&0x80u)?0xACu:0xA8u;
@@ -46,7 +51,8 @@ static inline int som_weapon_mask_draw(const SomNpcWorkState *sprite,const uint8
     const uint8_t *image=record+5u;
     uint32_t colours[6]={0};
     for(unsigned c=1;c<=5u;c++){
-        const unsigned value=sprite->entry.colours[c-1u];
+        const unsigned value=live5?(unsigned)(live5[2u*(c-1u)]|live5[2u*(c-1u)+1u]<<8):
+                                   sprite->entry.colours[c-1u];
         colours[c]=som_overlay_color(format,(value&31u)*255u/31u,
                                     ((value>>5u)&31u)*255u/31u,
                                     ((value>>10u)&31u)*255u/31u);

@@ -31,7 +31,22 @@ int main(void){
     assert(som_gen_parse(text,back,SOM_GEN_MAX)==1);
     assert(!strcmp(back[0].name,"RABBITE ELITE")&&back[0].damage[2]==17&&back[0].nemesis==2&&
            back[0].wins==1&&back[0].rank==1&&back[0].home_map==130&&back[0].species==0);
-    assert(som_gen_parse("SOMGENERALS 2\n0 130 1 0 0 0 0 0 0 0 0 0 0 0 0 -1 X\n",back,8)==0);
+    assert(som_gen_parse("SOMGENERALS 3\n0 130 1 0 0 0 0 0 0 0 0 0 0 0 0 -1 X\n",back,8)==0); /* future */
+    /* v2 keeps the habits per hero; v1 files still load, with none. */
+    g[0].habit[1][3]=0xC8;g[0].habit[2][7]=0x05;
+    som_gen_format(g,1,text,sizeof(text));
+    assert(!strncmp(text,"SOMGENERALS 2\n",14)&&strstr(text," h00"));
+    memset(back,0xEE,sizeof(back));
+    assert(som_gen_parse(text,back,SOM_GEN_MAX)==1&&back[0].habit[1][3]==0xC8&&back[0].habit[2][7]==5&&
+           back[0].habit[0][0]==0&&!strcmp(back[0].name,"RABBITE ELITE"));
+    memset(back,0xEE,sizeof(back));
+    assert(som_gen_parse("SOMGENERALS 1\n0 130 3 4 1 2 0 0 9 0 0 0 0 0 0 1 OLD ONE\n",back,8)==1&&
+           back[0].rank==3&&back[0].nemesis==1&&back[0].damage[1]==9&&!back[0].habit[2][7]&&
+           !strcmp(back[0].name,"OLD ONE"));
+    assert(som_gen_parse("SOMGENERALS 2\n0 130 1 0 0 0 0 0 0 0 0 0 0 0 0 -1 X\n",back,8)==1&&
+           !strcmp(back[0].name,"X")&&!back[0].habit[0][0]);
+    assert(som_gen_parse("SOMGENERALS 2\n0 130 1 0 0 0 0 0 0 0 0 0 0 0 0 -1 hal\n",back,8)==1&&
+           !strcmp(back[0].name,"hal"));                          /* a name, not habits */
     assert(som_gen_parse("SOMGENERALS 1\n0 130 9 0 0 0 0 0 0 0 0 0 0 0 0 -1 X\n",back,8)==0); /* rank */
     assert(som_gen_parse("SOMGENERALS 1\ngarbage\n0 130 2 0 0 0 0 0 0 0 0 0 0 0 0 -1 R\n",back,8)==1&&
            back[0].rank==2&&!strcmp(back[0].name,"R"));

@@ -37,9 +37,9 @@
 
 enum { SOM_PERF_INTERVAL, SOM_PERF_RUN, SOM_PERF_CORE, SOM_PERF_VIDEO, SOM_PERF_AUDIO,
        SOM_PERF_OVERLAY, SOM_PERF_MIX, SOM_PERF_PUMP, SOM_PERF_WRAM, SOM_PERF_PROXY,
-       SOM_PERF_PHASES };
+       SOM_PERF_TACTICS, SOM_PERF_PHASES };
 static const char *const som_perf_names[SOM_PERF_PHASES]={
-    "interval","run","core","video","audio","overlay","mix","pump","wram","proxy"};
+    "interval","run","core","video","audio","overlay","mix","pump","wram","proxy","tactics"};
 
 typedef struct {
     uint32_t hist[SOM_PERF_BUCKETS+1u];

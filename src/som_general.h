@@ -37,7 +37,10 @@
 #define SOM_GEN_PALETTE 0xDFA0u
 #define SOM_GEN_KEEP_AWAY 40          /* px (Manhattan) it keeps from a nemesis weapon */
 #define SOM_GEN_RETINT_FRAMES 60ul
-#define SOM_GEN_FILE_TAG "SOMGENERALS 1"
+#define SOM_GEN_FILE_TAG "SOMGENERALS 2"
+#define SOM_GEN_FILE_TAG_V1 "SOMGENERALS 1"
+#define SOM_GEN_HEROES 3u
+#define SOM_GEN_HABITS 8u                  /* = SOM_HABITS of som_enemy_tactics.h */
 
 typedef struct {
     char name[24];
@@ -45,6 +48,7 @@ typedef struct {
     unsigned encounters, defeats, wins, escapes;
     unsigned damage[8];               /* lifetime damage taken per weapon type */
     int nemesis;                      /* weapon type, -1 = none yet */
+    uint8_t habit[SOM_GEN_HEROES][SOM_GEN_HABITS];  /* habits seen per hero (v2) */
 } SomGeneral;
 
 typedef struct {
@@ -102,21 +106,28 @@ static inline unsigned som_gen_defaults(SomGeneral *g){
 }
 
 /* Text: the tag line, then one general per line:
- * species map rank encounters defeats wins escapes d0..d7 nemesis name */
+ * species map rank encounters defeats wins escapes d0..d7 nemesis
+ *   h<24 hex bytes: 3 heroes x 8 habits> name                     (v2)
+ * Version 1 files (no habit field) still load, with no habits. */
 static inline size_t som_gen_format(const SomGeneral *g,unsigned count,char *out,size_t size){
     size_t n=(size_t)snprintf(out,size,"%s\n",SOM_GEN_FILE_TAG);
     for(unsigned i=0;i<count&&n<size;i++){
         const SomGeneral *e=&g[i];
-        n+=(size_t)snprintf(out+n,size-n,"%u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %d %s\n",
+        char habits[2u*SOM_GEN_HEROES*SOM_GEN_HABITS+1u];
+        for(unsigned k=0;k<SOM_GEN_HEROES*SOM_GEN_HABITS;k++)
+            snprintf(habits+2u*k,3,"%02X",e->habit[k/SOM_GEN_HABITS][k%SOM_GEN_HABITS]);
+        n+=(size_t)snprintf(out+n,size-n,"%u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %d h%s %s\n",
             e->species,e->home_map,e->rank,e->encounters,e->defeats,e->wins,e->escapes,
             e->damage[0],e->damage[1],e->damage[2],e->damage[3],e->damage[4],e->damage[5],
-            e->damage[6],e->damage[7],e->nemesis,e->name);
+            e->damage[6],e->damage[7],e->nemesis,habits,e->name);
     }
     return n<size?n:size;
 }
 /* Number of generals read (0 on a bad tag or no valid line). */
 static inline unsigned som_gen_parse(const char *text,SomGeneral *g,unsigned max){
-    if(!text||strncmp(text,SOM_GEN_FILE_TAG "\n",sizeof(SOM_GEN_FILE_TAG))!=0)return 0;
+    if(!text)return 0;
+    const int v2=strncmp(text,SOM_GEN_FILE_TAG "\n",sizeof(SOM_GEN_FILE_TAG))==0;
+    if(!v2&&strncmp(text,SOM_GEN_FILE_TAG_V1 "\n",sizeof(SOM_GEN_FILE_TAG_V1))!=0)return 0;
     const char *line=strchr(text,'\n');
     unsigned count=0;
     while(line&&*++line&&count<max){
@@ -126,8 +137,26 @@ static inline unsigned som_gen_parse(const char *text,SomGeneral *g,unsigned max
                   &e.rank,&e.encounters,&e.defeats,&e.wins,&e.escapes,&e.damage[0],&e.damage[1],
                   &e.damage[2],&e.damage[3],&e.damage[4],&e.damage[5],&e.damage[6],&e.damage[7],
                   &e.nemesis,&used)==16&&used>0){
+            const char *p=line+used;
+            int hex=v2&&*p=='h';
+            for(unsigned d=1;hex&&d<=2u*SOM_GEN_HEROES*SOM_GEN_HABITS;d++){
+                const char c=p[d];
+                hex=(c>='0'&&c<='9')||(c>='A'&&c<='F')||(c>='a'&&c<='f');
+            }
+            if(hex&&p[1u+2u*SOM_GEN_HEROES*SOM_GEN_HABITS]==' '){
+                p++;
+                for(unsigned k=0;k<SOM_GEN_HEROES*SOM_GEN_HABITS;k++,p+=2){
+                    unsigned v=0;
+                    for(unsigned d=0;d<2u;d++){
+                        const char c=p[d];
+                        v=v*16u+(unsigned)(c<='9'?c-'0':(c|0x20)-'a'+10);
+                    }
+                    e.habit[k/SOM_GEN_HABITS][k%SOM_GEN_HABITS]=(uint8_t)v;
+                }
+                while(*p==' ')p++;
+            }
             size_t k=0;
-            for(const char *p=line+used;*p&&*p!='\n'&&k+1<sizeof(e.name);p++)e.name[k++]=*p;
+            for(;*p&&*p!='\n'&&k+1<sizeof(e.name);p++)e.name[k++]=*p;
             e.name[k]=0;
             if(e.species<0x80u&&e.home_map<0x200u&&e.rank>=1u&&e.rank<=SOM_GEN_MAX_RANK&&
                e.nemesis>=-1&&e.nemesis<8&&k)g[count++]=e;

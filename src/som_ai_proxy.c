@@ -43,9 +43,14 @@
 #include "som_weapon_mask.h"
 #include "som_art_gen.h"
 #include "som_arena.h"
+#include "som_enemy_tactics.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 static void som_fight_configure(void);
+static void som_fight_set_level(unsigned level);
+static void som_fight_general_elected(unsigned i);
+static void som_fight_general_concluded(unsigned i);
+static void som_fight_overlay(uint8_t *pixels,unsigned width,unsigned height,size_t pitch);
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -221,6 +226,9 @@ static const char *debug_messages_file=SOM_DEBUG_MESSAGES_FILE;
 static const char *p2_ai_file=SOM_P2_AI_FILE;
 #define SOM_WHACK_OFF_FILE "/home/apps/retroarch/cores/experimental/som_ai_whack_off"
 static const char *whack_off_file=SOM_WHACK_OFF_FILE;
+/* Enemy fighting AI level (menu); FLXTR_SOM_FIGHT_DIFFICULTY wins over it. */
+#define SOM_FIGHT_FILE "/home/apps/retroarch/cores/experimental/som_ai_fight_difficulty"
+static const char *fight_file=SOM_FIGHT_FILE;
 /* Independent from the six Gambit priority digits, shared with the
  * external song-id -> yt-dlp playback bridge. */
 #define SOM_MUSIC_GENRE_FILE "/home/apps/retroarch/cores/experimental/som_music_genre"
@@ -228,7 +236,7 @@ static const char *music_genre_file=SOM_MUSIC_GENRE_FILE;
 static void som_music_genre_load(void);
 static void som_music_genre_save(void);
 static SomGambits gambits={0,0,{4,3,3,3,4,1},0,SOM_PAGE_ACTIONS,
-    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0,0};
+    {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0,SOM_FIGHT_NORMAL,0};
 static SomDisciplines disciplines;
 /* The acting hero (2026-11-22, "write them with companions in mind"): the
  * player's moves (X class moves, L2 specials, throw, bash, Blink, portals,
@@ -2158,6 +2166,12 @@ static void som_gambit_result(int result){
     case SOM_GAMBIT_WHACK_CHANGED:
         if(gambits.no_whack){FILE *off=fopen(whack_off_file,"w");if(off)fclose(off);}
         else unlink(whack_off_file);
+        break;
+    case SOM_GAMBIT_FIGHT_CHANGED:
+        som_gambit_write(fight_file,som_fight_names[gambits.fight_level%SOM_FIGHT_LEVELS]);
+        som_fight_set_level(gambits.fight_level);
+        {char say[40];snprintf(say,sizeof(say),"Enemy AI|%s",som_fight_level_labels[gambits.fight_level%SOM_FIGHT_LEVELS]);
+         som_overlay_say(&overlay,say,SOM_MESSAGE_FRAMES);}
         break;
     case SOM_GAMBIT_EXIT:
         if(act_ai){                        /* from the ring menu: the AI starts */
@@ -8622,7 +8636,10 @@ static void som_generals_frame(void){
     for(unsigned i=0;i<general_count;i++){
         SomGeneral *g=&generals[i];SomGeneralLive *l=&generals_live[i];
         int event=som_gen_elect(g,l,ram,frame_number,familiar.slot);
+        if(event==SOM_GEN_ELECTED)som_fight_general_elected(i);
         if(event==SOM_GEN_NONE)event=som_gen_tick(g,l,ram,frame_number);
+        if(event==SOM_GEN_DEFEATED||event==SOM_GEN_WON||event==SOM_GEN_ESCAPED)
+            som_fight_general_concluded(i);
         if(event==SOM_GEN_NONE)continue;
         static const char *const weapons[8]={"glove","sword","axe","spear","whip","bow",
             "boomerang","javelin"};
@@ -9436,6 +9453,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"V",
                           lock2_x,lock2_y-(int)((frame_number/8u)&1u),1,
                           som_overlay_color(pixel_format,255,220,64));
+    som_fight_overlay(overlay_frame,width,height,pitch);
     if(general_text[0])
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,general_text,
                           general_x,general_y,1,
@@ -10117,105 +10135,150 @@ static void som_enemy_scaling_frame(void){
         if(base&&som_word(base+1)&&base[0]<=98u)som_enemy_scale(enemy,base,party_level);
     }
 }
-/* Fighting-game tactics: observe native poses, never controller inputs.
- * Only defer native attack readiness or damp existing native movement.
- * No forced attacks, target rewrites, teleportation or damage changes. */
-typedef struct {
-    unsigned long next, seen;
-    uint16_t hp;
-    uint8_t species, valid, pressure, last_pose, target;
-} SomEnemyFight;
-static SomEnemyFight enemy_fight[3];
-static unsigned enemy_fight_map=0x10000u;
-/* Tactical difficulty is independent of enemy HP/damage scaling.
- * FLXTR_SOM_FIGHT_DIFFICULTY: classic, easy, normal, hard, expert.
- * Read once per loaded game via the existing retro_load_game path. */
-typedef struct {
-    unsigned interval, delay, habit, range;
-    int spacing, zoning, coordination;
-} SomFightDifficulty;
-static const SomFightDifficulty som_fight_levels[]={
-    {0,0,255,0,0,0,0},       /* classic: native AI only */
-    {24,12,8,48,1,0,0},      /* easy: generous openings */
-    {14,8,4,96,1,1,0},      /* normal */
-    {10,5,3,112,1,1,1},     /* hard */
-    {7,3,2,128,1,1,1}       /* expert: still bounded, no input reading */
-};
-static unsigned som_fight_level=2;
-static unsigned som_fight_parse(const char *s){
-    if(!s)return 2;
-    if(!strcmp(s,"classic")||!strcmp(s,"0"))return 0;
-    if(!strcmp(s,"easy")||!strcmp(s,"1"))return 1;
-    if(!strcmp(s,"hard")||!strcmp(s,"3"))return 3;
-    if(!strcmp(s,"expert")||!strcmp(s,"4"))return 4;
-    return 2;
+/* Fighting-game tactics (src/som_enemy_tactics.h): observe the world, bend
+ * the native monster AI's own moves and swing timing. Never controller
+ * inputs, forced attacks, damage, teleports or target rewrites.
+ * FLXTR_SOM_FIGHT_DIFFICULTY: classic, easy, normal (default), hard, expert;
+ * independent of the HP/damage scaling. FLXTR_SOM_FIGHT_DEBUG=1 shows the
+ * developer overlay; FLXTR_SOM_FIGHT_ARENA=<archetype> and
+ * FLXTR_SOM_FIGHT_RANK=<rank> set every monster in Watts' arena. */
+static SomTac fight;
+static int fight_debug,fight_arena_rank=-1;
+static unsigned long fight_ticks;
+static uint8_t general_habit_live[SOM_GEN_MAX][SOM_TAC_HEROES][SOM_HABITS];
+static int som_fight_name(const char *s,const char *const *names,unsigned n){
+    if(!s||!*s)return -1;
+    for(unsigned i=0;i<n;i++){
+        const char *a=s,*b=names[i];
+        while(*a&&*b&&(*a|0x20)==(*b|0x20)){a++;b++;}
+        if(!*a&&!*b)return (int)i;
+    }
+    return -1;
+}
+static void som_fight_set_level(unsigned level){
+    const int arena=fight.arena_archetype;
+    som_tac_reset(&fight,level);fight.arena_archetype=arena;
 }
 static void som_fight_configure(void){
-    som_fight_level=som_fight_parse(getenv("FLXTR_SOM_FIGHT_DIFFICULTY"));
-    memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=0x10000u;
+    fight.arena_archetype=som_fight_name(getenv("FLXTR_SOM_FIGHT_ARENA"),som_arch_names,SOM_ARCH_COUNT);
+    fight_arena_rank=som_fight_name(getenv("FLXTR_SOM_FIGHT_RANK"),som_rank_names,SOM_RANKS);
+    {const char *env=getenv("FLXTR_SOM_FIGHT_DIFFICULTY");
+     char saved[16]={0};
+     FILE *in=env&&*env?NULL:fopen(fight_file,"r");
+     if(in){if(!fgets(saved,sizeof(saved),in))saved[0]=0;fclose(in);
+            saved[strcspn(saved,"\r\n")]=0;}
+     som_fight_set_level(som_fight_parse(env&&*env?env:saved[0]?saved:NULL));
+     gambits.fight_level=fight.level;}
+    {const char *d=getenv("FLXTR_SOM_FIGHT_DEBUG");fight_debug=d&&*d&&strcmp(d,"0");}
+    memset(general_habit_live,0,sizeof(general_habit_live));
+    fight_ticks=0;
+    fprintf(stderr,"[som-ai] FIGHT AI %s%s%s\n",som_fight_names[fight.level],
+            fight.arena_archetype>0?", arena trains ":"",
+            fight.arena_archetype>0?som_arch_names[fight.arena_archetype]:"");
+}
+/* Generals rank 1..5 map to Veteran..General; a general that has a nemesis
+ * weapon and rank 4 or more is a Nemesis. */
+static unsigned som_fight_general_rank(const SomGeneral *g){
+    if(g->nemesis>=0&&g->rank>=4u)return SOM_RANK_NEMESIS;
+    return g->rank>=SOM_RANK_GENERAL?SOM_RANK_GENERAL:g->rank;
 }
 static void som_enemy_fight_frame(void){
-    const SomFightDifficulty *cfg=&som_fight_levels[som_fight_level];
-    if(!cfg->interval)return;
+    if(fight.level==SOM_FIGHT_CLASSIC)return;
     uint8_t *ram=som_field_ram();
-    if(!ram||disciplines.open||som_manual_disciplines){
-        memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=0x10000u;return;
+    if(!ram||disciplines.open||som_manual_disciplines){fight.last_frame=0;return;}
+    const uint64_t t0=PERF_NOW();
+    SomTacHeroExtra extra[SOM_TAC_HEROES];
+    memset(extra,0,sizeof(extra));
+    for(unsigned who=0;who<SOM_TAC_HEROES;who++){
+        const uint8_t *h=ram+0xE000u+0x200u*who;
+        static const uint8_t reach[8]={24,28,28,34,48,96,80,80};
+        const unsigned weapon=h[0x1E4]&7u;
+        const SomWeaponStyle *st=som_style_of(&styles,som_disc_member_class(&disciplines,who),NULL);
+        int r=reach[weapon]+(st&&st->weapon==weapon&&st->reach_bonus>0?st->reach_bonus:0);
+        extra[who].reach=(uint8_t)(r>255?255:r);
+        extra[who].guard=(uint8_t)som_guard_up(ram,who);
+        extra[who].evade=(uint8_t)(evade_active&&som_actor==who);
     }
-    unsigned map=som_word(ram+0xDC);
-    if(map!=enemy_fight_map){
-        memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=map;
+    {unsigned clones=0;for(unsigned i=0;i<SOM_BUN_COUNT;i++)clones+=bunshin.alive[i]?1u:0u;
+     if(som_actor<SOM_TAC_HEROES)extra[som_actor].clones=(uint8_t)clones;}
+    const unsigned map=som_word(ram+0xDC)&0x1FFu;
+    const int arena=map==SOM_ARENA_MAP;
+    for(unsigned s=0;s<SOM_TAC_FOES;s++)fight.rank[s]=SOM_RANK_COMMON;
+    if(arena&&fight_arena_rank>=0)for(unsigned s=0;s<SOM_TAC_FOES;s++)fight.rank[s]=(uint8_t)fight_arena_rank;
+    for(unsigned i=0;i<general_count;i++){
+        const SomGeneralLive *l=&generals_live[i];
+        if(generals_on&&l->slot>=0&&l->slot<(int)SOM_TAC_FOES)
+            fight.rank[l->slot]=(uint8_t)som_fight_general_rank(&generals[i]);
     }
-    unsigned pressure_slots=0;
-    /* Count nearby active attackers independently of decision tick phase. */
-    if(cfg->coordination)for(unsigned i=0;i<3;i++){
-        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
-        if((int)i!=familiar.slot&&m[0x180]<0x54u&&som_bun_monster_alive(m)&&som_word(m+0x182)&&
-           (m[0x01C]==0x20u||m[0x01C]==0x80u))pressure_slots++;
+    {const int keep=fight.arena_archetype;
+     if(!arena)fight.arena_archetype=-1;
+     som_tac_frame(&fight,ram,extra,familiar.slot,frame_number);
+     fight.arena_archetype=keep;}
+    /* a general's habits, kept for its record when the encounter ends */
+    for(unsigned i=0;i<general_count;i++){
+        const SomGeneralLive *l=&generals_live[i];
+        if(!generals_on||l->slot<0||l->slot>=(int)SOM_TAC_FOES)continue;
+        const SomTacFoe *f=&fight.foe[l->slot];
+        if(f->live&&f->species==generals[i].species)
+            memcpy(general_habit_live[i],f->habit,sizeof(general_habit_live[i]));
     }
-    for(unsigned slot=0;slot<3;slot++){
-        uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
-        SomEnemyFight *f=&enemy_fight[slot];
-        unsigned hp=som_word(e+0x182),species=e[0x180];
-        if((int)slot==familiar.slot||species>=0x54u||!hp||
-           !som_bun_monster_alive(e)){memset(f,0,sizeof(*f));continue;}
-        if(!f->valid||f->species!=species||hp>f->hp||frame_number<f->seen||
-           frame_number-f->seen>2){
-            memset(f,0,sizeof(*f));f->valid=1;f->species=(uint8_t)species;
-            f->next=frame_number+cfg->interval+slot*3u;f->target=255;
+    PERF_ADD(SOM_PERF_TACTICS,t0);
+    if(fight_debug){
+        static uint8_t shown[SOM_TAC_FOES];
+        for(unsigned k=0;k<SOM_TAC_FOES;k++){
+            const SomTacFoe *f=&fight.foe[k];
+            const uint8_t now=f->live?f->action:0xFF;
+            if(now==shown[k])continue;
+            shown[k]=now;
+            if(f->live)fprintf(stderr,"[som-ai] FIGHT slot %u %02X %s %s %s -> %s, P%u %s, %s\n",k,f->species,
+                som_arch_names[f->archetype],som_rank_names[f->rank],som_tac_temper(f,f->archetype),
+                som_tac_action_names[f->action],f->target<SOM_TAC_HEROES?f->target+1u:0u,
+                som_role_names[f->role],f->reason);
         }
-        f->hp=(uint16_t)hp;f->seen=frame_number;
-        const uint8_t *hero=NULL;unsigned best=~0u,who_best=255;
-        int ex=som_word(e+2),ey=som_word(e+4);
-        for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
-            const uint8_t *h=ram+0xE000u+0x200u*who;
-            if(!som_ally_alive(h)||((h[0x0B]^e[0x0B])&0x80u))continue;
-            unsigned d=(unsigned)(abs(ex-(int)som_word(h+2))+abs(ey-(int)som_word(h+4)));
-            if(d<best){best=d;hero=h;who_best=who;}
-        }
-        if(!hero||best>cfg->range){f->pressure=0;f->last_pose=0;f->target=255;continue;}
-        unsigned pose=hero[0x01C];
-        int swinging=pose==0x20u||pose==0x80u;
-        if(f->target!=who_best){f->last_pose=0;f->pressure=0;f->target=(uint8_t)who_best;}
-        if(swinging&&!f->last_pose&&f->pressure<8u)f->pressure++;
-        f->last_pose=(uint8_t)swinging;
-        if(frame_number<f->next)continue;
-        f->next=frame_number+cfg->interval+(species+slot)%5u;
-        /* Never interrupt native animations, damage reactions or status. */
-        if(e[0x01C]||e[0x1F1]||som_word(e+0x190))continue;
-        unsigned style=species%4u; /* provisional deterministic archetypes */
-        unsigned gap=style==2u?44u:style==0u?18u:26u;
-        int recovery=!swinging&&hero[0x1ED]!=0;
-        int guard=swinging&&best<=gap+12u&&(style!=0u||f->pressure>=cfg->habit);
-        int yield=cfg->coordination&&pressure_slots>0u&&best<32u&&!recovery;
-        if(cfg->spacing&&best<gap&&(guard||(cfg->zoning&&style==2u)||yield)){
-            /* Footsies/zoning: stop only velocity directed toward the hero. */
-            int dx=(int)som_word(hero+2)-ex,dy=(int)som_word(hero+4)-ey;
-            if((int8_t)e[6]*dx+(int8_t)e[7]*dy>0){e[6]=0;e[7]=0;}
-        }
-        if((guard||yield)&&!recovery&&!e[0x1ED])
-            e[0x1ED]=(uint8_t)(cfg->delay+(species+slot)%5u);
-        else if(best<32u&&!guard)pressure_slots++;
-        /* Recovery windows are left to the original attack VM, not forced. */
+    }
+    if(fight_debug&&++fight_ticks>=1800u){
+        fprintf(stderr,"[som-ai] FIGHT %s: %u decisions, %u native writes so far\n",
+                som_fight_names[fight.level],(unsigned)fight.evals,(unsigned)fight.writes);
+        fight_ticks=0;
+    }
+}
+/* A newly elected general remembers the heroes (at 3/4 strength). */
+static void som_fight_general_elected(unsigned i){
+    const SomGeneralLive *l=&generals_live[i];
+    if(l->slot<0||l->slot>=(int)SOM_TAC_FOES)return;
+    SomTacFoe *f=&fight.foe[l->slot];
+    for(unsigned h=0;h<SOM_TAC_HEROES;h++)for(unsigned k=0;k<SOM_HABITS;k++){
+        const unsigned v=generals[i].habit[h][k]*3u/4u;
+        general_habit_live[i][h][k]=(uint8_t)v;
+        if(f->live&&f->species==generals[i].species&&f->habit[h][k]<v)f->habit[h][k]=(uint8_t)v;
+    }
+}
+/* The encounter ended: its habits join the general's long memory. */
+static void som_fight_general_concluded(unsigned i){
+    for(unsigned h=0;h<SOM_TAC_HEROES;h++)for(unsigned k=0;k<SOM_HABITS;k++){
+        const unsigned old=generals[i].habit[h][k]*3u/4u,now=general_habit_live[i][h][k];
+        generals[i].habit[h][k]=(uint8_t)(now>old?now:old);
+    }
+    memset(general_habit_live[i],0,sizeof(general_habit_live[i]));
+}
+/* Developer overlay: archetype, rank, action, target, role and reason over
+ * each monster. Off unless FLXTR_SOM_FIGHT_DEBUG=1. */
+static void som_fight_overlay(uint8_t *pixels,unsigned width,unsigned height,size_t pitch){
+    if(!fight_debug||fight.level==SOM_FIGHT_CLASSIC||!som_overlay_field()||!backend_retro_get_memory_data||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    const uint32_t ink=som_overlay_color(pixel_format,160,255,200);
+    for(unsigned s=0;s<SOM_TAC_FOES;s++){
+        char lines[5][40];
+        const unsigned n=som_tac_describe(&fight,s,lines,5);
+        if(!n)continue;
+        const uint8_t *o=ram+SOM_TAC_FOE_BASE+SOM_TAC_OBJECT*s;
+        const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
+        const int x=(int16_t)(som_word(o+2)-som_word(ram+cam))-30;
+        int y=(int16_t)(som_word(o+4)-som_word(ram+cam+2u))-o[0x45]-24-(int)n*8;
+        if(x<-30||x>=256||y>=224)continue;
+        for(unsigned k=0;k<n;k++,y+=8)
+            if(y>=0)som_overlay_label(pixels,width,height,pitch,pixel_format,lines[k],x<0?0:x,y,0,ink);
     }
 }
 /* Clamp native attack displacement, not the animation or its damage stage.

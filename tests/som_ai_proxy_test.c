@@ -1174,7 +1174,7 @@ int main(void){
     /* Gambit menu text and drawing. */
     {
         SomGambits g={1,1,{0,5,3,3,4,1},0,SOM_PAGE_ACTIONS,
-            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0,0};
+            {3,2,2,2,3,3,3,3},{3,3},0,0,1,0,0,0,2,0};
         char text[33];
         assert(som_gambit_line(&g,0,text)&&strstr(text,"GAMBITS"));
         /* Quest page: two weights + exit, changed with Right, saved as digits. */
@@ -1240,6 +1240,8 @@ int main(void){
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)==SOM_GAMBIT_P2_CHANGED&&m.player2);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_WHACK_CHANGED&&m.no_whack);
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
+            assert(m.cursor==SOM_GAMBIT_FIGHT_ITEM);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(m.cursor==SOM_GAMBIT_EXIT_ITEM);
         }
@@ -3998,6 +4000,76 @@ int main(void){
         }
         mocked_buttons=0;som_input_poll();
         som_disc_init(&disciplines);memset(ram,0,SOM_WRAM_SIZE);
+    }
+    /* Enemy tactics in the proxy: configuration, Classic, General ranks and
+     * the habits a general keeps between encounters. */
+    {
+        backend_retro_get_memory_data=mocked_memory_data;backend_retro_get_memory_size=mocked_memory_size;
+        uint8_t *w=mocked_wram;memset(w,0,SOM_WRAM_SIZE);
+        w[0xE4]=1;w[0xE6]=0x0F;w[0xD0]=0;w[0x7D]=0;w[0xDC]=52;
+        uint8_t *h=w+0xE000;h[0]=1;som_put_word(h+2,100);som_put_word(h+4,100);som_put_word(h+0x182,50);
+        uint8_t *m=w+0xE600;m[0]=1;m[0x180]=0x00;som_put_word(m+2,150);som_put_word(m+4,100);
+        som_put_word(m+0x182,20);som_put_word(m+0x184,20);m[6]=0x82;
+        const int keep_fam=familiar.slot;familiar.slot=-1;
+        setenv("FLXTR_SOM_FIGHT_DIFFICULTY","classic",1);unsetenv("FLXTR_SOM_FIGHT_ARENA");
+        som_fight_configure();
+        assert(fight.level==SOM_FIGHT_CLASSIC);
+        {uint8_t before[SOM_WRAM_SIZE];memcpy(before,w,SOM_WRAM_SIZE);
+         for(unsigned i=0;i<60;i++){frame_number++;som_enemy_fight_frame();}
+         assert(!memcmp(before,w,SOM_WRAM_SIZE)&&!fight.foe[0].live);}
+        setenv("FLXTR_SOM_FIGHT_DIFFICULTY","hard",1);setenv("FLXTR_SOM_FIGHT_ARENA","zoner",1);
+        setenv("FLXTR_SOM_FIGHT_RANK","elite",1);
+        som_fight_configure();
+        assert(fight.level==SOM_FIGHT_HARD&&fight.arena_archetype==SOM_ARCH_ZONER&&fight_arena_rank==SOM_RANK_ELITE);
+        for(unsigned i=0;i<30;i++){frame_number++;som_enemy_fight_frame();}
+        /* not the arena: the species' own archetype, common rank */
+        assert(fight.foe[0].live&&fight.foe[0].archetype==SOM_ARCH_RUSHDOWN&&fight.foe[0].rank==SOM_RANK_COMMON);
+        som_put_word(w+0xDC,SOM_ARENA_MAP);
+        for(unsigned i=0;i<5;i++){frame_number++;som_enemy_fight_frame();}
+        assert(fight.foe[0].archetype==SOM_ARCH_ZONER&&fight.foe[0].rank==SOM_RANK_ELITE);
+        som_put_word(w+0xDC,52);
+        /* Generals: rank 1..5 -> Veteran..General, a nemesis from rank 4 */
+        SomGeneral g;memset(&g,0,sizeof(g));g.rank=1;g.nemesis=-1;
+        assert(som_fight_general_rank(&g)==SOM_RANK_VETERAN);
+        g.rank=5;assert(som_fight_general_rank(&g)==SOM_RANK_GENERAL);
+        g.nemesis=2;assert(som_fight_general_rank(&g)==SOM_RANK_NEMESIS);
+        g.rank=3;assert(som_fight_general_rank(&g)==SOM_RANK_CAPTAIN);
+        {const int on=generals_on;const unsigned count=general_count;const SomGeneral keep=generals[0];
+         const SomGeneralLive keep_live=generals_live[0];
+         generals_on=1;general_count=1;memset(&generals[0],0,sizeof(generals[0]));
+         generals[0].species=0x00;generals[0].rank=4;generals[0].nemesis=1;generals[0].habit[0][SOM_HABIT_BLOCK]=200;
+         generals_live[0].slot=0;
+         for(unsigned i=0;i<3;i++){frame_number++;som_enemy_fight_frame();}
+         assert(fight.foe[0].rank==SOM_RANK_NEMESIS);
+         som_fight_general_elected(0);
+         assert(fight.foe[0].habit[0][SOM_HABIT_BLOCK]==150);          /* 3/4 remembered */
+         fight.foe[0].habit[1][SOM_HABIT_RANGED]=180;
+         frame_number++;som_enemy_fight_frame();
+         som_fight_general_concluded(0);
+         assert(generals[0].habit[1][SOM_HABIT_RANGED]==180&&generals[0].habit[0][SOM_HABIT_BLOCK]>=150);
+         generals_on=on;general_count=count;generals[0]=keep;generals_live[0]=keep_live;}
+        /* the gambit menu sets and saves the level; the env var wins on load */
+        {SomGambits gm;memset(&gm,0,sizeof(gm));gm.open=1;gm.cursor=SOM_GAMBIT_FIGHT_ITEM;gm.fight_level=2;
+         char line[33];
+         assert(som_gambit_line(&gm,SOM_GAMBIT_FIGHT_ITEM+1u,line)&&strstr(line,"Enemy AI: Normal"));
+         assert(som_gambit_press(&gm,(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))==SOM_GAMBIT_FIGHT_CHANGED&&gm.fight_level==3);
+         assert(som_gambit_press(&gm,(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))==SOM_GAMBIT_FIGHT_CHANGED&&gm.fight_level==2);
+         gm.fight_level=4;assert(som_gambit_press(&gm,(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B))==SOM_GAMBIT_FIGHT_CHANGED&&gm.fight_level==0);
+         assert(som_gambit_line(&gm,SOM_GAMBIT_FIGHT_ITEM+1u,line)&&strstr(line,"Classic"));
+         char tmpl[]="/tmp/som-fight-XXXXXX";const int fd=mkstemp(tmpl);assert(fd>=0);close(fd);
+         const char *keep_file=fight_file;fight_file=tmpl;
+         unsetenv("FLXTR_SOM_FIGHT_DIFFICULTY");
+         som_gambit_write(fight_file,"expert");som_fight_configure();
+         assert(fight.level==SOM_FIGHT_EXPERT&&gambits.fight_level==SOM_FIGHT_EXPERT);
+         setenv("FLXTR_SOM_FIGHT_DIFFICULTY","easy",1);som_fight_configure();
+         assert(fight.level==SOM_FIGHT_EASY);
+         unlink(tmpl);fight_file=keep_file;}
+        /* switching back to Classic leaves nothing behind */
+        setenv("FLXTR_SOM_FIGHT_DIFFICULTY","classic",1);som_fight_configure();
+        assert(!fight.foe[0].live&&!fight.foe[0].token_until);
+        unsetenv("FLXTR_SOM_FIGHT_DIFFICULTY");unsetenv("FLXTR_SOM_FIGHT_ARENA");unsetenv("FLXTR_SOM_FIGHT_RANK");
+        som_fight_configure();assert(fight.level==SOM_FIGHT_NORMAL);
+        familiar.slot=keep_fam;memset(w,0,SOM_WRAM_SIZE);
     }
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");

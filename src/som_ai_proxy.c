@@ -47,6 +47,7 @@
 #include "som_armour.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
+#include "som_mentalist.h"
 static void som_fight_configure(void);
 static void som_fight_set_level(unsigned level);
 static void som_fight_general_elected(unsigned i);
@@ -1096,6 +1097,17 @@ static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 /* Mage bolts (src/som_mage_bolt.h): every caster's B is a glove punch that
  * throws a painted ball of its B spell's element. */
 static SomBolt mage_bolts[SOM_BOLTS];
+/* The Mentalist's string: state here, the moves after the string helpers. */
+static SomMind mind_state;
+static uint16_t psi_press_dirs;          /* pad 1's D-pad and command at its last B */
+static unsigned psi_press_cmd;
+static unsigned long psi_press_at;
+static unsigned som_psi_move(uint8_t *ram,unsigned who);
+static void som_psi_land(uint8_t *ram,const SomBolt *b,unsigned slot);
+static void som_psi_frame(uint8_t *ram);
+static int som_psi_mirror_hero(uint8_t *ram,unsigned who);
+static unsigned som_monk_command(void);
+static int som_psi_marks(int x[3],int y[3]);
 /* Y (player, 2026-11-22): the class's second spell, the game's own cast
  * with its original effect, damage and MP; heals go to the most hurt hero. */
 static int som_most_hurt_hero(const uint8_t *ram,unsigned spell);
@@ -1841,6 +1853,7 @@ static void som_perks_hero(uint8_t *ram,unsigned who){
                     som_party_names[who],prev-hp,prev-hp-back);
         }
     }
+    if(som_psi_mirror_hero(ram,who)&&hurt){som_put_word(hero+0x182,(uint16_t)prev);now_hp=prev;}
     const int guarding=som_guard_up(ram,who);
     const unsigned cls=som_disc_member_class(&disciplines,who);
     const int samurai=cls==SOM_DISC_BUSHIDO,monk=cls==SOM_DISC_MARTIAL;
@@ -2773,9 +2786,14 @@ static void som_input_poll(void){
          * when the monk stands; mid-string (a lunge that ends beside one) B
          * keeps the string. */
         const unsigned string_weapon=som_string_off(driver_cls)?SOM_NO_WEAPON:som_string_weapon(driver_cls);
-        if(attack_ram&&string_weapon!=SOM_NO_WEAPON&&!ring_ai_enabled&&
+        if(attack_ram&&(string_weapon!=SOM_NO_WEAPON||driver_cls==SOM_DISC_PSIONICS)&&!ring_ai_enabled&&
            !som_manual_disciplines&&!(current&(l2_bit|r2)))
             som_monk_chain_dirs(attack_ram,driver,(uint16_t)(pressed&dpad));
+        /* The Mentalist's B is the game's swing; its petal reads this press. */
+        if(attack_ram&&driver_cls==SOM_DISC_PSIONICS&&(pressed&b_bit)&&!(current&(l2_bit|r2|y_bit))){
+            psi_press_dirs=(uint16_t)(current&dpad);psi_press_cmd=som_monk_command();
+            psi_press_at=frame_number?frame_number:1u;
+        }
         if(attack_ram&&string_weapon!=SOM_NO_WEAPON&&!ring_ai_enabled&&
            !som_manual_disciplines&&!retired_ring_chord&&!style_b_hidden&&!special_suppress&&
            !(current&(l2_bit|r2|y_bit))&&(current&b_bit)&&
@@ -4151,6 +4169,7 @@ static int som_class_attack(uint8_t *ram,unsigned who,unsigned cls,unsigned map)
                                      hero[0x10],damage,map,frame_number);
         if(slot>0){
             mage_bolts[slot-1].kind=SOM_BOLT_PETAL;
+            if(cls==SOM_DISC_PSIONICS)mage_bolts[slot-1].move=som_psi_move(ram,who);
             fprintf(stderr,"[som-ai] PETAL %s (%u)\n",som_party_names[who],damage);
         }
     }
@@ -4169,6 +4188,7 @@ static void som_petal_hit(uint8_t *ram,const SomBolt *b,unsigned slot){
     fprintf(stderr,"[som-ai] PETAL critical on monster %u\n",slot);
 }
 static void som_class_attack_frame(uint8_t *ram){
+    som_psi_frame(ram);
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)
         if(mage_orbs[who]<SOM_ORBS&&frame_number>=orb_back_at[who]){
             mage_orbs[who]++;orb_back_at[who]=frame_number+SOM_ORB_RECHARGE;
@@ -4270,7 +4290,7 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
             const uint8_t *m=ram+SOM_BOLT_MONSTER_BASE+SOM_BOLT_OBJECT*(unsigned)slot;
             monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=b->who%SOM_PARTY_MEMBERS;
             som_judged_hit(ram,b->who,(unsigned)slot);
-            if(b->kind==SOM_BOLT_PETAL)som_petal_hit(ram,b,(unsigned)slot);
+            if(b->kind==SOM_BOLT_PETAL){som_petal_hit(ram,b,(unsigned)slot);som_psi_land(ram,b,(unsigned)slot);}
             if(b->who==0u&&disciplines.selected<SOM_DISCIPLINE_COUNT)
                 som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
                             m[0x180],SOM_XPK_SPELL,"mage bolt hit");
@@ -6304,6 +6324,160 @@ static unsigned som_monk_command(void){
     if(monk_dir_last==SOM_MONK_AWAY)return monk_dir_prev==SOM_MONK_AWAY?SOM_CMD_AWAY_AWAY:0u;
     if(monk_dir_last!=SOM_MONK_TOWARD)return 0;
     return monk_dir_prev==SOM_MONK_TOWARD?7u:monk_dir_prev==SOM_MONK_AWAY?6u:0u;
+}
+/* ---- The Mentalist's string (src/som_mentalist.h) ---- */
+#define SOM_PSI_PRESS_FRAMES 20ul         /* the swing starts this soon after the press */
+#define SOM_PSI_FINISHER_COST 10u
+#define SOM_PSI_COMMAND_COST 15u
+static SomEnergy *som_member_energy(unsigned who){
+    return who&&who<SOM_PARTY_MEMBERS?&ally_tech[who-1u].en:&energy;
+}
+static int som_psi_pay(unsigned who,const uint8_t *ram,unsigned cost,const char *what){
+    if(energy_free)return 1;
+    SomEnergy *e=som_member_energy(who);
+    if(!som_energy_can(e,SOM_DISC_PSIONICS,cost,0u)){
+        if(who==som_pad1_member_in(ram)){
+            char text[48];snprintf(text,sizeof(text),"^Not enough Psi|%s",what);
+            som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+        }
+        return 0;
+    }
+    som_energy_take(e,SOM_DISC_PSIONICS,cost,0u);
+    return 1;
+}
+static int som_mind_open(const uint8_t *ram,int x,int y,unsigned place){
+    return som_bun_spot_open(ram,x,y,place);
+}
+static unsigned som_psi_damage(void){
+    return 8u+disciplines.level[SOM_DISC_PSIONICS];
+}
+/* What hero `who`'s petal plants: the string's next step, the finisher by
+ * the D-pad held at pad 1's press, or a command. */
+static unsigned som_psi_move(uint8_t *ram,unsigned who){
+    const uint8_t *o=ram+0xE000u+0x200u*who;
+    const int pad=who==som_pad1_member_in(ram)&&psi_press_at&&
+        frame_number-psi_press_at<=SOM_PSI_PRESS_FRAMES;
+    if(pad&&(psi_press_cmd==7u||psi_press_cmd==6u)){
+        const unsigned move=psi_press_cmd==7u?SOM_MIND_HOLD_MOVE:SOM_MIND_BETRAY_MOVE;
+        psi_press_cmd=0;
+        if(som_psi_pay(who,ram,SOM_PSI_COMMAND_COST,som_mind_move_names[move])){
+            mind_state.step[who]=0;return move;
+        }
+    }
+    const unsigned step=som_mind_next_step(&mind_state,who,frame_number,SOM_MONK_CHAIN_RESET);
+    if(step<=3u)return SOM_MIND_WHISPER;
+    if(step==4u)return SOM_MIND_MISDIRECT;
+    const unsigned d=pad?som_monk_dir_of(ram,o,psi_press_dirs):0u;
+    const unsigned move=d==SOM_MONK_TOWARD?SOM_MIND_PANIC_MOVE:d==SOM_MONK_AWAY?SOM_MIND_MIRROR:
+        d==SOM_MONK_SIDE?SOM_MIND_SWAP:SOM_MIND_SLEEP;
+    if(!som_psi_pay(who,ram,SOM_PSI_FINISHER_COST,som_mind_move_names[move]))return SOM_MIND_WHISPER;
+    if(move==SOM_MIND_MIRROR)som_mind_mirror(&mind_state,who,frame_number);   /* armed at once */
+    return move;
+}
+/* The petal's move on the monster it landed on. */
+static void som_psi_land(uint8_t *ram,const SomBolt *b,unsigned slot){
+    if(!b->move||b->move>SOM_MIND_BETRAY_MOVE||slot>2u)return;
+    uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    const unsigned who=b->who%SOM_PARTY_MEMBERS;
+    const int mx=(int)som_word(m+2),my=(int)som_word(m+4);
+    const char *said=NULL;
+    int ok=0;
+    som_mind_sync(&mind_state,ram,slot);
+    switch(b->move){
+    case SOM_MIND_WHISPER:
+        if(m[0x180]<SOM_MIND_BOSS){som_mind_mark(&mind_state,ram,slot);ok=1;}
+        break;
+    case SOM_MIND_MISDIRECT:
+        ok=som_mind_betray(&mind_state,ram,slot,1u,som_psi_damage(),frame_number,familiar.slot);
+        said=ok?"^Misdirection!|it turns on its own":"^Misdirection|no one to turn on";
+        break;
+    case SOM_MIND_SLEEP:{
+        const unsigned chance=40u+15u*mind_state.marks[slot];
+        if(m[0x180]<SOM_MIND_BOSS&&class_roll()<chance){
+            sleep_at[slot]=frame_number+8ul;sleep_id[slot]=m[0x180];ok=1;
+        }
+        mind_state.marks[slot]=0;
+        said=ok?"^Sleep Paralysis!":"^Sleep Paralysis|it resists";
+        break;}
+    case SOM_MIND_PANIC_MOVE:{
+        const uint8_t *h=ram+0xE000u+0x200u*who;
+        ok=som_mind_panic(&mind_state,ram,slot,(int)som_word(h+2),(int)som_word(h+4),frame_number,familiar.slot);
+        said=ok?"^Panic!":NULL;
+        break;}
+    case SOM_MIND_MIRROR:
+        if(m[0x180]<SOM_MIND_BOSS)som_mind_mark(&mind_state,ram,slot);
+        ok=1;said="^Mirror|the next blow goes astray";
+        break;
+    case SOM_MIND_SWAP:
+        ok=som_mind_swap(&mind_state,ram,slot,som_psi_damage()+4u*mind_state.marks[slot],
+                         frame_number,familiar.slot)>=0;
+        said=ok?"^Swap Minds!":"^Swap Minds|no other mind";
+        break;
+    case SOM_MIND_HOLD_MOVE:
+        ok=som_mind_hold(&mind_state,ram,slot,frame_number,familiar.slot);
+        said=ok?"^Intrusion: Hold":NULL;
+        break;
+    case SOM_MIND_BETRAY_MOVE:{
+        const unsigned marks=mind_state.marks[slot];
+        ok=marks&&som_mind_betray(&mind_state,ram,slot,marks,som_psi_damage(),frame_number,familiar.slot);
+        if(ok)mind_state.marks[slot]=0;
+        said=ok?"^Intrusion: Betray!":marks?"^Betray|no one to turn on":"^Betray|no marks on it";
+        break;}
+    }
+    if(said)som_overlay_say(&overlay,said,SOM_MESSAGE_FRAMES/2u);
+    if(ok&&b->move!=SOM_MIND_WHISPER)som_bun_boom(bunshin_booms,mx,my,1,frame_number);
+    fprintf(stderr,"[som-ai] MIND %s %s on monster %u%s (marks %u)\n",som_party_names[who],
+            som_mind_move_names[b->move],slot,ok?"":" failed",(unsigned)mind_state.marks[slot]);
+}
+/* Each frame: the bent minds act. */
+static void som_psi_frame(uint8_t *ram){
+    if(!ram)return;
+    static unsigned map=0x10000u;
+    if((som_word(ram+0xDC)&0x1FFu)!=map){           /* a new map: new minds */
+        map=som_word(ram+0xDC)&0x1FFu;
+        memset(mind_state.effect,0,sizeof(mind_state.effect));
+        memset(mind_state.marks,0,sizeof(mind_state.marks));
+        mind_state.mirror_until=0;
+    }
+    unsigned ended=0;
+    const unsigned struck=som_mind_tick(&mind_state,ram,frame_number,familiar.slot,som_mind_open,&ended);
+    for(unsigned k=0;k<3u;k++){
+        if(struck&(1u<<k)){
+            const int t=mind_state.target[k];
+            if(t>=0&&t<3){
+                const uint8_t *o=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)t;
+                som_bun_boom(bunshin_booms,(int)som_word(o+2),(int)som_word(o+4),1,frame_number);
+                fprintf(stderr,"[som-ai] MIND monster %u strikes monster %d\n",k,t);
+            }
+        }
+        if(ended&(1u<<k))fprintf(stderr,"[som-ai] MIND monster %u comes to itself\n",k);
+    }
+    if(mind_state.mirror_until&&frame_number>=mind_state.mirror_until)mind_state.mirror_until=0;
+}
+/* Mirror, after each frame for hero `who`: a monster's blow about to land
+ * (pending +0x059 / +0x1F1) is taken off him and lands on the attacker's
+ * nearest fellow. 1 = it was turned. */
+static int som_psi_mirror_hero(uint8_t *ram,unsigned who){
+    if(!som_mind_mirror_armed(&mind_state,who,frame_number))return 0;
+    uint8_t *hero=ram+0xE000u+0x200u*who;
+    if(!(hero[0x059]||hero[0x1F1]||hero[0x1F2]))return 0;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,familiar.slot);
+    if(foe<0)return 0;
+    int to=som_mind_partner(ram,(unsigned)foe,familiar.slot);
+    if(to<0)to=foe;                                  /* alone: it hits itself */
+    uint8_t *t=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)to;
+    unsigned damage=hero[0x1F1]?hero[0x1F1]:som_psi_damage();
+    damage+=damage/2u;
+    som_queue_damage(t,damage);
+    hero[0x059]=0;hero[0x1F1]=hero[0x1F2]=0;
+    mind_state.mirror_until=0;
+    monster_hit_frame[to]=frame_number;monster_hit_who[to]=who;
+    som_bun_boom(bunshin_booms,(int)som_bun_u16(t+2),(int)som_bun_u16(t+4),1,frame_number);
+    som_overlay_say(&overlay,"^Mirror!",SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] MIND Mirror: monster %d's blow on %s lands on monster %d for %u\n",
+            foe,som_party_names[who],to,damage);
+    return 1;
 }
 /* A move starts from the ground: no speed is left, the height +0x45 neither.
  * The jump scripts only add to the height, so a move that cancels a jump
@@ -9358,7 +9532,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                             0,&general_x,&general_y))
         som_gen_label(&generals[0],general_text,sizeof(general_text));
     int lock_x=-1,lock_y=-1,lock2_x=-1,lock2_y=-1;
+    int mark_x[3]={-1,-1,-1},mark_y[3]={-1,-1,-1},marks_shown=0;
     if(!menu){
+        marks_shown=som_psi_marks(mark_x,mark_y);
         (void)som_lock_marker(&lock_x,&lock_y);
         som_lock_swap(0);(void)som_lock_marker(&lock2_x,&lock2_y);som_lock_swap(0);
     }
@@ -9423,7 +9599,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     const int classes_icon=!menu&&on_turbo&&som_ring_on_classes(ring_owner_ram)&&
         ring_owner_ram[0x1808]==som_pad1_member_in(ring_owner_ram);
-    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0&&lock2_x<0&&
+    if((!overlay.frames_left&&!menu&&!hero_drawn&&!class_title&&!worker&&!general_text[0]&&lock_x<0&&lock2_x<0&&!marks_shown&&
         !classes_icon&&!cam_look&&!skins_shown)||(!data&&!draw_classes)||data==RETRO_HW_FRAME_BUFFER_VALID||
        (pixel_format!=0&&pixel_format!=1&&pixel_format!=2)){
         som_frontend_video(data,width,height,pitch);
@@ -9530,6 +9706,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         som_cam_point(&camera,&lock_x,&lock_y);
         som_cam_point(&camera,&lock2_x,&lock2_y);
         som_cam_point(&camera,&general_x,&general_y);
+        for(unsigned k=0;k<3u;k++)som_cam_point(&camera,&mark_x[k],&mark_y[k]);
     }
     if(lock_x>=0)                                 /* the lock-on marker, bobbing */
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"V",
@@ -9539,6 +9716,15 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"V",
                           lock2_x,lock2_y-(int)((frame_number/8u)&1u),1,
                           som_overlay_color(pixel_format,255,220,64));
+    for(unsigned k=0;k<3u;k++)                   /* the Mentalist's marks: one star each */
+        if(mark_x[k]>=0){
+            static const char *const stars[4]={"","*","**","***"};
+            const unsigned n=mind_state.marks[k]<4u?mind_state.marks[k]:3u;
+            som_overlay_label(overlay_frame,width,height,pitch,pixel_format,stars[n],
+                              mark_x[k]+14,mark_y[k]+4,1,         /* beside the lock-on V */
+                              mind_state.effect[k]?som_overlay_color(pixel_format,255,120,255):
+                                                   som_overlay_color(pixel_format,200,150,255));
+        }
     som_fight_overlay(overlay_frame,width,height,pitch);
     if(general_text[0])
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,general_text,
@@ -9788,6 +9974,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     /* A previously selected class also receives missing weapons after load. */
     som_class_selected();
     ally_equip_pending=6u;ally_equip_tried=0;memset(town_weapon,0xFF,sizeof(town_weapon));
+    som_mind_reset(&mind_state);psi_press_at=0;
     ally_order.until=0;ally_tech_ready=0;memset(revivals,0,sizeof(revivals));
     weapon_trace_on=0;som_weapon_trace_reset();
     memset(member_pal_have,0,sizeof(member_pal_have));
@@ -10996,6 +11183,26 @@ static int som_lock_acquire_for(uint8_t *ram,unsigned slot,unsigned who){
     const int ok=som_lock_acquire(ram,slot,who);
     som_lock_swap(0);
     return ok;
+}
+/* Screen spots over the monsters with Mentalist marks (or a bent mind);
+ * the count shown. */
+static int som_psi_marks(int x[3],int y[3]){
+    if(!backend_retro_get_memory_data||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return 0;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    int n=0;
+    for(unsigned k=0;k<3u;k++){
+        x[k]=-1;
+        const uint8_t *o=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
+        if((!mind_state.marks[k]&&!mind_state.effect[k])||o[0x180]!=mind_state.id[k]||
+           !som_bun_monster_alive(o))continue;
+        const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
+        x[k]=(int16_t)(som_bun_u16(o+2)-som_bun_u16(ram+cam));
+        y[k]=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))-o[0x45]-34;
+        if(x[k]<0||x[k]>=256||y[k]<8||y[k]>=224){x[k]=-1;continue;}
+        n++;
+    }
+    return n;
 }
 static int som_lock_marker(int *x,int *y){
     if(lock_slot<0||!backend_retro_get_memory_data||

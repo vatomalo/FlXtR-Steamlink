@@ -439,6 +439,29 @@ Shunshin stopped by a wall, trail drawn.
   Log: `[som-ai] SHUNSHIN from L2+X`.
 - The AI keeps its own commands `kawarimi` / `shunshin`.
 
+### Mentalist B string (2026-11-26)
+
+The Mentalist (Psionics) keeps the game's glove swing and its Dream Petal; each petal that
+lands plants something in the monster's head (`src/som_mentalist.h`, glue `som_psi_*`):
+
+| Press | Move | Effect |
+|---|---|---|
+| B1-B3 | Whisper | a mark (up to 3, violet stars beside the target) |
+| B4 | Misdirection | its next attack goes at its nearest fellow monster, then it is itself again |
+| B5, no direction | Sleep Paralysis | sleep by 40 % + 15 % per mark (marks spent) |
+| B5, toward | Panic | it runs from the hero for 2 s (walls stop it) |
+| B5, away | Mirror | for 3 s the next blow on the hero lands on the attacker's nearest fellow (x1.5) |
+| B5, sideways | Swap Minds | it and its nearest fellow trade places and strike each other once |
+| toward, toward + B | Intrusion: Hold | it stands still and cannot attack for 1.5 s |
+| away, toward + B | Intrusion: Betray | one attack on its own side per mark (marks spent) |
+
+Finishers cost 10 Psi, commands 15 (without it the petal is a Whisper). A pause of 1.5 s
+starts the string again. No bosses (id 0x57 and up). Levers: hero target `+0x1AC` = none,
+bite gauge `+0x1ED` held, native speed `+0x06/+0x07` zeroed, strikes through pending damage
+`+0x1F1` (the familiar's). Companions' petals run the same string without directions.
+Real ROM (`tools/som_headless/scenarios/mentalist_rabites.txt`, map 130): three Whispers,
+Misdirection, `MIND monster 0 strikes monster 1`, Sleep.
+
 ### Statuses that take the pad (2026-11-26)
 
 While a hero is frozen, petrified, in a balloon, engulfed or dead (`+0x190 & 0xC160`, the mask

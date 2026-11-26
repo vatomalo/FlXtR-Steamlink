@@ -49,6 +49,7 @@ typedef struct {
     unsigned hits;                /* monsters this pass has hit (bit = slot) */
     int tx, ty;                   /* chain: the bound one; wisp: home */
     unsigned long start, burst;   /* burst: frame of the splash, 0 none */
+    unsigned move;                /* the Mentalist's: what this petal plants (som_mentalist.h) */
 } SomBolt;
 
 /* Core, glow and rim colour of each element. */
@@ -82,7 +83,7 @@ static inline int som_bolt_fire(SomBolt b[SOM_BOLTS], unsigned who, unsigned ele
         o->y = y + o->dy * SOM_BOLT_LEAD;
         o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
         o->damage = damage; o->map = map;
-        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1; o->big = 0; o->kind = SOM_BOLT_BALL; o->hits = 0; o->tx = x; o->ty = y;
+        o->start = frame ? frame : 1u; o->burst = 0; o->active = 1; o->big = 0; o->kind = SOM_BOLT_BALL; o->hits = 0; o->tx = x; o->ty = y; o->move = 0;
         return (int)i + 1;
     }
     return 0;
@@ -96,7 +97,7 @@ static inline int som_bolt_sparkle(SomBolt b[SOM_BOLTS], unsigned who, unsigned 
         SomBolt *o = &b[i];
         o->dx = o->dy = 0; o->x = x; o->y = y;
         o->who = who; o->element = element % SOM_BOLT_ELEMENTS;
-        o->damage = 0; o->map = map; o->big = 1; o->kind = SOM_BOLT_BALL; o->hits = 0; o->tx = x; o->ty = y;
+        o->damage = 0; o->map = map; o->big = 1; o->kind = SOM_BOLT_BALL; o->hits = 0; o->tx = x; o->ty = y; o->move = 0;
         o->start = o->burst = frame ? frame : 1u; o->active = 1;
         return 1;
     }

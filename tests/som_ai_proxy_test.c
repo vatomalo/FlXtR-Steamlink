@@ -3386,6 +3386,39 @@ int main(void){
                     if(pick==2u)assert(kinds==1u<<SOM_BOLT_RIBBON&&m[0x1F1]&&(m[0x190]&4u));
                     m[0x180]=keep_id;memcpy(m+2,keep_x,4);m[0x190]=m[0x191]=0;m[0x1F1]=0;
                 }
+                {   /* The Mentalist's string on a companion (no pad): three Whispers,
+                     * Misdirection, then the finisher with no direction (Sleep
+                     * Paralysis), then again from the start. */
+                    som_mind_reset(&mind_state);
+                    static const unsigned want[6]={SOM_MIND_WHISPER,SOM_MIND_WHISPER,SOM_MIND_WHISPER,
+                        SOM_MIND_MISDIRECT,SOM_MIND_SLEEP,SOM_MIND_WHISPER};
+                    for(unsigned i=0;i<6u;i++){
+                        memset(mage_bolts,0,sizeof(mage_bolts));
+                        spr2[0x1C]=0x20;spr2[0x10]=2;spr2[0x1ED]=0;
+                        assert(som_class_attack(ram,2u,SOM_DISC_PSIONICS,som_word(ram+0xDC)&0x1FFu));
+                        assert(mage_bolts[0].active&&mage_bolts[0].move==want[i]);
+                        frame_number+=30u;
+                    }
+                    /* Landing: a Whisper marks; Misdirection turns it on its fellow. */
+                    uint8_t keep_m3[0x600];memcpy(keep_m3,ram+0xE600,sizeof(keep_m3));
+                    uint8_t *a=ram+0xE600,*b=ram+0xE800;
+                    memset(ram+0xE600,0,0x600);
+                    a[0]=b[0]=1;a[0x180]=0x14;b[0x180]=0x15;
+                    som_put_word(a+2,300);som_put_word(a+4,300);som_put_word(b+2,330);som_put_word(b+4,300);
+                    som_put_word(a+0x182,40);som_put_word(b+0x182,40);
+                    const int keep_fam=familiar.slot;familiar.slot=-1;
+                    SomBolt pb;memset(&pb,0,sizeof(pb));pb.who=2;pb.kind=SOM_BOLT_PETAL;
+                    pb.move=SOM_MIND_WHISPER;som_psi_land(ram,&pb,0);som_psi_land(ram,&pb,0);
+                    assert(mind_state.marks[0]==2);
+                    pb.move=SOM_MIND_MISDIRECT;som_psi_land(ram,&pb,0);
+                    assert(mind_state.effect[0]==SOM_MIND_BETRAY&&mind_state.target[0]==1);
+                    for(unsigned f=0;f<60u&&!b[0x1F1];f++){som_psi_frame(ram);frame_number++;}
+                    assert(b[0x1F1]&&a[0x1AC]==0xFF);                  /* it struck its own */
+                    pb.move=SOM_MIND_BETRAY_MOVE;som_psi_land(ram,&pb,1);   /* no marks on 1 */
+                    assert(mind_state.effect[1]==SOM_MIND_NONE);
+                    familiar.slot=keep_fam;memcpy(ram+0xE600,keep_m3,sizeof(keep_m3));
+                    som_mind_reset(&mind_state);memset(mage_bolts,0,sizeof(mage_bolts));
+                }
                 for(unsigned pick=0;pick<4u;pick++){       /* orb, chain, wisp, spikes */
                     static const unsigned cs[4]={3u,5u,6u,13u},want[4]={SOM_BOLT_ORB,SOM_BOLT_CHAIN,SOM_BOLT_WISP,SOM_BOLT_SPIKE};
                     memset(mage_bolts,0,sizeof(mage_bolts));

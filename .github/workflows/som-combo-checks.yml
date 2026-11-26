@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build and run C proxy regression tests
         run: |
-          make test-som-ai-proxy test-som-enemy-tactics test-som-armour test-som-general test-som-ai-player2 test-som-combo test-som-songs test-som-net-pad test-som-telekinesis test-som-familiar-art test-som-raid test-som-jukebox test-som-weapon-mask
+          make test-som-ai-proxy test-som-enemy-tactics test-som-armour test-som-general test-som-ai-player2 test-som-combo test-som-mentalist test-som-songs test-som-net-pad test-som-telekinesis test-som-familiar-art test-som-raid test-som-jukebox test-som-weapon-mask
           cc -std=c11 -Wall -Wextra -Werror -Isrc tests/som_disciplines_test.c -o /tmp/som-disciplines-test
           /tmp/som-disciplines-test
       - name: Python tests (AI bridge, planner, soundtrack, headless harness; no ROM)

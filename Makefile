@@ -99,6 +99,13 @@ test-som-combo:
 
 .PHONY: test-som-combo
 
+test-som-mentalist:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_mentalist_test.c -o build/som-mentalist-test
+	./build/som-mentalist-test
+
+.PHONY: test-som-mentalist
+
 test-som-npc-work:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_npc_work_test.c -o build/som-npc-work-test

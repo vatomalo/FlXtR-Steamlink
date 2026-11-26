@@ -1,0 +1,43 @@
+# The Mentalist's B string on map 130 (start: rabites.state from to_rabites.txt).
+# Three Whispers mark the Rabite in front, the fourth petal (Misdirection) turns it on
+# the Rabite beside it, the fifth (no direction) is Sleep Paralysis.
+#! expect-log MIND BOY Whisper on monster 0 \(marks 1\)
+#! expect-log MIND BOY Whisper on monster 0 \(marks 3\)
+#! expect-log MIND BOY Misdirection on monster 0 \(marks 3\)
+#! expect-log MIND monster 0 strikes monster 1
+#! expect-log MIND BOY Sleep Paralysis on monster 0
+expect u16 00DC == 130
+cmd class_15
+frames 120
+hold RIGHT 2
+frames 10
+monster 2 0 90
+monster 0 28 0
+monster 1 52 0
+poke E782 240
+poke E982 240
+hold B 2
+frames 40
+monster 0 28 0
+monster 1 52 0
+hold B 2
+frames 40
+monster 0 28 0
+monster 1 52 0
+hold B 2
+frames 40
+monster 0 28 0
+monster 1 52 0
+poke E782 240
+poke E982 240
+hold B 2
+frames 6
+peek
+frames 60
+peek
+shot mentalist_misdirection
+monster 0 28 0
+poke E782 240
+hold B 2
+frames 60
+peek

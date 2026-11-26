@@ -9507,10 +9507,10 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
                                const uint8_t *depth,unsigned depth_pitch){
     if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u,bpp=format==1?4u:2u;
-    const SomOutfit *outfit=&som_outfits[SOM_OUTFIT_SAMURAI];
     for(unsigned who=0;who<3u;who++){
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
         if((look.head<0&&!look.torso)||ram[0xE000u+0x200u*who]!=1u)continue;
+        const SomOutfit *outfit=&som_outfits[look.torso<SOM_OUTFITS?look.torso:SOM_OUTFIT_NONE];
         const unsigned layer=som_owner_sprite_depth(oam,who);
         static uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER];
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];

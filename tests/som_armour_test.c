@@ -75,6 +75,14 @@ int main(void){
     assert(som_armour_colour(o,SOM_SLOT_TORSO,0,8,2)==o->layer[0].lacing);
     assert(som_armour_colour(o,SOM_SLOT_TORSO,0,8,0)==o->layer[0].rgb[0]);
     assert(som_armour_colour(o,SOM_SLOT_TORSO,0,10,1)==o->layer[0].rgb[2]);
+    /* Both class outfits use the same pose mask, but have distinct art and
+     * palettes. Every head view must keep the fixed 20-pixel canvas. */
+    assert(som_class_look(8u).torso==SOM_OUTFIT_WEAPONMASTER);
+    assert(som_class_look(8u).head==SOM_HEAD_WEAPONMASTER);
+    assert(som_class_look(10u).torso==SOM_OUTFIT_SAMURAI);
+    assert(som_outfits[SOM_OUTFIT_WEAPONMASTER].layer[0].rgb[0][0]!=o->layer[0].rgb[0][0]);
+    for(unsigned head=0;head<SOM_HEADS;head++)for(unsigned view=0;view<3u;view++)
+        for(unsigned y=0;y<SOM_HEAD_H;y++)assert(strlen(som_head_art[head][view][y])==SOM_HEAD_W);
     /* cost of compose + mask for one hero */
     put_piece(8,0x1C0,100,80,0,0,0);put_piece(9,0x1C2,100,96,16,0,0);
     {clock_t c0=clock();unsigned total=0;

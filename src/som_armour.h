@@ -167,11 +167,13 @@ static inline unsigned som_armour_torso_mask(const uint8_t img[SOM_ARMOUR_BOX][S
  * lacing every third row from the neck. */
 typedef struct { uint8_t rgb[3][3]; uint8_t lacing[3]; uint8_t lace_every; } SomArmourLayer;
 typedef struct { const char *name; SomArmourLayer layer[SOM_SLOT_COUNT]; } SomOutfit;
-enum { SOM_OUTFIT_NONE, SOM_OUTFIT_SAMURAI, SOM_OUTFITS };
+enum { SOM_OUTFIT_NONE, SOM_OUTFIT_SAMURAI, SOM_OUTFIT_WEAPONMASTER, SOM_OUTFITS };
 static const SomOutfit som_outfits[SOM_OUTFITS]={
     {"none",{{{{0}},{0},0}}},
     /* lacquered lamellar: crimson plates, golden lacing */
     {"Samurai",{{{{206,44,52},{150,26,38},{92,16,28}},{232,184,72},3}}},
+    /* tempered steel plates over a dark teal coat, brass seams */
+    {"Weaponmaster",{{{{170,199,205},{94,139,151},{38,78,94}},{224,183,92},3}}},
 };
 /* Colour for a masked pixel: index c (native), row from the neck. */
 static inline const uint8_t *som_armour_colour(const SomOutfit *o,unsigned slot,unsigned who,unsigned c,int row){
@@ -207,7 +209,7 @@ static inline unsigned som_armour_sode(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARM
 #define SOM_HEAD_H 14
 #define SOM_HEAD_TOP 3      /* 3 rows lower than drawn: the brim sits on the bandana (player, 2026-11-26) */
 enum { SOM_HEAD_FRONT, SOM_HEAD_BACK, SOM_HEAD_SIDE };
-enum { SOM_HEAD_KABUTO, SOM_HEAD_NINJA, SOM_HEAD_HUNTER, SOM_HEAD_MAGE, SOM_HEAD_ARCHER, SOM_HEAD_MONK, SOM_HEAD_NECRO, SOM_HEADS };
+enum { SOM_HEAD_KABUTO, SOM_HEAD_NINJA, SOM_HEAD_HUNTER, SOM_HEAD_MAGE, SOM_HEAD_ARCHER, SOM_HEAD_MONK, SOM_HEAD_NECRO, SOM_HEAD_WEAPONMASTER, SOM_HEADS };
 static const char *const som_head_art[SOM_HEADS][3][SOM_HEAD_H]={
     {
      {"....................","....................","....................","G..................G","GG................GG",".GG...KKKKKKKK...GG.","..GGKKaaAAaaAAKKGG..","...KaaAAAAAAAAAAK...","..KaAAAAAAAAAAAAAK..",".KAAAAGGGGGGGGAAAAK.","KRRKKKKKKKKKKKKKKRRK","KRr..............rRK","KRr..............rRK",".Kr..............rK."},
@@ -237,6 +239,10 @@ static const char *const som_head_art[SOM_HEADS][3][SOM_HEAD_H]={
      {"....................","....................","....................","....................",".....KKKKKKKKKK.....","...KKaaAAAaAAAAKK...","..KaaAAAAAAAAAAAAK..",".KaAWWWWWWWWWWWAADK.",".KAAK..........KADK.","KAAK............KADK","KAD..............DDK","KAD..............DDK",".KD..............DK.","...................."},
      {"....................","....................","....................","....................","....................","...KKaaAAAaAAAAKK...","..KaaAAWAAAWAAAAAK..",".KaAAAAWAAAWAAAAADK.",".KAAAAAWAAAWAAAAADK.","KAAAAAAWAAAWAAAAAADK","KAAAAAAAAAAAAAAAADDK","KADDAAAAAAAAAAAADDDK",".KKDDDDDDDDDDDDDDKK.","...................."},
      {"....................","....................","....................","....................",".....KKKKKKKKKK.....","...KKaaAAAaAAAAKK...","..KaaAAAAAAAAAAAAK..",".KaAAAAAAAAAAAAWWWWK","KAAAAAAAAKAAAK......","KAAAAAAAK.AAK.......","KAAAAAAK..AK........","KDDAAAK...K.........",".KKDDK..............","...................."}},  /* necro */
+    {
+     {"....................","....................","....................",".......KAAAAK.......",".....KAaaaaAAAK.....","....KAAAAGGAAAAK....","...KAAAAWWWWAAAAK...","..KAAAAAAAAAAAAAAK..","..KDD..........DDK..","..KDD..........DDK..","...KK..........KK...","....................","....................","...................."},
+     {"....................","....................","....................",".......KAAAAK.......",".....KAAAAAAAAK.....","....KAAAWWWWAAAK....","...KAAAAAAAAAAAAK...","..KAAAAAGGGGAAAAAK..","..KAAAAAAAAAAAAAAK..","...KDDDDDDDDDDDDK...","....................","....................","....................","...................."},
+     {"....................","....................","....................",".......KAAAK........",".....KAaaaAAAAK.....","....KAAAAAAAAAAK....","...KAAAAAAAAWWWAK...","..KAAAAAAAAAAAAAAAK.","..KDDD..........DDK.","..KDD...............","...KK...............","....................","....................","...................."}}, /* weaponmaster helm */
 };
 /* Personality: rows that flutter (tails, feathers) per headgear and view
  * (front, back, side), first..last row, 0,0 none. They sway one pixel,
@@ -249,6 +255,7 @@ static const uint8_t som_head_flutter[SOM_HEADS][3][2]={
     {{3,4},{3,4},{3,4}},          /* archer: the feather */
     {{0,0},{11,13},{11,12}},      /* monk: hachimaki tails */
     {{0,0},{0,0},{0,0}},          /* necro */
+    {{0,0},{0,0},{0,0}},          /* weaponmaster */
 };
 /* Colours per headgear, in the letter order "KAaDGWRr". */
 static const uint8_t som_head_rgb[SOM_HEADS][8][3]={
@@ -259,6 +266,7 @@ static const uint8_t som_head_rgb[SOM_HEADS][8][3]={
     {{14,30,14},{52,128,52},{100,176,84},{32,84,32},{214,40,40},{0,0,0},{0,0,0},{0,0,0}},             /* archer */
     {{48,48,56},{236,236,232},{255,255,255},{168,168,176},{0,0,0},{240,240,240},{0,0,0},{0,0,0}},     /* monk: white hachimaki */
     {{8,8,10},{40,38,44},{70,68,80},{24,22,28},{0,0,0},{226,218,190},{0,0,0},{0,0,0}},                /* necro */
+    {{19,33,42},{91,136,148},{171,204,211},{43,77,92},{224,183,92},{47,121,132},{0,0,0},{0,0,0}},    /* weaponmaster */
 };
 static inline const uint8_t *som_head_colour(unsigned head,char k){
     static const char letters[]="KAaDGWRr";
@@ -298,13 +306,14 @@ static inline int som_head_glint(int u,unsigned long frame){
     const unsigned long t=frame%120ul;
     return t<(unsigned long)SOM_HEAD_W*2ul&&(unsigned long)u==t/2ul;
 }
-/* The class's look: headgear (or -1) and whether the Samurai torso and sode
- * are painted. Classes 0..15 (som_disciplines.h). */
-typedef struct { int head; uint8_t torso; } SomClassLook;
+/* The class's look: headgear (or -1) and torso outfit.
+ * Classes 0..15 (som_disciplines.h). */
+typedef struct { int head; uint8_t torso; } SomClassLook; /* torso = SOM_OUTFIT_* */
 static inline SomClassLook som_class_look(unsigned cls){
     SomClassLook l={-1,0};
     switch(cls){
-    case 10: l.head=SOM_HEAD_KABUTO;l.torso=1;break;   /* Bushido */
+    case 10: l.head=SOM_HEAD_KABUTO;l.torso=SOM_OUTFIT_SAMURAI;break;   /* Bushido */
+    case 8:  l.head=SOM_HEAD_WEAPONMASTER;l.torso=SOM_OUTFIT_WEAPONMASTER;break; /* Weapon Flow */
     case 2:  l.head=SOM_HEAD_NINJA;break;              /* Ninjutsu */
     case 12: l.head=SOM_HEAD_HUNTER;break;             /* Vampire Hunting */
     case 3:  l.head=SOM_HEAD_MAGE;break;               /* Magic */

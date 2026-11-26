@@ -728,6 +728,10 @@ The old all-pixel 55%/150%/200% scaled-art renderer was replaced on the
 in the style data for existing balancing/configuration compatibility, but
 the proxy **does not scale the entire weapon** any more.
 
+Weaponmaster's field sprite now wears a steel-and-teal cuirass with brass seams
+and a matching compact helm. The armour follows each hero's native animation
+and the same sprite/foreground cover rules as the Samurai outfit.
+
 The pack carries Bushido's blade masks and the Ninjutsu Kusarigama hybrid:
 
 - **Where the art comes from (2026-11-25):** the core makes the sword looks and

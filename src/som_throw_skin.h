@@ -11,7 +11,7 @@
 #define SOM_ICON_BYTES 96u
 #define SOM_THROW_MATCH_RADIUS 24
 enum {SOM_SKIN_NONE,SOM_SKIN_STAR,SOM_SKIN_CROSS};
-typedef struct {int kind,x,y;} SomThrowSkin;
+typedef struct {int kind,x,y,small;} SomThrowSkin;
 
 /* A 16x16 menu icon (four 3bpp tiles) as colour numbers 0..7. */
 static inline void som_icon_decode(const uint8_t *b,uint8_t out[256]){
@@ -43,6 +43,18 @@ static inline void som_icon_draw(uint8_t *px,unsigned width,unsigned height,size
         if(v&&v!=7u)som_skin_dot(px,width,height,pitch,format,x0+x,y0+y,som_icon_steel(format,v));
     }
 }
+/* A charged native throw sends two or three projectiles. Give each its own
+ * compact star so the volley reads as a swarm without changing hit logic. */
+static inline void som_icon_draw_small(uint8_t *px,unsigned width,unsigned height,size_t pitch,int format,
+                                       const uint8_t icon[256],int x0,int y0,unsigned turn){
+    for(int y=0;y<8;y++)for(int x=0;x<8;x++){
+        const int a=2*x+1,b=2*y+1;
+        const int sx=turn==0u?a:turn==1u?b:turn==2u?15-a:15-b;
+        const int sy=turn==0u?b:turn==1u?15-a:turn==2u?15-b:a;
+        const unsigned v=icon[sy*16+sx];
+        if(v&&v!=7u)som_skin_dot(px,width,height,pitch,format,x0+x,y0+y,som_icon_steel(format,v));
+    }
+}
 /* The cross: silver arms, golden rim, turning on its long axis. */
 static inline void som_cross_draw(uint8_t *px,unsigned width,unsigned height,size_t pitch,int format,
                                   int cx,int cy,unsigned phase){
@@ -67,6 +79,7 @@ static inline unsigned som_throw_skins(uint8_t *ram,const uint8_t look[3],SomThr
     unsigned n=0;
     for(unsigned who=0;who<3u;who++){
         if(!look[who])continue;
+        const unsigned first=n;
         for(unsigned k=0;k<3u;k++){
             const uint8_t *e=ram+0xD000u+0x40u*who+0x10u*k;
             const unsigned kind=e[0]&7u;
@@ -94,9 +107,12 @@ static inline unsigned som_throw_skins(uint8_t *ram,const uint8_t look[3],SomThr
             }
             if(best>=0&&n<9u){
                 ram[0x0800u+4u*(unsigned)best+1u]=0xF0u;
-                out[n].kind=look[who];out[n].x=draw_x+8;out[n].y=draw_y+8;n++;
+                out[n].kind=look[who];out[n].x=draw_x+8;out[n].y=draw_y+8;
+                out[n].small=0;n++;
             }
         }
+        if(look[who]==SOM_SKIN_STAR&&n-first>1u)
+            for(unsigned i=first;i<n;i++)out[i].small=1;
     }
     return n;
 }

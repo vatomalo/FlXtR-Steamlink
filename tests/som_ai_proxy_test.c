@@ -426,7 +426,7 @@ int main(void){
     mocked_wram[0xE000]=1;mocked_wram[0xE4]=1;mocked_wram[0xE6]=0x0F;
     for(unsigned i=0;i<8;i++)mocked_wram[0xCC54+i]=0xFF;
     mocked_wram[0xCC55]=0x43; /* already-owned tier-3 sword */
-    assert(som_class_supply(mocked_wram,2)==3); /* Ninja: chakram, Taijutsu glove, Kusarigama flail */
+    assert(som_class_supply(mocked_wram,2)==3); /* Ninja: shuriken, Taijutsu glove, Kusarigama flail */
     assert(mocked_wram[0xCC55]==0x43&&mocked_wram[0xCC5A]==0&&mocked_wram[0xCC54]==0&&
            mocked_wram[0xCC58]==0);
     assert(som_class_supply(mocked_wram,2)==0); /* idempotent */
@@ -1844,6 +1844,29 @@ int main(void){
         assert(!special_stage&&!special_release_with_button);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         special_stage=0;special_suppress=0;hero[0x19C]=1;
+        /* Kusarigama: releasing B while the previous whip swing recovers
+         * must queue the sword spin, then fire it as soon as charge is safe. */
+        {
+            const uint16_t b=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
+            disciplines.selected=SOM_DISC_NINJUTSU;
+            styles.selected[SOM_DISC_NINJUTSU]=SOM_STYLE_HEAVY;
+            hero[0x1E4]=1;hero[0x19C]=2;hero[0x19B]=0;
+            hero[0x01C]=0x20;hero[0x061]=hero[0x1ED]=0;
+            ram[0xE01A]=1;ram[0xE01B]=0;
+            special_stage=2;special_weapon=1;special_started=frame_number;
+            special_chord=b;special_suppress=1;special_release_with_button=1;
+            kusarigama_attack_active=1;kusarigama_attack_released=0;
+            kusarigama_attack_who=0;kusarigama_attack_started=frame_number;
+            mocked_buttons=0;som_input_poll();
+            assert(special_stage==2&&kusarigama_release_requested);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==1);
+            som_special_tick();assert(special_stage==2&&hero[0x19B]==0);
+            hero[0x01C]=0;som_special_tick();
+            assert(!special_stage&&kusarigama_attack_released&&hero[0x19B]==2);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
+            kusarigama_attack_active=kusarigama_attack_released=0;
+            special_suppress=0;ram[0xE01A]=ram[0xE01B]=0;hero[0x19B]=0;
+        }
         /* A: a proxy-driven dodge (the game's poses do not play in field
          * play). Divine Arts has no dodge: native A (dash). */
         disciplines.selected=4;
@@ -2588,7 +2611,7 @@ int main(void){
             assert(!som_bun_alive(&bunshin)&&!bunshin_shunshin);
         }
         som_bun_clear(&bunshin);
-        /* Kage Bunshin (chakram): two clones across the facing, on open
+        /* Kage Bunshin (shuriken): two clones across the facing, on open
          * ground; a monster touching one makes it explode; A swaps. */
         memset(ram+0x10000,0,0x10000);                       /* all tile 0: open */
         ram[0xC0]=0x00;ram[0xC1]=0x02;ram[0xC2]=0x00;ram[0xC3]=0x02;   /* 512x512 */

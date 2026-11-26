@@ -30,7 +30,7 @@ the save's inn.
 Use `--train-boss` in place of a scenario and pass an existing state from
 inside the boss encounter. The trainer starts attempts with the Boy, Girl,
 and Sprite in turn. Its first strategies keep the saved classes and try
-their Y and X attacks at range, including Ninja's chakram and
+their Y and X attacks at range, including Ninja's shuriken and
 Weaponmaster's bow. Further trials can pair a ranged fighter with a Cleric
 companion. It ranks attack patterns by observed boss HP, keeps
 working on party members without a win, and stops when all three have led

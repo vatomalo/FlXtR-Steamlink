@@ -9477,10 +9477,14 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
         if((look.head<0&&!look.torso)||ram[0xE000u+0x200u*who]!=1u)continue;
         const unsigned layer=som_owner_sprite_depth(oam,who);
-#define SOM_IN_FRONT(x,y) (depth&&depth[(size_t)(y)*depth_pitch+(size_t)(x)]>layer)
+        static uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER];
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0,from=0;
         if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
+        const int cx=x0-8,cy=y0-8;
+        const unsigned covered=som_armour_cover(oam,vram,who,cx,cy,cover);
+#define SOM_IN_FRONT(x,y) ((depth&&depth[(size_t)(y)*depth_pitch+(size_t)(x)]>layer)||\
+    (covered&&(x)-cx>=0&&(y)-cy>=0&&(x)-cx<SOM_ARMOUR_COVER&&(y)-cy<SOM_ARMOUR_COVER&&cover[(y)-cy][(x)-cx]))
         if(!look.torso||!som_armour_torso_mask(img,who,mask,&from))memset(mask,0,sizeof(mask));
         else (void)som_armour_sode(img,who,from,mask);
         /* screen colour per index: up to four candidates, majority wins */
@@ -9518,7 +9522,10 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
         if(look.head>=0&&som_head_place(img,&kx,&ky)){
             const unsigned facing=ram[0xE000u+0x200u*who+0x10u];
             for(int v=0;v<SOM_HEAD_H;v++)for(int u=0;u<SOM_HEAD_W;u++){
-                const uint8_t *col=som_head_colour((unsigned)look.head,som_head_at((unsigned)look.head,facing,u,v));
+                const char k=som_head_at((unsigned)look.head,facing,u,v,frame_number);
+                static const uint8_t glint[3]={255,250,226};
+                const uint8_t *col=(k=='G'||k=='a')&&som_head_glint(u,frame_number)?glint:
+                                   som_head_colour((unsigned)look.head,k);
                 const int ox=x0+kx+u,oy=y0+ky+v;
                 if(!col||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy)||SOM_IN_FRONT(ox,oy))continue;
                 som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
@@ -9712,11 +9719,23 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(flykick.active)
                 som_npc_work_draw(&flykick,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
+            const uint8_t *cover_vram=backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=SOM_BUN_VRAM_SIZE?
+                (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM):NULL;
             for(unsigned who=0;blades&&who<SOM_PARTY_MEMBERS;who++)
-                if(weapon_drawn[who].draw.active)
+                if(weapon_drawn[who].draw.active){
+                    /* the heroes and monsters drawn over this hero cover his blade too */
+                    static uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER];
+                    const uint8_t *o=ram+0xE000u+0x200u*who;
+                    const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
+                    const int cx=(int16_t)(som_bun_u16(o+2)-som_bun_u16(ram+cam))-SOM_ARMOUR_COVER/2;
+                    const int cy=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))-SOM_ARMOUR_COVER*3/4;
+                    const int has=oam_shown_valid&&cover_vram&&
+                        som_armour_cover(oam_shown,cover_vram,who,cx,cy,cover)!=0u;
                     som_weapon_mask_draw(&weapon_drawn[who].draw,ram,overlay_frame,width,height,
                                          pitch,pixel_format,weapon_drawn[who].dx,weapon_drawn[who].dy,
-                                         som_saber_colours(ram,who));
+                                         som_saber_colours(ram,who),has?&cover[0][0]:NULL,cx,cy,
+                                         SOM_ARMOUR_COVER);
+                }
             if(ukemi_draw.active)
                 som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);
@@ -9874,6 +9893,10 @@ static void load_backend(void){
     if(!backend){fprintf(stderr,"[som-ai] dlopen failed: %s\n",dlerror());abort();}
     *(void**)(&backend_skip_music)=dlsym(backend,"retro_flxtr_skip_music_voices");
     *(void**)(&backend_main_depth)=dlsym(backend,"retro_flxtr_main_depth");
+    {   /* FLXTR_SOM_NO_DEPTH=1: draw without the core's depth (measuring its cost) */
+        const char *off=getenv("FLXTR_SOM_NO_DEPTH");
+        if(off&&!strcmp(off,"1"))backend_main_depth=NULL;
+    }
 #define LOAD_VIDEO() do { \
     *(void**)(&backend_set_video_refresh)=dlsym(backend,"retro_set_video_refresh"); \
     if(!backend_set_video_refresh){fputs("[som-ai] backend lacks retro_set_video_refresh\n",stderr);abort();} \

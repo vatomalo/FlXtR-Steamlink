@@ -94,6 +94,36 @@ static inline int som_armour_compose(const uint8_t *oam,const uint8_t *vram,unsi
     *x0=l;*y0=t;
     return 1;
 }
+/* What the SNES draws over hero `who`: every sprite piece earlier in OAM than
+ * the hero's own front-most piece (sprites overlap by OAM order whatever their
+ * BG priority, so the core's depth cannot tell one hero from another; player,
+ * 2026-11-27: "if player is on top of player depth is not respected"). Marks
+ * their opaque pixels in a SOM_ARMOUR_COVER square whose top-left is screen
+ * (cx, cy). Returns the count marked. */
+#define SOM_ARMOUR_COVER 64
+static inline unsigned som_armour_cover(const uint8_t *oam,const uint8_t *vram,unsigned who,int cx,int cy,
+                                        uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER]){
+    memset(cover,0,SOM_ARMOUR_COVER*SOM_ARMOUR_COVER);
+    unsigned front=128u,n=0;
+    for(unsigned j=0;j<128u&&front==128u;j++)if(som_armour_piece(oam+4u*j,who))front=j;
+    for(unsigned j=0;j<front;j++){
+        const uint8_t *e=oam+4u*j;
+        const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+        if(hb&2u||e[1]>=0xE0u)continue;            /* large pieces, or parked off screen */
+        int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
+        const int y=e[1];
+        if(x+16<=cx||x>=cx+SOM_ARMOUR_COVER||y+16<=cy||y>=cy+SOM_ARMOUR_COVER)continue;
+        const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
+        for(unsigned py=0;py<16u;py++)for(unsigned px=0;px<16u;px++){
+            const int X=x+(int)px-cx,Y=y+(int)py-cy;
+            if(X<0||Y<0||X>=SOM_ARMOUR_COVER||Y>=SOM_ARMOUR_COVER)continue;
+            const unsigned u=(e[3]&64u)?15u-px:px,v=(e[3]&128u)?15u-py:py;
+            const unsigned tt=(tile&256u)|((tile+(u>>3)+16u*(v>>3))&255u);
+            if(som_armour_tile_pixel(vram,tt,u&7u,v&7u)){cover[Y][X]=1;n++;}
+        }
+    }
+    return n;
+}
 /* Torso band of a composed hero: rows [*from, *to). 0 if none. */
 static inline int som_armour_torso_rows(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],unsigned who,
                                         int *from,int *to){
@@ -169,46 +199,57 @@ static inline unsigned som_armour_sode(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARM
 }
 /* Headgear (player, 2026-11-26: "might look better with a kabuto", then
  * "do more armors"): drawn art per class, front / back / side (left = the
- * side mirrored), 16x14, placed on the head the game draws this frame: row
+ * side mirrored), 20x14 (player, 2026-11-27: "too small"), placed on the head the game draws this frame: row
  * SOM_HEAD_TOP sits on the top row of the head, centred on its top rows.
  * Letters: K outline, A main, a highlight, D shade, G accent, W trim,
  * R / r second colour (the kabuto's crimson); '.' see-through. */
-#define SOM_HEAD_W 16
+#define SOM_HEAD_W 20
 #define SOM_HEAD_H 14
 #define SOM_HEAD_TOP 3      /* 3 rows lower than drawn: the brim sits on the bandana (player, 2026-11-26) */
 enum { SOM_HEAD_FRONT, SOM_HEAD_BACK, SOM_HEAD_SIDE };
 enum { SOM_HEAD_KABUTO, SOM_HEAD_NINJA, SOM_HEAD_HUNTER, SOM_HEAD_MAGE, SOM_HEAD_ARCHER, SOM_HEAD_MONK, SOM_HEAD_NECRO, SOM_HEADS };
 static const char *const som_head_art[SOM_HEADS][3][SOM_HEAD_H]={
     {
-     {"................","................","................","G..............G","GG............GG",".GG...KKKK...GG.","..GGKKaaAAKKGG..","...KaaAAAAAAK...","..KaAAAAAAAAAK..",".KAAAAGGGGAAAAK.","KRRKKKKKKKKKKRRK","KRr..........rRK","KRr..........rRK",".Kr..........rK."},
-     {"................","................","................","................","................","......KKKK......","....KKaaAAKK....","...KaaAAAAAAK...","..KaAAAAAAAAAK..",".KAAAAAAAAAAAAK.","KRRRRRRRRRRRRRRK","KrRGRRGRRGRRGRrK","KrrRRRRRRRRRRrrK",".KKrrrrrrrrrrKK."},
-     {"................","................","................","...............G","..............GG","......KKKK...GG.","....KKaaAAKKGG..","...KaaAAAAAAK...","..KaAAAAAAAAAK..",".KAAAAAAAAGGGAK.","KRRRRRKKKKKKKKK.","KrRRRRK.........","KrrRRK..........",".KKrK..........."}},  /* kabuto */
+     {"....................","....................","....................","G..................G","GG................GG",".GG...KKKKKKKK...GG.","..GGKKaaAAaaAAKKGG..","...KaaAAAAAAAAAAK...","..KaAAAAAAAAAAAAAK..",".KAAAAGGGGGGGGAAAAK.","KRRKKKKKKKKKKKKKKRRK","KRr..............rRK","KRr..............rRK",".Kr..............rK."},
+     {"....................","....................","....................","....................","....................","......KKKKKKKK......","....KKaaAAaaAAKK....","...KaaAAAAAAAAAAK...","..KaAAAAAAAAAAAAAK..",".KAAAAAAAAAAAAAAAAK.","KRRRRRRRRRRRRRRRRRRK","KrRGRRGRRGGRRGRRGRrK","KrrRRRRRRRRRRRRRRrrK",".KKrrrrrrrrrrrrrrKK."},
+     {"....................","....................","....................","...................G","..................GG","......KKKKKKKK...GG.","....KKaaAAaaAAKKGG..","...KaaAAAAAAAAAAK...","..KaAAAAAAAAAAAAAK..",".KAAAAAAAAAAAAGGGAK.","KRRRRRKKKKKKKKKKKKK.","KrRRRRK...K.........","KrrRRK..............",".KKrK..............."}},  /* kabuto */
     {
-     {"................","................","................","................",".....KKKKKK.....","...KKaaAAAAKK...","..KaaAAAAAAAAK..",".KaAAAAAAAAAADK.",".KAAKGGGGGGKADK.","KAAAKKKKKKKKAADK","KAAD........DADK","KADD........DDK.",".KD..........K..","................"},
-     {"................","................","................","................",".....KKKKKK.....","...KKaaAAAAKK...","..KaaAAAAAAAAK..",".KaAAAAAAAAAADK.",".KAAAAGGGGAAADK.","KAAAAAKGGKAAAADK","KAAADKAKKAKDAADK","KADDK.KAAK.KDDK.",".KK...KADK..KK..","................"},
-     {"................","................","................","................",".....KKKKKK.....","...KKaaAAAAKK...","..KaaAAAAAAAAK..",".KaAAAAAAAAAAAK.","KKAAAAAAKGGGGGK.","KAAAAAAKKKKKKK..","KAAAAAK.........","KDDADK..........","KDK.K...........","................"}},  /* ninja */
+     {"....................","....................","....................","....................","....................","....................","....................","....KKKKKKKKKKKK....","KAAAKGaaaaaaaaGKAAAK","KDDDKGGWWGGWWGGKDDDK","....KKKKKKKKKKKK....","....................","....................","...................."},
+     {"....................","....................","....................","....................","....................","....................","....................","....................","KAAAAAAAAAAAAAAAAAAK","KDDDDDDKKDDKKDDDDDDK",".......KAA.KAAK.....","......KAKKKAKKAK....",".....KAK..AK..KAK...",".....KK...K....KK..."},
+     {"....................","....................","....................","....................","....................","....................","....................","...............KKKK.","KK.KAAAAAAAAAAAKGaaK","KAKKDDDDDDDDDDDKGGGK",".KAAK..........KKKK.","..KAAK..............","...KK...............","...................."}},  /* ninja */
     {
-     {"................","................","................","....KKKKKKKK....","...KaaAAAAAAK...","...KaAAAAAAAK...","...KGGGGGGGGK...",".KKKKKKKKKKKKKK.","KaaAAAAAAAAAAADK",".KKKKKKKKKKKKKK.","................","................","................","................"},
-     {"................","................","................","....KKKKKKKK....","...KaaAAAAAAK...","...KaAAAAAAAK...","...KGGGGGGGGK...",".KKKKKKKKKKKKKK.","KaaAAAAAAAAAAADK",".KKKKKKKKKKKKKK.","................","................","................","................"},
-     {"................","................","................",".....KKKKKKK....","....KaaAAAAAK...","....KaAAAAAAK...","....KGGGGGGGK...","KKKKKKKKKKKKKKKK","KaaAAAAAAAAAAADK",".KKKKKKKKKKKKKK.","................","................","................","................"}},  /* hunter */
+     {"....................","....................","....................","....KKKKKKKKKKKK....","...KaaAAAAAAAAAAK...","...KaAAAAAAAAAAAK...","...KGGGGGGGGGGGGK...",".KKKKKKKKKKKKKKKKKK.","KaaAAAAAAAAAAAAAAADK",".KKKKKKKKKKKKKKKKKK.","....................","....................","....................","...................."},
+     {"....................","....................","....................","....KKKKKKKKKKKK....","...KaaAAAAAAAAAAK...","...KaAAAAAAAAAAAK...","...KGGGGGGGGGGGGK...",".KKKKKKKKKKKKKKKKKK.","KaaAAAAAAAAAAAAAAADK",".KKKKKKKKKKKKKKKKKK.","....................","....................","....................","...................."},
+     {"....................","....................","....................",".....KKKKKKKKKKK....","....KaaAAAaAAAAAK...","....KaAAAAAAAAAAK...","....KGGGGGGGGGGGK...","KKKKKKKKKKKKKKKKKKKK","KaaAAAAAAAAAAAAAAADK",".KKKKKKKKKKKKKKKKKK.","....................","....................","....................","...................."}},  /* hunter */
     {
-     {"........KK......",".......KaAK.....","......KaAAK.....","......KaAADK....",".....KaAAAADK...",".....KaAAAADK...","....KaAAAAAADK..","....KGGGGGGGGK..",".KKKKKKKKKKKKKK.","KaaAAAAAAAAAAADK",".KKKKKKKKKKKKKK.","................","................","................"},
-     {"........KK......",".......KaAK.....","......KaAAK.....","......KaAADK....",".....KaAAAADK...",".....KaAAAADK...","....KaAAAAAADK..","....KGGGGGGGGK..",".KKKKKKKKKKKKKK.","KaaAAAAAAAAAAADK",".KKKKKKKKKKKKKK.","................","................","................"},
-     {"..KK............","..KaKK..........","...KaAKK........","....KaAADK......",".....KaAAADK....",".....KaAAAADK...","....KaAAAAAADK..","....KGGGGGGGGK..","KKKKKKKKKKKKKKKK","KaaAAAAAAAAAAADK",".KKKKKKKKKKKKKK.","................","................","................"}},  /* mage */
+     {"........KK..KK......",".......KaA.KaAK.....","......KaAAKaAAK.....","......KaAAKaAADK....",".....KaAAAaAAAADK...",".....KaAAAaAAAADK...","....KaAAAAAAAAAADK..","....KGGGGGGGGGGGGK..",".KKKKKKKKKKKKKKKKKK.","KaaAAAAAAAAAAAAAAADK",".KKKKKKKKKKKKKKKKKK.","....................","....................","...................."},
+     {"........KK..KK......",".......KaA.KaAK.....","......KaAAKaAAK.....","......KaAAKaAADK....",".....KaAAAaAAAADK...",".....KaAAAaAAAADK...","....KaAAAAAAAAAADK..","....KGGGGGGGGGGGGK..",".KKKKKKKKKKKKKKKKKK.","KaaAAAAAAAAAAAAAAADK",".KKKKKKKKKKKKKKKKKK.","....................","....................","...................."},
+     {"..KK................","..KaKK..............","...KaAKK..KK........","....KaAADKAADK......",".....KaAAAaAAADK....",".....KaAAAaAAAADK...","....KaAAAAAAAAAADK..","....KGGGGGGGGGGGGK..","KKKKKKKKKKKKKKKKKKKK","KaaAAAAAAAAAAAAAAADK",".KKKKKKKKKKKKKKKKKK.","....................","....................","...................."}},  /* mage */
     {
-     {"................","................","................","............G...","...........GG...","....KKKKKKGGK...","...KaaAAAAGAAK..","..KaAAAAAAAAADK.",".KKKKKKKKKKKKKK.","................","................","................","................","................"},
-     {"................","................","................","............G...","...........GG...","....KKKKKKGGK...","...KaaAAAAGAAK..","..KaAAAAAAAAADK.",".KKKKKKKKKKKKKK.","................","................","................","................","................"},
-     {"................","................","................",".G..............",".GG.............","..GGKKKKKK......","...KaaAAAAAK....","..KaAAAAAAAAKK..",".KKKKKKKKKKKAAKK","...........KKK..","................","................","................","................"}},  /* archer */
+     {"....................","....................","....................","................G...","...............GG...","....KKKKKKKKKKGGK...","...KaaAAAAAAAAGAAK..","..KaAAAAAAAAAAAAADK.",".KKKKKKKKKKKKKKKKKK.","....................","....................","....................","....................","...................."},
+     {"....................","....................","....................","................G...","...............GG...","....KKKKKKKKKKGGK...","...KaaAAAAAAAAGAAK..","..KaAAAAAAAAAAAAADK.",".KKKKKKKKKKKKKKKKKK.","....................","....................","....................","....................","...................."},
+     {"....................","....................","....................",".G..................",".GG.................","..GGKKKKKKKKKK......","...KaaAAAAAAAAAK....","..KaAAAAAAAAAAAAKK..",".KKKKKKKKKKKKKKKAAKK","...............KKK..","....................","....................","....................","...................."}},  /* archer */
     {
-     {"................","................","................","................","................","................","................","................","................","..KAAAAAAAAAAK..","..KDDDDDDDDDDK..","................","................","................"},
-     {"................","................","................","................","................","................","................","................","................","..KAAAAAAAAAAK..","..KDDDDKKDDDDK..","......KAAK......",".....KAKKAK.....",".....KK..KK....."},
-     {"................","................","................","................","................","................","................","................","................","KK.KAAAAAAAAAK..","KAKKDDDDDDDDDK..",".KAAK...........","..KK............","................"}},  /* monk */
+     {"....................","....................","....................","....................","....................","....................","....................","....................","....................","..KAAAAAAAAAAAAAAK..","..KDDDDDDDDDDDDDDK..","....................","....................","...................."},
+     {"....................","....................","....................","....................","....................","....................","....................","....................","....................","..KAAAAAAAAAAAAAAK..","..KDDDDKKDDKKDDDDK..","......KAAKKAAK......",".....KAKKAAKKAK.....",".....KK..KK..KK....."},
+     {"....................","....................","....................","....................","....................","....................","....................","....................","....................","KK.KAAAAAAAAAAAAAK..","KAKKDDDDDDDDDDDDDK..",".KAAK...............","..KK................","...................."}},  /* monk */
     {
-     {"................","................","................","................",".....KKKKKK.....","...KKaaAAAAKK...","..KaaAAAAAAAAK..",".KaAWWWWWWWAADK.",".KAAK......KADK.","KAAK........KADK","KAD..........DDK","KAD..........DDK",".KD..........DK.","................"},
-     {"................","................","................","................","................","...KKaaAAAAKK...","..KaaAAWAAAAAK..",".KaAAAAWAAAAADK.",".KAAAAAWAAAAADK.","KAAAAAAWAAAAAADK","KAAAAAAAAAAAADDK","KADDAAAAAAAADDDK",".KKDDDDDDDDDDKK.","................"},
-     {"................","................","................","................",".....KKKKKK.....","...KKaaAAAAKK...","..KaaAAAAAAAAK..",".KaAAAAAAAAWWWWK","KAAAAAAAAK......","KAAAAAAAK.......","KAAAAAAK........","KDDAAAK.........",".KKDDK..........","................"}},  /* necro */
+     {"....................","....................","....................","....................",".....KKKKKKKKKK.....","...KKaaAAAaAAAAKK...","..KaaAAAAAAAAAAAAK..",".KaAWWWWWWWWWWWAADK.",".KAAK..........KADK.","KAAK............KADK","KAD..............DDK","KAD..............DDK",".KD..............DK.","...................."},
+     {"....................","....................","....................","....................","....................","...KKaaAAAaAAAAKK...","..KaaAAWAAAWAAAAAK..",".KaAAAAWAAAWAAAAADK.",".KAAAAAWAAAWAAAAADK.","KAAAAAAWAAAWAAAAAADK","KAAAAAAAAAAAAAAAADDK","KADDAAAAAAAAAAAADDDK",".KKDDDDDDDDDDDDDDKK.","...................."},
+     {"....................","....................","....................","....................",".....KKKKKKKKKK.....","...KKaaAAAaAAAAKK...","..KaaAAAAAAAAAAAAK..",".KaAAAAAAAAAAAAWWWWK","KAAAAAAAAKAAAK......","KAAAAAAAK.AAK.......","KAAAAAAK..AK........","KDDAAAK...K.........",".KKDDK..............","...................."}},  /* necro */
 };
-
+/* Personality: rows that flutter (tails, feathers) per headgear and view
+ * (front, back, side), first..last row, 0,0 none. They sway one pixel,
+ * row by row, every 8 frames. */
+static const uint8_t som_head_flutter[SOM_HEADS][3][2]={
+    {{0,0},{0,0},{0,0}},          /* kabuto */
+    {{0,0},{10,13},{10,12}},      /* hagane: knot tails */
+    {{0,0},{0,0},{0,0}},          /* hunter */
+    {{0,2},{0,2},{0,2}},          /* mage: the hat's tip */
+    {{3,4},{3,4},{3,4}},          /* archer: the feather */
+    {{0,0},{11,13},{11,12}},      /* monk: hachimaki tails */
+    {{0,0},{0,0},{0,0}},          /* necro */
+};
 /* Colours per headgear, in the letter order "KAaDGWRr". */
 static const uint8_t som_head_rgb[SOM_HEADS][8][3]={
     {{24,20,28},{44,40,58},{96,92,120},{30,28,40},{232,184,72},{232,232,220},{180,36,44},{110,20,32}},  /* kabuto */
@@ -238,13 +279,24 @@ static inline int som_head_place(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BO
     *kx=(l+r+1)/2-SOM_HEAD_W/2;*ky=top-SOM_HEAD_TOP;
     return 1;
 }
-/* The headgear's letter at (u, v) for a hero facing `facing` (+0x10). */
-static inline char som_head_at(unsigned head,unsigned facing,int u,int v){
+/* The headgear's letter at (u, v) for a hero facing `facing` (+0x10) at
+ * frame `frame` (fluttering rows sway). */
+static inline char som_head_at(unsigned head,unsigned facing,int u,int v,unsigned long frame){
     if(head>=SOM_HEADS||u<0||v<0||u>=SOM_HEAD_W||v>=SOM_HEAD_H)return '.';
     const int side=facing==0x02u||facing==0x82u;
     const unsigned art=side?SOM_HEAD_SIDE:facing==0x00u?SOM_HEAD_BACK:SOM_HEAD_FRONT;
     if(facing==0x82u)u=SOM_HEAD_W-1-u;
+    const uint8_t *f=som_head_flutter[head][art];
+    if(f[1]&&v>=f[0]&&v<=f[1]&&(((frame>>3)+(unsigned long)v)&1ul)){
+        u+=side?1:(v&1)?1:-1;                 /* the tail streams back, or sways */
+        if(u<0||u>=SOM_HEAD_W)return '.';
+    }
     return som_head_art[head][art][v][u];
+}
+/* A glint runs across the gold and steel every 2 s. */
+static inline int som_head_glint(int u,unsigned long frame){
+    const unsigned long t=frame%120ul;
+    return t<(unsigned long)SOM_HEAD_W*2ul&&(unsigned long)u==t/2ul;
 }
 /* The class's look: headgear (or -1) and whether the Samurai torso and sode
  * are painted. Classes 0..15 (som_disciplines.h). */

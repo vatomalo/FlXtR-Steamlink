@@ -28,7 +28,9 @@ static inline uint32_t som_mask_mix25(uint32_t dst,uint32_t src,int format){
 
 /* Draw a ROM-extracted, grip-aligned weapon mask on the FINAL Libretro frame.
  * Solid palette 1..5 keeps native SNES sharpness; indices 6..10 use a
- * deliberate 25% blend. The pack contains no hero pixels or background. */
+ * deliberate 25% blend. The pack contains no hero pixels or background.
+ * cover (cover_n x cover_n at screen cover_x, cover_y, may be NULL): pixels
+ * where another sprite is drawn over the hero, left alone. */
 /* live5: five BGR555 words (the hero's own weapon colours in the game's
  * sprite palette 0) used instead of the pack's while a saber is up, so the
  * blade takes the saber's colour like the game's own weapons; NULL = the
@@ -36,7 +38,8 @@ static inline uint32_t som_mask_mix25(uint32_t dst,uint32_t src,int format){
 static inline int som_weapon_mask_draw(const SomNpcWorkState *sprite,const uint8_t *ram,
                                        uint8_t *pixels,unsigned width,unsigned height,
                                        size_t pitch,int format,int ox0,int oy0,
-                                       const uint8_t *live5){
+                                       const uint8_t *live5,
+                                       const uint8_t *cover,int cover_x,int cover_y,int cover_n){
     if(!sprite||!sprite->active||!ram||!pixels)return 0;
     const unsigned obj=SOM_NPC_OBJECT(sprite->slot);
     const unsigned cam=(ram[obj+0x0Bu]&0x80u)?0xACu:0xA8u;
@@ -64,6 +67,10 @@ static inline int som_weapon_mask_draw(const SomNpcWorkState *sprite,const uint8
         const int ox=xbase+(sprite->dir==3u?-(dx+(int)x)-1:dx+(int)x);
         const int oy=ybase+dy+(int)y;
         if(ox<0||oy<0||ox>=bw||oy>=bh)continue;
+        if(cover){                                /* a sprite in front of the hero */
+            const int cu=ox-cover_x,cv=oy-cover_y;
+            if(cu>=0&&cv>=0&&cu<cover_n&&cv<cover_n&&cover[cv*cover_n+cu])continue;
+        }
         for(unsigned yy=0;yy<sy;yy++)for(unsigned xx=0;xx<sx;xx++){
             const unsigned px=(unsigned)ox*sx+xx,py=(unsigned)oy*sy+yy;
             uint32_t colour=colours[index>5u?index-5u:index];

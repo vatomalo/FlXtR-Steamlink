@@ -18,17 +18,31 @@ static inline unsigned som_owner_sprite_depth(const uint8_t *oam,unsigned who){
 }
 
 /* Restore original core pixels wherever its final foreground depth beats
- * the native depth of the actor whose extra artwork was drawn. */
+ * the native depth of the actor whose extra artwork was drawn. Only pixels
+ * our drawing changed are looked at: whole unchanged rows are skipped with
+ * one memcmp (on the Steam Link the per-pixel pass over the full frame cost
+ * ~15 ms a frame, 2026-11-27). */
 static inline void som_mask_behind_foreground(uint8_t *frame,const uint8_t *base,
                                                unsigned width,unsigned height,size_t row,
                                                unsigned bytes,const uint8_t *depth,
                                                unsigned depth_pitch,unsigned actor_depth){
     if(!frame||!base||!depth||!depth_pitch||!bytes)return;
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u;
-    for(unsigned y=0;y<height;y++)for(unsigned x=0;x<width;x++){
-        if(depth[(size_t)(y/sy)*depth_pitch+x/sx]>actor_depth)
-            memcpy(frame+(size_t)y*row+(size_t)x*bytes,
-                   base+(size_t)y*row+(size_t)x*bytes,bytes);
+    const size_t line=(size_t)width*bytes;
+    for(unsigned y=0;y<height;y++){
+        uint8_t *f=frame+(size_t)y*row;
+        const uint8_t *b=base+(size_t)y*row;
+        if(!memcmp(f,b,line))continue;
+        const uint8_t *d=depth+(size_t)(y/sy)*depth_pitch;
+        if(bytes==2u){
+            uint16_t *f16=(uint16_t*)(void*)f;const uint16_t *b16=(const uint16_t*)(const void*)b;
+            for(unsigned x=0;x<width;x++)
+                if(f16[x]!=b16[x]&&d[sx==1u?x:x>>1]>actor_depth)f16[x]=b16[x];
+        }else{
+            uint32_t *f32=(uint32_t*)(void*)f;const uint32_t *b32=(const uint32_t*)(const void*)b;
+            for(unsigned x=0;x<width;x++)
+                if(f32[x]!=b32[x]&&d[sx==1u?x:x>>1]>actor_depth)f32[x]=b32[x];
+        }
     }
 }
 #endif

@@ -167,6 +167,7 @@ def main(argv=None):
         base = os.environ.get("SOM_HEADLESS_BASE_CORE")   # a core already on the host
         run = ("cd %s && " % shlex.quote(run_dir)) + \
               ("FLXTR_AI_BASE_CORE=%s " % shlex.quote(base) if base else "") + \
+              ("FLXTR_SOM_NO_DEPTH=1 " if os.environ.get("SOM_HEADLESS_NO_DEPTH") == "1" else "") + \
               ("FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 FLXTR_SOM_TEST_COMMANDS=1 ./som-harness "
                "./som_ai_proxy_test.so %s %s %s %s") % (
                    shlex.quote(rom), shlex.quote(start),

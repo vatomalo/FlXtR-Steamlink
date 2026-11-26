@@ -1272,13 +1272,17 @@ static void som_auto_target_frame(uint8_t *ram);
 static void som_class_x_frame(uint8_t *ram);
 static void som_hundred_frame(uint8_t *ram);
 static void som_issen_cut(uint8_t *ram,int x,int y);
-/* Hold A (Circle) SOM_A_HOLD_FRAMES: Kawarimi. The tap's hop still fires on
- * the press; the held request waits up to SOM_A_HOLD_WAIT frames for the
- * hero to be free (the hop over), even if A is let go meanwhile. */
+/* Hold A (Circle) SOM_A_HOLD_FRAMES after an evade: the game's own run. The
+ * evade fires on the press; once it is over and A is still held, the game
+ * sees A again (A held is its run) until A is let go (player, 2026-11-26:
+ * "on all evade types make hold evade to run"). */
 #define SOM_A_HOLD_FRAMES 20ul
-#define SOM_A_HOLD_WAIT 90ul
-static unsigned long a_press_frame,a_kawarimi_since;
-static int a_hold_done=1,a_kawarimi_pending;
+static unsigned long a_press_frame;
+static int a_hold_done=1,a_running;
+/* Down, Down + A (ninja): Kawarimi no Jutsu. Each step within
+ * SOM_DDA_FRAMES of the one before. */
+#define SOM_DDA_FRAMES 15ul
+static unsigned long dda_down_prev,dda_down_last;
 static void som_bunshin_frame(uint8_t *ram);
 static int som_bunshin_swap(uint8_t *ram,int flee,int fx,int fy,int dir_x,int dir_y);
 /* R2+A bash (swordsman): the game's own run for up to SOM_BASH_LUNGE_FRAMES
@@ -2461,7 +2465,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
        (device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD&&index==0){
         /* While it plays the D-pad is hidden too: a held direction made the
          * game replace the pose with walking (live, 2026-11-14). */
-        const uint16_t a=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_A)|(evade_active?
+        const uint16_t a=(uint16_t)((a_running&&!evade_active?0u:1u<<RETRO_DEVICE_ID_JOYPAD_A)|(evade_active?
             (1u<<RETRO_DEVICE_ID_JOYPAD_UP)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT)|
             (1u<<RETRO_DEVICE_ID_JOYPAD_B)|(1u<<RETRO_DEVICE_ID_JOYPAD_Y)|
@@ -2775,9 +2779,18 @@ static void som_input_poll(void){
         const uint16_t a_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
         evade_a_hidden=basic&&!ring_ai_enabled&&!som_manual_disciplines&&
             som_disc_has_dodge(som_actor_class());
+        const uint16_t down_bit=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);
+        if(pressed&down_bit){dda_down_prev=dda_down_last;dda_down_last=frame_number?frame_number:1u;}
+        if(!(current&a_bit))a_running=0;
         if(evade_a_hidden&&(pressed&a_bit)){
-            a_press_frame=frame_number;a_hold_done=0;
-            if(x_cast_at&&som_actor_class()==SOM_DISC_NINJUTSU){
+            a_press_frame=frame_number;a_hold_done=0;a_running=0;
+            const int dda=dda_down_prev&&dda_down_last-dda_down_prev<=SOM_DDA_FRAMES&&
+                frame_number-dda_down_last<=SOM_DDA_FRAMES;
+            if(dda&&som_actor_class()==SOM_DISC_NINJUTSU&&!x_cast_at&&som_kawarimi_arm(wram)){
+                a_hold_done=1;dda_down_prev=dda_down_last=0;
+                fprintf(stderr,"[som-ai] KAWARIMI from Down, Down + A\n");
+            }
+            else if(x_cast_at&&som_actor_class()==SOM_DISC_NINJUTSU){
                 const int bx=(current&(1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))?1:
                              (current&(1u<<RETRO_DEVICE_ID_JOYPAD_LEFT))?-1:0;
                 const int by=(current&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN))?1:
@@ -2804,21 +2817,14 @@ static void som_input_poll(void){
                 evade_dir_x=evade_dir_y=0;
             }
         }
-        /* Hold A: Kawarimi no Jutsu, armed once the hop is over. */
+        /* Hold A: once the evade is over the game gets A back, its run. */
         if(!(current&a_bit))a_hold_done=1;
-        if(evade_a_hidden&&(current&a_bit)&&!a_hold_done&&
+        if(evade_a_hidden&&(current&a_bit)&&!a_hold_done&&!evade_active&&
            frame_number-a_press_frame>=SOM_A_HOLD_FRAMES){
-            a_hold_done=1;a_kawarimi_pending=1;a_kawarimi_since=frame_number;
+            a_hold_done=1;a_running=1;
+            fprintf(stderr,"[som-ai] RUN from held A\n");
         }
-        if(a_kawarimi_pending){
-            if(!wram||ring_ai_enabled||kawarimi_armed_until||
-               frame_number-a_kawarimi_since>SOM_A_HOLD_WAIT)a_kawarimi_pending=0;
-            else if(som_actor_class()!=SOM_DISC_NINJUTSU)a_kawarimi_pending=0;
-            else if(som_kawarimi_arm(wram)){
-                a_kawarimi_pending=0;
-                fprintf(stderr,"[som-ai] KAWARIMI from held A\n");
-            }
-        }
+        if(!evade_a_hidden)a_running=0;
         /* The Ninja's heavy Kusarigama keeps the whip for normal B taps.
          * Hold B to charge the sword's native level-2 move, then mask only
          * its weapon art with the matched whip frames from the local ROM. */
@@ -5178,8 +5184,8 @@ static void som_blink_bring_party(uint8_t *ram){
 }
 /* A (and the AI's "evade"): the class's plain dodge hop. A ninja with the
  * long-range weapon (shuriken/boomerang) casts Kage Bunshin instead, and with clones out A swaps
- * him into one. Holding A arms Kawarimi after the hop, and L2+X is
- * Shunshin (also AI commands "kawarimi" / "shunshin"). */
+ * him into one. Holding A runs once the evade is over; Down, Down + A arms
+ * Kawarimi and L2+X is Shunshin (also AI commands "kawarimi" / "shunshin"). */
 static int som_evade_start_raw(uint8_t *ram){
     if(!ram||evade_active)return 0;
     if(!som_disc_has_dodge(som_actor_class())){
@@ -9661,7 +9667,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
     kusarigama_attack_who=0;kusarigama_attack_started=0;
-    evade_active=evade_a_hidden=0;evade_hp=0;evade_frames=0;trail_until=0;
+    evade_active=evade_a_hidden=0;a_running=0;a_hold_done=1;dda_down_prev=dda_down_last=0;evade_hp=0;evade_frames=0;trail_until=0;
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;
     memset(&ukemi_draw,0,sizeof(ukemi_draw));ukemi_hid=0;ukemi_map=0;
     som_energy_init(&energy);

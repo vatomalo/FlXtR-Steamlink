@@ -1935,35 +1935,62 @@ int main(void){
         assert(!cartwheel_native&&hero[0x1E5]==0xFF);
         for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
         hero[0x01C]=0;ram[0xED]=0;hero[2]=200;hero[3]=0;
-        /* Hold A: the hop fires on the press, then Kawarimi is armed once
-         * he is free again. A tap leaves Kawarimi unarmed. */
+        /* Hold A: the hop fires on the press; once it is over and A is still
+         * held the game sees A (its run) until A is let go. A tap never runs.
+         * Down, Down + A arms Kawarimi (ninja only) instead of the hop. */
         {
             const uint16_t a=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);
+            const uint16_t down=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN);
             uint8_t camera[16];memcpy(camera,ram+0xA8,sizeof(camera));
             const uint8_t keep_class=disciplines.selected,keep_weapon=hero[0x1E4];
-            disciplines.selected=SOM_DISC_NINJUTSU;hero[0x1E4]=1;      /* Kawarimi: ninja only */
+            disciplines.selected=SOM_DISC_NINJUTSU;hero[0x1E4]=1;
             hero[2]=200;hero[3]=0;hero[0x01C]=0;
             mocked_buttons=a;som_input_poll();assert(evade_active);
             mocked_buttons=0;som_input_poll();
             for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;som_input_poll();}
-            assert(!evade_active&&!kawarimi_armed_until);
-            hero[2]=200;hero[3]=0;hero[0x01C]=0;
-            mocked_buttons=a;som_input_poll();assert(evade_active);
-            for(unsigned f=0;f<60&&!kawarimi_armed_until;f++){
-                som_hop_step();som_evade_tick();frame_number++;som_input_poll();
+            assert(!evade_active&&!kawarimi_armed_until&&!a_running);
+            for(unsigned cls=SOM_DISC_NINJUTSU,k=0;k<2;k++,cls=11u){     /* ninja, archer */
+                disciplines.selected=(uint8_t)cls;
+                hero[2]=200;hero[3]=0;hero[0x01C]=0;
+                mocked_buttons=a;som_input_poll();assert(evade_active);
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+                for(unsigned f=0;f<60&&!a_running;f++){
+                    som_hop_step();som_evade_tick();frame_number++;som_input_poll();
+                    assert(a_running||som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+                }
+                assert(a_running&&!evade_active&&!kawarimi_armed_until);
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+                mocked_buttons=0;som_input_poll();
+                assert(!a_running&&som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==0);
+                for(unsigned f=0;f<30;f++){som_hop_step();som_evade_tick();frame_number++;}
             }
+            /* Down, Down + A: Kawarimi, no hop. */
+            disciplines.selected=SOM_DISC_NINJUTSU;
+            hero[2]=200;hero[3]=0;hero[0x01C]=0;
+            mocked_buttons=down;som_input_poll();frame_number++;
+            mocked_buttons=0;som_input_poll();frame_number++;
+            mocked_buttons=down;som_input_poll();frame_number++;
+            mocked_buttons=(uint16_t)(down|a);som_input_poll();
             assert(kawarimi_armed_until&&!evade_active);
+            mocked_buttons=0;som_input_poll();kawarimi_armed_until=0;
+            /* Too slow between the Downs: the plain evade. */
+            mocked_buttons=down;som_input_poll();frame_number+=SOM_DDA_FRAMES+5u;
+            mocked_buttons=0;som_input_poll();frame_number++;
+            mocked_buttons=down;som_input_poll();frame_number++;
+            mocked_buttons=(uint16_t)(down|a);som_input_poll();
+            assert(!kawarimi_armed_until&&evade_active);
             mocked_buttons=0;som_input_poll();
-            kawarimi_armed_until=0;
-            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
-            memcpy(ram+0xA8,camera,sizeof(camera));
-            /* Any other class: holding A arms nothing. */
-            disciplines.selected=11;                                   /* archer */
-            mocked_buttons=a;
-            for(unsigned f=0;f<60;f++){som_hop_step();som_evade_tick();frame_number++;som_input_poll();}
-            assert(!kawarimi_armed_until);
+            for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+            /* Any other class: Down, Down + A is the evade. */
+            disciplines.selected=11;
+            hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x01C]=0;
+            mocked_buttons=down;som_input_poll();frame_number++;
+            mocked_buttons=0;som_input_poll();frame_number++;
+            mocked_buttons=down;som_input_poll();frame_number++;
+            mocked_buttons=(uint16_t)(down|a);som_input_poll();
+            assert(!kawarimi_armed_until&&evade_active);
             mocked_buttons=0;som_input_poll();
-            for(unsigned f=0;f<30;f++){som_hop_step();som_evade_tick();frame_number++;}
+            for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
             hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
             memcpy(ram+0xA8,camera,sizeof(camera));
             /* Samurai: A with a monster in grab reach grabs and throws it. */

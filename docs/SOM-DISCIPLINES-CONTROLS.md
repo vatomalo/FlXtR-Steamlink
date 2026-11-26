@@ -427,10 +427,12 @@ Shunshin stopped by a wall, trail drawn.
 
 ### Jutsu buttons (2026-11-19)
 
-- **Hold A / Circle** (20 frames, ninja only; Kawarimi is a ninja skill): the tap's hop still fires on
-  the press; the held request then arms **Kawarimi no Jutsu** as soon as the hero is free
-  (waits up to 90 frames, even if A is let go). Armed for 3 s, it fires when a monster
-  touches or hits him. Log: `[som-ai] KAWARIMI from held A`.
+- **Hold A / Circle** (every class with an evade, 2026-11-26): the evade fires on the press; once
+  it is over and A is still held (20 frames or more), the game sees A again, which is its own
+  run, until A is let go. Log: `[som-ai] RUN from held A`.
+- **Down, Down + A / Circle** (ninja only; Kawarimi is a ninja skill; each step within 15
+  frames): arms **Kawarimi no Jutsu** instead of the evade. Armed for 3 s, it fires when a
+  monster touches or hits him. Log: `[som-ai] KAWARIMI from Down, Down + A`.
 - **L2 + X / Triangle** (ninja with a short-range weapon in hand): **Shunshin no Jutsu**,
   a clone on each side across the facing that explodes when a monster reaches him. The
   game never sees that X. Any other class or weapon: L2+X still reaches the game.
@@ -626,7 +628,7 @@ classes start at level 1); the style file is now `s2 <classes> ...`.
 
 ### 2026-11-20 changes
 
-- Kawarimi (hold A, AI `kawarimi`) is a ninja skill only.
+- Kawarimi (Down, Down + A, AI `kawarimi`) is a ninja skill only.
 - Samurai: A with a monster in grab reach grabs and throws it; otherwise A is the evade roll.
 - Swordsman: A is the cartwheel (like the monk and the rogue), no longer the evade roll.
 - The HUD weapon name is centred under the class title.
@@ -793,7 +795,7 @@ pips under the class and weapon names.
 |---|---|---|
 | Evade (any class's A dodge) | 0 | 1 |
 | Blink (X then A), AI Blink | 10 | 2 / 1 |
-| Kawarimi (hold A) | 15 | 1 |
+| Kawarimi (Down, Down + A) | 15 | 1 |
 | Shunshin, class L2+X move, class X move, clone jutsu | 15 | 0 |
 | Issen, Hundred Fists | 20 | 0 |
 | Iaijutsu, Telekinesis | 10 | 0 |

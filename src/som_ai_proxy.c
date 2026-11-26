@@ -9698,7 +9698,14 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     if(cam_look)
         cam_texts=som_cam_save(&camera,cam_ram,cam_vram,oam_shown_valid?oam_shown:cam_ram+0x0800u,overlay_frame,
                                pitch,cam_bytes,cam_mask,cam_text,SOM_CAM_W*SOM_CAM_H);
-    if(cam_on&&(cam_texts||!oam_shown_valid||(cam_ram[0xD0]&0x80u)))cam_on=0;
+    /* The camera director (talk, fight, whacked, idle shots) zooms with the
+     * text lifted off and put back unscaled. 9dd8989 turned the zoom off
+     * whenever any text was saved, which the field HUD always is: the
+     * camera chose its shots but never showed them (player, 2026-11-27:
+     * "we had an AI camera director which zoomed in"). The rub takes the
+     * texture beside each letter since 275cd3d, so no HUD reflections. */
+    if(cam_on&&!oam_shown_valid)cam_on=0;
+    if(cam_on)som_cam_rub(cam_mask,overlay_frame,pitch,cam_bytes);
     unsigned depth_pitch=0;
     const uint8_t *main_depth=backend_main_depth?backend_main_depth(&depth_pitch):NULL;
     int mask_effects=0;

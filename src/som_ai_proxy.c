@@ -1579,6 +1579,30 @@ static uint8_t *som_field_ram(void){
     return ram&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1?ram:NULL;
 }
 /* Observe HP changes following swings, not button-tap counts. */
+/* Observe confirmed HP loss on both sides, independently of combo input.
+ * Rebaseline across maps, field exits and frame counter rewinds. */
+static void som_hit_puffs_frame(void){
+    static uint16_t hp[6];
+    static uint8_t id[6],live[6];
+    static unsigned map=0x10000u;
+    static unsigned long last;
+    const uint8_t *ram=som_field_ram();
+    if(!ram||map!=som_word(ram+0xDC)||frame_number<=last||frame_number-last>2u){
+        memset(live,0,sizeof(live));
+        map=ram?som_word(ram+0xDC):0x10000u;
+        for(unsigned i=0;i<SOM_BUN_BOOMS;i++)if(bunshin_booms[i].smoke==2)bunshin_booms[i].start=0;
+    }
+    last=frame_number;
+    if(!ram)return;
+    for(unsigned i=0;i<6;i++){
+        const uint8_t *o=ram+0xE000u+0x200u*i;
+        unsigned h=som_word(o+0x182);
+        int active=o[0]==1u&&(i<3u||o[0x180]<0x80u);
+        if(active&&live[i]&&id[i]==o[0x180]&&hp[i]>h)
+            som_bun_boom(bunshin_booms,(int)som_word(o+2),(int)som_word(o+4),2,frame_number);
+        hp[i]=(uint16_t)h;id[i]=o[0x180];live[i]=(uint8_t)(active&&h>0);
+    }
+}
 static void som_combo_frame(void){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
@@ -4438,6 +4462,24 @@ static void som_bunshin_draw(uint8_t *pixels,unsigned width,unsigned height,size
         if(!b->start)continue;
         const unsigned long age=frame_number-b->start;
         if(age>=SOM_BUN_BOOM_FRAMES){b->start=0;continue;}
+        if(b->smoke==2){
+            if(age>=10u){b->start=0;continue;}
+            /* Tiny amber/copper impact puff, 5-9 native pixels wide. */
+            const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+            const int cx=hero_x+b->x-hx,cy=hero_y+b->y-hy-8;
+            const int radius=2+(int)age/4;
+            const uint32_t hot=som_overlay_color(pixel_format,255,184,64);
+            const uint32_t warm=som_overlay_color(pixel_format,218,105,39);
+            const uint32_t dark=som_overlay_color(pixel_format,128,55,38);
+            for(int dy=-radius;dy<=radius;dy++)for(int dx=-radius;dx<=radius;dx++){
+                int d=dx*dx+dy*dy,x=cx+dx,y=cy+dy;
+                if(d>radius*radius||x<0||y<0||x>=(int)(width/sx)||y>=(int)(height/sy))continue;
+                if(age>2u&&((unsigned)(dx*7+dy*13+(int)age)&7u)<age/2u)continue;
+                uint32_t c=age<3u&&d<=2?hot:age<6u?warm:dark;
+                som_overlay_fill(pixels,pitch,pixel_format,(unsigned)x*sx,(unsigned)y*sy,sx,sy,c);
+            }
+            continue;
+        }
         som_bun_draw_boom(pixels,width,height,pitch,pixel_format,
                           hero_x+(b->x-hx),hero_y+(b->y-hy)-8,(unsigned)age,b->smoke);
     }
@@ -10283,7 +10325,7 @@ RETRO_API void retro_run(void){
     som_pad2_guard_finish();
     if(test_enabled&&on_turbo)som_revival_frame(som_live_wram());
     const uint64_t perf_core_us=perf_core?som_perf_now_us()-perf_core:0;
-    if(test_enabled&&on_turbo)som_combo_frame();
+    if(test_enabled&&on_turbo){som_hit_puffs_frame();som_combo_frame();}
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
         som_mage_bolt_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM),1);

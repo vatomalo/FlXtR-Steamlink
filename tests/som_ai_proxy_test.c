@@ -1685,9 +1685,11 @@ int main(void){
         assert(hero[0x1E4]==2&&b_weapon_blocked);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK)==0);
+        hero[0x008]=1;hero[0x045]=10;               /* an earlier jump left over */
         hero[0x01C]=0;som_input_poll();             /* still held, hero free */
         /* The sword, and the string's first strike (B hidden from the game). */
         assert(hero[0x1E4]==1&&b_weapon_blocked&&monk_chain_active&&hero[0x01C]==0x20);
+        assert(!hero[0x008]&&!hero[0x045]);              /* a cancelled jump is over */
         assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B)==0);
         hero[0x01C]=0;som_monk_chain_frame(ram);som_input_poll();
         assert(!monk_chain_active&&!hero[0x01C]);      /* one press, one strike */
@@ -2276,6 +2278,12 @@ int main(void){
             som_hop_step();
             assert(hero[0x010]==0x82);                                 /* faces it */
             hero[0x010]=0x01;som_style_after(ram);assert(hero[0x010]==0x82);
+            /* Not during an attack: a turn restarts its script in the air. */
+            for(unsigned st=0x20;st<=0x80u;st+=0x60u){
+                hero[0x01C]=(uint8_t)st;hero[0x010]=0x01;som_style_after(ram);
+                assert(hero[0x010]==0x01);
+            }
+            hero[0x01C]=0;som_style_after(ram);assert(hero[0x010]==0x82);
             mocked_buttons=l1;som_input_poll();
             mocked_buttons=(uint16_t)(l1|(1u<<RETRO_DEVICE_ID_JOYPAD_B));som_input_poll();
             mocked_buttons=0;som_input_poll();
@@ -2900,29 +2908,27 @@ int main(void){
             portals.count=0;hero[2]=200;hero[4]=200;hero[0x0E]=0;
             disciplines.selected=keep;
         }
-        /* The class HUD lift upgrades old 10 px save-state placement to 26:
-         * BG3 scroll (7E:0040)
-         * and the portrait sprite; once only; undone for a dialog. */
+        /* BG3 stays at the game's own scroll: saves made with the old 10/20/26 px
+         * HUD lift get it back to 0 and the portrait back down; field only. */
         {
             uint8_t keep_oam[0x220];memcpy(keep_oam,ram+0x0800,sizeof(keep_oam));
-            const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D];
-            assert(SOM_HUD_LABEL_DY>=26); /* class begins below both native rows */
-            ram[0xD0]=0;ram[0x7D]=0;ram[0x40]=10;ram[0x41]=0;hud_lifted=0;
-            uint8_t *e=ram+0x0800;e[0]=88;e[1]=199;e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
-            uint8_t *m=ram+0x0804;m[0]=60;m[1]=200;m[2]=0x40;m[3]=0x30;   /* a monster low on screen */
-            som_hud_lift(ram,0);
-            assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX&&m[1]==200);
-            ram[0x40]=26;e[1]=173;hud_lifted=0;som_hud_lift(ram,0);
-            assert(ram[0x40]==SOM_HUD_LIFT_PX&&e[1]==199-SOM_HUD_LIFT_PX);   /* yesterday's lift */
-            ram[0x40]=10;e[1]=189;hud_lifted=0;
-            som_hud_lift(ram,0);assert(e[1]==199-SOM_HUD_LIFT_PX); /* legacy saved OAM: shift by delta */
-            som_hud_lift(ram,0);
-            assert(e[1]==199-SOM_HUD_LIFT_PX);                         /* not twice */
-            ram[0xD0]=0x83;som_hud_lift(ram,0);                         /* a dialog */
-            assert(ram[0x40]==0&&!hud_lifted);
-            ram[0x40]=0x30;ram[0xD0]=0;som_hud_lift(ram,0);             /* a scroll of the game's own */
-            assert(ram[0x40]==0x30&&!hud_lifted);
-            ram[0x40]=0;ram[0xD0]=keep_d0;ram[0x7D]=keep_7d;
+            const uint8_t keep_d0=ram[0xD0],keep_7d=ram[0x7D],keep_e000=ram[0xE000];
+            ram[0xE000]=1;ram[0xD0]=0;ram[0x7D]=0;ram[0x41]=0;
+            uint8_t *e=ram+0x0800,*m=ram+0x0804;
+            for(unsigned old=10;old<=26;old+=old==10?10u:6u){
+                ram[0x40]=(uint8_t)old;
+                e[0]=88;e[1]=(uint8_t)(199-old);e[2]=0xE8;e[3]=0x33;   /* portrait, tile 0x1E8 */
+                m[0]=60;m[1]=(uint8_t)(199-old);m[2]=0x40;m[3]=0x30;   /* a monster as high */
+                som_hud_lift(ram,0);
+                assert(ram[0x40]==0&&e[1]==199&&m[1]==199-old);
+                som_hud_lift(ram,0);assert(e[1]==199);                  /* not twice */
+            }
+            ram[0x40]=10;e[1]=189;som_hud_lift(ram,1);                  /* a menu */
+            assert(ram[0x40]==10&&e[1]==189);
+            ram[0xD0]=0x83;som_hud_lift(ram,0);assert(ram[0x40]==10);   /* a dialog */
+            ram[0xD0]=0;ram[0x40]=0x30;som_hud_lift(ram,0);             /* a scroll of the game's own */
+            assert(ram[0x40]==0x30);
+            ram[0x40]=0;ram[0xD0]=keep_d0;ram[0x7D]=keep_7d;ram[0xE000]=keep_e000;
             memcpy(ram+0x0800,keep_oam,sizeof(keep_oam));
         }
         /* AI commands: class choice and casts within the class. */

@@ -6215,6 +6215,11 @@ static unsigned som_monk_command(void){
     if(monk_dir_last!=SOM_MONK_TOWARD)return 0;
     return monk_dir_prev==SOM_MONK_TOWARD?7u:monk_dir_prev==SOM_MONK_AWAY?6u:0u;
 }
+/* A move starts from the ground: no speed is left, the height +0x45 neither.
+ * The jump scripts only add to the height, so a move that cancels a jump
+ * would go on from the air and its own jump higher still (player, 2026-11-25:
+ * "stuck in air and looks like dissidia"). */
+static void som_string_ground(uint8_t *o){o[0x006]=o[0x007]=o[0x008]=0;o[0x045]=0;}
 /* Plays one move: a strike (level 0, swing variant) or a power attack. */
 static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned variant,unsigned stage,
                           const char *what){
@@ -6225,7 +6230,7 @@ static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned varian
     o[0x01C]=level?0x80u:0x20u;
     o[0x011]=(uint8_t)(level?4u*level+cls:variant);
     o[0x19B]=(uint8_t)stage;
-    o[0x006]=o[0x007]=0;o[0x030]=0xFF;
+    som_string_ground(o);o[0x030]=0xFF;
     if(level){
         char text[32];snprintf(text,sizeof(text),"^%s|level %u",what,level);
         som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/4u);
@@ -6335,7 +6340,7 @@ static int som_archer_play(uint8_t *ram,unsigned who,unsigned move,int hop_done)
     o[0x01C]=m->level?0x80u:0x20u;
     o[0x011]=(uint8_t)(m->level?4u*m->level+cls:0u);
     o[0x19B]=m->arrows;
-    o[0x006]=o[0x007]=0;o[0x030]=0xFF;
+    som_string_ground(o);o[0x030]=0xFF;
     archer_moving=(int)move;
     archer_launch_at=frame_number+m->launch+SOM_ARCHER_LATENCY;
     archer_free_at=frame_number+m->free+SOM_ARCHER_LATENCY;
@@ -6510,7 +6515,7 @@ static int som_blade_play(uint8_t *ram,unsigned who,const SomBladeMove *m,int ca
     o[0x01C]=m->level?0x80u:0x20u;
     o[0x011]=(uint8_t)(m->level?4u*m->level+cls:m->variant);
     o[0x19B]=m->arrows;
-    o[0x006]=o[0x007]=0;o[0x030]=0xFF;
+    som_string_ground(o);o[0x030]=0xFF;
     blade_move=m;blade_started=frame_number;
     blade_launch_at=m->launch?frame_number+m->launch+SOM_ARCHER_LATENCY:0;
     blade_free_at=m->launch?frame_number+m->free+SOM_ARCHER_LATENCY:0;
@@ -9174,8 +9179,10 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
             if(hb&2u)continue;
             int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
             int y=e[1]+1;
-            if(x<left)left=x;if(x+16>right)right=x+16;
-            if(y<top)top=y;if(y+16>bottom)bottom=y+16;
+            if(x<left)left=x;
+            if(x+16>right)right=x+16;
+            if(y<top)top=y;
+            if(y+16>bottom)bottom=y+16;
         }
         if(right-left>48||bottom-top>48||right<=left||bottom<=top)continue;
         int cx=(left+right)/2,cy=top+(bottom-top)*5/8;

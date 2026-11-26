@@ -42,6 +42,18 @@ slots (helmet, shoulders, gloves, legs) are not drawn yet. Palette replacement
 cannot add silhouettes; those need generated art (som_art_gen.h) and per-pose
 attachment points.
 
+## Kabuto and shoulder plates (2026-11-26)
+
+The player found the crimson torso patchy ("red shirt patches ... might look better with a
+kabuto"). Now:
+
+- **Sode:** the boy's arm indices 5-7 in the first 4 rows of the torso band are painted too,
+  in alternating crimson bands, so the cuirass reads as one piece.
+- **Kabuto:** drawn art (`som_kabuto_art`, 16x11: front with gold kuwagata horns, back
+  with a laced shikoro, side with the crest forward; left = side mirrored), placed per frame
+  on the top rows of the head the game draws (`som_kabuto_place`), by the hero's facing
+  `+0x10`. Real-ROM shots on map 130, four facings.
+
 ## Cost and tests
 
 Compose plus mask: about 5.6 µs per armoured hero per frame on x86

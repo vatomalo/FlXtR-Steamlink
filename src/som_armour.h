@@ -152,4 +152,89 @@ static inline const uint8_t *som_armour_colour(const SomOutfit *o,unsigned slot,
     for(unsigned k=1;k<c;k++)if(set>>k&1u)rank++;
     return L->rgb[rank>2u?2u:rank];
 }
+/* Shoulder plates (sode): the boy's arms (indices 5, 6, 7) in the first
+ * SOM_ARMOUR_SODE_ROWS rows of the torso band take the armour colour too, so
+ * the cuirass reads as one piece and not as patches between the arms
+ * (player, 2026-11-26: "red shirt patches"). */
+#define SOM_ARMOUR_SODE_ROWS 4
+static const uint16_t som_armour_sode_mask[3]={(1u<<5)|(1u<<6)|(1u<<7),0,0};
+static inline unsigned som_armour_sode(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],unsigned who,int from,
+                                       uint8_t mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX]){
+    if(who>2u||!som_armour_sode_mask[who])return 0;
+    unsigned n=0;
+    for(int y=from;y<from+SOM_ARMOUR_SODE_ROWS&&y<SOM_ARMOUR_BOX;y++)
+        for(int x=0;x<SOM_ARMOUR_BOX;x++)
+            if(img[y][x]&&(som_armour_sode_mask[who]>>img[y][x]&1u)&&!mask[y][x]){mask[y][x]=2;n++;}
+    return n;
+}
+/* Kabuto (player, 2026-11-26: "might look better with a kabuto"): drawn art,
+ * front / back / side (left = the side mirrored), placed on the head the game
+ * draws this frame. Row SOM_KABUTO_TOP sits on the top row of the head; the
+ * art is centred on the head's top rows. Letters: K outline, B lacquer,
+ * b lacquer highlight, G gold, R crimson, r dark crimson, '.' see-through. */
+#define SOM_KABUTO_W 16
+#define SOM_KABUTO_H 11
+#define SOM_KABUTO_TOP 3
+enum { SOM_KABUTO_FRONT, SOM_KABUTO_BACK, SOM_KABUTO_SIDE };
+static const char *const som_kabuto_art[3][SOM_KABUTO_H]={
+    {"G..............G",
+     "GG............GG",
+     ".GG...KKKK...GG.",
+     "..GGKKbbBBKKGG..",
+     "...KbbBBBBBBK...",
+     "..KbBBBBBBBBBK..",
+     ".KBBBBGGGGBBBBK.",
+     "KRRKKKKKKKKKKRRK",
+     "KRr..........rRK",
+     "KRr..........rRK",
+     ".Kr..........rK."},
+    {"................",
+     "................",
+     "......KKKK......",
+     "....KKbbBBKK....",
+     "...KbbBBBBBBK...",
+     "..KbBBBBBBBBBK..",
+     ".KBBBBBBBBBBBBK.",
+     "KRRRRRRRRRRRRRRK",
+     "KrRGRRGRRGRRGRrK",
+     "KrrRRRRRRRRRRrrK",
+     ".KKrrrrrrrrrrKK."},
+    {"...............G",
+     "..............GG",
+     "......KKKK...GG.",
+     "....KKbbBBKKGG..",
+     "...KbbBBBBBBK...",
+     "..KbBBBBBBBBBK..",
+     ".KBBBBBBBBGGGBK.",
+     "KRRRRRKKKKKKKKK.",
+     "KrRRRRK.........",
+     "KrrRRK..........",
+     ".KKrK..........."},
+};
+static inline const uint8_t *som_kabuto_rgb(char k){
+    static const uint8_t K[3]={24,20,28},B[3]={44,40,58},b[3]={96,92,120},G[3]={232,184,72},
+                         R[3]={180,36,44},r[3]={110,20,32};
+    return k=='K'?K:k=='B'?B:k=='b'?b:k=='G'?G:k=='R'?R:k=='r'?r:NULL;
+}
+/* Where the kabuto goes in the composed image: its top-left (*kx, *ky). */
+static inline int som_kabuto_place(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],int *kx,int *ky){
+    int top=-1;
+    for(int y=0;y<SOM_ARMOUR_BOX&&top<0;y++)
+        for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){top=y;break;}
+    if(top<0)return 0;
+    int l=SOM_ARMOUR_BOX,r=-1;
+    for(int y=top;y<top+6&&y<SOM_ARMOUR_BOX;y++)
+        for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){if(x<l)l=x;if(x>r)r=x;}
+    if(r<l)return 0;
+    *kx=(l+r+1)/2-SOM_KABUTO_W/2;*ky=top-SOM_KABUTO_TOP;
+    return 1;
+}
+/* The kabuto's letter at (u, v) for a hero facing `facing` (+0x10). */
+static inline char som_kabuto_at(unsigned facing,int u,int v){
+    if(u<0||v<0||u>=SOM_KABUTO_W||v>=SOM_KABUTO_H)return '.';
+    const int side=facing==0x02u||facing==0x82u;
+    const unsigned art=side?SOM_KABUTO_SIDE:facing==0x00u?SOM_KABUTO_BACK:SOM_KABUTO_FRONT;
+    if(facing==0x82u)u=SOM_KABUTO_W-1-u;
+    return som_kabuto_art[art][v][u];
+}
 #endif

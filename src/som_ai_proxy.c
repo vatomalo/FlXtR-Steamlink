@@ -9464,6 +9464,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0,from;
         if(!som_armour_compose(oam,vram,who,img,&x0,&y0)||!som_armour_torso_mask(img,who,mask,&from))continue;
+        (void)som_armour_sode(img,who,from,mask);
         /* screen colour per index: up to four candidates, majority wins */
         uint32_t cand[16][4];uint16_t votes[16][4];
         memset(votes,0,sizeof(votes));
@@ -9489,9 +9490,22 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
             const unsigned c=img[y][x];
             uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
             if(!known[c]||actual!=screen[c])continue;                     /* covered: leave it */
-            const uint8_t *col=som_armour_colour(outfit,SOM_SLOT_TORSO,who,c,y-from);
+            const uint8_t *col=mask[y][x]==2u?outfit->layer[SOM_SLOT_TORSO].rgb[(y-from)&1]:   /* sode: banded */
+                som_armour_colour(outfit,SOM_SLOT_TORSO,who,c,y-from);
             som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
                              som_overlay_color(format,col[0],col[1],col[2]));
+        }
+        /* The kabuto, on top of the head this frame. */
+        int kx,ky;
+        if(som_kabuto_place(img,&kx,&ky)){
+            const unsigned facing=ram[0xE000u+0x200u*who+0x10u];
+            for(int v=0;v<SOM_KABUTO_H;v++)for(int u=0;u<SOM_KABUTO_W;u++){
+                const uint8_t *col=som_kabuto_rgb(som_kabuto_at(facing,u,v));
+                const int ox=x0+kx+u,oy=y0+ky+v;
+                if(!col||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+                som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
+                                 som_overlay_color(format,col[0],col[1],col[2]));
+            }
         }
     }
 }

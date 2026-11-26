@@ -439,6 +439,15 @@ Shunshin stopped by a wall, trail drawn.
   Log: `[som-ai] SHUNSHIN from L2+X`.
 - The AI keeps its own commands `kawarimi` / `shunshin`.
 
+### Statuses that take the pad (2026-11-26)
+
+While a hero is frozen, petrified, in a balloon, engulfed or dead (`+0x190 & 0xC160`, the mask
+under which the game itself zeroes the pad), no FlXtR move starts for them: strings, evades,
+Blink, jutsu, Kawarimi, specials, Iaijutsu, bash, throw, flying kick, class moves, casts,
+weapon swaps, companion techniques, and lock-on stops turning them. Both pads go to the
+game as they are. A string under way, with a press waiting, is dropped (`CHAIN dropped: BOY
+cannot act`). The check is `som_status_locked` in `src/som_ai_proxy.c`.
+
 ### Towns (2026-11-26)
 
 On every map that is not a combat map (`$ED` bit 7 clear: towns, houses, shops, inns) the

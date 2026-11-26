@@ -2032,6 +2032,27 @@ int main(void){
                 hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
                 memcpy(ram+0xA8,camera,sizeof(camera));
             }
+            /* Balloon (and frozen, petrified, engulfed): the game's pad, no
+             * FlXtR move starts, a string with a press waiting is dropped. */
+            {
+                const uint8_t keep_status=hero[0x191];
+                hero[0x191]=0x01;                                      /* balloon 0x0100 */
+                mocked_buttons=(uint16_t)(a|down);som_input_poll();
+                assert(!evade_active&&!evade_a_hidden);
+                assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A)==1);
+                mocked_buttons=0;som_input_poll();
+                assert(!som_evade_start(ram)&&!som_blink_dash(ram,1,0)&&!som_kawarimi_arm(ram));
+                assert(!som_monk_chain_start(ram,0,0,0));
+                monk_chain_active=1;monk_chain_who=0;monk_chain_queued=1;hero[0x01C]=0x20;
+                som_monk_chain_frame(ram);
+                assert(!monk_chain_active&&!monk_chain_queued);
+                hero[0x01C]=0;hero[0x191]=keep_status;frame_number+=SOM_DDA_FRAMES+1u;
+                mocked_buttons=a;som_input_poll();assert(evade_active);   /* free again */
+                mocked_buttons=0;som_input_poll();
+                for(unsigned f=0;f<40;f++){som_hop_step();som_evade_tick();frame_number++;}
+                hero[2]=200;hero[3]=0;hero[4]=200;hero[5]=0;hero[0x010]=0x02;hero[0x01C]=0;
+                memcpy(ram+0xA8,camera,sizeof(camera));
+            }
             /* Samurai: A with a monster in grab reach grabs and throws it. */
             disciplines.selected=SOM_DISC_BUSHIDO;throw_ready=0;
             foe[0]=1;foe[0x180]=7;foe[0x190]=foe[0x191]=0;foe[0x182]=50;

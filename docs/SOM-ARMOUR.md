@@ -54,6 +54,14 @@ kabuto"). Now:
   on the top rows of the head the game draws (`som_kabuto_place`), by the hero's facing
   `+0x10`. Real-ROM shots on map 130, four facings.
 
+## Class headgear (2026-11-26)
+
+`som_head_art` (16x14, head top at row 6) and `som_class_look(cls)`: Samurai kabuto (and
+the torso + sode), Ninja hood with a steel forehead plate, Vampire Hunter wide-brim hat with
+a red band, Mage pointed hat, Archer feathered cap, Monk white hachimaki with tails at the
+back, Necromancer hood with bone trim. Colours per piece in `som_head_rgb` (letters
+`KAaDGWRr`). The other classes have none yet. Real-ROM shots, four facings each.
+
 ## Cost and tests
 
 Compose plus mask: about 5.6 µs per armoured hero per frame on x86

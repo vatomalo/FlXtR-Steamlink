@@ -9469,11 +9469,13 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u,bpp=format==1?4u:2u;
     const SomOutfit *outfit=&som_outfits[SOM_OUTFIT_SAMURAI];
     for(unsigned who=0;who<3u;who++){
-        if(som_disc_member_class(&disciplines,who)!=SOM_DISC_BUSHIDO||ram[0xE000u+0x200u*who]!=1u)continue;
+        const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
+        if((look.head<0&&!look.torso)||ram[0xE000u+0x200u*who]!=1u)continue;
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
-        int x0,y0,from;
-        if(!som_armour_compose(oam,vram,who,img,&x0,&y0)||!som_armour_torso_mask(img,who,mask,&from))continue;
-        (void)som_armour_sode(img,who,from,mask);
+        int x0,y0,from=0;
+        if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
+        if(!look.torso||!som_armour_torso_mask(img,who,mask,&from))memset(mask,0,sizeof(mask));
+        else (void)som_armour_sode(img,who,from,mask);
         /* screen colour per index: up to four candidates, majority wins */
         uint32_t cand[16][4];uint16_t votes[16][4];
         memset(votes,0,sizeof(votes));
@@ -9504,12 +9506,12 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
             som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
                              som_overlay_color(format,col[0],col[1],col[2]));
         }
-        /* The kabuto, on top of the head this frame. */
+        /* The class's headgear, on top of the head this frame. */
         int kx,ky;
-        if(som_kabuto_place(img,&kx,&ky)){
+        if(look.head>=0&&som_head_place(img,&kx,&ky)){
             const unsigned facing=ram[0xE000u+0x200u*who+0x10u];
-            for(int v=0;v<SOM_KABUTO_H;v++)for(int u=0;u<SOM_KABUTO_W;u++){
-                const uint8_t *col=som_kabuto_rgb(som_kabuto_at(facing,u,v));
+            for(int v=0;v<SOM_HEAD_H;v++)for(int u=0;u<SOM_HEAD_W;u++){
+                const uint8_t *col=som_head_colour((unsigned)look.head,som_head_at((unsigned)look.head,facing,u,v));
                 const int ox=x0+kx+u,oy=y0+ky+v;
                 if(!col||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
                 som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,

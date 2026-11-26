@@ -34,6 +34,7 @@
 #include "som_bunshin.h"
 #include "som_telekinesis.h"
 #include "som_bunshin_draw.h"
+#include "som_depth_mask.h"
 #include "som_mage_bolt.h"
 #include "som_jukebox.h"
 #include "som_xp.h"
@@ -580,6 +581,9 @@ static const char *record_file="/tmp/flxtr-som-ai-recorded";
 static int recording;
 static uint8_t *overlay_frame;
 static size_t overlay_frame_size;
+static uint8_t *effect_base;
+static size_t effect_base_size;
+static const uint8_t *(*backend_main_depth)(unsigned *pitch);
 /* Automatic camera (som_camera.h); this marker file turns it off. */
 #define SOM_CAMERA_OFF_FILE "/home/apps/retroarch/cores/experimental/som_ai_camera_off"
 static const char *camera_off_file=SOM_CAMERA_OFF_FILE;
@@ -9638,6 +9642,16 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         cam_texts=som_cam_save(&camera,cam_ram,cam_vram,oam_shown_valid?oam_shown:cam_ram+0x0800u,overlay_frame,
                                pitch,cam_bytes,cam_mask,cam_text,SOM_CAM_W*SOM_CAM_H);
     if(cam_on&&(cam_texts||!oam_shown_valid||(cam_ram[0xD0]&0x80u)))cam_on=0;
+    unsigned depth_pitch=0;
+    const uint8_t *main_depth=backend_main_depth?backend_main_depth(&depth_pitch):NULL;
+    int mask_effects=0;
+    if(main_depth&&depth_pitch>=width&&size<=effect_base_size)
+        mask_effects=1;
+    else if(main_depth&&depth_pitch>=width){
+        uint8_t *grown=realloc(effect_base,size);
+        if(grown){effect_base=grown;effect_base_size=size;mask_effects=1;}
+    }
+    if(mask_effects)memcpy(effect_base,overlay_frame,size);
     if(width==256u)for(unsigned i=0;i<skins_shown;i++){
         if(skins_now[i].kind==SOM_SKIN_STAR){
             const uint8_t *art=som_rom_at(0xD28400u+SOM_ICON_BYTES*0x7Bu,SOM_ICON_BYTES);
@@ -9684,6 +9698,13 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             som_trail_draw(overlay_frame,width,height,pitch);
             som_bunshin_draw(overlay_frame,width,height,pitch,hero_x,hero_y);
         }
+    }
+    if(mask_effects){
+        const unsigned owner=hero_drawn&&clones?bunshin_owner:
+                             flykick.active?flykick.slot:trail_until?trail_owner:0u;
+        const unsigned owner_depth=som_owner_sprite_depth(oam_shown_valid?oam_shown:NULL,owner);
+        som_mask_behind_foreground(overlay_frame,effect_base,width,height,pitch,cam_bytes,
+                                    main_depth,depth_pitch,owner_depth);
     }
     if(cam_on){
         som_cam_clamp(&camera);
@@ -9817,6 +9838,7 @@ static void load_backend(void){
     backend=dlopen(path,RTLD_NOW|RTLD_LOCAL);
     if(!backend){fprintf(stderr,"[som-ai] dlopen failed: %s\n",dlerror());abort();}
     *(void**)(&backend_skip_music)=dlsym(backend,"retro_flxtr_skip_music_voices");
+    *(void**)(&backend_main_depth)=dlsym(backend,"retro_flxtr_main_depth");
 #define LOAD_VIDEO() do { \
     *(void**)(&backend_set_video_refresh)=dlsym(backend,"retro_set_video_refresh"); \
     if(!backend_set_video_refresh){fputs("[som-ai] backend lacks retro_set_video_refresh\n",stderr);abort();} \

@@ -175,7 +175,7 @@ static inline unsigned som_armour_sode(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARM
  * R / r second colour (the kabuto's crimson); '.' see-through. */
 #define SOM_HEAD_W 16
 #define SOM_HEAD_H 14
-#define SOM_HEAD_TOP 6
+#define SOM_HEAD_TOP 3      /* 3 rows lower than drawn: the brim sits on the bandana (player, 2026-11-26) */
 enum { SOM_HEAD_FRONT, SOM_HEAD_BACK, SOM_HEAD_SIDE };
 enum { SOM_HEAD_KABUTO, SOM_HEAD_NINJA, SOM_HEAD_HUNTER, SOM_HEAD_MAGE, SOM_HEAD_ARCHER, SOM_HEAD_MONK, SOM_HEAD_NECRO, SOM_HEADS };
 static const char *const som_head_art[SOM_HEADS][3][SOM_HEAD_H]={

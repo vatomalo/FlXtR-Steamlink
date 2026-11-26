@@ -9464,13 +9464,20 @@ static const uint8_t *som_saber_colours(const uint8_t *ram,unsigned who){
  * palette and the screen, so the palette cannot be compared directly). A
  * torso pixel that shows another colour is covered by scenery or another
  * sprite and is left alone. */
-static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,const uint8_t *ram,const uint8_t *oam,const uint8_t *vram){
+/* depth: the core's main-screen depth per pixel (retro_flxtr_main_depth),
+ * NULL without the patched core: armour and headgear are drawn on the hero's
+ * own layer, hidden where scenery in front of the hero's sprite priority is
+ * (player, 2026-11-26: "should be on the same layer as player sprites"). */
+static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,const uint8_t *ram,const uint8_t *oam,const uint8_t *vram,
+                               const uint8_t *depth,unsigned depth_pitch){
     if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u,bpp=format==1?4u:2u;
     const SomOutfit *outfit=&som_outfits[SOM_OUTFIT_SAMURAI];
     for(unsigned who=0;who<3u;who++){
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
         if((look.head<0&&!look.torso)||ram[0xE000u+0x200u*who]!=1u)continue;
+        const unsigned layer=som_owner_sprite_depth(oam,who);
+#define SOM_IN_FRONT(x,y) (depth&&depth[(size_t)(y)*depth_pitch+(size_t)(x)]>layer)
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0,from=0;
         if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
@@ -9500,7 +9507,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
             if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
             const unsigned c=img[y][x];
             uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
-            if(!known[c]||actual!=screen[c])continue;                     /* covered: leave it */
+            if(!known[c]||actual!=screen[c]||SOM_IN_FRONT(ox,oy))continue;  /* covered: leave it */
             const uint8_t *col=mask[y][x]==2u?outfit->layer[SOM_SLOT_TORSO].rgb[(y-from)&1]:   /* sode: banded */
                 som_armour_colour(outfit,SOM_SLOT_TORSO,who,c,y-from);
             som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
@@ -9513,13 +9520,14 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
             for(int v=0;v<SOM_HEAD_H;v++)for(int u=0;u<SOM_HEAD_W;u++){
                 const uint8_t *col=som_head_colour((unsigned)look.head,som_head_at((unsigned)look.head,facing,u,v));
                 const int ox=x0+kx+u,oy=y0+ky+v;
-                if(!col||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+                if(!col||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy)||SOM_IN_FRONT(ox,oy))continue;
                 som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
                                  som_overlay_color(format,col[0],col[1],col[2]));
             }
         }
     }
 }
+#undef SOM_IN_FRONT
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
@@ -9691,7 +9699,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     if(!menu&&on_turbo&&test_enabled&&ring_owner_ram&&oam_shown_valid&&
        backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=SOM_BUN_VRAM_SIZE)
         som_bushido_armour(overlay_frame,width,height,pitch,pixel_format,ring_owner_ram,oam_shown,
-            (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM));
+            (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM),
+            main_depth&&depth_pitch>=SOM_CAM_W?main_depth:NULL,depth_pitch);
     if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
     if(worker){
         size_t ram_size=0;

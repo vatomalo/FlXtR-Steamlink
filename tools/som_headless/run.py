@@ -164,9 +164,12 @@ def main(argv=None):
             if local:
                 newer = shlex.quote(os.path.join(local, name))
                 setup.append("[ ! -f %s ] || cp %s %s/" % (newer, newer, run_dir))
-        run = ("cd %s && FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 FLXTR_SOM_TEST_COMMANDS=1 ./som-harness "
+        base = os.environ.get("SOM_HEADLESS_BASE_CORE")   # a core already on the host
+        run = ("cd %s && " % shlex.quote(run_dir)) + \
+              ("FLXTR_AI_BASE_CORE=%s " % shlex.quote(base) if base else "") + \
+              ("FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 FLXTR_SOM_TEST_COMMANDS=1 ./som-harness "
                "./som_ai_proxy_test.so %s %s %s %s") % (
-                   shlex.quote(run_dir), shlex.quote(rom), shlex.quote(start),
+                   shlex.quote(rom), shlex.quote(start),
                    "--train-boss" if args.train_boss else "scenario.txt", shlex.quote(run_dir))
         cleanup = "rm -rf %s" % shlex.quote(run_dir)
 

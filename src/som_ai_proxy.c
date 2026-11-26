@@ -906,6 +906,12 @@ static unsigned som_class_arm_slot(unsigned cls,unsigned type){
     if(cls==SOM_DISC_FLOW&&type==5u)return 2u;
     return 3u;
 }
+/* The Ninja's glove is the unarmed Taijutsu chain, not an unnamed
+ * off-class weapon. This is a display name only; the glove stays equipped. */
+static const char *som_class_weapon_display_name(const SomStyles *s,unsigned cls,unsigned type){
+    if(cls==SOM_DISC_NINJUTSU&&type==0u)return "Taijutsu";
+    return som_custom_weapon_name(s,cls,som_class_arm_slot(cls,type));
+}
 /* Discipline experience (src/som_xp.h): only verified events reach here.
  * The file is written on every level-up and at most once a minute. */
 static SomXpDecay xp_decay;
@@ -9444,7 +9450,7 @@ static void som_party_panels(uint8_t *frame,unsigned width,unsigned height,size_
             const unsigned type=ram[0xE1E4];
             if(type<8u&&ram[0xCC54u+type]!=0xFF)
                 snprintf(second,sizeof(second),"%s",
-                         som_custom_weapon_name(&styles,cls,som_class_arm_slot(cls,type)));
+                         som_class_weapon_display_name(&styles,cls,type));
         }else{
             snprintf(second,sizeof(second),"%s",som_ally_moves[cls].name);
             ink=som_overlay_color(pixel_format,170,230,200);

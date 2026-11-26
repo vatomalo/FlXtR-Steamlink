@@ -39,6 +39,13 @@ test-som-ai-proxy:
 
 .PHONY: test-som-ai-proxy
 
+test-som-depth-mask:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_depth_mask_test.c -o build/som-depth-mask-test
+	./build/som-depth-mask-test
+
+.PHONY: test-som-depth-mask
+
 test-som-ai-player2:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_ai_player2_test.c -o build/som-ai-player2-test

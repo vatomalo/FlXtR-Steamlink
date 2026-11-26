@@ -1,0 +1,21 @@
+diff --git a/libretro.c b/libretro.c
+index f64b71c..df65114 100644
+--- a/libretro.c
++++ b/libretro.c
+@@ -751,6 +751,16 @@ void retro_run(void)
+    audio_upload_samples();
+ }
+ 
++/* FlXtR overlays use the renderer's actual main-screen priority for the
++ * frame just passed to video_cb. This buffer is read-only and remains owned
++ * by the core. A NULL result means there is no rendered frame to compare. */
++RETRO_API const uint8_t *retro_flxtr_main_depth(unsigned *pitch)
++{
++   if (pitch)
++      *pitch = GFX.ZPitch;
++   return GFX.ZBuffer;
++}
++
+ bool S9xReadMousePosition(int32_t which1, int32_t* x, int32_t* y, uint32_t* buttons)
+ {
+    (void) which1;

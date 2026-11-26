@@ -1248,6 +1248,7 @@ static unsigned lock_map;
 static void som_lock_toggle(uint8_t *ram);
 static void som_lock_frame(uint8_t *ram);
 static void som_lock_frame2(uint8_t *ram);
+static const uint8_t *som_combo_locked_enemy(const uint8_t *ram,unsigned who);
 #define SOM_ORBS 3u
 static unsigned mage_orbs[SOM_PARTY_MEMBERS]={SOM_ORBS,SOM_ORBS,SOM_ORBS};
 static int som_lock_marker(int *x,int *y);
@@ -6101,12 +6102,23 @@ static unsigned long monk_dir_last_at,monk_dir_prev_at;
  * far class the game uses for the variant. */
 static unsigned som_monk_enemy(const uint8_t *ram,const uint8_t *o,int *ex,int *ey){
     const int hx=(int)som_word(o+2),hy=(int)som_word(o+4);
+    const unsigned who=(unsigned)(o-(ram+0xE000u))/0x200u;
+    const uint8_t *locked=som_combo_locked_enemy(ram,who);
+    if(locked){
+        const int dx=(int)som_word(locked+2)-hx,dy=(int)som_word(locked+4)-hy;
+        const unsigned cx=abs(dx)<26?1u:abs(dx)<42?2u:3u;
+        const unsigned cy=abs(dy)<24?1u:abs(dy)<40?2u:3u;
+        if(abs(dx)>=abs(dy)){*ex=dx>=0?1:-1;*ey=0;}
+        else{*ex=0;*ey=dy>=0?1:-1;}
+        return (cx>cy?cx:cy)-1u;
+    }
     unsigned best=3u;long best_d=-1;
     const unsigned f=o[0x010];
     *ex=f==0x02u?1:f==0x82u?-1:0;*ey=*ex?0:(f==0x01u?1:-1);
     for(unsigned k=0;k<3u;k++){
         const uint8_t *m=ram+0xE600u+0x200u*k;
-        if(m[0]!=1||m[0x180]>=0x80||(int)k==familiar.slot)continue;
+        if(!som_bun_monster_alive(m)||!som_word(m+0x182)||(int)k==familiar.slot||
+           ((m[0x0B]^o[0x0B])&0x80u))continue;
         const int dx=(int)som_word(m+2)-hx,dy=(int)som_word(m+4)-hy;
         const unsigned cx=abs(dx)<26?1u:abs(dx)<42?2u:3u,cy=abs(dy)<24?1u:abs(dy)<40?2u:3u;
         const unsigned c=cx>cy?cx:cy;
@@ -6163,7 +6175,10 @@ static unsigned som_monk_command(void){
 /* Plays one move: a strike (level 0, swing variant) or a power attack. */
 static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned variant,unsigned stage,
                           const char *what){
-    const unsigned cls=som_monk_enemy(ram,o,&(int){0},&(int){0});
+    int ex,ey;
+    const unsigned cls=som_monk_enemy(ram,o,&ex,&ey);
+    if(som_combo_locked_enemy(ram,(unsigned)(o-(ram+0xE000u))/0x200u))
+        o[0x010]=ex>0?0x02u:ex<0?0x82u:ey>0?0x01u:0x00u;
     o[0x01C]=level?0x80u:0x20u;
     o[0x011]=(uint8_t)(level?4u*level+cls:variant);
     o[0x19B]=(uint8_t)stage;
@@ -6243,7 +6258,8 @@ static void som_archer_face(const uint8_t *ram,uint8_t *o){
               labs((long)som_word(m+4)-(long)som_word(o+4))<=160;
     }
     int ex,ey;
-    if(near)(void)som_monk_enemy(ram,o,&ex,&ey);else som_monk_ref(ram,o,&ex,&ey);
+    if(near||som_combo_locked_enemy(ram,(unsigned)(o-(ram+0xE000u))/0x200u))
+        (void)som_monk_enemy(ram,o,&ex,&ey);else som_monk_ref(ram,o,&ex,&ey);
     o[0x010]=ex>0?0x02u:ex<0?0x82u:ey>0?0x01u:0x00u;
 }
 /* Starts `move` (after its hop, if it has one). */
@@ -9994,6 +10010,80 @@ static void som_enemy_scaling_frame(void){
         if(base&&som_word(base+1)&&base[0]<=98u)som_enemy_scale(enemy,base,party_level);
     }
 }
+/* Clamp native attack displacement, not the animation or its damage stage.
+ * Sample before retro_run and constrain the resulting ground position before
+ * the next lock/orbit pass. Explicit proxy evades and teleports stay free. */
+typedef struct {
+    int x,y;
+    uint8_t pose,layer,valid,free_move;
+} SomComboPosition;
+static int som_combo_attack_pose(unsigned pose){return pose==0x20u||pose==0x80u;}
+static int som_combo_free_move(unsigned who){
+    return who==som_actor&&(evade_active||blink_active||ukemi_draw.active||issen_active);
+}
+static unsigned som_combo_spacing(const uint8_t *hero,unsigned who){
+    /* Leave a gap inside the native melee reach (24/28/28/34 px).
+     * Ranged strings get a small collision gap, not an enforced retreat. */
+    static const unsigned gap[8]={14,18,18,22,18,16,16,20};
+    const unsigned weapon=hero[0x1E4];
+    int n=weapon<8u?(int)gap[weapon]:14;
+    const unsigned cls=som_disc_member_class(&disciplines,who);
+    const SomWeaponStyle *st=som_style_of(&styles,cls,NULL);
+    if(st&&st->weapon==weapon&&st->reach_bonus>0)n+=st->reach_bonus/2;
+    return (unsigned)n;
+}
+/* Return the last safe point on the actual movement segment. The original
+ * distance is the lower limit if already too close: never push a stationary
+ * hero backwards. The radial half-plane also catches a one-frame leap
+ * completely through the enemy, even when its endpoint is outside the gap. */
+static int som_combo_clamp_segment(int x,int y,int tx,int ty,unsigned gap,int *nx,int *ny){
+    const int dx=*nx-x,dy=*ny-y;
+    const int steps=abs(dx)>abs(dy)?abs(dx):abs(dy);
+    if(!steps)return 0;
+    const int64_t rx=(int64_t)x-tx,ry=(int64_t)y-ty;
+    const int64_t initial=rx*rx+ry*ry;
+    if(!initial)return 0;
+    int64_t limit=(int64_t)gap*gap;
+    if(initial<limit)limit=initial;
+    int sx=x,sy=y;
+    for(int i=1;i<=steps;i++){
+        const int px=x+(int)((int64_t)dx*i/steps),py=y+(int)((int64_t)dy*i/steps);
+        const int64_t ax=(int64_t)px-tx,ay=(int64_t)py-ty;
+        if(ax*rx+ay*ry<=0||ax*ax+ay*ay<limit)break;
+        sx=px;sy=py;
+    }
+    if(sx==*nx&&sy==*ny)return 0;
+    *nx=sx;*ny=sy;return 1;
+}
+static unsigned som_combo_positions(const uint8_t *ram,SomComboPosition pos[SOM_PARTY_MEMBERS]){
+    memset(pos,0,sizeof(*pos)*SOM_PARTY_MEMBERS);
+    if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]||ram[0x7D]==1u)return 0x10000u;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *hero=ram+0xE000u+0x200u*who;
+        if(!som_ally_alive(hero))continue;
+        pos[who]=(SomComboPosition){(int)som_word(hero+2),(int)som_word(hero+4),
+            hero[0x01C],(uint8_t)(hero[0x0B]&0x80u),1,(uint8_t)som_combo_free_move(who)};
+    }
+    return som_word(ram+0xDC);
+}
+static void som_combo_spacing_after(uint8_t *ram,unsigned map,const SomComboPosition pos[SOM_PARTY_MEMBERS]){
+    if(!ram||map!=som_word(ram+0xDC)||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]||ram[0x7D]==1u)return;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        uint8_t *hero=ram+0xE000u+0x200u*who;
+        const SomComboPosition *p=&pos[who];
+        if(!p->valid||p->free_move||som_combo_free_move(who)||!som_ally_alive(hero)||
+           p->layer!=(hero[0x0B]&0x80u)||
+           (!som_combo_attack_pose(p->pose)&&!som_combo_attack_pose(hero[0x01C])))continue;
+        const uint8_t *target=som_combo_locked_enemy(ram,who);
+        if(!target)continue;
+        int nx=(int)som_word(hero+2),ny=(int)som_word(hero+4);
+        if(!som_combo_clamp_segment(p->x,p->y,(int)som_word(target+2),(int)som_word(target+4),
+                                    som_combo_spacing(hero,who),&nx,&ny))continue;
+        if(!som_bun_spot_open(ram,nx,ny,som_hero_place(hero))||
+           !som_rescue_path_open(ram,p->x,p->y,nx,ny,som_hero_place(hero))){nx=p->x;ny=p->y;}
+        som_put_word(hero+2,(uint16_t)nx);som_put_word(hero+4,(uint16_t)ny);
+    }
+}
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     const uint64_t perf_t0=som_perf_frame_begin(frame_number);
@@ -10081,7 +10171,10 @@ RETRO_API void retro_run(void){
         const uint8_t *shadow=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(shadow){memcpy(oam_shown,shadow+0x0800u,sizeof(oam_shown));oam_shown_valid=1;}
     }
+    SomComboPosition combo_pos[SOM_PARTY_MEMBERS];
+    const unsigned combo_map=som_combo_positions(test_enabled&&on_turbo?som_live_wram():NULL,combo_pos);
     backend_run();
+    if(test_enabled&&on_turbo)som_combo_spacing_after(som_live_wram(),combo_map,combo_pos);
     if(on_turbo)som_auto_target_frame(som_live_wram());
     som_guard_finish();
     som_pad2_guard_finish();
@@ -10391,6 +10484,7 @@ static void som_lock_orbit_after(uint8_t *ram){
     const long vx=(long)som_bun_u16(m+2)-(long)som_bun_u16(hero+2);
     const long vy=(long)som_bun_u16(m+4)-(long)som_bun_u16(hero+4);
     const int dist=som_isqrt(vx*vx+vy*vy);
+    if(hero[0x01C]||som_combo_free_move(lock_who)){lock_orbiting=0;lock_keep_radius=0;lock_radius=0;return;}
     if(!lock_orbiting||!lock_keep_radius||!lock_radius){
         lock_radius=dist<SOM_LOCK_MIN_RADIUS?SOM_LOCK_MIN_RADIUS:dist;return;
     }
@@ -10451,6 +10545,23 @@ static void som_lock_swap(int reset){
     {__typeof__(lock_stuck) t=lock_stuck;lock_stuck=p2_lock_stuck;p2_lock_stuck=t;}
     {__typeof__(lock_orbit_dirs) t=lock_orbit_dirs;lock_orbit_dirs=p2_lock_orbit_dirs;p2_lock_orbit_dirs=t;}
 }
+/* Look up the actor's own lock, including P2 when the P1 context is active.
+ * A lock never crosses a map, layer, dead enemy or recycled monster slot. */
+static const uint8_t *som_combo_lock_current(const uint8_t *ram,unsigned who){
+    if(!ram||who>=SOM_PARTY_MEMBERS||lock_who!=who||lock_slot<0||lock_slot>=3||
+       lock_slot==familiar.slot||lock_map!=som_word(ram+0xDC)||ring_ai_enabled)return NULL;
+    const uint8_t *hero=ram+0xE000u+0x200u*who;
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)lock_slot;
+    if(!som_bun_monster_alive(m)||!som_word(m+0x182)||m[0x180]!=lock_identity||
+       ((m[0x0B]^hero[0x0B])&0x80u))return NULL;
+    return m;
+}
+static const uint8_t *som_combo_locked_enemy(const uint8_t *ram,unsigned who){
+    const uint8_t *m=som_combo_lock_current(ram,who);
+    if(m)return m;
+    som_lock_swap(0);m=som_combo_lock_current(ram,who);som_lock_swap(0);
+    return m;
+}
 static void som_lock_release(const char *why){
     if(lock_slot<0)return;
     fprintf(stderr,"[som-ai] LOCK off (monster slot %d): %s\n",lock_slot+1,why);
@@ -10508,7 +10619,7 @@ static void som_lock_frame(uint8_t *ram){
     if(abs(dx)+abs(dy)>SOM_LOCK_DROP){som_lock_release("too far");return;}
     som_lock_orbit_after(ram);
     /* Not during a dodge or a pose the game is playing on its own. */
-    if(evade_active||hero[0x01C]==0x40u||hero[0x01C]==0x30u)return;
+    if(som_combo_free_move(lock_who)||hero[0x01C])return;
     hero[0x010]=abs(dx)>=abs(dy)?(dx>=0?0x02u:0x82u):(dy>=0?0x01u:0x00u);
 }
 static void som_lock_frame2(uint8_t *ram){
@@ -10520,6 +10631,7 @@ static void som_lock_frame2(uint8_t *ram){
 }
 /* Who gets the automatic target: player 2's hero into her own lock. */
 static int som_lock_acquire_for(uint8_t *ram,unsigned slot,unsigned who){
+    if(som_combo_locked_enemy(ram,who))return 1; /* do not steal a live combo target */
     if(who!=pad2_actor)return som_lock_acquire(ram,slot,who);
     som_lock_swap(0);
     const int ok=som_lock_acquire(ram,slot,who);

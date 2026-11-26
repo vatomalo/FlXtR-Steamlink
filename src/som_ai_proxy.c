@@ -9159,6 +9159,54 @@ static void som_class_icons(uint8_t *pixels,unsigned width,unsigned height,size_
         som_icon_draw(pixels,width,height,pitch,pixel_format,icon,78,108+(int)slot*20,0u);
     }
 }
+/* Experimental Bushido torso: recolour only visible native sprite pixels.
+ * OAM/VRAM supply the silhouette; no rectangular background is painted. */
+static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,const uint8_t *ram,const uint8_t *oam,const uint8_t *vram){
+    if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
+    const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u,bpp=format==1?4u:2u;
+    for(unsigned who=0;who<3u;who++){
+        if(som_disc_member_class(&disciplines,who)!=SOM_DISC_BUSHIDO||ram[0xE000u+0x200u*who]!=1u)continue;
+        int left=512,top=256,right=-512,bottom=-256;
+        for(unsigned i=0;i<128u;i++){
+            const uint8_t *e=oam+4u*i;
+            if(!som_bun_hero_piece(e,who))continue;
+            unsigned hb=(oam[512u+i/4u]>>(2u*(i%4u)))&3u;
+            if(hb&2u)continue;
+            int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
+            int y=e[1]+1;
+            if(x<left)left=x;if(x+16>right)right=x+16;
+            if(y<top)top=y;if(y+16>bottom)bottom=y+16;
+        }
+        if(right-left>48||bottom-top>48||right<=left||bottom<=top)continue;
+        int cx=(left+right)/2,cy=top+(bottom-top)*5/8;
+        const uint8_t *pal=ram+0x700u+32u*(who+1u);
+        for(unsigned i=0;i<128u;i++){
+            const uint8_t *e=oam+4u*i;
+            if(!som_bun_hero_piece(e,who))continue;
+            unsigned hb=(oam[512u+i/4u]>>(2u*(i%4u)))&3u;
+            if(hb&2u)continue;
+            int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
+            int y=e[1]+1;
+            unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
+            for(unsigned py=0;py<16u;py++)for(unsigned px=0;px<16u;px++){
+                int ox=x+(int)px,oy=y+(int)py,dx=ox-cx,dy=oy-cy;
+                if(dx< -5||dx>4||dy< -4||dy>3||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+                unsigned u=(e[3]&64u)?15u-px:px,v=(e[3]&128u)?15u-py:py;
+                unsigned t=(tile&256u)|((tile+(u>>3)+16u*(v>>3))&255u);
+                unsigned c=som_bun_tile_pixel(vram,t,u&7u,v&7u);
+                if(!c)continue;
+                unsigned rgb=pal[2u*c]|((unsigned)pal[2u*c+1u]<<8);
+                uint32_t native=som_overlay_color(format,(rgb&31u)*255u/31u,((rgb>>5)&31u)*255u/31u,((rgb>>10)&31u)*255u/31u);
+                uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
+                if(actual!=(native&(bpp==2u?0xFFFFu:0xFFFFFFFFu)))continue;
+                uint32_t colour=dy== -2||dy==1?som_overlay_color(format,168,125,57):
+                    (dx== -5||dx==4)?som_overlay_color(format,91,39,43):
+                    som_overlay_color(format,48+(c&3u)*8u,52+(c&3u)*8u,61+(c&3u)*8u);
+                som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,colour);
+            }
+        }
+    }
+}
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
@@ -9315,6 +9363,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         }else som_cross_draw(overlay_frame,width,height,pitch,pixel_format,
                              skins_now[i].x,skins_now[i].y,(unsigned)(frame_number/4ul));
     }
+    if(!menu&&on_turbo&&test_enabled&&ring_owner_ram&&oam_shown_valid&&
+       backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=SOM_BUN_VRAM_SIZE)
+        som_bushido_armour(overlay_frame,width,height,pitch,pixel_format,ring_owner_ram,oam_shown,
+            (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM));
     if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
     if(worker){
         size_t ram_size=0;

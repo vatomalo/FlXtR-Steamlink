@@ -1,5 +1,6 @@
 name: Secret of Mana combo build checks
 on:
+  pull_request:
   push:
     branches:
       - main

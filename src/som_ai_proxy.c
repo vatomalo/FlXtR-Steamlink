@@ -1256,6 +1256,8 @@ static int weapon_tiles_hidden[SOM_PARTY_MEMBERS];
 typedef struct {SomNpcWorkState draw;int dx,dy;} SomMaskDraw;
 static SomMaskDraw weapon_masked[SOM_PARTY_MEMBERS];
 static int kusarigama_attack_active,kusarigama_attack_released,kusarigama_swing_seen;
+static int kusarigama_release_requested;
+static unsigned long kusarigama_release_at;
 static unsigned kusarigama_attack_who;
 static unsigned long kusarigama_attack_started;
 static void som_weapon_mask_frame(uint8_t *ram);
@@ -2614,17 +2616,23 @@ static void som_input_poll(void){
         const int borrowed=pad2_actor<SOM_PARTY_MEMBERS&&som_actor==pad2_actor;
         if(special_stage&&special_release_with_button&&
            !(current&special_chord)){
-            /* A physical B/Y hold must end when its button is released,
-             * even if the native gauge never reached the requested stage. */
-            special_stage=0;special_release_with_button=0;
-            if(kusarigama_attack_active)kusarigama_attack_released=1;
-            fprintf(stderr,"[som-ai] SPECIAL released with attack button\n");
+            if(kusarigama_attack_active){
+                /* Finish the sword charge on its first safe frame after B
+                 * release. Cancelling here loses the spinning attack whenever
+                 * the preceding whip swing has not recovered yet. */
+                if(!kusarigama_release_requested)kusarigama_release_at=frame_number;
+                kusarigama_release_requested=1;
+            }else{
+                special_stage=0;special_release_with_button=0;
+                fprintf(stderr,"[som-ai] SPECIAL released with attack button\n");
+            }
         }
         if(special_stage&&!borrowed&&current&&(current&~special_chord)){
             fprintf(stderr,"[som-ai] SPECIAL cancelled by manual input\n");
             special_stage=0;special_suppress=0;
             special_release_with_button=0;
             kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
+            kusarigama_release_requested=0;
         }
         if(special_suppress&&!((borrowed?pad2_raw:current)&special_chord))special_suppress=0;
         combo_input_held=(current&(attack|secondary))!=0;
@@ -2895,6 +2903,7 @@ static void som_input_poll(void){
             combo_hold_tried=1;
             if(som_special_start_weapon(1u,2u,0)){
                 kusarigama_attack_active=1;kusarigama_attack_released=0;
+                kusarigama_release_requested=0;
                 kusarigama_swing_seen=0;kusarigama_attack_who=som_actor;
                 kusarigama_attack_started=frame_number;
                 special_chord=b_bit;special_suppress=1;
@@ -7069,11 +7078,13 @@ static void som_special_tick(void){
     uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
     if(!ram||SOM_ACT(ram)[0x000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||
        ram[0xD0]!=0||SOM_ACT(ram)[0x1E4]!=special_weapon||
-       frame_number-special_started>SOM_SPECIAL_TIMEOUT){
+       frame_number-special_started>SOM_SPECIAL_TIMEOUT||
+       (kusarigama_release_requested&&frame_number-kusarigama_release_at>120ul)){
         fprintf(stderr,"[som-ai] SPECIAL abort: state changed or charge timeout\n");
         special_stage=0;
         special_release_with_button=0;
         kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
+        kusarigama_release_requested=0;
         return;
     }
     /* Skip the hold: once the swing is over and the gauge runs ($C0:B330:
@@ -7086,11 +7097,12 @@ static void som_special_tick(void){
         SOM_ACT(ram)[0x01A]=0x2C;SOM_ACT(ram)[0x01B]=(uint8_t)special_stage;SOM_ACT(ram)[0x19B]=(uint8_t)special_stage;
     }
     if(SOM_ACT(ram)[0x19B]>=special_stage){
-        /* Kusarigama holds its native charged stance until physical B release. */
-        if(kusarigama_attack_active&&(last_physical_buttons&(1u<<RETRO_DEVICE_ID_JOYPAD_B)))return;
+        /* Hold the sword's charged stance until B is released. */
+        if(kusarigama_attack_active&&!kusarigama_release_requested)return;
         fprintf(stderr,"[som-ai] SPECIAL release %s level %u\n",
                 som_weapon_types[special_weapon],special_stage);
         if(kusarigama_attack_active)kusarigama_attack_released=1;
+        kusarigama_release_requested=0;
         special_stage=0; /* B releases on next emulated frame */
         special_release_with_button=0;
     }
@@ -9722,8 +9734,11 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             uint8_t icon[256];
             if(!art)continue;
             som_icon_decode(art,icon);
-            som_icon_draw(overlay_frame,width,height,pitch,pixel_format,icon,
-                          skins_now[i].x-8,skins_now[i].y-8,(unsigned)(frame_number/3ul)&3u);
+            if(skins_now[i].small)
+                som_icon_draw_small(overlay_frame,width,height,pitch,pixel_format,icon,
+                                    skins_now[i].x-4,skins_now[i].y-4,(unsigned)(frame_number/3ul)&3u);
+            else som_icon_draw(overlay_frame,width,height,pitch,pixel_format,icon,
+                               skins_now[i].x-8,skins_now[i].y-8,(unsigned)(frame_number/3ul)&3u);
         }else som_cross_draw(overlay_frame,width,height,pitch,pixel_format,
                              skins_now[i].x,skins_now[i].y,(unsigned)(frame_number/4ul));
     }
@@ -10038,6 +10053,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     special_stage=0;special_weapon=0;special_started=0;
     special_release_with_button=0;
     kusarigama_attack_active=kusarigama_attack_released=kusarigama_swing_seen=0;
+    kusarigama_release_requested=0;kusarigama_release_at=0;
     kusarigama_attack_who=0;kusarigama_attack_started=0;
     evade_active=evade_a_hidden=0;a_running=0;a_hold_done=1;dda_down_prev=dda_down_last=0;evade_hp=0;evade_frames=0;trail_until=0;
     cartwheel_native=0;cartwheel_fallback=0;flykick.active=0;flykick_hid=0;bash_kick=0;

@@ -27,7 +27,11 @@ int main(void){
     for(unsigned k=0;k<3u;k++){
         assert(ram[0x0800u+4u*k+1u]==0xF0u);
         assert(out[k].kind==SOM_SKIN_STAR&&out[k].x==100);
+        assert(out[k].small);
     }
     assert(out[0].y==84&&out[1].y==72&&out[2].y==100);
+    memset(ram,0,sizeof(ram));
+    projectile(ram,0u,2u,0x120u,92,76);
+    assert(som_throw_skins(ram,look,out)==1u&&!out[0].small);
     return 0;
 }

@@ -488,7 +488,7 @@ Until now `som_disc_award` had no caller: no discipline ever gained XP. `src/som
 
 | event (verified how) | trains | base XP |
 |---|---|---|
-| weapon hit: a live monster lost HP within 75 frames of the swing | the class if it uses that weapon, else the weapon's home (glove/spear Martial Arts, sword/axe Swordsmanship, whip Support & Dance, bow/javelin Archery, boomerang/chakram Ninjutsu) | 10 |
+| weapon hit: a live monster lost HP within 75 frames of the swing | the class if it uses that weapon, else the weapon's home (glove/spear Martial Arts, sword/axe Swordsmanship, whip Support & Dance, bow/javelin Archery, boomerang/shuriken Ninjutsu) | 10 |
 | that hit switched weapons mid-chain | Weapon Flow | 8 |
 | dodge with a monster within 24 px (near miss), once per dodge | the dodging class | 15 |
 | hostile spell whose target lost HP within 240 frames | the casting class, else Magic | 15 |
@@ -744,10 +744,11 @@ The pack carries Bushido's blade masks and the Ninjutsu Kusarigama hybrid:
   Cutlass, Estoc. Boy, girl and sprite alike. The slash
   trail stays native. A Tanto may instead be a user-extracted Seiken Densetsu 3 dagger PNG. The PNG must have a transparent
   background and be cropped to just the dagger.
-- **Kusarigama (Ninjutsu heavy style):** normal B taps still use the whip. Hold
-  B after its recovery to charge the sword's native level-2 attack; the
-  level-2 body animation is paired with whip frames extracted from the local
-  ROM. It requires sword charge level 2 and the opted-in weapon-mask pack.
+- **Kusarigama (Ninjutsu heavy style):** tap B for the whip strike. Hold B
+  through its recovery for the sword's level-2 charged stance, then release
+  for the spinning body animation paired with whip frames from the local ROM.
+  The released charge waits up to two seconds for a safe frame. It requires
+  sword charge level 2 and the ROM-derived weapon-mask pack.
 - The runtime draws palette indices 1..5 opaque; separate FX indices 6..10
   have 25% translucency on the post-core frame, including RGB565, 1555, 8888.
 - Native game/hero palettes and attack scripts remain unchanged. The proxy

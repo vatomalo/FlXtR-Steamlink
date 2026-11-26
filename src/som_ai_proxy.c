@@ -44,6 +44,7 @@
 #include "som_art_gen.h"
 #include "som_arena.h"
 #include "som_enemy_tactics.h"
+#include "som_armour.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 static void som_fight_configure(void);
@@ -9181,53 +9182,51 @@ static void som_class_icons(uint8_t *pixels,unsigned width,unsigned height,size_
         som_icon_draw(pixels,width,height,pitch,pixel_format,icon,78,108+(int)slot*20,0u);
     }
 }
-/* Experimental Bushido torso: recolour only visible native sprite pixels.
- * OAM/VRAM supply the silhouette; no rectangular background is painted. */
+/* Bushido torso armour (src/som_armour.h): the hero's own sprite pieces are
+ * composed from OAM and VRAM and the torso is found per frame by palette
+ * index and body band. What each index looks like on screen is learned from
+ * the hero's own pixels this frame (the most common framebuffer colour per
+ * index: Turbo's colour filter and the class tint sit between the WRAM
+ * palette and the screen, so the palette cannot be compared directly). A
+ * torso pixel that shows another colour is covered by scenery or another
+ * sprite and is left alone. */
 static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,const uint8_t *ram,const uint8_t *oam,const uint8_t *vram){
     if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u,bpp=format==1?4u:2u;
+    const SomOutfit *outfit=&som_outfits[SOM_OUTFIT_SAMURAI];
     for(unsigned who=0;who<3u;who++){
         if(som_disc_member_class(&disciplines,who)!=SOM_DISC_BUSHIDO||ram[0xE000u+0x200u*who]!=1u)continue;
-        int left=512,top=256,right=-512,bottom=-256;
-        for(unsigned i=0;i<128u;i++){
-            const uint8_t *e=oam+4u*i;
-            if(!som_bun_hero_piece(e,who))continue;
-            unsigned hb=(oam[512u+i/4u]>>(2u*(i%4u)))&3u;
-            if(hb&2u)continue;
-            int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
-            int y=e[1]+1;
-            if(x<left)left=x;
-            if(x+16>right)right=x+16;
-            if(y<top)top=y;
-            if(y+16>bottom)bottom=y+16;
+        uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+        int x0,y0,from;
+        if(!som_armour_compose(oam,vram,who,img,&x0,&y0)||!som_armour_torso_mask(img,who,mask,&from))continue;
+        /* screen colour per index: up to four candidates, majority wins */
+        uint32_t cand[16][4];uint16_t votes[16][4];
+        memset(votes,0,sizeof(votes));
+        for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
+            const unsigned c=img[y][x];
+            const int ox=x0+x,oy=y0+y;
+            if(!c||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+            uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
+            unsigned k=0;
+            while(k<4u&&votes[c][k]&&cand[c][k]!=actual)k++;
+            if(k<4u){cand[c][k]=actual;votes[c][k]++;}
         }
-        if(right-left>48||bottom-top>48||right<=left||bottom<=top)continue;
-        int cx=(left+right)/2,cy=top+(bottom-top)*5/8;
-        const uint8_t *pal=ram+0x700u+32u*(who+1u);
-        for(unsigned i=0;i<128u;i++){
-            const uint8_t *e=oam+4u*i;
-            if(!som_bun_hero_piece(e,who))continue;
-            unsigned hb=(oam[512u+i/4u]>>(2u*(i%4u)))&3u;
-            if(hb&2u)continue;
-            int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
-            int y=e[1]+1;
-            unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-            for(unsigned py=0;py<16u;py++)for(unsigned px=0;px<16u;px++){
-                int ox=x+(int)px,oy=y+(int)py,dx=ox-cx,dy=oy-cy;
-                if(dx< -5||dx>4||dy< -4||dy>3||ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
-                unsigned u=(e[3]&64u)?15u-px:px,v=(e[3]&128u)?15u-py:py;
-                unsigned t=(tile&256u)|((tile+(u>>3)+16u*(v>>3))&255u);
-                unsigned c=som_bun_tile_pixel(vram,t,u&7u,v&7u);
-                if(!c)continue;
-                unsigned rgb=pal[2u*c]|((unsigned)pal[2u*c+1u]<<8);
-                uint32_t native=som_overlay_color(format,(rgb&31u)*255u/31u,((rgb>>5)&31u)*255u/31u,((rgb>>10)&31u)*255u/31u);
-                uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
-                if(actual!=(native&(bpp==2u?0xFFFFu:0xFFFFFFFFu)))continue;
-                uint32_t colour=dy== -2||dy==1?som_overlay_color(format,168,125,57):
-                    (dx== -5||dx==4)?som_overlay_color(format,91,39,43):
-                    som_overlay_color(format,48+(c&3u)*8u,52+(c&3u)*8u,61+(c&3u)*8u);
-                som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,colour);
-            }
+        uint32_t screen[16];uint8_t known[16];
+        for(unsigned c=0;c<16u;c++){
+            unsigned best=0;known[c]=0;
+            for(unsigned k=1;k<4u;k++)if(votes[c][k]>votes[c][best])best=k;
+            if(votes[c][best]>=2u){screen[c]=cand[c][best];known[c]=1;}
+        }
+        for(int y=from;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
+            if(!mask[y][x])continue;
+            const int ox=x0+x,oy=y0+y;
+            if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+            const unsigned c=img[y][x];
+            uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
+            if(!known[c]||actual!=screen[c])continue;                     /* covered: leave it */
+            const uint8_t *col=som_armour_colour(outfit,SOM_SLOT_TORSO,who,c,y-from);
+            som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
+                             som_overlay_color(format,col[0],col[1],col[2]));
         }
     }
 }

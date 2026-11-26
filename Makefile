@@ -120,6 +120,13 @@ test-som-enemy-tactics:
 
 .PHONY: test-som-enemy-tactics
 
+test-som-armour:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_armour_test.c -o build/som-armour-test
+	./build/som-armour-test
+
+.PHONY: test-som-armour
+
 test-som-raid:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_raid_test.c -o build/som-raid-test

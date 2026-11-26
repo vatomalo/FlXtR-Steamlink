@@ -45,6 +45,7 @@
 #include "som_arena.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
+static void som_fight_configure(void);
 #include <time.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -9570,6 +9571,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_prog_preserve_legacy();
     som_mix_reset(&music_ring,SOM_MIX_GAIN_DEFAULT);
     som_music_stop();music_check_frame=0;
+    som_fight_configure();
     {const char *perks=getenv("FLXTR_SOM_PERKS");perks_enabled=!(perks&&!strcmp(perks,"0"));}
     prog_rom=game&&game->data&&game->size?som_prog_hash((const uint8_t*)game->data,game->size):0;
     som_prog_fresh(&prog,prog_rom);prog_baseline=0;prog_was_field=0;prog_session_first=1;
@@ -10020,7 +10022,36 @@ typedef struct {
 } SomEnemyFight;
 static SomEnemyFight enemy_fight[3];
 static unsigned enemy_fight_map=0x10000u;
+/* Tactical difficulty is independent of enemy HP/damage scaling.
+ * FLXTR_SOM_FIGHT_DIFFICULTY: classic, easy, normal, hard, expert.
+ * Read once per loaded game via the existing retro_load_game path. */
+typedef struct {
+    unsigned interval, delay, habit, range;
+    int spacing, zoning, coordination;
+} SomFightDifficulty;
+static const SomFightDifficulty som_fight_levels[]={
+    {0,0,255,0,0,0,0},       /* classic: native AI only */
+    {24,12,8,48,1,0,0},      /* easy: generous openings */
+    {14,8,4,96,1,1,0},      /* normal */
+    {10,5,3,112,1,1,1},     /* hard */
+    {7,3,2,128,1,1,1}       /* expert: still bounded, no input reading */
+};
+static unsigned som_fight_level=2;
+static unsigned som_fight_parse(const char *s){
+    if(!s)return 2;
+    if(!strcmp(s,"classic")||!strcmp(s,"0"))return 0;
+    if(!strcmp(s,"easy")||!strcmp(s,"1"))return 1;
+    if(!strcmp(s,"hard")||!strcmp(s,"3"))return 3;
+    if(!strcmp(s,"expert")||!strcmp(s,"4"))return 4;
+    return 2;
+}
+static void som_fight_configure(void){
+    som_fight_level=som_fight_parse(getenv("FLXTR_SOM_FIGHT_DIFFICULTY"));
+    memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=0x10000u;
+}
 static void som_enemy_fight_frame(void){
+    const SomFightDifficulty *cfg=&som_fight_levels[som_fight_level];
+    if(!cfg->interval)return;
     uint8_t *ram=som_field_ram();
     if(!ram||disciplines.open||som_manual_disciplines){
         memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=0x10000u;return;
@@ -10030,6 +10061,12 @@ static void som_enemy_fight_frame(void){
         memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=map;
     }
     unsigned pressure_slots=0;
+    /* Count nearby active attackers independently of decision tick phase. */
+    if(cfg->coordination)for(unsigned i=0;i<3;i++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
+        if((int)i!=familiar.slot&&m[0x180]<0x54u&&som_bun_monster_alive(m)&&som_word(m+0x182)&&
+           (m[0x01C]==0x20u||m[0x01C]==0x80u))pressure_slots++;
+    }
     for(unsigned slot=0;slot<3;slot++){
         uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
         SomEnemyFight *f=&enemy_fight[slot];
@@ -10039,7 +10076,7 @@ static void som_enemy_fight_frame(void){
         if(!f->valid||f->species!=species||hp>f->hp||frame_number<f->seen||
            frame_number-f->seen>2){
             memset(f,0,sizeof(*f));f->valid=1;f->species=(uint8_t)species;
-            f->next=frame_number+12u+slot*3u;f->target=255;
+            f->next=frame_number+cfg->interval+slot*3u;f->target=255;
         }
         f->hp=(uint16_t)hp;f->seen=frame_number;
         const uint8_t *hero=NULL;unsigned best=~0u,who_best=255;
@@ -10050,28 +10087,28 @@ static void som_enemy_fight_frame(void){
             unsigned d=(unsigned)(abs(ex-(int)som_word(h+2))+abs(ey-(int)som_word(h+4)));
             if(d<best){best=d;hero=h;who_best=who;}
         }
-        if(!hero||best>96u){f->pressure=0;f->last_pose=0;f->target=255;continue;}
+        if(!hero||best>cfg->range){f->pressure=0;f->last_pose=0;f->target=255;continue;}
         unsigned pose=hero[0x01C];
         int swinging=pose==0x20u||pose==0x80u;
         if(f->target!=who_best){f->last_pose=0;f->pressure=0;f->target=(uint8_t)who_best;}
         if(swinging&&!f->last_pose&&f->pressure<8u)f->pressure++;
         f->last_pose=(uint8_t)swinging;
         if(frame_number<f->next)continue;
-        f->next=frame_number+12u+(species+slot)%5u;
+        f->next=frame_number+cfg->interval+(species+slot)%5u;
         /* Never interrupt native animations, damage reactions or status. */
         if(e[0x01C]||e[0x1F1]||som_word(e+0x190))continue;
         unsigned style=species%4u; /* provisional deterministic archetypes */
         unsigned gap=style==2u?44u:style==0u?18u:26u;
         int recovery=!swinging&&hero[0x1ED]!=0;
-        int guard=swinging&&best<=gap+12u&&(style!=0u||f->pressure>=3u);
-        int yield=pressure_slots>0u&&best<32u&&!recovery;
-        if(best<gap&&(guard||style==2u||yield)){
+        int guard=swinging&&best<=gap+12u&&(style!=0u||f->pressure>=cfg->habit);
+        int yield=cfg->coordination&&pressure_slots>0u&&best<32u&&!recovery;
+        if(cfg->spacing&&best<gap&&(guard||(cfg->zoning&&style==2u)||yield)){
             /* Footsies/zoning: stop only velocity directed toward the hero. */
             int dx=(int)som_word(hero+2)-ex,dy=(int)som_word(hero+4)-ey;
             if((int8_t)e[6]*dx+(int8_t)e[7]*dy>0){e[6]=0;e[7]=0;}
         }
         if((guard||yield)&&!recovery&&!e[0x1ED])
-            e[0x1ED]=(uint8_t)(6u+(species+slot)%5u);
+            e[0x1ED]=(uint8_t)(cfg->delay+(species+slot)%5u);
         else if(best<32u&&!guard)pressure_slots++;
         /* Recovery windows are left to the original attack VM, not forced. */
     }

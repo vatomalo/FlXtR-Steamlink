@@ -10010,6 +10010,72 @@ static void som_enemy_scaling_frame(void){
         if(base&&som_word(base+1)&&base[0]<=98u)som_enemy_scale(enemy,base,party_level);
     }
 }
+/* Fighting-game tactics: observe native poses, never controller inputs.
+ * Only defer native attack readiness or damp existing native movement.
+ * No forced attacks, target rewrites, teleportation or damage changes. */
+typedef struct {
+    unsigned long next, seen;
+    uint16_t hp;
+    uint8_t species, valid, pressure, last_pose, target;
+} SomEnemyFight;
+static SomEnemyFight enemy_fight[3];
+static unsigned enemy_fight_map=0x10000u;
+static void som_enemy_fight_frame(void){
+    uint8_t *ram=som_field_ram();
+    if(!ram||disciplines.open||som_manual_disciplines){
+        memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=0x10000u;return;
+    }
+    unsigned map=som_word(ram+0xDC);
+    if(map!=enemy_fight_map){
+        memset(enemy_fight,0,sizeof(enemy_fight));enemy_fight_map=map;
+    }
+    unsigned pressure_slots=0;
+    for(unsigned slot=0;slot<3;slot++){
+        uint8_t *e=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        SomEnemyFight *f=&enemy_fight[slot];
+        unsigned hp=som_word(e+0x182),species=e[0x180];
+        if((int)slot==familiar.slot||species>=0x54u||!hp||
+           !som_bun_monster_alive(e)){memset(f,0,sizeof(*f));continue;}
+        if(!f->valid||f->species!=species||hp>f->hp||frame_number<f->seen||
+           frame_number-f->seen>2){
+            memset(f,0,sizeof(*f));f->valid=1;f->species=(uint8_t)species;
+            f->next=frame_number+12u+slot*3u;f->target=255;
+        }
+        f->hp=(uint16_t)hp;f->seen=frame_number;
+        const uint8_t *hero=NULL;unsigned best=~0u,who_best=255;
+        int ex=som_word(e+2),ey=som_word(e+4);
+        for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+            const uint8_t *h=ram+0xE000u+0x200u*who;
+            if(!som_ally_alive(h)||((h[0x0B]^e[0x0B])&0x80u))continue;
+            unsigned d=(unsigned)(abs(ex-(int)som_word(h+2))+abs(ey-(int)som_word(h+4)));
+            if(d<best){best=d;hero=h;who_best=who;}
+        }
+        if(!hero||best>96u){f->pressure=0;f->last_pose=0;f->target=255;continue;}
+        unsigned pose=hero[0x01C];
+        int swinging=pose==0x20u||pose==0x80u;
+        if(f->target!=who_best){f->last_pose=0;f->pressure=0;f->target=(uint8_t)who_best;}
+        if(swinging&&!f->last_pose&&f->pressure<8u)f->pressure++;
+        f->last_pose=(uint8_t)swinging;
+        if(frame_number<f->next)continue;
+        f->next=frame_number+12u+(species+slot)%5u;
+        /* Never interrupt native animations, damage reactions or status. */
+        if(e[0x01C]||e[0x1F1]||som_word(e+0x190))continue;
+        unsigned style=species%4u; /* provisional deterministic archetypes */
+        unsigned gap=style==2u?44u:style==0u?18u:26u;
+        int recovery=!swinging&&hero[0x1ED]!=0;
+        int guard=swinging&&best<=gap+12u&&(style!=0u||f->pressure>=3u);
+        int yield=pressure_slots>0u&&best<32u&&!recovery;
+        if(best<gap&&(guard||style==2u||yield)){
+            /* Footsies/zoning: stop only velocity directed toward the hero. */
+            int dx=(int)som_word(hero+2)-ex,dy=(int)som_word(hero+4)-ey;
+            if((int8_t)e[6]*dx+(int8_t)e[7]*dy>0){e[6]=0;e[7]=0;}
+        }
+        if((guard||yield)&&!recovery&&!e[0x1ED])
+            e[0x1ED]=(uint8_t)(6u+(species+slot)%5u);
+        else if(best<32u&&!guard)pressure_slots++;
+        /* Recovery windows are left to the original attack VM, not forced. */
+    }
+}
 /* Clamp native attack displacement, not the animation or its damage stage.
  * Sample before retro_run and constrain the resulting ground position before
  * the next lock/orbit pass. Explicit proxy evades and teleports stay free. */
@@ -10096,7 +10162,7 @@ RETRO_API void retro_run(void){
     som_npc_work_frame();
     som_clone_tick();
     som_familiar_frame();
-    if(test_enabled&&on_turbo)som_enemy_scaling_frame();
+    if(test_enabled&&on_turbo){som_enemy_scaling_frame();som_enemy_fight_frame();}
     som_generals_frame();
     /* No automatic hero VRAM caching: old monster-style snapshots garbled art. */
     if(test_enabled&&on_turbo&&backend_retro_get_memory_data&&

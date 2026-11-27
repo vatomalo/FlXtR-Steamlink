@@ -58,6 +58,21 @@ int main(void){
     put_piece(8,0x1C0,100,80,0,0,1);put_piece(9,0x1C2,100,96,16,0,1);
     assert(som_armour_compose(oam,vram,0,img,&x0,&y0));
     for(int y=0;y<32;y++)for(int x=0;x<16;x++)assert(img[y][x]==hexv(boy[y][15-x]));
+    /* An earlier sprite flipped both ways clips against the cover square. */
+    {
+        uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER];
+        put_piece(7,0x1D4,96,76,0,1,1);
+        oam[7u*4u+3u]|=0x80u;
+        const unsigned count=som_armour_cover(oam,vram,0,100,80,cover);
+        unsigned expected=0;
+        for(unsigned y=0;y<SOM_ARMOUR_COVER;y++)for(unsigned x=0;x<SOM_ARMOUR_COVER;x++){
+            const unsigned pixel=x<12u&&y<12u&&hexv(boy[11u-y][11u-x])!=0u;
+            assert(cover[y][x]==pixel);
+            expected+=pixel;
+        }
+        assert(count==expected&&expected!=0u);
+        oam[7u*4u+1u]=0xF0u;
+    }
     /* another hero's palette is not the boy */
     assert(som_armour_compose(oam,vram,1,img,&x0,&y0)==0);
     /* the sprite's body tiles (0x1E0) count; HUD portraits (low on screen) do not */

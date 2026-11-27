@@ -524,23 +524,33 @@ static inline void som_cam_scale(const SomCamera *c,uint8_t *px,uint8_t *copy,si
         }
     }
 }
+static inline void som_cam_hd_axis(uint8_t *map,unsigned count,
+                                  int32_t start,unsigned limit,unsigned divisor){
+    const unsigned numerator=32768u*256u;
+    const unsigned step=numerator/divisor,remainder=numerator%divisor;
+    unsigned error=0;
+    /* Carry the remainder to reproduce floor(index * numerator / divisor)
+     * without wide division for every output column and row. */
+    for(unsigned i=0;i<count;i++){
+        const int32_t pixel=start>>16;
+        map[i]=(uint8_t)(pixel<0?0:pixel>(int32_t)limit?limit:(unsigned)pixel);
+        start+=(int32_t)step;
+        error+=remainder;
+        if(error>=divisor){error-=divisor;start++;}
+    }
+}
 /* The same into a 512x448 picture: `out` has pitch 512*bytes. A small bias
  * keeps thirds from falling just short of their game pixel. */
 static inline void som_cam_scale_hd(const SomCamera *c,const uint8_t *px,size_t pitch,
                                     uint8_t *out,unsigned bytes){
-    int32_t s=som_cam_start(c,c->cx,128.0f,2.0f)+512;
-    int32_t sy=som_cam_start(c,c->cy,112.0f,2.0f)+512;
-    uint8_t cols[2u*SOM_CAM_W];
-    for(unsigned x=0;x<2u*SOM_CAM_W;x++){
-        const int32_t col=(s+(int32_t)(((int64_t)x*32768*256)/(int32_t)(c->zoom*256.0f)))>>16;
-        cols[x]=(uint8_t)(col<0?0:col>255?255:col);
-    }
+    const unsigned divisor=(unsigned)(c->zoom*256.0f);
+    uint8_t cols[2u*SOM_CAM_W],rows[2u*SOM_CAM_H];
+    som_cam_hd_axis(cols,2u*SOM_CAM_W,som_cam_start(c,c->cx,128.0f,2.0f)+512,SOM_CAM_W-1u,divisor);
+    som_cam_hd_axis(rows,2u*SOM_CAM_H,som_cam_start(c,c->cy,112.0f,2.0f)+512,SOM_CAM_H-1u,divisor);
     int last=-1;
     const size_t line=2u*SOM_CAM_W*bytes;
     for(unsigned y=0;y<2u*SOM_CAM_H;y++){
-        int row=(int)((sy+(int32_t)(((int64_t)y*32768*256)/(int32_t)(c->zoom*256.0f)))>>16);
-        if(row<0)row=0;
-        if(row>SOM_CAM_H-1)row=SOM_CAM_H-1;
+        const int row=rows[y];
         uint8_t *dst=out+(size_t)y*line;
         if(row==last){memcpy(dst,dst-line,line);continue;}
         last=row;
@@ -555,13 +565,21 @@ static inline void som_cam_scale_hd(const SomCamera *c,const uint8_t *px,size_t 
         }
     }
 }
-static inline void som_cam_restore_hd(uint8_t *out,size_t pitch,unsigned bytes,const SomCamPixel *in,unsigned n){
-    const size_t line=2u*SOM_CAM_W*bytes;
+static inline void som_cam_restore_hd(uint8_t *out,unsigned bytes,const SomCamPixel *in,unsigned n){
+    /* The camera works on packed rows. Split each saved byte offset at the
+     * power-of-two source pitch, then expand both coordinates. */
+    const size_t pitch=SOM_CAM_W*bytes,line=2u*pitch;
     for(unsigned i=0;i<n;i++){
-        const unsigned y=(unsigned)(in[i].at/pitch),x=(unsigned)(in[i].at%pitch)/bytes;
-        uint8_t *d=out+(size_t)(2u*y)*line+2u*x*bytes;
-        memcpy(d,&in[i].ink,bytes);memcpy(d+bytes,&in[i].ink,bytes);
-        memcpy(d+line,d,2u*bytes);
+        const size_t at=in[i].at;
+        uint8_t *d=out+2u*(at+(at&~(pitch-1u)));
+        if(bytes==2u){
+            const uint16_t pixel=(uint16_t)in[i].ink;
+            const uint16_t pair[]={pixel,pixel};
+            memcpy(d,pair,sizeof(pair));memcpy(d+line,pair,sizeof(pair));
+        }else{
+            const uint32_t pair[]={in[i].ink,in[i].ink};
+            memcpy(d,pair,sizeof(pair));memcpy(d+line,pair,sizeof(pair));
+        }
     }
 }
 /* Put the saved text back, exactly where the game drew it. */

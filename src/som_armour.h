@@ -57,16 +57,25 @@ static inline unsigned som_armour_tile_pixel(const uint8_t *vram,unsigned tile,u
     return ((t[2u*py]>>bit)&1u)|(((t[2u*py+1u]>>bit)&1u)<<1)|
            (((t[16u+2u*py]>>bit)&1u)<<2)|(((t[16u+2u*py+1u]>>bit)&1u)<<3);
 }
+/* Fetch each planar tile row once, in screen order. */
+static inline const uint8_t *som_armour_row(const uint8_t *vram,unsigned tile,unsigned u,unsigned v){
+    const unsigned tt=(tile&256u)|((tile+u+16u*(v>>3))&255u);
+    const unsigned word=(tt&256u?0x7000u:0x6000u)+(tt&255u)*16u;
+    return vram+((word*2u)&0xFFFFu)+2u*(v&7u);
+}
 /* Composes hero `who` from OAM (0x220 bytes) and VRAM into a 48x48 index
  * image at screen (*x0,*y0), lower OAM entries on top. 0 if not drawn. */
 static inline int som_armour_compose(const uint8_t *oam,const uint8_t *vram,unsigned who,
                                      uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],int *x0,int *y0){
     int l=512,t=512,r=-512,b=-512;
+    uint8_t pieces[128];
+    unsigned count=0;
     for(unsigned j=0;j<128u;j++){
         const uint8_t *e=oam+4u*j;
         if(!som_armour_piece(e,who))continue;
         const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
         if(hb&2u)continue;
+        pieces[count++]=(uint8_t)j;
         int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
         const int y=e[1];   /* measured: OAM y is the screen row */
         if(x<l)l=x;
@@ -76,19 +85,25 @@ static inline int som_armour_compose(const uint8_t *oam,const uint8_t *vram,unsi
     }
     if(r<=l||b<=t||r-l>SOM_ARMOUR_BOX||b-t>SOM_ARMOUR_BOX)return 0;
     memset(img,0,SOM_ARMOUR_BOX*SOM_ARMOUR_BOX);
-    for(int j=127;j>=0;j--){
-        const uint8_t *e=oam+4u*(unsigned)j;
-        if(!som_armour_piece(e,who))continue;
-        const unsigned hb=(oam[512u+(unsigned)j/4u]>>(2u*((unsigned)j%4u)))&3u;
-        if(hb&2u)continue;
+    while(count){
+        const unsigned j=pieces[--count];
+        const uint8_t *e=oam+4u*j;
+        const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
         int x=e[0]+256*(int)(hb&1u);if(x>=256)x-=512;
         const int y=e[1];   /* measured: OAM y is the screen row */
         const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-        for(unsigned py=0;py<16u;py++)for(unsigned px=0;px<16u;px++){
-            const unsigned u=(e[3]&64u)?15u-px:px,v=(e[3]&128u)?15u-py:py;
-            const unsigned tt=(tile&256u)|((tile+(u>>3)+16u*(v>>3))&255u);
-            const unsigned c=som_armour_tile_pixel(vram,tt,u&7u,v&7u);
-            if(c)img[y+(int)py-t][x+(int)px-l]=(uint8_t)c;
+        const unsigned flip=(e[3]>>6)&1u,vflip=(e[3]>>7)&1u;
+        for(unsigned py=0;py<16u;py++)for(unsigned half=0;half<2u;half++){
+            const uint8_t *p=som_armour_row(vram,tile,half^flip,py^(vflip*15u));
+            uint8_t *dst=img[y-t+(int)py]+(x-l)+8u*half;
+            const unsigned a=p[0],b0=p[1],c0=p[16],d=p[17];
+            if(!(a|b0|c0|d))continue;
+            for(unsigned px=0;px<8u;px++){
+                const unsigned bit=px^(flip?0u:7u);
+                const unsigned c=((a>>bit)&1u)|(((b0>>bit)&1u)<<1)|
+                                 (((c0>>bit)&1u)<<2)|(((d>>bit)&1u)<<3);
+                if(c)dst[px]=(uint8_t)c;
+            }
         }
     }
     *x0=l;*y0=t;
@@ -114,12 +129,22 @@ static inline unsigned som_armour_cover(const uint8_t *oam,const uint8_t *vram,u
         const int y=e[1];
         if(x+16<=cx||x>=cx+SOM_ARMOUR_COVER||y+16<=cy||y>=cy+SOM_ARMOUR_COVER)continue;
         const unsigned tile=e[2]|((unsigned)(e[3]&1u)<<8);
-        for(unsigned py=0;py<16u;py++)for(unsigned px=0;px<16u;px++){
-            const int X=x+(int)px-cx,Y=y+(int)py-cy;
-            if(X<0||Y<0||X>=SOM_ARMOUR_COVER||Y>=SOM_ARMOUR_COVER)continue;
-            const unsigned u=(e[3]&64u)?15u-px:px,v=(e[3]&128u)?15u-py:py;
-            const unsigned tt=(tile&256u)|((tile+(u>>3)+16u*(v>>3))&255u);
-            if(som_armour_tile_pixel(vram,tt,u&7u,v&7u)){cover[Y][X]=1;n++;}
+        const unsigned flip=(e[3]>>6)&1u,vflip=(e[3]>>7)&1u;
+        for(unsigned py=0;py<16u;py++){
+            const unsigned Y=(unsigned)(y+(int)py-cy);
+            if(Y>=SOM_ARMOUR_COVER)continue;
+            for(unsigned half=0;half<2u;half++){
+                const uint8_t *p=som_armour_row(vram,tile,half^flip,py^(vflip*15u));
+                const unsigned opaque=p[0]|p[1]|p[16]|p[17];
+                if(!opaque)continue;
+                for(unsigned px=0;px<8u;px++){
+                    const unsigned X=(unsigned)(x-cx)+8u*half+px;
+                    if(X<SOM_ARMOUR_COVER&&(opaque&(1u<<(px^(flip?0u:7u))))){
+                        cover[Y][X]=1;
+                        n++;
+                    }
+                }
+            }
         }
     }
     return n;

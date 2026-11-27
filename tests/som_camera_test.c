@@ -144,7 +144,7 @@ int main(void){
     }
     /* text is 2x2 in hd */
     text[0].at=10*512+2*20;text[0].ink=0xABCD;memset(big,0,sizeof(big));
-    som_cam_restore_hd((uint8_t*)big,512,2,text,1);
+    som_cam_restore_hd((uint8_t*)big,2,text,1);
     for(int y=0;y<448;y++)for(int x=0;x<512;x++)
         assert(big[y*512+x]==(y/2==10&&x/2==20?0xABCD:0));
     SomCamGovern g;memset(&g,0,sizeof(g));

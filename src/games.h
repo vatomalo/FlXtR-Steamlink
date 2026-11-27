@@ -902,9 +902,11 @@ static int games_run(void){
      * Do not enable injection for a normal Snes9x launch. */
     const char *chosen_base=strrchr(core,'/');
     chosen_base=chosen_base?chosen_base+1:core;
-    if(!strcmp(chosen_base,"som_ai_proxy_libretro" FLXTR_CORE_EXT))
+    if(!strcmp(chosen_base,"som_ai_proxy_libretro" FLXTR_CORE_EXT)){
         setenv("FLXTR_SOM_AI_TEST","1",1);
-    else unsetenv("FLXTR_SOM_AI_TEST");
+        /* Avoid quadrupling the gameplay texture during HD camera shots. */
+        if(performance==0&&game_hw_scaler())setenv("FLXTR_SOM_CAMERA_NATIVE","1",1);
+    }else unsetenv("FLXTR_SOM_AI_TEST");
     fprintf(stderr,"Game launch: core=%s ROM=%s\n",core,rom);
     /* Argument vectors preserve spaces/metacharacters; never execute a playlist as shell text. */
     const char *test=getenv("FLXTR_GAME_TEST_FRAMES");

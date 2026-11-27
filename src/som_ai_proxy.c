@@ -4178,6 +4178,43 @@ static unsigned som_mage_bolt_damage(const uint8_t *hero,unsigned cls){
     return SOM_BOLT_BASE_DAMAGE+hero[0x181]*3u/2u+
         (cls<SOM_DISCIPLINE_COUNT?disciplines.level[cls]:0u);
 }
+/* The Ninja's Shuriken and Shuriken Volley (the GEAR page's Y, player
+ * 2026-11-27): the game's boomerang throw plays as ever, but each boomerang
+ * entry it launches (7E:D000 + 0x40*hero + 0x10*k, kind 3/5) is taken off
+ * the moment it is live (the game then frees the hero and reloads his
+ * gauge, as when a boomerang is caught) and small shuriken bolts fly in its
+ * place: one each, or three in a fan for the Volley. A charged throw that
+ * launches two or three entries throws that many. */
+static void som_shuriken_throw(uint8_t *ram){
+    if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]!=0u)return;
+    const unsigned pick=gear_throw[SOM_DISC_NINJUTSU];
+    if(pick==1u)return;                               /* Fuma: the game's flight */
+    const unsigned map=som_word(ram+0xDC)&0x1FFu;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        uint8_t *h=ram+0xE000u+0x200u*who;
+        if(h[0]!=1u||h[0x1E4]!=6u||som_disc_member_class(&disciplines,who)!=SOM_DISC_NINJUTSU)continue;
+        for(unsigned k=0;k<3u;k++){
+            uint8_t *e=ram+0xD000u+0x40u*who+0x10u*k;
+            const unsigned kind=e[0]&7u;
+            if((kind!=3u&&kind!=5u)||(e[0]&0xF8u))continue;   /* free, or still delayed */
+            memset(e,0,16u);
+            int dx,dy;som_bolt_dir(h[0x10],&dx,&dy);
+            const unsigned damage=som_mage_bolt_damage(h,SOM_DISC_NINJUTSU);
+            const int fan=pick==2u?3:1;
+            for(int f=0;f<fan;f++){
+                const int side=fan==1?0:(f-1)*3;      /* -3, 0, +3 across the throw */
+                const int slot=som_bolt_fire(mage_bolts,who,7u,(int)som_word(h+2),(int)som_word(h+4)-6,
+                                             h[0x10],pick==2u?damage*2u/3u:damage,map,frame_number);
+                if(slot<=0)break;
+                SomBolt *b=&mage_bolts[slot-1];
+                b->kind=SOM_BOLT_STAR;
+                b->dx=dx*SOM_STAR_SPEED+(dx?0:side);b->dy=dy*SOM_STAR_SPEED+(dy?0:side);
+            }
+            fprintf(stderr,"[som-ai] SHURIKEN %s: %d thrown (%u each)\n",som_party_names[who],fan,
+                    pick==2u?damage*2u/3u:damage);
+        }
+    }
+}
 /* The living hero with the lowest share of her HP (+0x182 of +0x184),
  * or -1 when nobody is hurt (no MP spent on a full party). Revivifier
  * (0x21) only targets a fallen party member. */
@@ -4860,10 +4897,21 @@ static void som_bunshin_draw(uint8_t *pixels,unsigned width,unsigned height,size
                          som_overlay_color(pixel_format,rgb[0][0],rgb[0][1],rgb[0][2]));
         }
     }
-    for(unsigned i=0;i<SOM_BOLTS;i++)
-        if(mage_bolts[i].active)
-            som_bolt_draw(pixels,width,height,pitch,pixel_format,&mage_bolts[i],
-                          hero_x+(mage_bolts[i].x-hx),hero_y+(mage_bolts[i].y-hy)-10,frame_number);
+    for(unsigned i=0;i<SOM_BOLTS;i++){
+        const SomBolt *b=&mage_bolts[i];
+        if(!b->active)continue;
+        const int bx=hero_x+(b->x-hx),by=hero_y+(b->y-hy)-10;
+        if(b->kind==SOM_BOLT_STAR&&!b->burst){          /* the ROM's shuriken, small and spinning */
+            const uint8_t *art=som_rom_at(0xD28400u+SOM_ICON_BYTES*0x7Bu,SOM_ICON_BYTES);
+            if(art&&width==256u){
+                uint8_t icon[256];som_icon_decode(art,icon);
+                som_icon_draw_small(pixels,width,height,pitch,pixel_format,icon,bx-4,by-4,
+                                    (unsigned)frame_number&3u);
+            }
+            continue;
+        }
+        som_bolt_draw(pixels,width,height,pitch,pixel_format,b,bx,by,frame_number);
+    }
 }
 /* Swordsman bash: see SOM_BASH_LUNGE_FRAMES. */
 static int som_bash_start_raw(uint8_t *ram){
@@ -10324,14 +10372,14 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             uint8_t icon[256];
             if(!art)continue;
             som_icon_decode(art,icon);
-            if(skins_now[i].kind==SOM_SKIN_FUMA)
-                som_icon_draw_big(overlay_frame,width,height,pitch,pixel_format,icon,
-                                  skins_now[i].x-16,skins_now[i].y-16,(unsigned)(frame_number/3ul)&3u);
-            else if(skins_now[i].small)
+            /* player, 2026-11-27: "fuma shuriken should be size of normal
+             * shuriken and shuriken should be very small"; held: still */
+            const unsigned turn=skins_now[i].held?0u:(unsigned)(frame_number/2ul)&3u;
+            if(skins_now[i].small)
                 som_icon_draw_small(overlay_frame,width,height,pitch,pixel_format,icon,
-                                    skins_now[i].x-4,skins_now[i].y-4,(unsigned)(frame_number/3ul)&3u);
+                                    skins_now[i].x-4,skins_now[i].y-4,turn);
             else som_icon_draw(overlay_frame,width,height,pitch,pixel_format,icon,
-                               skins_now[i].x-8,skins_now[i].y-8,(unsigned)(frame_number/3ul)&3u);
+                               skins_now[i].x-8,skins_now[i].y-8,turn);
         }else som_cross_draw(overlay_frame,width,height,pitch,pixel_format,
                              skins_now[i].x,skins_now[i].y,(unsigned)(frame_number/4ul));
     }
@@ -11926,6 +11974,7 @@ RETRO_API void retro_run(void){
     const unsigned combo_map=som_combo_positions(test_enabled&&on_turbo?som_live_wram():NULL,combo_pos);
     backend_run();
     if(som_time_active(&temporal))som_bullet_world(som_live_wram());
+    if(test_enabled&&on_turbo)som_shuriken_throw(som_live_wram());
     if(test_enabled&&on_turbo)som_combo_spacing_after(som_live_wram(),combo_map,combo_pos);
     if(on_turbo)som_auto_target_frame(som_live_wram());
     som_guard_finish();

@@ -32,7 +32,13 @@
  * Petal (Mentalist), a slow lotus; Ribbon (Dancer) and Healing Touch
  * (Cleric), shown where they happen and never flying. */
 enum { SOM_BOLT_BALL, SOM_BOLT_PETAL, SOM_BOLT_ORB, SOM_BOLT_SPIKE, SOM_BOLT_WISP,
+       SOM_BOLT_STAR,
        SOM_BOLT_RIBBON, SOM_BOLT_TOUCH, SOM_BOLT_CHAIN };
+/* The Ninja's shuriken (player, 2026-11-27: "shuriken should be small and
+ * thrown more like mage projectiles but smaller"): dx, dy are the per-frame
+ * step itself (a volley fans out), drawn by the proxy as the ROM's shuriken. */
+#define SOM_STAR_SPEED 8
+#define SOM_STAR_FRAMES 18u
 #define SOM_ORB_FRAMES 46u
 #define SOM_ORB_SEEK 130
 #define SOM_WISP_OUT 18u
@@ -135,7 +141,8 @@ static inline int som_bolt_step(SomBolt *o, uint8_t *ram, unsigned map, int skip
     }
     const int petal = o->kind == SOM_BOLT_PETAL;
     const unsigned life = petal ? SOM_PETAL_FRAMES : o->kind == SOM_BOLT_ORB ? SOM_ORB_FRAMES :
-        o->kind == SOM_BOLT_WISP ? SOM_WISP_FRAMES : SOM_BOLT_FRAMES;
+        o->kind == SOM_BOLT_WISP ? SOM_WISP_FRAMES : o->kind == SOM_BOLT_STAR ? SOM_STAR_FRAMES :
+        SOM_BOLT_FRAMES;
     if (frame - o->start >= life) { o->burst = frame; return -1; }
     if (o->kind == SOM_BOLT_ORB) {             /* toward the nearest monster */
         int best = -1, gx = 0, gy = 0;
@@ -157,6 +164,8 @@ static inline int som_bolt_step(SomBolt *o, uint8_t *ram, unsigned map, int skip
         if (abs(ex) + abs(ey) < 10) { o->burst = frame; return -1; }
         o->x += ex > 5 ? 5 : ex < -5 ? -5 : ex;
         o->y += ey > 5 ? 5 : ey < -5 ? -5 : ey;
+    } else if (o->kind == SOM_BOLT_STAR) {
+        o->x += o->dx; o->y += o->dy;
     } else {
         o->x += o->dx * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);
         o->y += o->dy * (petal ? SOM_PETAL_SPEED : SOM_BOLT_SPEED);

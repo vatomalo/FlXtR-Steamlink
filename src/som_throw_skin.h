@@ -10,8 +10,8 @@
 #include "som_overlay.h"
 #define SOM_ICON_BYTES 96u
 #define SOM_THROW_MATCH_RADIUS 24
-enum {SOM_SKIN_NONE,SOM_SKIN_STAR,SOM_SKIN_CROSS,SOM_SKIN_FUMA};   /* fuma: the star, double size */
-typedef struct {int kind,x,y,small;} SomThrowSkin;
+enum {SOM_SKIN_NONE,SOM_SKIN_STAR,SOM_SKIN_CROSS,SOM_SKIN_FUMA};   /* star: small and fast; fuma: full size */
+typedef struct {int kind,x,y,small,held;} SomThrowSkin;   /* held: in the hand, not spinning */
 
 /* A 16x16 menu icon (four 3bpp tiles) as colour numbers 0..7. */
 static inline void som_icon_decode(const uint8_t *b,uint8_t out[256]){
@@ -55,17 +55,6 @@ static inline void som_icon_draw_small(uint8_t *px,unsigned width,unsigned heigh
         if(v&&v!=7u)som_skin_dot(px,width,height,pitch,format,x0+x,y0+y,som_icon_steel(format,v));
     }
 }
-/* The Fuma Shuriken: the same ROM star, each pixel doubled (32x32). */
-static inline void som_icon_draw_big(uint8_t *px,unsigned width,unsigned height,size_t pitch,int format,
-                                     const uint8_t icon[256],int x0,int y0,unsigned turn){
-    for(int y=0;y<32;y++)for(int x=0;x<32;x++){
-        const int a=x/2,b=y/2;
-        const int sx=turn==0u?a:turn==1u?b:turn==2u?15-a:15-b;
-        const int sy=turn==0u?b:turn==1u?15-a:turn==2u?15-b:a;
-        const unsigned v=icon[sy*16+sx];
-        if(v&&v!=7u)som_skin_dot(px,width,height,pitch,format,x0+x,y0+y,som_icon_steel(format,v));
-    }
-}
 /* The cross: silver arms, golden rim, turning on its long axis. */
 static inline void som_cross_draw(uint8_t *px,unsigned width,unsigned height,size_t pitch,int format,
                                   int cx,int cy,unsigned phase){
@@ -84,17 +73,19 @@ static inline void som_cross_draw(uint8_t *px,unsigned width,unsigned height,siz
         som_skin_dot(px,width,height,pitch,format,cx+x,cy+y,core&&arm>1?silver:gold);
     }
 }
-/* The boomerang as the hero's own weapon sprite (measured 2026-11-27: a
- * Ninja's thrown boomerang is not in the projectile table; the game draws it,
- * in the hand and in flight, as a 16x16 weapon piece in palette 0, the boy's
- * at tile 0x144, his weapon tiles 0x140-0x15F; the girl's and the sprite's
- * blocks are taken to follow at 0x160 and 0x180). */
-#define SOM_WEAPON_TILE_BASE 0x140u
-#define SOM_WEAPON_TILE_BLOCK 0x20u
-static inline int som_weapon_piece_of(const uint8_t *o,unsigned who){
+/* The boomerang in the hand (measured 2026-11-27, hero 0): a 16x16 weapon
+ * piece in palette 0, tile 0x144 (weapon tiles 0x140-0x15F), up-left of the
+ * hero while he stands and through the wind-up. In flight it is a projectile
+ * entry (tiles 0x164/0x166), skinned above. A held piece is one within
+ * SOM_HELD_REACH px of its own hero's screen spot (hx, hy). */
+#define SOM_HELD_TILE_LO 0x140u
+#define SOM_HELD_TILE_HI 0x160u
+#define SOM_HELD_REACH 40
+static inline int som_held_piece(const uint8_t *o,int hx,int hy){
     const unsigned tile=o[2]|((unsigned)(o[3]&1u)<<8);
-    const unsigned lo=SOM_WEAPON_TILE_BASE+SOM_WEAPON_TILE_BLOCK*who;
-    return ((o[3]>>1)&7u)==0u&&tile>=lo&&tile<lo+SOM_WEAPON_TILE_BLOCK&&o[1]<0xE0u;
+    if(((o[3]>>1)&7u)!=0u||tile<SOM_HELD_TILE_LO||tile>=SOM_HELD_TILE_HI||o[1]>=0xE0u)return 0;
+    const int dx=(int)o[0]+8-hx,dy=(int)o[1]+8-hy;
+    return (dx<0?-dx:dx)+(dy<0?-dy:dy)<=SOM_HELD_REACH;
 }
 /* This frame's thrown boomerangs with a look, and (holding[hero]) the
  * boomerang weapon pieces, in screen pixels, struck from the OAM shadow. */
@@ -132,22 +123,25 @@ static inline unsigned som_throw_skins_held(uint8_t *ram,const uint8_t look[3],c
             if(best>=0&&n<9u){
                 ram[0x0800u+4u*(unsigned)best+1u]=0xF0u;
                 out[n].kind=look[who];out[n].x=draw_x+8;out[n].y=draw_y+8;
-                out[n].small=0;n++;
+                out[n].small=look[who]==SOM_SKIN_STAR;out[n].held=0;n++;   /* the shuriken: small */
             }
         }
-        if(look[who]==SOM_SKIN_STAR&&n-first>1u)
-            for(unsigned i=first;i<n;i++)out[i].small=1;
+        (void)first;
         /* the boomerang held or thrown as a weapon sprite (holding[who]) */
-        if(holding&&holding[who])
+        if(holding&&holding[who]){
+            const uint8_t *h=ram+0xE000u+0x200u*who;
+            const unsigned cam=(h[0x0Bu]&0x80u)?0xACu:0xA8u;
+            const int hx=(int)(int16_t)((h[2]|h[3]<<8)-(ram[cam]|ram[cam+1u]<<8));
+            const int hy=(int)(int16_t)((h[4]|h[5]<<8)-(ram[cam+2u]|ram[cam+3u]<<8))-12;
             for(unsigned i=0;i<128u&&n<9u;i++){
                 uint8_t *o=ram+0x0800u+4u*i;
-                if(!som_weapon_piece_of(o,who))continue;
                 const unsigned hb=(ram[0x0A00u+i/4u]>>(2u*(i%4u)))&3u;
-                const int big=(hb&2u)!=0;
-                int x=o[0]+256*(int)(hb&1u);if(x>=256)x-=512;
-                out[n].kind=look[who];out[n].x=x+(big?8:4);out[n].y=o[1]+(big?8:4);out[n].small=0;n++;
+                if((hb&1u)||!som_held_piece(o,hx,hy))continue;
+                out[n].kind=look[who];out[n].x=o[0]+8;out[n].y=o[1]+8;
+                out[n].small=look[who]==SOM_SKIN_STAR;out[n].held=1;n++;
                 o[1]=0xF0u;                               /* the game's picture off screen */
             }
+        }
     }
     return n;
 }

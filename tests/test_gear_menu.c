@@ -14,6 +14,7 @@ int main(void){
     som_gear_line(&m,&st,2u,0,2,line);assert(line[0]=='>'&&strstr(line,"Ninjato"));
     som_gear_line(&m,&st,2u,0,3,line);assert(strstr(line,"< Shuriken >"));
     som_gear_line(&m,&st,2u,1,3,line);assert(strstr(line,"Fuma Shuriken"));
+    som_gear_line(&m,&st,2u,2,3,line);assert(strstr(line,"Shuriken Volley"));
     som_gear_line(&m,&st,2u,0,9,line);assert(strstr(line,"Kunai")&&strstr(line,"Kusarigama"));
     assert(som_gear_press(&m,BTN(LEFT),2u,&dir)==SOM_GEAR_STYLE&&dir==-1);
     assert(som_gear_press(&m,BTN(DOWN),2u,&dir)==SOM_GEAR_NONE&&m.row==1);

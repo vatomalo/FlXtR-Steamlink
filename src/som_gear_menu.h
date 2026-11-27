@@ -7,9 +7,11 @@
  *   B  the class's three weapon styles (src/som_weapon_styles.h): Kunai /
  *      Ninjato / Kusarigama, Tanto / Katana / Dai Katana, ...; casters'
  *      spell sets. Each keeps its own level, speed, power and reach.
- *   Y  the thrown look where there is a choice: the Ninja's Shuriken or Fuma
- *      Shuriken (the same ROM star drawn double size; flight and hits stay
- *      the game's). Other Y and X weapons are shown, fixed.
+ *   Y  the throw where there is a choice. The Ninja: Shuriken (a small star
+ *      thrown straight and fast like a mage's ball), Fuma Shuriken (the
+ *      game's own boomerang flight, drawn as a full-size shuriken) or
+ *      Shuriken Volley (three small stars in a fan). Other Y and X weapons
+ *      are shown, fixed.
  * One hero at a time (X: next). Up/Down picks the row, Left/Right (or B)
  * changes it, A closes. Pure: the caller applies the change. */
 #ifndef FLXTR_SOM_GEAR_MENU_H
@@ -20,12 +22,12 @@
 
 #define SOM_GEAR_LINES 12u
 #define SOM_GEAR_ROWS 3u
-#define SOM_THROWS 2u
+#define SOM_THROWS 3u
 enum { SOM_GEAR_NONE, SOM_GEAR_CLOSED, SOM_GEAR_STYLE, SOM_GEAR_THROW, SOM_GEAR_HERO };
 
 /* Thrown looks per class: [0] is the default; "" ends the list. */
 static const char *const som_gear_throws[SOM_DISCIPLINE_COUNT][SOM_THROWS]={
-    [2]={"Shuriken","Fuma Shuriken"},          /* Ninjutsu */
+    [2]={"Shuriken","Fuma Shuriken","Shuriken Volley"},   /* Ninjutsu */
 };
 static inline unsigned som_gear_throw_count(unsigned cls){
     unsigned n=0;
@@ -84,8 +86,17 @@ static inline int som_gear_line(const SomGearMenu *m,const SomStyles *st,unsigne
             }
         }
     }else if(m->row==1u){
-        if(at==1u)snprintf(out,33,throws>1u?"  only the look: the throw stays":"  fixed for this class");
-        if(at==2u&&throws>1u)snprintf(out,33,"  the game's own");
+        if(throws<=1u){if(at==1u)snprintf(out,33,"  fixed for this class");}
+        else if(throw_pick%throws==0u){
+            if(at==1u)snprintf(out,33,"  small, straight and fast");
+            if(at==2u)snprintf(out,33,"  one per throw (charged: more)");
+        }else if(throw_pick%throws==1u){
+            if(at==1u)snprintf(out,33,"  full size, the game's flight:");
+            if(at==2u)snprintf(out,33,"  out, through foes, and back");
+        }else{
+            if(at==1u)snprintf(out,33,"  three small stars in a fan");
+            if(at==2u)snprintf(out,33,"  each hits once");
+        }
     }else if(at==1u)snprintf(out,33,"  fixed for this class");
     return 1;
 }

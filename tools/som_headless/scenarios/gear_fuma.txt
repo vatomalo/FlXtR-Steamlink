@@ -1,23 +1,40 @@
-# The Fuma Shuriken look (start: rabites.state): a Ninja's Y throw drawn as the
-# ROM's shuriken at double size (gear_throw_2_1 = the GEAR page's choice).
+# The Ninja's three throws (start: rabites.state; GEAR page Y = gear_throw_2_N):
+# 0 Shuriken: the boomerang launch becomes one small straight fast star;
+# 1 Fuma Shuriken: the game's boomerang flight, drawn as a full-size shuriken;
+# 2 Shuriken Volley: three small stars in a fan.
+#! expect-log SHURIKEN BOY: 1 thrown
+#! expect-log SHURIKEN BOY: 3 thrown
 expect u16 00DC == 130
 frames 60
 cmd class_2
-cmd gear_throw_2_1
+cmd gear_throw_2_0
 frames 30
 monster 0 -150 150
 monster 1 -150 -150
 monster 2 150 150
+shot hold_star
 hold Y 2
-frames 4
-shot fuma_0
-frames 4
-shot fuma_a
-frames 8
-shot fuma_b
-frames 40
-cmd gear_throw_2_0
-hold Y 2
-frames 8
+frames 18
 shot star_a
-frames 40
+frames 3
+shot star_b
+frames 3
+shot star_c
+frames 60
+cmd gear_throw_2_1
+frames 10
+shot hold_fuma
+hold Y 2
+frames 22
+shot fuma_a
+frames 6
+shot fuma_b
+frames 80
+cmd gear_throw_2_2
+frames 10
+hold Y 2
+frames 18
+shot volley_a
+frames 4
+shot volley_b
+frames 60

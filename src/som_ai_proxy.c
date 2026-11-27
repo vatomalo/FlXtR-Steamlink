@@ -10618,6 +10618,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
 #undef SOM_IN_FRONT
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
+    som_status_scroll++;                     /* the menu background drifts */
     if(sprite_creator.active&&(width==256u||width==512u)&&(height==224u||height==448u)&&
        pixel_format>=0&&pixel_format<=2){
         const size_t row=(size_t)width*(pixel_format==1?4u:2u),size=row*height;
@@ -11011,7 +11012,14 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         overlay.frames_left--;
     }
     if(menu){
-        if(act_ai)som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
+        /* Any frame size (the TV's, not only 256/512 x 224/448): the ACT
+         * pages keep the CLASSES look here too (player, 2026-11-27: "why
+         * are not all the panels of the ACT menu like the Classes menu"). */
+        const unsigned msx=width>=512u?2u:1u,msy=height>=400u?2u:1u;
+        if(som_manual_disciplines&&(jukebox.open||perk_menu.open||gear_menu.open||act_ai)&&
+           width>=256u*msx&&height>=224u*msy)
+            som_act_pages_draw(overlay_frame,width,height,pitch);
+        else if(act_ai)som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
         else if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
         else if(perk_menu.open)som_perk_menu_draw(overlay_frame,width,height,pitch,pixel_format);
         else if(gear_menu.open)som_gear_menu_draw(overlay_frame,width,height,pitch,pixel_format);

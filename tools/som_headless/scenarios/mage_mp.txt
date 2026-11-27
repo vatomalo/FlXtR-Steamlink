@@ -1,0 +1,19 @@
+# Mage bolts cost MP (start: rabites.state): the boy as a Mage with 1 MP of 10
+# throws one bolt (class level 1: 1 MP); the next B is refused.
+#! expect-log ORB BOY
+#! expect-log MAGE BOLT BOY refused: MP 0 < 1
+expect u16 00DC == 130
+frames 60
+cmd class_3
+frames 30
+poke E187 0x0A
+poke E186 0x01
+monster 1 -150 150
+monster 2 -150 -150
+hold RIGHT 2
+monster 0 40 0
+hold B 2
+frames 90
+expect u8 E186 == 0
+hold B 2
+frames 60

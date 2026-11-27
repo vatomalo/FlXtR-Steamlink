@@ -42,8 +42,9 @@ typedef struct {
 
 /* cls: the hero's class (SOM_DISCIPLINE_NONE classless); throw_pick: the
  * class's chosen throw look. */
+/* pouch: shuriken left (-1: no pouch shown) */
 static inline int som_gear_line(const SomGearMenu *m,const SomStyles *st,unsigned cls,unsigned throw_pick,
-                                unsigned line,char out[33]){
+                                int pouch,unsigned line,char out[33]){
     static const char *const who_names[3]={"BOY","GIRL","SPRITE"};
     out[0]=0;
     if(line>=SOM_GEAR_LINES)return 0;
@@ -90,12 +91,16 @@ static inline int som_gear_line(const SomGearMenu *m,const SomStyles *st,unsigne
         else if(throw_pick%throws==0u){
             if(at==1u)snprintf(out,33,"  small, straight and fast");
             if(at==2u)snprintf(out,33,"  one per throw (charged: more)");
+            if(at==3u&&pouch>=0)snprintf(out,33,"  pouch %d/15, gathered after",pouch);
+            if(at==4u&&pouch>=0)snprintf(out,33,"  a fight, full at a save");
         }else if(throw_pick%throws==1u){
             if(at==1u)snprintf(out,33,"  full size, the game's flight:");
             if(at==2u)snprintf(out,33,"  out, through foes, and back");
         }else{
             if(at==1u)snprintf(out,33,"  three small stars in a fan");
-            if(at==2u)snprintf(out,33,"  each hits once");
+            if(at==2u)snprintf(out,33,"  each hits once, uses three");
+            if(at==3u&&pouch>=0)snprintf(out,33,"  pouch %d/15, gathered after",pouch);
+            if(at==4u&&pouch>=0)snprintf(out,33,"  a fight, full at a save");
         }
     }else if(at==1u)snprintf(out,33,"  fixed for this class");
     return 1;

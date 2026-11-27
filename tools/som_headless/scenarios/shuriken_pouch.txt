@@ -1,0 +1,24 @@
+# The Ninja's shuriken pouch (start: rabites.state): with 2 left a Volley throws
+# 2, the next throw finds it empty; when the fight is over they are gathered.
+#! expect-log SHURIKEN BOY: 2 thrown \(\d+ each\), 0 left
+#! expect-log SHURIKEN BOY: pouch empty
+#! expect-log SHURIKEN BOY: 2 gathered, 2 in the pouch
+expect u16 00DC == 130
+frames 60
+cmd class_2
+cmd gear_throw_2_2
+cmd shuriken_pouch_2
+frames 30
+monster 1 -150 150
+monster 2 -150 -150
+hold RIGHT 2
+monster 0 50 0
+hold Y 2
+frames 120
+monster 0 50 0
+hold Y 2
+frames 120
+monster 0 300 300
+monster 1 300 -300
+monster 2 -300 300
+frames 400

@@ -20,6 +20,10 @@
 #define SOM_ENERGY_CAP 250u
 #define SOM_ENERGY_REFILL_FRAMES 20u      /* +1 every 1/3 s */
 #define SOM_ENERGY_STILL_FRAMES 6u        /* +1 every 0.1 s standing still */
+/* In a fight, moving: 4x slower (player, 2026-11-27: "I see the class gauge
+ * always full make it suffer more"). som_energy_fight is set by the proxy. */
+#define SOM_ENERGY_FIGHT_FRAMES 80u       /* +1 every 1.3 s */
+static int som_energy_fight;
 #define SOM_AP_MAX 4u
 #define SOM_AP_REFILL_FRAMES 60u          /* one pip a second: short evades, more of them */
 
@@ -65,7 +69,8 @@ static inline void som_energy_tick(SomEnergy *e,unsigned cls,unsigned level,int 
     const unsigned max=som_energy_max(level);
     if(!e->started[cls]){e->started[cls]=1;e->energy[cls]=(uint16_t)max;}
     if(e->energy[cls]>max)e->energy[cls]=(uint16_t)max;
-    if(e->energy[cls]<max&&++e->energy_tick>=(still?SOM_ENERGY_STILL_FRAMES:SOM_ENERGY_REFILL_FRAMES)){
+    if(e->energy[cls]<max&&++e->energy_tick>=(still?SOM_ENERGY_STILL_FRAMES:
+                                              som_energy_fight?SOM_ENERGY_FIGHT_FRAMES:SOM_ENERGY_REFILL_FRAMES)){
         e->energy[cls]++;e->energy_tick=0;
     }
 }

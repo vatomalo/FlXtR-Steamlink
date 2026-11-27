@@ -508,6 +508,12 @@ static SomPerkMenu perk_menu;
  * SOM_GEAR_FILE as "gear1 <16 digits>". */
 static SomGearMenu gear_menu;
 static uint8_t gear_throw[SOM_DISCIPLINE_COUNT];
+/* The Ninja's shuriken pouch per hero (player, 2026-11-27: "Ninja does not
+ * have unlimited shurikens"): SOM_POUCH; the thrown ones are gathered back
+ * when a fight ends, and a save (an inn) fills it. The Fuma comes back. */
+#define SOM_POUCH 15u
+static uint8_t shuriken_pouch[3]={SOM_POUCH,SOM_POUCH,SOM_POUCH},shuriken_thrown[3];
+static unsigned long shuriken_said;
 #define SOM_GEAR_FILE "/home/apps/retroarch/cores/experimental/som_ai_gear"
 static void som_gear_save(void){
     char line[64];int n=snprintf(line,sizeof(line),"gear1 ");
@@ -712,6 +718,7 @@ static void som_perk_prog_restore(const SomProgress *p){
         (void)som_prt_set_raw(&perk_rt,who,p->loadout[who],p->loadout_set?p->loadout_n[who]:0u);
     som_prt_flush(&perk_rt);
     perk_rt_revalidate=1;
+    memset(shuriken_pouch,SOM_POUCH,sizeof(shuriken_pouch));memset(shuriken_thrown,0,sizeof(shuriken_thrown));
 }
 static uint64_t prog_rom,prog_seen[SOM_PROG_SLOTS];
 static int prog_baseline,prog_was_field,prog_session_first=1;
@@ -785,6 +792,7 @@ static void som_prog_frame(void){
             const int ok=som_prog_write();
             fprintf(stderr,"[som-ai] PROGRESS saved with slot %u (%016llx)%s\n",k+1u,
                     (unsigned long long)fp,ok?"":": write failed");
+            memset(shuriken_pouch,SOM_POUCH,sizeof(shuriken_pouch));memset(shuriken_thrown,0,sizeof(shuriken_thrown));
         }
         prog_seen[k]=fp;
     }
@@ -2096,6 +2104,18 @@ static void som_perks_frame(uint8_t *ram){
     }
     if(near)perk_quiet=0;
     else if(perk_quiet<SOM_FIGHT_QUIET_FRAMES)perk_quiet++;
+    som_energy_fight=perk_quiet<SOM_FIGHT_QUIET_FRAMES;
+    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)                 /* the fight is over: pick them up */
+        for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++)if(shuriken_thrown[w]){
+            const unsigned back=shuriken_thrown[w];
+            const unsigned now=shuriken_pouch[w]+back>SOM_POUCH?SOM_POUCH:shuriken_pouch[w]+back;
+            fprintf(stderr,"[som-ai] SHURIKEN %s: %u gathered, %u in the pouch\n",som_party_names[w],back,now);
+            if(w==som_pad1_member_in(ram)&&som_disc_member_class(&disciplines,w)==SOM_DISC_NINJUTSU){
+                char text[32];snprintf(text,sizeof(text),"^%u shuriken gathered",back);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+            }
+            shuriken_pouch[w]=(uint8_t)now;shuriken_thrown[w]=0;
+        }
     if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES){                         /* a new fight */
         if(perk_first_hit_used[0]|perk_first_hit_used[1]|perk_first_hit_used[2]|
            perk_rt.hero[0].hit_this_fight|perk_rt.hero[1].hit_this_fight|perk_rt.hero[2].hit_this_fight|
@@ -4204,9 +4224,24 @@ static void som_shuriken_throw(uint8_t *ram){
             const unsigned kind=e[0]&7u;
             if((kind!=3u&&kind!=5u)||(e[0]&0xF8u))continue;   /* free, or still delayed */
             memset(e,0,16u);
+            const int want=pick==2u?3:1;
+            const int fan=shuriken_pouch[who]<(unsigned)want?(int)shuriken_pouch[who]:want;
+            const int player=who==som_pad1_member_in(ram)||who==som_pad2_member(ram);
+            if(!fan){
+                if(player&&frame_number-shuriken_said>=60ul){
+                    som_overlay_say(&overlay,"^No shuriken",SOM_MESSAGE_FRAMES/4u);shuriken_said=frame_number;
+                }
+                fprintf(stderr,"[som-ai] SHURIKEN %s: pouch empty\n",som_party_names[who]);
+                continue;
+            }
+            shuriken_pouch[who]=(uint8_t)(shuriken_pouch[who]-(unsigned)fan);
+            shuriken_thrown[who]=(uint8_t)(shuriken_thrown[who]+(unsigned)fan);
+            if(player&&shuriken_pouch[who]<=3u&&frame_number-shuriken_said>=30ul){
+                char text[32];snprintf(text,sizeof(text),"^%u shuriken left",(unsigned)shuriken_pouch[who]);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/5u);shuriken_said=frame_number;
+            }
             int dx,dy;som_bolt_dir(h[0x10],&dx,&dy);
             const unsigned damage=som_mage_bolt_damage(h,SOM_DISC_NINJUTSU);
-            const int fan=pick==2u?3:1;
             for(int f=0;f<fan;f++){
                 const int side=fan==1?0:(f-1)*3;      /* -3, 0, +3 across the throw */
                 const int slot=som_bolt_fire(mage_bolts,who,7u,(int)som_word(h+2),(int)som_word(h+4)-6,
@@ -4216,8 +4251,8 @@ static void som_shuriken_throw(uint8_t *ram){
                 b->kind=SOM_BOLT_STAR;
                 b->dx=dx*SOM_STAR_SPEED+(dx?0:side);b->dy=dy*SOM_STAR_SPEED+(dy?0:side);
             }
-            fprintf(stderr,"[som-ai] SHURIKEN %s: %d thrown (%u each)\n",som_party_names[who],fan,
-                    pick==2u?damage*2u/3u:damage);
+            fprintf(stderr,"[som-ai] SHURIKEN %s: %d thrown (%u each), %u left\n",som_party_names[who],fan,
+                    pick==2u?damage*2u/3u:damage,(unsigned)shuriken_pouch[who]);
         }
     }
 }
@@ -4532,6 +4567,7 @@ static void som_whack_frame(const uint8_t *ram){
         if(now)ids[k]=m[0x180];
     }
 }
+static unsigned long mp_said;
 static void som_mage_bolt_frame(uint8_t *ram,int after){
     if(!ram)return;
     const int field=ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0&&ram[0x7D]!=1;
@@ -4562,16 +4598,34 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
             no_jab_until[who]=frame_number+20ul;
             mage_swing_prev[who]=0;continue;
         }
+        /* The bolt costs MP (player, 2026-11-27: "mages projectiles should
+         * consume mp"; costs grow with the class level, none left: no
+         * attack). A hero with no MP at all (max 0) throws for free. */
+        const unsigned mp_cost=!hero[0x187]?0u:disciplines.level[cls]>=25u?3u:disciplines.level[cls]>=10u?2u:1u;
+        if(swing&&mage_swing_prev[who]!=0x20u&&hero[0x186]<mp_cost){
+            hero[0x1C]=0;hero[0x30]=0xFF;
+            if(hero[0x1ED]<46u)hero[0x1ED]=46u;
+            no_jab_until[who]=frame_number+20ul;mage_swing_prev[who]=0;
+            if((who==som_pad1_member_in(ram)||who==som_pad2_member(ram))&&frame_number-mp_said>=60ul){
+                som_overlay_say(&overlay,"^No MP",SOM_MESSAGE_FRAMES/4u);mp_said=frame_number;
+                fprintf(stderr,"[som-ai] MAGE BOLT %s refused: MP %u < %u\n",som_party_names[who],
+                        (unsigned)hero[0x186],mp_cost);
+            }
+            continue;
+        }
         if(swing&&mage_swing_prev[who]!=0x20u&&som_class_attack(ram,who,cls,map)){
+            hero[0x186]=(uint8_t)(hero[0x186]-mp_cost);
             mage_swing_prev[who]=0;continue;
         }
         if(swing&&mage_swing_prev[who]!=0x20u){
             const unsigned spell=som_caster_spell(cls,0u);
             const unsigned element=som_spell_element(spell),damage=som_mage_bolt_damage(hero,cls);
             if(som_bolt_fire(mage_bolts,who,element,(int)som_word(hero+2),(int)som_word(hero+4),
-                             hero[0x10],damage,map,frame_number))
-                fprintf(stderr,"[som-ai] MAGE BOLT %s %s (%u)\n",som_party_names[who],
-                        som_class_spell_label(cls,spell),damage);
+                             hero[0x10],damage,map,frame_number)){
+                hero[0x186]=(uint8_t)(hero[0x186]-mp_cost);
+                fprintf(stderr,"[som-ai] MAGE BOLT %s %s (%u, %u MP)\n",som_party_names[who],
+                        som_class_spell_label(cls,spell),damage,mp_cost);
+            }
         }
         mage_swing_prev[who]=hero[0x1C];
     }
@@ -8714,6 +8768,12 @@ static int som_handle_command(const char *command){
         }
     }
     {const int r=som_perk_rt_command(command);if(r>=0)return r;}
+    {   /* shuriken_pouch_<n>: every hero's pouch (tests) */
+        unsigned n;char tail;
+        if(sscanf(command,"shuriken_pouch_%2u%c",&n,&tail)==1&&n<=SOM_POUCH){
+            memset(shuriken_pouch,(int)n,sizeof(shuriken_pouch));return 1;
+        }
+    }
     {   /* gear_throw_<class>_<n>: the thrown look (the GEAR page's Y row) */
         unsigned c,n;char tail;
         if(sscanf(command,"gear_throw_%2u_%1u%c",&c,&n,&tail)==2&&c<SOM_DISCIPLINE_COUNT&&n<som_gear_throw_count(c)){
@@ -9529,7 +9589,8 @@ static void som_gear_menu_draw(uint8_t *pixels,unsigned width,unsigned height,si
     const unsigned who=gear_menu.who%SOM_PARTY_MEMBERS,cls=som_disc_member_class(&disciplines,who);
     char out[33];
     for(unsigned line=0;line<SOM_GEAR_LINES;line++){
-        if(!som_gear_line(&gear_menu,&styles,cls,cls<SOM_DISCIPLINE_COUNT?gear_throw[cls]:0u,line,out))break;
+        if(!som_gear_line(&gear_menu,&styles,cls,cls<SOM_DISCIPLINE_COUNT?gear_throw[cls]:0u,
+                          cls==SOM_DISC_NINJUTSU?(int)shuriken_pouch[who]:-1,line,out))break;
         const uint32_t ink=line==1u?som_overlay_color(format,255,214,96):
                            line>=2u+SOM_GEAR_ROWS?som_overlay_color(format,200,210,255):
                            som_overlay_color(format,255,255,255);

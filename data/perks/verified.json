@@ -1,0 +1,4 @@
+{
+ "_comment": "Perks whose behaviour an automated test has checked: key -> the test that checks it. Only these become IMPLEMENTED (selectable in ordinary play).",
+ "perks": {}
+}

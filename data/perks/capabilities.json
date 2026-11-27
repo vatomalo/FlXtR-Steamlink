@@ -1,0 +1,829 @@
+{
+ "_comment": "Engine capabilities perks name. status: runtime = implemented in src/som_perk_runtime.h and wired into the proxy; engine = the proxy detects/does it but the perk runtime is not wired to it yet; hook = needs a new engine hook; primitive = needs a new effect primitive; entity = the game has no such entity behaviour; ui = needs UI. A perk's implementation_status comes from the worst of its capabilities (tools/generate_perk_registry.py).",
+ "events": {
+  "ATTACK_HIT": {
+   "status": "engine",
+   "note": "a hero's hit lowered a monster's HP (som_perk_hit, credited per hero, bonus damage it added is not a new hit)"
+  },
+  "ATTACK_START": {
+   "status": "engine",
+   "note": "hero +0x1C enters an attack (0x20/0x80)"
+  },
+  "ATTACK_MISS": {
+   "status": "hook",
+   "note": "a swing that ends without any monster losing HP: needs the swing end vs HP watch"
+  },
+  "CRITICAL_HIT": {
+   "status": "engine",
+   "note": "the game's 'gets whacked!' critical (som_whack_frame), credited to the hero who hit last"
+  },
+  "COMBO_MILESTONE": {
+   "status": "engine",
+   "note": "combo ladder count step (som_combo.h)"
+  },
+  "COMBO_FINISHER": {
+   "status": "engine",
+   "note": "combo or B string finisher started (som_finisher_now)"
+  },
+  "STRING_FINISHER": {
+   "status": "engine",
+   "note": "B string finisher of a class string"
+  },
+  "ENEMY_KILLED": {
+   "status": "engine",
+   "note": "monster HP to 0 within the kill-credit window of a hero's hit (som_perks_frame)"
+  },
+  "BLOCK": {
+   "status": "engine",
+   "note": "a blow landed while the hero guards (som_guard_up)"
+  },
+  "PERFECT_BLOCK": {
+   "status": "hook",
+   "note": "guard raised within a few frames before the blow: needs the guard press frame"
+  },
+  "COUNTER": {
+   "status": "engine",
+   "note": "a counter fired: Iai counter, Counter Palm, Tiger Drop, Intercept"
+  },
+  "DODGE": {
+   "status": "engine",
+   "note": "an evade with a monster close by (near miss, som_xp)"
+  },
+  "PERFECT_DODGE": {
+   "status": "hook",
+   "note": "an evade started inside a monster's attack window: needs evade start vs ENEMY_ATTACK_START"
+  },
+  "UKEMI": {
+   "status": "engine",
+   "note": "ukemi recovery played"
+  },
+  "INTERCEPT": {
+   "status": "engine",
+   "note": "Monk Intercept landed (src/som_intercept.h)"
+  },
+  "ENEMY_ATTACK_START": {
+   "status": "engine",
+   "note": "monster +0x1C 0 -> 0x80 (the Intercept window)"
+  },
+  "TELEPORT": {
+   "status": "engine",
+   "note": "Shadowstep / Shunshin / Blink moved the hero"
+  },
+  "LANDING": {
+   "status": "hook",
+   "note": "end of a Bash or jump attack: needs the move's end frame"
+  },
+  "DAMAGE_POST": {
+   "status": "engine",
+   "note": "a hero's HP dropped this frame (perk_hero_hp_prev)"
+  },
+  "LETHAL_DAMAGE": {
+   "status": "hook",
+   "note": "HP 0 is seen after the game applied it; undoing it inside the death path is not safe yet"
+  },
+  "WEAPON_SWITCH": {
+   "status": "engine",
+   "note": "hero weapon +0x1E4 changed"
+  },
+  "TARGET_SWITCH": {
+   "status": "engine",
+   "note": "lock-on moved to another monster"
+  },
+  "SPELL_CAST": {
+   "status": "engine",
+   "note": "proxy quick cast / class spell started"
+  },
+  "SPELL_HIT": {
+   "status": "engine",
+   "note": "spell target lost HP within SOM_XP_SPELL_WINDOW"
+  },
+  "PROJECTILE_CREATED": {
+   "status": "hook",
+   "note": "projectile table 7E:D000 is read only so far"
+  },
+  "STATUS_APPLIED": {
+   "status": "hook",
+   "note": "status bits on heroes are not watched yet"
+  },
+  "MARK_APPLIED": {
+   "status": "primitive",
+   "note": "needs generic marks"
+  },
+  "SUMMON_CREATED": {
+   "status": "engine",
+   "note": "familiar bound"
+  },
+  "SUMMON_ATTACK": {
+   "status": "engine",
+   "note": "the familiar's strike landed"
+  },
+  "SUMMON_DEATH": {
+   "status": "engine",
+   "note": "the familiar died"
+  },
+  "CLONE_STRIKE": {
+   "status": "engine",
+   "note": "Kage Bunshin / Fuma clone strike"
+  },
+  "COMPANION_ATTACK": {
+   "status": "engine",
+   "note": "an AI ally's hit"
+  },
+  "COMPANION_HURT": {
+   "status": "engine",
+   "note": "an ally's HP dropped"
+  },
+  "COMPANION_DOWNED": {
+   "status": "engine",
+   "note": "an ally's HP reached 0"
+  },
+  "HEAL": {
+   "status": "engine",
+   "note": "som_queue_heal / a heal spell raised HP"
+  },
+  "ITEM_USED": {
+   "status": "hook",
+   "note": "item use is not detected"
+  },
+  "LOOT_DROPPED": {
+   "status": "hook",
+   "note": "the drop roll is inside the game's death routine"
+  },
+  "DEVICE_PLACED": {
+   "status": "engine",
+   "note": "Artificer bomb or mine placed"
+  },
+  "DEVICE_EXPLODED": {
+   "status": "engine",
+   "note": "Artificer bomb or mine went off"
+  },
+  "COMBAT_END": {
+   "status": "engine",
+   "note": "no monster near for SOM_FIGHT_QUIET_FRAMES"
+  },
+  "INPUT_SPECIAL": {
+   "status": "ui",
+   "note": "needs a free button chord"
+  },
+  "FRAME_PASSIVE": {
+   "status": "engine",
+   "note": "once a second per hero"
+  },
+  "PASSIVE": {
+   "status": "engine",
+   "note": "a static number another system reads (dodge frames, cooldowns, reach)"
+  }
+ },
+ "conditions": {
+  "every_n": {
+   "status": "engine",
+   "note": "every Nth time the perk's trigger fires (perk counter)"
+  },
+  "in_combo": {
+   "status": "engine",
+   "note": "combo count > 0"
+  },
+  "chain_hit": {
+   "status": "engine",
+   "note": "a hit within a second of the hero's last hit"
+  },
+  "idle_attack": {
+   "status": "engine",
+   "note": "no hit landed by the hero for 3 s"
+  },
+  "first_hit_of_fight": {
+   "status": "engine",
+   "note": "the hero's first hit since the fight began"
+  },
+  "hits_on_target": {
+   "status": "engine",
+   "note": "N hits by the hero on the same monster within 2 s"
+  },
+  "hits_within": {
+   "status": "engine",
+   "note": "N hits within F frames"
+  },
+  "once_per_fight": {
+   "status": "engine",
+   "note": "fires once until the fight ends"
+  },
+  "full_hp": {
+   "status": "engine",
+   "note": "hero HP = max"
+  },
+  "hp_below": {
+   "status": "engine",
+   "note": "hero HP below N%"
+  },
+  "hp_below_half": {
+   "status": "engine",
+   "note": "hero HP below 50%"
+  },
+  "owner_low_hp": {
+   "status": "engine",
+   "note": "hero HP below 30%"
+  },
+  "energy_half": {
+   "status": "engine",
+   "note": "class energy above half"
+  },
+  "target_low_hp": {
+   "status": "engine",
+   "note": "monster HP below 25% of max (+0x182/+0x184)"
+  },
+  "target_hp_below": {
+   "status": "engine",
+   "note": "monster HP below N%"
+  },
+  "target_isolated": {
+   "status": "engine",
+   "note": "no other live monster within 64 px"
+  },
+  "target_staggered": {
+   "status": "engine",
+   "note": "monster hurt state (+0x1C = 0x40)"
+  },
+  "target_recovering": {
+   "status": "engine",
+   "note": "monster attack ended within 30 frames"
+  },
+  "target_unaware": {
+   "status": "engine",
+   "note": "monster faces away (+0x10) and is not attacking"
+  },
+  "behind_target": {
+   "status": "engine",
+   "note": "hero is on the side the monster faces away from"
+  },
+  "target_undead": {
+   "status": "engine",
+   "note": "som_undead(species)"
+  },
+  "target_large": {
+   "status": "engine",
+   "note": "boss, or monster max HP >= 2x hero max HP"
+  },
+  "target_far": {
+   "status": "engine",
+   "note": "monster more than 64 px away"
+  },
+  "target_close": {
+   "status": "engine",
+   "note": "monster within 24 px"
+  },
+  "target_poisoned": {
+   "status": "hook",
+   "note": "monster status bits not mapped yet"
+  },
+  "target_status": {
+   "status": "hook",
+   "note": "monster status bits not mapped yet"
+  },
+  "target_beast": {
+   "status": "hook",
+   "note": "no monster family table yet"
+  },
+  "target_flying": {
+   "status": "hook",
+   "note": "no monster family table yet"
+  },
+  "target_marked": {
+   "status": "primitive",
+   "note": "needs generic marks"
+  },
+  "target_slowed": {
+   "status": "primitive",
+   "note": "needs per-monster time scale"
+  },
+  "target_frozen": {
+   "status": "primitive",
+   "note": "needs per-monster time scale"
+  },
+  "target_hurt_ally": {
+   "status": "engine",
+   "note": "monster hit an ally within 3 s"
+  },
+  "target_attacking_ally": {
+   "status": "engine",
+   "note": "monster attacking (+0x1C 0x80) with an ally closer than the hero"
+  },
+  "charged_hit": {
+   "status": "engine",
+   "note": "the hit came from a charge level >= 1 (+0x19B)"
+  },
+  "charge_at_least": {
+   "status": "engine",
+   "note": "charge level >= N"
+  },
+  "charging": {
+   "status": "engine",
+   "note": "hero is charging (+0x19B > 0, no swing)"
+  },
+  "weapon_glove": {
+   "status": "engine",
+   "note": "+0x1E4 glove"
+  },
+  "weapon_sword": {
+   "status": "engine",
+   "note": "+0x1E4 sword"
+  },
+  "weapon_axe": {
+   "status": "engine",
+   "note": "+0x1E4 axe"
+  },
+  "weapon_whip": {
+   "status": "engine",
+   "note": "+0x1E4 whip"
+  },
+  "weapon_ranged": {
+   "status": "engine",
+   "note": "+0x1E4 bow/boomerang/javelin"
+  },
+  "weapon_changed": {
+   "status": "engine",
+   "note": "weapon differs from the hero's last hit"
+  },
+  "weapon_alternated": {
+   "status": "engine",
+   "note": "melee/ranged differs from the last hit"
+  },
+  "weapon_sequence": {
+   "status": "engine",
+   "note": "last two hits' weapons match the sequence"
+  },
+  "distinct_weapons": {
+   "status": "engine",
+   "note": "N weapon types in the current combo"
+  },
+  "after_dodge": {
+   "status": "engine",
+   "note": "within 30 frames after an evade"
+  },
+  "after_switch": {
+   "status": "engine",
+   "note": "within 120 frames after a weapon switch"
+  },
+  "out_of_combat": {
+   "status": "engine",
+   "note": "no monster within 128 px for 5 s"
+  },
+  "no_monster_close": {
+   "status": "engine",
+   "note": "no monster within 32 px of the hero"
+  },
+  "bullet_time": {
+   "status": "engine",
+   "note": "bullet time running"
+  },
+  "own_time_effect": {
+   "status": "primitive",
+   "note": "needs owned time effects"
+  },
+  "in_own_field": {
+   "status": "primitive",
+   "note": "needs time fields"
+  },
+  "stationary": {
+   "status": "engine",
+   "note": "no D-pad for N frames"
+  },
+  "recent_movement": {
+   "status": "engine",
+   "note": "pixels moved in the last second"
+  },
+  "ally_near_target": {
+   "status": "engine",
+   "note": "a live ally or the familiar within 48 px of the monster"
+  },
+  "ally_low_hp_near": {
+   "status": "engine",
+   "note": "an ally within 32 px below half HP"
+  },
+  "ally_within": {
+   "status": "engine",
+   "note": "the ally within N px of the hero"
+  },
+  "ally_hp_below": {
+   "status": "engine",
+   "note": "the ally below N%"
+  },
+  "ally_behind_owner": {
+   "status": "engine",
+   "note": "the ally behind the guarding hero"
+  },
+  "owner_guarding": {
+   "status": "engine",
+   "note": "som_guard_up"
+  },
+  "coop_same_target": {
+   "status": "engine",
+   "note": "both pad heroes hit the monster within 30 frames"
+  },
+  "familiar_alive": {
+   "status": "engine",
+   "note": "familiar bound"
+  },
+  "familiar_hit_recent": {
+   "status": "engine",
+   "note": "familiar hit the monster within 60 frames"
+  },
+  "no_familiar": {
+   "status": "engine",
+   "note": "no familiar bound"
+  },
+  "fight_minute": {
+   "status": "engine",
+   "note": "60 s into a fight"
+  },
+  "heal_on_familiar": {
+   "status": "engine",
+   "note": "heal target is the familiar"
+  },
+  "own_heal": {
+   "status": "engine",
+   "note": "the heal came from this hero"
+  },
+  "healed_low_hp": {
+   "status": "engine",
+   "note": "healed one was below 25%"
+  },
+  "spell_kill": {
+   "status": "engine",
+   "note": "the killing hit was a spell"
+  },
+  "element": {
+   "status": "hook",
+   "note": "spell element table not mapped"
+  },
+  "element_changed": {
+   "status": "hook",
+   "note": "spell element table not mapped"
+  },
+  "mp_short": {
+   "status": "engine",
+   "note": "hero MP below the spell's cost"
+  },
+  "no_damage_fight": {
+   "status": "engine",
+   "note": "no HP lost since the fight began"
+  },
+  "combo_at_least": {
+   "status": "engine",
+   "note": "combo count >= N"
+  },
+  "on_beat": {
+   "status": "engine",
+   "note": "swing pressed within 6 frames of the gauge filling"
+  },
+  "move": {
+   "status": "engine",
+   "note": "the hit came from a named class move"
+  },
+  "second_target_in_move": {
+   "status": "engine",
+   "note": "the move already hit another monster"
+  }
+ },
+ "effects": {
+  "damage_bonus": {
+   "status": "engine",
+   "note": "extra pending damage (+0x1F1) as a share of the hit, owed so it never counts as a hit"
+  },
+  "stacking_damage": {
+   "status": "engine",
+   "note": "damage_bonus that grows per stack"
+  },
+  "temp_modifier": {
+   "status": "engine",
+   "note": "timed/charged modifier kept by the runtime"
+  },
+  "secondary_strike": {
+   "status": "engine",
+   "note": "extra pending damage on the same/nearest/line monster; generated, cannot retrigger"
+  },
+  "area_damage": {
+   "status": "engine",
+   "note": "pending damage to every monster within a radius"
+  },
+  "delayed_damage": {
+   "status": "engine",
+   "note": "bounded queue of damage released later"
+  },
+  "delayed_area_damage": {
+   "status": "engine",
+   "note": "area_damage released later"
+  },
+  "damage_over_time": {
+   "status": "engine",
+   "note": "bounded ticks of pending damage"
+  },
+  "execute": {
+   "status": "engine",
+   "note": "pending damage = the monster's remaining HP"
+  },
+  "heal": {
+   "status": "engine",
+   "note": "som_queue_heal on the hero"
+  },
+  "party_heal": {
+   "status": "engine",
+   "note": "som_queue_heal on each live hero"
+  },
+  "shield": {
+   "status": "engine",
+   "note": "HP given back after a hit, up to a pool"
+  },
+  "energy": {
+   "status": "engine",
+   "note": "class energy (Chakra, Chi, Ki ...)"
+  },
+  "attack_speed": {
+   "status": "engine",
+   "note": "weapon gauge refill"
+  },
+  "stagger": {
+   "status": "engine",
+   "note": "pending hit of 1: the monster plays its hurt state"
+  },
+  "bullet_time": {
+   "status": "engine",
+   "note": "Monk bullet time (som_bullet_world)"
+  },
+  "time_scale": {
+   "status": "primitive",
+   "note": "per-monster time scale (refactor of som_bullet_world)"
+  },
+  "time_field": {
+   "status": "primitive",
+   "note": "time scale inside a circle"
+  },
+  "extend_time_effects": {
+   "status": "primitive",
+   "note": "needs owned time effects"
+  },
+  "echo_attack": {
+   "status": "primitive",
+   "note": "replay a hit at a spot later"
+  },
+  "delay_self_damage": {
+   "status": "primitive",
+   "note": "give HP back and take it over time"
+  },
+  "position_reversal": {
+   "status": "primitive",
+   "note": "ring of positions + collision check on the way back"
+  },
+  "release_delayed": {
+   "status": "primitive",
+   "note": "needs delayed damage owned by input"
+  },
+  "hold_gauge": {
+   "status": "primitive",
+   "note": "monster attack gauge held (+0x1ED)"
+  },
+  "hold_tune": {
+   "status": "engine",
+   "note": "Mentalist Hold duration"
+  },
+  "mark": {
+   "status": "primitive",
+   "note": "generic marks with a drawn icon"
+  },
+  "consume_mark": {
+   "status": "primitive",
+   "note": "generic marks"
+  },
+  "mark_tune": {
+   "status": "engine",
+   "note": "Mentalist Whisper marks"
+  },
+  "misdirect": {
+   "status": "engine",
+   "note": "Mentalist Misdirection"
+  },
+  "misdirect_tune": {
+   "status": "engine",
+   "note": "Mentalist Misdirection"
+  },
+  "afterimage": {
+   "status": "primitive",
+   "note": "bunshin art as a still image"
+  },
+  "pull": {
+   "status": "primitive",
+   "note": "collision-aware pull (som_bun_spot_open)"
+  },
+  "knockback": {
+   "status": "primitive",
+   "note": "collision-aware push"
+  },
+  "knockback_self": {
+   "status": "hook",
+   "note": "hero knockback is the game's"
+  },
+  "move_toward": {
+   "status": "primitive",
+   "note": "collision-aware step toward the target"
+  },
+  "preserve_combo": {
+   "status": "primitive",
+   "note": "combo ladder keeps its count through a switch"
+  },
+  "combo_window": {
+   "status": "primitive",
+   "note": "combo ladder timeout per hero"
+  },
+  "dodge_frames": {
+   "status": "engine",
+   "note": "legacy SOM_EFFECT_DODGE_FRAMES path"
+  },
+  "cooldown_cut": {
+   "status": "engine",
+   "note": "cooldowns the proxy owns"
+  },
+  "ukemi_window": {
+   "status": "engine",
+   "note": "ukemi timing constant"
+  },
+  "stagger_resist": {
+   "status": "hook",
+   "note": "hero hurt state is the game's"
+  },
+  "status_shorten": {
+   "status": "hook",
+   "note": "hero status timers not mapped"
+  },
+  "apply_status": {
+   "status": "engine",
+   "note": "som_class_status"
+  },
+  "remove_status": {
+   "status": "hook",
+   "note": "hero status bits not mapped"
+  },
+  "ability_range": {
+   "status": "engine",
+   "note": "reach constants the proxy owns"
+  },
+  "interaction_range": {
+   "status": "engine",
+   "note": "chest pull reach (Mentalist)"
+  },
+  "perfect_window": {
+   "status": "engine",
+   "note": "Intercept warning for every class"
+  },
+  "target_stat": {
+   "status": "hook",
+   "note": "monster defence words not mapped"
+  },
+  "hero_stat": {
+   "status": "hook",
+   "note": "hero max HP is the game's"
+  },
+  "restore_mp": {
+   "status": "hook",
+   "note": "MP word not wrapped"
+  },
+  "damage_to_mp": {
+   "status": "hook",
+   "note": "MP word not wrapped"
+  },
+  "hp_for_mp": {
+   "status": "hook",
+   "note": "MP word not wrapped"
+  },
+  "restore_ap": {
+   "status": "engine",
+   "note": "AP pips (som_energy)"
+  },
+  "ap_free": {
+   "status": "engine",
+   "note": "AP pips"
+  },
+  "disable_guard": {
+   "status": "engine",
+   "note": "guard is the proxy's"
+  },
+  "crit": {
+   "status": "engine",
+   "note": "the proxy's own critical: +100% as pending damage"
+  },
+  "crit_damage_tune": {
+   "status": "hook",
+   "note": "the game's critical damage"
+  },
+  "souls": {
+   "status": "primitive",
+   "note": "soul counter + spell bonus"
+  },
+  "charge_store": {
+   "status": "primitive",
+   "note": "charge counter + spell bonus"
+  },
+  "weapon_element": {
+   "status": "hook",
+   "note": "weapon element is the game's"
+  },
+  "weapon_buff": {
+   "status": "primitive",
+   "note": "per-weapon timed bonus"
+  },
+  "relay_on_hit": {
+   "status": "primitive",
+   "note": "explicit one-step relay of on-hit perks"
+  },
+  "modify_summon": {
+   "status": "engine",
+   "note": "familiar HP/duration"
+  },
+  "summon_target": {
+   "status": "engine",
+   "note": "familiar target = lock"
+  },
+  "spawn_familiar": {
+   "status": "engine",
+   "note": "summon_familiar"
+  },
+  "raise_undead": {
+   "status": "engine",
+   "note": "Necro re-skin"
+  },
+  "redirect_damage": {
+   "status": "primitive",
+   "note": "move hero damage to the familiar/ally"
+  },
+  "revive": {
+   "status": "hook",
+   "note": "revival is the game's"
+  },
+  "prevent_lethal": {
+   "status": "hook",
+   "note": "needs DAMAGE_PRE"
+  },
+  "overheal_shield": {
+   "status": "primitive",
+   "note": "heal overflow to the shield pool"
+  },
+  "delayed_heal": {
+   "status": "engine",
+   "note": "queued heal"
+  },
+  "ally_attack_speed": {
+   "status": "engine",
+   "note": "ally gauge refill"
+  },
+  "loot": {
+   "status": "hook",
+   "note": "drop roll"
+  },
+  "gold": {
+   "status": "primitive",
+   "note": "GP word write"
+  },
+  "use_item": {
+   "status": "hook",
+   "note": "inventory write"
+  },
+  "device_tune": {
+   "status": "engine",
+   "note": "Artificer devices"
+  },
+  "device_chain": {
+   "status": "engine",
+   "note": "Artificer devices"
+  },
+  "spawn_device": {
+   "status": "entity",
+   "note": "no turret entity"
+  },
+  "orbit": {
+   "status": "primitive",
+   "note": "orbit sprites + touch check"
+  },
+  "projectile_mod": {
+   "status": "hook",
+   "note": "game projectiles"
+  },
+  "bolt_mod": {
+   "status": "primitive",
+   "note": "proxy bolts (som_mage_bolt.h)"
+  },
+  "self_damage": {
+   "status": "engine",
+   "note": "hero HP write"
+  },
+  "self_stun": {
+   "status": "primitive",
+   "note": "hero input lock"
+  },
+  "damage_taken": {
+   "status": "engine",
+   "note": "HP write after a hit"
+  },
+  "energy_cost_tune": {
+   "status": "primitive",
+   "note": "needs owned time effects"
+  }
+ }
+}

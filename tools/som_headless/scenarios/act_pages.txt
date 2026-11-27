@@ -1,0 +1,36 @@
+# Every ACT page drawn like CLASSES (start: rabites.state): open the class
+# menu from the ring's ACT icon, then R1 through PERKS, GEAR, MUSIC and AI,
+# a screenshot of each.
+#! expect-log PARTY menu opened from the ring
+expect u16 00DC == 130
+cmd camera_off
+frames 60
+cmd class_2
+frames 30
+hold R3 2
+frames 60
+hold UP 2
+frames 40
+hold UP 2
+frames 40
+hold RIGHT 2
+frames 40
+hold B 2
+frames 20
+shot page_classes
+hold R 2
+frames 10
+shot page_perks
+hold R 2
+frames 10
+shot page_gear
+hold R 2
+frames 10
+shot page_music
+hold R 2
+frames 10
+shot page_ai
+hold R 2
+frames 10
+shot page_ai_combat
+frames 10

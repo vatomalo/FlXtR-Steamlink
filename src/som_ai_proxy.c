@@ -9744,6 +9744,76 @@ static void som_gear_menu_draw(uint8_t *pixels,unsigned width,unsigned height,si
         }
     }
 }
+/* Every ACT page drawn like the CLASSES page (player, 2026-11-27: "make all
+ * menu's similar to class menu inside ACT menu"): the Status screen's
+ * background, beveled silver windows and outlined text. A top window holds
+ * the page tabs and the page's own header (its line 0), the big window the
+ * rest; the cursor row is gold as in the class list. width is 512 here. */
+#define SOM_ACT_PAGE_LINES 20u
+static const char *const som_act_tabs[5]={"Classes","Perks","Gear","Music","AI"};
+static void som_act_page_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,unsigned tab,
+                              char lines[SOM_ACT_PAGE_LINES][33],const uint32_t *inks,unsigned n){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    if(!pixels||width<256u*sx||height<224u*sy)return;
+    const uint32_t white=som_overlay_color(pixel_format,255,255,255);
+    const uint32_t gold=som_overlay_color(pixel_format,255,223,143);
+    const uint32_t dim=som_overlay_color(pixel_format,150,162,158);
+    som_status_texture_draw(&classes_background,pixels,pitch,pixel_format,sx,sy);
+    som_disc_window(pixels,width,height,pitch,pixel_format,4,4,248,31);
+    som_disc_window(pixels,width,height,pitch,pixel_format,4,37,248,163);
+    int x=13;
+    for(unsigned t=0;t<5u;t++){
+        som_overlay_label(pixels,width,height,pitch,pixel_format,som_act_tabs[t],x,10,0,t==tab?gold:dim);
+        x+=(int)strlen(som_act_tabs[t])*6+18;
+    }
+    if(n)som_overlay_label(pixels,width,height,pitch,pixel_format,lines[0],13,22,0,white);
+    for(unsigned i=1;i<n&&i<SOM_ACT_PAGE_LINES;i++)
+        som_overlay_label(pixels,width,height,pitch,pixel_format,lines[i],13,44+(int)(i-1u)*9,0,inks[i]);
+    som_overlay_label(pixels,width,height,pitch,pixel_format,"L1/R1 Page    A Back",128,206,1,white);
+}
+/* The ink of a list row: gold under the cursor, else the page's own. */
+static uint32_t som_act_ink(const char *line,uint32_t ink){
+    return line[0]=='>'?som_overlay_color(pixel_format,255,223,143):ink;
+}
+static void som_act_pages_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch){
+    char lines[SOM_ACT_PAGE_LINES][33];
+    uint32_t inks[SOM_ACT_PAGE_LINES];
+    const uint32_t white=som_overlay_color(pixel_format,255,255,255);
+    const uint32_t gold=som_overlay_color(pixel_format,255,223,143);
+    const uint32_t note=som_overlay_color(pixel_format,206,236,255);
+    const uint32_t dim=som_overlay_color(pixel_format,146,158,154);
+    unsigned n=0,tab=0;
+    if(jukebox.open){
+        tab=3u;
+        for(;n<SOM_JUKE_LINES&&n<SOM_ACT_PAGE_LINES&&som_juke_line(&jukebox,n,lines[n]);n++)
+            inks[n]=n==1u?gold:n==SOM_JUKE_LINES-1u?note:som_act_ink(lines[n],white);
+    }else if(perk_menu.open){
+        tab=1u;
+        const SomPerkUnlockView v=som_perk_rt_view(som_live_wram(),perk_menu.who%SOM_PARTY_MEMBERS);
+        for(;n<SOM_PMENU_LINES&&n<SOM_ACT_PAGE_LINES&&som_pmenu_line(&perk_rt,&perk_menu,&v,n,lines[n]);n++){
+            uint32_t ink=white;
+            if(n==1u)ink=gold;
+            else if(n>=2u&&n<2u+SOM_PMENU_ROWS&&lines[n][0]){
+                if(lines[n][1]=='*')ink=som_overlay_color(pixel_format,140,255,150);
+                else if(lines[n][1]=='-'||lines[n][1]=='x')ink=dim;
+                ink=som_act_ink(lines[n],ink);
+            }else if(n>=2u+SOM_PMENU_ROWS)ink=note;
+            inks[n]=ink;
+        }
+    }else if(gear_menu.open){
+        tab=2u;
+        const unsigned who=gear_menu.who%SOM_PARTY_MEMBERS,cls=som_disc_member_class(&disciplines,who);
+        for(;n<SOM_GEAR_LINES&&n<SOM_ACT_PAGE_LINES&&
+             som_gear_line(&gear_menu,&styles,cls,cls<SOM_DISCIPLINE_COUNT?gear_throw[cls]:0u,
+                           cls==SOM_DISC_NINJUTSU?(int)shuriken_pouch[who]:-1,n,lines[n]);n++)
+            inks[n]=n==1u?gold:n>=2u+SOM_GEAR_ROWS?note:som_act_ink(lines[n],white);
+    }else if(act_ai){
+        tab=4u;
+        for(;n<SOM_ACT_PAGE_LINES&&som_gambit_line(&gambits,n,lines[n]);n++)
+            inks[n]=som_act_ink(lines[n],som_gambit_line_off(&gambits,n)?dim:white);
+    }else return;
+    som_act_page_draw(pixels,width,height,pitch,tab,lines,inks,n);
+}
 static uint64_t perf_video_us;
 static void som_frontend_video(const void *data,unsigned width,unsigned height,size_t pitch){
     const uint64_t t0=PERF_NOW();
@@ -10454,7 +10524,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         (void)som_lock_marker(&lock_x,&lock_y);
         som_lock_swap(0);(void)som_lock_marker(&lock2_x,&lock2_y);som_lock_swap(0);
     }
-    const int draw_classes=som_manual_disciplines&&!jukebox.open&&!perk_menu.open&&!gear_menu.open&&!act_ai&&
+    const int draw_classes=som_manual_disciplines&&
         (height==224u||height==448u)&&(width==256u||width==512u);
     const uint8_t *ring_owner_ram=som_live_wram();
     const uint8_t *cam_ram=NULL,*cam_vram=NULL;
@@ -10539,7 +10609,9 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         overlay_frame=grown;overlay_frame_size=size;
     }
     if(draw_classes){
-        if(class_guide_open)som_class_guide_draw(overlay_frame,width,height,row);
+        if(jukebox.open||perk_menu.open||gear_menu.open||act_ai)
+            som_act_pages_draw(overlay_frame,width,height,row);
+        else if(class_guide_open)som_class_guide_draw(overlay_frame,width,height,row);
         else{
             som_disc_draw(overlay_frame,width,height,row,pixel_format,&disciplines,&classes_background);
             som_class_icons(overlay_frame,width,height,row);

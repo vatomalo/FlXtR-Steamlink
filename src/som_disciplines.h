@@ -505,7 +505,7 @@ static inline void som_disc_draw(uint8_t *pixels,unsigned width,unsigned height,
     som_overlay_label(pixels,width,height,pitch,format,"B Equip",13,113,0,white);
     som_overlay_label(pixels,width,height,pitch,format,"X Party",13,127,0,white);
     som_overlay_label(pixels,width,height,pitch,format,d->grab?"Y Drop":"Y Reorder",13,141,0,white);
-    som_overlay_label(pixels,width,height,pitch,format,"L/R Music, AI",13,155,0,white);
+    som_overlay_label(pixels,width,height,pitch,format,"L1/R1 Pages",13,155,0,white);
     som_overlay_label(pixels,width,height,pitch,format,"Select Guide",13,169,0,white);
     som_overlay_label(pixels,width,height,pitch,format,"A Back",13,183,0,white);
     som_overlay_label(pixels,width,height,pitch,format,"Classes",115,21,0,gold);

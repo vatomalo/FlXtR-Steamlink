@@ -394,6 +394,25 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
     return 1;
 }
 
+/* Whether a page line is a setting that is off (drawn dim). */
+static inline int som_gambit_line_off(const SomGambits *g, unsigned line) {
+    const char *const *page_names = NULL; uint8_t *page_weights = NULL;
+    const int weights_page = g->page == SOM_PAGE_COMBAT || g->page == SOM_PAGE_QUEST;
+    const unsigned page_count = weights_page ? som_page_weights(g, &page_names, &page_weights) : 0u;
+    (void)page_names;
+    const int off = line >= 1u && (weights_page ?
+        (line - 1u < page_count && !page_weights[line - 1u]) :
+        ((line - 1u < SOM_GAMBIT_COUNT && !g->weight[line - 1u]) ||
+         (line - 1u == SOM_GAMBIT_MUSIC_ITEM &&
+          g->music_genre == SOM_MUSIC_GENRE_COUNT - 1u) ||
+         (line - 1u == SOM_GAMBIT_INFINITE_MP && !g->infinite_mp) ||
+         (line - 1u == SOM_GAMBIT_DEBUG_ITEM && !g->debug_messages) ||
+         (line - 1u == SOM_GAMBIT_P2_ITEM && !g->player2) ||
+         (line - 1u == SOM_GAMBIT_WHACK_ITEM && g->no_whack) ||
+         (line - 1u == SOM_GAMBIT_FIGHT_ITEM && !g->fight_level) ||
+         (line - 1u == SOM_GAMBIT_CRITIC_ITEM && !g->critic)));
+    return off;
+}
 static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned height,
                                    size_t pitch, int format, const SomGambits *g) {
     if (!g->open || !pixels) return;
@@ -415,17 +434,7 @@ static inline void som_gambit_draw(uint8_t *pixels, unsigned width, unsigned hei
     const uint32_t dim = som_overlay_color(format, 150, 160, 200);
     char text[33];
     for (unsigned line = 0; line < lines && som_gambit_line(g, line, text); line++) {
-        const int off = line >= 1u && (weights_page ?
-            (line - 1u < page_count && !page_weights[line - 1u]) :
-            ((line - 1u < SOM_GAMBIT_COUNT && !g->weight[line - 1u]) ||
-             (line - 1u == SOM_GAMBIT_MUSIC_ITEM &&
-              g->music_genre == SOM_MUSIC_GENRE_COUNT - 1u) ||
-             (line - 1u == SOM_GAMBIT_INFINITE_MP && !g->infinite_mp) ||
-             (line - 1u == SOM_GAMBIT_DEBUG_ITEM && !g->debug_messages) ||
-             (line - 1u == SOM_GAMBIT_P2_ITEM && !g->player2) ||
-             (line - 1u == SOM_GAMBIT_WHACK_ITEM && g->no_whack) ||
-             (line - 1u == SOM_GAMBIT_FIGHT_ITEM && !g->fight_level) ||
-             (line - 1u == SOM_GAMBIT_CRITIC_ITEM && !g->critic)));
+        const int off = som_gambit_line_off(g, line);
         for (unsigned i = 0; text[i]; i++) {
             unsigned char c = (unsigned char)text[i];
             if (c < 32u || c > 126u) continue;

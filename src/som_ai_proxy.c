@@ -9832,19 +9832,20 @@ static const uint8_t *som_saber_colours(const uint8_t *ram,unsigned who){
  * NULL without the patched core: armour and headgear are drawn on the hero's
  * own layer, hidden where scenery in front of the hero's sprite priority is
  * (player, 2026-11-26: "should be on the same layer as player sprites"). */
-static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,const uint8_t *ram,const uint8_t *oam,const uint8_t *vram,
-                               const uint8_t *depth,unsigned depth_pitch){
-    if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
+/* One hero's armour, headgear and robe on his composed picture img (palette
+ * indices, top-left at screen x0, y0): from his game sprites (OAM), or from
+ * art the proxy draws for him (Ukemi). */
+static void som_armour_hero(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,const uint8_t *ram,const uint8_t *oam,const uint8_t *vram,
+                            const uint8_t *depth,unsigned depth_pitch,unsigned who,
+                            uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],int x0,int y0){
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u,bpp=format==1?4u:2u;
-    for(unsigned who=0;who<3u;who++){
-        const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
-        if((look.head<0&&!look.torso&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
-        const SomOutfit *outfit=&som_outfits[look.torso<SOM_OUTFITS?look.torso:SOM_OUTFIT_NONE];
-        const unsigned layer=som_owner_sprite_depth(oam,who);
-        static uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER];
-        uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
-        int x0,y0,from=0;
-        if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
+    const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
+    const SomOutfit *outfit=&som_outfits[look.torso<SOM_OUTFITS?look.torso:SOM_OUTFIT_NONE];
+    const unsigned layer=som_owner_sprite_depth(oam,who);
+    static uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER];
+    uint8_t mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+    int from=0;
+    do{
         {   /* FLXTR_SOM_ARMOUR_DUMP=1: print the composed hero's palette indices once a second */
             static int dump=-1;
             if(dump<0){const char *e=getenv("FLXTR_SOM_ARMOUR_DUMP");dump=e&&!strcmp(e,"1");}
@@ -10051,6 +10052,18 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
                                  som_overlay_color(format,col[0],col[1],col[2]));
             }
         }
+        }while(0);
+}
+static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format,const uint8_t *ram,const uint8_t *oam,const uint8_t *vram,
+                               const uint8_t *depth,unsigned depth_pitch){
+    if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
+    for(unsigned who=0;who<3u;who++){
+        const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
+        if((look.head<0&&!look.torso&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
+        uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+        int x0,y0;
+        if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
+        som_armour_hero(pixels,width,height,pitch,format,ram,oam,vram,depth,depth_pitch,who,img,x0,y0);
     }
 }
 #undef SOM_IN_FRONT
@@ -10267,9 +10280,20 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                                          som_saber_colours(ram,who),has?&cover[0][0]:NULL,cx,cy,
                                          SOM_ARMOUR_COVER);
                 }
-            if(ukemi_draw.active)
-                som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
-                                  pixel_format);
+            if(ukemi_draw.active&&
+               som_npc_work_draw(&ukemi_draw,ram,frame_number,overlay_frame,width,height,pitch,
+                                 pixel_format)&&
+               oam_shown_valid&&backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=SOM_BUN_VRAM_SIZE){
+                /* the tumble is our art, not the game's sprite: dress it too
+                 * (player, 2026-11-27: "ukemi has no armor sprites") */
+                const unsigned who=ukemi_draw.slot<SOM_PARTY_MEMBERS?ukemi_draw.slot:0u;
+                uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+                int ux0,uy0;
+                if(som_npc_work_compose(&ukemi_draw,ram,frame_number,&img[0][0],SOM_ARMOUR_BOX,&ux0,&uy0))
+                    som_armour_hero(overlay_frame,width,height,pitch,pixel_format,ram,oam_shown,
+                        (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM),
+                        main_depth&&depth_pitch>=SOM_CAM_W?main_depth:NULL,depth_pitch,who,img,ux0,uy0);
+            }
             if(fuma.active&&frame_number>=fuma.start)
                 som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,
                                   pixel_format);

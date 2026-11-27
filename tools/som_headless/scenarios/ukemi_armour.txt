@@ -1,0 +1,16 @@
+# Ukemi keeps the armour (start: rabites.state): a Samurai (torso armour and
+# kabuto) evades with A; the tumble the proxy draws is dressed like his sprite.
+expect u16 00DC == 130
+frames 60
+cmd class_10
+frames 40
+monster 0 -150 150
+monster 1 -150 -150
+monster 2 150 150
+shot stand
+hold A 1
+frames 4
+shot ukemi_a
+frames 4
+shot ukemi_b
+frames 30

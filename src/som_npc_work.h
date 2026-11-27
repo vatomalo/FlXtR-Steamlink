@@ -301,6 +301,58 @@ static inline int som_npc_work_draw_at(const SomNpcWorkState *s,const uint8_t *w
     return drawn;
 }
 
+/* The pose as palette indices 1-15 (weapon colours 16-20 left out) in a
+ * box x box image whose top-left is screen (*x0, *y0), placed and mirrored
+ * exactly as som_npc_work_draw_at puts it at (fx, fy). For the armour pass:
+ * a hero the proxy draws itself (Ukemi) is dressed like his game sprite.
+ * 0 when nothing is drawn or it does not fit. */
+static inline int som_npc_work_compose_at(const SomNpcWorkState *s,unsigned long frame,int fx,int fy,
+                                          uint8_t *img,int box,int *x0,int *y0){
+    if(!s->active||!img||box<=0)return 0;
+    const uint8_t *p=som_npc_work_pose(s,frame-s->start);
+    const int dx=(int8_t)p[1],dy=(int8_t)p[2],w=p[3],h=p[4];
+    const uint8_t *px=p+5;
+    const int mirror=s->dir==3u;
+    const int scale=s->scale_pct>0&&s->scale_pct<100?s->scale_pct:100;
+    int l=1<<20,t=1<<20,r=-(1<<20),b=-(1<<20);
+    for(int pass=0;pass<2;pass++){
+        if(pass){
+            if(r<l||b<t||r-l+1>box||b-t+1>box)return 0;
+            memset(img,0,(size_t)box*(size_t)box);
+        }
+        const int qx0=scale<100?(dx*scale)/100-1:dx,qx1=scale<100?((dx+w)*scale+99)/100+1:dx+w;
+        const int qy0=scale<100?(dy*scale)/100-1:dy,qy1=scale<100?((dy+h)*scale+99)/100+1:dy+h;
+        for(int qy=qy0;qy<qy1;qy++)for(int qx=qx0;qx<qx1;qx++){
+            int sxp=qx-dx,syp=qy-dy;
+            if(scale<100){
+                const int ax=qx*100+50,ay=qy*100+50;
+                sxp=(ax>=0?ax/scale:-((-ax+scale-1)/scale))-dx;
+                syp=(ay>=0?ay/scale:-((-ay+scale-1)/scale))-dy;
+            }
+            if(sxp<0||syp<0||sxp>=w||syp>=h)continue;
+            const unsigned c=px[syp*w+sxp];
+            if(!c||c>15u)continue;
+            const int ox=fx+(mirror?-qx-1:qx),oy=fy+qy;
+            if(!pass){if(ox<l)l=ox;if(ox>r)r=ox;if(oy<t)t=oy;if(oy>b)b=oy;}
+            else img[(oy-t)*box+(ox-l)]=(uint8_t)c;
+        }
+    }
+    *x0=l;*y0=t;
+    return 1;
+}
+static inline int som_npc_work_compose(const SomNpcWorkState *s,const uint8_t *wram,unsigned long frame,
+                                       uint8_t *img,int box,int *x0,int *y0){
+    if(!s->active||!wram)return 0;
+    const unsigned o=SOM_NPC_OBJECT(s->slot);
+    const unsigned cam=(wram[o+0x0Bu]&0x80u)?0xACu:0xA8u;
+    const int fx=s->fixed?(int16_t)((unsigned)s->wx-som_npc_u16(wram,cam)):
+                          (int16_t)(som_npc_u16(wram,o+0x02u)-som_npc_u16(wram,cam));
+    const int fy=s->fixed?(int16_t)((unsigned)s->wy-som_npc_u16(wram,cam+2u))-s->lift:
+                          (int16_t)(som_npc_u16(wram,o+0x04u)-som_npc_u16(wram,cam+2u))-
+                          wram[o+0x45u]-s->lift;
+    return som_npc_work_compose_at(s,frame,fx,fy,img,box,x0,y0);
+}
+
 /* Draws the worker on the frame copy (base screen 256x224, doubled when the
  * frame is). The foot point is world minus the camera, as $C0:E443 computes
  * +0x20/+0x22 (+0x0B bit 7 selects the second camera), lifted by the jump

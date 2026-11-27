@@ -165,8 +165,16 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
         for(int y=top;matte&&y>=0&&y<top+6&&y<32;y++)for(int x=0;x<18;x++)
             if(matte[y*18+x]){if(x<l)l=x;if(x>r)r=x;}
         const int cx=r>=l?(l+r+1)/2:9;
-        int htop=-1;
-        for(int y=0;y<SOM_HEAD_SIZE&&htop<0;y++)for(int x=0;x<SOM_HEAD_SIZE;x++)if(som_head_role(head,1u,x,y)){htop=y;break;}
+        /* by the eyes: the head's eye row on the preview's (row 13, measured
+         * on the naming sprite 2026-11-27), like in the field */
+        int htop=-1,eye=-1,chin=-1;
+        for(int y=0;y<SOM_HEAD_SIZE;y++)for(int x=0;x<SOM_HEAD_SIZE;x++){
+            const uint8_t q=som_head_role(head,1u,x,y);
+            if(q&&htop<0)htop=y;
+            if(q==15u)eye=y;
+            if(q>=5u&&q<=7u)chin=y;
+        }
+        if(eye<0)eye=chin>=0?chin-2:SOM_HEAD_SIZE-4;
         static const uint8_t skins[3][3][3]={
             {{139,82,57},{213,123,82},{246,189,123}},
             {{222,131,90},{222,131,90},{255,222,172}},
@@ -188,7 +196,7 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
             else if(q==15u)c=white;
             else if(q-16u<head[10])c=head+11u+3u*(q-16u);
             else c=outline;
-            const int x=cx-SOM_HEAD_SIZE/2+u,y=top-htop+v;
+            const int x=cx-SOM_HEAD_SIZE/2+u,y=13-eye+v;
             if(x<-4||x>=22||y<-4||y>=32)continue;
             som_overlay_fill(pixels,pitch,format,(unsigned)(38+2*x)*sx,(unsigned)(67+2*y)*sy,2u*sx,2u*sy,
                              som_overlay_color(format,c[0],c[1],c[2]));

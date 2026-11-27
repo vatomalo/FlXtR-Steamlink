@@ -93,17 +93,29 @@ static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigne
     const int side=facing==0x02u||facing==0x82u;
     const unsigned view=side?2u:facing==0x00u?0u:1u;
     const int mirror=facing==0x82u;
-    /* the borrowed head's own top row and chin (its last skin row) */
-    int htop=-1,chin=-1;
+    /* Placed by the eyes, not the hair (player, 2026-11-27: "they should be
+     * at headband level"): the borrowed head's eye row (its facing-down view,
+     * kept for every facing) goes on the hero's own eye row, just under the
+     * headband. The hero's is measured whenever he faces the player
+     * (index 15, the eye whites) and remembered per hero. */
+    static int eye_off[3]={13,13,13};
+    if(view==1u){
+        int last=-1;
+        for(int y=top;y<top+20&&y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]==15u)last=y;
+        if(last>top+6)eye_off[who]=last-top;
+    }
+    int htop=-1,chin=-1,eye=-1;
     for(int y=0;y<SOM_HEAD_SIZE;y++)for(int x=0;x<SOM_HEAD_SIZE;x++){
-        const uint8_t q=som_head_role(e,view,x,y);
+        const uint8_t q=som_head_role(e,view,x,y),d=som_head_role(e,1u,x,y);
         if(q&&htop<0)htop=y;
-        if(q>=5u&&q<=7u)chin=y;
+        if(d>=5u&&d<=7u)chin=y;
+        if(d==15u)eye=y;
     }
     if(htop<0)return 0;
-    if(chin<0)chin=SOM_HEAD_SIZE-4;                    /* from behind: no face */
-    /* screen square of the head: its top on the hero's top row, centred */
-    const int hx=x0+(l+r+1)/2-SOM_HEAD_SIZE/2,hy=y0+top-htop;
+    if(chin<0)chin=SOM_HEAD_SIZE-2;
+    if(eye<0)eye=chin-2;
+    const int hx=x0+(l+r+1)/2-SOM_HEAD_SIZE/2,hy=y0+top+eye_off[who]-eye;
+    const int clear_from=y0+top,clear_to=hy+eye;      /* the hero's own hair above the new eyes goes */
     unsigned n=0;
     for(unsigned j=0;j<128u;j++){
         const uint8_t *o=oam+4u*j;
@@ -112,7 +124,7 @@ static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigne
         if(hb&2u)continue;
         int px=o[0]+256*(int)(hb&1u);if(px>=256)px-=512;
         const int py=o[1];
-        if(px+16<=hx||px>=hx+SOM_HEAD_SIZE||py+16<=hy||py>=hy+SOM_HEAD_SIZE)continue;
+        if(py+16<=clear_from||py>=hy+SOM_HEAD_SIZE)continue;
         const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8),hflip=(o[3]>>6)&1u,vflip=(o[3]>>7)&1u;
         for(unsigned q=0;q<4u;q++){
             const unsigned tile=(base&256u)|((base+(q&1u)+16u*(q>>1))&255u);   /* as the PPU wraps */
@@ -137,11 +149,12 @@ static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigne
                 const int sx=px+(int)(hflip?15u-ux:ux),sy=py+(int)(vflip?15u-uy:uy);
                 uint8_t c=native[ty*8u+tx];
                 const int u=sx-hx,v=sy-hy;
-                if(u>=0&&v>=0&&u<SOM_HEAD_SIZE&&v<SOM_HEAD_SIZE){
-                    const uint8_t role=som_head_role(e,view,mirror?SOM_HEAD_SIZE-1-u:u,v);
-                    if(role){c=som_head_index(e,who,role,pal);touched=1;}
-                    else if(v<=chin&&(c==1u||(c>=2u&&c<=4u)||(who==0u&&c>=8u&&c<=10u))){c=0;touched=1;}
-                }
+                const uint8_t role=u>=0&&v>=0&&u<SOM_HEAD_SIZE&&v<SOM_HEAD_SIZE?
+                    som_head_role(e,view,mirror?SOM_HEAD_SIZE-1-u:u,v):0u;
+                const int hair=c==1u||(c>=2u&&c<=4u)||(who==0u&&c>=8u&&c<=10u);
+                if(role){c=som_head_index(e,who,role,pal);touched=1;}
+                else if(hair&&((sy>=clear_from&&sy<clear_to)||
+                               (u>=0&&u<SOM_HEAD_SIZE&&v>=0&&v<=chin&&c!=1u))){c=0;touched=1;}
                 dst[ty*8u+tx]=c;
             }
             if(touched){out->has[tile]=1;n++;}

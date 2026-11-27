@@ -161,6 +161,9 @@ then opens Android's installer. Downloads can be cancelled; a failed download
 keeps the installed app. Android 8+ may first require “Allow from this source”.
 Android always asks before installation. Downloads only begin after tapping
 Download; there is no periodic background service or silent installation.
+While FlXtR downloads, verifies, or runs its root-assisted installer, it keeps
+the screen and CPU awake. The wake hold ends on cancellation or failure, or after
+the restart wait. Android controls the screen once its own installer opens.
 
 The channel is independent of desktop releases:
 `https://github.com/vatomalo/FlXtR-Steamlink/releases/download/android-latest/android.json`.

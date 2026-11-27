@@ -11,7 +11,9 @@ import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.provider.Settings;
+import android.view.WindowManager;
 import androidx.core.content.FileProvider;
 import org.json.JSONObject;
 import java.io.*;
@@ -31,7 +33,27 @@ final class AppUpdates {
     private static java.lang.ref.WeakReference<Activity> foreground=new java.lang.ref.WeakReference<>(null);
     private final Activity activity;
     private final SharedPreferences prefs;
+    private final java.util.concurrent.atomic.AtomicInteger awakeCount=new java.util.concurrent.atomic.AtomicInteger();
     AppUpdates(Activity activity){this.activity=activity;prefs=activity.getSharedPreferences("app-updates",0);}
+    /** Keep the in-app update alive even if another window briefly covers FlXtR. */
+    private final class Awake implements AutoCloseable {
+        private final PowerManager.WakeLock cpu;
+        private boolean closed;
+        Awake(){
+            PowerManager power=(PowerManager)activity.getSystemService(Activity.POWER_SERVICE);
+            cpu=power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"FlXtR:app-update");
+            cpu.acquire(15*60*1000L);
+            awakeCount.incrementAndGet();
+            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+        @Override public void close(){
+            if(closed)return;
+            closed=true;
+            if(cpu.isHeld())cpu.release();
+            awakeCount.decrementAndGet();
+            activity.runOnUiThread(()->{if(awakeCount.get()==0)activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);});
+        }
+    }
     static void installStartup(Application app){app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks(){
         private int started;private boolean startup=true,configuration;
         public void onActivityStarted(Activity a){if(started++==0&&!configuration)startup=true;configuration=false;}
@@ -66,13 +88,14 @@ final class AppUpdates {
         StreamResolver.Request request=new StreamResolver.Request(600);
         AlertDialog dialog=new AlertDialog.Builder(activity,R.style.FlxtrConsoleDialog).setTitle("Updating FlXtR").setMessage("Downloading and verifying the signed update. FlXtR will restart after installation. If root is unavailable, Android will ask you to tap Install.").setNegativeButton("Cancel",(d,i)->request.cancel()).create();
         dialog.setOnCancelListener(d->request.cancel());dialog.show();Gamepad.dialog(dialog);
+        Awake awake=new Awake();
         worker.execute(()->{File partial=null;try{
             File folder=directory();partial=new File(folder,"update.part");File apk=new File(folder,"update.apk");
             fetch(release,partial,request);verify(partial,release);
             if(apk.exists()&&!apk.delete())throw new IOException("Cannot replace old update");if(!partial.renameTo(apk))throw new IOException("Cannot save update");
             try(FileOutputStream out=new FileOutputStream(new File(folder,"release.json"))){out.write(new JSONObject().put("package","org.flxtr.android").put("versionCode",release.code).put("versionName",release.name).put("minSdk",release.minSdk).put("size",release.size).put("url",release.url).put("sha256",release.sha256).toString().getBytes(StandardCharsets.UTF_8));}
             request.check();prefs.edit().putBoolean("ready",true).apply();ui(()->{if(foreground.get()==activity)install();});
-        }catch(Exception failure){if(!request.cancelled)message("The update couldn't be downloaded or verified. Please try again. Your installed version is kept.");}finally{if(partial!=null)partial.delete();busy.set(false);ui(dialog::dismiss);}});
+        }catch(Exception failure){if(!request.cancelled)message("The update couldn't be downloaded or verified. Please try again. Your installed version is kept.");}finally{if(partial!=null)partial.delete();busy.set(false);ui(dialog::dismiss);awake.close();}});
     }
     private void fetch(AndroidRelease release,File destination,StreamResolver.Request request)throws Exception{
         String address=release.url;
@@ -94,8 +117,37 @@ final class AppUpdates {
     private static boolean sameSignatures(Signature[] a,Signature[] b){return a!=null&&b!=null&&a.length>0&&new HashSet<>(Arrays.asList(a)).equals(new HashSet<>(Arrays.asList(b)));}
     void install(){
         if(!installing.compareAndSet(false,true))return;
+        Awake awake=new Awake();
         AlertDialog progress=new AlertDialog.Builder(activity,R.style.FlxtrConsoleDialog).setTitle("Installing FlXtR").setMessage("Installing the verified update. FlXtR will restart automatically.").setCancelable(false).show();
-        worker.execute(()->{try{File folder=directory(),apk=new File(folder,"update.apk");AndroidRelease release=new AndroidRelease(new JSONObject(new String(java.nio.file.Files.readAllBytes(new File(folder,"release.json").toPath()),StandardCharsets.UTF_8)));verify(apk,release);prefs.edit().putBoolean("ready",false).apply();boolean installed=false;try{installed=RootInstaller.install(apk);}catch(Exception denied){/* Keep Android's installer available without root. */}if(!installed)ui(()->{progress.dismiss();androidInstall();});else ui(()->activity.getWindow().getDecorView().postDelayed(()->{if(alive()){progress.dismiss();message("The update did not finish. Your installed version is kept. Check for updates to try again.");}},30000));}catch(Exception failure){prefs.edit().putBoolean("ready",false).apply();ui(progress::dismiss);message("Couldn't install this update. Your installed version is kept. Check for updates to try again.");}finally{installing.set(false);}});
+        worker.execute(()->{
+            boolean awaitingRestart=false;
+            try{
+                File folder=directory(),apk=new File(folder,"update.apk");
+                AndroidRelease release=new AndroidRelease(new JSONObject(new String(java.nio.file.Files.readAllBytes(new File(folder,"release.json").toPath()),StandardCharsets.UTF_8)));
+                verify(apk,release);
+                prefs.edit().putBoolean("ready",false).apply();
+                boolean installed=false;
+                try{installed=RootInstaller.install(apk);}catch(Exception denied){/* Keep Android's installer available without root. */}
+                if(!installed)ui(()->{progress.dismiss();androidInstall();});
+                else{
+                    awaitingRestart=true;
+                    activity.runOnUiThread(()->activity.getWindow().getDecorView().postDelayed(()->{
+                        awake.close();
+                        if(alive()){
+                            progress.dismiss();
+                            message("The update did not finish. Your installed version is kept. Check for updates to try again.");
+                        }
+                    },30000));
+                }
+            }catch(Exception failure){
+                prefs.edit().putBoolean("ready",false).apply();
+                ui(progress::dismiss);
+                message("Couldn't install this update. Your installed version is kept. Check for updates to try again.");
+            }finally{
+                installing.set(false);
+                if(!awaitingRestart)awake.close();
+            }
+        });
     }
     private void androidInstall(){
         try{File folder=directory(),apk=new File(folder,"update.apk");AndroidRelease release=new AndroidRelease(new JSONObject(new String(java.nio.file.Files.readAllBytes(new File(folder,"release.json").toPath()),StandardCharsets.UTF_8)));verify(apk,release);

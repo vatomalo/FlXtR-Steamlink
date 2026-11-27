@@ -9559,13 +9559,29 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u,bpp=format==1?4u:2u;
     for(unsigned who=0;who<3u;who++){
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
-        if((look.head<0&&!look.torso)||ram[0xE000u+0x200u*who]!=1u)continue;
+        if((look.head<0&&!look.torso&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
         const SomOutfit *outfit=&som_outfits[look.torso<SOM_OUTFITS?look.torso:SOM_OUTFIT_NONE];
         const unsigned layer=som_owner_sprite_depth(oam,who);
         static uint8_t cover[SOM_ARMOUR_COVER][SOM_ARMOUR_COVER];
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],mask[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0,from=0;
         if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
+        {   /* FLXTR_SOM_ARMOUR_DUMP=1: print the composed hero's palette indices once a second */
+            static int dump=-1;
+            if(dump<0){const char *e=getenv("FLXTR_SOM_ARMOUR_DUMP");dump=e&&!strcmp(e,"1");}
+            if(dump&&frame_number%60u==0u){
+                fprintf(stderr,"[som-ai] ARMOUR DUMP hero %u facing %02X pose %04X\n",who,
+                        ram[0xE000u+0x200u*who+0x10u],som_word(ram+0xE000u+0x200u*who+0x26u));
+                for(int yy=0;yy<SOM_ARMOUR_BOX;yy++){
+                    char line[SOM_ARMOUR_BOX+1];int any=0;
+                    for(int xx=0;xx<SOM_ARMOUR_BOX;xx++){
+                        const unsigned v=img[yy][xx];line[xx]=v?"0123456789ABCDEF"[v]:'.';any|=v!=0;
+                    }
+                    line[SOM_ARMOUR_BOX]=0;
+                    if(any)fprintf(stderr,"[som-ai] ARMOUR %2d %s\n",yy,line);
+                }
+            }
+        }
         const int cx=x0-8,cy=y0-8;
         const unsigned covered=som_armour_cover(oam,vram,who,cx,cy,cover);
 #define SOM_IN_FRONT(x,y) ((depth&&depth[(size_t)(y)*depth_pitch+(size_t)(x)]>layer)||\
@@ -9601,6 +9617,72 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
                 som_armour_colour(outfit,SOM_SLOT_TORSO,who,c,y-from);
             som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
                              som_overlay_color(format,col[0],col[1],col[2]));
+        }
+        /* The boy's bandana repainted, and the sash: palette work on his own
+         * pixels, so every pose the game draws carries them. */
+        if(who==0u&&look.bald&&known[1]){
+            /* the shaved head: skin inside the skull, the hair outside it cut away
+             * (filled with the ground beside the sprite, like the camera's text rub) */
+            static uint8_t bald[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+            som_bald_mask(img,bald);
+            for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
+                const unsigned k=bald[y][x];
+                if(!k)continue;
+                const int ox=x0+x,oy=y0+y;
+                if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+                const unsigned c=img[y][x];
+                uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
+                if(!known[c]||actual!=screen[c]||SOM_IN_FRONT(ox,oy))continue;
+                uint32_t put;
+                if(k==1u||k==4u||k==5u){
+                    const unsigned si=k==1u?7u:k==4u?6u:5u;   /* the face's own light, mid, dark */
+                    if(!known[si])continue;
+                    put=screen[si];
+                }
+                else if(k==2u)put=screen[1];
+                else{                                       /* cut: the nearest ground in the row */
+                    int gx=-1;
+                    for(int d=1;d<SOM_ARMOUR_BOX&&gx<0;d++){
+                        if(x-d>=0&&!img[y][x-d]&&x0+x-d>=0){gx=x0+x-d;break;}
+                        if(x+d<SOM_ARMOUR_BOX&&!img[y][x+d]&&x0+x+d<(int)(width/sx)){gx=x0+x+d;break;}
+                    }
+                    if(gx<0)continue;
+                    memcpy(&put,pixels+(size_t)oy*sy*pitch+(size_t)gx*sx*bpp,bpp);
+                }
+                for(unsigned yy=0;yy<sy;yy++)for(unsigned xx=0;xx<sx;xx++)
+                    memcpy(pixels+((size_t)oy*sy+yy)*pitch+((size_t)ox*sx+xx)*bpp,&put,bpp);
+            }
+        }
+        if(who==0u&&(look.band||look.sash)){
+            int top=-1;
+            for(int y=0;y<SOM_ARMOUR_BOX&&top<0;y++)
+                for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){top=y;break;}
+            int ta=0,tz=0;
+            const int torso=look.sash&&som_armour_torso_rows(img,who,&ta,&tz);
+            const unsigned facing=ram[0xE000u+0x200u*who+0x10u];
+            static const uint8_t sash_cloth[3]={238,156,40},sash_edge[3]={170,92,20};   /* saffron kasaya, darker fold */
+            for(int y=top<0?SOM_ARMOUR_BOX:top;y<SOM_ARMOUR_BOX;y++){
+                int l=SOM_ARMOUR_BOX,r=-1;
+                if(torso&&y>=ta&&y<tz)
+                    for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]>1u){if(x<l)l=x;if(x>r)r=x;}
+                for(int x=0;x<SOM_ARMOUR_BOX;x++){
+                    const unsigned c=img[y][x];
+                    if(c<2u)continue;
+                    const uint8_t *col=NULL;
+                    if(y<top+SOM_BAND_ROWS)col=som_band_colour(look.band,c);
+                    else if(torso&&y>=ta&&y<tz&&c!=15u&&(c<5u||c>7u)){
+                        const int k=som_sash_at(x,y-ta,l,r,facing);
+                        col=k==1?sash_cloth:k==2?sash_edge:NULL;
+                    }
+                    if(!col)continue;
+                    const int ox=x0+x,oy=y0+y;
+                    if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+                    uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
+                    if(!known[c]||actual!=screen[c]||SOM_IN_FRONT(ox,oy))continue;
+                    som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
+                                     som_overlay_color(format,col[0],col[1],col[2]));
+                }
+            }
         }
         /* The class's headgear, on top of the head this frame. */
         int kx,ky;

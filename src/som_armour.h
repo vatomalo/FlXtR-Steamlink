@@ -308,20 +308,85 @@ static inline int som_head_glint(int u,unsigned long frame){
 }
 /* The class's look: headgear (or -1) and torso outfit.
  * Classes 0..15 (som_disciplines.h). */
-typedef struct { int head; uint8_t torso; } SomClassLook; /* torso = SOM_OUTFIT_* */
+/* band: the boy's own bandana repainted (palette work, it follows every
+ * frame the game draws); sash: a diagonal band across the torso, mirrored
+ * with the facing (player, 2026-11-27: "hagane would serve a lot better as a
+ * palette hack ... monk would look really cool with a asymetric sash"). */
+enum { SOM_BAND_NONE, SOM_BAND_HAGANE, SOM_BAND_HACHIMAKI };
+typedef struct { int head; uint8_t torso,band,sash,bald; } SomClassLook; /* torso = SOM_OUTFIT_* */
 static inline SomClassLook som_class_look(unsigned cls){
-    SomClassLook l={-1,0};
+    SomClassLook l={-1,0,0,0,0};
     switch(cls){
     case 10: l.head=SOM_HEAD_KABUTO;l.torso=SOM_OUTFIT_SAMURAI;break;   /* Bushido */
     case 8:  l.head=SOM_HEAD_WEAPONMASTER;l.torso=SOM_OUTFIT_WEAPONMASTER;break; /* Weapon Flow */
-    case 2:  l.head=SOM_HEAD_NINJA;break;              /* Ninjutsu */
+    case 2:  l.band=SOM_BAND_HAGANE;break;             /* Ninjutsu: the bandana, steel and navy */
     case 12: l.head=SOM_HEAD_HUNTER;break;             /* Vampire Hunting */
     case 3:  l.head=SOM_HEAD_MAGE;break;               /* Magic */
     case 11: l.head=SOM_HEAD_ARCHER;break;             /* Archery */
-    case 1:  l.head=SOM_HEAD_MONK;break;               /* Martial Arts */
+    case 1:  l.band=SOM_BAND_HACHIMAKI;l.sash=1;l.bald=1;break;  /* Martial Arts: shaved head, hachimaki, kasaya */
     case 13: l.head=SOM_HEAD_NECRO;break;              /* Necromancy */
     default: break;
     }
     return l;
+}
+/* The boy's bandana (measured, composed sprite facing down 2026-11-27):
+ * palette indices 8, 9, 10 in the head rows (hair 2-4, eyes 15, skin 5-7);
+ * the old note "8/9 are also the face" was the bandana. */
+#define SOM_BAND_ROWS 13
+static inline const uint8_t *som_band_colour(unsigned band,unsigned index){
+    static const uint8_t hagane[3][3]={{214,222,232},{150,158,172},{36,40,66}};   /* steel, steel, navy */
+    static const uint8_t hachi[3][3]={{252,252,248},{220,220,214},{170,168,166}};
+    if(index<8u||index>10u||band==SOM_BAND_NONE)return NULL;
+    return band==SOM_BAND_HAGANE?hagane[index-8u]:hachi[index-8u];
+}
+/* The sash: torso pixel (x, row v from the neck) of a hero facing `facing`
+ * whose torso spans columns l..r. 0 none, 1 cloth, 2 its fold (player: "like a
+ * Shaolin Monks robe": the kasaya over one shoulder). */
+static inline int som_sash_at(int x,int v,int l,int r,unsigned facing){
+    if(r<=l)return 0;
+    const int mirror=facing==0x82u||facing==0x00u;           /* left, back: the other shoulder */
+    const int u=mirror?r-x:x-l;
+    const int d=u-(v*(r-l))/8+1;                               /* shoulder to the opposite hip */
+    return d>=0&&d<=4?(d==4?2:1):0;     /* a wide kasaya drape, its lower edge a fold */
+}
+/* A shaved head (player, 2026-11-27: "monk should not have hair! thats what
+ * the mask was for"): the boy's hair (indices 2-4) inside a skull ellipse
+ * takes skin shades, the hair outside it is cut away. The skull sits on the
+ * head: centred on the head's columns in its lower rows, its top 2 rows below
+ * the hair's top, 7 rows tall from there to the brow. Returns per pixel of
+ * the composed image: 0 keep, 1 light skin, 4 mid, 5 dark, 2 skull outline,
+ * 3 cut away. */
+#define SOM_BALD_RX 6
+#define SOM_BALD_RY 6
+static inline void som_bald_mask(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],
+                                 uint8_t out[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX]){
+    memset(out,0,SOM_ARMOUR_BOX*SOM_ARMOUR_BOX);
+    int top=-1;
+    for(int y=0;y<SOM_ARMOUR_BOX&&top<0;y++)
+        for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){top=y;break;}
+    if(top<0)return;
+    /* centre: the columns of the head's lower rows (face, ears or the back of
+     * the head), where the hair no longer flares */
+    int l=SOM_ARMOUR_BOX,r=-1;
+    for(int y=top+9;y<top+13&&y<SOM_ARMOUR_BOX;y++)
+        for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]>1u){if(x<l)l=x;if(x>r)r=x;}
+    if(r<l)return;
+    const int cx2=l+r,cy=top+2+SOM_BALD_RY;          /* centre x doubled */
+    for(int y=top;y<top+13&&y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
+        const unsigned c=img[y][x];
+        if(c<1u||c>4u)continue;                        /* only hair and its outline */
+        const int dx2=2*x+1-cx2,dy=y-cy;
+        const int in=dx2*dx2*SOM_BALD_RY*SOM_BALD_RY+4*dy*dy*SOM_BALD_RX*SOM_BALD_RX<=
+                     4*SOM_BALD_RX*SOM_BALD_RX*SOM_BALD_RY*SOM_BALD_RY;
+        const int dx2o=dx2>0?dx2+2:dx2-2,dyo=dy>0?dy+1:dy-1;
+        const int edge=in&&!(dx2o*dx2o*SOM_BALD_RY*SOM_BALD_RY+4*dyo*dyo*SOM_BALD_RX*SOM_BALD_RX<=
+                             4*SOM_BALD_RX*SOM_BALD_RX*SOM_BALD_RY*SOM_BALD_RY);
+        if(!in){out[y][x]=3;continue;}
+        if(edge){out[y][x]=2;continue;}
+        /* a smooth scalp: light in the middle, mid toward the rim, dark low at the back */
+        const long e=(long)dx2*dx2*SOM_BALD_RY*SOM_BALD_RY+4L*dy*dy*SOM_BALD_RX*SOM_BALD_RX;
+        const long full=4L*SOM_BALD_RX*SOM_BALD_RX*SOM_BALD_RY*SOM_BALD_RY;
+        out[y][x]=(uint8_t)(e*10<full*4?1:e*10<full*8?4:5);
+    }
 }
 #endif

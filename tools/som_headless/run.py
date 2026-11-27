@@ -168,6 +168,8 @@ def main(argv=None):
         run = ("cd %s && " % shlex.quote(run_dir)) + \
               ("FLXTR_AI_BASE_CORE=%s " % shlex.quote(base) if base else "") + \
               ("FLXTR_SOM_NO_DEPTH=1 " if os.environ.get("SOM_HEADLESS_NO_DEPTH") == "1" else "") + \
+              "".join("%s " % shlex.quote(kv) for kv in os.environ.get("SOM_HEADLESS_ENV", "").split()
+                      if re.match(r"^FLXTR_[A-Z0-9_]+=[A-Za-z0-9_.-]*$", kv)) + \
               ("FLXTR_SOM_AI_DIRECT=${SOM_HEADLESS_DIRECT:-1} FLXTR_SOM_AUTO_STATE=0 FLXTR_SOM_TEST_COMMANDS=1 ./som-harness "
                "./som_ai_proxy_test.so %s %s %s %s") % (
                    shlex.quote(rom), shlex.quote(start),

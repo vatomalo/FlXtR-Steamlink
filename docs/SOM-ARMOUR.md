@@ -62,6 +62,20 @@ a red band, Mage pointed hat, Archer feathered cap, Monk white hachimaki with ta
 back, Necromancer hood with bone trim. Colours per piece in `som_head_rgb` (letters
 `KAaDGWRr`). The other classes have none yet. Real-ROM shots, four facings each.
 
+## Palette and mask looks (2026-11-27)
+
+The player prefers palette and mask work over drawn sprites ("hagane would serve a lot better
+as a palette hack"; small drawn parts such as pauldrons or a belt stay possible). The boy's
+bandana is palette indices 8, 9 and 10 in the head rows (dump `FLXTR_SOM_ARMOUR_DUMP=1`; the
+older note "8/9 are also the face" was the bandana; eyes 15, skin 5-7, hair 2-4).
+
+- **Ninja:** the bandana repainted as a hagane (steel plate, navy cloth).
+- **Monk:** shaved head (`som_bald_mask`: the hair inside a skull ellipse takes the face's own
+  skin shades with an outline, the hair outside is cut and filled with the ground beside the
+  sprite), the bandana as a white hachimaki, and a saffron kasaya drape across the torso from
+  one shoulder to the opposite hip, mirrored by facing (`som_sash_at`).
+- Boy only so far (the girl and the sprite use those indices for other things).
+
 ## Cost and tests
 
 Compose plus mask: about 5.6 µs per armoured hero per frame on x86

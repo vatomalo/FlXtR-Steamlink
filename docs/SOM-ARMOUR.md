@@ -84,3 +84,22 @@ class is Samurai. Not measured on the Steam Link.
 
 Real-ROM check: `tools/som_headless/run.py` with `cmd class_10` on a field state,
 then shots. The colour pass draws before the camera scale, so zoom follows.
+
+## The Monk, redrawn (2026-11-27)
+
+The ellipse recolour of the hair "is not looking good" (player), so the Monk's head is drawn
+art (`som_monk_front/side/back` in `src/som_armour.h`): a shaved head in the face's own
+skin shades with a scalp shine, a white hachimaki with a red mark and knot tails that
+flutter. The art is picked from the sprite itself (two eyes front, one eye side and the
+side it looks to, none from behind; the facing byte lags while he turns) and anchored on
+the eyes, or on the bandana from behind. Hair the art does not cover is cut away and
+filled with the ground beside him (may smear next to another sprite). A skin shade not
+visible this frame borrows its neighbour. The robe: shirt indices 8-10 saffron, a maroon
+kasaya between gold hems over one shoulder (mirrored with facing), belt 11-12 dark cloth,
+trousers saffron.
+
+Look checks without the Steam Link: build the patched core for x86 (patches/snes9x2005-*),
+start from a `.srm`, `FLXTR_SOM_LOOK_CROP=1` (via `SOM_HEADLESS_ENV`) saves the painted
+hero every 10 frames to `/tmp/flxtr-look-<who>-<frame>.ppm` in the run folder;
+`SOM_HEADLESS_CAMERA_OFF=1` turns the camera director off; harness `hero K dx dy` moves a
+party member next to the boy. ARM save states do not load on a 64-bit core.

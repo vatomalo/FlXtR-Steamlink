@@ -508,6 +508,12 @@ int main(int argc,char **argv){
                     fprintf(stderr,"[harness] oam %u x %u y %u tile %03x attr %02x large %u\n",
                             i,e[0]|((hb&1u)<<8),e[1],e[2]|((e[3]&1u)<<8),e[3],hb>>1);
             }
+        }else if(sscanf(line,"hero %lu %63s %199s",&k,a,b)==3&&k>=1u&&k<3u){
+            /* hero K dx dy: put party member K at the boy's position + (dx, dy) */
+            uint8_t *o=ram+0xE000u+0x200u*k;
+            const int x=(int)u16(ram+0xE002)+atoi(a),y=(int)u16(ram+0xE004)+atoi(b);
+            o[2]=(uint8_t)x;o[3]=(uint8_t)(x>>8);o[4]=(uint8_t)y;o[5]=(uint8_t)(y>>8);
+            fprintf(stderr,"[harness] hero %lu placed at %d,%d\n",k,x,y);
         }else if(sscanf(line,"monster %lu %63s %199s",&k,a,b)==3&&k<3u){
             uint8_t *o=ram+0xE600u+0x200u*k;
             const int x=(int)u16(ram+0xE002)+atoi(a),y=(int)u16(ram+0xE004)+atoi(b);

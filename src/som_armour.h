@@ -323,7 +323,7 @@ static inline SomClassLook som_class_look(unsigned cls){
     case 12: l.head=SOM_HEAD_HUNTER;break;             /* Vampire Hunting */
     case 3:  l.head=SOM_HEAD_MAGE;break;               /* Magic */
     case 11: l.head=SOM_HEAD_ARCHER;break;             /* Archery */
-    case 1:  l.band=SOM_BAND_HACHIMAKI;l.sash=1;l.bald=1;break;  /* Martial Arts: shaved head, hachimaki, kasaya */
+    case 1:  l.sash=1;l.bald=1;break;   /* Martial Arts: shaved head with hachimaki, saffron robe, kasaya */
     case 13: l.head=SOM_HEAD_NECRO;break;              /* Necromancy */
     default: break;
     }
@@ -347,46 +347,115 @@ static inline int som_sash_at(int x,int v,int l,int r,unsigned facing){
     const int mirror=facing==0x82u||facing==0x00u;           /* left, back: the other shoulder */
     const int u=mirror?r-x:x-l;
     const int d=u-(v*(r-l))/8+1;                               /* shoulder to the opposite hip */
-    return d>=0&&d<=4?(d==4?2:1):0;     /* a wide kasaya drape, its lower edge a fold */
+    return d>=0&&d<=4?(d==0||d==4?2:1):0;   /* a maroon kasaya drape between two gold hems */
 }
-/* A shaved head (player, 2026-11-27: "monk should not have hair! thats what
- * the mask was for"): the boy's hair (indices 2-4) inside a skull ellipse
- * takes skin shades, the hair outside it is cut away. The skull sits on the
- * head: centred on the head's columns in its lower rows, its top 2 rows below
- * the hair's top, 7 rows tall from there to the brow. Returns per pixel of
- * the composed image: 0 keep, 1 light skin, 4 mid, 5 dark, 2 skull outline,
- * 3 cut away. */
-#define SOM_BALD_RX 6
-#define SOM_BALD_RY 6
-static inline void som_bald_mask(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],
-                                 uint8_t out[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX]){
-    memset(out,0,SOM_ARMOUR_BOX*SOM_ARMOUR_BOX);
+/* The Monk's shaved head (player, 2026-11-27: "monk should not have hair";
+ * the first cut, recolouring the hair inside an ellipse, "is not looking
+ * good"): drawn art per facing in his own skin shades, with a white
+ * hachimaki, anchored on the face the game draws this frame (the eyes, or
+ * the bandana from behind), so it follows every pose. Letters: o outline,
+ * H scalp shine, L light skin, M mid, D dark, W band, w band shade, R the
+ * band's red mark, T a tail (flutters), _ keep the game's pixel (hair or
+ * bandana there turn skin), . nothing (the game's pixel is cut away). */
+#define SOM_MONK_FRONT_W 13
+#define SOM_MONK_FRONT_H 12
+static const char som_monk_front[SOM_MONK_FRONT_H][17]={  /* eyes on row 9 */
+    "....ooooo....",
+    "..ooLLLLLoo..",
+    ".oLHHLLLLLMo.",
+    ".oHHLLLLLLMo.",
+    "oLLLLLLLLLMMo",
+    "ooooooooooooo",
+    "oWWWWRRRWWWWo",
+    "owwwwwRwwwwwo",
+    "oMMoooMMoooMo",
+    "oM_________Mo",
+    "oM_________Mo",
+    ".o_________o.",
+};
+#define SOM_MONK_SIDE_W 16
+#define SOM_MONK_SIDE_H 13
+static const char som_monk_side[SOM_MONK_SIDE_H][17]={    /* facing right; eye on row 9, column 11 */
+    "........oooo....",
+    "......ooLLLLoo..",
+    ".....oLHHLLLLLo.",
+    "....oLHHLLLLLLLo",
+    "....oLLLLLLLLLMo",
+    "....oooooooooooo",
+    "...ooWWWWWWWWRRo",
+    "..oTowwwwwwwwwwo",
+    "..oTooMMMMMoooMo",
+    ".oTo.oMDMMM_____",
+    ".oo..oMDDMM_____",
+    ".....oMMMMo_____",
+    "......oMMMo_____",
+};
+#define SOM_MONK_BACK_W 13
+#define SOM_MONK_BACK_H 15
+static const char som_monk_back[SOM_MONK_BACK_H][17]={    /* the band on rows 9-10 */
+    "....ooooo....",
+    "..ooLLLLLoo..",
+    ".oLLHHLLLLMo.",
+    ".oLHHLLLLLMo.",
+    "oLLLLLLLLLMMo",
+    "oLLLLLLLLMMMo",
+    "oMLLLLLLLMMDo",
+    "oMMLLLLLMMMDo",
+    "ooooooooooooo",
+    "oWWWWWoWWWWWo",
+    "owwwwoWowwwwo",
+    "oMMMoWoWoMMDo",
+    ".oMMoWoWoMDo.",
+    ".oDMoTo.ToDo.",
+    "..oooT...ooo.",
+};
+typedef struct { const char (*art)[17]; int w,h,x,y,mirror; } SomMonkHead;
+/* Where the Monk's head goes in the composed image this frame: the art's
+ * top-left (x, y; may lie outside the box) and its orientation. Chosen from
+ * the sprite itself (the facing byte lags behind the drawn pose while he
+ * turns): two eyes front, one eye side, none from behind. */
+static inline int som_monk_head(const uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX],unsigned facing,SomMonkHead *h){
+    (void)facing;
     int top=-1;
     for(int y=0;y<SOM_ARMOUR_BOX&&top<0;y++)
         for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){top=y;break;}
-    if(top<0)return;
-    /* centre: the columns of the head's lower rows (face, ears or the back of
-     * the head), where the hair no longer flares */
-    int l=SOM_ARMOUR_BOX,r=-1;
-    for(int y=top+9;y<top+13&&y<SOM_ARMOUR_BOX;y++)
-        for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]>1u){if(x<l)l=x;if(x>r)r=x;}
-    if(r<l)return;
-    const int cx2=l+r,cy=top+2+SOM_BALD_RY;          /* centre x doubled */
-    for(int y=top;y<top+13&&y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
-        const unsigned c=img[y][x];
-        if(c<1u||c>4u)continue;                        /* only hair and its outline */
-        const int dx2=2*x+1-cx2,dy=y-cy;
-        const int in=dx2*dx2*SOM_BALD_RY*SOM_BALD_RY+4*dy*dy*SOM_BALD_RX*SOM_BALD_RX<=
-                     4*SOM_BALD_RX*SOM_BALD_RX*SOM_BALD_RY*SOM_BALD_RY;
-        const int dx2o=dx2>0?dx2+2:dx2-2,dyo=dy>0?dy+1:dy-1;
-        const int edge=in&&!(dx2o*dx2o*SOM_BALD_RY*SOM_BALD_RY+4*dyo*dyo*SOM_BALD_RX*SOM_BALD_RX<=
-                             4*SOM_BALD_RX*SOM_BALD_RX*SOM_BALD_RY*SOM_BALD_RY);
-        if(!in){out[y][x]=3;continue;}
-        if(edge){out[y][x]=2;continue;}
-        /* a smooth scalp: light in the middle, mid toward the rim, dark low at the back */
-        const long e=(long)dx2*dx2*SOM_BALD_RY*SOM_BALD_RY+4L*dy*dy*SOM_BALD_RX*SOM_BALD_RX;
-        const long full=4L*SOM_BALD_RX*SOM_BALD_RX*SOM_BALD_RY*SOM_BALD_RY;
-        out[y][x]=(uint8_t)(e*10<full*4?1:e*10<full*8?4:5);
+    if(top<0)return 0;
+    const int lim=top+18<SOM_ARMOUR_BOX?top+18:SOM_ARMOUR_BOX;
+    int ey=-1,fl=SOM_ARMOUR_BOX,fr=-1;
+    for(int y=top;y<lim&&ey<0;y++)
+        for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]==15u){ey=y;if(x<fl)fl=x;if(x>fr)fr=x;}
+    memset(h,0,sizeof(*h));
+    if(ey<0){                                            /* from behind: the bandana's top row */
+        int b=-1;
+        for(int y=top+4;y<lim&&b<0;y++)
+            for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]>=8u&&img[y][x]<=10u){b=y;break;}
+        if(b<0)return 0;
+        int l=SOM_ARMOUR_BOX,r=-1;
+        for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[b-1][x]){if(x<l)l=x;if(x>r)r=x;}
+        if(r<l)return 0;
+        h->art=som_monk_back;h->w=SOM_MONK_BACK_W;h->h=SOM_MONK_BACK_H;
+        h->x=(l+r+1)/2-SOM_MONK_BACK_W/2;h->y=b-9;
+        return 1;
     }
+    if(fr-fl>=3){                                        /* two eyes: front */
+        h->art=som_monk_front;h->w=SOM_MONK_FRONT_W;h->h=SOM_MONK_FRONT_H;
+        h->x=(fl+fr+1)/2-SOM_MONK_FRONT_W/2;h->y=ey-9;
+        return 1;
+    }
+    int l=SOM_ARMOUR_BOX,r=-1;                           /* one eye: side, toward the eye */
+    for(int y=top;y<ey;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){if(x<l)l=x;if(x>r)r=x;}
+    h->art=som_monk_side;h->w=SOM_MONK_SIDE_W;h->h=SOM_MONK_SIDE_H;
+    h->mirror=2*fl<l+r;
+    h->x=h->mirror?fl-(SOM_MONK_SIDE_W-1-11):fl-11;h->y=ey-9;
+    return 1;
+}
+/* The art's letter at (u, v); tails stream back and forth with the frame. */
+static inline char som_monk_head_at(const SomMonkHead *h,int u,int v,unsigned long frame){
+    if(v<0||v>=h->h||u<0||u>=h->w)return ' ';
+    if(h->mirror)u=h->w-1-u;
+    char k=h->art[v][u];
+    if(k=='T'&&(((frame>>3)+(unsigned long)v+(unsigned long)u)&1ul)&&
+       (u==0||v==h->h-1))k='.';                       /* the tails' tips flutter */
+    return k;
 }
 #endif

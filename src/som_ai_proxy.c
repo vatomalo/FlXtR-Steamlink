@@ -9620,37 +9620,76 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
         }
         /* The boy's bandana repainted, and the sash: palette work on his own
          * pixels, so every pose the game draws carries them. */
-        if(who==0u&&look.bald&&known[1]){
-            /* the shaved head: skin inside the skull, the hair outside it cut away
-             * (filled with the ground beside the sprite, like the camera's text rub) */
-            static uint8_t bald[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
-            som_bald_mask(img,bald);
-            for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
-                const unsigned k=bald[y][x];
-                if(!k)continue;
-                const int ox=x0+x,oy=y0+y;
-                if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
-                const unsigned c=img[y][x];
-                uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
-                if(!known[c]||actual!=screen[c]||SOM_IN_FRONT(ox,oy))continue;
-                uint32_t put;
-                if(k==1u||k==4u||k==5u){
-                    const unsigned si=k==1u?7u:k==4u?6u:5u;   /* the face's own light, mid, dark */
-                    if(!known[si])continue;
-                    put=screen[si];
-                }
-                else if(k==2u)put=screen[1];
-                else{                                       /* cut: the nearest ground in the row */
-                    int gx=-1;
-                    for(int d=1;d<SOM_ARMOUR_BOX&&gx<0;d++){
-                        if(x-d>=0&&!img[y][x-d]&&x0+x-d>=0){gx=x0+x-d;break;}
-                        if(x+d<SOM_ARMOUR_BOX&&!img[y][x+d]&&x0+x+d<(int)(width/sx)){gx=x0+x+d;break;}
+        SomMonkHead mh;
+        if(who==0u&&look.bald&&known[1]&&(known[5]||known[6]||known[7])&&
+           som_monk_head(img,ram[0xE000u+0x200u*who+0x10u],&mh)){
+            /* the shaved head: drawn art in his own skin shades; the hair it
+             * does not cover is cut away (filled with the ground beside the
+             * sprite). Decided on the untouched frame, then painted. */
+            /* a skin shade this frame does not show borrows its neighbour */
+            if(!known[6])screen[6]=known[7]?screen[7]:screen[5];
+            if(!known[7])screen[7]=screen[6];
+            if(!known[5])screen[5]=screen[6];
+            static uint32_t put[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX+16];
+            static uint8_t has[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX+16];
+            memset(has,0,sizeof(has));
+            const int bx=mh.x<0?mh.x:0;              /* art may start left of the box */
+            int top=-1;
+            for(int y=0;y<SOM_ARMOUR_BOX&&top<0;y++)
+                for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){top=y;break;}
+            const int last=mh.y+mh.h;                /* rows top..last-1 are the head */
+            for(int y=top;y<last&&y<SOM_ARMOUR_BOX;y++){
+                if(y<0)continue;
+                for(int x=bx;x<SOM_ARMOUR_BOX&&x-bx<SOM_ARMOUR_BOX+16;x++){
+                    const unsigned c=x>=0?img[y][x]:0u;
+                    const char k=som_monk_head_at(&mh,x-mh.x,y-mh.y,frame_number);
+                    const int ox=x0+x,oy=y0+y;
+                    if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
+                    uint32_t actual=0;memcpy(&actual,pixels+(size_t)oy*sy*pitch+(size_t)ox*sx*bpp,bpp);
+                    if(SOM_IN_FRONT(ox,oy))continue;
+                    if(c&&(!known[c]||actual!=screen[c]))continue;      /* covered: leave it */
+                    uint32_t v;int cut=0;
+                    switch(k){
+                    case 'o':v=screen[1];break;
+                    case 'H':case 'L':v=screen[7];break;   /* the face's own light, mid, dark */
+                    case 'M':v=screen[6];break;
+                    case 'D':v=screen[5];break;
+                    case 'W':case 'T':v=som_overlay_color(format,250,250,244);break;
+                    case 'w':v=som_overlay_color(format,190,192,198);break;
+                    case 'R':v=som_overlay_color(format,214,34,42);break;
+                    case '_':
+                        if((c>=2u&&c<=4u)||(c>=8u&&c<=10u))v=screen[6];
+                        else continue;
+                        break;
+                    default:                         /* '.' or outside the art: cut the game's pixel */
+                        if(!c)continue;
+                        cut=1;v=0;break;
                     }
-                    if(gx<0)continue;
-                    memcpy(&put,pixels+(size_t)oy*sy*pitch+(size_t)gx*sx*bpp,bpp);
+                    if(k=='H'&&format==1){            /* the scalp's shine: light skin half way to white */
+                        const uint32_t m=v;
+                        v=(m&0xFF000000u)|(((m>>16&255u)+255u)/2u<<16)|(((m>>8&255u)+255u)/2u<<8)|(((m&255u)+255u)/2u);
+                    }
+                    if(cut){                          /* the nearest ground in the row, outside sprite and art */
+                        int gx=-1;
+                        for(int d=1;d<SOM_ARMOUR_BOX&&gx<0;d++)for(int sgn=-1;sgn<=1&&gx<0;sgn+=2){
+                            const int xx=x+sgn*d;
+                            if(xx>=0&&xx<SOM_ARMOUR_BOX&&img[y][xx])continue;
+                            const char kk=som_monk_head_at(&mh,xx-mh.x,y-mh.y,frame_number);
+                            if(kk!=' '&&kk!='.')continue;
+                            if(x0+xx<0||x0+xx>=(int)(width/sx))continue;
+                            gx=x0+xx;
+                        }
+                        if(gx<0)continue;
+                        memcpy(&v,pixels+(size_t)oy*sy*pitch+(size_t)gx*sx*bpp,bpp);
+                    }
+                    put[y][x-bx]=v;has[y][x-bx]=1;
                 }
+            }
+            for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int i=0;i<SOM_ARMOUR_BOX+16;i++){
+                if(!has[y][i])continue;
+                const int ox=x0+i+bx,oy=y0+y;
                 for(unsigned yy=0;yy<sy;yy++)for(unsigned xx=0;xx<sx;xx++)
-                    memcpy(pixels+((size_t)oy*sy+yy)*pitch+((size_t)ox*sx+xx)*bpp,&put,bpp);
+                    memcpy(pixels+((size_t)oy*sy+yy)*pitch+((size_t)ox*sx+xx)*bpp,&put[y][i],bpp);
             }
         }
         if(who==0u&&(look.band||look.sash)){
@@ -9660,7 +9699,11 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
             int ta=0,tz=0;
             const int torso=look.sash&&som_armour_torso_rows(img,who,&ta,&tz);
             const unsigned facing=ram[0xE000u+0x200u*who+0x10u];
-            static const uint8_t sash_cloth[3]={238,156,40},sash_edge[3]={170,92,20};   /* saffron kasaya, darker fold */
+            /* the Monk's robe: saffron cloth (the shirt's own light, mid and dark),
+             * a maroon kasaya over one shoulder between gold hems, a dark sash belt */
+            static const uint8_t robe[3][3]={{255,184,60},{232,136,32},{170,84,22}};
+            static const uint8_t kasaya[3][3]={{156,34,44},{124,24,36},{86,14,26}};
+            static const uint8_t hem[3]={236,196,72},belt[2][3]={{112,60,30},{70,36,18}};
             for(int y=top<0?SOM_ARMOUR_BOX:top;y<SOM_ARMOUR_BOX;y++){
                 int l=SOM_ARMOUR_BOX,r=-1;
                 if(torso&&y>=ta&&y<tz)
@@ -9672,8 +9715,12 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
                     if(y<top+SOM_BAND_ROWS)col=som_band_colour(look.band,c);
                     else if(torso&&y>=ta&&y<tz&&c!=15u&&(c<5u||c>7u)){
                         const int k=som_sash_at(x,y-ta,l,r,facing);
-                        col=k==1?sash_cloth:k==2?sash_edge:NULL;
+                        if(k==2)col=hem;
+                        else if(k==1)col=kasaya[c==8u?0:c==9u?1:2];
+                        else if(c>=8u&&c<=10u)col=robe[c-8u];
+                        else if(c==11u||c==12u)col=belt[c-11u];
                     }
+                    else if(torso&&y>=tz&&c>=10u&&c<=12u)col=robe[c==10u?1:2];   /* trousers: the robe's shade */
                     if(!col)continue;
                     const int ox=x0+x,oy=y0+y;
                     if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy))continue;
@@ -9682,6 +9729,26 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
                     som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
                                      som_overlay_color(format,col[0],col[1],col[2]));
                 }
+            }
+        }
+        {   /* FLXTR_SOM_LOOK_CROP=1: save the painted hero every 10 frames (look checks) */
+            static int crop=-1;
+            if(crop<0){const char *e=getenv("FLXTR_SOM_LOOK_CROP");crop=e&&!strcmp(e,"1");}
+            char fn[96];FILE *f;
+            if(crop&&frame_number%10u==0u&&
+               snprintf(fn,sizeof fn,"/tmp/flxtr-look-%u-%05lu.ppm",who,(unsigned long)frame_number)>0&&
+               (f=fopen(fn,"wb"))!=NULL){
+                fprintf(f,"P6 56 56 255\n");
+                for(int y=y0-4;y<y0+52;y++)for(int x=x0-4;x<x0+52;x++){
+                    uint8_t rgb[3]={0,0,0};
+                    if(x>=0&&y>=0&&x<(int)(width/sx)&&y<(int)(height/sy)){
+                        uint32_t v=0;memcpy(&v,pixels+(size_t)y*sy*pitch+(size_t)x*sx*bpp,bpp);
+                        if(format==1){rgb[0]=(uint8_t)(v>>16);rgb[1]=(uint8_t)(v>>8);rgb[2]=(uint8_t)v;}
+                        else{rgb[0]=(uint8_t)((v>>11&31u)<<3);rgb[1]=(uint8_t)((v>>5&63u)<<2);rgb[2]=(uint8_t)((v&31u)<<3);}
+                    }
+                    fwrite(rgb,1,3,f);
+                }
+                fclose(f);
             }
         }
         /* The class's headgear, on top of the head this frame. */

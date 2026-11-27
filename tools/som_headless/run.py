@@ -155,6 +155,8 @@ def main(argv=None):
         upload_start = bool(args.host) and start != "-" and Path(args.start).is_file()
         if start != "-" and not upload_start:     # a path on the run host
             setup.append("cp %s %s" % (shlex.quote(args.start), shlex.quote(start)))
+        if os.environ.get("SOM_HEADLESS_CAMERA_OFF") == "1":   # plain frames for look checks
+            setup.append("touch %s/som_ai_camera_off" % shlex.quote(run_dir))
         # SOM_HEADLESS_DATA: a folder on the run host with newer copies
         # (e.g. a freshly built frame pack) that win over the installed ones.
         local = os.environ.get("SOM_HEADLESS_DATA")

@@ -323,7 +323,8 @@ static inline SomClassLook som_class_look(unsigned cls){
     case 12: l.head=SOM_HEAD_HUNTER;break;             /* Vampire Hunting */
     case 3:  l.head=SOM_HEAD_MAGE;break;               /* Magic */
     case 11: l.head=SOM_HEAD_ARCHER;break;             /* Archery */
-    case 1:  l.sash=1;l.bald=1;break;   /* Martial Arts: shaved head with hachimaki, saffron robe, kasaya */
+    case 1:  l.sash=1;break;   /* Martial Arts: saffron robe and kasaya. No drawn
+                                  * bald head: the player found the game slow with it (2026-11-27) */
     case 13: l.head=SOM_HEAD_NECRO;break;              /* Necromancy */
     default: break;
     }

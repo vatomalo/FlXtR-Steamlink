@@ -47,35 +47,24 @@ The native constructor sets WRAM A20F and A156 to 3, and the native
 confirmation routine reads the target party slot at A22B. A clean
 headless New Game run verified those fields on the blank and populated
 name page. Press B or Start to accept the appearance, A to cancel, or
-X on the keyboard to revisit appearance. Left and right switch between
-native and a supplied compiled atlas for the active party slot.
+X on the keyboard to revisit appearance. Up/down selects the session skin palette within a five-position clamp.
+Randi's naming preview supports reversible hair and clothing layer toggles.
+The patched backend hides the chosen palette regions inside native OBJ
+rendering, letting the actual background show through. Hair filtering
+uses Randi's upper preview rows and palette indices 2–4. Clothing uses
+indices 8–14 only below the face. These are preview masks, not anatomy
+reconstruction. They leave the native face and eye pixels in place.
 Set `FLXTR_SOM_CREATOR_OFF=1` to skip the appearance panel entirely.
 
-The display uses a two-panel layout with an enlarged native preview and
-appearance selection. The atlas option displays an indexed tile sample.
 Input remains captured until buttons are released when leaving the
 appearance panel. The original keyboard owns glyph insertion, name
 validation, confirming the name, initializing the hero and resuming
 the opening event. The proxy does not write those name or event fields.
 
-Appearance selection in this prototype is session-only. It switches
-between native rendering and a preloaded atlas; confirmation-time
-compilation, an animated custom preview and save persistence are separate
-work. The emulator scenario checks cancel and reopen, a held confirm
-without a leaked glyph, and a native name accepted into the opening scene.
-
-## Original starter bodies and skin
-
-The naming preview defaults to starter art when the backend exposes both
-OBJ atlas and palette callbacks. Left/right selects native or starter.
-Up/down selects Ivory, Golden, Copper or Umber. All three slot designs
-and both preview poses are original indexed art. The generator compiles
-8×8 draw tiles from the same frames the preview uses. The renderer applies
-the selected palette only to replacement tiles and caches the game's
-brightness conversion. It does not rewrite CGRAM or game memory.
-
-Starter rendering is mapped to a limited set of native idle and walk poses.
-Unmapped poses and pieces use native graphics. Selection remains
-session-only and the preview is a two-pose loop. Environment variables
-`FLXTR_SOM_STARTER_P1`, `FLXTR_SOM_STARTER_P2`, and `FLXTR_SOM_STARTER_P3`
-can set a development fixture's skin (0–3) before loading a field save.
+Skin selection is applied by the existing party palette path, without
+substituting the character's body, pose or movement. It is session-only.
+Some native colours are shared across regions, so only the verified skin
+shade entries are changed. Hair styles, replacement face and eye layers,
+per-pose attachment coordinates, and save persistence remain pending.
+The test checks cancel and reopen, reversible layer controls, a held
+confirm without a leaked glyph, and an accepted name entering the story.

@@ -1,0 +1,123 @@
+--- a/libretro.c
++++ b/libretro.c
+@@ -758,6 +758,17 @@
+    flxtr_obj_lookup = lookup;
+ }
+
++extern const uint16_t *flxtr_name_skin;
++extern unsigned flxtr_name_layers;
++extern unsigned flxtr_name_actor;
++
++RETRO_API void retro_flxtr_set_name_skin(const uint16_t *skin, unsigned slot, unsigned layers)
++{
++   flxtr_name_skin = skin;
++   flxtr_name_actor = slot;
++   flxtr_name_layers = slot == 0 ? layers : 0;
++}
++
+ /* FlXtR overlays use the renderer's actual main-screen priority for the
+  * frame just passed to video_cb. This buffer is read-only and remains owned
+  * by the core. A NULL result means there is no rendered frame to compare. */
+--- a/source/gfx.c
++++ b/source/gfx.c
+@@ -777,6 +777,12 @@
+ }
+
+ const uint8_t *flxtr_obj_pixels;
++const uint16_t *flxtr_name_skin;
++unsigned flxtr_name_layers;
++unsigned flxtr_name_actor;
++bool flxtr_name_draw;
++unsigned flxtr_name_hide;
++
+ const uint8_t *(*flxtr_obj_lookup)(unsigned name, unsigned palette, unsigned tile);
+
+ static void DrawOBJS(bool OnMain, uint8_t D)
+@@ -894,6 +900,20 @@
+          if (tiles <= 0)
+             continue;
+
++         /* The Turbo naming page's native actor preview occupies this
++          * rectangle. Only the active naming UI enables the hook. */
++         if (flxtr_name_skin && PPU.OBJ[S].HPos >= 136 && PPU.OBJ[S].HPos <= 162 &&
++             PPU.OBJ[S].VPos >= 12 && PPU.OBJ[S].VPos < 48)
++         {
++            flxtr_name_draw = true;
++            flxtr_name_hide = 0;
++            if ((flxtr_name_layers & 1) && Y < 34)
++               flxtr_name_hide |= 0x001c;
++            if ((flxtr_name_layers & 2) && Y >= 34)
++               flxtr_name_hide |= 0x7f00;
++         }
++
++
+          if (OnMain && SUB_OR_ADD(4))
+             SelectTileRenderer(!GFX.Pseudo && PPU.OBJ [S].Palette < 4);
+
+@@ -957,6 +977,9 @@
+             if (use_atlas)
+                flxtr_obj_pixels = NULL;
+          }
++         if (flxtr_name_draw)
++            flxtr_name_draw = false;
++
+       }
+    }
+ }
+--- a/source/tile.h
++++ b/source/tile.h
+@@ -4,6 +4,35 @@
+ #define _TILE_H_
+
+ extern const uint8_t *flxtr_obj_pixels;
++extern const uint16_t *flxtr_name_skin;
++extern unsigned flxtr_name_actor;
++extern bool flxtr_name_draw;
++extern unsigned flxtr_name_hide;
++
++static INLINE uint8_t *flxtr_name_mask_tile(const uint8_t *source)
++{
++   static uint8_t masked[64];
++   unsigned i;
++   for (i = 0; i < 64; i++)
++      masked[i] = (flxtr_name_hide & (1u << source[i])) ? 0 : source[i];
++   return masked;
++}
++
++static INLINE uint16_t *flxtr_name_tint(const uint16_t *source)
++{
++   static uint16_t palette[16];
++   unsigned i;
++   memcpy(palette, source, sizeof(palette));
++   for (i = flxtr_name_actor ? 1 : 0; i < 3; i++)
++   {
++      const unsigned rgb = flxtr_name_skin[i];
++      if (rgb != 0xffff && IPPU.XB)
++         palette[5 + i] = BUILD_PIXEL(IPPU.XB[rgb & 31],
++               IPPU.XB[(rgb >> 5) & 31], IPPU.XB[(rgb >> 10) & 31]);
++   }
++   return palette;
++}
++
+
+ #define TILE_PREAMBLE_VARS() \
+     uint32_t l; \
+@@ -27,6 +56,8 @@
+        if (BG.Buffered [TileNumber] == BLANK_TILE) \
+           return; \
+     } \
++    if (flxtr_name_draw && flxtr_name_hide) \
++       pCache = flxtr_name_mask_tile(pCache); \
+     if (BG.DirectColourMode) \
+     { \
+        if (IPPU.DirectColourMapsNeedRebuild) \
+@@ -34,7 +65,8 @@
+        ScreenColors = DirectColourMaps [(Tile >> 10) & BG.PaletteMask]; \
+     } \
+     else \
+-       ScreenColors = &IPPU.ScreenColors [(((Tile >> 10) & BG.PaletteMask) << BG.PaletteShift) + BG.StartPalette]
++       ScreenColors = &IPPU.ScreenColors [(((Tile >> 10) & BG.PaletteMask) << BG.PaletteShift) + BG.StartPalette]; \
++    if (flxtr_name_draw) ScreenColors = flxtr_name_tint(ScreenColors)
+
+ #define RENDER_TILE(NORMAL, FLIPPED, N) \
+     switch (Tile & (V_FLIP | H_FLIP)) \

@@ -7,8 +7,22 @@ hold B 4
 frames 160
 shot appearance
 hold DOWN 4
-frames 5
-shot skin_golden
+frames 8
+shot ivory
+hold DOWN 4
+frames 8
+shot golden
+hold L 4
+frames 8
+shot hair_hidden
+hold R 4
+frames 8
+shot clothing_hidden
+hold L 4
+frames 8
+hold R 4
+frames 8
+shot restored
 expect u8 A1CC == 0
 hold A 8
 frames 4
@@ -16,11 +30,10 @@ expect u8 A1CC == 0
 hold X 4
 frames 4
 shot appearance_reopened
-hold RIGHT 4
+hold DOWN 4
 frames 5
 hold DOWN 4
 frames 5
-shot selected_golden
 hold B 10
 frames 10
 expect u8 A1CC == 0

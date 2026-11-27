@@ -1,0 +1,71 @@
+# The PERKS page through the real ring (start: rabites.state): R3 opens the
+# ring, Up turns to the settings ring and no further (Up/Down are locked
+# there), Right onto ACT, B opens the class menu, R1 the PERKS page; Right to
+# the Samurai list, B equips Iaijutsu Focus, Left back to Equipped.
+#! expect-log PARTY menu opened from the ring
+#! expect-log PERKS BOY 2001 Iaijutsu Focus: Equipped
+expect u16 00DC == 130
+cmd camera_off
+frames 60
+cmd class_10
+cmd test_level_10_40
+frames 30
+hold R3 2
+frames 60
+hold UP 2
+frames 40
+hold UP 2
+frames 40
+expect u8 1809 == 2
+hold UP 2
+frames 40
+expect u8 1809 == 2
+hold DOWN 2
+frames 40
+expect u8 1809 == 2
+hold RIGHT 2
+frames 40
+shot ring_act
+hold B 2
+frames 20
+hold R 2
+frames 10
+shot perks_equipped_empty
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold RIGHT 2
+frames 4
+hold B 2
+frames 10
+shot perks_samurai
+hold DOWN 2
+frames 4
+hold DOWN 2
+frames 4
+hold DOWN 2
+frames 4
+hold DOWN 2
+frames 4
+hold DOWN 2
+frames 4
+hold DOWN 2
+frames 4
+shot perks_samurai_mushin

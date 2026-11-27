@@ -121,6 +121,8 @@ test-som-perks:
 	./build/test-perk-progression
 	$(CC) $(CFLAGS) -Isrc tests/test_perk_persistence.c -o build/test-perk-persistence
 	./build/test-perk-persistence
+	$(CC) $(CFLAGS) -Isrc tests/test_perk_menu.c -o build/test-perk-menu
+	./build/test-perk-menu
 	python3 -m unittest tests/test_perk_database.py
 
 .PHONY: test-som-perks

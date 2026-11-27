@@ -52,6 +52,7 @@
 #include "som_intercept.h"
 #include "som_temporal.h"
 #include "som_perk_runtime.h"
+#include "som_perk_menu.h"
 static void som_fight_configure(void);
 static void som_fight_set_level(unsigned level);
 static void som_fight_general_elected(unsigned i);
@@ -166,6 +167,7 @@ static void som_perk_rt_emit(const uint8_t *ram,unsigned who,int slot,unsigned t
 static unsigned som_perk_owe(uint8_t *m,unsigned slot,unsigned amount);
 static void som_perk_rt_frame(uint8_t *ram);
 static int som_perk_rt_command(const char *command);
+static SomPerkUnlockView som_perk_rt_view(const uint8_t *ram,unsigned who);
 static uint16_t som_word(const uint8_t *p);
 static void som_put_word(uint8_t *p,uint16_t v);
 /* The chain level with the Finisher Mastery and Weapon Flow perks. */
@@ -499,6 +501,8 @@ static int som_ring_on_classes(const uint8_t *ram){
 static const char *juke_request_file=SOM_JUKE_REQUEST,*juke_list_file=SOM_JUKE_LIST;
 static SomJukebox jukebox;
 static int jukebox_ready;
+/* The class menu's PERKS page (src/som_perk_menu.h). */
+static SomPerkMenu perk_menu;
 static void som_juke_send(const char *line){
     char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",juke_request_file);
     FILE *out=fopen(temp,"w");
@@ -3175,6 +3179,11 @@ static void som_input_poll(void){
         uint8_t *ring_ram=som_live_wram();
         const uint16_t menu_pressed=pressed;
         ring_hidden=som_ring_open_idle(ring_ram)?1u<<RETRO_DEVICE_ID_JOYPAD_START:0u;
+        /* The settings ring (the ACT icon) keeps the player (2026-11-27:
+         * "make it so you cannot press up or down"): Up/Down would turn to
+         * the item and weapon rings. Submenus (Equip, Status) still get them. */
+        if(ring_hidden&&ring_ram[0x1809]==2u)
+            ring_hidden|=(uint16_t)((1u<<RETRO_DEVICE_ID_JOYPAD_UP)|(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN));
         const int ring_party=!ring_ai_enabled&&!som_manual_disciplines&&!menu_hold_until_release&&
             (pressed&b_bit)&&som_ring_on_classes(ring_ram);
         if(ring_party){
@@ -3206,26 +3215,47 @@ static void som_input_poll(void){
                 disciplines.cursor=(disciplines.cursor+SOM_DISCIPLINE_COUNT-1u)%SOM_DISCIPLINE_COUNT;
             else if(menu_pressed&down)
                 disciplines.cursor=(disciplines.cursor+1u)%SOM_DISCIPLINE_COUNT;
-        }else if(som_manual_disciplines&&!jukebox.open&&!disciplines.grab&&
+        }else if(som_manual_disciplines&&!jukebox.open&&!perk_menu.open&&!disciplines.grab&&
                  !act_ai&&(menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT))){
             class_guide_open=1;
         }else if(som_manual_disciplines && menu_pressed &&
                  (menu_pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R)))&&
                  !jukebox.typing){
-            /* L1/R1: CLASSES, MUSIC, AI ACTIONS, COMBAT, QUEST. */
+            /* L1/R1: CLASSES, PERKS, MUSIC, AI ACTIONS, COMBAT, QUEST. */
             if(!jukebox_ready){som_juke_init(&jukebox);jukebox_ready=1;}
-            const unsigned pages=2u+SOM_GAMBIT_PAGES;
-            unsigned page=act_ai?2u+gambits.page:jukebox.open?1u:0u;
+            const unsigned pages=3u+SOM_GAMBIT_PAGES;
+            unsigned page=act_ai?3u+gambits.page:jukebox.open?2u:perk_menu.open?1u:0u;
             page=(page+((menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R))?1u:pages-1u))%pages;
-            disciplines.open=page==0u;jukebox.open=page==1u;act_ai=page>=2u;
+            if(page==1u&&!perk_menu.open){perk_menu.who=disciplines.who%SOM_PARTY_MEMBERS;perk_menu.note[0]=0;}
+            disciplines.open=page==0u;perk_menu.open=page==1u;jukebox.open=page==2u;act_ai=page>=3u;
             gambits.open=gambits.resting=act_ai;
-            if(act_ai){gambits.page=page-2u;gambits.cursor=0;}
+            if(act_ai){gambits.page=page-3u;gambits.cursor=0;}
             if(jukebox.open)som_juke_refresh();
         }else if(som_manual_disciplines&&menu_pressed&&act_ai){
             const int result=som_gambit_press(&gambits,menu_pressed);
             if(result==SOM_GAMBIT_CLOSED){
                 act_ai=0;gambits.resting=0;som_manual_disciplines=0;disciplines.open=0;
             }else som_gambit_result(result);
+        }else if(som_manual_disciplines && menu_pressed && perk_menu.open){
+            uint16_t id=0;
+            const int r=som_pmenu_press(&perk_rt,&perk_menu,menu_pressed,&id);
+            const unsigned who=perk_menu.who%SOM_PARTY_MEMBERS;
+            if(r==SOM_PMENU_CLOSED){
+                perk_menu.open=0;disciplines.open=0;som_manual_disciplines=0;
+                fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
+            }else if(r==SOM_PMENU_EQUIP||r==SOM_PMENU_UNEQUIP){
+                const SomPerkDef *d=som_perk_def_by_id(id);
+                if(r==SOM_PMENU_UNEQUIP){
+                    som_prt_unequip(&perk_rt,who,id);
+                    snprintf(perk_menu.note,sizeof(perk_menu.note),"%.24s off",d?d->name:"?");
+                }else{
+                    const SomPerkUnlockView v=som_perk_rt_view(som_live_wram(),who);
+                    const int e=som_prt_equip(&perk_rt,who,id,&v);
+                    snprintf(perk_menu.note,sizeof(perk_menu.note),"%s",e==SOM_PEQ_OK?"Equipped":som_peq_names[e]);
+                }
+                fprintf(stderr,"[som-ai] PERKS %s %u %s: %s\n",som_party_names[who],(unsigned)id,
+                        d?d->name:"?",perk_menu.note);
+            }
         }else if(som_manual_disciplines && menu_pressed && jukebox.open){
             char request[160];
             if(!jukebox.typing&&(menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A))){
@@ -3251,6 +3281,7 @@ static void som_input_poll(void){
             }
         }
         if(act_ai&&!som_manual_disciplines){act_ai=0;gambits.open=0;gambits.resting=0;}
+        if(perk_menu.open&&!som_manual_disciplines)perk_menu.open=0;
         if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
         {   /* A closed menu: hold the pad back from the game until let go. */
             if(menu_was_open&&!som_manual_disciplines)menu_hold_until_release=1;
@@ -3302,7 +3333,7 @@ static void som_input_poll(void){
              * Start alone stays swallowed and cannot interrupt a session. */
             ally_order.until=0;
             ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
-            som_manual_disciplines=0;jukebox.open=0;
+            som_manual_disciplines=0;jukebox.open=0;perk_menu.open=0;
             unlink(ring_ai_file);
             som_overlay_say(&overlay,"You play|L2 + Start stopped AI",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] PLAYER %d L2+START: controls back to the player\n",p1_quit?1:2);
@@ -9336,6 +9367,36 @@ static void som_juke_draw(uint8_t *pixels,unsigned width,unsigned height,size_t 
         }
     }
 }
+/* The PERKS page, drawn like the MUSIC page. */
+static void som_perk_menu_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    const unsigned bw=200u*sx,bh=(SOM_PMENU_LINES*10u+8u)*sy;
+    if(!pixels||bw+12u*sx>width||bh+12u*sy>height)return;
+    const unsigned x0=6u*sx,y0=6u*sy;
+    som_overlay_fill(pixels,pitch,format,x0,y0,bw,bh,som_overlay_color(format,245,245,255));
+    som_overlay_fill(pixels,pitch,format,x0+sx,y0+sy,bw-2u*sx,bh-2u*sy,som_overlay_color(format,30,18,60));
+    const SomPerkUnlockView v=som_perk_rt_view(som_live_wram(),perk_menu.who%SOM_PARTY_MEMBERS);
+    char out[33];
+    for(unsigned line=0;line<SOM_PMENU_LINES;line++){
+        if(!som_pmenu_line(&perk_rt,&perk_menu,&v,line,out))break;
+        uint32_t ink=som_overlay_color(format,255,255,255);
+        if(line==1u)ink=som_overlay_color(format,255,214,96);
+        else if(line>=2u&&line<2u+SOM_PMENU_ROWS&&out[0]){
+            if(out[1]=='*')ink=som_overlay_color(format,140,255,150);
+            else if(out[1]=='-')ink=som_overlay_color(format,150,150,170);
+            else if(out[1]=='x')ink=som_overlay_color(format,95,90,120);
+        }else if(line>=2u+SOM_PMENU_ROWS)ink=som_overlay_color(format,200,210,255);
+        for(unsigned i=0;out[i];i++){
+            const unsigned char c=(unsigned char)out[i];
+            if(c<32u||c>126u)continue;
+            const uint8_t *glyph=som_overlay_font[c-32u];
+            for(unsigned row=0;row<7u;row++)for(unsigned col=0;col<5u;col++){
+                if(!(glyph[row]&(0x10u>>col)))continue;
+                som_overlay_fill(pixels,pitch,format,x0+(5u+i*6u+col)*sx,y0+(4u+line*10u+row)*sy,sx,sy,ink);
+            }
+        }
+    }
+}
 static uint64_t perf_video_us;
 static void som_frontend_video(const void *data,unsigned width,unsigned height,size_t pitch){
     const uint64_t t0=PERF_NOW();
@@ -10032,7 +10093,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         (void)som_lock_marker(&lock_x,&lock_y);
         som_lock_swap(0);(void)som_lock_marker(&lock2_x,&lock2_y);som_lock_swap(0);
     }
-    const int draw_classes=som_manual_disciplines&&!jukebox.open&&!act_ai&&
+    const int draw_classes=som_manual_disciplines&&!jukebox.open&&!perk_menu.open&&!act_ai&&
         (height==224u||height==448u)&&(width==256u||width==512u);
     const uint8_t *ring_owner_ram=som_live_wram();
     const uint8_t *cam_ram=NULL,*cam_vram=NULL;
@@ -10328,6 +10389,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     if(menu){
         if(act_ai)som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
         else if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
+        else if(perk_menu.open)som_perk_menu_draw(overlay_frame,width,height,pitch,pixel_format);
         else if(class_guide_open)
             som_class_guide_draw(overlay_frame,width,height,pitch);
         else if(som_manual_disciplines)

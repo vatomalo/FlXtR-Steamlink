@@ -427,6 +427,7 @@ static void som_member_palette_frame(uint8_t *ram,unsigned who){
     for(unsigned i=0;i<16u;i++)
         if(som_member_clothes[who]&(1u<<i)){dressed[2u*i]=tinted[2u*i];dressed[2u*i+1u]=tinted[2u*i+1u];}
     som_member_hair(dressed,who);
+    if(profile==SOM_PAL_NECRO_BONE)som_pal_necro_body(dressed,who);
     memcpy(current,dressed,32);
     /* The game works on (and sends to the screen) a second buffer,
      * 7E:0700 + palette*32 (live trace 2026-11-14: hero palette 1 at 7E:0720
@@ -8922,6 +8923,14 @@ static int som_handle_command(const char *command){
         return 1;
     }
     /* The AI picks the discipline that fits (bridge som_class_director). */
+    /* party_class_W_C: member W (1 girl, 2 sprite) takes class C (look checks). */
+    if(!strncmp(command,"party_class_",12)){
+        unsigned w=0,c=0;
+        if(sscanf(command+12,"%u_%u",&w,&c)!=2||w<1u||w>2u||c>=SOM_DISCIPLINE_COUNT)return 0;
+        disciplines.party[w-1u]=(uint8_t)c;
+        som_party_class_saved();
+        return 1;
+    }
     if(!strncmp(command,"class_",6)){
         char *end=NULL;
         const unsigned long n=!strcmp(command+6,"none")?SOM_DISCIPLINE_NONE:
@@ -10391,6 +10400,12 @@ static void som_armour_hero(uint8_t *pixels,unsigned width,unsigned height,size_
             static const uint8_t robe[3][3]={{255,184,60},{232,136,32},{170,84,22}};
             static const uint8_t kasaya[3][3]={{156,34,44},{124,24,36},{86,14,26}};
             static const uint8_t hem[3]={236,196,72},belt[2][3]={{112,60,30},{70,36,18}};
+            static const uint8_t plate[4][3]={{0,0,0},{168,176,190},{232,238,246},{84,88,104}};
+            int bl=SOM_ARMOUR_BOX,br=-1;                 /* the bandana's columns this frame */
+            if(look.band==SOM_BAND_HAGANE&&top>=0)
+                for(int y=top;y<top+SOM_BAND_ROWS&&y<SOM_ARMOUR_BOX;y++)
+                    for(int x=0;x<SOM_ARMOUR_BOX;x++)
+                        if(img[y][x]>=8u&&img[y][x]<=10u){if(x<bl)bl=x;if(x>br)br=x;}
             for(int y=top<0?SOM_ARMOUR_BOX:top;y<SOM_ARMOUR_BOX;y++){
                 int l=SOM_ARMOUR_BOX,r=-1;
                 if(torso&&y>=ta&&y<tz)
@@ -10399,7 +10414,13 @@ static void som_armour_hero(uint8_t *pixels,unsigned width,unsigned height,size_
                     const unsigned c=img[y][x];
                     if(c<2u)continue;
                     const uint8_t *col=NULL;
-                    if(y<top+SOM_BAND_ROWS)col=som_band_colour(look.band,c);
+                    if(y<top+SOM_BAND_ROWS){
+                        col=som_band_colour(look.band,c);
+                        if(col&&look.band==SOM_BAND_HAGANE){
+                            const int k=som_hagane_plate_at(x,bl,br,facing);
+                            if(k)col=plate[k];
+                        }
+                    }
                     else if(torso&&y>=ta&&y<tz&&c!=15u&&(c<5u||c>7u)){
                         const int k=som_sash_at(x,y-ta,l,r,facing);
                         if(k==2)col=hem;
@@ -10415,6 +10436,33 @@ static void som_armour_hero(uint8_t *pixels,unsigned width,unsigned height,size_
                     if(!known[c]||actual!=screen[c]||SOM_IN_FRONT(ox,oy))continue;
                     som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
                                      som_overlay_color(format,col[0],col[1],col[2]));
+                }
+            }
+        }
+        /* The Necromancer's long robe (player, 2026-11-27: "robes could
+         * potentially be made by sprites"): below the torso the gaps between
+         * the legs are filled with robe cloth down to the ankles, so the dark
+         * trousers and the cloth read as one garment in every pose. A fold
+         * runs down the middle of each gap. */
+        int ra=0,rz=0;
+        if(look.robe&&som_armour_torso_rows(img,who,&ra,&rz)){
+            int bottom=-1;
+            for(int y=SOM_ARMOUR_BOX-1;y>=0&&bottom<0;y--)
+                for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){bottom=y;break;}
+            const uint32_t cloth=som_overlay_color(format,30,30,38),fold=som_overlay_color(format,58,58,70);
+            for(int y=rz>2?rz-2:0;y<=bottom-2;y++){
+                int l=-1,r=-1;
+                for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){if(l<0)l=x;r=x;}
+                for(int x=l+1;l>=0&&x<r;){
+                    if(img[y][x]){x++;continue;}
+                    int e=x;while(e<r&&!img[y][e])e++;
+                    if(e-x<=8)for(int k=x;k<e;k++){
+                        const int ox=x0+k,oy=y0+y;
+                        if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy)||SOM_IN_FRONT(ox,oy))continue;
+                        som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
+                                         k==(x+e-1)/2&&e-x>2?fold:cloth);
+                    }
+                    x=e;
                 }
             }
         }
@@ -10466,7 +10514,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
     if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
     for(unsigned who=0;who<3u;who++){
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
-        if((look.head<0&&!look.torso&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
+        if((look.head<0&&!look.torso&&!look.robe&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0;
         if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;

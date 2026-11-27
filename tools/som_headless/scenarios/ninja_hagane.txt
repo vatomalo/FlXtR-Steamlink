@@ -1,0 +1,19 @@
+# The Ninja's hagane (start: rabites.state): black cloth with a steel plate
+# on the forehead, front and side; none from behind.
+expect u16 00DC == 130
+cmd camera_off
+frames 60
+cmd class_2
+monster 0 -150 150
+monster 1 -150 -150
+monster 2 150 150
+frames 60
+hold DOWN 10
+shot hagane_down
+hold RIGHT 10
+shot hagane_right
+hold LEFT 10
+shot hagane_left
+hold UP 10
+shot hagane_up
+frames 10

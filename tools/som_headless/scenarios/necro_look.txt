@@ -1,0 +1,21 @@
+# The Necromancer's look on all three heroes (start: rabites.state): pale
+# skin, black hair, grey and black clothes, no hat, a long robe.
+#! expect-log DISCIPLINE selected=13
+expect u16 00DC == 130
+cmd camera_off
+frames 60
+cmd class_13
+cmd party_class_1_13
+cmd party_class_2_13
+monster 0 -150 150
+monster 1 -150 -150
+monster 2 150 150
+frames 60
+shot necro_stand
+hold DOWN 12
+shot necro_walk_down
+hold RIGHT 12
+shot necro_walk_right
+hold UP 12
+shot necro_walk_up
+frames 10

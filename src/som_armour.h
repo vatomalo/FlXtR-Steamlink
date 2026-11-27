@@ -338,9 +338,9 @@ static inline int som_head_glint(int u,unsigned long frame){
  * with the facing (player, 2026-11-27: "hagane would serve a lot better as a
  * palette hack ... monk would look really cool with a asymetric sash"). */
 enum { SOM_BAND_NONE, SOM_BAND_HAGANE, SOM_BAND_HACHIMAKI };
-typedef struct { int head; uint8_t torso,band,sash,bald; } SomClassLook; /* torso = SOM_OUTFIT_* */
+typedef struct { int head; uint8_t torso,band,sash,bald,robe; } SomClassLook; /* torso = SOM_OUTFIT_* */
 static inline SomClassLook som_class_look(unsigned cls){
-    SomClassLook l={-1,0,0,0,0};
+    SomClassLook l={-1,0,0,0,0,0};
     switch(cls){
     case 10: l.head=SOM_HEAD_KABUTO;l.torso=SOM_OUTFIT_SAMURAI;break;   /* Bushido */
     case 8:  l.head=SOM_HEAD_WEAPONMASTER;l.torso=SOM_OUTFIT_WEAPONMASTER;break; /* Weapon Flow */
@@ -350,7 +350,8 @@ static inline SomClassLook som_class_look(unsigned cls){
     case 11: l.head=SOM_HEAD_ARCHER;break;             /* Archery */
     case 1:  l.sash=1;break;   /* Martial Arts: saffron robe and kasaya. No drawn
                                   * bald head: the player found the game slow with it (2026-11-27) */
-    case 13: l.head=SOM_HEAD_NECRO;break;              /* Necromancy */
+    case 13: l.robe=1;break;   /* Necromancy: no hat (player, 2026-11-27: "necromancer
+                                  * hat sucks"), pale skin and black hair (palette), a long robe */
     default: break;
     }
     return l;
@@ -360,10 +361,23 @@ static inline SomClassLook som_class_look(unsigned cls){
  * the old note "8/9 are also the face" was the bandana. */
 #define SOM_BAND_ROWS 13
 static inline const uint8_t *som_band_colour(unsigned band,unsigned index){
-    static const uint8_t hagane[3][3]={{214,222,232},{150,158,172},{36,40,66}};   /* steel, steel, navy */
+    static const uint8_t hagane[3][3]={{46,46,54},{28,28,34},{12,12,16}};   /* black cloth (player, 2026-11-27) */
     static const uint8_t hachi[3][3]={{252,252,248},{220,220,214},{170,168,166}};
     if(index<8u||index>10u||band==SOM_BAND_NONE)return NULL;
     return band==SOM_BAND_HAGANE?hagane[index-8u]:hachi[index-8u];
+}
+/* The hagane's metal plate on the forehead (player, 2026-11-27: "black with
+ * a metal plate in the front"): band columns bl..br (the bandana's extent
+ * this frame), facing +0x10. 0 cloth, 1 steel, 2 steel highlight, 3 rim. */
+static inline int som_hagane_plate_at(int x,int bl,int br,unsigned facing){
+    if(br<bl||facing==0x00u)return 0;                 /* from behind: the knot */
+    int a,b;
+    if(facing==0x02u){a=br-4;b=br;}                    /* side: the front end */
+    else if(facing==0x82u){a=bl;b=bl+4;}
+    else{const int c=(bl+br)/2;a=c-3;b=c+3;}
+    if(x<a||x>b)return 0;
+    if(x==a||x==b)return 3;
+    return x==a+1?2:1;
 }
 /* The sash: torso pixel (x, row v from the neck) of a hero facing `facing`
  * whose torso spans columns l..r. 0 none, 1 cloth, 2 its fold (player: "like a

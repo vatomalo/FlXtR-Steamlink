@@ -10524,6 +10524,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
 #undef SOM_IN_FRONT
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
+    som_status_scroll++;                     /* the menu background drifts */
     SOM_PROF_BEGIN();
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */

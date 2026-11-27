@@ -464,8 +464,15 @@ static inline int som_status_texture_load(SomStatusTexture *texture,const uint8_
     return 1;
 }
 
+/* The pattern drifts behind the fixed windows like the game's own menus
+ * (player, 2026-11-27: "make it parallax scroll like the original menus"):
+ * the caller advances som_status_scroll once a frame; the pattern moves one
+ * texel up-left every SOM_STATUS_SCROLL_FRAMES frames. */
+#define SOM_STATUS_SCROLL_FRAMES 3u
+static unsigned long som_status_scroll;
 static inline void som_status_texture_draw(const SomStatusTexture *texture,uint8_t *pixels,
                                            size_t pitch,int format,unsigned sx,unsigned sy){
+    const unsigned step=(unsigned)(som_status_scroll/SOM_STATUS_SCROLL_FRAMES);
     uint32_t palette[16];
     for(unsigned i=0;i<16u;i++){
         const uint16_t color=texture->palette[i];
@@ -473,7 +480,7 @@ static inline void som_status_texture_draw(const SomStatusTexture *texture,uint8
     }
     for(unsigned y=0;y<224u*sy;y++)
         for(unsigned x=0;x<256u*sx;x++){
-            const unsigned index=texture->pixels[(y/sy+6u)&31u][(x*(2u/sx)+10u)&63u];
+            const unsigned index=texture->pixels[(y/sy+6u+step)&31u][(x*(2u/sx)+10u+2u*step)&63u];
             som_overlay_put(pixels,pitch,format,x,y,palette[index]);
         }
 }

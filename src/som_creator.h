@@ -65,6 +65,9 @@ static inline int som_creator_input(SomCreator *menu,int slot,uint16_t buttons,
     if(menu->skin+1u<SOM_CREATOR_SKINS&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)))menu->skin++;
     if(slot==0&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_L)))menu->layers^=SOM_CREATOR_HAIR_OFF;
     if(slot==0&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R)))menu->layers^=SOM_CREATOR_CLOTHES_OFF;
+    if(slot==0&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT)))
+        menu->layers=menu->layers==(SOM_CREATOR_HAIR_OFF|SOM_CREATOR_CLOTHES_OFF)?
+            0u:SOM_CREATOR_HAIR_OFF|SOM_CREATOR_CLOTHES_OFF;
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A)){
         menu->active=0;
         menu->release=1;
@@ -107,7 +110,7 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
                           "L: SHOW HAIR":"L: HIDE HAIR",177,112,1,text);
         som_overlay_label(pixels,width,height,pitch,format,menu->layers&SOM_CREATOR_CLOTHES_OFF?
                           "R: SHOW CLOTHES":"R: HIDE CLOTHES",177,127,1,text);
-        som_overlay_label(pixels,width,height,pitch,format,"LAYERS: PREVIEW",177,146,1,mint);
+        som_overlay_label(pixels,width,height,pitch,format,"SELECT: BASE MODEL",177,146,1,mint);
     }
     if(native){
         /* The observed Turbo naming preview sits at x=144, y=16 in
@@ -119,7 +122,9 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
             som_overlay_fill(pixels,pitch,format,(38u+2u*x)*sx,(67u+2u*y)*sy,2u*sx,2u*sy,ink);
         }
     }
-    som_overlay_label(pixels,width,height,pitch,format,"NATIVE BODY",56,141,1,text);
+    som_overlay_label(pixels,width,height,pitch,format,
+                      menu->layers==(SOM_CREATOR_HAIR_OFF|SOM_CREATOR_CLOTHES_OFF)?
+                      "BASE MODEL":"NATIVE BODY",56,141,1,text);
     som_overlay_label(pixels,width,height,pitch,format,"B CONTINUE   A CANCEL",128,195,1,mint);
 }
 #endif

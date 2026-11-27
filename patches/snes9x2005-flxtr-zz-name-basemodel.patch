@@ -1,0 +1,109 @@
+--- a/source/gfx.c
++++ b/source/gfx.c
+@@ -782,6 +782,8 @@
+ unsigned flxtr_name_actor;
+ bool flxtr_name_draw;
+ unsigned flxtr_name_hide;
++unsigned flxtr_name_row, flxtr_name_line;
++int flxtr_name_x;
+
+ const uint8_t *(*flxtr_obj_lookup)(unsigned name, unsigned palette, unsigned tile);
+
+@@ -906,11 +908,8 @@
+              PPU.OBJ[S].VPos >= 12 && PPU.OBJ[S].VPos < 48)
+          {
+             flxtr_name_draw = true;
+-            flxtr_name_hide = 0;
+-            if ((flxtr_name_layers & 1) && Y < 34)
+-               flxtr_name_hide |= 0x001c;
+-            if ((flxtr_name_layers & 2) && Y >= 34)
+-               flxtr_name_hide |= 0x7f00;
++            flxtr_name_hide = flxtr_name_layers;
++            flxtr_name_row = Y;
+          }
+
+
+@@ -951,6 +950,12 @@
+                flxtr_obj_pixels = flxtr_obj_lookup(PPU.OBJ[S].Name, PPU.OBJ[S].Palette,
+                                                   (BaseTile | TileX) & 0x1ff);
+
++            if (flxtr_name_draw && flxtr_name_hide)
++            {
++               flxtr_name_x = X;
++               flxtr_name_line = TileLine;
++            }
++
+             if (X + 8 < NextPos)
+             {
+                if (WinStat)
+--- a/source/tile.h
++++ b/source/tile.h
+@@ -8,13 +8,56 @@
+ extern unsigned flxtr_name_actor;
+ extern bool flxtr_name_draw;
+ extern unsigned flxtr_name_hide;
++extern unsigned flxtr_name_row, flxtr_name_line;
++extern int flxtr_name_x;
+
+-static INLINE uint8_t *flxtr_name_mask_tile(const uint8_t *source)
++/* Naming preview only. Replace the removed hair with an original rounded
++ * scalp and map outfit shades to a plain underlayer. Keep native face pixels. */
++static INLINE uint8_t flxtr_name_underlayer(unsigned ink, int x, unsigned y)
++{
++   if ((flxtr_name_hide & 1) && y < 32)
++   {
++      if (y < 22)
++         return 0;
++      if (y < 28)
++      {
++         static const uint8_t radius[] = {1, 2, 3, 4, 4, 4};
++         const int r = radius[y - 22];
++         if (x < 151 - r || x > 151 + r)
++            return 0;
++         if (x == 151 - r || x == 151 + r || y == 22)
++            return 1;
++         return x < 149 ? 6 : 7;
++      }
++      /* Keep the eye marks and the existing cheek and jaw shading. */
++      if (ink == 15 || (ink >= 5 && ink <= 7))
++         return ink;
++      if (x < 147 || x > 155)
++         return 0;
++      return ink == 1 ? 1 : 0;
++   }
++   if ((flxtr_name_hide & 2) && y >= 32 && ink >= 8 && ink <= 14)
++   {
++      /* Retain the pose and shading, with a narrower torso than the jacket. */
++      if (y < 40 && (x < 148 || x > 155))
++         return 0;
++      return ink == 8 || ink == 11 || ink == 14 ? 5 :
++             ink == 9 || ink == 12 ? 6 : 7;
++   }
++   return ink;
++}
++
++static INLINE uint8_t *flxtr_name_mask_tile(const uint8_t *source, bool flipped)
+ {
+    static uint8_t masked[64];
+    unsigned i;
+-   for (i = 0; i < 64; i++)
+-      masked[i] = (flxtr_name_hide & (1u << source[i])) ? 0 : source[i];
++   memcpy(masked, source, sizeof(masked));
++   for (i = 0; i < 8; i++)
++   {
++      const unsigned px = flxtr_name_line + i;
++      const int x = flxtr_name_x + (int)(flipped ? 7 - i : i);
++      masked[px] = flxtr_name_underlayer(source[px], x, flxtr_name_row);
++   }
+    return masked;
+ }
+
+@@ -57,7 +100,7 @@
+           return; \
+     } \
+     if (flxtr_name_draw && flxtr_name_hide) \
+-       pCache = flxtr_name_mask_tile(pCache); \
++       pCache = flxtr_name_mask_tile(pCache, (Tile & H_FLIP) != 0); \
+     if (BG.DirectColourMode) \
+     { \
+        if (IPPU.DirectColourMapsNeedRebuild) \

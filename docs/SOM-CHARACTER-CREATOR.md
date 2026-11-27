@@ -68,3 +68,14 @@ shade entries are changed. Hair styles, replacement face and eye layers,
 per-pose attachment coordinates, and save persistence remain pending.
 The test checks cancel and reopen, reversible layer controls, a held
 confirm without a leaked glyph, and an accepted name entering the story.
+
+### Base model preview
+
+Select toggles both layer controls together on Randi's naming pose. The
+head transform removes the hair silhouette and bandana, draws a rounded
+scalp, and keeps eye and cheek pixels from the native renderer. The body
+transform replaces the outfit colours with a plain skin-shaded underlayer,
+narrows the jacket, and preserves native pose and placement. Both transforms
+operate on a scratch tile row. Transparent pixels expose the game background,
+so there is no scenery reconstruction. The mapping is specific to the naming
+preview. Gameplay continues to use its original animation and equipment art.

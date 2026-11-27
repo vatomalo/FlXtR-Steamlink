@@ -9,6 +9,7 @@ int main(void){
     const unsigned x=1u<<RETRO_DEVICE_ID_JOYPAD_X;
     const unsigned down=1u<<RETRO_DEVICE_ID_JOYPAD_DOWN;
     const unsigned up=1u<<RETRO_DEVICE_ID_JOYPAD_UP;
+    const unsigned select=1u<<RETRO_DEVICE_ID_JOYPAD_SELECT;
     const unsigned layers=(1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R);
     assert(som_creator_slot(ram)==-1);
     ram[0xA156]=ram[0xA20F]=3;
@@ -17,6 +18,9 @@ int main(void){
     assert(som_creator_input(&menu,0,b,0)==SOM_CREATOR_CAPTURE&&menu.active);
     assert(som_creator_input(&menu,0,up,0)==SOM_CREATOR_CAPTURE&&menu.skin==0);
     assert(som_creator_input(&menu,0,down|layers,0)==SOM_CREATOR_CAPTURE&&menu.skin==1&&menu.layers==3);
+    assert(som_creator_input(&menu,0,select,0)==SOM_CREATOR_CAPTURE&&menu.layers==0);
+    assert(som_creator_input(&menu,0,0,0)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input(&menu,0,select,0)==SOM_CREATOR_CAPTURE&&menu.layers==3);
     assert(som_creator_input(&menu,0,a,0)==SOM_CREATOR_CAPTURE&&!menu.active);
     assert(som_creator_input(&menu,0,a,0)==SOM_CREATOR_CAPTURE);
     assert(som_creator_input(&menu,0,0,0)==SOM_CREATOR_CAPTURE);

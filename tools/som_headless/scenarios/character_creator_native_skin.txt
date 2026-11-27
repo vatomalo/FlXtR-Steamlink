@@ -18,11 +18,14 @@ shot hair_hidden
 hold R 4
 frames 8
 shot clothing_hidden
-hold L 4
-frames 8
-hold R 4
+hold SELECT 4
 frames 8
 shot restored
+hold SELECT 4
+frames 8
+shot base_model
+hold SELECT 4
+frames 8
 expect u8 A1CC == 0
 hold A 8
 frames 4

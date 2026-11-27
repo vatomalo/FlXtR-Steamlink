@@ -672,19 +672,37 @@ static size_t effect_base_size;
 static const uint8_t *(*backend_main_depth)(unsigned *pitch);
 typedef const uint8_t *(*SomObjLookup)(unsigned name,unsigned palette,unsigned tile);
 static void (*backend_set_obj_lookup)(SomObjLookup);
+static void (*backend_set_obj_palette)(unsigned,const uint16_t *);
+static unsigned starter_mask,starter_available;
+static uint8_t starter_skin[3],starter_pose[3],starter_step[3];
+static uint16_t starter_palette[3][16];
 static SomSpriteAtlas sprite_atlas[3];
-static unsigned sprite_atlas_loaded,sprite_atlas_available,sprite_atlas_visible,sprite_atlas_seen;
+static unsigned sprite_atlas_loaded,sprite_atlas_visible,sprite_atlas_seen;
 static SomCreator sprite_creator;
 static int sprite_creator_enabled,sprite_creator_captures;
 
 static const uint8_t *som_sprite_lookup(unsigned name,unsigned palette,unsigned tile){
     if(palette<1u||palette>3u||tile>=SOM_ATLAS_TILES)return NULL;
     const unsigned slot=palette-1u,bit=1u<<slot;
-    if(!(sprite_atlas_loaded&bit))return NULL;
+    if(!((sprite_atlas_loaded|starter_mask)&bit))return NULL;
     const unsigned row=name&~0x10u;
     if(!((row>=0x1C0u&&row<0x1D0u&&(slot||row<0x1C8u))||
          (row>=0x1E0u&&row<0x1E8u)))return NULL;
     const uint8_t *pixels=sprite_atlas[slot].tiles[tile];
+    if(starter_mask&bit){
+        static const unsigned first[]={0x1C0,0x1C8,0x1E0},second[]={0x1C2,0x1CC,0x1E4};
+        if(!starter_pose[slot])return NULL;
+        const unsigned base=first[slot];
+        /* The starter is anchored to the first 16-pixel column of the
+         * native actor footprint. The second body OBJ carries the legs. */
+        if(name==base||name==second[slot]){
+            const unsigned left=tile&15u,top=name&15u;
+            if(left<top||left-top>1u)return NULL;
+            const unsigned bottom=((tile^name)&16u)?2u:0u;
+            const unsigned index=(name==base?0u:4u)+bottom+left-top;
+            pixels=som_starter_tiles[slot][starter_step[slot]][index];
+        }else return NULL;
+    }
     if(pixels){
         sprite_atlas_visible|=bit;
         if(!(sprite_atlas_seen&bit)){
@@ -698,8 +716,19 @@ static const uint8_t *som_sprite_lookup(unsigned name,unsigned palette,unsigned 
 
 static void som_sprite_close(void){
     if(backend_set_obj_lookup)backend_set_obj_lookup(NULL);
+    for(unsigned slot=0;slot<3u;slot++)
+        if(backend_set_obj_palette)backend_set_obj_palette(slot,NULL);
+    starter_mask=starter_available=0;
+    memset(starter_skin,0,sizeof(starter_skin));
     for(unsigned slot=0;slot<3u;slot++)som_atlas_clear(&sprite_atlas[slot]);
-    sprite_atlas_loaded=sprite_atlas_available=sprite_atlas_visible=sprite_atlas_seen=0;
+    sprite_atlas_loaded=sprite_atlas_visible=sprite_atlas_seen=0;
+}
+
+static void som_starter_apply(unsigned slot,unsigned skin){
+    starter_mask|=1u<<slot;
+    starter_skin[slot]=(uint8_t)skin;
+    som_starter_palette(slot,skin,starter_palette[slot]);
+    backend_set_obj_palette(slot,starter_palette[slot]);
 }
 
 static void som_sprite_open(void){
@@ -707,7 +736,12 @@ static void som_sprite_open(void){
         "FLXTR_SOM_ATLAS_P1","FLXTR_SOM_ATLAS_P2","FLXTR_SOM_ATLAS_P3"
     };
     som_sprite_close();
+    starter_available=backend_set_obj_palette&&backend_set_obj_lookup?7u:0u;
+    static const char *const skins[]={"FLXTR_SOM_STARTER_P1","FLXTR_SOM_STARTER_P2","FLXTR_SOM_STARTER_P3"};
     for(unsigned slot=0;slot<3u;slot++){
+        const char *skin=getenv(skins[slot]);
+        if(starter_available&&skin&&skin[0]>='0'&&skin[0]<'0'+SOM_SKIN_COUNT&&!skin[1])
+            som_starter_apply(slot,(unsigned)(skin[0]-'0'));
         const char *path=getenv(envs[slot]);
         if(!path||!*path)continue;
         if(!backend_set_obj_lookup||!som_atlas_load(&sprite_atlas[slot],path,slot)){
@@ -715,7 +749,6 @@ static void som_sprite_open(void){
             continue;
         }
         sprite_atlas_loaded|=1u<<slot;
-        sprite_atlas_available|=1u<<slot;
     }
 }
 
@@ -727,8 +760,11 @@ static void som_sprite_prepare(const uint8_t *ram){
     }
     for(unsigned slot=0;slot<3u;slot++){
         const uint8_t *actor=ram+0xE000u+0x200u*slot;
-        som_atlas_select(&sprite_atlas[slot],actor[0]==1u
-                         ?som_atlas_u16(actor+0x26u):UINT32_MAX);
+        const unsigned pose=actor[0]==1u?som_atlas_u16(actor+0x26u):UINT32_MAX;
+        starter_pose[slot]=pose==474u||pose==480u||pose==488u||pose==496u||pose==504u;
+        starter_step[slot]=(uint8_t)(pose==488u||pose==504u);
+        som_atlas_select(&sprite_atlas[slot],pose);
+        if(!sprite_atlas[slot].records)sprite_atlas[slot].pose=pose;
     }
     backend_set_obj_lookup(som_sprite_lookup);
 }
@@ -2888,15 +2924,25 @@ static void som_input_poll(void){
             for(unsigned key=0;frontend_state&&key<16u;key++)
                 if(frontend_state(0,RETRO_DEVICE_JOYPAD,0,key))buttons|=(uint16_t)(1u<<key);
             const int was_active=sprite_creator.active;
-            const int action=som_creator_input(&sprite_creator,slot,buttons,sprite_atlas_available,sprite_atlas_loaded);
+            if(slot>=0&&!was_active)sprite_creator.skin=starter_skin[slot];
+            const unsigned appearance=sprite_creator.seen?starter_mask:(starter_mask|starter_available);
+            const int action=som_creator_input(&sprite_creator,slot,buttons,starter_available,appearance);
             sprite_creator_captures=action!=SOM_CREATOR_PASS;
             if(!was_active&&sprite_creator.active)
                 fprintf(stderr,"[som-ai] CREATOR opened for party slot %u\n",sprite_creator.slot+1u);
             if(action==SOM_CREATOR_CONFIRM){
                 const unsigned bit=1u<<sprite_creator.slot;
-                if(sprite_creator.selected)sprite_atlas_loaded|=bit;
-                else sprite_atlas_loaded&=~bit;
-                fprintf(stderr,"[som-ai] CREATOR appearance accepted; native name entry resumed\n");
+                const unsigned slot=sprite_creator.slot;
+                if(sprite_creator.selected){
+                    som_starter_apply(slot,sprite_creator.skin);
+                }else{
+                    starter_mask&=~bit;
+                    sprite_atlas_visible&=~bit;
+                    if(backend_set_obj_palette)backend_set_obj_palette(slot,NULL);
+                    if(!starter_mask&&!sprite_atlas_loaded&&backend_set_obj_lookup)backend_set_obj_lookup(NULL);
+                }
+                fprintf(stderr,"[som-ai] CREATOR appearance accepted; native name entry resumed (%s)\n",
+                        sprite_creator.selected?som_skin_names[starter_skin[slot]]:"native");
             }
             if(sprite_creator_captures)return;
         }
@@ -10620,9 +10666,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(grown){overlay_frame=grown;overlay_frame_size=size;}
         }
         if(size<=overlay_frame_size){
-            const SomSpriteAtlas *atlas=&sprite_atlas[sprite_creator.slot];
             som_creator_draw(&sprite_creator,overlay_frame,width,height,row,pixel_format,
-                             atlas->count?atlas->records+4:NULL,
+                             (unsigned)((frame_number/16u)&1u),
                              data!=RETRO_HW_FRAME_BUFFER_VALID&&pitch>=row?data:NULL,pitch);
             som_frontend_video(overlay_frame,width,height,row);
             return;
@@ -11060,6 +11105,7 @@ static void load_backend(void){
     *(void**)(&backend_skip_music)=dlsym(backend,"retro_flxtr_skip_music_voices");
     *(void**)(&backend_main_depth)=dlsym(backend,"retro_flxtr_main_depth");
     *(void**)(&backend_set_obj_lookup)=dlsym(backend,"retro_flxtr_set_obj_lookup");
+    *(void**)(&backend_set_obj_palette)=dlsym(backend,"retro_flxtr_set_obj_palette");
     {   /* FLXTR_SOM_NO_DEPTH=1: draw without the core's depth (measuring its cost) */
         const char *off=getenv("FLXTR_SOM_NO_DEPTH");
         if(off&&!strcmp(off,"1"))backend_main_depth=NULL;
@@ -12433,7 +12479,7 @@ RETRO_API void retro_run(void){
     }
     SomComboPosition combo_pos[SOM_PARTY_MEMBERS];
     const unsigned combo_map=som_combo_positions(test_enabled&&on_turbo?som_live_wram():NULL,combo_pos);
-    if(sprite_atlas_loaded)som_sprite_prepare(on_turbo&&test_enabled?som_live_wram():NULL);
+    if(sprite_atlas_loaded||starter_mask)som_sprite_prepare(on_turbo&&test_enabled?som_live_wram():NULL);
     backend_run();
     if(som_time_active(&temporal))som_bullet_world(som_live_wram());
     if(test_enabled&&on_turbo)som_shuriken_throw(som_live_wram());

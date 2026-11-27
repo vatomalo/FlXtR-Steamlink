@@ -3,11 +3,12 @@
 
 #include <stdint.h>
 #include "som_overlay.h"
+#include "som_starter.h"
 #include "vendor/libretro.h"
 
 typedef struct {
     uint16_t previous;
-    uint8_t slot, active, seen, release, external, selected;
+    uint8_t slot, active, seen, release, external, selected, skin;
 } SomCreator;
 
 enum { SOM_CREATOR_PASS, SOM_CREATOR_CAPTURE, SOM_CREATOR_CONFIRM };
@@ -43,6 +44,10 @@ static inline int som_creator_input(SomCreator *menu,int slot,uint16_t buttons,
     if(menu->external&&(pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_LEFT)|
                                 (1u<<RETRO_DEVICE_ID_JOYPAD_RIGHT))))
         menu->selected^=1u;
+    if(menu->selected&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_UP)))
+        menu->skin=(menu->skin+SOM_SKIN_COUNT-1u)%SOM_SKIN_COUNT;
+    if(menu->selected&&(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)))
+        menu->skin=(menu->skin+1u)%SOM_SKIN_COUNT;
     if(pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_A)){
         menu->active=0;
         menu->release=1;
@@ -57,7 +62,7 @@ static inline int som_creator_input(SomCreator *menu,int slot,uint16_t buttons,
 }
 
 static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsigned width,
-                                    unsigned height,size_t pitch,int format,const uint8_t *tile,
+                                    unsigned height,size_t pitch,int format,unsigned step,
                                     const uint8_t *native,size_t native_pitch){
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u;
     if(width<256u*sx||height<224u*sy)return;
@@ -72,19 +77,27 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
     som_overlay_label(pixels,width,height,pitch,format,"APPEARANCE",177,52,1,mint);
     static const char *const actors[]={"RANDI SLOT","PRIMM SLOT","POPOI SLOT"};
     som_overlay_label(pixels,width,height,pitch,format,actors[menu->slot],56,52,1,text);
-    som_overlay_label(pixels,width,height,pitch,format,menu->selected?"< ATLAS >":"< NATIVE >",
+    som_overlay_label(pixels,width,height,pitch,format,menu->selected?"< STARTER >":"< NATIVE >",
                       177,89,1,text);
     som_overlay_label(pixels,width,height,pitch,format,menu->external?"LEFT / RIGHT":"NATIVE APPEARANCE",
                       177,115,1,mint);
     som_overlay_label(pixels,width,height,pitch,format,"NAME ENTRY NEXT",177,151,1,text);
-    if(menu->selected&&tile){
-        for(unsigned y=0;y<8;y++)for(unsigned x=0;x<8;x++){
-            const unsigned ink=tile[y*8u+x];
+    if(menu->selected){
+        uint16_t palette[16];
+        som_starter_palette(menu->slot,menu->skin,palette);
+        const uint8_t *body=som_starter_pixels[menu->slot][step];
+        for(unsigned y=0;y<32;y++)for(unsigned x=0;x<16;x++){
+            const unsigned ink=body[y*16u+x];
             if(ink){
-                const uint32_t c=som_overlay_color(format,70u+8u*ink,120u+6u*ink,100u+5u*ink);
-                som_overlay_fill(pixels,pitch,format,(36u+5u*x)*sx,(81u+5u*y)*sy,5u*sx,5u*sy,c);
+                const unsigned rgb=palette[ink];
+                const uint32_t colour=som_overlay_color(format,(rgb&31u)*255u/31u,
+                                        ((rgb>>5)&31u)*255u/31u,(rgb>>10)*255u/31u);
+                som_overlay_fill(pixels,pitch,format,(40u+2u*x)*sx,(66u+2u*y)*sy,
+                                 2u*sx,2u*sy,colour);
             }
         }
+        som_overlay_label(pixels,width,height,pitch,format,som_skin_names[menu->skin],177,128,1,text);
+        som_overlay_label(pixels,width,height,pitch,format,"UP / DOWN: SKIN",177,140,1,mint);
     }
     if(!menu->selected&&native){
         /* The observed Turbo naming preview sits at x=144, y=16 in
@@ -96,7 +109,7 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
             som_overlay_fill(pixels,pitch,format,(38u+2u*x)*sx,(67u+2u*y)*sy,2u*sx,2u*sy,ink);
         }
     }
-    som_overlay_label(pixels,width,height,pitch,format,menu->selected?"ATLAS TILE":"ORIGINAL",
+    som_overlay_label(pixels,width,height,pitch,format,menu->selected?"STARTER BODY":"ORIGINAL",
                       56,141,1,text);
     som_overlay_label(pixels,width,height,pitch,format,"B CONTINUE   A CANCEL",128,195,1,mint);
 }

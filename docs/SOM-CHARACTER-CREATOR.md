@@ -63,3 +63,19 @@ between native rendering and a preloaded atlas; confirmation-time
 compilation, an animated custom preview and save persistence are separate
 work. The emulator scenario checks cancel and reopen, a held confirm
 without a leaked glyph, and a native name accepted into the opening scene.
+
+## Original starter bodies and skin
+
+The naming preview defaults to starter art when the backend exposes both
+OBJ atlas and palette callbacks. Left/right selects native or starter.
+Up/down selects Ivory, Golden, Copper or Umber. All three slot designs
+and both preview poses are original indexed art. The generator compiles
+8×8 draw tiles from the same frames the preview uses. The renderer applies
+the selected palette only to replacement tiles and caches the game's
+brightness conversion. It does not rewrite CGRAM or game memory.
+
+Starter rendering is mapped to a limited set of native idle and walk poses.
+Unmapped poses and pieces use native graphics. Selection remains
+session-only and the preview is a two-pose loop. Environment variables
+`FLXTR_SOM_STARTER_P1`, `FLXTR_SOM_STARTER_P2`, and `FLXTR_SOM_STARTER_P3`
+can set a development fixture's skin (0–3) before loading a field save.

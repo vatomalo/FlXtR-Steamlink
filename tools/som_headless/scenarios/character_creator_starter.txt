@@ -1,0 +1,36 @@
+#! expect-log CREATOR opened for party slot 1
+#! expect-log CREATOR appearance accepted; native name entry resumed
+frames 900
+hold START 4
+frames 160
+hold B 4
+frames 160
+shot appearance
+hold DOWN 4
+frames 5
+shot skin_golden
+expect u8 A1CC == 0
+hold A 8
+frames 4
+expect u8 A1CC == 0
+hold X 4
+frames 4
+shot appearance_reopened
+hold RIGHT 4
+frames 5
+hold DOWN 4
+frames 5
+shot selected_golden
+hold B 10
+frames 10
+expect u8 A1CC == 0
+shot naming
+hold B 4
+frames 10
+expect u8 A1CC == 1
+hold START 4
+frames 220
+expect u8 CC00 == 0x9B
+expect u8 CC01 == 0
+shot opening_story
+#! expect-log native name entry resumed \(GOLDEN\)

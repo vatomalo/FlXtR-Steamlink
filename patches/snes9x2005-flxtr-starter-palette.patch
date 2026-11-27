@@ -1,0 +1,91 @@
+--- a/libretro.c
++++ b/libretro.c
+@@ -758,6 +758,18 @@
+    flxtr_obj_lookup = lookup;
+ }
+
++extern const uint16_t *flxtr_obj_palettes[3];
++extern uint8_t flxtr_obj_palette_brightness[3];
++
++RETRO_API void retro_flxtr_set_obj_palette(unsigned slot, const uint16_t *palette)
++{
++   if (slot < 3)
++   {
++      flxtr_obj_palettes[slot] = palette;
++      flxtr_obj_palette_brightness[slot] = 0xff;
++   }
++}
++
+ /* FlXtR overlays use the renderer's actual main-screen priority for the
+  * frame just passed to video_cb. This buffer is read-only and remains owned
+  * by the core. A NULL result means there is no rendered frame to compare. */
+--- a/source/gfx.c
++++ b/source/gfx.c
+@@ -777,6 +777,11 @@
+ }
+
+ const uint8_t *flxtr_obj_pixels;
++uint16_t *flxtr_obj_colours;
++const uint16_t *flxtr_obj_palettes[3];
++uint8_t flxtr_obj_palette_brightness[3];
++static uint16_t flxtr_obj_palette[3][16];
++
+ const uint8_t *(*flxtr_obj_lookup)(unsigned name, unsigned palette, unsigned tile);
+
+ static void DrawOBJS(bool OnMain, uint8_t D)
+@@ -893,6 +898,24 @@
+          tiles += GFX.OBJVisibleTiles[S];
+          if (tiles <= 0)
+             continue;
++         if (use_atlas && IPPU.XB && flxtr_obj_palettes[PPU.OBJ[S].Palette - 1])
++         {
++            const unsigned slot = PPU.OBJ[S].Palette - 1;
++            if (flxtr_obj_palette_brightness[slot] != PPU.Brightness)
++            {
++               unsigned ink;
++               const uint16_t *palette = flxtr_obj_palettes[slot];
++               for (ink = 1; ink < 16; ink++)
++               {
++                  unsigned rgb = palette[ink];
++                  flxtr_obj_palette[slot][ink] = BUILD_PIXEL(IPPU.XB[rgb & 31],
++                        IPPU.XB[(rgb >> 5) & 31], IPPU.XB[(rgb >> 10) & 31]);
++               }
++               flxtr_obj_palette_brightness[slot] = PPU.Brightness;
++            }
++            flxtr_obj_colours = flxtr_obj_palette[slot];
++         }
++
+
+          if (OnMain && SUB_OR_ADD(4))
+             SelectTileRenderer(!GFX.Pseudo && PPU.OBJ [S].Palette < 4);
+@@ -957,6 +980,9 @@
+             if (use_atlas)
+                flxtr_obj_pixels = NULL;
+          }
++         if (use_atlas)
++            flxtr_obj_colours = NULL;
++
+       }
+    }
+ }
+--- a/source/tile.h
++++ b/source/tile.h
+@@ -4,6 +4,7 @@
+ #define _TILE_H_
+
+ extern const uint8_t *flxtr_obj_pixels;
++extern uint16_t *flxtr_obj_colours;
+
+ #define TILE_PREAMBLE_VARS() \
+     uint32_t l; \
+@@ -27,7 +28,9 @@
+        if (BG.Buffered [TileNumber] == BLANK_TILE) \
+           return; \
+     } \
+-    if (BG.DirectColourMode) \
++    if (flxtr_obj_pixels && flxtr_obj_colours) \
++       ScreenColors = flxtr_obj_colours; \
++    else if (BG.DirectColourMode) \
+     { \
+        if (IPPU.DirectColourMapsNeedRebuild) \
+           S9xBuildDirectColourMaps (); \

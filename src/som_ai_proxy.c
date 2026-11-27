@@ -4594,10 +4594,6 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
             monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=b->who%SOM_PARTY_MEMBERS;
             som_judged_hit(ram,b->who,(unsigned)slot);
             if(b->kind==SOM_BOLT_PETAL){som_petal_hit(ram,b,(unsigned)slot);som_psi_land(ram,b,(unsigned)slot);}
-            /* the shuriken calls the Fuma clone as the boomerang did (player,
-             * 2026-11-27: "regular shuriken does not have fuma shuriken bunshin") */
-            if(b->kind==SOM_BOLT_STAR&&b->who==0u&&disciplines.selected==SOM_DISC_NINJUTSU&&!fuma.active)
-                som_fuma_start(ram,(unsigned)slot,b->damage);
             if(b->who==0u&&disciplines.selected<SOM_DISCIPLINE_COUNT)
                 som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
                             m[0x180],SOM_XPK_SPELL,"mage bolt hit");

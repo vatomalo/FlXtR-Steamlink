@@ -4640,6 +4640,10 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
         /* No charge, ever (also while B is held): a charged glove is a
          * kick. The kick still came now and then live (2026-11-22). */
         hero[0x19B]=0;
+        /* No weapon gauge either (player, 2026-11-27: "fix that magic still
+         * uses the 0/100 stamina meter"): the bolts pay MP instead, so the
+         * gauge is kept full, outside the short pause after a refusal. */
+        if(frame_number>=no_jab_until[who]&&!(hero[0x1C]&0xA0u))hero[0x1ED]=0;
         if(!after)continue;
         if(who)som_mage_ally_throw(ram,who);
         /* One punch, never the kick or the lunge (glove normals 2, 3), on

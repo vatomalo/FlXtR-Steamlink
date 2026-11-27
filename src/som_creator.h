@@ -7,6 +7,7 @@
 #include "vendor/libretro.h"
 #include "som_hair.h"
 #include "som_heads.h"
+#include "som_hair_styles.h"
 #include "som_disciplines.h"
 
 typedef struct {
@@ -68,7 +69,7 @@ static inline int som_creator_input_full(SomCreator *menu,int slot,uint16_t butt
         menu->slot=(uint8_t)slot;
         menu->seen=menu->active=1;
         menu->skin=(uint8_t)applied;
-        menu->hair=(uint8_t)(hair<=menu->heads?hair:0u);
+        menu->hair=(uint8_t)(hair<(unsigned)SOM_OWN_STYLES+menu->heads?hair:0u);
         menu->hair_colour=(uint8_t)(hair_colour<SOM_HAIR_COLOURS?hair_colour:0u);
         menu->cls=(uint8_t)(cls<=SOM_DISCIPLINE_COUNT?cls:0u);
         menu->layers=0;menu->row=0;
@@ -85,7 +86,7 @@ static inline int som_creator_input_full(SomCreator *menu,int slot,uint16_t butt
                 if(left&&menu->skin)menu->skin--;
                 if(right&&menu->skin+1u<SOM_CREATOR_SKINS)menu->skin++;
             }else if(menu->row==1u)
-                menu->hair=(uint8_t)((menu->hair+(right?1u:menu->heads))%(menu->heads+1u));
+                menu->hair=(uint8_t)((menu->hair+(right?1u:(unsigned)SOM_OWN_STYLES+menu->heads-1u))%((unsigned)SOM_OWN_STYLES+menu->heads));
             else if(menu->row==2u)
                 menu->hair_colour=(uint8_t)((menu->hair_colour+(right?1u:SOM_HAIR_COLOURS-1u))%SOM_HAIR_COLOURS);
             else menu->cls=(uint8_t)((menu->cls+(right?1u:SOM_DISCIPLINE_COUNT))%(SOM_DISCIPLINE_COUNT+1u));
@@ -189,8 +190,9 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
         char line[40];
         static const char *const rows[SOM_CREATOR_ROWS]={"SKIN","HAIR","COLOUR","CLASS"};
         char head[16];
-        if(menu->hair)snprintf(head,sizeof(head),"%u/%u",(unsigned)menu->hair,(unsigned)menu->heads);
-        else snprintf(head,sizeof(head),"NATIVE");
+        if(menu->hair>=SOM_OWN_STYLES)            /* the game heads: experimental */
+            snprintf(head,sizeof(head),"GAME %u/%u",(unsigned)(menu->hair-SOM_OWN_STYLES+1u),(unsigned)menu->heads);
+        else snprintf(head,sizeof(head),"%s",som_own_style_names[menu->hair]);
         const char *values[SOM_CREATOR_ROWS]={som_creator_skin_names[menu->skin%SOM_CREATOR_SKINS],
             head,som_hair_colour_names[menu->hair_colour%SOM_HAIR_COLOURS],
             menu->cls&&menu->cls<=SOM_DISCIPLINE_COUNT?som_discipline_titles[menu->cls-1u]:"NONE"};

@@ -1,0 +1,63 @@
+# Own-hair styles on the leader (local x86 from an .srm, FLXTR patched core):
+# Bald, Short, Long, Ponytail, Spiky, each facing down, right and up.
+frames 900
+hold START 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 400
+cmd camera_off
+cmd class_none
+cmd hair_1_1_0
+hold DOWN 2
+frames 4
+shot s1_down
+hold RIGHT 2
+frames 4
+shot s1_right
+hold UP 2
+frames 4
+shot s1_up
+cmd hair_1_2_0
+hold DOWN 2
+frames 4
+shot s2_down
+hold RIGHT 2
+frames 4
+shot s2_right
+hold UP 2
+frames 4
+shot s2_up
+cmd hair_1_3_0
+hold DOWN 2
+frames 4
+shot s3_down
+hold RIGHT 2
+frames 4
+shot s3_right
+hold UP 2
+frames 4
+shot s3_up
+cmd hair_1_4_0
+hold DOWN 2
+frames 4
+shot s4_down
+hold RIGHT 2
+frames 4
+shot s4_right
+hold UP 2
+frames 4
+shot s4_up
+cmd hair_1_5_0
+hold DOWN 2
+frames 4
+shot s5_down
+hold RIGHT 2
+frames 4
+shot s5_right
+hold UP 2
+frames 4
+shot s5_up

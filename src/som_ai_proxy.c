@@ -349,9 +349,19 @@ static void som_heads_load(void){
     if(som_heads_parse(&head_pack,buf,n))fprintf(stderr,"[som-ai] HEADS %u game heads loaded\n",head_pack.count);
     else fprintf(stderr,"[som-ai] HEADS pack unreadable\n");
 }
+/* creator_hair[w]: 0 native, 1-5 own-hair styles (som_hair_styles.h),
+ * 6+ the game heads (experimental). */
 static const uint8_t *som_hero_head(unsigned who){
-    return who<SOM_PARTY_MEMBERS&&creator_hair[who]?som_head_entry(&head_pack,creator_hair[who]-1u):NULL;
+    return who<SOM_PARTY_MEMBERS&&creator_hair[who]>=SOM_OWN_STYLES?
+        som_head_entry(&head_pack,creator_hair[who]-SOM_OWN_STYLES):NULL;
 }
+static unsigned som_hero_own_style(unsigned who){
+    return who<SOM_PARTY_MEMBERS&&creator_hair[who]<SOM_OWN_STYLES?creator_hair[who]:0u;
+}
+/* the own-hair style's edits this frame, and which went through tiles */
+static SomHairEdit own_edit[SOM_PARTY_MEMBERS];
+static uint8_t own_done[SOM_PARTY_MEMBERS][SOM_EDIT_BOX][SOM_EDIT_BOX];
+static int own_eye[SOM_PARTY_MEMBERS]={12,12,12},own_on[SOM_PARTY_MEMBERS];
 /* The chosen discipline, levels and experience survive game restarts. */
 #define SOM_DISC_FILE "/home/apps/retroarch/cores/experimental/som_ai_disciplines"
 #define SOM_DISCIPLINES_V1 9u          /* disciplines before rogue/samurai/archer */
@@ -857,7 +867,8 @@ static void som_look_store(SomProgress *p){
     p->look_set=1;
     for(unsigned who=0;who<3u;who++){
         const uint8_t *e=som_hero_head(who);
-        p->look[who][0]=creator_skin[who];p->look[who][1]=e?e[0]:0u;p->look[who][2]=creator_hair_colour[who];
+        p->look[who][0]=creator_skin[who];p->look[who][1]=e?e[0]:(uint8_t)som_hero_own_style(who);
+        p->look[who][2]=creator_hair_colour[who];
     }
 }
 /* keep: a new game keeps what the naming page just made */
@@ -869,8 +880,9 @@ static void som_look_restore(const SomProgress *p,int keep){
         if(!p->look_set)continue;
         creator_skin[who]=p->look[who][0]<SOM_CREATOR_SKINS?p->look[who][0]:0u;
         creator_hair_colour[who]=p->look[who][2]<SOM_HAIR_COLOURS?p->look[who][2]:0u;
-        for(unsigned i=0;p->look[who][1]&&i<head_pack.count;i++)
-            if(som_head_entry(&head_pack,i)[0]==p->look[who][1]){creator_hair[who]=(uint8_t)(i+1u);break;}
+        if(p->look[who][1]<SOM_OWN_STYLES)creator_hair[who]=p->look[who][1];   /* an own-hair style */
+        for(unsigned i=0;p->look[who][1]>=0x80u&&i<head_pack.count;i++)
+            if(som_head_entry(&head_pack,i)[0]==p->look[who][1]){creator_hair[who]=(uint8_t)(i+SOM_OWN_STYLES);break;}
     }
 }
 /* The creator's first class: held (so a classless game allows it) and worn. */
@@ -2998,10 +3010,10 @@ static void som_input_poll(void){
             const unsigned c=open?sprite_creator.hair_colour:creator_hair_colour[who];
             const int shown=(open||slot>=0)&&naming>=0;      /* the core's naming hooks: the naming page only */
             if(backend_set_name_skin)backend_set_name_skin(shown?som_creator_skins[skin%SOM_CREATOR_SKINS]:NULL,sprite_creator.slot,
-                                  (open?sprite_creator.layers:0u)|(head?SOM_CREATOR_HAIR_OFF:0u));
+                                  (open?sprite_creator.layers:0u)|(head>=SOM_OWN_STYLES||head==SOM_OWN_BALD?SOM_CREATOR_HAIR_OFF:0u));
             if(backend_set_name_hair){
                 static uint16_t hair[3];
-                const uint8_t *e=head?som_head_entry(&head_pack,head-1u):NULL;
+                const uint8_t *e=head>=SOM_OWN_STYLES?som_head_entry(&head_pack,head-SOM_OWN_STYLES):NULL;
                 for(unsigned i=0;i<3u;i++)
                     hair[i]=c&&c<SOM_HAIR_COLOURS?som_hair_bgr555(som_hair_ramps[c][i]):e?som_hair_bgr555(som_head_hair(e,i)):0u;
                 backend_set_name_hair(shown&&((c&&c<SOM_HAIR_COLOURS)||e)?hair:NULL);
@@ -3016,8 +3028,8 @@ static void som_input_poll(void){
                 creator_class[sprite_creator.slot]=sprite_creator.cls;
                 /* the boy's at naming: when the new game starts; in play: now */
                 if(sprite_creator.slot>0u||naming<0)som_creator_class_apply(sprite_creator.slot);
-                {const uint8_t *e=sprite_creator.hair?som_head_entry(&head_pack,sprite_creator.hair-1u):NULL;
-                 fprintf(stderr,"[som-ai] CREATOR hair %s%02X %s\n",e?"head ":"native",e?e[0]:0u,
+                {const uint8_t *e=sprite_creator.hair>=SOM_OWN_STYLES?som_head_entry(&head_pack,sprite_creator.hair-SOM_OWN_STYLES):NULL;
+                 fprintf(stderr,"[som-ai] CREATOR hair %s%02X %s\n",e?"head ":som_own_style_names[sprite_creator.hair%SOM_OWN_STYLES],e?e[0]:0u,
                          som_hair_colour_names[sprite_creator.hair_colour%SOM_HAIR_COLOURS]);}
                 fprintf(stderr,"[som-ai] CREATOR appearance accepted; native name entry resumed (%s)\n",
                         som_creator_skin_names[sprite_creator.skin]);
@@ -9149,10 +9161,11 @@ static int som_handle_command(const char *command){
     if(!strncmp(command,"hair_",5)){
         unsigned w=0,st=0,c=0;
         som_heads_load();
-        if(sscanf(command+5,"%u_%u_%u",&w,&st,&c)!=3||w>2u||st>head_pack.count||c>=SOM_HAIR_COLOURS)return 0;
+        if(sscanf(command+5,"%u_%u_%u",&w,&st,&c)!=3||w>2u||st>=SOM_OWN_STYLES+head_pack.count||c>=SOM_HAIR_COLOURS)return 0;
         creator_hair[w]=(uint8_t)st;creator_hair_colour[w]=(uint8_t)c;
-        {const uint8_t *e=st?som_head_entry(&head_pack,st-1u):NULL;
-         fprintf(stderr,"[som-ai] HAIR %s %s%02X %s\n",som_party_names[w],e?"head ":"native",e?e[0]:0u,som_hair_colour_names[c]);}
+        {const uint8_t *e=som_hero_head(w);
+         fprintf(stderr,"[som-ai] HAIR %s %s%02X %s\n",som_party_names[w],e?"head ":som_own_style_names[st%SOM_OWN_STYLES],
+                 e?e[0]:0u,som_hair_colour_names[c]);}
         return 1;
     }
     if(!strncmp(command,"class_",6)){
@@ -10052,23 +10065,43 @@ static void som_act_pages_draw(uint8_t *pixels,unsigned width,unsigned height,si
 static void som_heads_prepare(void){
     const unsigned was=head_tiles_used;
     head_tiles_used=0;
+    memset(own_on,0,sizeof(own_on));
     if(!backend_set_obj_lookup||!(creator_hair[0]|creator_hair[1]|creator_hair[2])||!on_turbo||!test_enabled){
         if(was&&!sprite_atlas_loaded)backend_set_obj_lookup(NULL);
         return;
     }
     som_heads_load();
     uint8_t *ram=som_live_wram();
-    if(!ram||!head_pack.count||backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)<0x10000u){
+    if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)<0x10000u){
         if(was&&!sprite_atlas_loaded)backend_set_obj_lookup(NULL);
         return;
     }
     const uint8_t *vram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
     memset(head_tiles.has,0,sizeof(head_tiles.has));
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
-        const uint8_t *e=som_hero_head(who),*o=ram+0xE000u+0x200u*who;
-        if(!e||o[0]!=1u)continue;
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0]!=1u||!creator_hair[who])continue;
+        /* the frame itself says which way he faces (the byte lags in turns) */
+        static uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+        int x0,y0;
+        if(!som_armour_compose(ram+0x0800u,vram,who,img,&x0,&y0))continue;
+        const unsigned style=som_hero_own_style(who);
+        if(style){
+            if(som_hair_style_edit(style,who,(const uint8_t(*)[48])img,x0,y0,&own_eye[who],&own_edit[who])){
+                head_tiles_used+=som_heads_edit_tiles(&head_tiles,who,ram+0x0800u,vram,&own_edit[who],own_done[who]);
+                own_on[who]=1;
+            }
+            continue;
+        }
+        const uint8_t *e=som_hero_head(who);
+        if(!e)continue;
+        int top=-1,l=48,r=-1,ex=0,ey=0;
+        for(int y=0;y<48&&top<0;y++)for(int x=0;x<48;x++)if(img[y][x]){top=y;break;}
+        for(int y=top;top>=0&&y<top+6;y++)for(int x=0;x<48;x++)if(img[y][x]){if(x<l)l=x;if(x>r)r=x;}
+        const unsigned v=top<0?SOM_VIEW_FRONT:som_hair_view((const uint8_t(*)[48])img,top,(l+r)/2,&ex,&ey);
+        const unsigned facing=v==SOM_VIEW_BACK?0x00u:v==SOM_VIEW_FRONT?0x01u:v==SOM_VIEW_RIGHT?0x02u:0x82u;
         const uint8_t *pal=ram+0xDE00u+(128u+((o[0x8B]>>1)&7u)*16u)*2u;
-        head_tiles_used+=som_heads_hero(&head_tiles,e,who,o[0x10],ram+0x0800u,vram,pal);
+        head_tiles_used+=som_heads_hero(&head_tiles,e,who,facing,ram+0x0800u,vram,pal);
     }
     if(head_tiles_used||sprite_atlas_loaded)backend_set_obj_lookup(som_sprite_lookup);
     else if(was)backend_set_obj_lookup(NULL);
@@ -10736,6 +10769,23 @@ static void som_armour_hero(uint8_t *pixels,unsigned width,unsigned height,size_
                 fclose(f);
             }
         }
+        /* An own-hair style's additions beside the hero (no sprite tile of his
+         * there to carry them): painted in his live palette, under anything in
+         * front of him, like the armour. */
+        if(own_on[who]&&ram){
+            const SomHairEdit *ed=&own_edit[who];
+            const uint8_t *ho=ram+0xE000u+0x200u*who;
+            const uint8_t *pal=ram+0xDE00u+(128u+((ho[0x8B]>>1)&7u)*16u)*2u;
+            for(int y=0;y<SOM_EDIT_BOX;y++)for(int x=0;x<SOM_EDIT_BOX;x++){
+                const uint8_t k=ed->px[y][x];
+                if(k==0xFFu||!k||own_done[who][y][x])continue;
+                const int ox=ed->x0+x,oy=ed->y0+y;
+                if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy)||SOM_IN_FRONT(ox,oy))continue;
+                const unsigned c=pal[2u*k]|(unsigned)pal[2u*k+1u]<<8;
+                som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,
+                                 som_overlay_color(format,(c&31u)<<3,((c>>5)&31u)<<3,((c>>10)&31u)<<3));
+            }
+        }
         /* The class's headgear, on top of the head this frame. */
         int kx,ky;
         if(look.head>=0&&som_head_place(img,&kx,&ky)){
@@ -10765,7 +10815,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
     for(unsigned who=0;who<3u;who++){
         if(sprite_atlas_visible&(1u<<who))continue;
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
-        if((look.head<0&&!look.torso&&!look.robe&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
+        if((look.head<0&&!look.torso&&!look.robe&&!own_on[who]&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0;
         if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
@@ -10806,7 +10856,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(grown){overlay_frame=grown;overlay_frame_size=size;}
         }
         if(size<=overlay_frame_size){
-            const uint8_t *head=sprite_creator.hair?som_head_entry(&head_pack,sprite_creator.hair-1u):NULL;
+            const uint8_t *head=sprite_creator.hair>=SOM_OWN_STYLES?som_head_entry(&head_pack,sprite_creator.hair-SOM_OWN_STYLES):NULL;
             uint8_t *ram=som_live_wram();
             if(creator_debug&&som_creator_slot(ram)<0){
                 /* in play: the hero's own sprite (VRAM + OAM), twice the size,
@@ -10826,6 +10876,19 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                         if(img[y][x]==15u&&(top<0||y<top+22)){ex+=x;ey+=y;n++;}
                     }
                     if(n){ex/=n;ey/=n;}else{ex=SOM_ARMOUR_BOX/2;ey=(top<0?0:top)+12;}
+                    /* an own-hair style: the same edit as in play, on this picture */
+                    if(sprite_creator.hair&&sprite_creator.hair<SOM_OWN_STYLES){
+                        static SomHairEdit pe;int eye=own_eye[who];
+                        if(som_hair_style_edit(sprite_creator.hair,who,(const uint8_t(*)[48])img,0,0,&eye,&pe)){
+                            static uint8_t grown[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+                            memcpy(grown,img,sizeof(grown));
+                            for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
+                                const uint8_t v=pe.px[y+SOM_EDIT_MARGIN][x+SOM_EDIT_MARGIN];
+                                if(v!=0xFFu)grown[y][x]=v;
+                            }
+                            memcpy(img,grown,sizeof(grown));
+                        }
+                    }
                     const unsigned c=sprite_creator.hair_colour,skin=sprite_creator.skin;
                     for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
                         const unsigned k=img[y][x];

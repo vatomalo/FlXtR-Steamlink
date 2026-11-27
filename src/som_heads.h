@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "som_armour.h"
+#include "som_hair_styles.h"
 
 #define SOM_HEAD_SIZE 16
 #define SOM_HEAD_EYES 35u
@@ -247,6 +248,55 @@ static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigne
                      * old hair's place is clear, not a block of skin */
                     const int skull=sy>=top&&sy>=hy+hair_top&&sy<=eye_line-2&&dx<=5&&!(sy<top+2&&dx>3);
                     c=skull?(uint8_t)(dx>=4||sy<top+1?6u:7u):0u;touched=1;
+                }
+                dst[ty*8u+tx]=c;
+            }
+            if(touched){out->has[tile]=1;n++;}
+        }
+    }
+    return n;
+}
+/* An own-hair style's edits (som_hair_styles.h) through the hero's tiles:
+ * each of his pixels the canvas changes is drawn changed by the core;
+ * done[][] marks the canvas cells that went through a tile (the rest, beside
+ * him, the proxy paints). Returns how many tiles changed. */
+static inline unsigned som_heads_edit_tiles(SomHeadTiles *out,unsigned who,const uint8_t *oam,const uint8_t *vram,
+                                            const SomHairEdit *ed,uint8_t done[SOM_EDIT_BOX][SOM_EDIT_BOX]){
+    unsigned n=0;
+    memset(done,0,SOM_EDIT_BOX*SOM_EDIT_BOX);
+    if(!ed->any)return 0;
+    for(unsigned j=0;j<128u;j++){
+        const uint8_t *o=oam+4u*j;
+        if(!som_armour_piece(o,who))continue;
+        const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+        if(hb&2u)continue;
+        int px=o[0]+256*(int)(hb&1u);if(px>=256)px-=512;
+        const int py=o[1];
+        if(px+16<=ed->x0||px>=ed->x0+SOM_EDIT_BOX||py+16<=ed->y0||py>=ed->y0+SOM_EDIT_BOX)continue;
+        const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8),hflip=(o[3]>>6)&1u,vflip=(o[3]>>7)&1u;
+        for(unsigned q=0;q<4u;q++){
+            const unsigned tile=(base&256u)|((base+(q&1u)+16u*(q>>1))&255u);
+            if(out->has[tile])continue;
+            uint8_t native[64];int any=0;
+            for(unsigned ty=0;ty<8u;ty++){
+                const uint8_t *row=som_armour_row(vram,base,q&1u,(q>>1)*8u+ty);
+                for(unsigned tx=0;tx<8u;tx++){
+                    const unsigned bit=7u-tx;
+                    const uint8_t c=(uint8_t)(((row[0]>>bit)&1u)|(((row[1]>>bit)&1u)<<1)|
+                                              (((row[16]>>bit)&1u)<<2)|(((row[17]>>bit)&1u)<<3));
+                    native[ty*8u+tx]=c;any|=c;
+                }
+            }
+            if(!any)continue;                             /* blank tiles: painted instead */
+            uint8_t *dst=out->pixels[tile];
+            int touched=0;
+            for(unsigned ty=0;ty<8u;ty++)for(unsigned tx=0;tx<8u;tx++){
+                const unsigned ux=(q&1u)*8u+tx,uy=(q>>1)*8u+ty;
+                const int sx=px+(int)(hflip?15u-ux:ux),sy=py+(int)(vflip?15u-uy:uy);
+                const int cx=sx-ed->x0,cy=sy-ed->y0;
+                uint8_t c=native[ty*8u+tx];
+                if(cx>=0&&cy>=0&&cx<SOM_EDIT_BOX&&cy<SOM_EDIT_BOX&&ed->px[cy][cx]!=0xFFu){
+                    c=ed->px[cy][cx];done[cy][cx]=1;touched=1;
                 }
                 dst[ty*8u+tx]=c;
             }

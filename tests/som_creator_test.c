@@ -44,24 +44,26 @@ int main(void){
     /* hair: Down to the hair row; Left/Right step through native and the
      * game heads on offer (wrapping); Down to colour, Right; Up back. */
     SomCreator h={0};
-    h.heads=3;
-    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==2&&h.hair_colour==4&&h.row==0);
-    assert(som_creator_input_hair(&h,1,down,0,2,4)==SOM_CREATOR_CAPTURE&&h.row==1);
-    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,right,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==3);
-    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,right,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==0);
-    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,left,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==3);
-    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,down,0,2,4)==SOM_CREATOR_CAPTURE&&h.row==2);
-    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,right,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair_colour==5&&h.skin==0);
-    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,up,0,2,4)==SOM_CREATOR_CAPTURE&&h.row==1);
-    /* no pack: only native */
+    h.heads=3;                                     /* + 6 own-hair options (native..spiky): 0..8 */
+    assert(som_creator_input_hair(&h,1,0,0,7,4)==SOM_CREATOR_CAPTURE&&h.hair==7&&h.hair_colour==4&&h.row==0);
+    assert(som_creator_input_hair(&h,1,down,0,7,4)==SOM_CREATOR_CAPTURE&&h.row==1);
+    assert(som_creator_input_hair(&h,1,0,0,7,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,right,0,7,4)==SOM_CREATOR_CAPTURE&&h.hair==8);
+    assert(som_creator_input_hair(&h,1,0,0,7,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,right,0,7,4)==SOM_CREATOR_CAPTURE&&h.hair==0);
+    assert(som_creator_input_hair(&h,1,0,0,7,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,left,0,7,4)==SOM_CREATOR_CAPTURE&&h.hair==8);
+    assert(som_creator_input_hair(&h,1,0,0,7,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,down,0,7,4)==SOM_CREATOR_CAPTURE&&h.row==2);
+    assert(som_creator_input_hair(&h,1,0,0,7,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,right,0,7,4)==SOM_CREATOR_CAPTURE&&h.hair_colour==5&&h.skin==0);
+    assert(som_creator_input_hair(&h,1,0,0,7,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,up,0,7,4)==SOM_CREATOR_CAPTURE&&h.row==1);
+    /* no pack: native and the own-hair styles only */
     SomCreator z={0};
-    assert(som_creator_input_hair(&z,0,0,0,5,0)==SOM_CREATOR_CAPTURE&&z.hair==0);
+    assert(som_creator_input_hair(&z,0,0,0,5,0)==SOM_CREATOR_CAPTURE&&z.hair==5);
+    SomCreator z2={0};
+    assert(som_creator_input_hair(&z2,0,0,0,6,0)==SOM_CREATOR_CAPTURE&&z2.hair==0);
     /* a head pack: parse, roles, the hero's palette entry for each role */
     static uint8_t pk[10+2*SOM_HEAD_ENTRY];
     memcpy(pk,"SOMHEAD3",8);pk[8]=2;

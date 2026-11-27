@@ -2385,8 +2385,11 @@ int main(void){
             foe[2]=150;foe[3]=0;foe[4]=210;foe[5]=0;                   /* to the left */
             auto_target_ready=0;lock_slot=-1;
             som_auto_target_frame(ram);                                /* baseline */
+            monster_hit_frame[0]=0;
             foe[0x182]=49;som_auto_target_frame(ram);
-            assert(lock_slot==0&&lock_who==0u);                        /* party hit */
+            assert(lock_slot<0);              /* nobody's swing: a companion's spell, no lock */
+            hero[0x01C]=0x20;foe[0x182]=48;som_auto_target_frame(ram);hero[0x01C]=0;
+            assert(lock_slot==0&&lock_who==0u);                        /* his own hit */
             som_lock_release("test");foe[0x182]=50;som_auto_target_frame(ram);
             som_put_word(hero+0x182,39);som_auto_target_frame(ram);
             assert(lock_slot==0&&lock_who==0u);                        /* party member hit */

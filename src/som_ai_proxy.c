@@ -11736,6 +11736,25 @@ static int som_lock_marker(int *x,int *y){
     if(*x<0||*x>=256||*y<0||*y>=224){*x=-1;return 0;}
     return 1;
 }
+/* Whose hit took a monster's HP this frame: a hit the proxy queued in the
+ * last 30 frames (its own record), else the hero swinging his weapon
+ * nearest to it (64 px, a ranged weapon 160 px), else nobody (a spell or
+ * something the proxy cannot attribute). */
+static int som_hit_credit(const uint8_t *ram,unsigned slot){
+    if(slot<3u&&monster_hit_frame[slot]&&frame_number-monster_hit_frame[slot]<=30ul)
+        return (int)(monster_hit_who[slot]%SOM_PARTY_MEMBERS);
+    const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    int best=-1;long best_d=0;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0]!=1||!(o[0x1C]&0xA0u))continue;
+        const long d=labs((long)som_bun_u16(m+2)-(long)som_bun_u16(o+2))+
+                     labs((long)som_bun_u16(m+4)-(long)som_bun_u16(o+4));
+        if(d>(som_weapon_long_range(o[0x1E4])?160:64))continue;
+        if(best<0||d<best_d){best=(int)who;best_d=d;}
+    }
+    return best;
+}
 static void som_auto_target_frame(uint8_t *ram){
     if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]!=0u||ram[0x7D]==1u){
         auto_target_ready=0;return;
@@ -11752,26 +11771,32 @@ static void som_auto_target_frame(uint8_t *ram){
             auto_target_party_hp[i]=(uint16_t)som_word(ram+0xE000u+0x200u*i+0x182u);
         som_lock_frame(ram);return;
     }
-    unsigned hitter=som_pad1_member_in(ram);
-    if(pad2_actor<SOM_PARTY_MEMBERS&&
-       (pad2_combo_actor==pad2_actor||
-        (pad2_raw&((1u<<RETRO_DEVICE_ID_JOYPAD_B)|(1u<<RETRO_DEVICE_ID_JOYPAD_X)|
-                   (1u<<RETRO_DEVICE_ID_JOYPAD_Y)))))hitter=pad2_actor;
+    const unsigned p1=som_pad1_member_in(ram);
     for(unsigned i=0;i<3u;i++){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*i;
         const unsigned hp=som_word(m+0x182);
         const int live=som_bun_monster_alive(m)&&hp>0;
+        /* Only the player's own hit locks the player on (player 2026-11-27:
+         * "targeting is broken ... faces wrong way"): any HP loss used to
+         * lock pad 1's hero, so a companion's spell or bolt on a monster
+         * behind him turned him away from his fight. */
         if((familiar.slot<0||(int)i!=familiar.slot)&&live&&
            auto_target_enemy_live[i]&&m[0x180]==auto_target_enemy_id[i]&&
-           hp<auto_target_enemy_hp[i])
-            som_lock_acquire_for(ram,i,hitter);
+           hp<auto_target_enemy_hp[i]){
+            const int who=som_hit_credit(ram,i);
+            if(who>=0&&((unsigned)who==p1||(unsigned)who==pad2_actor))
+                som_lock_acquire_for(ram,i,(unsigned)who);
+        }
         auto_target_enemy_hp[i]=(uint16_t)hp;
         auto_target_enemy_id[i]=m[0x180];auto_target_enemy_live[i]=(uint8_t)live;
     }
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
         const uint8_t *hero=ram+0xE000u+0x200u*who;
         const unsigned hp=som_word(hero+0x182);
-        if(som_ally_alive(hero)&&auto_target_party_hp[who]&&hp<auto_target_party_hp[who]){
+        /* the heroes the pads play only: the lock is one, and a hurt
+         * companion took it from the player */
+        if((who==p1||who==pad2_actor)&&
+           som_ally_alive(hero)&&auto_target_party_hp[who]&&hp<auto_target_party_hp[who]){
             const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
             int best=-1,best_d=SOM_LOCK_RANGE+1;
             const int touching=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,

@@ -49,6 +49,7 @@
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include "som_mentalist.h"
+#include "som_intercept.h"
 static void som_fight_configure(void);
 static void som_fight_set_level(unsigned level);
 static void som_fight_general_elected(unsigned i);
@@ -1369,6 +1370,10 @@ static int bash_kick,flykick_from_ai;
 static SomNpcWorkState flykick;
 static int flykick_hid;
 static int som_flykick_start(uint8_t *ram);
+/* Monk's X: Intercept (src/som_intercept.h). */
+static SomIntercept icpt;
+static int som_intercept_x(uint8_t *ram);
+static int som_icpt_marks(int x[3],int y[3]);
 static int som_flykick_start_raw(uint8_t *ram);
 /* Fuma (Ninjutsu, boomerang): when the hero's boomerang hits a monster, a
  * shadow clone appears in smoke beside it, on the hero's side, swings the
@@ -2984,10 +2989,11 @@ static void som_input_poll(void){
                 if(result==SOM_EQUIP_OK)x_weapon_swap=1;else x_spell_blocked=1;
             }
         }else if(x_role==SOM_X_FLYING_KICK){
-            /* Martial Arts: X is the flying kick (the game never sees X). */
+            /* Martial Arts: X is Intercept (the game never sees X); the
+             * flying kick was X until 2026-11-27. */
             if(xram&&(current&x_bit)&&!(current&(l2_bit|r2))&&!retired_ring_chord&&!special_suppress){
                 x_spell_blocked=1;
-                if(pressed&x_bit)som_flykick_start(xram);
+                if(pressed&x_bit)som_intercept_x(xram);
             }
         }else if(x_role>=SOM_X_HOLY_WATER){
             /* Hunter, Necromancer, Artificer, Mentalist: X is the class move.
@@ -6617,6 +6623,78 @@ static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned varian
     }
     fprintf(stderr,"[som-ai] MONK %s level %u (animation %u)\n",what,level,(unsigned)o[0x011]);
 }
+/* Intercept (src/som_intercept.h): the windows, once a frame, for the
+ * hero pad 1 plays when he is a Monk. */
+#define SOM_ICPT_GUARD 12ul
+static unsigned long icpt_guard_until;
+static unsigned icpt_guard_hp,icpt_guard_who;
+static void som_intercept_frame(uint8_t *ram){
+    if(frame_number<icpt_guard_until&&icpt_guard_who<SOM_PARTY_MEMBERS){
+        uint8_t *g=ram+0xE000u+0x200u*icpt_guard_who;
+        g[0x059]=0;g[0x1F1]=g[0x1F2]=0;
+        if(g[0]==1&&som_word(g+0x182)&&som_word(g+0x182)<icpt_guard_hp)
+            som_put_word(g+0x182,(uint16_t)icpt_guard_hp);
+    }
+    const unsigned who=som_pad1_member_in(ram);
+    const uint8_t *o=ram+0xE000u+0x200u*who;
+    if(who>=SOM_PARTY_MEMBERS||som_disc_member_class(&disciplines,who)!=SOM_DISC_MARTIAL||
+       o[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0){
+        memset(icpt.opened,0,sizeof(icpt.opened));
+        for(unsigned k=0;k<3u;k++)icpt.prev[k]=ram[SOM_ICPT_MONSTERS+SOM_ICPT_OBJECT*k+0x1C];
+        return;
+    }
+    unsigned long was[3];memcpy(was,icpt.opened,sizeof(was));
+    som_icpt_scan(&icpt,ram,o,frame_number,familiar.slot);
+    for(unsigned k=0;k<3u;k++)
+        if(icpt.opened[k]&&!was[k])fprintf(stderr,"[som-ai] INTERCEPT window: monster %u attacks\n",k);
+}
+static int som_intercept_x(uint8_t *ram){
+    const unsigned who=som_pad1_member_in(ram);
+    if(who>=SOM_PARTY_MEMBERS||who!=som_actor)return 0;
+    uint8_t *o=ram+0xE000u+0x200u*who;
+    if(o[0]!=1||o[0x060]||(o[0x191]&0x80u)||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0||ram[0x7D]==1)return 0;
+    if(frame_number<icpt.locked_until)return 0;
+    const int k=som_icpt_target(&icpt);
+    if(k<0){                                         /* nothing coming: a whiff */
+        icpt.locked_until=frame_number+SOM_ICPT_WHIFF;icpt.chain=0;
+        som_overlay_say(&overlay,"^Too early",SOM_MESSAGE_FRAMES/5u);
+        fprintf(stderr,"[som-ai] INTERCEPT whiff: no attack coming\n");
+        return 0;
+    }
+    uint8_t *m=ram+SOM_ICPT_MONSTERS+SOM_ICPT_OBJECT*(unsigned)k;
+    const int perfect=frame_number-icpt.opened[k]>=SOM_ICPT_PERFECT;
+    icpt.chain=icpt.last_at&&frame_number-icpt.last_at<=SOM_ICPT_CHAIN?icpt.chain+1u:1u;
+    icpt.last_at=frame_number;icpt.opened[k]=0;
+    if(o[0x1E4]!=0u)(void)som_equip_weapon_direct(ram,0u);   /* the strike is the glove's */
+    int x,y;uint8_t face;
+    som_icpt_stand(o,m,&x,&y,&face);
+    som_put_word(o+2,(uint16_t)x);som_put_word(o+4,(uint16_t)y);o[0x010]=face;
+    /* The hit staggers it: the game turns the pending damage into its hurt
+     * state on its next AI step (at most 5 frames), which ends the attack
+     * the game's own way (cutting +0x1C by hand left a Rabite that never
+     * attacked again, headless 2026-11-27). Until then the Monk is guarded
+     * (som_intercept_frame), so the blow cannot land. */
+    if(m[0x1ED]<60u)m[0x1ED]=60u;
+    icpt_guard_until=frame_number+SOM_ICPT_GUARD;icpt_guard_hp=som_word(o+0x182);icpt_guard_who=who;
+    const unsigned damage=som_icpt_damage(disciplines.level[SOM_DISC_MARTIAL],perfect,icpt.chain);
+    const unsigned pending=m[0x1F1]+damage;
+    m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
+    monster_hit_frame[k]=frame_number;monster_hit_who[k]=who;
+    o[0x059]=0;o[0x1F1]=o[0x1F2]=0;
+    const SomIcptMove *mv=&som_icpt_moves[icpt.next%SOM_ICPT_MOVES];
+    icpt.next=(icpt.next+1u)%SOM_ICPT_MOVES;
+    som_monk_play(ram,o,mv->level,0u,perfect?3u:2u,mv->name);
+    o[0x010]=face;
+    char text[48];
+    if(icpt.chain>1u)snprintf(text,sizeof text,"^%s%s|x%u",perfect?"Perfect ":"",mv->name,icpt.chain);
+    else snprintf(text,sizeof text,"^%s%s",perfect?"Perfect ":"",mv->name);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+    som_bun_boom(bunshin_booms,(int)som_word(m+2),(int)som_word(m+4),perfect?2:1,frame_number);
+    som_cam_counter(&camera,m);
+    fprintf(stderr,"[som-ai] INTERCEPT %s monster %d: %s%s, %u damage, streak %u\n",
+            som_party_names[who],k,perfect?"perfect ":"",mv->name,damage,icpt.chain);
+    return 1;
+}
 static int som_monk_ready(const uint8_t *ram,const uint8_t *o,unsigned who,int cancel){
     if(o[0]!=1||o[0x1E4]!=som_string_weapon(som_disc_member_class(&disciplines,who))||
        o[0x061]||o[0x060]||(o[0x191]&0x80u)||
@@ -9853,8 +9931,10 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         som_gen_label(&generals[0],general_text,sizeof(general_text));
     int lock_x=-1,lock_y=-1,lock2_x=-1,lock2_y=-1;
     int mark_x[3]={-1,-1,-1},mark_y[3]={-1,-1,-1},marks_shown=0;
+    int warn_x[3]={-1,-1,-1},warn_y[3]={-1,-1,-1};
     if(!menu){
         marks_shown=som_psi_marks(mark_x,mark_y);
+        marks_shown+=som_icpt_marks(warn_x,warn_y);
         (void)som_lock_marker(&lock_x,&lock_y);
         som_lock_swap(0);(void)som_lock_marker(&lock2_x,&lock2_y);som_lock_swap(0);
     }
@@ -10068,9 +10148,11 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         som_cam_point(&camera,&lock2_x,&lock2_y);
         som_cam_point(&camera,&general_x,&general_y);
         for(unsigned k=0;k<3u;k++)som_cam_point(&camera,&mark_x[k],&mark_y[k]);
+        for(unsigned k=0;k<3u;k++)som_cam_point(&camera,&warn_x[k],&warn_y[k]);
         if(width==2u*SOM_CAM_W){                     /* 1.5x is drawn in 512x448 */
             int *pts[]={&hero_x,&hero_y,&lock_x,&lock_y,&lock2_x,&lock2_y,&general_x,&general_y,
-                        &mark_x[0],&mark_y[0],&mark_x[1],&mark_y[1],&mark_x[2],&mark_y[2]};
+                        &mark_x[0],&mark_y[0],&mark_x[1],&mark_y[1],&mark_x[2],&mark_y[2],
+                        &warn_x[0],&warn_y[0],&warn_x[1],&warn_y[1],&warn_x[2],&warn_y[2]};
             for(unsigned k=0;k<sizeof(pts)/sizeof(pts[0]);k+=2)
                 if(*pts[k]>=0){*pts[k]*=2;*pts[k+1]*=2;}
         }
@@ -10097,6 +10179,14 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                               mark_x[k]+14,mark_y[k]+4,1,         /* beside the lock-on V */
                               mind_state.effect[k]?som_overlay_color(pixel_format,255,120,255):
                                                    som_overlay_color(pixel_format,200,150,255));
+        }
+    for(unsigned k=0;k<3u;k++)                   /* Intercept: "!" over an attack coming */
+        if(warn_x[k]>=0){
+            const int late=icpt.opened[k]&&frame_number-icpt.opened[k]>=SOM_ICPT_PERFECT;
+            som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"!",
+                              warn_x[k]-2,warn_y[k]-6-(late?2:0),2,
+                              late?som_overlay_color(pixel_format,255,60,40):
+                                   som_overlay_color(pixel_format,255,200,40));
         }
     som_fight_overlay(overlay_frame,width,height,pitch);
     if(general_text[0])
@@ -11156,6 +11246,7 @@ RETRO_API void retro_run(void){
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)==SOM_WRAM_SIZE)
     {
         uint8_t *ram=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        som_intercept_frame(ram);
         som_monk_chain_frame(ram);
         som_string_swap(0);
         if(monk_chain_active&&monk_chain_who<SOM_PARTY_MEMBERS)
@@ -11608,6 +11699,24 @@ static int som_psi_marks(int x[3],int y[3]){
         const uint8_t *o=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
         if((!mind_state.marks[k]&&!mind_state.effect[k])||o[0x180]!=mind_state.id[k]||
            !som_bun_monster_alive(o))continue;
+        const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
+        x[k]=(int16_t)(som_bun_u16(o+2)-som_bun_u16(ram+cam));
+        y[k]=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))-o[0x45]-34;
+        if(x[k]<0||x[k]>=256||y[k]<8||y[k]>=224){x[k]=-1;continue;}
+        n++;
+    }
+    return n;
+}
+/* Screen spots of the open Intercept windows (the "!" over the monster). */
+static int som_icpt_marks(int x[3],int y[3]){
+    if(!backend_retro_get_memory_data||
+       backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return 0;
+    const uint8_t *ram=(const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+    int n=0;
+    for(unsigned k=0;k<3u;k++){
+        x[k]=-1;
+        if(!icpt.opened[k])continue;
+        const uint8_t *o=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
         const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
         x[k]=(int16_t)(som_bun_u16(o+2)-som_bun_u16(ram+cam));
         y[k]=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))-o[0x45]-34;

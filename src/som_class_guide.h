@@ -12,7 +12,7 @@ static const SomClassGuide som_class_guide[SOM_DISCIPLINE_COUNT]={
     {"Close-range fighter with crowd control.",
      {"L2+X  Whirlwind around you","R2+A  Bash through enemies","B x4, B  Axe Cleave"}},
     {"Close-range strikes and guard counters.",
-     {"X  Flying Kick","L2+X  Hundred Fists","R2  Guard to counter"}},
+     {"X  Intercept an attack (!)","L2+X  Hundred Fists","R2  Guard to counter"}},
     {"Fast weapon swaps, spells and clones.",
      {"L2+X  Shunshin with a close weapon","X then A  Blink step","B x4, B  Taijutsu"}},
     {"Elemental spells and ranged damage.",

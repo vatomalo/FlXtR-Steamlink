@@ -1,0 +1,95 @@
+# Monk X = Intercept on map 130 (start: rabites.state): X every 31 frames near a Rabite;
+# a bite opens a window, X in it steps in and strikes first.
+#! expect-log INTERCEPT window: monster 0 attacks
+#! expect-log INTERCEPT BOY monster 0: .*Intercept
+expect u16 00DC == 130
+cmd camera_off
+cmd class_1
+frames 60
+hold RIGHT 2
+frames 10
+monster 1 -150 150
+monster 2 -150 -150
+monster 0 36 0
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+monster 0 36 0
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+shot end

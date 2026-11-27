@@ -228,7 +228,28 @@ ROM frames found on the way (boy, pose table D0:FFF0): handstand 176-179
 pose 34 (likely the cannonball launch), side kick 89 (glove attack 2),
 airborne kicks 92, 166, 167.
 
-## Flying kick (Martial Arts, X/Triangle, 2026-11-18)
+## Intercept (Martial Arts, X/Triangle, 2026-11-27)
+
+The monk's X is now Intercept, after Shadow of Mordor's and Batman Arkham's
+counters and Sifu's intercept (`src/som_intercept.h`). When a monster within
+112 px starts its attack (its swing state +0x1C becomes 0x80; a Rabite's bite
+lands about 14 frames later), a yellow **!** shows over it for 16 frames,
+turning red in the last 8. X in that window steps the monk in front of it
+(20 px, facing it) and strikes first: the strike's damage puts the monster
+into the game's own hurt state (1.75 s stagger), which ends its attack, and
+the monk is guarded for 12 frames so the blow cannot land. X in the red part
+is a **perfect** intercept (x1.5 damage, a stronger strike stage). Each
+intercept uses the next glove power attack of a rotation: Palm, Knee, Elbow,
+Sweep, Shoulder, Dragon. Intercepts within 3 s of each other build a streak
+(+2 damage per link, up to +10). X with nothing coming is a whiff ("Too
+early") and locks X for half a second. Damage: 14 + 2 x Martial Arts level.
+The AI's monk still uses the old flying kick. Headless check:
+`tools/som_headless/scenarios/monk_intercept.txt` (rabites.state).
+
+## Flying kick (Martial Arts, X/Triangle until 2026-11-27)
+
+Replaced on the player's X by Intercept (above); the AI still uses it.
+
 
 X (Triangle) no longer casts for Martial Arts: it is the flying kick. It is
 the swordsman's R1+A bash with the glove: the game's own run (A held, up to

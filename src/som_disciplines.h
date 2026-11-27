@@ -41,8 +41,9 @@ static inline int som_disc_has_dodge(unsigned discipline){
 /* What X does per class (docs/SOM-CLASS-ASSESSMENT.md). Spells for the
  * casters and the hybrids; Bushido (samurai) has no magic: X is Iaijutsu,
  * a straight charge level 3 strike with the katana (hold X: level 4), one
- * per SOM_IAI_COOLDOWN_FRAMES; Martial Arts (monk): X is the flying kick,
- * a run and a kick (som_ai_proxy.c som_flykick_start); Weapon Flow (weaponsmaster) has no magic:
+ * per SOM_IAI_COOLDOWN_FRAMES; Martial Arts (monk): X is Intercept, a
+ * counter to a monster's attack as it starts (src/som_intercept.h; the role
+ * keeps its old name SOM_X_FLYING_KICK); Weapon Flow (weaponsmaster) has no magic:
  * X attacks with a third weapon, som_disc_third_weapon. */
 enum {SOM_X_SPELLS, SOM_X_IAI, SOM_X_THIRD_WEAPON, SOM_X_FLYING_KICK,
       SOM_X_HOLY_WATER, SOM_X_RAISE_DEAD, SOM_X_BOMB, SOM_X_MIND_CONTROL, SOM_X_SUMMON};

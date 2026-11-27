@@ -3965,7 +3965,10 @@ static void som_quick_cast_frame(uint8_t *ram){
  * (up, down, left or right) within the reach, and she turns to it and
  * jabs, the game's own swing (+0x1C 0x20, animation 1, script restart). */
 #define SOM_RIBBON_REACH 46
+/* 1 = this caster's swing would do nothing now (see its definition). */
+static int som_caster_swing_idle(const uint8_t *ram,unsigned who,unsigned cls);
 static int som_mage_ally_throw(uint8_t *ram,unsigned who){
+    if(som_caster_swing_idle(ram,who,som_disc_member_class(&disciplines,who)))return 0;
     uint8_t *o=ram+0xE000u+0x200u*who;
     if(o[0x2C]||som_pad1_member_in(ram)==who||!som_ally_idle(ram,who)||
        o[0x1ED]||frame_number<mage_ally_next[who])return 0;
@@ -4188,6 +4191,31 @@ static void som_warlock_chain(uint8_t *ram,unsigned who,unsigned map){
     }
     fprintf(stderr,"[som-ai] CHAIN %s monster %d for %u\n",som_party_names[who],best,damage);
 }
+/* An AI Cleric with nobody hurt in reach of her touch (and no undead to
+ * burn), or an AI Warlock with no monster in Hex Chain reach, has nothing
+ * to swing at: the player saw them punch on and on (2026-11-27, "when
+ * cleric has full hp, do not keep using glove attacks, same when warlock
+ * has no target"). Her swing is then not thrown at all. */
+static int som_caster_swing_idle(const uint8_t *ram,unsigned who,unsigned cls){
+    if(cls!=SOM_DISC_CLERIC&&cls!=5u)return 0;
+    const uint8_t *me=ram+0xE000u+0x200u*who;
+    const int x=(int)som_word(me+2),y=(int)som_word(me+4);
+    if(cls==SOM_DISC_CLERIC)
+        for(unsigned k=0;k<SOM_PARTY_MEMBERS;k++){
+            const uint8_t *o=ram+0xE000u+0x200u*k;
+            const unsigned hp=som_word(o+0x182);
+            if(k!=who&&o[0]==1&&hp&&hp<som_word(o+0x184)&&
+               abs((int)som_word(o+2)-x)+abs((int)som_word(o+4)-y)<=SOM_TOUCH_REACH)return 0;
+        }
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*k;
+        if((int)k==familiar.slot||!som_bun_monster_alive(m))continue;
+        const long d=labs((long)som_word(m+2)-x)+labs((long)som_word(m+4)-y);
+        if(cls==SOM_DISC_CLERIC&&som_undead(m[0x180])&&d<=SOM_TOUCH_REACH)return 0;
+        if(cls==5u&&(m[0x0B]&0x80u)==(me[0x0B]&0x80u)&&d<=SOM_CHAIN_REACH)return 0;
+    }
+    return 1;
+}
 /* The class's own B. 1 = it replaces the jab and the ball. */
 static int som_class_attack(uint8_t *ram,unsigned who,unsigned cls,unsigned map){
     uint8_t *hero=ram+0xE000u+0x200u*who;
@@ -4312,6 +4340,14 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
             fprintf(stderr,"[som-ai] MAGE JAB for %s's kick/lunge\n",som_party_names[who]);
         }
         const int swing=hero[0x1C]==0x20u&&!hero[0x60];
+        if(swing&&mage_swing_prev[who]!=0x20u&&who!=som_pad1_member_in(ram)&&(int)who!=(int)som_pad2_member(ram)&&
+           som_caster_swing_idle(ram,who,cls)){
+            /* the game's ally AI swung at nothing: no punch, the gauge waits */
+            hero[0x1C]=0;hero[0x30]=0xFF;
+            if(hero[0x1ED]<46u)hero[0x1ED]=46u;
+            no_jab_until[who]=frame_number+20ul;
+            mage_swing_prev[who]=0;continue;
+        }
         if(swing&&mage_swing_prev[who]!=0x20u&&som_class_attack(ram,who,cls,map)){
             mage_swing_prev[who]=0;continue;
         }

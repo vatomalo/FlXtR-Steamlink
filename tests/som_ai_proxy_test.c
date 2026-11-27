@@ -4237,6 +4237,23 @@ int main(void){
         assert(som_word(m+2)==108&&!bullet_frames);
         familiar.slot=keep_fam;
     }
+    {   /* an AI Cleric with a full party, or a Warlock with nobody in reach, holds her punch */
+        static uint8_t cram[0x20000];
+        uint8_t *c=cram+0xE200u,*b=cram+0xE000u,*m=cram+SOM_BUN_MONSTER_BASE;
+        const int keep_fam=familiar.slot;familiar.slot=-1;
+        c[0]=1;som_put_word(c+2,100);som_put_word(c+4,100);som_put_word(c+0x182,50);som_put_word(c+0x184,50);
+        b[0]=1;som_put_word(b+2,120);som_put_word(b+4,100);som_put_word(b+0x182,90);som_put_word(b+0x184,90);
+        assert(som_caster_swing_idle(cram,1u,SOM_DISC_CLERIC));         /* all full */
+        som_put_word(b+0x182,60);
+        assert(!som_caster_swing_idle(cram,1u,SOM_DISC_CLERIC));        /* the boy hurt, in touch */
+        assert(som_caster_swing_idle(cram,1u,5u));                       /* no monster */
+        m[0]=1;m[0x180]=0x14;som_put_word(m+2,150);som_put_word(m+4,100);
+        assert(!som_caster_swing_idle(cram,1u,5u));                      /* 50 px: in chain reach */
+        som_put_word(m+2,300);
+        assert(som_caster_swing_idle(cram,1u,5u));                       /* too far */
+        assert(!som_caster_swing_idle(cram,1u,3u));                      /* the Mage is not held */
+        familiar.slot=keep_fam;
+    }
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");
     return 0;
 }

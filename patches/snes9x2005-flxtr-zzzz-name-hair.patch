@@ -1,0 +1,61 @@
+diff --git a/libretro.c b/libretro.c
+index d0f58c4..e178660 100644
+--- a/libretro.c
++++ b/libretro.c
+@@ -767,6 +767,15 @@ extern const uint16_t *flxtr_name_skin;
+ extern unsigned flxtr_name_layers;
+ extern unsigned flxtr_name_actor;
+ 
++extern const uint16_t *flxtr_name_hair;
++
++/* The naming preview's hair colour: three BGR555 entries (dark, mid,
++ * light), or NULL for the native hair. */
++RETRO_API void retro_flxtr_set_name_hair(const uint16_t *hair)
++{
++   flxtr_name_hair = hair;
++}
++
+ RETRO_API void retro_flxtr_set_name_skin(const uint16_t *skin, unsigned slot, unsigned layers)
+ {
+    flxtr_name_skin = skin;
+diff --git a/source/gfx.c b/source/gfx.c
+index 0060509..787a022 100644
+--- a/source/gfx.c
++++ b/source/gfx.c
+@@ -778,6 +778,7 @@ void S9xSetupOBJ(void)
+ 
+ const uint8_t *flxtr_obj_pixels;
+ const uint16_t *flxtr_name_skin;
++const uint16_t *flxtr_name_hair;
+ unsigned flxtr_name_layers;
+ unsigned flxtr_name_actor;
+ bool flxtr_name_draw;
+diff --git a/source/tile.h b/source/tile.h
+index 4b919ab..6c685ea 100644
+--- a/source/tile.h
++++ b/source/tile.h
+@@ -5,6 +5,7 @@
+ 
+ extern const uint8_t *flxtr_obj_pixels;
+ extern const uint16_t *flxtr_name_skin;
++extern const uint16_t *flxtr_name_hair;
+ extern unsigned flxtr_name_actor;
+ extern bool flxtr_name_draw;
+ extern unsigned flxtr_name_hide;
+@@ -95,6 +96,16 @@ static INLINE uint16_t *flxtr_name_tint(const uint16_t *source)
+          palette[5 + i] = BUILD_PIXEL(IPPU.XB[rgb & 31],
+                IPPU.XB[(rgb >> 5) & 31], IPPU.XB[(rgb >> 10) & 31]);
+    }
++   /* The creator's hair colour: entries 2-4 (dark to light), and the
++    * sprite's hair puffs at 8. */
++   for (i = 0; flxtr_name_hair && IPPU.XB && i < 3; i++)
++   {
++      const unsigned rgb = flxtr_name_hair[i];
++      palette[2 + i] = BUILD_PIXEL(IPPU.XB[rgb & 31],
++            IPPU.XB[(rgb >> 5) & 31], IPPU.XB[(rgb >> 10) & 31]);
++      if (i == 1 && flxtr_name_actor == 2)
++         palette[8] = palette[3];
++   }
+    return palette;
+ }
+ 

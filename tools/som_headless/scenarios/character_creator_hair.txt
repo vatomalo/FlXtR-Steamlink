@@ -1,0 +1,28 @@
+# The creator's hair rows on the naming page (New Game from SRAM): Down to
+# HAIR, Right to SPIKY; Down to COLOUR, Right x4 to BLONDE; accept.
+#! expect-log CREATOR opened for party slot 1
+#! expect-log CREATOR hair SPIKY BLONDE
+frames 900
+hold START 4
+frames 160
+hold B 4
+frames 160
+shot creator_open
+hold DOWN 4
+frames 4
+hold RIGHT 4
+frames 4
+shot creator_spiky
+hold DOWN 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+shot creator_spiky_blonde
+hold B 10
+frames 10

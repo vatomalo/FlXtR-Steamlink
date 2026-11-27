@@ -1,0 +1,41 @@
+# The creator's hair styles in the field (start: rabites.state): each style
+# in its own colour, seen from the front, the side and the back.
+#! expect-log HAIR BOY SPIKY BLONDE
+#! expect-log HAIR BOY TOPKNOT BLACK
+expect u16 00DC == 130
+cmd camera_off
+frames 60
+cmd class_none
+monster 0 -150 150
+monster 1 -150 -150
+monster 2 150 150
+cmd hair_0_1_4
+frames 20
+hold DOWN 8
+shot spiky_front
+hold RIGHT 8
+shot spiky_side
+hold UP 8
+shot spiky_back
+cmd hair_0_2_5
+hold DOWN 8
+shot long_front
+hold LEFT 8
+shot long_side
+hold UP 8
+shot long_back
+cmd hair_0_3_3
+hold DOWN 8
+shot ponytail_front
+hold RIGHT 8
+shot ponytail_side
+hold UP 8
+shot ponytail_back
+cmd hair_0_4_1
+hold DOWN 8
+shot topknot_front
+hold LEFT 8
+shot topknot_side
+hold UP 8
+shot topknot_back
+frames 4

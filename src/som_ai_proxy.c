@@ -326,6 +326,8 @@ static uint8_t member_pal_orig[SOM_PARTY_MEMBERS][32],member_pal_written[SOM_PAR
 static int member_pal_have[SOM_PARTY_MEMBERS];
 static unsigned member_pal_addr[SOM_PARTY_MEMBERS];
 static uint8_t creator_skin[SOM_PARTY_MEMBERS];
+/* The creator's hair per hero (som_hair.h): style and colour, 0 native. */
+static uint8_t creator_hair[SOM_PARTY_MEMBERS],creator_hair_colour[SOM_PARTY_MEMBERS];
 /* The chosen discipline, levels and experience survive game restarts. */
 #define SOM_DISC_FILE "/home/apps/retroarch/cores/experimental/som_ai_disciplines"
 #define SOM_DISCIPLINES_V1 9u          /* disciplines before rogue/samurai/archer */
@@ -405,7 +407,7 @@ static void som_member_palette_frame(uint8_t *ram,unsigned who){
     /* The heroes the two pads play (and the boy) never glow. */
     const int held=ram[0xE4]==1&&ram[0xE6]==0x0F&&
         (who==0u||who==som_pad1_member_in(ram)||who==som_pad2_member(ram));
-    if(profile==SOM_PAL_ORIGINAL&&who!=1u&&!creator_skin[who]){     /* the girl still gets her hair */
+    if(profile==SOM_PAL_ORIGINAL&&who!=1u&&!creator_skin[who]&&!creator_hair_colour[who]){     /* the girl still gets her hair */
         if(member_pal_have[who]&&!memcmp(current,written,32)){
             memcpy(current,orig,32);
             if(!memcmp(working,written,32))memcpy(working,orig,32);
@@ -432,6 +434,7 @@ static void som_member_palette_frame(uint8_t *ram,unsigned who){
     som_member_hair(dressed,who);
     if(profile==SOM_PAL_NECRO_BONE)som_pal_necro_body(dressed,who);
     som_creator_tint(dressed,who,creator_skin[who]);
+    som_hair_tint(dressed,who,creator_hair_colour[who]);
     memcpy(current,dressed,32);
     /* The game works on (and sends to the screen) a second buffer,
      * 7E:0700 + palette*32 (live trace 2026-11-14: hero palette 1 at 7E:0720
@@ -675,6 +678,7 @@ static const uint8_t *(*backend_main_depth)(unsigned *pitch);
 typedef const uint8_t *(*SomObjLookup)(unsigned name,unsigned palette,unsigned tile);
 static void (*backend_set_obj_lookup)(SomObjLookup);
 static void (*backend_set_name_skin)(const uint16_t *,unsigned,unsigned);
+static void (*backend_set_name_hair)(const uint16_t *);
 static const uint8_t *(*backend_name_matte)(void);
 static SomSpriteAtlas sprite_atlas[3];
 static unsigned sprite_atlas_loaded,sprite_atlas_available,sprite_atlas_visible,sprite_atlas_seen;
@@ -703,6 +707,7 @@ static const uint8_t *som_sprite_lookup(unsigned name,unsigned palette,unsigned 
 static void som_sprite_close(void){
     if(backend_set_obj_lookup)backend_set_obj_lookup(NULL);
     if(backend_set_name_skin)backend_set_name_skin(NULL,0u,0u);
+    if(backend_set_name_hair)backend_set_name_hair(NULL);
     for(unsigned slot=0;slot<3u;slot++)som_atlas_clear(&sprite_atlas[slot]);
     sprite_atlas_loaded=sprite_atlas_available=sprite_atlas_visible=sprite_atlas_seen=0;
 }
@@ -2893,14 +2898,25 @@ static void som_input_poll(void){
             for(unsigned key=0;frontend_state&&key<16u;key++)
                 if(frontend_state(0,RETRO_DEVICE_JOYPAD,0,key))buttons|=(uint16_t)(1u<<key);
             const int was_active=sprite_creator.active;
-            const int action=som_creator_input(&sprite_creator,slot,buttons,slot>=0?creator_skin[slot]:0u);
+            const int action=som_creator_input_hair(&sprite_creator,slot,buttons,slot>=0?creator_skin[slot]:0u,
+                slot>=0?creator_hair[slot]:0u,slot>=0?creator_hair_colour[slot]:0u);
             backend_set_name_skin(sprite_creator.active?som_creator_skins[sprite_creator.skin]:NULL,
                                   sprite_creator.slot,sprite_creator.layers);
+            if(backend_set_name_hair){
+                static uint16_t hair[3];
+                const unsigned c=sprite_creator.hair_colour;
+                for(unsigned i=0;i<3u&&c<SOM_HAIR_COLOURS;i++)hair[i]=som_hair_bgr555(som_hair_ramps[c][i]);
+                backend_set_name_hair(sprite_creator.active&&c&&c<SOM_HAIR_COLOURS?hair:NULL);
+            }
             sprite_creator_captures=action!=SOM_CREATOR_PASS;
             if(!was_active&&sprite_creator.active)
                 fprintf(stderr,"[som-ai] CREATOR opened for party slot %u\n",sprite_creator.slot+1u);
             if(action==SOM_CREATOR_CONFIRM){
                 creator_skin[sprite_creator.slot]=sprite_creator.skin;
+                creator_hair[sprite_creator.slot]=sprite_creator.hair;
+                creator_hair_colour[sprite_creator.slot]=sprite_creator.hair_colour;
+                fprintf(stderr,"[som-ai] CREATOR hair %s %s\n",som_hair_style_names[sprite_creator.hair%SOM_HAIR_STYLES],
+                        som_hair_colour_names[sprite_creator.hair_colour%SOM_HAIR_COLOURS]);
                 fprintf(stderr,"[som-ai] CREATOR appearance accepted; native name entry resumed (%s)\n",
                         som_creator_skin_names[sprite_creator.skin]);
             }
@@ -9024,6 +9040,15 @@ static int som_handle_command(const char *command){
         som_party_class_saved();
         return 1;
     }
+    /* hair_W_S_C: hero W (0 boy, 1 girl, 2 sprite) wears hair style S in
+     * colour C (som_hair.h; look checks). */
+    if(!strncmp(command,"hair_",5)){
+        unsigned w=0,st=0,c=0;
+        if(sscanf(command+5,"%u_%u_%u",&w,&st,&c)!=3||w>2u||st>=SOM_HAIR_STYLES||c>=SOM_HAIR_COLOURS)return 0;
+        creator_hair[w]=(uint8_t)st;creator_hair_colour[w]=(uint8_t)c;
+        fprintf(stderr,"[som-ai] HAIR %s %s %s\n",som_party_names[w],som_hair_style_names[st],som_hair_colour_names[c]);
+        return 1;
+    }
     if(!strncmp(command,"class_",6)){
         char *end=NULL;
         const unsigned long n=!strcmp(command+6,"none")?SOM_DISCIPLINE_NONE:
@@ -10579,6 +10604,32 @@ static void som_armour_hero(uint8_t *pixels,unsigned width,unsigned height,size_
                 fclose(f);
             }
         }
+        /* The creator's hair style (som_hair.h), under any headgear: drawn in
+         * the hero's own live hair colours (palette entries 1-4), so it
+         * matches the hair the game draws and any class or creator tint. */
+        if(creator_hair[who]&&creator_hair[who]<SOM_HAIR_STYLES){
+            int hx,hy;
+            if(som_head_place(img,&hx,&hy)){
+                const uint8_t *o=ram+0xE000u+0x200u*who;
+                const uint8_t *pal=ram+0xDE00u+(128u+((o[0x8B]>>1)&7u)*16u)*2u;
+                uint32_t ink[5];
+                ink[0]=som_overlay_color(format,170,40,48);               /* the tie */
+                for(unsigned i=1;i<5u;i++){
+                    const unsigned c=pal[2u*i]|(unsigned)pal[2u*i+1u]<<8;
+                    ink[i]=som_overlay_color(format,(c&31u)<<3,((c>>5)&31u)<<3,((c>>10)&31u)<<3);
+                }
+                const unsigned facing=o[0x10];
+                hy+=SOM_HEAD_TOP-SOM_HAIR_TOP;                             /* the same head top row */
+                hx+=(SOM_HEAD_W-SOM_HAIR_W)/2;
+                for(int v=0;v<SOM_HAIR_H;v++)for(int u=0;u<SOM_HAIR_W;u++){
+                    const char k=som_hair_at(creator_hair[who],facing,u,v,frame_number);
+                    if(k=='.')continue;
+                    const int ox=x0+hx+u,oy=y0+hy+v;
+                    if(ox<0||oy<0||ox>=(int)(width/sx)||oy>=(int)(height/sy)||SOM_IN_FRONT(ox,oy))continue;
+                    som_overlay_fill(pixels,pitch,format,(unsigned)ox*sx,(unsigned)oy*sy,sx,sy,ink[som_hair_entry_at(k,u,v)]);
+                }
+            }
+        }
         /* The class's headgear, on top of the head this frame. */
         int kx,ky;
         if(look.head>=0&&som_head_place(img,&kx,&ky)){
@@ -10608,7 +10659,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
     for(unsigned who=0;who<3u;who++){
         if(sprite_atlas_visible&(1u<<who))continue;
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
-        if((look.head<0&&!look.torso&&!look.robe&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
+        if((look.head<0&&!look.torso&&!look.robe&&!creator_hair[who]&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0;
         if(!som_armour_compose(oam,vram,who,img,&x0,&y0))continue;
@@ -11074,6 +11125,7 @@ static void load_backend(void){
     *(void**)(&backend_main_depth)=dlsym(backend,"retro_flxtr_main_depth");
     *(void**)(&backend_set_obj_lookup)=dlsym(backend,"retro_flxtr_set_obj_lookup");
     *(void**)(&backend_set_name_skin)=dlsym(backend,"retro_flxtr_set_name_skin");
+    *(void**)(&backend_set_name_hair)=dlsym(backend,"retro_flxtr_set_name_hair");
     *(void**)(&backend_name_matte)=dlsym(backend,"retro_flxtr_name_matte");
     {   /* FLXTR_SOM_NO_DEPTH=1: draw without the core's depth (measuring its cost) */
         const char *off=getenv("FLXTR_SOM_NO_DEPTH");
@@ -11189,7 +11241,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_sprite_open();
     memset(&sprite_creator,0,sizeof(sprite_creator));
     memset(creator_skin,0,sizeof(creator_skin));
+    memset(creator_hair,0,sizeof(creator_hair));memset(creator_hair_colour,0,sizeof(creator_hair_colour));
     if(backend_set_name_skin)backend_set_name_skin(NULL,0u,0u);
+    if(backend_set_name_hair)backend_set_name_hair(NULL);
     sprite_creator_captures=0;
     const char *disable_creator=getenv("FLXTR_SOM_CREATOR_OFF");
     sprite_creator_enabled=!disable_creator||strcmp(disable_creator,"1")!=0;

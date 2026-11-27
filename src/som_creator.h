@@ -83,7 +83,7 @@ static inline int som_creator_input(SomCreator *menu,int slot,uint16_t buttons,
 
 static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsigned width,
                                     unsigned height,size_t pitch,int format,
-                                    const uint8_t *native,size_t native_pitch){
+                                    const uint8_t *native,size_t native_pitch,const uint8_t *matte){
     const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u;
     if(width<256u*sx||height<224u*sy)return;
     const uint32_t back=som_overlay_color(format,13,26,32);
@@ -117,6 +117,7 @@ static inline void som_creator_draw(const SomCreator *menu,uint8_t *pixels,unsig
          * base coordinates. Retain the native pixels and scale by 2. */
         const unsigned bytes=format==1?4u:2u;
         for(unsigned y=0;y<32;y++)for(unsigned x=0;x<18;x++){
+            if(matte&&!matte[y*18u+x])continue;
             uint32_t ink=0;
             memcpy(&ink,native+(16u+y)*sy*native_pitch+(143u+x)*sx*bytes,bytes);
             som_overlay_fill(pixels,pitch,format,(38u+2u*x)*sx,(67u+2u*y)*sy,2u*sx,2u*sy,ink);

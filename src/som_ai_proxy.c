@@ -675,6 +675,7 @@ static const uint8_t *(*backend_main_depth)(unsigned *pitch);
 typedef const uint8_t *(*SomObjLookup)(unsigned name,unsigned palette,unsigned tile);
 static void (*backend_set_obj_lookup)(SomObjLookup);
 static void (*backend_set_name_skin)(const uint16_t *,unsigned,unsigned);
+static const uint8_t *(*backend_name_matte)(void);
 static SomSpriteAtlas sprite_atlas[3];
 static unsigned sprite_atlas_loaded,sprite_atlas_available,sprite_atlas_visible,sprite_atlas_seen;
 static SomCreator sprite_creator;
@@ -10626,7 +10627,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         }
         if(size<=overlay_frame_size){
             som_creator_draw(&sprite_creator,overlay_frame,width,height,row,pixel_format,
-                             data!=RETRO_HW_FRAME_BUFFER_VALID&&pitch>=row?data:NULL,pitch);
+                             data!=RETRO_HW_FRAME_BUFFER_VALID&&pitch>=row?data:NULL,pitch,
+                             backend_name_matte?backend_name_matte():NULL);
             som_frontend_video(overlay_frame,width,height,row);
             return;
         }
@@ -11064,6 +11066,7 @@ static void load_backend(void){
     *(void**)(&backend_main_depth)=dlsym(backend,"retro_flxtr_main_depth");
     *(void**)(&backend_set_obj_lookup)=dlsym(backend,"retro_flxtr_set_obj_lookup");
     *(void**)(&backend_set_name_skin)=dlsym(backend,"retro_flxtr_set_name_skin");
+    *(void**)(&backend_name_matte)=dlsym(backend,"retro_flxtr_name_matte");
     {   /* FLXTR_SOM_NO_DEPTH=1: draw without the core's depth (measuring its cost) */
         const char *off=getenv("FLXTR_SOM_NO_DEPTH");
         if(off&&!strcmp(off,"1"))backend_main_depth=NULL;

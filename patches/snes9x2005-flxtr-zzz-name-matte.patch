@@ -1,0 +1,84 @@
+--- a/libretro.c
++++ b/libretro.c
+@@ -631,6 +631,9 @@
+       retro_set_audio_buff_status_cb();
+ }
+
++extern const uint16_t *flxtr_name_skin;
++extern uint8_t flxtr_name_matte[18 * 32];
++
+ void retro_run(void)
+ {
+    bool updated = false;
+@@ -718,6 +721,8 @@
+
+    RETRO_PERFORMANCE_INIT(S9xMainLoop_func);
+    RETRO_PERFORMANCE_START(S9xMainLoop_func);
++   if (flxtr_name_skin)
++      memset(flxtr_name_matte, 0, sizeof(flxtr_name_matte));
+    S9xMainLoop();
+    RETRO_PERFORMANCE_STOP(S9xMainLoop_func);
+
+@@ -769,6 +774,11 @@
+    flxtr_name_layers = slot == 0 ? layers : 0;
+ }
+
++RETRO_API const uint8_t *retro_flxtr_name_matte(void)
++{
++   return flxtr_name_matte;
++}
++
+ /* FlXtR overlays use the renderer's actual main-screen priority for the
+  * frame just passed to video_cb. This buffer is read-only and remains owned
+  * by the core. A NULL result means there is no rendered frame to compare. */
+--- a/source/gfx.c
++++ b/source/gfx.c
+@@ -784,6 +784,7 @@
+ unsigned flxtr_name_hide;
+ unsigned flxtr_name_row, flxtr_name_line;
+ int flxtr_name_x;
++uint8_t flxtr_name_matte[18 * 32];
+
+ const uint8_t *(*flxtr_obj_lookup)(unsigned name, unsigned palette, unsigned tile);
+
+@@ -950,7 +951,7 @@
+                flxtr_obj_pixels = flxtr_obj_lookup(PPU.OBJ[S].Name, PPU.OBJ[S].Palette,
+                                                   (BaseTile | TileX) & 0x1ff);
+
+-            if (flxtr_name_draw && flxtr_name_hide)
++            if (flxtr_name_draw)
+             {
+                flxtr_name_x = X;
+                flxtr_name_line = TileLine;
+--- a/source/tile.h
++++ b/source/tile.h
+@@ -10,6 +10,20 @@
+ extern unsigned flxtr_name_hide;
+ extern unsigned flxtr_name_row, flxtr_name_line;
+ extern int flxtr_name_x;
++extern uint8_t flxtr_name_matte[18 * 32];
++
++static INLINE void flxtr_name_capture_row(const uint8_t *source, bool flipped)
++{
++   unsigned i;
++   if (flxtr_name_row < 16 || flxtr_name_row >= 48)
++      return;
++   for (i = 0; i < 8; i++)
++   {
++      const int x = flxtr_name_x + (int)(flipped ? 7 - i : i) - 143;
++      if (x >= 0 && x < 18 && source[flxtr_name_line + i])
++         flxtr_name_matte[(flxtr_name_row - 16) * 18 + x] = 1;
++   }
++}
+
+ /* Naming preview only. Replace the removed hair with an original rounded
+  * scalp and map outfit shades to a plain underlayer. Keep native face pixels. */
+@@ -109,6 +123,8 @@
+     } \
+     if (flxtr_name_draw && flxtr_name_hide) \
+        pCache = flxtr_name_mask_tile(pCache, (Tile & H_FLIP) != 0); \
++    if (flxtr_name_draw) \
++       flxtr_name_capture_row(pCache, (Tile & H_FLIP) != 0); \
+     if (BG.DirectColourMode) \
+     { \
+        if (IPPU.DirectColourMapsNeedRebuild) \

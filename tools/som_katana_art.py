@@ -175,6 +175,49 @@ def draw(image, style):
     return out
 
 
+def bo(image):
+    """The Monk's Bo (player, 2026-11-27: "make monk spear look like a Bo"):
+    a straight two-pixel wooden staff between the two farthest pixels of the
+    native spear, dark bands at both ends, outline one pixel; None if the
+    frame has no spear. Integer maths only (src/som_art_gen.h som_art_bo
+    gives the same bytes)."""
+    height, width = len(image), len(image[0])
+    pts = [(x, y) for y in range(height) for x in range(width) if 1 <= image[y][x] <= 4]
+    if len(pts) < 2:
+        return None
+    best, a, b = -1, 0, 0
+    for i in range(len(pts)):
+        for j in range(i+1, len(pts)):
+            d = (pts[i][0]-pts[j][0])**2+(pts[i][1]-pts[j][1])**2
+            if d > best:
+                best, a, b = d, i, j
+    (ax, ay), (bx, by) = pts[a], pts[b]
+    dx, dy = bx-ax, by-ay
+    n = max(abs(dx), abs(dy))
+    core = [[0]*width for _ in range(height)]
+    for k in range(n+1):
+        x = ax+(2*dx*k+n)//(2*n)
+        y = ay+(2*dy*k+n)//(2*n)
+        end = k < 2 or k > n-2
+        x2, y2 = (x, y+1) if abs(dx) >= abs(dy) else (x+1, y)
+        for px, py, c in ((x, y, 3 if end else 1), (x2, y2, 3 if end else 2)):
+            if 0 <= px < width and 0 <= py < height:
+                core[py][px] = c
+    out = [[0]*width for _ in range(height)]
+    for y in range(height):
+        for x in range(width):
+            if not core[y][x]:
+                continue
+            for i, j in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                if 0 <= x+i < width and 0 <= y+j < height and not core[y+j][x+i]:
+                    out[y+j][x+i] = 4
+    for y in range(height):
+        for x in range(width):
+            if core[y][x]:
+                out[y][x] = core[y][x]
+    return out
+
+
 def giant(image, body):
     """The native weapon at twice its size about the hands (Scale2x, with the
     outline kept one pixel thin), or None."""

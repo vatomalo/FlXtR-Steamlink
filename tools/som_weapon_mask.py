@@ -41,6 +41,11 @@ SWORD_ROWS = tuple(range(9, 18))
 # Weapon Flow's giant axe and spear: the game's own art, doubled. Also stored
 # as row 9 (tier 0): (weapon, its first row, kind).
 GIANTS = (("axe", 18, 0xED), ("spear", 27, 0xEE))
+# The Monk's Bo: the spear's frames redrawn as a plain wooden staff
+# (K.bo), in wood colours (the stake's), stored as row 9 like the giants.
+BO = ("spear", 27, 0xEF)
+WOOD = (28 | 21 << 5 | 12 << 10, 22 | 14 << 5 | 7 << 10, 15 | 9 << 5 | 4 << 10, 6 | 3 << 5 | 1 << 10,
+        30 | 27 << 5 | 20 << 10)
 KUSARIGAMA_WHIP_ROW = 36       # Ninjutsu's default Leather Lash artwork
 CANVAS = 224
 ORIGIN = (112, 140)
@@ -319,6 +324,27 @@ def pack(gfx, rows=SWORD_ROWS[:1], dagger=None, kusarigama=False):
                                        *(palette + palette + [0]*10))
                 encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
                 entries += 1
+    if kusarigama:
+        weapon_name, row, kind = BO
+        tiles = gfx.weapon_tiles(row)
+        for frame, flags in weapon_frames(gfx, weapon_name, row):
+            wp = gfx.weapon_pieces(row, frame, flags)
+            if not wp or any(t is not None and t >= 64 for piece in wp for t in piece[4]):
+                continue
+            weapon = [[0]*CANVAS for _ in range(CANVAS)]
+            body = [[0]*CANVAS for _ in range(CANVAS)]
+            gfx.render("boy", wp, image=weapon, origin=ORIGIN, source=tiles)
+            gfx.render("boy", gfx.pieces("boy", weapon_name, frame, flags), image=body, origin=ORIGIN)
+            art = K.bo(weapon)
+            if art and behind_body(gfx, row, frame):
+                art = [[0 if b else c for c, b in zip(line, under)] for line, under in zip(art, body)]
+            record = cropped(art) if art else None
+            if record is None:
+                continue
+            dx, dy, w, h, pixels = record
+            encoded += struct.pack("<4B20H", kind, SWORD_ROWS[0], frame, 1, *(list(WOOD)*2 + [0]*10))
+            encoded += struct.pack("<BbbBB", 1, dx, dy, w, h)+pixels
+            entries += 1
     if entries > 65535:
         raise ValueError("too many weapon mask frames")
     return b"SOMWORK1"+struct.pack("<H", entries)+bytes(encoded)

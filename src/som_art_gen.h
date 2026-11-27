@@ -499,6 +499,50 @@ static int som_art_giant(const uint8_t *image,const uint8_t *body,uint8_t *big,u
     }
     return 1;
 }
+/* The Monk's Bo (player, 2026-11-27: "make monk spear look like a Bo"):
+ * tools/som_katana_art.py bo(), byte for byte. A straight two-pixel wooden
+ * staff between the two farthest pixels of the native spear, dark bands at
+ * both ends, a one-pixel outline. core: scratch. 0 when no spear. */
+static long som_art_fdiv(long a,long b){        /* Python's // for b > 0 */
+    long q=a/b;
+    if(a%b&&a<0)q--;
+    return q;
+}
+static int som_art_bo(const uint8_t *image,uint8_t *core,uint8_t *out){
+    const int W=SOM_ART_CANVAS;
+    long best=-1;int ax=0,ay=0,bx=0,by=0,count=0;
+    static int px[SOM_ART_CANVAS*8],py[SOM_ART_CANVAS*8];
+    for(int y=0;y<W;y++)for(int x=0;x<W;x++){
+        const int c=image[y*W+x];
+        if(c<1||c>4)continue;
+        if(count<SOM_ART_CANVAS*8){px[count]=x;py[count]=y;}
+        count++;
+    }
+    if(count<2||count>SOM_ART_CANVAS*8)return 0;
+    for(int i=0;i<count;i++)for(int j=i+1;j<count;j++){
+        const long d=(long)(px[i]-px[j])*(px[i]-px[j])+(long)(py[i]-py[j])*(py[i]-py[j]);
+        if(d>best){best=d;ax=px[i];ay=py[i];bx=px[j];by=py[j];}
+    }
+    const long dx=bx-ax,dy=by-ay,n=labs(dx)>labs(dy)?labs(dx):labs(dy);
+    memset(core,0,(size_t)(W*W));memset(out,0,(size_t)(W*W));
+    for(long k=0;k<=n;k++){
+        const int x=ax+(int)som_art_fdiv(2*dx*k+n,2*n),y=ay+(int)som_art_fdiv(2*dy*k+n,2*n);
+        const int end=k<2||k>n-2;
+        const int x2=labs(dx)>=labs(dy)?x:x+1,y2=labs(dx)>=labs(dy)?y+1:y;
+        if(x>=0&&y>=0&&x<W&&y<W)core[y*W+x]=(uint8_t)(end?3:1);
+        if(x2>=0&&y2>=0&&x2<W&&y2<W)core[y2*W+x2]=(uint8_t)(end?3:2);
+    }
+    for(int y=0;y<W;y++)for(int x=0;x<W;x++){
+        if(!core[y*W+x])continue;
+        static const int d4[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
+        for(int q=0;q<4;q++){
+            const int nx=x+d4[q][0],ny=y+d4[q][1];
+            if(nx>=0&&ny>=0&&nx<W&&ny<W&&!core[ny*W+nx])out[ny*W+nx]=4u;
+        }
+    }
+    for(int i=0;i<W*W;i++)if(core[i])out[i]=core[i];
+    return 1;
+}
 /* Every frame of a weapon's attacks, then the walking and resting poses. */
 static void som_art_frames(SomArtRom *g,int weapon,unsigned row,uint8_t *have,uint8_t *flags){
     SomArtStep steps[256];
@@ -620,6 +664,26 @@ static int som_art_weapon_masks(const uint8_t *rom,size_t size,SomArtOut *o){
                 if(!(som_art_8(&g,som_art_off(0xD4,som_art_weapon_list(&g,row,f)))&0x80u))
                     for(size_t i=0;i<area;i++)if(body[i])art[i]=0;
                 som_art_mask_entry(o,art,w,giants[k].kind,f,five);
+            }
+        }
+        {   /* the Monk's Bo: tools/som_weapon_mask.py BO, wood colours */
+            const unsigned row=27u;
+            som_art_frames(&g,3,row,have,flags);
+            som_art_weapon_tiles(&g,row,tiles);
+            for(unsigned f=0;f<256u&&!g.bad;f++)if(have[f]){
+                unsigned n=som_art_weapon_pieces(&g,row,f,flags[f],p);
+                int ok=n!=0;
+                for(unsigned i=0;i<n;i++)for(unsigned q=0;q<4u;q++)if(p[i].tile[q]>=64)ok=0;
+                if(!ok)continue;
+                memset(weapon,0,2u*area);
+                som_art_render(&g,p,n,weapon,SOM_ART_CANVAS,112,140,tiles,0);
+                n=som_art_pieces(&g,0u,3,f,flags[f],p);
+                som_art_render(&g,p,n,body,SOM_ART_CANVAS,112,140,NULL,0);
+                if(!som_art_bo(weapon,core,art))continue;
+                if(!(som_art_8(&g,som_art_off(0xD4,som_art_weapon_list(&g,row,f)))&0x80u))
+                    for(size_t i=0;i<area;i++)if(body[i])art[i]=0;
+                const SomArtWindow all={0,0,SOM_ART_CANVAS,SOM_ART_CANVAS};
+                som_art_mask_entry(o,art,all,0xEFu,f,som_art_wood);
             }
         }
     }

@@ -1333,7 +1333,7 @@ enum {SOM_LOOK_TANTO,SOM_LOOK_DAI,SOM_LOOK_KUSARIGAMA,SOM_LOOK_KATANA,SOM_LOOK_R
       SOM_LOOK_LONGSWORD,SOM_LOOK_CLAYMORE,SOM_LOOK_ZWEIHANDER,SOM_LOOK_GREATSWORD,SOM_LOOK_COLOSSUS,
       SOM_LOOK_DAGGER,SOM_LOOK_CUTLASS,SOM_LOOK_ESTOC,SOM_LOOK_KUNAI,SOM_LOOK_NINJATO,
       SOM_LOOK_STAKE,SOM_LOOK_SILVER,SOM_LOOK_KUKRI,SOM_LOOK_RUSTY,SOM_LOOK_BROAD,SOM_LOOK_HERALD,
-      SOM_LOOK_EXCALIBUR,SOM_LOOK_GIGAS,SOM_LOOK_DRAGON,SOM_LOOK_MANA,SOM_LOOK_GIANT_AXE,SOM_LOOK_GIANT_SPEAR,SOM_LOOKS};
+      SOM_LOOK_EXCALIBUR,SOM_LOOK_GIGAS,SOM_LOOK_DRAGON,SOM_LOOK_MANA,SOM_LOOK_GIANT_AXE,SOM_LOOK_GIANT_SPEAR,SOM_LOOK_BO,SOM_LOOKS};
 #define SOM_MASK_ROWS 9u               /* sword rows 9..17 */
 #define SOM_MASK_AT(look,row,pose) (((look)*SOM_MASK_ROWS+(row)-9u)*256u+(pose))
 static uint32_t *weapon_mask_index;    /* SOM_MASK_AT; row 9 stands for every row */
@@ -12638,6 +12638,8 @@ static int som_weapon_mask_mode(const uint8_t *ram,unsigned who){
     /* Weapon Flow's axe and spear are giants too. */
     if(cls==SOM_DISC_WEAPON_FLOW&&(actor[0x1E4]==2u||actor[0x1E4]==3u))
         return actor[0x1E4]==2u?SOM_LOOK_GIANT_AXE:SOM_LOOK_GIANT_SPEAR;
+    /* The Monk's spear is a Bo (player, 2026-11-27): any hero, his Monk class. */
+    if(cls==SOM_DISC_MARTIAL&&actor[0x1E4]==3u)return SOM_LOOK_BO;
     if(actor[0x1E4]!=1u)return -1;
     if(cls>=SOM_DISCIPLINE_COUNT){              /* classless: the forged sword held */
         static const uint8_t forged[SOM_MASK_ROWS]={SOM_LOOK_RUSTY,SOM_LOOK_BROAD,SOM_LOOK_HERALD,
@@ -12664,7 +12666,8 @@ static int som_mask_shown(const uint8_t *actor,int mode){
     return (actor[0x024u]&(mode==SOM_LOOK_KUSARIGAMA?0x40u:0x0Fu))!=0;
 }
 static int som_weapon_mask_entry(unsigned mode,unsigned row,unsigned frame,SomWorkEntry *out){
-    const unsigned first=mode==SOM_LOOK_GIANT_AXE?18u:mode==SOM_LOOK_GIANT_SPEAR?27u:9u;   /* the type's tier 0 */
+    const unsigned first=mode==SOM_LOOK_GIANT_AXE?18u:
+        (mode==SOM_LOOK_GIANT_SPEAR||mode==SOM_LOOK_BO)?27u:9u;   /* the type's tier 0 */
     if(!weapon_mask_index||mode>=SOM_LOOKS||row<first||row>=first+SOM_MASK_ROWS||frame>255u)return 0;
     uint32_t at=weapon_mask_index[SOM_MASK_AT(mode,row-first+9u,frame)];
     /* Every sword has the same shapes: one stored blade, the row's colours. */

@@ -1,0 +1,20 @@
+# The Monk's spear drawn as a Bo (start: rabites.state): a plain wooden staff
+# made from the ROM's own spear frames, in every pose of his Y attack.
+#! expect-log weapon styles: indexed \d+ masked frames
+expect u16 00DC == 130
+frames 60
+cmd class_1
+frames 40
+monster 0 -150 150
+monster 1 -150 -150
+monster 2 150 150
+hold Y 2
+frames 6
+shot bo_a
+frames 6
+shot bo_b
+frames 6
+shot bo_c
+frames 6
+shot bo_d
+frames 60

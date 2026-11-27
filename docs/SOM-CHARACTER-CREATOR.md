@@ -84,3 +84,23 @@ The scalp sits below the removed hair volume. The torso uses the selected
 skin ramp and shades the cowl footprint as part of the native shoulders.
 The preview composites the renderer's opaque sprite coverage onto the
 creator panel, so the naming screen's green background is excluded.
+
+### Hair: the game's own heads
+
+The HAIR row offers NATIVE and every person's head in the ROM (39 on the
+Turbo ROM: the heroes and the villagers, monsters and objects left out),
+built at deploy time by `tools/som_head_pack.py` into `som_heads.bin`
+(ROM-derived, never committed or bundled). Each head is the top piece row of
+the standing frame, facing up, down and side, 16 x 16, with its colours stored
+by role (outline, hair, skin, white, others). In the field the proxy finds the
+hero's pieces in the OAM shadow before each frame and hands the core
+replacement tiles through the sprite atlas hook: the borrowed head inside
+its square, the game's own pixels outside, the old hair cleared where the head
+has none. The core draws them with native priority, clipping and transparency.
+Colours use the hero's palette: hair on entries 2-4 (the head's own hair
+colour, or the COLOUR row's), skin on the hero's skin, others on the nearest
+hero colour. Limits: tiles the game draws twice (the girl's and the sprite's
+mirrored halves facing up and down) carry one picture, so those views are
+mirrored; blank tiles are left alone, so a head wider than the hero's own
+pieces is cut at their edge; non-standing poses reuse the standing head.
+The drawn hair caps of the first attempt were removed.

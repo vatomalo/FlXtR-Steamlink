@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""The game's own heads as hair styles for the character creator.
+
+Player, 2026-11-27: drawn hair caps were "the worst! can't we use ingame
+hairstyles?" ... "all humans". Every person in the ROM (the three heroes and
+the villagers, read by som_hero_gfx) gives a head: the top row of its
+standing frame, facing up, down and side, cropped to 16 x 16 on the head.
+Monsters and objects are left out (no skin, or no face).
+
+Colours are stored by role so a head can be worn in the hero's own palette:
+1 outline, 2-4 hair (dark to light), 5-7 skin (dark to light), 15 white,
+16+ other colours (RGB in the entry, matched to the nearest hero colour at
+run time). The source's own hair ramp is kept for the NATIVE hair colour.
+
+    python3 tools/som_head_pack.py ROM OUT.bin            # the proxy pack (SOMHEAD1)
+    python3 tools/som_head_pack.py ROM OUT.png --sheet    # what was picked
+
+Pack: "SOMHEAD1", u16 count, then per head: u8 kind, u8 hair[3][3] RGB,
+u8 extras, u8 extra[8][3] RGB, then 3 x 16 x 16 role bytes (up, down, side;
+side faces right).
+"""
+import argparse
+import colorsys
+import struct
+import sys
+import zlib
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import som_hero_gfx as H  # noqa: E402
+import som_villager_work as V  # noqa: E402
+
+SIZE = 16
+DIRS = ("up", "down", "side")
+SOURCES = ["boy", "girl", "sprite"] + list(range(0x83, 0x100))
+KIND_IDS = {"boy": 0x80, "girl": 0x81, "sprite": 0x82}
+# Passed the person test but are not people, or not a whole head, or the
+# heroes' own heads again (sheet checked by eye, 2026-11-27): copies of the
+# boy and girl, a crab, a cat, a reindeer, a turtle, a flame, a cone, a
+# broken half, scenery, a rock, frog masks and the small full-body figures.
+EXCLUDE = {0x8A, 0x8B, 0xA3, 0xA5, 0xAD, 0xAF, 0xB3, 0xC1, 0xCC, 0xD0, 0xD2, 0xDF,
+           0xE1, 0xE2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8}
+
+
+def lum(c):
+    return (c[0] * 30 + c[1] * 59 + c[2] * 11) / 100
+
+
+def hsv(c):
+    return colorsys.rgb_to_hsv(c[0] / 255, c[1] / 255, c[2] / 255)
+
+
+def is_skin(c):
+    h, s, v = hsv(c)
+    return 0.02 <= h <= 0.13 and 0.15 <= s <= 0.62 and v >= 0.55 and c[0] >= 150
+
+
+def head_image(gfx, kind, direction):
+    """16 x 16 colour indices of the head (the frame's top row of pieces)."""
+    pieces = V.standing(gfx, kind, direction)
+    top = min(p[1] for p in pieces)
+    row = [p for p in pieces if p[1] == top]
+    image = gfx.render(kind, row, size=V.CELL, origin=V.ORIGIN)
+    y0 = V.ORIGIN[1] + top
+    cols = [x for y in range(y0, y0 + SIZE) for x, v in enumerate(image[y]) if v]
+    if not cols:
+        return None
+    centre = (min(cols) + max(cols) + 1) // 2
+    x0 = centre - SIZE // 2
+    return [[image[y][x] if 0 <= x < len(image[0]) else 0 for x in range(x0, x0 + SIZE)]
+            for y in range(y0, y0 + SIZE)]
+
+
+def roles(palette, images):
+    """{source index: role} and the hair ramp and extra colours."""
+    count = Counter(v for im in images for row in im for v in row if v)
+    used = [i for i in count if count[i] >= 1]
+    role, extras = {}, []
+    dark = [i for i in used if lum(palette[i]) < 80]
+    for i in dark:
+        role[i] = 1
+    skin = sorted((i for i in used if i not in role and is_skin(palette[i])), key=lambda i: lum(palette[i]))
+    for k, i in enumerate(skin):
+        role[i] = 5 + min(2, round(k * 2 / max(1, len(skin) - 1))) if len(skin) > 1 else 7
+    rest = [i for i in used if i not in role]
+    whites = [i for i in rest if min(palette[i]) >= 215]
+    for i in whites:
+        if count[i] <= 12:
+            role[i] = 15
+    rest = [i for i in rest if i not in role]
+    hair = []
+    if rest:
+        lead = max(rest, key=lambda i: count[i])
+        lh, ls, _ = hsv(palette[lead])
+        for i in rest:
+            h, s, _ = hsv(palette[i])
+            grey = ls < 0.18 and s < 0.25
+            if i == lead or grey or (ls >= 0.18 and min(abs(h - lh), 1 - abs(h - lh)) < 0.09):
+                hair.append(i)
+    hair.sort(key=lambda i: lum(palette[i]))
+    for k, i in enumerate(hair):
+        role[i] = 2 + (min(2, round(k * 2 / (len(hair) - 1))) if len(hair) > 1 else 1)
+    for i in used:
+        if i not in role:
+            if len(extras) < 8:
+                extras.append(i)
+                role[i] = 16 + len(extras) - 1
+            else:
+                role[i] = 1                 # a ninth extra colour: drawn dark
+    ramp = []
+    for want in (2, 3, 4):
+        pick = [i for i in hair if role[i] == want]
+        if pick:
+            ramp.append(tuple(palette[pick[len(pick) // 2]]))
+    while ramp and len(ramp) < 3:
+        ramp.append(ramp[-1])
+    return role, ramp, [tuple(palette[i]) for i in extras], skin, hair
+
+
+def build(gfx):
+    heads = []
+    for kind in SOURCES:
+        if KIND_IDS.get(kind, kind) in EXCLUDE:
+            continue
+        try:
+            images = [head_image(gfx, kind, d) for d in DIRS]
+        except (IndexError, KeyError, ValueError, struct.error, TypeError):
+            continue
+        if any(im is None for im in images):
+            continue
+        palette = [tuple(c) for c in gfx.palette(kind)]
+        role, ramp, extras, skin, hair = roles(palette, images)
+        down = images[1]
+        skin_px = sum(1 for row in down for v in row if v and role.get(v) in (5, 6, 7))
+        hair_px = sum(1 for row in down for v in row if v and role.get(v) in (2, 3, 4))
+        rows = [y for y, row in enumerate(down) if any(row)]
+        if skin_px < 10 or hair_px < 10 or len(ramp) < 3 or len(rows) < 10:
+            continue                       # not a person: no face, or no hair
+        coded = [[[role.get(v, 0) if v else 0 for v in row] for row in im] for im in images]
+        if any(c == coded[1] for c in (h[3] for h in heads)):
+            continue                       # the same head again (recoloured copies are kept)
+        heads.append((KIND_IDS.get(kind, kind), ramp, extras, coded))
+    return heads
+
+
+def pack(heads):
+    out = bytearray(b"SOMHEAD1") + struct.pack("<H", len(heads))
+    for kind, ramp, extras, coded in heads:
+        out.append(kind & 0xFF)
+        for c in ramp:
+            out += bytes(c)
+        out.append(len(extras))
+        for k in range(8):
+            out += bytes(extras[k]) if k < len(extras) else b"\0\0\0"
+        for im in coded:
+            for row in im:
+                out += bytes(row)
+    return bytes(out)
+
+
+def sheet(heads, path, scale=4):
+    hero_skin = [(139, 82, 57), (213, 123, 82), (246, 189, 123)]
+    cols, cell = 12, SIZE + 4
+    rows = (len(heads) + cols - 1) // cols
+    w, h = cols * cell * 3, rows * (cell + 2)
+    pix = [[(30, 40, 44)] * (w * scale) for _ in range(h * scale)]
+    for n, (kind, ramp, extras, coded) in enumerate(heads):
+        for d, im in enumerate(coded):
+            gx, gy = ((n % cols) * 3 + d) * cell, (n // cols) * (cell + 2)
+            for y, row in enumerate(im):
+                for x, v in enumerate(row):
+                    if not v:
+                        continue
+                    c = ((49, 41, 32) if v == 1 else ramp[v - 2] if v <= 4 else hero_skin[v - 5] if v <= 7
+                         else (250, 250, 250) if v == 15 else extras[v - 16])
+                    for dy in range(scale):
+                        pix[(gy + y) * scale + dy][(gx + x) * scale:(gx + x + 1) * scale] = [c] * scale
+    raw = b"".join(b"\0" + bytes(v for p in r for v in p) for r in pix)
+    def chunk(t, c):
+        return struct.pack(">I", len(c)) + t + c + struct.pack(">I", zlib.crc32(t + c) & 0xFFFFFFFF)
+    Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w * scale, h * scale, 8, 2, 0, 0, 0))
+                           + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("rom")
+    ap.add_argument("out")
+    ap.add_argument("--sheet", action="store_true")
+    a = ap.parse_args()
+    heads = build(H.HeroGfx(Path(a.rom).read_bytes()))
+    if a.sheet:
+        sheet(heads, a.out)
+    else:
+        Path(a.out).write_bytes(pack(heads))
+    print("%d heads: %s" % (len(heads), " ".join("%02X" % (k & 0xFF) for k, *_ in heads)), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

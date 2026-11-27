@@ -1,7 +1,9 @@
-# The creator's hair styles in the field (start: rabites.state): each style
-# in its own colour, seen from the front, the side and the back.
-#! expect-log HAIR BOY SPIKY BLONDE
-#! expect-log HAIR BOY TOPKNOT BLACK
+# Game heads as hair in the field (start: rabites.state): the boy wears the
+# girl's head, a blond spiky head (A7), a long teal head (A1) and an elder's
+# (9D), each from the front, the side and the back. Needs som_heads.bin
+# (tools/som_head_pack.py) in SOM_HEADLESS_DATA or installed.
+#! expect-log HEADS 39 game heads loaded
+#! expect-log HAIR BOY head 81
 expect u16 00DC == 130
 cmd camera_off
 frames 60
@@ -9,33 +11,33 @@ cmd class_none
 monster 0 -150 150
 monster 1 -150 -150
 monster 2 150 150
-cmd hair_0_1_4
+cmd hair_0_2_0
 frames 20
 hold DOWN 8
-shot spiky_front
+shot girl_front
 hold RIGHT 8
-shot spiky_side
+shot girl_side
 hold UP 8
-shot spiky_back
-cmd hair_0_2_5
+shot girl_back
+cmd hair_0_11_0
 hold DOWN 8
-shot long_front
+shot a7_front
 hold LEFT 8
-shot long_side
+shot a7_side
 hold UP 8
-shot long_back
-cmd hair_0_3_3
+shot a7_back
+cmd hair_0_8_0
 hold DOWN 8
-shot ponytail_front
+shot a1_front
 hold RIGHT 8
-shot ponytail_side
+shot a1_side
 hold UP 8
-shot ponytail_back
-cmd hair_0_4_1
+shot a1_back
+cmd hair_0_6_0
 hold DOWN 8
-shot topknot_front
+shot elder_front
 hold LEFT 8
-shot topknot_side
+shot elder_side
 hold UP 8
-shot topknot_back
+shot elder_back
 frames 4

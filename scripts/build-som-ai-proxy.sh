@@ -38,6 +38,9 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
   python3 tools/som_cartwheel.py "$SOM_ROM_PATH" \
     build/som-ai/som_cartwheel_frames.bin
   echo "Staged animation pack: build/som-ai/som_cartwheel_frames.bin"
+  # The game's own heads as creator hair styles (never bundled: ROM-derived).
+  python3 tools/som_head_pack.py "$SOM_ROM_PATH" build/som-ai/som_heads.bin
+  echo "Staged game heads: build/som-ai/som_heads.bin"
   # Bushido sprite masks: a locally extracted SD3 dagger is optional.
   # Donor images and the ROM are never committed or bundled.
   dagger_args=()

@@ -41,37 +41,44 @@ int main(void){
     assert(!palette[8]&&!palette[16]&&!palette[30]);
     som_creator_tint(palette,0,3);
     assert(palette[10]&&palette[11]);
-    /* hair: Down to the style row, Left wraps to the last style; Down to
-     * colour, Right; Up back to skin. The accepted hair comes back on open. */
+    /* hair: Down to the hair row; Left/Right step through native and the
+     * game heads on offer (wrapping); Down to colour, Right; Up back. */
     SomCreator h={0};
-    assert(som_creator_input_hair(&h,1,0,0,3,4)==SOM_CREATOR_CAPTURE&&h.hair==3&&h.hair_colour==4&&h.row==0);
-    assert(som_creator_input_hair(&h,1,down,0,3,4)==SOM_CREATOR_CAPTURE&&h.row==1);
-    assert(som_creator_input_hair(&h,1,0,0,3,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,right,0,3,4)==SOM_CREATOR_CAPTURE&&h.hair==4);
-    assert(som_creator_input_hair(&h,1,0,0,3,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,right,0,3,4)==SOM_CREATOR_CAPTURE&&h.hair==0);
-    assert(som_creator_input_hair(&h,1,0,0,3,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,left,0,3,4)==SOM_CREATOR_CAPTURE&&h.hair==SOM_HAIR_STYLES-1u);
-    assert(som_creator_input_hair(&h,1,0,0,3,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,down,0,3,4)==SOM_CREATOR_CAPTURE&&h.row==2);
-    assert(som_creator_input_hair(&h,1,0,0,3,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,right,0,3,4)==SOM_CREATOR_CAPTURE&&h.hair_colour==5&&h.skin==0);
-    assert(som_creator_input_hair(&h,1,0,0,3,4)==SOM_CREATOR_CAPTURE);
-    assert(som_creator_input_hair(&h,1,up|up,0,3,4)==SOM_CREATOR_CAPTURE&&h.row==1);
-    /* every art row fits; all views of a style exist; native draws nothing */
-    for(unsigned st=1;st<SOM_HAIR_STYLES;st++)for(unsigned v=0;v<3u;v++){
-        unsigned ink=0;
-        for(unsigned y=0;y<SOM_HAIR_H;y++){
-            const char *row=som_hair_art[st][v][y];
-            assert(row&&strlen(row)<=SOM_HAIR_W);
-            for(const char *c=row;*c;c++){assert(strchr(".KDAaG",*c));ink+=*c!='.';}
-        }
-        assert(ink>10u);
-    }
-    for(int u=0;u<SOM_HAIR_W;u++)assert(som_hair_at(SOM_HAIR_NATIVE,1u,u,4,0ul)=='.');
-    /* left mirrors right */
-    for(int v=0;v<SOM_HAIR_H;v++)for(int u=0;u<SOM_HAIR_W;u++)
-        assert(som_hair_at(SOM_HAIR_SPIKY,0x02u,u,v,0ul)==som_hair_at(SOM_HAIR_SPIKY,0x82u,SOM_HAIR_W-1-u,v,0ul));
+    h.heads=3;
+    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==2&&h.hair_colour==4&&h.row==0);
+    assert(som_creator_input_hair(&h,1,down,0,2,4)==SOM_CREATOR_CAPTURE&&h.row==1);
+    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,right,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==3);
+    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,right,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==0);
+    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,left,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair==3);
+    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,down,0,2,4)==SOM_CREATOR_CAPTURE&&h.row==2);
+    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,right,0,2,4)==SOM_CREATOR_CAPTURE&&h.hair_colour==5&&h.skin==0);
+    assert(som_creator_input_hair(&h,1,0,0,2,4)==SOM_CREATOR_CAPTURE);
+    assert(som_creator_input_hair(&h,1,up,0,2,4)==SOM_CREATOR_CAPTURE&&h.row==1);
+    /* no pack: only native */
+    SomCreator z={0};
+    assert(som_creator_input_hair(&z,0,0,0,5,0)==SOM_CREATOR_CAPTURE&&z.hair==0);
+    /* a head pack: parse, roles, the hero's palette entry for each role */
+    static uint8_t pk[10+2*SOM_HEAD_ENTRY];
+    memcpy(pk,"SOMHEAD1",8);pk[8]=2;
+    uint8_t *e=pk+10;
+    e[0]=0x9D;e[1]=10;e[4]=20;e[7]=30;e[10]=1;e[11]=200;e[12]=0;e[13]=0;
+    e[35+256+5*16+5]=3;e[35+256+6*16+5]=6;e[35+256+7*16+5]=16;
+    SomHeadPack hp={0};
+    assert(!som_heads_parse(&hp,pk,10));
+    assert(som_heads_parse(&hp,pk,sizeof(pk))&&hp.count==2&&som_head_entry(&hp,0)[0]==0x9D&&!som_head_entry(&hp,2));
+    assert(som_head_role(som_head_entry(&hp,0),1,5,5)==3&&som_head_role(som_head_entry(&hp,0),1,5,6)==6);
+    assert(som_head_hair(som_head_entry(&hp,0),2)[0]==30);
+    uint8_t live[32]={0};
+    live[2*13]=31;                                   /* entry 13: pure red */
+    assert(som_head_index(e,0,6,live)==6&&som_head_index(e,1,5,live)==6&&som_head_index(e,2,7,live)==7);
+    assert(som_head_index(e,1,3,live)==3&&som_head_index(e,0,15,live)==15&&som_head_index(e,0,0,live)==0);
+    assert(som_head_index(e,0,16,live)==13);        /* the extra red: the nearest hero colour */
+    som_heads_free(&hp);
     /* colour: hair entries 2-4 (and the sprite's 8), nothing else */
     uint8_t pal[32];memset(pal,0,sizeof(pal));
     som_hair_tint(pal,0,1);

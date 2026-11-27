@@ -1,7 +1,8 @@
-# The creator's hair rows on the naming page (New Game from SRAM): Down to
-# HAIR, Right to SPIKY; Down to COLOUR, Right x4 to BLONDE; accept.
+# The creator's hair rows on the naming page (New Game, blank SRAM): Down to
+# HAIR, Right twice to the second game head (the girl's, 81); Down to
+# COLOUR, Right x4 to BLONDE; accept. Needs som_heads.bin.
 #! expect-log CREATOR opened for party slot 1
-#! expect-log CREATOR hair SPIKY BLONDE
+#! expect-log CREATOR hair head 81 BLONDE
 frames 900
 hold START 4
 frames 160
@@ -12,7 +13,9 @@ hold DOWN 4
 frames 4
 hold RIGHT 4
 frames 4
-shot creator_spiky
+hold RIGHT 4
+frames 4
+shot creator_head
 hold DOWN 4
 frames 4
 hold RIGHT 4
@@ -23,6 +26,6 @@ hold RIGHT 4
 frames 4
 hold RIGHT 4
 frames 4
-shot creator_spiky_blonde
+shot creator_head_blonde
 hold B 10
 frames 10

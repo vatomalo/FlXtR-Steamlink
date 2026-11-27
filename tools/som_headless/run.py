@@ -38,7 +38,7 @@ REPO = Path(__file__).resolve().parents[2]
 TURBO_NAME = "Secret of Mana, Turbo.smc"          # the proxy enables itself on this name
 LIVE_PREFIXES = ("/home/apps/retroarch/cores/experimental/som_", "/tmp/flxtr-")
 SDK_CANDIDATES = ("/opt/steamlink-sdk", "/opt/dockers/storage/toolchains/steamlink-sdk")
-DEVICE_DATA = ("som_song_names.tsv", "som_ai_rom_patch.txt", "som_cartwheel_frames.bin",
+DEVICE_DATA = ("som_song_names.tsv", "som_ai_rom_patch.txt", "som_cartwheel_frames.bin", "som_heads.bin",
                "som_ai_disciplines")
 
 

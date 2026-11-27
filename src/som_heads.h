@@ -70,10 +70,29 @@ static inline uint8_t som_head_index(const uint8_t *e,unsigned who,uint8_t role,
     }
     return (uint8_t)best;
 }
+/* Hair only (player, 2026-11-27: "use mask to remove the face and
+ * shoulders keeping just the hair"): the head's hair (roles 2-4), and its
+ * outline and other colours (ribbons, bows) where they touch the hair. Face,
+ * eyes, skin and shoulders are dropped: the hero keeps his own. 0 = none. */
+static inline uint8_t som_head_hair_role(const uint8_t *e,unsigned view,int x,int y){
+    const uint8_t q=som_head_role(e,view,x,y);
+    if(q>=2u&&q<=4u)return q;
+    if(q!=1u&&q<16u)return 0;
+    static const int d[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
+    for(unsigned k=0;k<4u;k++){
+        const uint8_t n=som_head_role(e,view,x+d[k][0],y+d[k][1]);
+        if(n>=2u&&n<=4u)return q;
+    }
+    return 0;
+}
 /* The tiles to draw instead this frame: tile -> 64 colour indices. */
 typedef struct {
     uint8_t has[512];
     uint8_t pixels[512][64];
+    /* where each hero's head went this frame (for the class headband) */
+    uint8_t on[3],view[3],mirror[3];
+    int hx[3],hy[3],eye[3];
+    const uint8_t *entry[3];
 } SomHeadTiles;
 
 /* One hero: who 0..2, head entry e, OAM shadow oam (544 bytes), VRAM, the
@@ -81,28 +100,71 @@ typedef struct {
 static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigned who,unsigned facing,
                                       const uint8_t *oam,const uint8_t *vram,const uint8_t pal[32]){
     if(!e||!oam||!vram||who>2u)return 0;
-    static uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
-    int x0,y0;
-    if(!som_armour_compose(oam,vram,who,img,&x0,&y0))return 0;
-    int top=-1;
-    for(int y=0;y<SOM_ARMOUR_BOX&&top<0;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]){top=y;break;}
-    if(top<0)return 0;
-    int l=SOM_ARMOUR_BOX,r=-1;
-    for(int y=top;y<top+6&&y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++)
-        if(img[y][x]){if(x<l)l=x;if(x>r)r=x;}
+    /* Anchored on the head's own piece (player, 2026-11-27: "the heads
+     * connect badly to animations"): the hero's 16 x 16 piece with the most
+     * hair (indices 2-4) this frame, and any piece beside it on the same row
+     * with hair (the girl's and the sprite's mirrored halves). Arms, raised
+     * hands and the body never move the head. */
+    int best=-1,best_hair=0,hp_y=0,hp_l=0,hp_r=0;
+    int hair_of[128];
+    for(unsigned j=0;j<128u;j++){
+        hair_of[j]=0;
+        const uint8_t *o=oam+4u*j;
+        if(!som_armour_piece(o,who))continue;
+        const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+        if(hb&2u)continue;
+        const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8);
+        int count=0;
+        for(unsigned v=0;v<16u;v++)for(unsigned half=0;half<2u;half++){
+            const uint8_t *row=som_armour_row(vram,base,half,v);
+            for(unsigned b=0;b<8u;b++){
+                const unsigned c=((row[0]>>b)&1u)|(((row[1]>>b)&1u)<<1)|(((row[16]>>b)&1u)<<2)|(((row[17]>>b)&1u)<<3);
+                count+=c>=2u&&c<=4u;
+            }
+        }
+        hair_of[j]=count;
+        if(count>best_hair){best_hair=count;best=(int)j;}
+    }
+    if(best<0||best_hair<6)return 0;
+    {
+        const uint8_t *o=oam+4u*(unsigned)best;
+        const unsigned hb=(oam[512u+(unsigned)best/4u]>>(2u*((unsigned)best%4u)))&3u;
+        int px=o[0]+256*(int)(hb&1u);if(px>=256)px-=512;
+        hp_y=o[1];hp_l=px;hp_r=px+16;
+        for(unsigned j=0;j<128u;j++){
+            const uint8_t *q=oam+4u*j;
+            if(!hair_of[j]||hair_of[j]*4<best_hair||q[1]!=o[1])continue;
+            const unsigned hq=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+            int qx=q[0]+256*(int)(hq&1u);if(qx>=256)qx-=512;
+            if(qx<hp_l)hp_l=qx;
+            if(qx+16>hp_r)hp_r=qx+16;
+        }
+    }
     const int side=facing==0x02u||facing==0x82u;
     const unsigned view=side?2u:facing==0x00u?0u:1u;
     const int mirror=facing==0x82u;
-    /* Placed by the eyes, not the hair (player, 2026-11-27: "they should be
-     * at headband level"): the borrowed head's eye row (its facing-down view,
-     * kept for every facing) goes on the hero's own eye row, just under the
-     * headband. The hero's is measured whenever he faces the player
-     * (index 15, the eye whites) and remembered per hero. */
+    /* By the eyes (player: "at headband level"): the borrowed head's eye row
+     * on the hero's own, measured from the head piece's top whenever he faces
+     * the player (index 15, the eye whites, in this or the piece below). */
     static int eye_off[3]={13,13,13};
     if(view==1u){
         int last=-1;
-        for(int y=top;y<top+20&&y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++)if(img[y][x]==15u)last=y;
-        if(last>top+6)eye_off[who]=last-top;
+        for(unsigned j=0;j<128u;j++){
+            const uint8_t *q=oam+4u*j;
+            if(!som_armour_piece(q,who))continue;
+            const unsigned hq=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+            if(hq&2u||q[1]<hp_y||q[1]>hp_y+16)continue;
+            const unsigned base=q[2]|((unsigned)(q[3]&1u)<<8),vflip=(q[3]>>7)&1u;
+            for(unsigned v=0;v<16u;v++)for(unsigned half=0;half<2u;half++){
+                const uint8_t *row=som_armour_row(vram,base,half,v);
+                for(unsigned b=0;b<8u;b++){
+                    const unsigned c=((row[0]>>b)&1u)|(((row[1]>>b)&1u)<<1)|(((row[16]>>b)&1u)<<2)|(((row[17]>>b)&1u)<<3);
+                    const int sy=q[1]+(int)(vflip?15u-v:v)-hp_y;
+                    if(c==15u&&sy>last&&sy<22)last=sy;
+                }
+            }
+        }
+        if(last>6)eye_off[who]=last;
     }
     int htop=-1,chin=-1,eye=-1;
     for(int y=0;y<SOM_HEAD_SIZE;y++)for(int x=0;x<SOM_HEAD_SIZE;x++){
@@ -114,8 +176,15 @@ static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigne
     if(htop<0)return 0;
     if(chin<0)chin=SOM_HEAD_SIZE-2;
     if(eye<0)eye=chin-2;
-    const int hx=x0+(l+r+1)/2-SOM_HEAD_SIZE/2,hy=y0+top+eye_off[who]-eye;
-    const int clear_from=y0+top,clear_to=hy+eye;      /* the hero's own hair above the new eyes goes */
+    (void)chin;
+    const int hx=(hp_l+hp_r)/2-SOM_HEAD_SIZE/2,hy=hp_y+eye_off[who]-eye;
+    /* The hero's own hair (and the girl's bow, the sprite's puffs) goes above
+     * his eyes where the new hair does not cover it; inside the skull it is
+     * skin, so no hole opens over the forehead. His face and headband stay. */
+    const int eye_line=hp_y+eye_off[who],cx=(hp_l+hp_r)/2;
+    const uint16_t own_hair=who==0u?0x001Cu:who==1u?0x031Cu:0x011Cu;
+    out->on[who]=1;out->hx[who]=hx;out->hy[who]=hy;out->eye[who]=eye;out->view[who]=(uint8_t)view;
+    out->mirror[who]=(uint8_t)mirror;out->entry[who]=e;
     unsigned n=0;
     for(unsigned j=0;j<128u;j++){
         const uint8_t *o=oam+4u*j;
@@ -124,7 +193,8 @@ static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigne
         if(hb&2u)continue;
         int px=o[0]+256*(int)(hb&1u);if(px>=256)px-=512;
         const int py=o[1];
-        if(py+16<=clear_from||py>=hy+SOM_HEAD_SIZE)continue;
+        if(py+16<=hy||py>=hy+SOM_HEAD_SIZE)if(!(py==hp_y&&px+16>hp_l&&px<hp_r))continue;
+        const int head_piece=py==hp_y&&px+16>hp_l&&px<hp_r;
         const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8),hflip=(o[3]>>6)&1u,vflip=(o[3]>>7)&1u;
         for(unsigned q=0;q<4u;q++){
             const unsigned tile=(base&256u)|((base+(q&1u)+16u*(q>>1))&255u);   /* as the PPU wraps */
@@ -150,11 +220,14 @@ static inline unsigned som_heads_hero(SomHeadTiles *out,const uint8_t *e,unsigne
                 uint8_t c=native[ty*8u+tx];
                 const int u=sx-hx,v=sy-hy;
                 const uint8_t role=u>=0&&v>=0&&u<SOM_HEAD_SIZE&&v<SOM_HEAD_SIZE?
-                    som_head_role(e,view,mirror?SOM_HEAD_SIZE-1-u:u,v):0u;
-                const int hair=c==1u||(c>=2u&&c<=4u)||(who==0u&&c>=8u&&c<=10u);
+                    som_head_hair_role(e,view,mirror?SOM_HEAD_SIZE-1-u:u,v):0u;
+                const int old_hair=(own_hair>>c&1u)!=0u,old_line=c==1u&&sy<eye_line-4;
                 if(role){c=som_head_index(e,who,role,pal);touched=1;}
-                else if(hair&&((sy>=clear_from&&sy<clear_to)||
-                               (u>=0&&u<SOM_HEAD_SIZE&&v>=0&&v<=chin&&c!=1u))){c=0;touched=1;}
+                else if(head_piece&&sy<eye_line&&(old_hair||old_line)){
+                    const int dx=sx-cx<0?cx-sx:sx-cx,top=eye_line-11;
+                    const int skull=sy>=top&&sy<=eye_line-2&&dx<=5&&!(sy<top+2&&dx>3);
+                    c=skull?(uint8_t)(dx>=4||sy<top+1?6u:7u):0u;touched=1;
+                }
                 dst[ty*8u+tx]=c;
             }
             if(touched){out->has[tile]=1;n++;}

@@ -150,7 +150,7 @@ static inline void som_creator_draw_head(uint8_t *pixels,unsigned width,unsigned
     }
     static const uint8_t outline[3]={49,41,32},white[3]={250,250,250};
     for(int v=0;v<SOM_HEAD_SIZE;v++)for(int u=0;u<SOM_HEAD_SIZE;u++){
-        const uint8_t q=som_head_role(head,1u,u,v);
+        const uint8_t q=som_head_hair_role(head,1u,u,v);     /* hair only: the sprite keeps its face */
         if(!q)continue;
         const uint8_t *c;
         if(q==1u)c=outline;

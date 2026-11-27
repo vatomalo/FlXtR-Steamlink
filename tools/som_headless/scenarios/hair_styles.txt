@@ -1,13 +1,14 @@
 # Game heads as hair in the field (start: rabites.state): the boy wears the
 # girl's head, a blond spiky head (A7), a long teal head (A1) and an elder's
-# (9D), each from the front, the side and the back. Needs som_heads.bin
+# (9D), hair only, as a Ninja (the hagane stays), each from the front, the
+# side and the back. Needs som_heads.bin
 # (tools/som_head_pack.py) in SOM_HEADLESS_DATA or installed.
 #! expect-log HEADS 39 game heads loaded
 #! expect-log HAIR BOY head 81
 expect u16 00DC == 130
 cmd camera_off
 frames 60
-cmd class_none
+cmd class_2
 monster 0 -150 150
 monster 1 -150 -150
 monster 2 150 150

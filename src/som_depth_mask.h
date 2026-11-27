@@ -8,13 +8,22 @@
 /* Match the owner's native OAM priority. Snes9x's main-screen sprite depth
  * is 32 + (priority + 1) * 4; foreground tiles with greater depth cover it. */
 static inline unsigned som_owner_sprite_depth(const uint8_t *oam,unsigned who){
-    if(!oam)return 44u; /* normal field sprite priority when OAM is unavailable */
+    /* The hero's sprite layer; while the game's sprite is hidden (our own
+     * art plays: Ukemi, flying kick) the last one seen, not the field
+     * default: in water the game lifts the hero above the water, and the
+     * default hid the whole tumble behind it (player, 2026-11-27: "ukemi in
+     * water renders invisible"). */
+    static unsigned last[3]={44u,44u,44u};
+    if(!oam)return who<3u?last[who]:44u; /* normal field sprite priority when OAM is unavailable */
     for(unsigned i=0;i<128u;i++){
         const uint8_t *piece=oam+4u*i;
-        if(som_bun_hero_piece(piece,who))
-            return 32u+((((unsigned)piece[3]>>4)&3u)+1u)*4u;
+        if(som_bun_hero_piece(piece,who)){
+            const unsigned d=32u+((((unsigned)piece[3]>>4)&3u)+1u)*4u;
+            if(who<3u)last[who]=d;
+            return d;
+        }
     }
-    return 44u;
+    return who<3u?last[who]:44u;
 }
 
 /* Restore original core pixels wherever its final foreground depth beats

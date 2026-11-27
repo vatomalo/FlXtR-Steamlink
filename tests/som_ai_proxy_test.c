@@ -2709,7 +2709,12 @@ int main(void){
             const uint16_t xb=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_X);
             disciplines.selected=1;hero[0x180]=0x80;hero[0x010]=0x82;hero[0x0E]=0;hero[0x1E4]=0;
             som_combo_clear();
+            /* X is Intercept since 2026-11-27: nothing coming is a whiff */
             mocked_buttons=xb;som_input_poll();
+            assert(bash_stage==SOM_BASH_NONE&&!flykick.active&&icpt.locked_until>frame_number);
+            assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
+            /* the flying kick itself stays (the AI's) */
+            assert(som_flykick_start(ram));
             assert(bash_stage==SOM_BASH_LUNGE&&bash_kick&&hero[0x1E4]==0);
             assert(flykick.active&&flykick.dir==3u&&(hero[0x0E]&0x80u));
             assert(som_input_state(0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X)==0);
@@ -2732,7 +2737,7 @@ int main(void){
             /* With a combo level ready the landing kick is the finisher. */
             hero[0x006]=0;hero[0x1ED]=0;hero[0x19C]=2;hero[0x19B]=0;hero[0x01C]=0;
             som_combo_clear();combo.hits=5;combo.mixes=1;combo.hit_frame=frame_number;
-            mocked_buttons=xb;som_input_poll();mocked_buttons=0;som_input_poll();
+            assert(som_flykick_start(ram));
             assert(bash_stage==SOM_BASH_LUNGE);
             for(unsigned f=0;f<=SOM_BASH_LUNGE_FRAMES;f++){frame_number++;som_bash_tick();som_flykick_frame(ram);}
             /* The monk's glove has every level (not capped at the 2 learned). */

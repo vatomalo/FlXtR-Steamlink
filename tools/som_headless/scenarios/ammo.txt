@@ -1,0 +1,45 @@
+# Limited ammunition (start: rabites.state; ammo_1 = one of each): the Archer's
+# second javelin is taken off and the first is gathered after the fight; the
+# Hunter's second Holy Water and the Artificer's second bomb and mine do not
+# happen.
+#! expect-log JAVELIN BOY thrown, 0 left
+#! expect-log JAVELIN BOY: none left
+#! expect-log JAVELIN BOY: 1 gathered, 1 carried
+#! expect-log HOLY WATER at \d+,\d+, 0 left
+#! expect-log BOMB set at \d+,\d+, 0 left
+#! expect-log MINE set at \d+,\d+, 0 left
+#! expect-no-log HOLY WATER at \d+,\d+, 255 left
+expect u16 00DC == 130
+frames 60
+cmd class_11
+cmd ammo_1
+frames 40
+monster 1 -150 150
+monster 2 -150 -150
+hold RIGHT 2
+monster 0 60 0
+hold Y 2
+frames 120
+monster 0 60 0
+hold Y 2
+frames 120
+monster 0 300 300
+monster 1 300 -300
+monster 2 -300 300
+frames 400
+cmd class_12
+frames 40
+hold X 2
+frames 200
+hold X 2
+frames 200
+cmd class_14
+frames 40
+hold X 2
+frames 200
+hold X 2
+frames 200
+hold L2,X 2
+frames 400
+hold L2,X 2
+frames 100

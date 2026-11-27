@@ -514,6 +514,23 @@ static uint8_t gear_throw[SOM_DISCIPLINE_COUNT];
 #define SOM_POUCH 15u
 static uint8_t shuriken_pouch[3]={SOM_POUCH,SOM_POUCH,SOM_POUCH},shuriken_thrown[3];
 static unsigned long shuriken_said;
+/* More ammunition (player, 2026-11-27): the Archer's javelins (picked up
+ * after a fight like the shuriken), the Artificer's bombs and mines and the
+ * Hunter's Holy Water (only a save or an inn fills those). Per hero. */
+#define SOM_AMMO_JAVELINS 6u
+#define SOM_AMMO_BOMBS 8u
+#define SOM_AMMO_MINES 3u
+#define SOM_AMMO_HOLY 6u
+static uint8_t ammo_javelins[3]={SOM_AMMO_JAVELINS,SOM_AMMO_JAVELINS,SOM_AMMO_JAVELINS},javelins_thrown[3];
+static uint8_t ammo_bombs[3]={SOM_AMMO_BOMBS,SOM_AMMO_BOMBS,SOM_AMMO_BOMBS};
+static uint8_t ammo_mines[3]={SOM_AMMO_MINES,SOM_AMMO_MINES,SOM_AMMO_MINES};
+static uint8_t ammo_holy[3]={SOM_AMMO_HOLY,SOM_AMMO_HOLY,SOM_AMMO_HOLY};
+static void som_ammo_fill(void){
+    memset(shuriken_pouch,SOM_POUCH,sizeof(shuriken_pouch));memset(shuriken_thrown,0,sizeof(shuriken_thrown));
+    memset(ammo_javelins,SOM_AMMO_JAVELINS,sizeof(ammo_javelins));memset(javelins_thrown,0,sizeof(javelins_thrown));
+    memset(ammo_bombs,SOM_AMMO_BOMBS,sizeof(ammo_bombs));memset(ammo_mines,SOM_AMMO_MINES,sizeof(ammo_mines));
+    memset(ammo_holy,SOM_AMMO_HOLY,sizeof(ammo_holy));
+}
 #define SOM_GEAR_FILE "/home/apps/retroarch/cores/experimental/som_ai_gear"
 static void som_gear_save(void){
     char line[64];int n=snprintf(line,sizeof(line),"gear1 ");
@@ -718,7 +735,7 @@ static void som_perk_prog_restore(const SomProgress *p){
         (void)som_prt_set_raw(&perk_rt,who,p->loadout[who],p->loadout_set?p->loadout_n[who]:0u);
     som_prt_flush(&perk_rt);
     perk_rt_revalidate=1;
-    memset(shuriken_pouch,SOM_POUCH,sizeof(shuriken_pouch));memset(shuriken_thrown,0,sizeof(shuriken_thrown));
+    som_ammo_fill();
 }
 static uint64_t prog_rom,prog_seen[SOM_PROG_SLOTS];
 static int prog_baseline,prog_was_field,prog_session_first=1;
@@ -792,7 +809,7 @@ static void som_prog_frame(void){
             const int ok=som_prog_write();
             fprintf(stderr,"[som-ai] PROGRESS saved with slot %u (%016llx)%s\n",k+1u,
                     (unsigned long long)fp,ok?"":": write failed");
-            memset(shuriken_pouch,SOM_POUCH,sizeof(shuriken_pouch));memset(shuriken_thrown,0,sizeof(shuriken_thrown));
+            som_ammo_fill();                       /* a save (an inn): every pouch full */
         }
         prog_seen[k]=fp;
     }
@@ -2106,6 +2123,17 @@ static void som_perks_frame(uint8_t *ram){
     else if(perk_quiet<SOM_FIGHT_QUIET_FRAMES)perk_quiet++;
     som_energy_fight=perk_quiet<SOM_FIGHT_QUIET_FRAMES;
     if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)                 /* the fight is over: pick them up */
+        for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++)if(javelins_thrown[w]){
+            const unsigned back=javelins_thrown[w];
+            const unsigned now=ammo_javelins[w]+back>SOM_AMMO_JAVELINS?SOM_AMMO_JAVELINS:ammo_javelins[w]+back;
+            fprintf(stderr,"[som-ai] JAVELIN %s: %u gathered, %u carried\n",som_party_names[w],back,now);
+            if(w==som_pad1_member_in(ram)){
+                char text[32];snprintf(text,sizeof(text),"^%u javelins gathered",back);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/4u);
+            }
+            ammo_javelins[w]=(uint8_t)now;javelins_thrown[w]=0;
+        }
+    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)
         for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++)if(shuriken_thrown[w]){
             const unsigned back=shuriken_thrown[w];
             const unsigned now=shuriken_pouch[w]+back>SOM_POUCH?SOM_POUCH:shuriken_pouch[w]+back;
@@ -4211,7 +4239,38 @@ static unsigned som_mage_bolt_damage(const uint8_t *hero,unsigned cls){
  * gauge, as when a boomerang is caught) and small shuriken bolts fly in its
  * place: one each, or three in a fan for the Volley. A charged throw that
  * launches two or three entries throws that many. */
+/* The Archer's javelins: each javelin entry (kind 2) an Archer's throw or
+ * B-string move launches takes one; with none left it is taken off at once. */
+static void som_javelin_ammo(uint8_t *ram){
+    static uint8_t seen[3][3];
+    if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]!=0u)return;
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const int archer=ram[0xE000u+0x200u*who]==1u&&som_disc_member_class(&disciplines,who)==SOM_DISC_ARCHERY;
+        for(unsigned k=0;k<3u;k++){
+            uint8_t *e=ram+0xD000u+0x40u*who+0x10u*k;
+            if((e[0]&7u)!=2u){seen[who][k]=0;continue;}
+            if(!archer||seen[who][k]||(e[0]&0xF8u))continue;   /* still delayed: not yet */
+            seen[who][k]=1;
+            const int player=who==som_pad1_member_in(ram)||who==som_pad2_member(ram);
+            if(!ammo_javelins[who]){
+                memset(e,0,16u);
+                if(player&&frame_number-shuriken_said>=60ul){
+                    som_overlay_say(&overlay,"^No javelins",SOM_MESSAGE_FRAMES/4u);shuriken_said=frame_number;
+                }
+                fprintf(stderr,"[som-ai] JAVELIN %s: none left\n",som_party_names[who]);
+                continue;
+            }
+            ammo_javelins[who]--;javelins_thrown[who]++;
+            if(player&&ammo_javelins[who]<=2u){
+                char text[32];snprintf(text,sizeof(text),"^%u javelins left",(unsigned)ammo_javelins[who]);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/5u);
+            }
+            fprintf(stderr,"[som-ai] JAVELIN %s thrown, %u left\n",som_party_names[who],(unsigned)ammo_javelins[who]);
+        }
+    }
+}
 static void som_shuriken_throw(uint8_t *ram){
+    som_javelin_ammo(ram);
     if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]!=0u)return;
     const unsigned pick=gear_throw[SOM_DISC_NINJUTSU];
     if(pick==1u)return;                               /* Fuma: the game's flight */
@@ -6329,12 +6388,17 @@ static int som_class_move_raw(uint8_t *ram){
                             SOM_MESSAGE_FRAMES/3u);
             return 0;
         }
+        const unsigned me=som_actor%SOM_PARTY_MEMBERS;
+        if(!ammo_mines[me]){som_overlay_say(&overlay,"^No mines",SOM_MESSAGE_FRAMES/3u);return 0;}
+        ammo_mines[me]--;
         mine_x[free_slot]=(int)som_bun_u16(hero+2);mine_y[free_slot]=(int)som_bun_u16(hero+4);
         mine_map[free_slot]=som_bun_u16(ram+0xDC);mine_live[free_slot]=1;
         class_move_ready=frame_number+SOM_MINE_COOLDOWN;
         som_bun_boom(bunshin_booms,mine_x[free_slot],mine_y[free_slot],1,frame_number);
-        som_overlay_say(&overlay,"^Mine set",SOM_MESSAGE_FRAMES/3u);
-        fprintf(stderr,"[som-ai] MINE set at %d,%d\n",mine_x[free_slot],mine_y[free_slot]);
+        {char text[40];snprintf(text,sizeof(text),"^Mine set|%u left",(unsigned)ammo_mines[me]);
+         som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);}
+        fprintf(stderr,"[som-ai] MINE set at %d,%d, %u left\n",mine_x[free_slot],mine_y[free_slot],
+                (unsigned)ammo_mines[me]);
         return 1;
     }
     if(frame_number<class_move_ready){
@@ -8772,6 +8836,10 @@ static int som_handle_command(const char *command){
         unsigned n;char tail;
         if(sscanf(command,"shuriken_pouch_%2u%c",&n,&tail)==1&&n<=SOM_POUCH){
             memset(shuriken_pouch,(int)n,sizeof(shuriken_pouch));return 1;
+        }
+        if(sscanf(command,"ammo_%2u%c",&n,&tail)==1&&n<=SOM_AMMO_JAVELINS){   /* tests: every other kind */
+            memset(ammo_javelins,(int)n,3);memset(ammo_bombs,(int)n,3);
+            memset(ammo_mines,(int)(n<SOM_AMMO_MINES?n:SOM_AMMO_MINES),3);memset(ammo_holy,(int)n,3);return 1;
         }
     }
     {   /* gear_throw_<class>_<n>: the thrown look (the GEAR page's Y row) */
@@ -12163,21 +12231,28 @@ static int som_class_x_raw(uint8_t *ram){
     }
     if(!som_jutsu_free(ram))return 0;
     uint8_t *hero=SOM_ACT(ram);
+    const unsigned me=som_actor%SOM_PARTY_MEMBERS;
     if(d==SOM_DISC_HUNTER){
+        if(!ammo_holy[me]){som_overlay_say(&overlay,"^No Holy Water",SOM_MESSAGE_FRAMES/3u);return 0;}
+        ammo_holy[me]--;
         som_ahead(hero,SOM_HOLY_AHEAD,&holy_x,&holy_y);
         holy_until=frame_number+SOM_HOLY_FRAMES;x_move_ready=frame_number+SOM_HOLY_COOLDOWN;
         som_bun_boom(bunshin_booms,holy_x,holy_y,0,frame_number);
-        som_overlay_say(&overlay,"^Holy Water!",SOM_MESSAGE_FRAMES/2u);
-        fprintf(stderr,"[som-ai] HOLY WATER at %d,%d\n",holy_x,holy_y);
+        char text[40];snprintf(text,sizeof(text),"^Holy Water!|%u left",(unsigned)ammo_holy[me]);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+        fprintf(stderr,"[som-ai] HOLY WATER at %d,%d, %u left\n",holy_x,holy_y,(unsigned)ammo_holy[me]);
         return 1;
     }
     if(d==SOM_DISC_ARTIFICER){
         if(bomb_at){som_overlay_say(&overlay,"^Bomb|already set",SOM_MESSAGE_FRAMES/3u);return 0;}
+        if(!ammo_bombs[me]){som_overlay_say(&overlay,"^No bombs",SOM_MESSAGE_FRAMES/3u);return 0;}
+        ammo_bombs[me]--;
         som_ahead(hero,SOM_BOMB_AHEAD,&bomb_x,&bomb_y);
         bomb_at=frame_number+SOM_BOMB_FUSE;x_move_ready=frame_number+SOM_BOMB_COOLDOWN;
         som_bun_boom(bunshin_booms,bomb_x,bomb_y,1,frame_number);
-        som_overlay_say(&overlay,"^Bomb!|1 s fuse",SOM_MESSAGE_FRAMES/2u);
-        fprintf(stderr,"[som-ai] BOMB set at %d,%d\n",bomb_x,bomb_y);
+        {char text[40];snprintf(text,sizeof(text),"^Bomb!|%u left",(unsigned)ammo_bombs[me]);
+         som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);}
+        fprintf(stderr,"[som-ai] BOMB set at %d,%d, %u left\n",bomb_x,bomb_y,(unsigned)ammo_bombs[me]);
         return 1;
     }
     if(familiar.slot>=0||familiar_carry.valid){

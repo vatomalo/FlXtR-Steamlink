@@ -1,0 +1,23 @@
+# The Fuma Shuriken look (start: rabites.state): a Ninja's Y throw drawn as the
+# ROM's shuriken at double size (gear_throw_2_1 = the GEAR page's choice).
+expect u16 00DC == 130
+frames 60
+cmd class_2
+cmd gear_throw_2_1
+frames 30
+monster 0 -150 150
+monster 1 -150 -150
+monster 2 150 150
+hold Y 2
+frames 4
+shot fuma_0
+frames 4
+shot fuma_a
+frames 8
+shot fuma_b
+frames 40
+cmd gear_throw_2_0
+hold Y 2
+frames 8
+shot star_a
+frames 40

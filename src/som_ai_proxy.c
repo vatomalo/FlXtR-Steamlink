@@ -53,6 +53,7 @@
 #include "som_temporal.h"
 #include "som_perk_runtime.h"
 #include "som_perk_menu.h"
+#include "som_gear_menu.h"
 static void som_fight_configure(void);
 static void som_fight_set_level(unsigned level);
 static void som_fight_general_elected(unsigned i);
@@ -503,6 +504,32 @@ static SomJukebox jukebox;
 static int jukebox_ready;
 /* The class menu's PERKS page (src/som_perk_menu.h). */
 static SomPerkMenu perk_menu;
+/* The GEAR page (src/som_gear_menu.h); the thrown look per class, saved in
+ * SOM_GEAR_FILE as "gear1 <16 digits>". */
+static SomGearMenu gear_menu;
+static uint8_t gear_throw[SOM_DISCIPLINE_COUNT];
+#define SOM_GEAR_FILE "/home/apps/retroarch/cores/experimental/som_ai_gear"
+static void som_gear_save(void){
+    char line[64];int n=snprintf(line,sizeof(line),"gear1 ");
+    for(unsigned c=0;c<SOM_DISCIPLINE_COUNT;c++)n+=snprintf(line+n,sizeof(line)-(size_t)n,"%u",(unsigned)gear_throw[c]%10u);
+    FILE *out=fopen(SOM_GEAR_FILE ".tmp","w");
+    if(!out)return;
+    const int ok=fprintf(out,"%s\n",line)>0;
+    if(fclose(out)!=0||!ok){unlink(SOM_GEAR_FILE ".tmp");return;}
+    rename(SOM_GEAR_FILE ".tmp",SOM_GEAR_FILE);
+}
+static void som_gear_load(void){
+    memset(gear_throw,0,sizeof(gear_throw));
+    FILE *in=fopen(SOM_GEAR_FILE,"r");
+    if(!in)return;
+    char line[64]={0};
+    if(fgets(line,sizeof(line),in)&&!strncmp(line,"gear1 ",6))
+        for(unsigned c=0;c<SOM_DISCIPLINE_COUNT&&line[6+c]>='0'&&line[6+c]<='9';c++){
+            const unsigned v=(unsigned)(line[6+c]-'0');
+            gear_throw[c]=(uint8_t)(v<som_gear_throw_count(c)?v:0u);
+        }
+    fclose(in);
+}
 static void som_juke_send(const char *line){
     char temp[256];snprintf(temp,sizeof(temp),"%s.tmp",juke_request_file);
     FILE *out=fopen(temp,"w");
@@ -3223,27 +3250,46 @@ static void som_input_poll(void){
                 disciplines.cursor=(disciplines.cursor+SOM_DISCIPLINE_COUNT-1u)%SOM_DISCIPLINE_COUNT;
             else if(menu_pressed&down)
                 disciplines.cursor=(disciplines.cursor+1u)%SOM_DISCIPLINE_COUNT;
-        }else if(som_manual_disciplines&&!jukebox.open&&!perk_menu.open&&!disciplines.grab&&
+        }else if(som_manual_disciplines&&!jukebox.open&&!perk_menu.open&&!gear_menu.open&&!disciplines.grab&&
                  !act_ai&&(menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_SELECT))){
             class_guide_open=1;
         }else if(som_manual_disciplines && menu_pressed &&
                  (menu_pressed&((1u<<RETRO_DEVICE_ID_JOYPAD_L)|(1u<<RETRO_DEVICE_ID_JOYPAD_R)))&&
                  !jukebox.typing){
-            /* L1/R1: CLASSES, PERKS, MUSIC, AI ACTIONS, COMBAT, QUEST. */
+            /* L1/R1: CLASSES, PERKS, GEAR, MUSIC, AI ACTIONS, COMBAT, QUEST. */
             if(!jukebox_ready){som_juke_init(&jukebox);jukebox_ready=1;}
-            const unsigned pages=3u+SOM_GAMBIT_PAGES;
-            unsigned page=act_ai?3u+gambits.page:jukebox.open?2u:perk_menu.open?1u:0u;
+            const unsigned pages=4u+SOM_GAMBIT_PAGES;
+            unsigned page=act_ai?4u+gambits.page:jukebox.open?3u:gear_menu.open?2u:perk_menu.open?1u:0u;
             page=(page+((menu_pressed&(1u<<RETRO_DEVICE_ID_JOYPAD_R))?1u:pages-1u))%pages;
             if(page==1u&&!perk_menu.open){perk_menu.who=disciplines.who%SOM_PARTY_MEMBERS;perk_menu.note[0]=0;}
-            disciplines.open=page==0u;perk_menu.open=page==1u;jukebox.open=page==2u;act_ai=page>=3u;
+            if(page==2u&&!gear_menu.open){gear_menu.who=disciplines.who%SOM_PARTY_MEMBERS;gear_menu.row=0;}
+            disciplines.open=page==0u;perk_menu.open=page==1u;gear_menu.open=page==2u;
+            jukebox.open=page==3u;act_ai=page>=4u;
             gambits.open=gambits.resting=act_ai;
-            if(act_ai){gambits.page=page-3u;gambits.cursor=0;}
+            if(act_ai){gambits.page=page-4u;gambits.cursor=0;}
             if(jukebox.open)som_juke_refresh();
         }else if(som_manual_disciplines&&menu_pressed&&act_ai){
             const int result=som_gambit_press(&gambits,menu_pressed);
             if(result==SOM_GAMBIT_CLOSED){
                 act_ai=0;gambits.resting=0;som_manual_disciplines=0;disciplines.open=0;
             }else som_gambit_result(result);
+        }else if(som_manual_disciplines && menu_pressed && gear_menu.open){
+            const unsigned who=gear_menu.who%SOM_PARTY_MEMBERS;
+            const unsigned cls=som_disc_member_class(&disciplines,who);
+            int dir=0;
+            const int r=som_gear_press(&gear_menu,menu_pressed,cls,&dir);
+            if(r==SOM_GEAR_CLOSED){
+                gear_menu.open=0;disciplines.open=0;som_manual_disciplines=0;
+                fprintf(stderr,"[som-ai] MANUAL DISCIPLINES closed\n");
+            }else if(r==SOM_GEAR_STYLE){
+                som_style_cycle((int)((styles.selected[cls]+(dir<0?SOM_STYLES_PER_CLASS-1u:1u))%SOM_STYLES_PER_CLASS),who);
+            }else if(r==SOM_GEAR_THROW){
+                const unsigned n=som_gear_throw_count(cls);
+                gear_throw[cls]=(uint8_t)((gear_throw[cls]+(dir<0?n-1u:1u))%n);
+                som_gear_save();
+                fprintf(stderr,"[som-ai] GEAR %s %s throws: %s\n",som_party_names[who],som_discipline_names[cls],
+                        som_gear_throws[cls][gear_throw[cls]]);
+            }
         }else if(som_manual_disciplines && menu_pressed && perk_menu.open){
             uint16_t id=0;
             const int r=som_pmenu_press(&perk_rt,&perk_menu,menu_pressed,&id);
@@ -3290,6 +3336,7 @@ static void som_input_poll(void){
         }
         if(act_ai&&!som_manual_disciplines){act_ai=0;gambits.open=0;gambits.resting=0;}
         if(perk_menu.open&&!som_manual_disciplines)perk_menu.open=0;
+        if(gear_menu.open&&!som_manual_disciplines)gear_menu.open=0;
         if(jukebox.open&&frame_number%30u==0u)som_juke_refresh();
         {   /* A closed menu: hold the pad back from the game until let go. */
             if(menu_was_open&&!som_manual_disciplines)menu_hold_until_release=1;
@@ -3341,7 +3388,7 @@ static void som_input_poll(void){
              * Start alone stays swallowed and cannot interrupt a session. */
             ally_order.until=0;
             ring_ai_enabled=0;gambits.open=0;disciplines.open=0;
-            som_manual_disciplines=0;jukebox.open=0;perk_menu.open=0;
+            som_manual_disciplines=0;jukebox.open=0;perk_menu.open=0;gear_menu.open=0;
             unlink(ring_ai_file);
             som_overlay_say(&overlay,"You play|L2 + Start stopped AI",SOM_MESSAGE_FRAMES);
             fprintf(stderr,"[som-ai] PLAYER %d L2+START: controls back to the player\n",p1_quit?1:2);
@@ -7549,6 +7596,7 @@ static void som_styles_save(void){
     style_dirty=0;style_saved_frame=frame_number;
 }
 static void som_styles_load(void){
+    som_gear_load();
     som_styles_init(&styles);
     FILE *in=fopen(style_file,"r");
     if(!in)return;
@@ -8609,6 +8657,12 @@ static int som_handle_command(const char *command){
         }
     }
     {const int r=som_perk_rt_command(command);if(r>=0)return r;}
+    {   /* gear_throw_<class>_<n>: the thrown look (the GEAR page's Y row) */
+        unsigned c,n;char tail;
+        if(sscanf(command,"gear_throw_%2u_%1u%c",&c,&n,&tail)==2&&c<SOM_DISCIPLINE_COUNT&&n<som_gear_throw_count(c)){
+            gear_throw[c]=(uint8_t)n;som_gear_save();return 1;
+        }
+    }
     if(!strcmp(command,"fuma_swap"))
         return som_fuma_swap(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -9407,6 +9461,32 @@ static void som_perk_menu_draw(uint8_t *pixels,unsigned width,unsigned height,si
         }
     }
 }
+/* The GEAR page, drawn like the PERKS page. */
+static void som_gear_menu_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format){
+    const unsigned sx=width>=512?2u:1u,sy=height>=400?2u:1u;
+    const unsigned bw=200u*sx,bh=(SOM_GEAR_LINES*10u+8u)*sy;
+    if(!pixels||bw+12u*sx>width||bh+12u*sy>height)return;
+    const unsigned x0=6u*sx,y0=6u*sy;
+    som_overlay_fill(pixels,pitch,format,x0,y0,bw,bh,som_overlay_color(format,245,245,255));
+    som_overlay_fill(pixels,pitch,format,x0+sx,y0+sy,bw-2u*sx,bh-2u*sy,som_overlay_color(format,30,18,60));
+    const unsigned who=gear_menu.who%SOM_PARTY_MEMBERS,cls=som_disc_member_class(&disciplines,who);
+    char out[33];
+    for(unsigned line=0;line<SOM_GEAR_LINES;line++){
+        if(!som_gear_line(&gear_menu,&styles,cls,cls<SOM_DISCIPLINE_COUNT?gear_throw[cls]:0u,line,out))break;
+        const uint32_t ink=line==1u?som_overlay_color(format,255,214,96):
+                           line>=2u+SOM_GEAR_ROWS?som_overlay_color(format,200,210,255):
+                           som_overlay_color(format,255,255,255);
+        for(unsigned i=0;out[i];i++){
+            const unsigned char c=(unsigned char)out[i];
+            if(c<32u||c>126u)continue;
+            const uint8_t *glyph=som_overlay_font[c-32u];
+            for(unsigned row=0;row<7u;row++)for(unsigned col=0;col<5u;col++){
+                if(!(glyph[row]&(0x10u>>col)))continue;
+                som_overlay_fill(pixels,pitch,format,x0+(5u+i*6u+col)*sx,y0+(4u+line*10u+row)*sy,sx,sy,ink);
+            }
+        }
+    }
+}
 static uint64_t perf_video_us;
 static void som_frontend_video(const void *data,unsigned width,unsigned height,size_t pitch){
     const uint64_t t0=PERF_NOW();
@@ -10116,7 +10196,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         (void)som_lock_marker(&lock_x,&lock_y);
         som_lock_swap(0);(void)som_lock_marker(&lock2_x,&lock2_y);som_lock_swap(0);
     }
-    const int draw_classes=som_manual_disciplines&&!jukebox.open&&!perk_menu.open&&!act_ai&&
+    const int draw_classes=som_manual_disciplines&&!jukebox.open&&!perk_menu.open&&!gear_menu.open&&!act_ai&&
         (height==224u||height==448u)&&(width==256u||width==512u);
     const uint8_t *ring_owner_ram=som_live_wram();
     const uint8_t *cam_ram=NULL,*cam_vram=NULL;
@@ -10167,13 +10247,18 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     memcpy(skins_now,skins,sizeof(skins_now));
     skin_count=0;
     if(ring_owner_ram&&on_turbo&&test_enabled&&ring_owner_ram[0xE4]==1&&ring_owner_ram[0xE6]==0x0F){
-        uint8_t look[3];
+        uint8_t look[3],holding[3];
+        const uint8_t *live=som_live_wram();
         for(unsigned who=0;who<3u;who++){
             const unsigned cls=som_disc_member_class(&disciplines,who);
-            look[who]=cls==SOM_DISC_NINJUTSU?SOM_SKIN_STAR:cls==SOM_DISC_HUNTER?SOM_SKIN_CROSS:SOM_SKIN_NONE;
+            look[who]=cls==SOM_DISC_NINJUTSU?(gear_throw[cls]==1u?SOM_SKIN_FUMA:SOM_SKIN_STAR):
+                      cls==SOM_DISC_HUNTER?SOM_SKIN_CROSS:SOM_SKIN_NONE;
+            /* player, 2026-11-27: "make ninja hold a shuriken not a chakram" */
+            holding[who]=(uint8_t)(cls==SOM_DISC_NINJUTSU&&live&&live[0xE000u+0x200u*who]==1u&&
+                                   live[0xE000u+0x200u*who+0x1E4u]==6u);
         }
         if(look[0]||look[1]||look[2])
-            skin_count=som_throw_skins((uint8_t*)som_live_wram(),look,skins);
+            skin_count=som_throw_skins_held((uint8_t*)som_live_wram(),look,holding,skins);
     }
     const int classes_icon=!menu&&on_turbo&&som_ring_on_classes(ring_owner_ram)&&
         ring_owner_ram[0x1808]==som_pad1_member_in(ring_owner_ram);
@@ -10234,12 +10319,15 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(mask_effects)memcpy(effect_base,overlay_frame,size);
     if(width==256u)for(unsigned i=0;i<skins_shown;i++){
-        if(skins_now[i].kind==SOM_SKIN_STAR){
+        if(skins_now[i].kind==SOM_SKIN_STAR||skins_now[i].kind==SOM_SKIN_FUMA){
             const uint8_t *art=som_rom_at(0xD28400u+SOM_ICON_BYTES*0x7Bu,SOM_ICON_BYTES);
             uint8_t icon[256];
             if(!art)continue;
             som_icon_decode(art,icon);
-            if(skins_now[i].small)
+            if(skins_now[i].kind==SOM_SKIN_FUMA)
+                som_icon_draw_big(overlay_frame,width,height,pitch,pixel_format,icon,
+                                  skins_now[i].x-16,skins_now[i].y-16,(unsigned)(frame_number/3ul)&3u);
+            else if(skins_now[i].small)
                 som_icon_draw_small(overlay_frame,width,height,pitch,pixel_format,icon,
                                     skins_now[i].x-4,skins_now[i].y-4,(unsigned)(frame_number/3ul)&3u);
             else som_icon_draw(overlay_frame,width,height,pitch,pixel_format,icon,
@@ -10424,6 +10512,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         if(act_ai)som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
         else if(jukebox.open)som_juke_draw(overlay_frame,width,height,pitch,pixel_format);
         else if(perk_menu.open)som_perk_menu_draw(overlay_frame,width,height,pitch,pixel_format);
+        else if(gear_menu.open)som_gear_menu_draw(overlay_frame,width,height,pitch,pixel_format);
         else if(class_guide_open)
             som_class_guide_draw(overlay_frame,width,height,pitch);
         else if(som_manual_disciplines)

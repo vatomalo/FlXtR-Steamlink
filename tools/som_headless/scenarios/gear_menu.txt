@@ -1,0 +1,37 @@
+# The GEAR page through the real ring (start: rabites.state): a Ninja opens the
+# class menu from ACT, R1 twice to GEAR, B row: Left to Kunai; Y row: Right to
+# Fuma Shuriken; then throws (Y) and the star is drawn double size.
+#! expect-log PARTY menu opened from the ring
+#! expect-log STYLE BOY Ninjutsu: Kunai
+#! expect-log GEAR BOY Ninjutsu throws: Fuma Shuriken
+expect u16 00DC == 130
+cmd camera_off
+frames 60
+cmd class_2
+frames 30
+monster 0 -150 150
+monster 1 -150 -150
+monster 2 150 150
+hold R3 2
+frames 60
+hold UP 2
+frames 40
+hold UP 2
+frames 40
+hold RIGHT 2
+frames 40
+hold B 2
+frames 20
+hold R 2
+frames 6
+hold R 2
+frames 10
+shot gear_ninja
+hold LEFT 2
+frames 6
+hold DOWN 2
+frames 6
+hold RIGHT 2
+frames 10
+shot gear_fuma
+frames 10

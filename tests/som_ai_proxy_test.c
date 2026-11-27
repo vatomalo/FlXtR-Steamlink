@@ -214,13 +214,13 @@ int main(void){
     mocked_buttons=0;som_input_poll();
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);som_input_poll();
     assert(disciplines.selected==1);
-    {   /* R1: Perks, Music, then the three AI pages, then back to Classes */
+    {   /* R1: Perks, Gear, Music, then the three AI pages, then back to Classes */
         const uint16_t r1=1u<<RETRO_DEVICE_ID_JOYPAD_R,l1=1u<<RETRO_DEVICE_ID_JOYPAD_L;
-        for(unsigned k=0;k<6u;k++){
+        for(unsigned k=0;k<7u;k++){
             mocked_buttons=0;som_input_poll();mocked_buttons=r1;som_input_poll();
-            assert(som_manual_disciplines&&perk_menu.open==(k==0u)&&jukebox.open==(k==1u)&&
-                   act_ai==(k>=2u&&k<5u)&&disciplines.open==(k==5u));
-            if(act_ai)assert(gambits.open&&gambits.resting&&gambits.page==k-2u);
+            assert(som_manual_disciplines&&perk_menu.open==(k==0u)&&gear_menu.open==(k==1u)&&
+                   jukebox.open==(k==2u)&&act_ai==(k>=3u&&k<6u)&&disciplines.open==(k==6u));
+            if(act_ai)assert(gambits.open&&gambits.resting&&gambits.page==k-3u);
             else assert(!gambits.open);
         }
         mocked_buttons=0;som_input_poll();mocked_buttons=l1;som_input_poll();
@@ -228,15 +228,15 @@ int main(void){
         char row[33];assert(som_gambit_line(&gambits,SOM_QUEST_COUNT+1u,row)&&strstr(row,"Start AI"));
         for(unsigned k=0;k<2u;k++){mocked_buttons=0;som_input_poll();mocked_buttons=l1;som_input_poll();}
         assert(act_ai&&gambits.page==SOM_PAGE_ACTIONS&&!ring_ai_enabled);
-        for(unsigned k=0;k<3u;k++){mocked_buttons=0;som_input_poll();mocked_buttons=l1;som_input_poll();}
-        assert(!act_ai&&disciplines.open&&!jukebox.open&&!perk_menu.open&&!gambits.open&&!gambits.resting);
+        for(unsigned k=0;k<4u;k++){mocked_buttons=0;som_input_poll();mocked_buttons=l1;som_input_poll();}
+        assert(!act_ai&&disciplines.open&&!jukebox.open&&!perk_menu.open&&!gear_menu.open&&!gambits.open&&!gambits.resting);
         assert(disciplines.selected==1);
     }
     mocked_buttons=0;som_input_poll();
     mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_A);som_input_poll();
     assert(!som_manual_disciplines&&!disciplines.open);
     mocked_buttons=0;som_input_poll();
-    /* The menu, then R1 twice: the MUSIC page. Down, B tunes the radio station (a
+    /* The menu, then R1 three times: the MUSIC page. Down, B tunes the radio station (a
      * request line for the Steam Link's music bridge); A closes the menu. */
     {
         char juke_req[]="/tmp/flxtr-juke-req-test-XXXXXX";
@@ -252,6 +252,9 @@ int main(void){
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);som_input_poll();
         mocked_buttons=0;som_input_poll();
         assert(perk_menu.open&&!disciplines.open&&!jukebox.open);      /* PERKS first */
+        mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);som_input_poll();
+        mocked_buttons=0;som_input_poll();
+        assert(gear_menu.open&&!perk_menu.open&&!jukebox.open);        /* then GEAR */
         mocked_buttons=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_R);som_input_poll();
         mocked_buttons=0;som_input_poll();
         assert(jukebox.open&&!disciplines.open&&!perk_menu.open);

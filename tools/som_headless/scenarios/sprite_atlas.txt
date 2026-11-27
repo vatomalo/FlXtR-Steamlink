@@ -1,0 +1,32 @@
+# Start from field-capable SRAM. Use the three diagnostic banks from
+# make_sprite_atlas_fixture.py and a backend with the OBJ atlas hook.
+#! expect-log SPRITE ATLAS rendered party slot 1
+#! expect-log SPRITE ATLAS rendered party slot 2
+#! expect-log SPRITE ATLAS rendered party slot 3
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+dump atlas-idle
+shot atlas-idle
+hold RIGHT 10
+dump atlas-right
+shot atlas-right
+hold LEFT 10
+dump atlas-left
+shot atlas-left
+hold DOWN 10
+dump atlas-down
+shot atlas-down
+hold UP 10
+dump atlas-up
+shot atlas-up
+bench 1200

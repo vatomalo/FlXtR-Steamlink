@@ -6,10 +6,10 @@ frames 160
 hold B 4
 frames 160
 shot appearance
-hold DOWN 4
+hold RIGHT 4
 frames 8
 shot ivory
-hold DOWN 4
+hold RIGHT 4
 frames 8
 shot golden
 hold L 4
@@ -33,9 +33,9 @@ expect u8 A1CC == 0
 hold X 4
 frames 4
 shot appearance_reopened
-hold DOWN 4
+hold RIGHT 4
 frames 5
-hold DOWN 4
+hold RIGHT 4
 frames 5
 hold B 10
 frames 10

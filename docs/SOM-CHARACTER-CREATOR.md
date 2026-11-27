@@ -39,3 +39,27 @@ attachment checks in additional gameplay scenarios, and appearance profiles
 that can survive save, load and restart. The developer selector loads an
 already-compiled bank at content load. There is no ACT or naming integration,
 confirmation-time compiler, or complete hybrid character atlas yet.
+
+## Naming-page entry
+
+The creator opens once when the Turbo native naming page is detected.
+The native constructor sets WRAM A20F and A156 to 3, and the native
+confirmation routine reads the target party slot at A22B. A clean
+headless New Game run verified those fields on the blank and populated
+name page. Press B or Start to accept the appearance, A to cancel, or
+X on the keyboard to revisit appearance. Left and right switch between
+native and a supplied compiled atlas for the active party slot.
+Set `FLXTR_SOM_CREATOR_OFF=1` to skip the appearance panel entirely.
+
+The display uses a two-panel layout with an enlarged native preview and
+appearance selection. The atlas option displays an indexed tile sample.
+Input remains captured until buttons are released when leaving the
+appearance panel. The original keyboard owns glyph insertion, name
+validation, confirming the name, initializing the hero and resuming
+the opening event. The proxy does not write those name or event fields.
+
+Appearance selection in this prototype is session-only. It switches
+between native rendering and a preloaded atlas; confirmation-time
+compilation, an animated custom preview and save persistence are separate
+work. The emulator scenario checks cancel and reopen, a held confirm
+without a leaked glyph, and a native name accepted into the opening scene.

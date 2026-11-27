@@ -480,3 +480,9 @@ test-som-sprite-atlas:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_sprite_atlas_test.c -o build/som-sprite-atlas-test
 	./build/som-sprite-atlas-test
+
+.PHONY: test-som-creator
+test-som-creator:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_creator_test.c -o build/som-creator-test
+	./build/som-creator-test

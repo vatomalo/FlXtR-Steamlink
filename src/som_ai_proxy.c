@@ -47,6 +47,7 @@
 #include "som_enemy_tactics.h"
 #include "som_armour.h"
 #include "som_sprite_atlas.h"
+#include "som_creator.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include "som_mentalist.h"
@@ -672,7 +673,9 @@ static const uint8_t *(*backend_main_depth)(unsigned *pitch);
 typedef const uint8_t *(*SomObjLookup)(unsigned name,unsigned palette,unsigned tile);
 static void (*backend_set_obj_lookup)(SomObjLookup);
 static SomSpriteAtlas sprite_atlas[3];
-static unsigned sprite_atlas_loaded,sprite_atlas_visible,sprite_atlas_seen;
+static unsigned sprite_atlas_loaded,sprite_atlas_available,sprite_atlas_visible,sprite_atlas_seen;
+static SomCreator sprite_creator;
+static int sprite_creator_enabled,sprite_creator_captures;
 
 static const uint8_t *som_sprite_lookup(unsigned name,unsigned palette,unsigned tile){
     if(palette<1u||palette>3u||tile>=SOM_ATLAS_TILES)return NULL;
@@ -696,7 +699,7 @@ static const uint8_t *som_sprite_lookup(unsigned name,unsigned palette,unsigned 
 static void som_sprite_close(void){
     if(backend_set_obj_lookup)backend_set_obj_lookup(NULL);
     for(unsigned slot=0;slot<3u;slot++)som_atlas_clear(&sprite_atlas[slot]);
-    sprite_atlas_loaded=sprite_atlas_visible=sprite_atlas_seen=0;
+    sprite_atlas_loaded=sprite_atlas_available=sprite_atlas_visible=sprite_atlas_seen=0;
 }
 
 static void som_sprite_open(void){
@@ -712,6 +715,7 @@ static void som_sprite_open(void){
             continue;
         }
         sprite_atlas_loaded|=1u<<slot;
+        sprite_atlas_available|=1u<<slot;
     }
 }
 
@@ -2732,6 +2736,7 @@ static void som_lead_update(void){
     fprintf(stderr,"[som-ai] LEAD pad %d\n",want?2:1);
 }
 static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsigned id){
+    if(sprite_creator_captures&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD)return 0;
     if(lead_swapped&&port<2u)port=1u-port;
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
@@ -2876,6 +2881,27 @@ static void som_record_presses(uint16_t pressed){
 }
 static void som_input_poll(void){
     if(physical_poll)physical_poll();
+    if(sprite_creator_enabled&&on_turbo&&test_enabled){
+        const int slot=som_creator_slot(som_live_wram());
+        if(slot>=0||sprite_creator.seen||sprite_creator.release){
+            uint16_t buttons=0;
+            for(unsigned key=0;frontend_state&&key<16u;key++)
+                if(frontend_state(0,RETRO_DEVICE_JOYPAD,0,key))buttons|=(uint16_t)(1u<<key);
+            const int was_active=sprite_creator.active;
+            const int action=som_creator_input(&sprite_creator,slot,buttons,sprite_atlas_available,sprite_atlas_loaded);
+            sprite_creator_captures=action!=SOM_CREATOR_PASS;
+            if(!was_active&&sprite_creator.active)
+                fprintf(stderr,"[som-ai] CREATOR opened for party slot %u\n",sprite_creator.slot+1u);
+            if(action==SOM_CREATOR_CONFIRM){
+                const unsigned bit=1u<<sprite_creator.slot;
+                if(sprite_creator.selected)sprite_atlas_loaded|=bit;
+                else sprite_atlas_loaded&=~bit;
+                fprintf(stderr,"[som-ai] CREATOR appearance accepted; native name entry resumed\n");
+            }
+            if(sprite_creator_captures)return;
+        }
+    }
+    sprite_creator_captures=0;
     som_pads_frame();
     som_lead_update();
     som_actor_update();
@@ -10586,6 +10612,22 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
 #undef SOM_IN_FRONT
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
+    if(sprite_creator.active&&(width==256u||width==512u)&&(height==224u||height==448u)&&
+       pixel_format>=0&&pixel_format<=2){
+        const size_t row=(size_t)width*(pixel_format==1?4u:2u),size=row*height;
+        if(size>overlay_frame_size){
+            uint8_t *grown=realloc(overlay_frame,size);
+            if(grown){overlay_frame=grown;overlay_frame_size=size;}
+        }
+        if(size<=overlay_frame_size){
+            const SomSpriteAtlas *atlas=&sprite_atlas[sprite_creator.slot];
+            som_creator_draw(&sprite_creator,overlay_frame,width,height,row,pixel_format,
+                             atlas->count?atlas->records+4:NULL,
+                             data!=RETRO_HW_FRAME_BUFFER_VALID&&pitch>=row?data:NULL,pitch);
+            som_frontend_video(overlay_frame,width,height,row);
+            return;
+        }
+    }
     SOM_PROF_BEGIN();
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */
@@ -11130,6 +11172,10 @@ static int som_enable_classes_ring(uint8_t *rom,size_t size){
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
     som_sprite_open();
+    memset(&sprite_creator,0,sizeof(sprite_creator));
+    sprite_creator_captures=0;
+    const char *disable_creator=getenv("FLXTR_SOM_CREATOR_OFF");
+    sprite_creator_enabled=!disable_creator||strcmp(disable_creator,"1")!=0;
     const char *native_camera=getenv("FLXTR_SOM_CAMERA_NATIVE");
     camera_native=native_camera&&strcmp(native_camera,"1")==0;
     frame_number=0;classes_ring_enabled=0;ring_hidden=0;start_ring_held=0;start_ring_until=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;

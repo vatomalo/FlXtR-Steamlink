@@ -64,15 +64,20 @@ int main(void){
     assert(som_creator_input_hair(&z,0,0,0,5,0)==SOM_CREATOR_CAPTURE&&z.hair==0);
     /* a head pack: parse, roles, the hero's palette entry for each role */
     static uint8_t pk[10+2*SOM_HEAD_ENTRY];
-    memcpy(pk,"SOMHEAD1",8);pk[8]=2;
+    memcpy(pk,"SOMHEAD2",8);pk[8]=2;
     uint8_t *e=pk+10;
     e[0]=0x9D;e[1]=10;e[4]=20;e[7]=30;e[10]=1;e[11]=200;e[12]=0;e[13]=0;
-    e[35+256+5*16+5]=3;e[35+256+6*16+5]=6;e[35+256+7*16+5]=16;
+    e[41+256+5*16+5]=3;e[41+256+6*16+5]=6;e[41+256+7*16+5]=16;
+    e[35]=0xFF;e[36]=0xFF;e[37]=7;e[38]=11;e[39]=0xFF;e[40]=0xFF;
     SomHeadPack hp={0};
     assert(!som_heads_parse(&hp,pk,10));
     assert(som_heads_parse(&hp,pk,sizeof(pk))&&hp.count==2&&som_head_entry(&hp,0)[0]==0x9D&&!som_head_entry(&hp,2));
     assert(som_head_role(som_head_entry(&hp,0),1,5,5)==3&&som_head_role(som_head_entry(&hp,0),1,5,6)==6);
     assert(som_head_hair(som_head_entry(&hp,0),2)[0]==30);
+    {int x=0,y=0;
+     assert(!som_head_eyes(som_head_entry(&hp,0),0,&x,&y));                     /* from behind: none */
+     assert(som_head_eyes(som_head_entry(&hp,0),1,&x,&y)&&x==7&&y==11);
+     x=y=0;assert(som_head_eyes(som_head_entry(&hp,0),2,&x,&y)&&x==7&&y==11);} /* side: the front's */
     uint8_t live[32]={0};
     live[2*13]=31;                                   /* entry 13: pure red */
     assert(som_head_index(e,0,6,live)==6&&som_head_index(e,1,5,live)==6&&som_head_index(e,2,7,live)==7);

@@ -3,7 +3,7 @@
 # (9D), hair only, as a Ninja (the hagane stays), each from the front, the
 # side and the back. Needs som_heads.bin
 # (tools/som_head_pack.py) in SOM_HEADLESS_DATA or installed.
-#! expect-log HEADS 39 game heads loaded
+#! expect-log HEADS 38 game heads loaded
 #! expect-log HAIR BOY head 81
 expect u16 00DC == 130
 cmd camera_off

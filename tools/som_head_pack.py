@@ -15,9 +15,11 @@ run time). The source's own hair ramp is kept for the NATIVE hair colour.
     python3 tools/som_head_pack.py ROM OUT.bin            # the proxy pack (SOMHEAD1)
     python3 tools/som_head_pack.py ROM OUT.png --sheet    # what was picked
 
-Pack: "SOMHEAD1", u16 count, then per head: u8 kind, u8 hair[3][3] RGB,
-u8 extras, u8 extra[8][3] RGB, then 3 x 16 x 16 role bytes (up, down, side;
-side faces right).
+Pack: "SOMHEAD2", u16 count, then per head: u8 kind, u8 hair[3][3] RGB,
+u8 extras, u8 extra[8][3] RGB, u8 eyes[3][2] (the eye centre x, y per view,
+255 none: from behind), then 3 x 16 x 16 role bytes (up, down, side; side
+faces right). The eyes place the hair on the hero (player, 2026-11-27: "use
+the eyes to place the hairstyles").
 """
 import argparse
 import colorsys
@@ -118,6 +120,35 @@ def roles(palette, images):
     return role, ramp, [tuple(palette[i]) for i in extras], skin, hair
 
 
+def eye_centre(coded):
+    """The eyes: non-skin pixels lying between skin in a row (whites, irises or
+    pupils), in the first two rows where they occur. (x, y) or None."""
+    skin = lambda v: v in (5, 6, 7)
+    whites = [(x, y) for y, row in enumerate(coded) for x, v in enumerate(row) if v == 15]
+    if len(whites) >= 2:                   # eye whites: the plain case
+        return (sum(w[0] for w in whites) // len(whites), sum(w[1] for w in whites) // len(whites))
+    for y, row in enumerate(coded):
+        if y < 8:                          # the face is the lower half (light hair can look like skin)
+            continue
+        hits = []
+        for x, v in enumerate(row):
+            if not v or skin(v):
+                continue
+            left = any(skin(row[k]) for k in range(max(0, x - 3), x))
+            right = any(skin(row[k]) for k in range(x + 1, min(len(row), x + 4)))
+            if left and right:
+                hits.append((x, y))
+        if hits and y + 1 < len(coded):
+            nxt = coded[y + 1]
+            for x, v in enumerate(nxt):
+                if v and not skin(v) and any(skin(nxt[k]) for k in range(max(0, x - 3), x)) and \
+                        any(skin(nxt[k]) for k in range(x + 1, min(len(nxt), x + 4))):
+                    hits.append((x, y + 1))
+        if len(hits) >= 2:
+            return (sum(h[0] for h in hits) // len(hits), sum(h[1] for h in hits) // len(hits))
+    return None
+
+
 def build(gfx):
     heads = []
     for kind in SOURCES:
@@ -138,21 +169,28 @@ def build(gfx):
         if skin_px < 10 or hair_px < 10 or len(ramp) < 3 or len(rows) < 10:
             continue                       # not a person: no face, or no hair
         coded = [[[role.get(v, 0) if v else 0 for v in row] for row in im] for im in images]
-        if any(c == coded[1] for c in (h[3] for h in heads)):
+        if any(c == coded[1] for c in (h[3][1] for h in heads)):
             continue                       # the same head again (recoloured copies are kept)
-        heads.append((KIND_IDS.get(kind, kind), ramp, extras, coded))
+        eyes = [eye_centre(c) for c in coded]
+        if eyes[1] is None:                # hair over the face: centre, above the chin
+            chin = max((y for y, row in enumerate(coded[1]) for v in row if v in (5, 6, 7)), default=12)
+            eyes[1] = (8, max(0, chin - 3))
+        eyes[0] = None                     # from behind: no eyes, placed as from the front
+        heads.append((KIND_IDS.get(kind, kind), ramp, extras, coded, eyes))
     return heads
 
 
 def pack(heads):
-    out = bytearray(b"SOMHEAD1") + struct.pack("<H", len(heads))
-    for kind, ramp, extras, coded in heads:
+    out = bytearray(b"SOMHEAD2") + struct.pack("<H", len(heads))
+    for kind, ramp, extras, coded, eyes in heads:
         out.append(kind & 0xFF)
         for c in ramp:
             out += bytes(c)
         out.append(len(extras))
         for k in range(8):
             out += bytes(extras[k]) if k < len(extras) else b"\0\0\0"
+        for e in eyes:
+            out += bytes(e) if e else b"\xff\xff"
         for im in coded:
             for row in im:
                 out += bytes(row)
@@ -165,7 +203,7 @@ def sheet(heads, path, scale=4):
     rows = (len(heads) + cols - 1) // cols
     w, h = cols * cell * 3, rows * (cell + 2)
     pix = [[(30, 40, 44)] * (w * scale) for _ in range(h * scale)]
-    for n, (kind, ramp, extras, coded) in enumerate(heads):
+    for n, (kind, ramp, extras, coded, eyes) in enumerate(heads):
         for d, im in enumerate(coded):
             gx, gy = ((n % cols) * 3 + d) * cell, (n // cols) * (cell + 2)
             for y, row in enumerate(im):
@@ -195,6 +233,9 @@ def main():
     else:
         Path(a.out).write_bytes(pack(heads))
     print("%d heads: %s" % (len(heads), " ".join("%02X" % (k & 0xFF) for k, *_ in heads)), file=sys.stderr)
+    missing = ["%02X-side" % (h[0] & 0xFF) for h in heads if h[4][2] is None]
+    if missing:
+        print("no eyes in some views (placed from the front): " + " ".join(missing), file=sys.stderr)
 
 
 if __name__ == "__main__":

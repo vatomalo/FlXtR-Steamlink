@@ -1332,6 +1332,14 @@ static int som_kusarigama_art_ready(void);
  * SOM_LOCK_DROP px away, and on a map change. Player only (not the AI). */
 #define SOM_LOCK_RANGE 160
 #define SOM_LOCK_DROP 220
+/* Weapon reach (player, 2026-11-27: "if not within weapon range targeting
+ * should not connect"): a lock only takes a monster the hero's weapon can
+ * reach, and lets go SOM_LOCK_SLACK px beyond it. */
+#define SOM_LOCK_REACH_MELEE 64
+#define SOM_LOCK_SLACK 48
+static int som_lock_reach(const uint8_t *hero){
+    return som_weapon_long_range(hero[0x1E4])?SOM_LOCK_RANGE:SOM_LOCK_REACH_MELEE;
+}
 static int lock_slot=-1;
 static uint8_t lock_identity;
 static unsigned lock_who;
@@ -6470,6 +6478,8 @@ static unsigned som_monk_enemy(const uint8_t *ram,const uint8_t *o,int *ex,int *
     const int hx=(int)som_word(o+2),hy=(int)som_word(o+4);
     const unsigned who=(unsigned)(o-(ram+0xE000u))/0x200u;
     const uint8_t *locked=som_combo_locked_enemy(ram,who);
+    if(locked&&abs((int)som_word(locked+2)-hx)+abs((int)som_word(locked+4)-hy)>som_lock_reach(o))
+        locked=NULL;                                  /* out of reach: the nearest one instead */
     if(locked){
         const int dx=(int)som_word(locked+2)-hx,dy=(int)som_word(locked+4)-hy;
         const unsigned cx=abs(dx)<26?1u:abs(dx)<42?2u:3u;
@@ -12205,8 +12215,13 @@ static int som_lock_acquire(uint8_t *ram,unsigned slot,unsigned who){
     const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     const uint8_t *hero=ram+0xE000u+0x200u*who;
     if(!som_bun_monster_alive(m)||!som_ally_alive(hero))return 0;
+    const long d=labs((long)som_bun_u16(m+2)-(long)som_bun_u16(hero+2))+
+                 labs((long)som_bun_u16(m+4)-(long)som_bun_u16(hero+4));
+    if(d>som_lock_reach(hero))return 0;              /* out of the weapon's reach */
+    if(lock_slot==(int)slot&&lock_identity==m[0x180]&&lock_who==who)return 1;
     lock_slot=(int)slot;lock_identity=m[0x180];lock_who=who;
     lock_map=som_bun_u16(ram+0xDC);lock_radius=0;
+    fprintf(stderr,"[som-ai] LOCK on monster slot %u for %s (%ld px)\n",slot+1u,som_party_names[who],d);
     return 1;
 }
 static void som_lock_toggle_for(uint8_t *ram,unsigned who){
@@ -12225,9 +12240,9 @@ static void som_lock_toggle_for(uint8_t *ram,unsigned who){
         const uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
         if(!som_bun_monster_alive(m))continue;
         const long dist=labs((long)som_bun_u16(m+2)-hx)+labs((long)som_bun_u16(m+4)-hy);
-        if(dist<=SOM_LOCK_RANGE&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
+        if(dist<=som_lock_reach(hero)&&(best<0||dist<best_d)){best=(int)slot;best_d=dist;}
     }
-    if(best<0){som_overlay_say(&overlay,"^Nothing to lock on",SOM_MESSAGE_FRAMES/4u);return;}
+    if(best<0){som_overlay_say(&overlay,"^Nothing in reach",SOM_MESSAGE_FRAMES/4u);return;}
     if(!som_lock_acquire(ram,(unsigned)best,who))return;
     som_overlay_say(&overlay,"^Locked on",SOM_MESSAGE_FRAMES/4u);
     fprintf(stderr,"[som-ai] LOCK on monster slot %d (%ld px)\n",best+1,best_d);
@@ -12247,7 +12262,7 @@ static void som_lock_frame(uint8_t *ram){
     if(hero[0]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F||ram[0xD0]!=0)return;
     const int dx=(int)som_bun_u16(m+2)-(int)som_bun_u16(hero+2);
     const int dy=(int)som_bun_u16(m+4)-(int)som_bun_u16(hero+4);
-    if(abs(dx)+abs(dy)>SOM_LOCK_DROP){som_lock_release("too far");return;}
+    if(abs(dx)+abs(dy)>som_lock_reach(hero)+SOM_LOCK_SLACK){som_lock_release("out of reach");return;}
     som_lock_orbit_after(ram);
     /* Not during a dodge or a pose the game is playing on its own. */
     if(som_combo_free_move(lock_who)||hero[0x01C]||som_status_locked(hero))return;
@@ -12380,7 +12395,8 @@ static void som_auto_target_frame(uint8_t *ram){
         if((who==p1||who==pad2_actor)&&
            som_ally_alive(hero)&&auto_target_party_hp[who]&&hp<auto_target_party_hp[who]){
             const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
-            int best=-1,best_d=SOM_LOCK_RANGE+1;
+            const int reach=som_lock_reach(hero);
+            int best=-1,best_d=reach+1;
             const int touching=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,
                                                 SOM_BUN_HERO_TOUCH_Y*2,familiar.slot);
             if(touching>=0)best=touching;
@@ -12389,7 +12405,7 @@ static void som_auto_target_frame(uint8_t *ram){
                 if((int)i==familiar.slot||!som_bun_monster_alive(m)||
                    (m[0x0B]&0x80u)!=(hero[0x0B]&0x80u))continue;
                 const int d=abs((int)som_bun_u16(m+2)-hx)+abs((int)som_bun_u16(m+4)-hy);
-                if(d<=SOM_LOCK_RANGE&&d<best_d){best=(int)i;best_d=d;}
+                if(d<=reach&&d<best_d){best=(int)i;best_d=d;}
             }
             if(best>=0)som_lock_acquire_for(ram,(unsigned)best,who);
         }

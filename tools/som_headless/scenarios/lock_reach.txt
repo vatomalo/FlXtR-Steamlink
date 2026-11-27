@@ -1,0 +1,34 @@
+# Lock-on follows weapon reach (start: rabites.state): L1 with every Rabite far
+# finds nothing; L1 with one 40 px away locks it; walking away lets it go; a
+# Samurai string's own hits lock the monster they hit.
+#! expect-log LOCK on monster slot 1 for BOY \(\d+ px\)
+#! expect-log LOCK off \(monster slot 1\): out of reach
+#! expect-log LOCK on monster slot \d for BOY \(\d+ px\)
+expect u16 00DC == 130
+cmd camera_off
+frames 60
+cmd class_10
+frames 30
+monster 0 120 0
+monster 1 -130 40
+monster 2 -130 -40
+hold L 2
+frames 20
+monster 0 40 0
+hold L 2
+frames 20
+peek
+hold LEFT 60
+frames 20
+peek
+monster 0 18 0
+monster 1 -150 150
+monster 2 -150 -150
+hold RIGHT 2
+hold B 2
+frames 40
+hold B 2
+frames 40
+hold B 2
+frames 40
+peek

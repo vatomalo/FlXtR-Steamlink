@@ -672,6 +672,7 @@ static const uint8_t *(*backend_main_depth)(unsigned *pitch);
 static const char *camera_off_file=SOM_CAMERA_OFF_FILE;
 static SomCamera camera;
 static int camera_off=-1,camera_shot;
+static int camera_native;
 static SomCamGovern camera_govern;
 static void load_backend(void); /* RetroArch may query core info before init. */
 static void som_auto_state_path_set(const char *rom);
@@ -1119,6 +1120,9 @@ static SomEnergy energy;
 static int energy_free;
 static unsigned long energy_refused_at;
 static int som_clone_jutsu(uint8_t *ram,const char *jutsu);
+static int som_ninja_jutsu(uint8_t *ram,unsigned who,unsigned pick);
+static int som_energy_pay(unsigned e,unsigned ap,const char *what);
+static void som_energy_spend(unsigned e,unsigned ap);
 static int som_clone_jutsu_raw(uint8_t *ram,const char *jutsu);
 /* Ninjutsu, Ninja Storm style (player's design, 2026-11-20): a tapped X
  * waits SOM_X_A_WINDOW frames before the jutsu goes off; A inside that wait
@@ -2937,6 +2941,14 @@ static void som_input_poll(void){
         const unsigned driver_cls=som_disc_member_class(&disciplines,driver);
         const int caster=attack_ram&&som_disc_caster(driver_cls)&&!retired_ring_chord;
         if(wram)som_monk_glove(wram);
+        /* A Ninja whose GEAR Y is a jutsu: Y is that jutsu, never the
+         * boomerang (the game does not see it). */
+        const int ninja_jutsu_y=attack_ram&&driver_cls==SOM_DISC_NINJUTSU&&gear_throw[SOM_DISC_NINJUTSU]>=3u&&
+            (current&y_bit)&&!(current&(l2_bit|r2))&&!special_suppress&&!retired_ring_chord;
+        if(ninja_jutsu_y){
+            y_weapon_blocked=1;
+            if(pressed&y_bit)(void)som_ninja_jutsu(attack_ram,driver,gear_throw[SOM_DISC_NINJUTSU]);
+        }
         /* B passes through for the mage bolt. Y starts the native spell. */
         const int caster_talk=caster&&(current&b_bit)&&!(current&y_bit)&&
             som_interact_ahead_by(attack_ram,driver);
@@ -2947,7 +2959,7 @@ static void som_input_poll(void){
                 fprintf(stderr,"[som-ai] CASTER %s Y: %s\n",som_party_names[driver],
                         som_class_spell_label(driver_cls,spell));
         }
-        if(attack_ram&&driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!caster&&
+        if(attack_ram&&driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!caster&&!(ninja_jutsu_y&&!(current&b_bit))&&
            !retired_ring_chord&&!style_b_hidden&&(current&(y_bit|b_bit))&&
            !(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
@@ -2960,7 +2972,7 @@ static void som_input_poll(void){
             else if(which)y_weapon_blocked=1;
             else if(result==SOM_EQUIP_BUSY)b_weapon_blocked=1;
         }
-        if(attack_ram&&!driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!caster&&
+        if(attack_ram&&!driver&&driver_cls<SOM_DISCIPLINE_COUNT&&!caster&&!(ninja_jutsu_y&&!(current&b_bit))&&
            !style_b_hidden&&!retired_ring_chord&&(current&(y_bit|b_bit))&&
            !(current&(l2_bit|r2))&&!special_suppress){
             const unsigned which=(current&y_bit)?1u:0u;
@@ -4269,6 +4281,42 @@ static void som_javelin_ammo(uint8_t *ram){
         }
     }
 }
+/* The Ninja's jutsu on Y (GEAR pick 3-6): Katon, Suiton, Raiton balls from
+ * the bolt engine in their element, or Kage Bunshin. Paid in Chakra. */
+#define SOM_JUTSU_SUITON_MARK 0x51u
+static int som_ninja_jutsu(uint8_t *ram,unsigned who,unsigned pick){
+    if(!ram||who>=SOM_PARTY_MEMBERS)return 0;
+    uint8_t *h=ram+0xE000u+0x200u*who;
+    if(h[0]!=1u||h[0x1C]||som_status_locked(h)||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]!=0u){
+        fprintf(stderr,"[som-ai] JUTSU %s refused: busy (state %02X)\n",som_party_names[who],(unsigned)h[0x1C]);
+        return 0;
+    }
+    static unsigned long ready[SOM_PARTY_MEMBERS];      /* 0.75 s between two jutsu */
+    if(frame_number<ready[who])return 0;
+    if(pick==6u){
+        if(who!=som_actor)return 0;
+        ready[who]=frame_number+45ul;
+        return som_clone_jutsu(ram,"Kage Bunshin no Jutsu");
+    }
+    static const struct {const char *name;unsigned element,cost,kind,pct;} j[3]={
+        {"Katon",2u,10u,SOM_BOLT_BALL,150u},{"Suiton",1u,10u,SOM_BOLT_BALL,100u},{"Raiton",3u,12u,SOM_BOLT_SPIKE,110u}};
+    if(pick<3u||pick>5u)return 0;
+    const unsigned k=pick-3u;
+    if(who==som_actor){if(!som_energy_pay(j[k].cost,0u,j[k].name))return 0;}
+    const unsigned map=som_word(ram+0xDC)&0x1FFu;
+    const unsigned damage=som_mage_bolt_damage(h,SOM_DISC_NINJUTSU)*j[k].pct/100u;
+    const int slot=som_bolt_fire(mage_bolts,who,j[k].element,(int)som_word(h+2),(int)som_word(h+4),
+                                 h[0x10],damage,map,frame_number);
+    if(slot<=0)return 0;
+    SomBolt *b=&mage_bolts[slot-1];
+    b->kind=(int)j[k].kind;b->big=1;b->move=pick==4u?SOM_JUTSU_SUITON_MARK:0u;
+    if(who==som_actor)som_energy_spend(j[k].cost,0u);
+    ready[who]=frame_number+45ul;
+    char text[32];snprintf(text,sizeof(text),"^%s no Jutsu",j[k].name);
+    som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);
+    fprintf(stderr,"[som-ai] JUTSU %s %s (%u)\n",som_party_names[who],j[k].name,damage);
+    return 1;
+}
 static void som_shuriken_throw(uint8_t *ram){
     som_javelin_ammo(ram);
     if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0xD0]!=0u)return;
@@ -4717,6 +4765,9 @@ static void som_mage_bolt_frame(uint8_t *ram,int after){
             monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=b->who%SOM_PARTY_MEMBERS;
             som_judged_hit(ram,b->who,(unsigned)slot);
             if(b->kind==SOM_BOLT_PETAL){som_petal_hit(ram,b,(unsigned)slot);som_psi_land(ram,b,(unsigned)slot);}
+            if(b->kind==SOM_BOLT_BALL&&b->move==SOM_JUTSU_SUITON_MARK&&
+               som_class_status((uint8_t*)m,0x0004u,60u))
+                fprintf(stderr,"[som-ai] SUITON slows monster %d\n",slot);
             if(b->who==0u&&disciplines.selected<SOM_DISCIPLINE_COUNT)
                 som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
                             m[0x180],SOM_XPK_SPELL,"mage bolt hit");
@@ -10404,7 +10455,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         const int shot=som_cam_frame(&camera,cam_ram,som_pad1_member_in(cam_ram),
                                      menu||portals.count!=0,
                                      !camera_govern.off);
-        {   /* the time since the last frame belongs to how that one was drawn */
+        if(!camera_native){   /* the time since the last frame belongs to how that one was drawn */
             static int was_hd;
             static float was_ms;
             struct timespec t;
@@ -10595,16 +10646,17 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(cam_on){
         som_cam_clamp(&camera);
+        const int render_hd=camera.hd&&!camera_native;
         const size_t hd_row=2u*SOM_CAM_W*cam_bytes,hd_size=hd_row*2u*SOM_CAM_H;
         uint8_t *hd=NULL;
-        if(camera.hd&&hd_size>overlay_frame_size){
+        if(render_hd&&hd_size>overlay_frame_size){
             hd=realloc(overlay_frame,hd_size);
             if(hd){overlay_frame=hd;overlay_frame_size=hd_size;}
         }
-        if(camera.hd&&overlay_frame_size>=hd_size){
+        if(render_hd&&overlay_frame_size>=hd_size){
             memcpy(cam_copy,overlay_frame,size);
             som_cam_scale_hd(&camera,(const uint8_t*)cam_copy,pitch,overlay_frame,cam_bytes);
-            som_cam_restore_hd(overlay_frame,pitch,cam_bytes,cam_text,cam_texts);
+            som_cam_restore_hd(overlay_frame,cam_bytes,cam_text,cam_texts);
             width=2u*SOM_CAM_W;height=2u*SOM_CAM_H;pitch=hd_row;
         }else{
             som_cam_scale(&camera,overlay_frame,(uint8_t*)cam_copy,pitch,cam_bytes);
@@ -10860,6 +10912,8 @@ static int som_enable_classes_ring(uint8_t *rom,size_t size){
 }
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
+    const char *native_camera=getenv("FLXTR_SOM_CAMERA_NATIVE");
+    camera_native=native_camera&&strcmp(native_camera,"1")==0;
     frame_number=0;classes_ring_enabled=0;ring_hidden=0;start_ring_held=0;start_ring_until=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
     active_action=SOM_ACT_NONE;action_frames=0;som_have_previous_menu=0;
     autonomous_mode=0;auto_step=0;auto_deadline=0;

@@ -1,0 +1,69 @@
+# The Ninja's jutsu on Y (GEAR picks 3-6). Runs locally from an .srm (x86 core, SOM_HEADLESS_BASE_CORE);
+# a hero in hurt stagger refuses (logged), so each jutsu is pressed three times.
+frames 900
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 300
+expect u8 00E4 == 1
+expect u8 00E6 == 0x0F
+expect u8 00D0 == 0
+hold DOWN 60
+frames 120
+hold DOWN 10
+hold LEFT 90
+hold RIGHT 23
+hold UP 80
+hold LEFT 17
+hold UP 62
+hold LEFT 60
+frames 150
+expect u8 E600 == 1
+# --- the Ninja's jutsu on Y (GEAR picks 3-6) ---
+#! expect-log JUTSU BOY (Katon|refused)
+#! expect-log JUTSU BOY Suiton
+#! expect-log JUTSU BOY Raiton
+cmd class_2
+frames 40
+monster 1 -150 150
+monster 2 -150 -150
+hold RIGHT 2
+cmd gear_throw_2_3
+frames 40
+monster 0 60 0
+hold Y 2
+frames 30
+hold Y 2
+frames 30
+hold Y 2
+frames 60
+cmd gear_throw_2_4
+frames 40
+monster 0 60 0
+hold Y 2
+frames 30
+hold Y 2
+frames 30
+hold Y 2
+frames 60
+cmd gear_throw_2_5
+frames 40
+monster 0 60 0
+monster 2 90 0
+hold Y 2
+frames 30
+hold Y 2
+frames 30
+hold Y 2
+frames 60
+cmd gear_throw_2_6
+frames 40
+hold Y 2
+frames 30
+hold Y 2
+frames 60
+shot bunshin

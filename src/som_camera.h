@@ -452,7 +452,12 @@ static inline unsigned som_cam_save(SomCamera *c,const uint8_t *ram,const uint8_
     const unsigned tm=0xB000u+((ram[0xE8]&1u)?0x800u:0u),scroll=som_cam_u16(ram+0x40);
     unsigned n=0;
     c->window=0;
-    memset(mask,0,SOM_CAM_W*SOM_CAM_H);
+    /* clear only the rows marked last time (a full 57 KB memset every frame
+     * otherwise; perf 2026-11-27). The caller keeps one mask buffer. */
+    static uint8_t marked[SOM_CAM_H];
+    static const uint8_t *marked_for;
+    if(marked_for!=mask){memset(mask,0,SOM_CAM_W*SOM_CAM_H);memset(marked,0,sizeof(marked));marked_for=mask;}
+    for(unsigned y=0;y<SOM_CAM_H;y++)if(marked[y]){memset(mask+y*SOM_CAM_W,0,SOM_CAM_W);marked[y]=0;}
     for(unsigned y=0;y<SOM_CAM_H;y++){
         /* BG3 also holds leftovers the game does not show (rows 13-15, below the HUD): only
          * the window's place, or the HUD band and the spell banner, count. */
@@ -465,23 +470,25 @@ static inline unsigned som_cam_save(SomCamera *c,const uint8_t *ram,const uint8_
             const unsigned a=(0x8000u+(w&0x3FFu)*16u+ty*2u)&0xFFFFu;
             const unsigned bits=vram[a]|vram[a+1u];
             for(unsigned k=0;bits&&k<8u;k++)
-                if(bits>>((w&0x4000u)?k:7u-k)&1u)mask[y*SOM_CAM_W+col*8u+k]=1;
+                if(bits>>((w&0x4000u)?k:7u-k)&1u){mask[y*SOM_CAM_W+col*8u+k]=1;marked[y]=1;}
         }
         /* a window's rows are kept whole, with its 8 px margins */
         unsigned filled=0;
         if(ram[0xD0]&0x80u)
             for(unsigned x=0;x<SOM_CAM_W;x++)filled+=mask[y*SOM_CAM_W+x];
-        if(filled>=160u){memset(mask+y*SOM_CAM_W,1,SOM_CAM_W);c->window=y+1u;}
+        if(filled>=160u){memset(mask+y*SOM_CAM_W,1,SOM_CAM_W);c->window=y+1u;marked[y]=1;}
     }
     if(oam&&!(ram[0xD0]&0x80u))for(unsigned i=0;i<128u;i++){
         const uint8_t *e=oam+4u*i;
         const unsigned tile=e[2]|(unsigned)(e[3]&1u)<<8;
         const unsigned hi=oam[0x200u+i/4u]>>(2u*(i%4u))&3u,size=(hi&2u)?32u:16u;   /* the game's sprite sizes */
         if(tile<0x1E0u||e[1]<SOM_CAM_HUD_TOP||e[1]>=0xE0u||(hi&1u))continue;
-        for(unsigned y=e[1]+1u;y<e[1]+1u+size&&y<SOM_CAM_H;y++)
+        for(unsigned y=e[1]+1u;y<e[1]+1u+size&&y<SOM_CAM_H;y++){
+            marked[y]=1;
             for(unsigned x=e[0];x<e[0]+size&&x<SOM_CAM_W;x++)mask[y*SOM_CAM_W+x]=1;
+        }
     }
-    if(c->window)memset(mask,1,c->window*SOM_CAM_W);   /* and what is above it */
+    if(c->window){memset(mask,1,c->window*SOM_CAM_W);memset(marked,1,c->window);}   /* and what is above it */
     for(unsigned y=0;y<SOM_CAM_H;y++){
         const uint8_t *m=mask+y*SOM_CAM_W;
         if(!memchr(m,1,SOM_CAM_W))continue;
@@ -504,7 +511,12 @@ static inline void som_cam_scale(const SomCamera *c,uint8_t *px,uint8_t *copy,si
         const int32_t col=sx>>16;
         cols[x]=(uint8_t)(col<0?0:col>255?255:col);
     }
-    memcpy(copy,px,pitch*SOM_CAM_H);
+    {   /* only the source rows the view reads (half the frame at 2x) */
+        int r0=(int)(sy>>16),r1=(int)((sy+step*(int32_t)(SOM_CAM_H-1))>>16);
+        if(r0<0)r0=0;
+        if(r1>SOM_CAM_H-1)r1=SOM_CAM_H-1;
+        if(r1>=r0)memcpy(copy+(size_t)r0*pitch,px+(size_t)r0*pitch,(size_t)(r1-r0+1)*pitch);
+    }
     int last=-1;
     for(unsigned y=0;y<SOM_CAM_H;y++,sy+=step){
         int row=(int)(sy>>16);

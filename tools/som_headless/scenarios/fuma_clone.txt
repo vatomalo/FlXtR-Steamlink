@@ -1,0 +1,13 @@
+# The Fuma Shuriken calls the Fuma clone (start: rabites.state).
+#! expect-log FUMA clone at \d+,\d+ strikes monster 0: level \d+, \d+ damage \(boomerang hit \d+, BOY\)
+expect u16 00DC == 130
+frames 60
+cmd class_2
+cmd gear_throw_2_1
+frames 30
+monster 1 -150 150
+monster 2 -150 -150
+hold RIGHT 2
+monster 0 50 0
+hold Y 2
+frames 120

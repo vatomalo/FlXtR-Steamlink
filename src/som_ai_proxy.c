@@ -1474,7 +1474,7 @@ static SomNpcWorkState fuma;
 static int fuma_target=-1,fuma_struck;
 static unsigned fuma_target_id,fuma_damage,fuma_level;
 static unsigned long fuma_strike_at,fuma_end_at,fuma_ready;
-static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base);
+static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base,unsigned who);
 static void som_fuma_frame(uint8_t *ram);
 /* Blink (AI "blink_<tx>_<ty>", any class): the hero vanishes in smoke,
  * travels unseen in a straight line to the centre of tile (tx, ty) on this
@@ -1781,8 +1781,6 @@ static void som_combo_frame(void){
                             sel<SOM_DISCIPLINE_COUNT?som_disc_weapons[sel]:NULL),
                         SOM_XP_HIT,e[0x180],SOM_XPK_HIT,"weapon hit");
             som_style_give(e[0x180]);
-            if(sel==SOM_DISC_NINJUTSU&&weapon==6u&&!fuma.active)   /* Fuma: boomerang hit */
-                som_fuma_start(ram,i,combo_hp[i]-hp);
             som_perk_hit((uint8_t*)ram,pad2_combo_actor<SOM_PARTY_MEMBERS?pad2_combo_actor:
                          som_pad1_member_in(ram),i,combo_hp[i]-hp,hp);
             if(sel==SOM_DISC_ROGUE&&frame_number<backstab_until){          /* Backstab */
@@ -1896,6 +1894,14 @@ static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,u
     }
     monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=who;
     som_judged_hit(ram,who,slot);
+    /* Fuma: a Ninja's Fuma Shuriken hit calls the shadow clone. The small
+     * Shuriken and the Volley never do (player, 2026-11-27: "regular
+     * shuriken has no fuma shuriken bunshin attack"); their bolt damage
+     * also lands as an HP drop here, so the GEAR choice decides. */
+    if(drop&&who<SOM_PARTY_MEMBERS&&!fuma.active&&ram[0xE000u+0x200u*who+0x1E4u]==6u&&
+       gear_throw[SOM_DISC_NINJUTSU]==1u&&
+       som_disc_member_class(&disciplines,who)==SOM_DISC_NINJUTSU)
+        som_fuma_start(ram,slot,drop,who);
     if(drop)som_perk_rt_emit(ram,who,(int)slot,SOM_PEV_ATTACK_HIT,drop,0u);
 }
 /* The guard is up: the AI's block action, or physical R2. */
@@ -4976,10 +4982,12 @@ static void som_flykick_frame(uint8_t *ram){
     const int game_over=!ram||SOM_ACT(ram)[0x000]!=1||ram[0xE4]!=1||ram[0xE6]!=0x0F;
     if(game_over||(!bash_stage&&!special_stage&&t>=flykick.length)||t>180ul)som_flykick_end(ram);
 }
-static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base){
-    if(!ram||fuma.active||frame_number<fuma_ready||slot>2u||!base)return;
+/* who: the Ninja whose boomerang hit (any hero; player, 2026-11-27:
+ * "everything for boy is for girl and sprite too"). One clone at a time. */
+static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base,unsigned who){
+    if(!ram||fuma.active||frame_number<fuma_ready||slot>2u||!base||who>=SOM_PARTY_MEMBERS)return;
     som_cartwheel_load();
-    const uint8_t *hero=ram+0xE000u,*m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+    const uint8_t *hero=ram+0xE000u+0x200u*who,*m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     const unsigned id=hero[0x180];
     if(!cartwheel_pack||id<0x80u||id>0x82u)return;
     const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
@@ -4999,12 +5007,12 @@ static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base){
     unsigned level=disciplines.level[SOM_DISC_NINJUTSU];
     const unsigned sword=hero[0x1C0]&0x0Fu;
     if(level>sword)level=sword;
-    level+=(unsigned)som_perk(SOM_EFFECT_FUMA_LEVEL);         /* Fuma Mastery */
+    level+=(unsigned)som_perk_of(who,SOM_EFFECT_FUMA_LEVEL);  /* Fuma Mastery */
     if(level>8u)level=8u;
     unsigned damage=base*(2u+level)/2u;
     if(damage>0xFFu)damage=0xFFu;
     memset(&fuma,0,sizeof(fuma));
-    fuma.active=1;fuma.slot=0;fuma.kind=id;fuma.dir=dir;fuma.entry=entry;fuma.own_palette=1;
+    fuma.active=1;fuma.slot=who;fuma.kind=id;fuma.dir=dir;fuma.entry=entry;fuma.own_palette=1;
     fuma.fixed=1;fuma.wx=cx;fuma.wy=cy;
     fuma.start=frame_number+SOM_FUMA_APPEAR;
     const unsigned long swing=som_work_swing_frames(&entry);
@@ -5018,20 +5026,21 @@ static void som_fuma_start(const uint8_t *ram,unsigned slot,unsigned base){
     snprintf(text,sizeof(text),"^Fuma|shadow strike level %u",level);
     som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] FUMA clone at %d,%d strikes monster %u: level %u, %u damage "
-            "(boomerang hit %u)\n",cx,cy,slot,level,damage,base);
+            "(boomerang hit %u, %s)\n",cx,cy,slot,level,damage,base,som_party_names[who]);
 }
 /* Each frame: the clone's strike lands two thirds into the swing; then it
  * holds its pose and vanishes in smoke. */
 static void som_fuma_frame(uint8_t *ram){
     if(!fuma.active)return;
-    const int field=ram&&ram[0xE000]==1&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+    const int field=ram&&ram[0xE000u+0x200u*(fuma.slot%SOM_PARTY_MEMBERS)]==1&&
+                    ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
     if(field&&!fuma_struck&&frame_number>=fuma_strike_at){
         fuma_struck=1;
         uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*(unsigned)fuma_target;
         if(som_bun_monster_alive(m)&&m[0x180]==fuma_target_id){
             /* The boomerang just hit it: Coup de Grace and Last Resort apply. */
-            fuma_damage+=som_perk_bonus(0u,(unsigned)fuma_target,fuma_damage,"fuma strike");
-            som_monster_hit((unsigned)fuma_target);
+            fuma_damage+=som_perk_bonus(fuma.slot%SOM_PARTY_MEMBERS,(unsigned)fuma_target,fuma_damage,"fuma strike");
+            monster_hit_frame[fuma_target]=frame_number;monster_hit_who[fuma_target]=fuma.slot%SOM_PARTY_MEMBERS;
             const unsigned pending=m[0x1F1]+fuma_damage;
             m[0x1F1]=(uint8_t)(pending>0xFFu?0xFFu:pending);
             som_xp_give(SOM_DISC_NINJUTSU,SOM_XP_HIT,m[0x180],SOM_XPK_HIT,"fuma strike");

@@ -46,6 +46,7 @@
 #include "som_arena.h"
 #include "som_enemy_tactics.h"
 #include "som_armour.h"
+#include "som_sprite_atlas.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include "som_mentalist.h"
@@ -668,6 +669,66 @@ static size_t overlay_frame_size;
 static uint8_t *effect_base;
 static size_t effect_base_size;
 static const uint8_t *(*backend_main_depth)(unsigned *pitch);
+typedef const uint8_t *(*SomObjLookup)(unsigned name,unsigned palette,unsigned tile);
+static void (*backend_set_obj_lookup)(SomObjLookup);
+static SomSpriteAtlas sprite_atlas[3];
+static unsigned sprite_atlas_loaded,sprite_atlas_visible,sprite_atlas_seen;
+
+static const uint8_t *som_sprite_lookup(unsigned name,unsigned palette,unsigned tile){
+    if(palette<1u||palette>3u||tile>=SOM_ATLAS_TILES)return NULL;
+    const unsigned slot=palette-1u,bit=1u<<slot;
+    if(!(sprite_atlas_loaded&bit))return NULL;
+    const unsigned row=name&~0x10u;
+    if(!((row>=0x1C0u&&row<0x1D0u&&(slot||row<0x1C8u))||
+         (row>=0x1E0u&&row<0x1E8u)))return NULL;
+    const uint8_t *pixels=sprite_atlas[slot].tiles[tile];
+    if(pixels){
+        sprite_atlas_visible|=bit;
+        if(!(sprite_atlas_seen&bit)){
+            sprite_atlas_seen|=bit;
+            fprintf(stderr,"[som-ai] SPRITE ATLAS rendered party slot %u pose %04X tile %03X\n",
+                    slot+1u,sprite_atlas[slot].pose,tile);
+        }
+    }
+    return pixels;
+}
+
+static void som_sprite_close(void){
+    if(backend_set_obj_lookup)backend_set_obj_lookup(NULL);
+    for(unsigned slot=0;slot<3u;slot++)som_atlas_clear(&sprite_atlas[slot]);
+    sprite_atlas_loaded=sprite_atlas_visible=sprite_atlas_seen=0;
+}
+
+static void som_sprite_open(void){
+    static const char *const envs[]={
+        "FLXTR_SOM_ATLAS_P1","FLXTR_SOM_ATLAS_P2","FLXTR_SOM_ATLAS_P3"
+    };
+    som_sprite_close();
+    for(unsigned slot=0;slot<3u;slot++){
+        const char *path=getenv(envs[slot]);
+        if(!path||!*path)continue;
+        if(!backend_set_obj_lookup||!som_atlas_load(&sprite_atlas[slot],path,slot)){
+            fprintf(stderr,"[som-ai] SPRITE ATLAS unavailable for party slot %u\n",slot+1u);
+            continue;
+        }
+        sprite_atlas_loaded|=1u<<slot;
+    }
+}
+
+static void som_sprite_prepare(const uint8_t *ram){
+    sprite_atlas_visible=0;
+    if(!ram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu||ram[0x7D]==1u){
+        backend_set_obj_lookup(NULL);
+        return;
+    }
+    for(unsigned slot=0;slot<3u;slot++){
+        const uint8_t *actor=ram+0xE000u+0x200u*slot;
+        som_atlas_select(&sprite_atlas[slot],actor[0]==1u
+                         ?som_atlas_u16(actor+0x26u):UINT32_MAX);
+    }
+    backend_set_obj_lookup(som_sprite_lookup);
+}
+
 /* Automatic camera (som_camera.h); this marker file turns it off. */
 #define SOM_CAMERA_OFF_FILE "/home/apps/retroarch/cores/experimental/som_ai_camera_off"
 static const char *camera_off_file=SOM_CAMERA_OFF_FILE;
@@ -10513,6 +10574,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
                                const uint8_t *depth,unsigned depth_pitch){
     if(!pixels||!ram||!oam||!vram||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu)return;
     for(unsigned who=0;who<3u;who++){
+        if(sprite_atlas_visible&(1u<<who))continue;
         const SomClassLook look=som_class_look(som_disc_member_class(&disciplines,who));
         if((look.head<0&&!look.torso&&!look.robe&&!(who==0u&&(look.band||look.sash)))||ram[0xE000u+0x200u*who]!=1u)continue;
         uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
@@ -10955,6 +11017,7 @@ static void load_backend(void){
     if(!backend){fprintf(stderr,"[som-ai] dlopen failed: %s\n",dlerror());abort();}
     *(void**)(&backend_skip_music)=dlsym(backend,"retro_flxtr_skip_music_voices");
     *(void**)(&backend_main_depth)=dlsym(backend,"retro_flxtr_main_depth");
+    *(void**)(&backend_set_obj_lookup)=dlsym(backend,"retro_flxtr_set_obj_lookup");
     {   /* FLXTR_SOM_NO_DEPTH=1: draw without the core's depth (measuring its cost) */
         const char *off=getenv("FLXTR_SOM_NO_DEPTH");
         if(off&&!strcmp(off,"1"))backend_main_depth=NULL;
@@ -11000,6 +11063,7 @@ RETRO_API void retro_init(void){
     load_backend();backend_init();
 }
 RETRO_API void retro_deinit(void){
+    som_sprite_close();
     if(backend_deinit)backend_deinit();
     /* RetroArch may call get_system_info again; do not unload an active
      * backend out from under its borrowed system-info string pointers. */
@@ -11065,6 +11129,7 @@ static int som_enable_classes_ring(uint8_t *rom,size_t size){
 }
 RETRO_API bool retro_load_game(const struct retro_game_info *game){
     load_backend();
+    som_sprite_open();
     const char *native_camera=getenv("FLXTR_SOM_CAMERA_NATIVE");
     camera_native=native_camera&&strcmp(native_camera,"1")==0;
     frame_number=0;classes_ring_enabled=0;ring_hidden=0;start_ring_held=0;start_ring_until=0;cancelled=0;completed=0;armed=0;on_turbo=0;som_cam_valid=0;
@@ -11305,6 +11370,7 @@ static int som_save_auto_state(void){
     return 1;
 }
 RETRO_API void retro_unload_game(void){
+    som_sprite_close();
     if(npc_work.active){
         size_t ram_size=0;
         uint8_t *ram=som_npc_ram(&ram_size);
@@ -12321,6 +12387,7 @@ RETRO_API void retro_run(void){
     }
     SomComboPosition combo_pos[SOM_PARTY_MEMBERS];
     const unsigned combo_map=som_combo_positions(test_enabled&&on_turbo?som_live_wram():NULL,combo_pos);
+    if(sprite_atlas_loaded)som_sprite_prepare(on_turbo&&test_enabled?som_live_wram():NULL);
     backend_run();
     if(som_time_active(&temporal))som_bullet_world(som_live_wram());
     if(test_enabled&&on_turbo)som_shuriken_throw(som_live_wram());

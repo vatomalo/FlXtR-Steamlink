@@ -1,0 +1,89 @@
+--- a/libretro.c
++++ b/libretro.c
+@@ -751,6 +751,13 @@
+    audio_upload_samples();
+ }
+
++extern const uint8_t *(*flxtr_obj_lookup)(unsigned, unsigned, unsigned);
++
++RETRO_API void retro_flxtr_set_obj_lookup(const uint8_t *(*lookup)(unsigned, unsigned, unsigned))
++{
++   flxtr_obj_lookup = lookup;
++}
++
+ /* FlXtR overlays use the renderer's actual main-screen priority for the
+  * frame just passed to video_cb. This buffer is read-only and remains owned
+  * by the core. A NULL result means there is no rendered frame to compare. */
+--- a/source/gfx.c
++++ b/source/gfx.c
+@@ -776,6 +776,9 @@
+    IPPU.OBJChanged = false;
+ }
+
++const uint8_t *flxtr_obj_pixels;
++const uint8_t *(*flxtr_obj_lookup)(unsigned name, unsigned palette, unsigned tile);
++
+ static void DrawOBJS(bool OnMain, uint8_t D)
+ {
+    struct
+@@ -885,6 +888,7 @@
+          int32_t WinIdx = 0, NextPos = -1000;
+          int32_t t, O;
+          int32_t X;
++         const bool use_atlas = flxtr_obj_lookup && PPU.OBJ[S].Palette >= 1 && PPU.OBJ[S].Palette <= 3;
+
+          tiles += GFX.OBJVisibleTiles[S];
+          if (tiles <= 0)
+@@ -923,6 +927,10 @@
+                NextPos = (WinIdx < 7) ? Windows[WinIdx].Pos : 1000;
+             }
+
++            if (use_atlas)
++               flxtr_obj_pixels = flxtr_obj_lookup(PPU.OBJ[S].Name, PPU.OBJ[S].Palette,
++                                                  (BaseTile | TileX) & 0x1ff);
++
+             if (X + 8 < NextPos)
+             {
+                if (WinStat)
+@@ -946,6 +954,8 @@
+                      NextPos = X + 8;
+                }
+             }
++            if (use_atlas)
++               flxtr_obj_pixels = NULL;
+          }
+       }
+    }
+--- a/source/tile.h
++++ b/source/tile.h
+@@ -3,6 +3,8 @@
+ #ifndef _TILE_H_
+ #define _TILE_H_
+
++extern const uint8_t *flxtr_obj_pixels;
++
+ #define TILE_PREAMBLE_VARS() \
+     uint32_t l; \
+     uint16_t *ScreenColors; \
+@@ -15,11 +17,16 @@
+     if ((Tile & 0x1ff) >= 256) \
+        TileAddr += BG.NameSelect; \
+     TileAddr &= 0xffff; \
+-    pCache = &BG.Buffer[(TileNumber = (TileAddr >> BG.TileShift)) << 6]; \
+-    if (!BG.Buffered [TileNumber]) \
+-       BG.Buffered[TileNumber] = ConvertTile (pCache, TileAddr); \
+-    if (BG.Buffered [TileNumber] == BLANK_TILE) \
+-       return; \
++    if (flxtr_obj_pixels) \
++       pCache = (uint8_t *)flxtr_obj_pixels; \
++    else \
++    { \
++       pCache = &BG.Buffer[(TileNumber = (TileAddr >> BG.TileShift)) << 6]; \
++       if (!BG.Buffered [TileNumber]) \
++          BG.Buffered[TileNumber] = ConvertTile (pCache, TileAddr); \
++       if (BG.Buffered [TileNumber] == BLANK_TILE) \
++          return; \
++    } \
+     if (BG.DirectColourMode) \
+     { \
+        if (IPPU.DirectColourMapsNeedRebuild) \

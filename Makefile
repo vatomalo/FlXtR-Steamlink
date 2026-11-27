@@ -474,3 +474,9 @@ test-bios-download: all
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) tests/bios_download_test.c -o build/bios-download-test $(SDL_LIBS) -lSDL2_image -lcurl
 	./build/bios-download-test
 	python3 tests/update_package_test.py
+
+.PHONY: test-som-sprite-atlas
+test-som-sprite-atlas:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_sprite_atlas_test.c -o build/som-sprite-atlas-test
+	./build/som-sprite-atlas-test

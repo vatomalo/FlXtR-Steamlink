@@ -46,6 +46,13 @@ typedef struct {
     uint8_t loadout_set;
     uint8_t loadout_n[3];
     uint16_t loadout[3][SOM_PROG_LOADOUT_MAX];
+    /* The character creator's look per hero (player, 2026-11-27: "the
+     * created character should passover to the game"), lines
+     * "look1 <hero> <skin> <head kind> <hair colour>": skin 0-4, the game
+     * head's kind byte (0 the hero's own hair, som_heads.h), hair colour
+     * 0-9. Older builds skip the lines; records without them look native. */
+    uint8_t look_set;
+    uint8_t look[3][3];
 } SomProgress;
 
 static inline uint64_t som_prog_hash(const uint8_t *data,size_t size){
@@ -134,6 +141,12 @@ static inline size_t som_prog_format(const SomProgress *p,char *out,size_t cap){
         if(n+1u>=cap)return 0;
         out[n++]='\n';out[n]=0;
     }
+    for(unsigned who=0;p->look_set&&who<3u;who++){
+        w=snprintf(out+n,cap-n,"look1 %u %u %u %u\n",who,(unsigned)p->look[who][0],
+                   (unsigned)p->look[who][1],(unsigned)p->look[who][2]);
+        if(w<0||(size_t)w>=cap-n)return 0;
+        n+=(size_t)w;
+    }
     const uint64_t sum=som_prog_hash((const uint8_t*)out,n);
     w=snprintf(out+n,cap-n,"sum %016llx\n",(unsigned long long)sum);
     if(w<0||(size_t)w>=cap-n)return 0;
@@ -171,6 +184,10 @@ static inline int som_prog_parse(const char *text,size_t len,SomProgress *p){
             q.level[i]=(uint16_t)level;q.experience[i]=(uint32_t)xp;seen|=16<<0;
         }else if(sscanf(line,"perks %lx %lx %lx %lx",&k[0],&k[1],&k[2],&k[3])==4){
             for(unsigned j=0;j<4u;j++)q.perks[j]=(uint32_t)k[j];
+        }else if(sscanf(line,"look1 %u %u %u %u",&i,&h[0],&h[1],&h[2])==4){
+            if(i<3u&&h[0]<8u&&h[1]<256u&&h[2]<16u){
+                q.look[i][0]=(uint8_t)h[0];q.look[i][1]=(uint8_t)h[1];q.look[i][2]=(uint8_t)h[2];q.look_set=1;
+            }
         }else if(sscanf(line,"pl1 %u",&i)==1&&i<3u){
             /* ids up to the line's end; a bad number ends the list */
             const char *c=line+4;

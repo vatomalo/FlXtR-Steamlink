@@ -1,0 +1,367 @@
+# The created character carries into the game (New Game, blank SRAM): head 2
+# (the girl's), BLONDE, first class Ninja (CLASS row: Right x3); accept;
+# the naming page shows the look; the name is entered and the story starts;
+# the new game opens with the class. Needs som_heads.bin.
+#! expect-log CREATOR hair head 81 BLONDE
+#! expect-log CREATOR appearance accepted
+#! expect-log PROGRESS new game: classless
+#! expect-log CREATOR first class BOY: Ninjutsu
+frames 900
+hold START 4
+frames 160
+hold B 4
+frames 160
+hold DOWN 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold DOWN 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold DOWN 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+shot creator_all
+hold B 10
+frames 30
+shot naming_page
+hold B 4
+frames 10
+hold START 4
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+frames 60
+hold B 2
+shot field
+frames 120
+shot field_later

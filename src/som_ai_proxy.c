@@ -329,6 +329,9 @@ static unsigned member_pal_addr[SOM_PARTY_MEMBERS];
 static uint8_t creator_skin[SOM_PARTY_MEMBERS];
 /* The creator's hair per hero (som_hair.h): style and colour, 0 native. */
 static uint8_t creator_hair[SOM_PARTY_MEMBERS],creator_hair_colour[SOM_PARTY_MEMBERS];
+/* The creator's first class per hero: 0 none, n: class n-1 (player,
+ * 2026-11-27: "we also get to chose our first class in the character menu"). */
+static uint8_t creator_class[SOM_PARTY_MEMBERS];
 /* The game's heads as hair (som_heads.h), from the ROM at build time
  * (tools/som_head_pack.py): creator_hair[w] 0 native, n the n-th head. */
 #define SOM_HEADS_FILE "/home/apps/retroarch/cores/experimental/som_heads.bin"
@@ -841,6 +844,43 @@ static void som_perk_prog_restore(const SomProgress *p){
     perk_rt_revalidate=1;
     som_ammo_fill();
 }
+static void som_party_class_saved(void);
+static void som_class_selected(void);
+/* The creator's look travels in the progress record too ("look1" lines):
+ * the game head by its kind byte, so a rebuilt pack keeps the same heads. */
+static void som_look_store(SomProgress *p){
+    p->look_set=1;
+    for(unsigned who=0;who<3u;who++){
+        const uint8_t *e=som_hero_head(who);
+        p->look[who][0]=creator_skin[who];p->look[who][1]=e?e[0]:0u;p->look[who][2]=creator_hair_colour[who];
+    }
+}
+/* keep: a new game keeps what the naming page just made */
+static void som_look_restore(const SomProgress *p,int keep){
+    if(keep)return;
+    som_heads_load();
+    for(unsigned who=0;who<3u;who++){
+        creator_skin[who]=creator_hair[who]=creator_hair_colour[who]=0;
+        if(!p->look_set)continue;
+        creator_skin[who]=p->look[who][0]<SOM_CREATOR_SKINS?p->look[who][0]:0u;
+        creator_hair_colour[who]=p->look[who][2]<SOM_HAIR_COLOURS?p->look[who][2]:0u;
+        for(unsigned i=0;p->look[who][1]&&i<head_pack.count;i++)
+            if(som_head_entry(&head_pack,i)[0]==p->look[who][1]){creator_hair[who]=(uint8_t)(i+1u);break;}
+    }
+}
+/* The creator's first class: held (so a classless game allows it) and worn. */
+static void som_creator_class_apply(unsigned who){
+    if(who>=SOM_PARTY_MEMBERS||!creator_class[who]||creator_class[who]>SOM_DISCIPLINE_COUNT)return;
+    const unsigned cls=creator_class[who]-1u;
+    disciplines.held[who]|=(uint16_t)(1u<<cls);
+    if(who==0u){disciplines.selected=(uint8_t)cls;som_disc_save();som_class_selected();}
+    else{
+        const uint8_t was=disciplines.who;
+        disciplines.party[who-1u]=(uint8_t)cls;disciplines.who=(uint8_t)who;
+        som_party_class_saved();disciplines.who=was;
+    }
+    fprintf(stderr,"[som-ai] CREATOR first class %s: %s\n",som_party_names[who],som_discipline_names[cls]);
+}
 static uint64_t prog_rom,prog_seen[SOM_PROG_SLOTS];
 static int prog_baseline,prog_was_field,prog_session_first=1;
 static void som_prog_path(uint64_t owner,const char *suffix,char *out,size_t cap){
@@ -864,7 +904,7 @@ static int som_prog_read(uint64_t owner,SomProgress *p){
 }
 static int som_prog_write(void){
     if(!prog.owner)return 0;                 /* a new game before its first save */
-    som_prog_from_disc(&prog,&disciplines);som_perk_prog_store(&prog);
+    som_prog_from_disc(&prog,&disciplines);som_perk_prog_store(&prog);som_look_store(&prog);
     prog.perks[0]=som_perk_bits(&disciplines);
     char text[SOM_PROG_TEXT_MAX];
     const size_t n=som_prog_format(&prog,text,sizeof(text));
@@ -926,11 +966,12 @@ static void som_prog_frame(void){
             const int got=som_prog_read(fp,&loaded);
             const int was_classless=disciplines.classless;
             if(was_classless)som_disc_init_keep();
-            if(got==SOM_PROG_OK){prog=loaded;som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);}
+            if(got==SOM_PROG_OK){prog=loaded;som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);som_look_restore(&prog,0);}
             else{
                 som_prog_fresh(&prog,prog_rom);
                 const uint8_t keep=disciplines.selected;
                 som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);disciplines.selected=keep;
+                som_look_restore(&prog,0);
             }
             prog.owner=fp;prog.slot=(unsigned)in_play;
             fprintf(stderr,"[som-ai] PROGRESS slot %d loaded (%016llx): %s\n",in_play+1,
@@ -941,6 +982,7 @@ static void som_prog_frame(void){
             som_prog_fresh(&prog,prog_rom);som_prog_classless(&prog);
             som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);
             fprintf(stderr,"[som-ai] PROGRESS new game: classless\n");
+            for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)som_creator_class_apply(who);   /* the look is kept */
         }else if(in_play<0&&prog_session_first){
             const uint8_t keep=disciplines.selected;
             som_prog_fresh(&prog,prog_rom);som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);
@@ -2927,16 +2969,25 @@ static void som_input_poll(void){
             const int was_active=sprite_creator.active;
             som_heads_load();
             sprite_creator.heads=(uint8_t)head_pack.count;
-            const int action=som_creator_input_hair(&sprite_creator,slot,buttons,slot>=0?creator_skin[slot]:0u,
-                slot>=0?creator_hair[slot]:0u,slot>=0?creator_hair_colour[slot]:0u);
-            /* with a game head the preview's own hair goes (the head covers the skull) */
-            backend_set_name_skin(sprite_creator.active?som_creator_skins[sprite_creator.skin]:NULL,
-                                  sprite_creator.slot,sprite_creator.layers|(sprite_creator.hair?SOM_CREATOR_HAIR_OFF:0u));
+            const int action=som_creator_input_full(&sprite_creator,slot,buttons,slot>=0?creator_skin[slot]:0u,
+                slot>=0?creator_hair[slot]:0u,slot>=0?creator_hair_colour[slot]:0u,slot>=0?creator_class[slot]:0u);
+            /* The creator while it is open; after it, the naming page keeps the
+             * accepted look (player: "already on naming screen it should be our
+             * created character"). With a game head the sprite's own hair goes. */
+            const int open=sprite_creator.active;
+            const unsigned who=sprite_creator.slot%SOM_PARTY_MEMBERS;
+            const unsigned skin=open?sprite_creator.skin:creator_skin[who];
+            const unsigned head=open?sprite_creator.hair:creator_hair[who];
+            const unsigned c=open?sprite_creator.hair_colour:creator_hair_colour[who];
+            const int shown=open||slot>=0;
+            backend_set_name_skin(shown?som_creator_skins[skin%SOM_CREATOR_SKINS]:NULL,sprite_creator.slot,
+                                  (open?sprite_creator.layers:0u)|(head?SOM_CREATOR_HAIR_OFF:0u));
             if(backend_set_name_hair){
                 static uint16_t hair[3];
-                const unsigned c=sprite_creator.hair_colour;
-                for(unsigned i=0;i<3u&&c<SOM_HAIR_COLOURS;i++)hair[i]=som_hair_bgr555(som_hair_ramps[c][i]);
-                backend_set_name_hair(sprite_creator.active&&c&&c<SOM_HAIR_COLOURS?hair:NULL);
+                const uint8_t *e=head?som_head_entry(&head_pack,head-1u):NULL;
+                for(unsigned i=0;i<3u;i++)
+                    hair[i]=c&&c<SOM_HAIR_COLOURS?som_hair_bgr555(som_hair_ramps[c][i]):e?som_hair_bgr555(som_head_hair(e,i)):0u;
+                backend_set_name_hair(shown&&((c&&c<SOM_HAIR_COLOURS)||e)?hair:NULL);
             }
             sprite_creator_captures=action!=SOM_CREATOR_PASS;
             if(!was_active&&sprite_creator.active)
@@ -2945,6 +2996,8 @@ static void som_input_poll(void){
                 creator_skin[sprite_creator.slot]=sprite_creator.skin;
                 creator_hair[sprite_creator.slot]=sprite_creator.hair;
                 creator_hair_colour[sprite_creator.slot]=sprite_creator.hair_colour;
+                creator_class[sprite_creator.slot]=sprite_creator.cls;
+                if(sprite_creator.slot>0u)som_creator_class_apply(sprite_creator.slot);   /* the boy's: when the new game starts */
                 {const uint8_t *e=sprite_creator.hair?som_head_entry(&head_pack,sprite_creator.hair-1u):NULL;
                  fprintf(stderr,"[som-ai] CREATOR hair %s%02X %s\n",e?"head ":"native",e?e[0]:0u,
                          som_hair_colour_names[sprite_creator.hair_colour%SOM_HAIR_COLOURS]);}
@@ -10703,6 +10756,28 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
     som_status_scroll++;                     /* the menu background drifts */
+    /* The naming page after the creator: the chosen game head on the name
+     * sprite (base 143, 16, eyes on its row 13). */
+    {
+        const int slot=on_turbo&&!sprite_creator.active?som_creator_slot(som_live_wram()):-1;
+        const uint8_t *head=slot>=0?som_hero_head((unsigned)slot):NULL;
+        if(head&&data&&data!=RETRO_HW_FRAME_BUFFER_VALID&&(width==256u||width==512u)&&
+           (height==224u||height==448u)&&pixel_format>=0&&pixel_format<=2){
+            const size_t row=(size_t)width*(pixel_format==1?4u:2u),size=row*height;
+            if(size>overlay_frame_size){
+                uint8_t *grown=realloc(overlay_frame,size);
+                if(grown){overlay_frame=grown;overlay_frame_size=size;}
+            }
+            if(size<=overlay_frame_size&&pitch>=row){
+                for(unsigned y=0;y<height;y++)memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
+                som_creator_draw_head(overlay_frame,width,height,row,pixel_format,head,(unsigned)slot,
+                                      creator_skin[slot],creator_hair_colour[slot],143,16,1,
+                                      backend_name_matte?backend_name_matte():NULL);
+                som_frontend_video(overlay_frame,width,height,row);
+                return;
+            }
+        }
+    }
     if(sprite_creator.active&&(width==256u||width==512u)&&(height==224u||height==448u)&&
        pixel_format>=0&&pixel_format<=2){
         const size_t row=(size_t)width*(pixel_format==1?4u:2u),size=row*height;
@@ -11276,6 +11351,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     memset(&sprite_creator,0,sizeof(sprite_creator));
     memset(creator_skin,0,sizeof(creator_skin));
     memset(creator_hair,0,sizeof(creator_hair));memset(creator_hair_colour,0,sizeof(creator_hair_colour));
+    memset(creator_class,0,sizeof(creator_class));
     if(backend_set_name_skin)backend_set_name_skin(NULL,0u,0u);
     if(backend_set_name_hair)backend_set_name_hair(NULL);
     sprite_creator_captures=0;
@@ -11449,7 +11525,7 @@ RETRO_API bool retro_serialize(void *data,size_t size){
     if(!core||!data||size<core)return false;
     if(!backend_retro_serialize(data,core))return false;
     if(size>=core+SOM_PROG_TRAILER_SIZE){
-        som_prog_from_disc(&prog,&disciplines);som_perk_prog_store(&prog);
+        som_prog_from_disc(&prog,&disciplines);som_perk_prog_store(&prog);som_look_store(&prog);
         som_prog_trailer_write(&prog,(uint8_t*)data+core);
     }
     return true;
@@ -11467,6 +11543,7 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
         if(som_prog_trailer_read((const uint8_t*)data+core,&loaded)==SOM_PROG_OK){
             if(disciplines.classless&&!loaded.classless)som_disc_init_keep();
             prog=loaded;som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);
+            som_look_restore(&prog,0);
             prog_session_first=0;prog_was_field=1;
             fprintf(stderr,"[som-ai] PROGRESS restored from the save state (slot %u)\n",
                     prog.slot<SOM_PROG_SLOTS?prog.slot+1u:0u);

@@ -20,6 +20,8 @@ static void test_round_trip(void){
         p.loadout_n[w]=SOM_PROG_LOADOUT_MAX;
         for(unsigned i=0;i<SOM_PROG_LOADOUT_MAX;i++)p.loadout[w][i]=(uint16_t)(65535u-i-w);
     }
+    p.look_set=1;                                            /* and the creator's look */
+    for(unsigned w=0;w<3u;w++){p.look[w][0]=4;p.look[w][1]=(uint8_t)(0xF0+w);p.look[w][2]=9;}
     char text[SOM_PROG_TEXT_MAX];
     const size_t n=som_prog_format(&p,text,sizeof(text));
     assert(n>0&&n<SOM_PROG_TEXT_MAX);
@@ -27,6 +29,7 @@ static void test_round_trip(void){
     assert(som_prog_parse(text,n,&q)==SOM_PROG_OK);
     assert(q.loadout_set&&!memcmp(q.loadout,p.loadout,sizeof(p.loadout))&&!memcmp(q.loadout_n,p.loadout_n,3));
     assert(!memcmp(q.level,p.level,sizeof(p.level))&&q.classless&&q.held[2]==0xFFFF);
+    assert(q.look_set&&!memcmp(q.look,p.look,sizeof(p.look)));
     /* the save-state trailer carries the same text, same size as before */
     static uint8_t trailer[SOM_PROG_TRAILER_SIZE];
     assert(som_prog_trailer_write(&p,trailer)==SOM_PROG_TRAILER_SIZE);

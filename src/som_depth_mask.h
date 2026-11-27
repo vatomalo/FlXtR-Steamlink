@@ -22,7 +22,9 @@ static inline unsigned som_owner_sprite_depth(const uint8_t *oam,unsigned who){
  * our drawing changed are looked at: whole unchanged rows are skipped with
  * one memcmp (on the Steam Link the per-pixel pass over the full frame cost
  * ~15 ms a frame, 2026-11-27). */
-static inline void som_mask_behind_foreground(uint8_t *frame,const uint8_t *base,
+/* base_row: the base's own line length (the core's frame can be used as the
+ * base directly when nothing was drawn on the copy before, perf 2026-11-27). */
+static inline void som_mask_behind_foreground_base(uint8_t *frame,const uint8_t *base,size_t base_row,
                                                unsigned width,unsigned height,size_t row,
                                                unsigned bytes,const uint8_t *depth,
                                                unsigned depth_pitch,unsigned actor_depth){
@@ -31,7 +33,7 @@ static inline void som_mask_behind_foreground(uint8_t *frame,const uint8_t *base
     const size_t line=(size_t)width*bytes;
     for(unsigned y=0;y<height;y++){
         uint8_t *f=frame+(size_t)y*row;
-        const uint8_t *b=base+(size_t)y*row;
+        const uint8_t *b=base+(size_t)y*base_row;
         if(!memcmp(f,b,line))continue;
         const uint8_t *d=depth+(size_t)(y/sy)*depth_pitch;
         if(bytes==2u){
@@ -44,5 +46,11 @@ static inline void som_mask_behind_foreground(uint8_t *frame,const uint8_t *base
                 if(f32[x]!=b32[x]&&d[sx==1u?x:x>>1]>actor_depth)f32[x]=b32[x];
         }
     }
+}
+static inline void som_mask_behind_foreground(uint8_t *frame,const uint8_t *base,
+                                               unsigned width,unsigned height,size_t row,
+                                               unsigned bytes,const uint8_t *depth,
+                                               unsigned depth_pitch,unsigned actor_depth){
+    som_mask_behind_foreground_base(frame,base,row,width,height,row,bytes,depth,depth_pitch,actor_depth);
 }
 #endif

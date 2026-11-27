@@ -9593,6 +9593,22 @@ static void som_class_guide_draw(uint8_t *pixels,unsigned width,unsigned height,
     som_npc_work_draw_at(&preview,NULL,frame_number/2ul,221,106,pixels,width,height,pitch,pixel_format);
 }
 
+/* FLXTR_SOM_PROF=1: time per stage of the frame drawing, printed every
+ * 1200 frames (perf work, 2026-11-27). Off: one branch per mark. */
+static int som_prof_on=-1;
+static uint64_t som_prof_last,som_prof_sum[9];
+static unsigned som_prof_frames;
+static const char *const som_prof_names[9]={"plan","copy+text","depthcopy","skins","armour",
+    "workers","mask","scale","ui"};
+static uint64_t som_prof_now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000000000ull+(uint64_t)t.tv_nsec;}
+#define SOM_PROF_BEGIN() do{if(som_prof_on<0){const char *e=getenv("FLXTR_SOM_PROF");som_prof_on=e&&!strcmp(e,"1");}\
+    if(som_prof_on)som_prof_last=som_prof_now();}while(0)
+#define SOM_PROF_MARK(i) do{if(som_prof_on>0){const uint64_t n_=som_prof_now();som_prof_sum[i]+=n_-som_prof_last;som_prof_last=n_;}}while(0)
+#define SOM_PROF_END() do{if(som_prof_on>0&&++som_prof_frames>=1200u){\
+    uint64_t all=0;for(int i=0;i<9;i++)all+=som_prof_sum[i];\
+    fprintf(stderr,"[som-ai] PROF draw %.3f ms/frame:",all/1e6/som_prof_frames);\
+    for(int i=0;i<9;i++)fprintf(stderr," %s %.3f",som_prof_names[i],som_prof_sum[i]/1e6/som_prof_frames);\
+    fprintf(stderr,"\n");memset(som_prof_sum,0,sizeof(som_prof_sum));som_prof_frames=0;}}while(0)
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch);
 /* The MUSIC page, drawn like the CLASSES page. */
 static void som_juke_draw(uint8_t *pixels,unsigned width,unsigned height,size_t pitch,int format){
@@ -10339,6 +10355,7 @@ static void som_bushido_armour(uint8_t *pixels,unsigned width,unsigned height,si
 #undef SOM_IN_FRONT
 static void som_video_refresh_inner(const void *data,unsigned width,unsigned height,size_t pitch){
     if(!frontend_video)return;
+    SOM_PROF_BEGIN();
     /* NULL repeats the previous (already decorated) frame; (void*)-1 is a
      * hardware-rendered frame that has no CPU pixels to draw on. */
     const int menu=som_manual_disciplines||
@@ -10480,9 +10497,11 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         return;
     }
     /* Copy only the visible pixels from the core's padded scanlines. */
+    SOM_PROF_MARK(0);
     if(row==pitch)memcpy(overlay_frame,data,size);
     else for(unsigned y=0;y<height;y++)
         memcpy(overlay_frame+(size_t)y*row,(const uint8_t*)data+(size_t)y*pitch,row);
+    const size_t data_pitch=pitch;
     pitch=row;
     /* The backend provides an already composited frame. Never invent world
      * pixels behind its native UI. Until a clean world layer is exported,
@@ -10498,16 +10517,23 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
      * texture beside each letter since 275cd3d, so no HUD reflections. */
     if(cam_on&&!oam_shown_valid)cam_on=0;
     if(cam_on)som_cam_rub(cam_mask,overlay_frame,pitch,cam_bytes);
+    SOM_PROF_MARK(1);
     unsigned depth_pitch=0;
     const uint8_t *main_depth=backend_main_depth?backend_main_depth(&depth_pitch):NULL;
     int mask_effects=0;
-    if(main_depth&&depth_pitch>=width&&size<=effect_base_size)
+    /* The untouched frame the depth mask compares with: the core's own frame
+     * when the copy has not been changed yet (no camera text rub), so the
+     * full-frame copy is only made while zoomed (perf, 2026-11-27). */
+    const uint8_t *mask_base=NULL;size_t mask_base_row=pitch;
+    if(main_depth&&depth_pitch>=width&&!cam_on){mask_effects=1;mask_base=(const uint8_t*)data;mask_base_row=data_pitch;}
+    else if(main_depth&&depth_pitch>=width&&size<=effect_base_size)
         mask_effects=1;
     else if(main_depth&&depth_pitch>=width){
         uint8_t *grown=realloc(effect_base,size);
         if(grown){effect_base=grown;effect_base_size=size;mask_effects=1;}
     }
-    if(mask_effects)memcpy(effect_base,overlay_frame,size);
+    if(mask_effects&&!mask_base){memcpy(effect_base,overlay_frame,size);mask_base=effect_base;}
+    SOM_PROF_MARK(2);
     if(width==256u)for(unsigned i=0;i<skins_shown;i++){
         if(skins_now[i].kind==SOM_SKIN_STAR||skins_now[i].kind==SOM_SKIN_FUMA){
             const uint8_t *art=som_rom_at(0xD28400u+SOM_ICON_BYTES*0x7Bu,SOM_ICON_BYTES);
@@ -10527,9 +10553,11 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     }
     if(!menu&&on_turbo&&test_enabled&&ring_owner_ram&&oam_shown_valid&&
        backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=SOM_BUN_VRAM_SIZE)
+        {SOM_PROF_MARK(3);}
         som_bushido_armour(overlay_frame,width,height,pitch,pixel_format,ring_owner_ram,oam_shown,
             (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM),
             main_depth&&depth_pitch>=SOM_CAM_W?main_depth:NULL,depth_pitch);
+    SOM_PROF_MARK(4);
     if(overlay.speech_bubble&&!hero_drawn)som_hero_screen(&hero_x,&hero_y);
     if(worker){
         size_t ram_size=0;
@@ -10586,14 +10614,16 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             som_bunshin_draw(overlay_frame,width,height,pitch,hero_x,hero_y);
         }
     }
+    SOM_PROF_MARK(5);
     if(mask_effects){
         const unsigned owner=hero_drawn&&clones?bunshin_owner:
                              flykick.active?flykick.slot:trail_until?trail_owner:0u;
         const unsigned owner_depth=som_owner_sprite_depth(oam_shown_valid?oam_shown:NULL,owner);
-        som_mask_behind_foreground(overlay_frame,effect_base,width,height,pitch,cam_bytes,
+        som_mask_behind_foreground_base(overlay_frame,mask_base,mask_base_row,width,height,pitch,cam_bytes,
                                     main_depth,depth_pitch,owner_depth);
     }
     if(cam_on){
+        SOM_PROF_MARK(6);
         som_cam_clamp(&camera);
         const size_t hd_row=2u*SOM_CAM_W*cam_bytes,hd_size=hd_row*2u*SOM_CAM_H;
         uint8_t *hd=NULL;
@@ -10610,6 +10640,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             som_cam_scale(&camera,overlay_frame,(uint8_t*)cam_copy,pitch,cam_bytes);
             som_cam_restore(overlay_frame,cam_bytes,cam_text,cam_texts);
         }
+        SOM_PROF_MARK(7);
         som_cam_point(&camera,&hero_x,&hero_y);
         som_cam_point(&camera,&lock_x,&lock_y);
         som_cam_point(&camera,&lock2_x,&lock2_y);
@@ -10709,6 +10740,8 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             som_disc_draw(overlay_frame,width,height,pitch,pixel_format,&disciplines,&classes_background);
         else som_gambit_draw(overlay_frame,width,height,pitch,pixel_format,&gambits);
     }
+    SOM_PROF_MARK(8);
+    SOM_PROF_END();
     som_frontend_video(overlay_frame,width,height,pitch);
 }
 /* Music-free mixing (our core only): Secret of Mana's music is never

@@ -44,16 +44,17 @@ static void crisp_hd(const SomCamera *c){
     }
 }
 int main(void){
-    SomCamera c;som_cam_reset(&c);
+    SomCamera c;memset(&c,0,sizeof(c));som_cam_reset(&c);
     ram[0xE4]=1;ram[0xE6]=0x0F;ram[0xDC]=52;
     obj(0xE000,20,200);                              /* near a corner */
-    run(&c,100,0);assert(c.shot==SOM_SHOT_WIDE&&!som_cam_active(&c));
+    run(&c,2,0);assert(c.shot==SOM_DIR_ESTABLISH&&c.zoom>1.95f);   /* arriving: in close */
+    run(&c,260,0);assert(c.shot==SOM_SHOT_WIDE&&!som_cam_active(&c));   /* pulled out */
     run(&c,700,0);assert(c.shot==SOM_SHOT_IDLE);inside(&c);crisp(&c);
     obj(0xE000,22,200);run(&c,120,0);assert(!som_cam_active(&c)&&c.zoom==1.0f);
     run(&c,800,0);crisp(&c);
     run(&c,30,1);assert(!som_cam_active(&c));        /* our menu: out fast */
     run(&c,100,0);obj(0xE600,90,150);ram[0xE600+0x180]=14;ram[0xE600+0x182]=9;
-    run(&c,200,0);assert(!som_cam_active(&c));        /* fights stay wide */
+    run(&c,200,0);inside(&c);assert(!c.hd);          /* no 1.5x without hd */
     ram[0xE600]=0;run(&c,300,0);crisp(&c);
     ram[0xDC]=53;run(&c,1,0);assert(!som_cam_active(&c));   /* new map: cut */
     /* a window: BG3 rows 1..7 filled, and a hidden leftover further down */
@@ -87,15 +88,18 @@ int main(void){
         inside(&c);
         assert((63-(c.cy-112/c.zoom))*c.zoom<63.5f);  /* nothing of it shows below */
     }
-    assert(c.shot==SOM_SHOT_TALK&&!mask[159*256+40]);crisp(&c);
+    assert((c.shot==SOM_SHOT_TALK||c.shot==SOM_DIR_SPEAKER)&&!mask[159*256+40]);crisp(&c);
     for(int i=0;i<2;i++){                             /* both below the window */
         float x=((i?160:128)-c.cx)*2+128,y=((i?98:88)-c.cy)*2+112;
         assert(x>15&&x<241&&y>63&&y<216);
     }
-    {   const float x0=c.cx,y0=c.cy;                  /* small steps: no movement */
-        for(int i=0;i<90;i++){obj(0xE000,128+i%6,100);run(&c,1,0);assert(c.cx==x0&&c.cy==y0);}
+    {   const float x0=c.aim_cx,y0=c.aim_cy;          /* small steps: the aim stays */
+        const int shot0=c.shot;                       /* within one shot (the director may cut) */
+        for(int i=0;i<90&&c.shot==shot0;i++){obj(0xE000,128+i%6,100);run(&c,1,0);
+            if(c.shot==shot0)assert(c.aim_cx==x0&&c.aim_cy==y0);}
     }
-    obj(0xE000,10,100);run(&c,200,0);assert(!som_cam_active(&c));         /* does not fit */
+    obj(0xE000,10,100);
+    for(int f=0;f<200;f++){run(&c,1,0);assert(c.shot!=SOM_SHOT_TALK);}  /* no two-shot: too far apart */
     obj(0xE000,128,100);run(&c,250,0);crisp(&c);
     ram[0x1D00]=0x80;run(&c,30,0);assert(!som_cam_active(&c));            /* choice */
     ram[0x1D00]=0;ram[0x29]=7;run(&c,1,0);assert(!som_cam_active(&c));
@@ -108,16 +112,31 @@ int main(void){
             assert(mask[y*256+x]==(x>=88&&x<104&&y>=174&&y<190));
     }
     /* with hd: fights at a crisp 1.5x, everybody in the picture */
-    hd_ok=1;ram[0x3B]=0;obj(0xE000,100,120);obj(0xE200,130,110);obj(0xE600,90,130);run(&c,300,0);
-    assert(c.shot==SOM_SHOT_FIGHT);crisp_hd(&c);inside(&c);
+    hd_ok=1;ram[0x3B]=0;obj(0xE000,100,120);obj(0xE200,130,110);obj(0xE600,90,130);run(&c,120,0);
+    {   /* the director cuts between its fight shots; a settled medium holds everybody */
+        unsigned seen=0;int settled=0;
+        for(int f=0;f<3000&&!settled;f++){
+            run(&c,1,0);inside(&c);seen|=1u<<c.shot;
+            settled=c.shot==SOM_SHOT_FIGHT&&c.zoom==1.5f&&c.aim_zoom==1.5f;
+        }
+        assert(settled);
+    }
+    crisp_hd(&c);
     for(int i=0;i<3;i++){
         float x=((i==0?100:i==1?130:90)-c.cx)*1.5f+128,y=((i==0?108:i==1?98:118)-c.cy)*1.5f+112;
         assert(x>=8&&x<248&&y>=4&&y<SOM_CAM_HUD_TOP);
     }
-    obj(0xE200,130,108);run(&c,200,0);crisp_hd(&c);
-    obj(0xE200,250,40);run(&c,200,0);assert(!som_cam_active(&c)&&!c.hd);  /* too far apart */
-    obj(0xE200,130,108);run(&c,300,0);assert(c.hd);hd_ok=0;run(&c,200,0);
-    assert(!c.hd&&!som_cam_active(&c));               /* governor */
+    {   /* over 20 s the director uses more than one fight shot */
+        SomCamera v=c;unsigned kinds=0;
+        for(int f=0;f<1200;f++){som_cam_frame(&v,ram,0,0,hd_ok);kinds|=1u<<v.shot;inside(&v);}
+        unsigned n=0;for(unsigned k=kinds;k;k&=k-1u)n++;
+        assert(n>=3u);
+    }
+    obj(0xE200,250,40);
+    for(int f=0;f<300;f++){run(&c,1,0);assert(c.shot!=SOM_SHOT_FIGHT);}   /* too far apart for a medium */
+    obj(0xE200,130,108);hd_ok=0;
+    for(int f=0;f<300;f++){run(&c,1,0);assert(c.shot!=SOM_SHOT_FIGHT&&c.shot!=SOM_DIR_LEAD&&c.shot!=SOM_DIR_PARTY);}
+    run(&c,60,0);assert(!c.hd);                       /* governor: no 1.5x shots at all */
     {   /* whacked: in fast, crisp, over, and back */
         ram[0xE600]=0;obj(0xE600,120,110);run(&c,200,0);som_cam_whack(&c,ram+0xE600);ram[0xE600]=0;
         run(&c,40,0);assert(c.shot==SOM_SHOT_WHACK);crisp(&c);

@@ -1294,6 +1294,7 @@ static void som_lock_toggle(uint8_t *ram);
 static void som_lock_frame(uint8_t *ram);
 static void som_lock_frame2(uint8_t *ram);
 static const uint8_t *som_combo_locked_enemy(const uint8_t *ram,unsigned who);
+static void som_cam_finisher_near(uint8_t *ram,unsigned who);
 #define SOM_ORBS 3u
 static unsigned mage_orbs[SOM_PARTY_MEMBERS]={SOM_ORBS,SOM_ORBS,SOM_ORBS};
 static int som_lock_marker(int *x,int *y);
@@ -1657,11 +1658,14 @@ static void som_hit_puffs_frame(void){
         const uint8_t *o=ram+0xE000u+0x200u*i;
         unsigned h=som_word(o+0x182);
         int active=o[0]==1u&&(i<3u||o[0x180]<0x80u);
-        if(active&&live[i]&&id[i]==o[0x180]&&hp[i]>h)
+        if(active&&live[i]&&id[i]==o[0x180]&&hp[i]>h){
             som_bun_boom(bunshin_booms,(int)som_word(o+2),(int)som_word(o+4),2,frame_number);
+            som_cam_impact(&camera,hp[i]-h,som_word(o+0x184));    /* the camera feels the hit */
+        }
         hp[i]=(uint16_t)h;id[i]=o[0x180];live[i]=(uint8_t)(active&&h>0);
     }
 }
+static unsigned combo_cam_level;      /* the combo level the camera last pushed in for */
 static void som_combo_frame(void){
     if(!backend_retro_get_memory_data||!backend_retro_get_memory_size||
        backend_retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM)!=SOM_WRAM_SIZE)return;
@@ -1709,10 +1713,14 @@ static void som_combo_frame(void){
             }
             if(combo.mixes!=mixes_before)
                 som_xp_give(SOM_DISC_FLOW,SOM_XP_FLOW,e[0x180],SOM_XPK_FLOW,"weapon switch hit");
-            if(som_combo_effective_level())
+            if(som_combo_effective_level()){
+                if(som_combo_effective_level()>combo_cam_level)som_cam_combo(&camera,e);   /* push in */
+                combo_cam_level=som_combo_effective_level();
                 fprintf(stderr,"[som-ai] COMBO %u hits, %u mixes: level %u ready\n",
                         combo.hits,combo.mixes,som_combo_effective_level());
+            }
         }
+        if(!som_combo_effective_level())combo_cam_level=0;
         if(xp_spell_slot==(int)i&&live&&e[0x180]==xp_spell_species&&hp<xp_spell_hp){
             som_xp_give(som_xp_spell_discipline(disciplines.selected),SOM_XP_SPELL,
                         e[0x180],SOM_XPK_SPELL,"spell hit");
@@ -1889,6 +1897,7 @@ static void som_perks_hero(uint8_t *ram,unsigned who){
             som_overlay_say(&overlay,samurai?"^Iai counter!":"^Counter palm!",SOM_MESSAGE_FRAMES/3u);
             fprintf(stderr,"[som-ai] %s %s: parried, hit monster %d for %u\n",som_party_names[who],
                     samurai?"IAI COUNTER":"COUNTER PALM",foe,damage);
+            som_cam_counter(&camera,m);                       /* crash zoom */
         }
     }
     const int counter=som_perk_of(who,SOM_EFFECT_GUARD_COUNTER);
@@ -2939,6 +2948,7 @@ static void som_input_poll(void){
                 som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
                 fprintf(stderr,"[som-ai] COMBO finisher: %u hits, level %u, %s\n",
                         hits,level,which?"Y":"B");
+                som_cam_finisher_near(wram,som_actor);
             }
         }
         const unsigned x_role=som_actor_class()<SOM_DISCIPLINE_COUNT?
@@ -6517,8 +6527,27 @@ static int som_psi_mirror_hero(uint8_t *ram,unsigned who){
  * "stuck in air and looks like dissidia"). */
 static void som_string_ground(uint8_t *o){o[0x006]=o[0x007]=o[0x008]=0;o[0x045]=0;}
 /* Plays one move: a strike (level 0, swing variant) or a power attack. */
+/* A finisher starts (string level 3 and up, a combo finisher): the camera
+ * director punches in on the foe it is aimed at (the lock, else the
+ * nearest within 120 px). */
+static void som_cam_finisher_near(uint8_t *ram,unsigned who){
+    if(!ram||who>=SOM_PARTY_MEMBERS)return;
+    const uint8_t *o=ram+0xE000u+0x200u*who;
+    const uint8_t *m=som_combo_locked_enemy(ram,who);
+    if(!m){
+        long best=-1;
+        for(unsigned k=0;k<3u;k++){
+            const uint8_t *e=ram+0xE600u+0x200u*k;
+            if(!som_bun_monster_alive(e)||(int)k==familiar.slot)continue;
+            const long d=labs((long)som_word(e+2)-(long)som_word(o+2))+labs((long)som_word(e+4)-(long)som_word(o+4));
+            if(d<=120&&(best<0||d<best)){best=d;m=e;}
+        }
+    }
+    if(m)som_cam_finisher(&camera,m);
+}
 static void som_monk_play(uint8_t *ram,uint8_t *o,unsigned level,unsigned variant,unsigned stage,
                           const char *what){
+    if(level>=3u)som_cam_finisher_near(ram,(unsigned)(o-(ram+0xE000u))/0x200u);
     int ex,ey;
     const unsigned cls=som_monk_enemy(ram,o,&ex,&ey);
     if(som_combo_locked_enemy(ram,(unsigned)(o-(ram+0xE000u))/0x200u))
@@ -6633,6 +6662,7 @@ static int som_archer_play(uint8_t *ram,unsigned who,unsigned move,int hop_done)
     }
     som_archer_face(ram,o);
     const unsigned cls=som_monk_enemy(ram,o,&(int){0},&(int){0});
+    if(m->level>=3u)som_cam_finisher_near(ram,who);
     o[0x01C]=m->level?0x80u:0x20u;
     o[0x011]=(uint8_t)(m->level?4u*m->level+cls:0u);
     o[0x19B]=m->arrows;
@@ -6808,6 +6838,7 @@ static int som_blade_play(uint8_t *ram,unsigned who,const SomBladeMove *m,int ca
     if(extra==SOM_BX_KAWARIMI&&who==som_actor)(void)som_kawarimi_arm(ram);
     som_archer_face(ram,o);
     const unsigned cls=som_monk_enemy(ram,o,&(int){0},&(int){0});
+    if(m->level>=3u)som_cam_finisher_near(ram,who);
     o[0x01C]=m->level?0x80u:0x20u;
     o[0x011]=(uint8_t)(m->level?4u*m->level+cls:m->variant);
     o[0x19B]=m->arrows;
@@ -9833,6 +9864,18 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
         som_cam_point(&camera,&lock2_x,&lock2_y);
         som_cam_point(&camera,&general_x,&general_y);
         for(unsigned k=0;k<3u;k++)som_cam_point(&camera,&mark_x[k],&mark_y[k]);
+        if(width==2u*SOM_CAM_W){                     /* 1.5x is drawn in 512x448 */
+            int *pts[]={&hero_x,&hero_y,&lock_x,&lock_y,&lock2_x,&lock2_y,&general_x,&general_y,
+                        &mark_x[0],&mark_y[0],&mark_x[1],&mark_y[1],&mark_x[2],&mark_y[2]};
+            for(unsigned k=0;k<sizeof(pts)/sizeof(pts[0]);k+=2)
+                if(*pts[k]>=0){*pts[k]*=2;*pts[k+1]*=2;}
+        }
+    }
+    if(cam_look&&som_cam_bars(&camera)){            /* letterbox for the big moments */
+        const unsigned rows=som_cam_bars(&camera)*(height/SOM_CAM_H);
+        const uint32_t black=som_overlay_color(pixel_format,0,0,0);
+        som_overlay_fill(overlay_frame,pitch,pixel_format,0,0,width,rows,black);
+        som_overlay_fill(overlay_frame,pitch,pixel_format,0,height-rows,width,rows,black);
     }
     if(lock_x>=0)                                 /* the lock-on marker, bobbing */
         som_overlay_label(overlay_frame,width,height,pitch,pixel_format,"V",

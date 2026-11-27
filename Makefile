@@ -120,6 +120,13 @@ test-som-mentalist:
 
 .PHONY: test-som-mentalist
 
+test-som-director:
+	@mkdir -p build
+	$(CC) $(CFLAGS) tests/som_director_test.c -o build/som-director-test
+	./build/som-director-test
+
+.PHONY: test-som-director
+
 test-som-npc-work:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_npc_work_test.c -o build/som-npc-work-test

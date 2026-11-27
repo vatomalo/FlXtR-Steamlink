@@ -15,6 +15,7 @@
  * Menus and choices ease out fast; fades, mode 7 and map changes cut. */
 #include <stdint.h>
 #include <string.h>
+#include "som_director.h"
 #define SOM_CAM_W 256
 #define SOM_CAM_H 224
 #define SOM_CAM_HUD_TOP 160          /* field: subjects stay above the HUD */
@@ -24,8 +25,15 @@
 #define SOM_CAM_DEAD 12.0f           /* px the aim may drift before the view follows */
 #define SOM_CAM_TALK_HOLD 45u
 #define SOM_CAM_WRAM 0x20000u
-enum {SOM_SHOT_WIDE,SOM_SHOT_TALK,SOM_SHOT_FIGHT,SOM_SHOT_IDLE,SOM_SHOT_WHACK,SOM_SHOT_COUNT};
-static const char *const som_shot_names[SOM_SHOT_COUNT]={"wide","talk","fight","idle","whacked"};
+/* The shots are the director's (som_director.h); the old names stay. */
+#define SOM_SHOT_WIDE SOM_DIR_WIDE
+#define SOM_SHOT_TALK SOM_DIR_TWO
+#define SOM_SHOT_FIGHT SOM_DIR_MEDIUM
+#define SOM_SHOT_IDLE SOM_DIR_IDLE
+#define SOM_SHOT_WHACK SOM_DIR_PUNCH
+#define SOM_SHOT_COUNT SOM_DIR_SHOTS
+#define som_shot_names som_dir_names
+#define SOM_CAM_BARS 14.0f            /* letterbox rows at the top and bottom, punch-ins and arrivals */
 typedef struct {
     float zoom,cx,cy;                /* view centre, screen pixels */
     float want_zoom,want_cx,want_cy;
@@ -37,11 +45,24 @@ typedef struct {
     int whack_x,whack_y,whack_layer; /* the map spot it looks at */
     int shot,hero_x,hero_y;
     unsigned map,still,talked,window;      /* window = screen row below the dialogue window, 0 none */
+    SomDirector dir;                 /* plans the shots (som_director.h) */
+    unsigned long frames;            /* frames the camera has run */
+    int arrived;                     /* a new map: the next seen frame establishes */
+    unsigned hp,foes,last_window;    /* what the events are read from */
+    int finisher,finisher_x,finisher_y,finisher_layer;
+    int shake;                       /* frames of shake left */
+    float bars;                      /* letterbox rows now */
+    float heat;                      /* fighting-game heat: hits and combos, decays */
+    int combo_ev,combo_x,combo_y,combo_layer;   /* a combo level was reached on this foe */
+    int crash;                       /* a counter: crash zoom */
+    unsigned ko;                     /* frames of the K.O. pull-out left */
 } SomCamera;
 typedef struct {uint32_t at,ink;} SomCamPixel;
 
 static inline void som_cam_reset(SomCamera *c){
+    const SomDirector keep=c->dir;const unsigned long frames=c->frames;
     memset(c,0,sizeof(*c));
+    c->dir=keep;c->frames=frames;c->arrived=1;
     c->zoom=c->want_zoom=1.0f;c->cx=c->want_cx=128.0f;c->cy=c->want_cy=112.0f;
     c->aim_zoom=c->last_zoom=1.0f;c->aim_cx=128.0f;c->aim_cy=112.0f;
 }
@@ -90,98 +111,226 @@ static inline void som_cam_whack(SomCamera *c,const uint8_t *object){
     c->whack_x=(int)som_cam_u16(object+2);c->whack_y=(int)som_cam_u16(object+4)-12;
     c->whack_layer=(object[0x0B]&0x80u)!=0;
 }
-/* One frame. `lead` = the hero being followed; `busy` = our own menus. */
+/* A finisher lands (the proxy says where): punch in on it. */
+static inline void som_cam_finisher(SomCamera *c,const uint8_t *object){
+    c->finisher=1;
+    c->finisher_x=(int)som_cam_u16(object+2);c->finisher_y=(int)som_cam_u16(object+4)-12;
+    c->finisher_layer=(object[0x0B]&0x80u)!=0;
+}
+/* Fighting-game camera input from the proxy (player, 2026-11-27: "add in
+ * fighting game camera techniques for fights"): every landed hit shakes the
+ * view by its weight and heats the fight (the director cuts tighter when
+ * hot); a combo level pushes in on the foe; a counter is a crash zoom. */
+static inline void som_cam_impact(SomCamera *c,unsigned damage,unsigned max_hp){
+    if(!max_hp)max_hp=1u;
+    const int s=(int)(2u+damage*24u/max_hp);
+    if(s>c->shake)c->shake=s>10?10:s;
+    c->heat+=0.5f+(float)(damage*4u)/(float)max_hp;
+    if(c->heat>6.0f)c->heat=6.0f;
+}
+static inline void som_cam_combo(SomCamera *c,const uint8_t *object){
+    c->combo_ev=1;
+    c->combo_x=(int)som_cam_u16(object+2);c->combo_y=(int)som_cam_u16(object+4)-12;
+    c->combo_layer=(object[0x0B]&0x80u)!=0;
+}
+static inline void som_cam_counter(SomCamera *c,const uint8_t *object){
+    som_cam_finisher(c,object);c->crash=1;
+}
+/* A map spot on screen now (whack, finisher). */
+static inline int som_cam_spot(const uint8_t *ram,int wx,int wy,int layer,int *x,int *y){
+    const unsigned cam=layer?0xACu:0xA8u;
+    *x=(int16_t)(wx-(int)som_cam_u16(ram+cam));*y=(int16_t)(wy-(int)som_cam_u16(ram+cam+2u));
+    return *x>=0&&*x<SOM_CAM_W&&*y>=0&&*y<SOM_CAM_H;
+}
+/* One frame. `lead` = the hero being followed; `busy` = our own menus.
+ * The director (som_director.h) picks the shot of each beat; this plays it:
+ * the subjects of the shot, its zoom and how fast the view eases there. */
 static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,int busy,int allow_hd){
     const unsigned map=som_cam_u16(ram+0xDC);
+    c->frames++;
     /* 8F = a palette fade; E4 2/4 = transitions and mode 7 */
     if(ram[0xE4]!=1||ram[0xE6]!=0x0F||(ram[0x29]&7u)==7u||map!=c->map){
         som_cam_reset(c);c->map=map;
         return SOM_SHOT_WIDE;
     }
-    int hx=0,hy=0,x,y,shot=SOM_SHOT_WIDE;
+    int hx=0,hy=0,x,y;
     const int seen=lead<3u&&som_cam_object(ram,0xE000u+0x200u*lead,&hx,&hy);
     const uint8_t *hero=ram+0xE000u+0x200u*(lead<3u?lead:0u);
     const int wx=(int)som_cam_u16(hero+2),wy=(int)som_cam_u16(hero+4);
     c->still=(wx==c->hero_x&&wy==c->hero_y)?c->still+1u:0u;
     c->hero_x=wx;c->hero_y=wy;
     const int choice=ram[0xA170]==0x5A||ram[0xA170]==0x5F||(ram[0x1D00]&0x80u);
-    SomCamBox box;memset(&box,0,sizeof(box));
-    c->want_zoom=1.0f;
-    const float talk_zoom=allow_hd?1.5f:2.0f;
-    if(seen&&!busy&&ram[0x7D]!=1){
-        som_cam_add(&box,hx,hy);
-        if(ram[0xD0]&0x80u){
-            if(!choice&&c->window){
-                const unsigned who=som_cam_u16(ram+0x3A);
-                if(who>=0x600u&&who<0x1800u&&!(who&0x1FFu)&&som_cam_object(ram,0xE000u+who,&x,&y))
-                    som_cam_add(&box,x,y);
-                if(som_cam_aim(c,&box,talk_zoom,16,72,216))shot=SOM_SHOT_TALK;
-            }
-        }else if(ram[0xD0]==0&&c->whack){
-            const unsigned cam=c->whack_layer?0xACu:0xA8u;
-            c->whack--;
-            SomCamBox spot;memset(&spot,0,sizeof(spot));
-            x=(int16_t)(c->whack_x-(int)som_cam_u16(ram+cam));y=(int16_t)(c->whack_y-(int)som_cam_u16(ram+cam+2u));
-            if(x>=0&&x<SOM_CAM_W&&y>=0&&y<SOM_CAM_H){
-                som_cam_add(&spot,x,y);
-                if(som_cam_aim(c,&spot,2.0f,12,8,SOM_CAM_HUD_TOP))shot=SOM_SHOT_WHACK;
-            }
-        }else if(ram[0xD0]==0){
-            int monsters=0;
-            SomCamBox all=box;
-            for(unsigned i=0;i<3u;i++){
-                const uint8_t *m=ram+0xE600u+0x200u*i;
-                if(m[0x180]<0x80u&&!(som_cam_u16(m+0x190)&0x8400u)&&som_cam_u16(m+0x182)&&
-                   som_cam_object(ram,0xE600u+0x200u*i,&x,&y)){som_cam_add(&all,x,y);monsters++;}
-            }
-            for(unsigned i=0;i<3u;i++)
-                if(i!=lead&&som_cam_object(ram,0xE000u+0x200u*i,&x,&y))som_cam_add(&all,x,y);
-            c->fight_seen=monsters?c->fight_seen+1u:0u;
-            if(c->fight_seen>=SOM_CAM_FIGHT_WAIT)c->fight_hold=SOM_CAM_FIGHT_HOLD;
-            else if(c->fight_hold)c->fight_hold--;
-            /* a shot already running may get tighter before it is given up */
-            if(allow_hd&&c->fight_hold&&
-               som_cam_aim(c,&all,1.5f,c->shot==SOM_SHOT_FIGHT?10:22,4,SOM_CAM_HUD_TOP))shot=SOM_SHOT_FIGHT;
-            else if(!monsters&&c->still>=SOM_CAM_IDLE_FRAMES&&
-                    som_cam_aim(c,&box,2.0f,16,8,SOM_CAM_HUD_TOP))shot=SOM_SHOT_IDLE;
+    const float mid=allow_hd?1.5f:2.0f;            /* the medium zoom we can afford */
+    /* ---- subjects ---- */
+    SomCamBox lead_box,talk_box,speaker,all,party,foe,lead_foe;
+    memset(&lead_box,0,sizeof(lead_box));
+    if(seen)som_cam_add(&lead_box,hx,hy);
+    talk_box=lead_box;all=lead_box;party=lead_box;memset(&speaker,0,sizeof(speaker));
+    memset(&foe,0,sizeof(foe));lead_foe=lead_box;
+    const int talking=seen&&(ram[0xD0]&0x80u)&&!choice&&c->window;
+    if(talking){
+        const unsigned who=som_cam_u16(ram+0x3A);
+        if(who>=0x600u&&who<0x1800u&&!(who&0x1FFu)&&som_cam_object(ram,0xE000u+who,&x,&y)){
+            som_cam_add(&talk_box,x,y);som_cam_add(&speaker,x,y);
         }
     }
-    /* Windows close and reopen between lines: hold the shot meanwhile. */
-    if(shot==SOM_SHOT_TALK)c->talked=SOM_CAM_TALK_HOLD;
-    else if(c->talked){
-        c->talked--;
-        if(seen&&!busy&&!choice&&ram[0x7D]!=1&&shot==SOM_SHOT_WIDE){
-            if(som_cam_aim(c,&box,talk_zoom,16,72,216))shot=SOM_SHOT_TALK;
-        }else c->talked=0;
+    unsigned foes=0;long best=-1;
+    if(ram[0xD0]==0)for(unsigned i=0;i<3u;i++){
+        const uint8_t *m=ram+0xE600u+0x200u*i;
+        if(m[0x180]<0x80u&&!(som_cam_u16(m+0x190)&0x8400u)&&som_cam_u16(m+0x182)&&
+           som_cam_object(ram,0xE600u+0x200u*i,&x,&y)){
+            som_cam_add(&all,x,y);foes++;
+            const long d=(long)(x-hx)*(x-hx)+(long)(y-hy)*(y-hy);
+            if(best<0||d<best){best=d;memset(&foe,0,sizeof(foe));som_cam_add(&foe,x,y);}
+        }
     }
+    if(foe.n){lead_foe=lead_box;som_cam_add(&lead_foe,foe.x0,foe.y0);}
+    for(unsigned i=0;i<3u;i++)
+        if(i!=lead&&som_cam_object(ram,0xE000u+0x200u*i,&x,&y)){som_cam_add(&all,x,y);som_cam_add(&party,x,y);}
+    c->fight_seen=foes?c->fight_seen+1u:0u;
+    const int fight_was=c->fight_hold!=0;
+    if(c->fight_seen>=SOM_CAM_FIGHT_WAIT)c->fight_hold=SOM_CAM_FIGHT_HOLD;
+    else if(c->fight_hold)c->fight_hold--;
+    /* ---- what fits ---- */
+    SomCamera t=*c;
+    uint16_t fits=SOM_DIR_BIT(SOM_DIR_WIDE)|SOM_DIR_BIT(SOM_DIR_PULL);
+    #define SOM_FITS(s,b,z,m,top,bot) if((b).n&&som_cam_aim(&t,&(b),(z),(m),(top),(bot)))fits|=SOM_DIR_BIT(s)
+    if(seen){
+        SOM_FITS(SOM_DIR_CLOSE,lead_box,2.0f,16,8,SOM_CAM_HUD_TOP);
+        SOM_FITS(SOM_DIR_IDLE,lead_box,2.0f,16,8,SOM_CAM_HUD_TOP);
+        SOM_FITS(SOM_DIR_ESTABLISH,lead_box,2.0f,16,8,SOM_CAM_HUD_TOP);
+        if(allow_hd){
+            SOM_FITS(SOM_DIR_MEDIUM,all,1.5f,14,4,SOM_CAM_HUD_TOP);
+            SOM_FITS(SOM_DIR_LEAD,lead_foe,1.5f,18,4,SOM_CAM_HUD_TOP);
+            if(party.n>1)SOM_FITS(SOM_DIR_PARTY,party,1.5f,16,4,SOM_CAM_HUD_TOP);
+        }
+        SOM_FITS(SOM_DIR_FOE,foe,2.0f,14,8,SOM_CAM_HUD_TOP);
+        if(talking){
+            SOM_FITS(SOM_DIR_TWO,talk_box,mid,16,72,216);
+            SOM_FITS(SOM_DIR_SPEAKER,speaker,2.0f,16,72,216);
+        }
+    }
+    #undef SOM_FITS
+    /* ---- the scene and its events ---- */
+    SomDirScene sc;memset(&sc,0,sizeof(sc));
+    sc.fits=fits;sc.still=c->still>=SOM_CAM_IDLE_FRAMES;
+    if(talking)c->talked=SOM_CAM_TALK_HOLD;
+    else if(c->talked&&!(seen&&!busy&&!choice&&ram[0x7D]!=1))c->talked=0;
+    else if(c->talked)c->talked--;
+    if(!seen||busy||choice||ram[0x7D]==1)sc.scene=SOM_DIR_HOLD;
+    else if(talking||c->talked)sc.scene=SOM_DIR_TALK;
+    else if(c->fight_hold)sc.scene=SOM_DIR_FIGHT;
+    else sc.scene=SOM_DIR_PEACE;
+    if(sc.scene==SOM_DIR_TALK&&!talking)sc.fits|=SOM_DIR_BIT(SOM_DIR_TWO)|SOM_DIR_BIT(SOM_DIR_SPEAKER);
+    c->heat*=0.985f;
+    sc.intensity=(int)foes+(best>=0&&best<40*40?1:0)-1+(int)(c->heat*0.5f);
+    const unsigned hp=som_cam_u16(hero+0x182),hp_max=som_cam_u16(hero+0x184);
+    int ev=SOM_DIR_EV_NONE;
+    if(c->arrived&&seen&&(sc.scene==SOM_DIR_TALK||ram[0xD0]))c->arrived=0;  /* arriving into a talk or event: no pull-out */
+    if(c->arrived&&seen&&(sc.scene==SOM_DIR_PEACE||sc.scene==SOM_DIR_FIGHT)){c->arrived=0;ev=SOM_DIR_EV_ARRIVE;}
+    else if(c->whack==SOM_CAM_WHACK_FRAMES)ev=SOM_DIR_EV_WHACK;
+    else if(c->finisher)ev=SOM_DIR_EV_FINISHER;
+    else if(c->combo_ev&&sc.scene==SOM_DIR_FIGHT)ev=SOM_DIR_EV_COMBO;
+    else if(c->foes&&!foes&&c->fight_hold&&!c->whack)ev=SOM_DIR_EV_KO;
+    else if(seen&&c->hp&&hp<c->hp&&hp_max&&(c->hp-hp)*8u>=hp_max)ev=SOM_DIR_EV_HURT;
+    else if(!fight_was&&c->fight_hold&&sc.scene==SOM_DIR_FIGHT)ev=SOM_DIR_EV_FIGHT;
+    else if(c->foes>foes&&sc.scene==SOM_DIR_FIGHT)ev=SOM_DIR_EV_KILL;
+    else if(talking&&!c->last_window)ev=SOM_DIR_EV_LINE;
+    if(ev==SOM_DIR_EV_ARRIVE&&!(fits&SOM_DIR_BIT(SOM_DIR_ESTABLISH)))ev=SOM_DIR_EV_NONE;
+    c->hp=hp;c->foes=foes;c->last_window=c->window;
+    c->combo_ev=0;
+    if(ev!=SOM_DIR_EV_NONE){
+        if(ev==SOM_DIR_EV_WHACK||ev==SOM_DIR_EV_FINISHER)c->shake=c->crash?16:12;
+        if(ev==SOM_DIR_EV_KO)c->ko=2u*SOM_DIR_BEAT;
+        if(ev==SOM_DIR_EV_COMBO&&som_cam_spot(ram,c->combo_x,c->combo_y,c->combo_layer,&x,&y)){
+            memset(&foe,0,sizeof(foe));som_cam_add(&foe,x,y);   /* the combo's foe */
+        }
+        if(ev==SOM_DIR_EV_HURT)c->shake=6;
+        som_dir_event(&c->dir,ev,&sc,c->frames);
+        if(ev==SOM_DIR_EV_ARRIVE&&som_cam_aim(c,&lead_box,2.0f,16,8,SOM_CAM_HUD_TOP)){
+            /* cut in close on arrival, the beat pulls out slowly from there */
+            c->zoom=2.0f;c->vz=0.0f;c->at_x=c->want_cx;c->at_y=c->want_cy;c->vx=c->vy=0.0f;
+        }
+    }
+    if(c->whack)c->whack--;
+    int shot=(int)som_dir_frame(&c->dir,&sc,c->frames);
+    /* ---- play the shot: its subject, its zoom ---- */
+    c->want_zoom=1.0f;
+    int aimed=0;
+    float quick=0.10f;
+    switch(shot){
+    case SOM_DIR_ESTABLISH:aimed=1;c->want_zoom=1.0f;quick=0.035f;break;
+    case SOM_DIR_MEDIUM:   aimed=som_cam_aim(c,&all,1.5f,c->shot==shot?10:14,4,SOM_CAM_HUD_TOP);break;
+    case SOM_DIR_LEAD:
+        aimed=som_cam_aim(c,&lead_foe,1.5f,18,4,SOM_CAM_HUD_TOP);
+        if(aimed&&foe.n){                    /* the hero on a third, looking into the room */
+            const float room=SOM_CAM_W/(6.0f*c->want_zoom);
+            c->want_cx+=foe.x0>=hx?room*0.5f:-room*0.5f;
+        }
+        break;
+    case SOM_DIR_CLOSE:    aimed=som_cam_aim(c,&lead_box,2.0f,16,8,SOM_CAM_HUD_TOP);quick=0.14f;break;
+    case SOM_DIR_FOE:      aimed=som_cam_aim(c,&foe,2.0f,14,8,SOM_CAM_HUD_TOP);quick=0.14f;break;
+    case SOM_DIR_PARTY:    aimed=som_cam_aim(c,&party,1.5f,16,4,SOM_CAM_HUD_TOP);quick=0.07f;break;
+    case SOM_DIR_TWO:      aimed=som_cam_aim(c,&talk_box,mid,16,72,216);quick=0.08f;break;
+    case SOM_DIR_SPEAKER:  aimed=som_cam_aim(c,speaker.n?&speaker:&talk_box,2.0f,16,72,216);quick=0.09f;break;
+    case SOM_DIR_IDLE:     aimed=som_cam_aim(c,&lead_box,2.0f,16,8,SOM_CAM_HUD_TOP);quick=0.05f;break;
+    case SOM_DIR_PUNCH:{
+        SomCamBox spot;memset(&spot,0,sizeof(spot));
+        const int fin=c->finisher||(!c->whack&&c->finisher_x);
+        if(fin?som_cam_spot(ram,c->finisher_x,c->finisher_y,c->finisher_layer,&x,&y):
+               som_cam_spot(ram,c->whack_x,c->whack_y,c->whack_layer,&x,&y))som_cam_add(&spot,x,y);
+        else if(foe.n)spot=foe;
+        aimed=spot.n&&som_cam_aim(c,&spot,2.0f,12,8,SOM_CAM_HUD_TOP);quick=c->crash?0.5f:0.32f;
+        break;}
+    case SOM_DIR_PULL:     aimed=1;c->want_zoom=1.0f;quick=c->ko?0.045f:0.22f;break;   /* K.O.: slow */
+    default:break;
+    }
+    c->finisher=0;
+    if(shot!=SOM_DIR_PUNCH)c->crash=0;
+    if(c->ko)c->ko--;
+    if(!aimed&&shot!=SOM_DIR_WIDE){shot=SOM_DIR_WIDE;c->want_zoom=1.0f;}
+    if(shot==SOM_DIR_WIDE&&(busy||choice||ram[0x7D]==1))quick=0.35f;
     /* The aim moves only when it must: a new shot or a drift past the dead zone. */
     const float dx=c->want_cx-c->aim_cx,dy=c->want_cy-c->aim_cy;
-    if(shot!=SOM_SHOT_WIDE){
+    if(c->want_zoom>1.0f){
         const int fresh=shot!=c->shot;
         if(fresh||dx>SOM_CAM_DEAD||dx<-SOM_CAM_DEAD)c->aim_cx=c->want_cx;
         if(fresh||dy>SOM_CAM_DEAD||dy<-SOM_CAM_DEAD)c->aim_cy=c->want_cy;
         c->aim_zoom=c->want_zoom;
-        SomCamera t=*c;                  /* only where the view can go */
-        t.zoom=c->aim_zoom;t.cx=c->aim_cx;t.cy=c->aim_cy;
-        som_cam_clamp(&t);c->aim_cx=t.cx;c->aim_cy=t.cy;
+        SomCamera t2=*c;                 /* only where the view can go */
+        t2.zoom=c->aim_zoom;t2.cx=c->aim_cx;t2.cy=c->aim_cy;
+        som_cam_clamp(&t2);c->aim_cx=t2.cx;c->aim_cy=t2.cy;
         if(c->zoom<=1.0f){c->at_x=c->aim_cx;c->at_y=c->aim_cy;c->vx=c->vy=0.0f;}
         if(c->aim_zoom==1.5f)c->hd=1;
     }else c->aim_zoom=1.0f;
-    if(!allow_hd||shot==SOM_SHOT_WHACK)c->hd=0;
+    if(!allow_hd||shot==SOM_DIR_PUNCH)c->hd=0;
     /* Critically damped: soft start, soft stop, then exactly on the mark. */
-    const float quick=shot==SOM_SHOT_WIDE&&(busy||choice||ram[0x7D]==1)?0.35f:shot==SOM_SHOT_WHACK?0.32f:0.10f;
     c->vz+=(c->aim_zoom-c->zoom)*quick*quick-2.0f*quick*c->vz;c->zoom+=c->vz;
     if(c->aim_zoom-c->zoom<.004f&&c->zoom-c->aim_zoom<.004f){c->zoom=c->aim_zoom;c->vz=0.0f;}
-    const float wp=0.065f;
+    const float wp=shot==SOM_DIR_PUNCH?0.2f:0.065f;
     c->vx+=(c->aim_cx-c->at_x)*wp*wp-2.0f*wp*c->vx;c->at_x+=c->vx;
     c->vy+=(c->aim_cy-c->at_y)*wp*wp-2.0f*wp*c->vy;c->at_y+=c->vy;
     c->cx=c->at_x;c->cy=c->at_y;
     if(c->zoom<=1.0f){c->zoom=1.0f;c->vz=0.0f;c->cx=128.0f;c->cy=112.0f;}
     if(c->zoom==1.0f||c->zoom==2.0f)c->hd=0;
+    /* Shake: whole game pixels, alternating, dying out (only when zoomed). */
+    if(c->shake){
+        c->shake--;
+        if(c->zoom>1.0f){
+            const float a=c->shake>6?2.0f:1.0f;
+            c->cx+=(c->shake&1)?a:-a;c->cy+=(c->shake&2)?a*0.5f:-a*0.5f;
+        }
+    }
+    /* Letterbox for the big moments. */
+    const float bars=shot==SOM_DIR_PUNCH||shot==SOM_DIR_ESTABLISH||c->ko?SOM_CAM_BARS:0.0f;
+    c->bars+=(bars-c->bars)*0.18f;
+    if(c->bars<0.5f&&bars==0.0f)c->bars=0.0f;
     som_cam_clamp(c);
     c->shot=shot;
     return shot;
 }
+/* Letterbox rows now (whole rows of the 256x224 picture). */
+static inline unsigned som_cam_bars(const SomCamera *c){return (unsigned)(c->bars+0.5f);}
 static inline int som_cam_active(const SomCamera *c){return c->zoom>1.004f;}
 /* hd costs four times the pixels. Average the time between frames with and
  * without it; after a second of hd that is clearly slower, say so (once). */

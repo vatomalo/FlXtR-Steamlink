@@ -56,6 +56,8 @@ typedef struct {
     int combo_ev,combo_x,combo_y,combo_layer;   /* a combo level was reached on this foe */
     int crash;                       /* a counter: crash zoom */
     unsigned ko;                     /* frames of the K.O. pull-out left */
+    unsigned bullet;                 /* game frames of bullet time left; bullet_ev: it began */
+    int bullet_ev;
 } SomCamera;
 typedef struct {uint32_t at,ink;} SomCamPixel;
 
@@ -133,6 +135,8 @@ static inline void som_cam_combo(SomCamera *c,const uint8_t *object){
     c->combo_x=(int)som_cam_u16(object+2);c->combo_y=(int)som_cam_u16(object+4)-12;
     c->combo_layer=(object[0x0B]&0x80u)!=0;
 }
+/* Bullet time began (the proxy slows the game): close on the hero, bars. */
+static inline void som_cam_bullet(SomCamera *c,unsigned game_frames){c->bullet=game_frames;c->bullet_ev=1;}
 static inline void som_cam_counter(SomCamera *c,const uint8_t *object){
     som_cam_finisher(c,object);c->crash=1;
 }
@@ -229,6 +233,7 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
     if(c->arrived&&seen&&(sc.scene==SOM_DIR_TALK||ram[0xD0]))c->arrived=0;  /* arriving into a talk or event: no pull-out */
     if(c->arrived&&seen&&(sc.scene==SOM_DIR_PEACE||sc.scene==SOM_DIR_FIGHT)){c->arrived=0;ev=SOM_DIR_EV_ARRIVE;}
     else if(c->whack==SOM_CAM_WHACK_FRAMES)ev=SOM_DIR_EV_WHACK;
+    else if(c->bullet_ev)ev=SOM_DIR_EV_BULLET;
     else if(c->finisher)ev=SOM_DIR_EV_FINISHER;
     else if(c->combo_ev&&sc.scene==SOM_DIR_FIGHT)ev=SOM_DIR_EV_COMBO;
     else if(c->foes&&!foes&&c->fight_hold&&!c->whack)ev=SOM_DIR_EV_KO;
@@ -238,7 +243,8 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
     else if(talking&&!c->last_window)ev=SOM_DIR_EV_LINE;
     if(ev==SOM_DIR_EV_ARRIVE&&!(fits&SOM_DIR_BIT(SOM_DIR_ESTABLISH)))ev=SOM_DIR_EV_NONE;
     c->hp=hp;c->foes=foes;c->last_window=c->window;
-    c->combo_ev=0;
+    c->combo_ev=0;c->bullet_ev=0;
+    if(c->bullet)c->bullet--;
     if(ev!=SOM_DIR_EV_NONE){
         if(ev==SOM_DIR_EV_WHACK||ev==SOM_DIR_EV_FINISHER)c->shake=c->crash?16:12;
         if(ev==SOM_DIR_EV_KO)c->ko=2u*SOM_DIR_BEAT;
@@ -322,7 +328,7 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
         }
     }
     /* Letterbox for the big moments. */
-    const float bars=shot==SOM_DIR_PUNCH||shot==SOM_DIR_ESTABLISH||c->ko?SOM_CAM_BARS:0.0f;
+    const float bars=shot==SOM_DIR_PUNCH||shot==SOM_DIR_ESTABLISH||c->ko||c->bullet?SOM_CAM_BARS:0.0f;
     c->bars+=(bars-c->bars)*0.18f;
     if(c->bars<0.5f&&bars==0.0f)c->bars=0.0f;
     som_cam_clamp(c);

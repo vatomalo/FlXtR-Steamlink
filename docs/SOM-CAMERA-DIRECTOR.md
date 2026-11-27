@@ -44,6 +44,17 @@ fighting game camera techniques for fights").
 - K.O.: the last foe down is a slow pull-out under letterbox bars.
 - Not done: hit-stop (freezing the game) would gap the audio stream the music is mixed into.
 
+## Bullet time (Monk, Samurai, Ninja)
+
+A blow landing on the guard (R2) of a Monk, Samurai or Ninja may start bullet time: 6 %,
+20 % under half HP, 40 % under a quarter; 20 s between two. For 2.5 s the monsters move and
+charge at half speed (`som_bullet_world`: every other frame they are put back where they
+stood and their attack gauge +0x1ED does not count down); the game, the heroes and the music
+run at full speed ("but monk and the classes would be fast"). The director cuts close on the
+hero (event `SOM_DIR_EV_BULLET`) with letterbox bars. The monsters' own animations still play
+at full speed; projectiles already flying are not slowed. Unit-tested; not yet seen on the
+real ROM (the Steam Link was offline).
+
 ## Events
 
 arrive, fight start, kill, K.O., hero hurt (1/8 of max HP in one go), whack, finisher, combo,

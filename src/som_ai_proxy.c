@@ -1108,6 +1108,12 @@ static SomBoom bunshin_booms[SOM_BUN_BOOMS];
 /* Mage bolts (src/som_mage_bolt.h): every caster's B is a glove punch that
  * throws a painted ball of its B spell's element. */
 static SomBolt mage_bolts[SOM_BOLTS];
+/* Bullet time (see som_bullet_world). */
+#define SOM_BULLET_FRAMES 150u            /* 2.5 s */
+#define SOM_BULLET_COOLDOWN 1200ul         /* frames between two */
+static unsigned bullet_frames;
+static unsigned long bullet_ready;
+static unsigned class_roll(void);
 /* The Mentalist's string: state here, the moves after the string helpers. */
 static SomMind mind_state;
 static uint16_t psi_press_dirs;          /* pad 1's D-pad and command at its last B */
@@ -1878,6 +1884,19 @@ static void som_perks_hero(uint8_t *ram,unsigned who){
     const int guarding=som_guard_up(ram,who);
     const unsigned cls=som_disc_member_class(&disciplines,who);
     const int samurai=cls==SOM_DISC_BUSHIDO,monk=cls==SOM_DISC_MARTIAL;
+    /* Bullet time: a blow landing on the guard of a Monk, Samurai or Ninja,
+     * by luck: 6 %, 20 % under half HP, 40 % under a quarter. */
+    if((samurai||monk||cls==SOM_DISC_NINJUTSU)&&guarding&&!bullet_frames&&frame_number>=bullet_ready&&
+       (hero[0x059]||hero[0x1F1]||hero[0x1F2])){
+        const unsigned chance=hp*4u<max?40u:hp*2u<max?20u:6u;
+        if(class_roll()<chance){
+            bullet_frames=SOM_BULLET_FRAMES;bullet_ready=frame_number+SOM_BULLET_COOLDOWN;
+            som_cam_bullet(&camera,SOM_BULLET_FRAMES/2u);
+            som_overlay_say(&overlay,"^Bullet Time",SOM_MESSAGE_FRAMES/2u);
+            fprintf(stderr,"[som-ai] BULLET TIME: %s blocked at %u/%u HP (chance %u%%)\n",
+                    som_party_names[who],hp,max,chance);
+        }
+    }
     if((samurai||monk)&&guarding&&frame_number>=(samurai?iai_ready:palm_ready)&&
        (hero[0x059]||hero[0x1F1]||hero[0x1F2])){
         const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,
@@ -10812,6 +10831,29 @@ static void som_combo_spacing_after(uint8_t *ram,unsigned map,const SomComboPosi
         som_put_word(hero+2,(uint16_t)nx);som_put_word(hero+4,(uint16_t)ny);
     }
 }
+/* Bullet time (player, 2026-11-27: "on some blocks if lucky give bullet
+ * time, especially on very low health ... a monk, samurai and ninjutsu
+ * perk"; "but monk and the classes would be fast"): the world slows, the
+ * heroes do not. After each frame the monsters lose every other frame of
+ * their movement (put back where they stood) and of their attack gauge
+ * (+0x1ED counts down half as fast), so they move and strike at half speed
+ * while the game, the heroes and the music run as ever. */
+static void som_bullet_world(uint8_t *ram){
+    static int x[3],y[3];
+    static uint8_t id[3];
+    if(!ram){bullet_frames=0;return;}
+    bullet_frames--;
+    const int hold=(bullet_frames&1u)!=0u;
+    for(unsigned k=0;k<3u;k++){
+        uint8_t *m=ram+0xE600u+0x200u*k;
+        if(!som_bun_monster_alive(m)||(int)k==familiar.slot){id[k]=0xFFu;continue;}
+        if(hold&&id[k]==m[0x180]){
+            som_put_word(m+2,(uint16_t)x[k]);som_put_word(m+4,(uint16_t)y[k]);
+            if(m[0x1ED]&&m[0x1ED]<0x7Fu)m[0x1ED]++;
+        }
+        x[k]=(int)som_word(m+2);y[k]=(int)som_word(m+4);id[k]=m[0x180];
+    }
+}
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
     const uint64_t perf_t0=som_perf_frame_begin(frame_number);
@@ -10903,6 +10945,7 @@ RETRO_API void retro_run(void){
     SomComboPosition combo_pos[SOM_PARTY_MEMBERS];
     const unsigned combo_map=som_combo_positions(test_enabled&&on_turbo?som_live_wram():NULL,combo_pos);
     backend_run();
+    if(bullet_frames)som_bullet_world(som_live_wram());
     if(test_enabled&&on_turbo)som_combo_spacing_after(som_live_wram(),combo_map,combo_pos);
     if(on_turbo)som_auto_target_frame(som_live_wram());
     som_guard_finish();

@@ -94,7 +94,7 @@ typedef struct {
     int intensity;          /* fight: 0 calm .. 3 hot (foes near, hits) */
 } SomDirScene;
 enum {SOM_DIR_EV_NONE,SOM_DIR_EV_WHACK,SOM_DIR_EV_FINISHER,SOM_DIR_EV_HURT,SOM_DIR_EV_ARRIVE,
-      SOM_DIR_EV_FIGHT,SOM_DIR_EV_KILL,SOM_DIR_EV_LINE,SOM_DIR_EV_COMBO,SOM_DIR_EV_KO};
+      SOM_DIR_EV_FIGHT,SOM_DIR_EV_KILL,SOM_DIR_EV_LINE,SOM_DIR_EV_COMBO,SOM_DIR_EV_KO,SOM_DIR_EV_BULLET};
 
 typedef struct {
     uint8_t plan[SOM_DIR_HORIZON];     /* tiles; plan[0] plays now */
@@ -288,11 +288,12 @@ static inline void som_dir_event(SomDirector *d,int ev,const SomDirScene *sc,uns
      * last foe down is a slow pull-out (the K.O.) */
     case SOM_DIR_EV_COMBO:    som_dir_pin(d,sc->fits&SOM_DIR_BIT(SOM_DIR_FOE)?SOM_DIR_FOE:SOM_DIR_LEAD,0,2);break;
     case SOM_DIR_EV_KO:       som_dir_pin(d,SOM_DIR_PULL,0,2);break;
+    case SOM_DIR_EV_BULLET:   som_dir_pin(d,sc->fits&SOM_DIR_BIT(SOM_DIR_CLOSE)?SOM_DIR_CLOSE:SOM_DIR_LEAD,0,3);break;
     default:break;
     }
     /* a punch or an arrival starts a new beat at once; others wait for the beat */
     const unsigned prev=ev==SOM_DIR_EV_WHACK||ev==SOM_DIR_EV_FINISHER||ev==SOM_DIR_EV_ARRIVE||
-        ev==SOM_DIR_EV_COMBO||ev==SOM_DIR_EV_KO?
+        ev==SOM_DIR_EV_COMBO||ev==SOM_DIR_EV_KO||ev==SOM_DIR_EV_BULLET?
         SOM_DIR_TILE(SOM_DIR_WIDE,SOM_DIR_PHASES-1u):d->now;
     d->valid=0;
     som_dir_solve(d,sc,prev);

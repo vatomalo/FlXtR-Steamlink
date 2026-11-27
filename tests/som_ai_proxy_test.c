@@ -4222,6 +4222,21 @@ int main(void){
         familiar.slot=keep_fam;memset(w,0,SOM_WRAM_SIZE);
     }
     unlink(path);unlink(wram_path);unlink(wram_tmp_path);unlink(ring_ai_path);
+    {   /* Bullet time: the monsters move and charge at half speed, the heroes do not. */
+        static uint8_t bram[SOM_WRAM_SIZE];
+        uint8_t *m=bram+0xE600,*h=bram+0xE000;
+        m[0]=1;m[0x180]=0x14;som_put_word(m+0x182,40);som_put_word(m+2,100);m[0x1ED]=10;
+        h[0]=1;som_put_word(h+2,50);
+        const int keep_fam=familiar.slot;familiar.slot=-1;
+        bullet_frames=4;
+        som_bullet_world(bram);                                   /* first look: kept */
+        som_put_word(m+2,104);m[0x1ED]=9;som_put_word(h+2,54);som_bullet_world(bram);
+        som_put_word(m+2,108);m[0x1ED]=8;som_put_word(h+2,58);som_bullet_world(bram);
+        assert(som_word(m+2)==104&&m[0x1ED]==9&&som_word(h+2)==58);   /* held; hero free */
+        som_put_word(m+2,108);som_bullet_world(bram);
+        assert(som_word(m+2)==108&&!bullet_frames);
+        familiar.slot=keep_fam;
+    }
     puts("PASS: Turbo actions, tile steps, ring AI signal, idle auto-start, override, and WRAM export");
     return 0;
 }

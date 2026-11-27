@@ -96,6 +96,17 @@ static inline int som_familiar_tick(SomFamiliar *f, uint8_t *ram, unsigned long 
         stop = SOM_FAMILIAR_FOLLOW;
     }
     int dx = gx - mx, dy = gy - my;
+    /* Face where it goes (or the monster it fights): the moves below are
+     * ours, so the game never turns it and it kept the facing its own AI
+     * left, often the hero's way (player 2026-11-27: "the summons are
+     * flipped horizontally"). +0x10: 0 up, 1 down, 2 right, 0x82 left
+     * (som-decomp graphics.md); a new facing restarts the animation by
+     * itself. Sideways unless clearly up or down, so diagonals do not
+     * flicker between the two. */
+    if (dx || dy) {
+        const int side = dx && abs(dy) <= 2 * abs(dx);
+        me[0x10] = side ? (dx > 0 ? 0x02 : 0x82) : (dy > 0 ? 0x01 : 0x00);
+    }
     if (abs(dx) + abs(dy) > stop) {
         int sx = dx > 0 ? SOM_FAMILIAR_SPEED : dx < 0 ? -SOM_FAMILIAR_SPEED : 0;
         int sy = dy > 0 ? SOM_FAMILIAR_SPEED : dy < 0 ? -SOM_FAMILIAR_SPEED : 0;

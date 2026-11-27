@@ -18,6 +18,18 @@ int main(void){
         assert(ram[0xE782u]==40u&&ram[0xE7F1u]==0u);
         memset(ram,0,sizeof(ram));
     }
+    /* It faces where it walks: the hero to its left -> left, a monster
+     * to its right -> right ("the summons are flipped", 2026-11-27). */
+    {
+        SomFamiliar f={0,-1,0,7};
+        ram[0xE600u]=1;ram[0xE780u]=3;put16(0xE784u,40);put16(0xE782u,40);put16(0xDCu,7);
+        put16(0xE602u,200);put16(0xE604u,100);ram[0xE610u]=0x02u;
+        put16(0xE002u,100);put16(0xE004u,110);
+        assert(som_familiar_tick(&f,ram,100)==SOM_FAMILIAR_HERE&&ram[0xE610u]==0x82u);
+        uint8_t *m=ram+0xE800u;m[0]=1;m[0x180]=3;put16(0xE982u,40);put16(0xE802u,260);put16(0xE804u,100);
+        assert(som_familiar_tick(&f,ram,101)==SOM_FAMILIAR_HERE&&f.target==1&&ram[0xE610u]==0x02u);
+        memset(ram,0,sizeof(ram));
+    }
     SomFamiliarCarry c;memset(&c,0,sizeof(c));
     c.valid=1;c.has_vram=1;c.tile_count=1;c.home_map=130;
     c.object[0]=1;c.object[0x180]=0;c.object[0x184]=25;

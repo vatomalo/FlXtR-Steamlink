@@ -23,6 +23,9 @@
 #define SOM_CAM_FIGHT_WAIT 30u
 #define SOM_CAM_FIGHT_HOLD 120u
 #define SOM_CAM_DEAD 12.0f           /* px the aim may drift before the view follows */
+#define SOM_CAM_SOFT 0.75f           /* ordinary shots ease at this share of their old rate */
+#define SOM_CAM_MAX_PAN 2.5f         /* px a frame at most while gliding */
+#define SOM_CAM_MAX_ZOOM 0.02f       /* zoom a frame at most while gliding */
 #define SOM_CAM_TALK_HOLD 45u
 #define SOM_CAM_WRAM 0x20000u
 /* The shots are the director's (som_director.h); the old names stay. */
@@ -310,12 +313,27 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
         if(c->aim_zoom==1.5f)c->hd=1;
     }else c->aim_zoom=1.0f;
     if(!allow_hd||shot==SOM_DIR_PUNCH)c->hd=0;
-    /* Critically damped: soft start, soft stop, then exactly on the mark. */
-    c->vz+=(c->aim_zoom-c->zoom)*quick*quick-2.0f*quick*c->vz;c->zoom+=c->vz;
+    /* Critically damped: soft start, soft stop, then exactly on the mark.
+     * Smoother (player, 2026-11-27: "camera needs smoother transitions"):
+     * the ordinary shots ease at SOM_CAM_SOFT of their old rate, and a
+     * glide never moves faster than SOM_CAM_MAX_PAN px / SOM_CAM_MAX_ZOOM
+     * zoom a frame, so a far new shot travels instead of whipping across.
+     * Punch-ins and K.O. pulls keep their snap; menus clear as fast. */
+    const int snap=shot==SOM_DIR_PUNCH||(shot==SOM_DIR_PULL&&!c->ko)||
+                   (shot==SOM_DIR_WIDE&&quick>=0.35f);
+    if(!snap&&quick>0.06f)quick*=SOM_CAM_SOFT;     /* the slow ones (idle, arrival) stay as they were */
+    c->vz+=(c->aim_zoom-c->zoom)*quick*quick-2.0f*quick*c->vz;
+    if(!snap)c->vz=c->vz>SOM_CAM_MAX_ZOOM?SOM_CAM_MAX_ZOOM:c->vz<-SOM_CAM_MAX_ZOOM?-SOM_CAM_MAX_ZOOM:c->vz;
+    c->zoom+=c->vz;
     if(c->aim_zoom-c->zoom<.004f&&c->zoom-c->aim_zoom<.004f){c->zoom=c->aim_zoom;c->vz=0.0f;}
-    const float wp=shot==SOM_DIR_PUNCH?0.2f:0.065f;
-    c->vx+=(c->aim_cx-c->at_x)*wp*wp-2.0f*wp*c->vx;c->at_x+=c->vx;
-    c->vy+=(c->aim_cy-c->at_y)*wp*wp-2.0f*wp*c->vy;c->at_y+=c->vy;
+    const float wp=shot==SOM_DIR_PUNCH?0.14f:0.045f;
+    c->vx+=(c->aim_cx-c->at_x)*wp*wp-2.0f*wp*c->vx;
+    c->vy+=(c->aim_cy-c->at_y)*wp*wp-2.0f*wp*c->vy;
+    if(!snap){
+        c->vx=c->vx>SOM_CAM_MAX_PAN?SOM_CAM_MAX_PAN:c->vx<-SOM_CAM_MAX_PAN?-SOM_CAM_MAX_PAN:c->vx;
+        c->vy=c->vy>SOM_CAM_MAX_PAN?SOM_CAM_MAX_PAN:c->vy<-SOM_CAM_MAX_PAN?-SOM_CAM_MAX_PAN:c->vy;
+    }
+    c->at_x+=c->vx;c->at_y+=c->vy;
     c->cx=c->at_x;c->cy=c->at_y;
     if(c->zoom<=1.0f){c->zoom=1.0f;c->vz=0.0f;c->cx=128.0f;c->cy=112.0f;}
     if(c->zoom==1.0f||c->zoom==2.0f)c->hd=0;
@@ -329,7 +347,7 @@ static inline int som_cam_frame(SomCamera *c,const uint8_t *ram,unsigned lead,in
     }
     /* Letterbox for the big moments. */
     const float bars=shot==SOM_DIR_PUNCH||shot==SOM_DIR_ESTABLISH||c->ko||c->bullet?SOM_CAM_BARS:0.0f;
-    c->bars+=(bars-c->bars)*0.18f;
+    c->bars+=(bars-c->bars)*0.10f;
     if(c->bars<0.5f&&bars==0.0f)c->bars=0.0f;
     som_cam_clamp(c);
     c->shot=shot;

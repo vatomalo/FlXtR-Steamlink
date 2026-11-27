@@ -80,7 +80,7 @@ operate on a scratch tile row. Transparent pixels expose the game background,
 so there is no scenery reconstruction. The mapping is specific to the naming
 preview. Gameplay continues to use its original animation and equipment art.
 
-The scalp starts at the native crown height. The torso uses the selected
-skin ramp for its own shading and keeps the native shoulder and stance.
+The scalp sits below the removed hair volume. The torso uses the selected
+skin ramp and shades the cowl footprint as part of the native shoulders.
 The preview composites the renderer's opaque sprite coverage onto the
 creator panel, so the naming screen's green background is excluded.

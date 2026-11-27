@@ -50,17 +50,17 @@
 + * scalp and map outfit shades to a plain underlayer. Keep native face pixels. */
 +static INLINE uint8_t flxtr_name_underlayer(unsigned ink, int x, unsigned y)
 +{
-+   if ((flxtr_name_hide & 1) && y < 32)
++   if ((flxtr_name_hide & 1) && y < 31)
 +   {
-+      if (y < 16)
++      if (y < 20)
 +         return 0;
 +      if (y < 28)
 +      {
-+         static const uint8_t radius[] = {2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
-+         const int r = radius[y - 16];
++         static const uint8_t radius[] = {1, 2, 3, 4, 4, 4, 4, 4};
++         const int r = radius[y - 20];
 +         if (x < 151 - r || x > 151 + r)
 +            return 0;
-+         if (x == 151 - r || x == 151 + r || y == 16)
++         if (x == 151 - r || x == 151 + r || y == 20)
 +            return 1;
 +         return x < 149 ? 6 : 7;
 +      }
@@ -71,11 +71,11 @@
 +         return 0;
 +      return ink == 1 ? 1 : 0;
 +   }
-+   if ((flxtr_name_hide & 2) && y >= 32)
++   if ((flxtr_name_hide & 2) && y >= 31)
 +   {
 +      /* Keep the native outer contour, arms and stance. Shade the torso
 +       * by its shape so the original fabric stripes do not show through. */
-+      if (y <= 39 && x >= 148 && x <= 155 && (ink == 1 || ink >= 8))
++      if (y <= 39 && x >= 148 && x <= 155 && (ink >= 8 || (y > 31 && ink == 1)))
 +      {
 +         if (x == 148 || x == 155 || y == 39)
 +            return 5;

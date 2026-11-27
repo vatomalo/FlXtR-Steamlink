@@ -32,6 +32,11 @@ int main(void){
     assert(out[0].y==84&&out[1].y==72&&out[2].y==100);
     memset(ram,0,sizeof(ram));
     projectile(ram,0u,2u,0x120u,92,76);
-    assert(som_throw_skins(ram,look,out)==1u&&!out[0].small);
+    /* the shuriken is small even alone (player, 2026-11-27); the Fuma is full size */
+    assert(som_throw_skins(ram,look,out)==1u&&out[0].small);
+    memset(ram,0,sizeof(ram));
+    projectile(ram,0u,2u,0x120u,92,76);
+    {const uint8_t fuma[3]={SOM_SKIN_FUMA,SOM_SKIN_FUMA,SOM_SKIN_FUMA};
+     assert(som_throw_skins(ram,fuma,out)==1u&&!out[0].small&&out[0].kind==SOM_SKIN_FUMA);}
     return 0;
 }

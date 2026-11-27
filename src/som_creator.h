@@ -42,6 +42,7 @@ static inline void som_creator_tint(uint8_t palette[32],unsigned slot,unsigned s
 
 static inline int som_creator_slot(const uint8_t *ram){
     if(!ram||ram[0xA20F]!=3u||ram[0xA156]!=3u||ram[0xA22B]>=3u)return -1;
+    if(ram[0xE4]==1u&&ram[0xE6]==0x0Fu)return -1;      /* field play is never the naming page */
     return ram[0xA22B];
 }
 

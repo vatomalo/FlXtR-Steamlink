@@ -15,10 +15,10 @@ run time). The source's own hair ramp is kept for the NATIVE hair colour.
     python3 tools/som_head_pack.py ROM OUT.bin            # the proxy pack (SOMHEAD1)
     python3 tools/som_head_pack.py ROM OUT.png --sheet    # what was picked
 
-Pack: "SOMHEAD2", u16 count, then per head: u8 kind, u8 hair[3][3] RGB,
+Pack: "SOMHEAD3", u16 count, then per head: u8 kind, u8 hair[3][3] RGB,
 u8 extras, u8 extra[8][3] RGB, u8 eyes[3][2] (the eye centre x, y per view,
 255 none: from behind), then 3 x 16 x 16 role bytes (up, down, side; side
-faces right). The eyes place the hair on the hero (player, 2026-11-27: "use
+faces right; bit 0x80: part of the hairstyle, see hair_mask). The eyes place the hair on the hero (player, 2026-11-27: "use
 the eyes to place the hairstyles").
 """
 import argparse
@@ -149,6 +149,31 @@ def eye_centre(coded):
     return None
 
 
+HAIR = 0x80
+
+
+def hair_mask(coded, eye_y):
+    """Marks the hairstyle (bit 0x80) by shape, not colour (player,
+    2026-11-27: the colour mask "masks out a lot of the actual hair"):
+    everything above the brows (two rows over the eyes: crown, highlights,
+    ribbons, hats), the hair colours anywhere, and whatever touches those
+    (curtains, tails, their outline). The face and shoulders below stay out."""
+    h, w = len(coded), len(coded[0])
+    keep = [[bool(v) and (y < eye_y - 2 or v in (2, 3, 4)) for x, v in enumerate(row)] for y, row in enumerate(coded)]
+    for _ in range(2):                     # grow onto touching non-skin pixels
+        grow = [r[:] for r in keep]
+        for y in range(h):
+            for x in range(w):
+                v = coded[y][x]
+                if keep[y][x] or not v or v in (5, 6, 7, 15):
+                    continue
+                if any(0 <= y + dy < h and 0 <= x + dx < w and keep[y + dy][x + dx]
+                       for dy in (-1, 0, 1) for dx in (-1, 0, 1)):
+                    grow[y][x] = True
+        keep = grow
+    return [[v | (HAIR if keep[y][x] else 0) for x, v in enumerate(row)] for y, row in enumerate(coded)]
+
+
 def build(gfx):
     heads = []
     for kind in SOURCES:
@@ -176,12 +201,13 @@ def build(gfx):
             chin = max((y for y, row in enumerate(coded[1]) for v in row if v in (5, 6, 7)), default=12)
             eyes[1] = (8, max(0, chin - 3))
         eyes[0] = None                     # from behind: no eyes, placed as from the front
+        coded = [hair_mask(c, (e or eyes[1])[1]) for c, e in zip(coded, eyes)]
         heads.append((KIND_IDS.get(kind, kind), ramp, extras, coded, eyes))
     return heads
 
 
 def pack(heads):
-    out = bytearray(b"SOMHEAD2") + struct.pack("<H", len(heads))
+    out = bytearray(b"SOMHEAD3") + struct.pack("<H", len(heads))
     for kind, ramp, extras, coded, eyes in heads:
         out.append(kind & 0xFF)
         for c in ramp:
@@ -208,8 +234,9 @@ def sheet(heads, path, scale=4):
             gx, gy = ((n % cols) * 3 + d) * cell, (n // cols) * (cell + 2)
             for y, row in enumerate(im):
                 for x, v in enumerate(row):
-                    if not v:
+                    if not v & HAIR:
                         continue
+                    v &= 0x7F
                     c = ((49, 41, 32) if v == 1 else ramp[v - 2] if v <= 4 else hero_skin[v - 5] if v <= 7
                          else (250, 250, 250) if v == 15 else extras[v - 16])
                     for dy in range(scale):

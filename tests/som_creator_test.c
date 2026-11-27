@@ -64,7 +64,7 @@ int main(void){
     assert(som_creator_input_hair(&z,0,0,0,5,0)==SOM_CREATOR_CAPTURE&&z.hair==0);
     /* a head pack: parse, roles, the hero's palette entry for each role */
     static uint8_t pk[10+2*SOM_HEAD_ENTRY];
-    memcpy(pk,"SOMHEAD2",8);pk[8]=2;
+    memcpy(pk,"SOMHEAD3",8);pk[8]=2;
     uint8_t *e=pk+10;
     e[0]=0x9D;e[1]=10;e[4]=20;e[7]=30;e[10]=1;e[11]=200;e[12]=0;e[13]=0;
     e[41+256+5*16+5]=3;e[41+256+6*16+5]=6;e[41+256+7*16+5]=16;

@@ -1,0 +1,38 @@
+# The debug creator in play (the ACT menu's AI page item; here its command):
+# from a field save, open it, HAIR Right twice (the girl's head), CLASS
+# Right x3 (Ninja), accept; the look and class apply at once.
+#! expect-log CREATOR debug for
+#! expect-log CREATOR hair head 81
+#! expect-log CREATOR first class
+frames 900
+hold START 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 400
+cmd creator_open
+frames 10
+shot debug_open
+hold DOWN 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold DOWN 4
+frames 4
+hold DOWN 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+hold RIGHT 4
+frames 4
+shot debug_set
+hold B 10
+frames 30
+shot debug_closed

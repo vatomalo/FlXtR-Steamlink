@@ -1253,6 +1253,10 @@ int main(void){
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(m.cursor==SOM_GAMBIT_FIGHT_ITEM);
             assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
+            assert(m.cursor==SOM_GAMBIT_CREATOR_ITEM);                     /* debug: the creator */
+            assert(som_gambit_line(&m,SOM_GAMBIT_CREATOR_ITEM+1u,text)&&strstr(text,"Character creator"));
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_B)==SOM_GAMBIT_CREATOR&&m.open);
+            assert(som_gambit_press(&m,1u<<RETRO_DEVICE_ID_JOYPAD_DOWN)==SOM_GAMBIT_NONE);
             assert(m.cursor==SOM_GAMBIT_EXIT_ITEM);
         }
         assert(!som_gambit_line(&g,SOM_GAMBIT_ITEMS+1,text));

@@ -54,8 +54,9 @@ static const char *const som_ai_model_names[SOM_AI_MODEL_COUNT] = {
 #define SOM_GAMBIT_P2_ITEM (SOM_GAMBIT_COUNT + 5u)     /* the AI plays player 2 */
 #define SOM_GAMBIT_WHACK_ITEM (SOM_GAMBIT_COUNT + 6u)  /* the whacked camera */
 #define SOM_GAMBIT_FIGHT_ITEM (SOM_GAMBIT_COUNT + 7u)  /* enemy fighting AI level */
-#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 8u)
-#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 9u)       /* + model, critic, music, test, debug, p2, whack, fight, exit */
+#define SOM_GAMBIT_CREATOR_ITEM (SOM_GAMBIT_COUNT + 8u) /* debug: the character creator in play */
+#define SOM_GAMBIT_EXIT_ITEM (SOM_GAMBIT_COUNT + 9u)
+#define SOM_GAMBIT_ITEMS (SOM_GAMBIT_COUNT + 10u)      /* + model, critic, music, test, debug, p2, whack, fight, creator, exit */
 /* Enemy AI levels, the order of som_enemy_tactics.h (classic = native only). */
 #define SOM_FIGHT_LEVEL_COUNT 5u
 static const char *const som_fight_level_labels[SOM_FIGHT_LEVEL_COUNT] = {
@@ -121,7 +122,8 @@ typedef struct {
 enum { SOM_GAMBIT_NONE, SOM_GAMBIT_OPENED, SOM_GAMBIT_CLOSED,
        SOM_GAMBIT_CHANGED, SOM_GAMBIT_EXIT, SOM_GAMBIT_TEST_SWITCH,
        SOM_GAMBIT_GENRE_CHANGED, SOM_GAMBIT_BRAIN_CHANGED, SOM_GAMBIT_DEBUG_CHANGED,
-       SOM_GAMBIT_P2_CHANGED, SOM_GAMBIT_WHACK_CHANGED, SOM_GAMBIT_FIGHT_CHANGED };
+       SOM_GAMBIT_P2_CHANGED, SOM_GAMBIT_WHACK_CHANGED, SOM_GAMBIT_FIGHT_CHANGED,
+       SOM_GAMBIT_CREATOR };
 
 /* "<model> <critic>\n"; invalid text keeps model 0 with the critic on. */
 static inline void som_brain_parse(SomGambits *g, const char *text) {
@@ -296,6 +298,8 @@ static inline int som_gambit_press(SomGambits *g, uint16_t pressed) {
         if (pressed & ((1u << RETRO_DEVICE_ID_JOYPAD_RIGHT) | (1u << RETRO_DEVICE_ID_JOYPAD_B)))
             g->fight_level = (g->fight_level + 1u) % SOM_FIGHT_LEVEL_COUNT;
         if (before != g->fight_level) return SOM_GAMBIT_FIGHT_CHANGED;
+    } else if (g->cursor == SOM_GAMBIT_CREATOR_ITEM) {
+        if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_B)) return SOM_GAMBIT_CREATOR;
     } else if (g->cursor == SOM_GAMBIT_EXIT_ITEM) {
         if (pressed & (1u << RETRO_DEVICE_ID_JOYPAD_B)) {
             g->open = 0;
@@ -380,6 +384,10 @@ static inline int som_gambit_line(const SomGambits *g, unsigned line, char out[3
     if (item == SOM_GAMBIT_FIGHT_ITEM) {
         snprintf(out, 33, "%s Enemy AI: %s", mark,
                  som_fight_level_labels[g->fight_level % SOM_FIGHT_LEVEL_COUNT]);
+        return 1;
+    }
+    if (item == SOM_GAMBIT_CREATOR_ITEM) {
+        snprintf(out, 33, "%s Character creator (debug)", mark);
         return 1;
     }
     if (item == SOM_GAMBIT_EXIT_ITEM) {

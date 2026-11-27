@@ -713,6 +713,11 @@ static SomSpriteAtlas sprite_atlas[3];
 static unsigned sprite_atlas_loaded,sprite_atlas_available,sprite_atlas_visible,sprite_atlas_seen;
 static SomCreator sprite_creator;
 static int sprite_creator_enabled,sprite_creator_captures;
+/* The creator opened in play from the ACT menu's AI page (player,
+ * 2026-11-27: "character creator should exist in ACT menu as a debug
+ * option"): for this hero, with the naming page's core hooks left off. */
+static int creator_debug;
+static unsigned creator_debug_who;
 
 static const uint8_t *som_sprite_lookup(unsigned name,unsigned palette,unsigned tile){
     if(head_tiles_used&&palette>=1u&&palette<=3u&&tile<512u&&head_tiles.has[tile])return head_tiles.pixels[tile];
@@ -2542,6 +2547,15 @@ static uint16_t som_p2ai_buttons(const uint8_t *ram){
 /* What a press in the AI menu did, from the AI's own menu or the ring's page. */
 static void som_gambit_result(int result){
     switch(result){
+    case SOM_GAMBIT_CREATOR:{
+        const unsigned who=som_pad1_member()%SOM_PARTY_MEMBERS;
+        act_ai=0;gambits.open=0;gambits.resting=0;som_manual_disciplines=0;disciplines.open=0;
+        menu_hold_until_release=1;
+        memset(&sprite_creator,0,sizeof(sprite_creator));
+        creator_debug=1;creator_debug_who=who;
+        fprintf(stderr,"[som-ai] CREATOR debug for %s\n",som_party_names[who]);
+        break;
+    }
     case SOM_GAMBIT_GENRE_CHANGED:
         som_music_genre_save();
         fprintf(stderr,"[som-ai] MUSIC genre %s (%u)\n",
@@ -2960,8 +2974,11 @@ static void som_record_presses(uint16_t pressed){
 }
 static void som_input_poll(void){
     if(physical_poll)physical_poll();
-    if(sprite_creator_enabled&&backend_set_name_skin&&on_turbo&&test_enabled){
-        const int slot=som_creator_slot(som_live_wram());
+    if(sprite_creator_enabled&&(backend_set_name_skin||creator_debug)&&on_turbo&&test_enabled){
+        const int naming=som_creator_slot(som_live_wram());
+        if(creator_debug&&naming<0&&sprite_creator.seen&&!sprite_creator.active&&!sprite_creator.release)
+            creator_debug=0;                             /* the debug panel closed and let go */
+        const int slot=naming>=0?naming:creator_debug?(int)creator_debug_who:-1;
         if(slot>=0||sprite_creator.seen||sprite_creator.release){
             uint16_t buttons=0;
             for(unsigned key=0;frontend_state&&key<16u;key++)
@@ -2979,8 +2996,8 @@ static void som_input_poll(void){
             const unsigned skin=open?sprite_creator.skin:creator_skin[who];
             const unsigned head=open?sprite_creator.hair:creator_hair[who];
             const unsigned c=open?sprite_creator.hair_colour:creator_hair_colour[who];
-            const int shown=open||slot>=0;
-            backend_set_name_skin(shown?som_creator_skins[skin%SOM_CREATOR_SKINS]:NULL,sprite_creator.slot,
+            const int shown=(open||slot>=0)&&naming>=0;      /* the core's naming hooks: the naming page only */
+            if(backend_set_name_skin)backend_set_name_skin(shown?som_creator_skins[skin%SOM_CREATOR_SKINS]:NULL,sprite_creator.slot,
                                   (open?sprite_creator.layers:0u)|(head?SOM_CREATOR_HAIR_OFF:0u));
             if(backend_set_name_hair){
                 static uint16_t hair[3];
@@ -2997,7 +3014,8 @@ static void som_input_poll(void){
                 creator_hair[sprite_creator.slot]=sprite_creator.hair;
                 creator_hair_colour[sprite_creator.slot]=sprite_creator.hair_colour;
                 creator_class[sprite_creator.slot]=sprite_creator.cls;
-                if(sprite_creator.slot>0u)som_creator_class_apply(sprite_creator.slot);   /* the boy's: when the new game starts */
+                /* the boy's at naming: when the new game starts; in play: now */
+                if(sprite_creator.slot>0u||naming<0)som_creator_class_apply(sprite_creator.slot);
                 {const uint8_t *e=sprite_creator.hair?som_head_entry(&head_pack,sprite_creator.hair-1u):NULL;
                  fprintf(stderr,"[som-ai] CREATOR hair %s%02X %s\n",e?"head ":"native",e?e[0]:0u,
                          som_hair_colour_names[sprite_creator.hair_colour%SOM_HAIR_COLOURS]);}
@@ -9124,6 +9142,8 @@ static int som_handle_command(const char *command){
         som_party_class_saved();
         return 1;
     }
+    /* creator_open: the ACT menu's debug creator, for the hero pad 1 plays */
+    if(!strcmp(command,"creator_open")){som_gambit_result(SOM_GAMBIT_CREATOR);return 1;}
     /* hair_W_S_C: hero W (0 boy, 1 girl, 2 sprite) wears hair style S in
      * colour C (som_hair.h; look checks). */
     if(!strncmp(command,"hair_",5)){
@@ -10786,10 +10806,51 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
             if(grown){overlay_frame=grown;overlay_frame_size=size;}
         }
         if(size<=overlay_frame_size){
+            const uint8_t *head=sprite_creator.hair?som_head_entry(&head_pack,sprite_creator.hair-1u):NULL;
+            uint8_t *ram=som_live_wram();
+            if(creator_debug&&som_creator_slot(ram)<0){
+                /* in play: the hero's own sprite (VRAM + OAM), twice the size,
+                 * eyes on the preview's eye spot, with the choices on it */
+                som_creator_draw(&sprite_creator,overlay_frame,width,height,row,pixel_format,NULL,0,NULL,NULL);
+                const unsigned who=creator_debug_who%SOM_PARTY_MEMBERS;
+                static uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
+                int x0,y0;
+                const uint8_t *vram=backend_retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM)>=SOM_BUN_VRAM_SIZE?
+                    (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM):NULL;
+                if(ram&&vram&&som_armour_compose(ram+0x0800u,vram,who,img,&x0,&y0)){
+                    const uint8_t *o=ram+0xE000u+0x200u*who;
+                    const uint8_t *pal=ram+0xDE00u+(128u+((o[0x8B]>>1)&7u)*16u)*2u;
+                    int ex=0,ey=0,n=0,top=-1;
+                    for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
+                        if(img[y][x]&&top<0)top=y;
+                        if(img[y][x]==15u&&(top<0||y<top+22)){ex+=x;ey+=y;n++;}
+                    }
+                    if(n){ex/=n;ey/=n;}else{ex=SOM_ARMOUR_BOX/2;ey=(top<0?0:top)+12;}
+                    const unsigned c=sprite_creator.hair_colour,skin=sprite_creator.skin;
+                    for(int y=0;y<SOM_ARMOUR_BOX;y++)for(int x=0;x<SOM_ARMOUR_BOX;x++){
+                        const unsigned k=img[y][x];
+                        if(!k||(head&&k>=2u&&k<=4u))continue;      /* a game head replaces his hair */
+                        unsigned r,g,b;
+                        if(k>=2u&&k<=4u&&c&&c<SOM_HAIR_COLOURS){r=som_hair_ramps[c][k-2u][0];g=som_hair_ramps[c][k-2u][1];b=som_hair_ramps[c][k-2u][2];}
+                        else{
+                            unsigned v=pal[2u*k]|(unsigned)pal[2u*k+1u]<<8;
+                            if(k>=5u&&k<=7u&&skin&&skin<SOM_CREATOR_SKINS&&som_creator_skins[skin][k-5u]!=0xFFFFu)
+                                v=som_creator_skins[skin][k-5u];
+                            r=(v&31u)<<3;g=((v>>5)&31u)<<3;b=((v>>10)&31u)<<3;
+                        }
+                        const int px=38+2*(x-ex+8),py=67+2*(y-ey+12);
+                        if(px<14||py<40||px>96||py>176)continue;
+                        const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u;
+                        som_overlay_fill(overlay_frame,row,pixel_format,(unsigned)px*sx,(unsigned)py*sy,2u*sx,2u*sy,
+                                         som_overlay_color(pixel_format,r,g,b));
+                    }
+                }
+                som_creator_draw_head(overlay_frame,width,height,row,pixel_format,head,who,
+                                      sprite_creator.skin,sprite_creator.hair_colour,38,67,2,NULL);
+            }else
             som_creator_draw(&sprite_creator,overlay_frame,width,height,row,pixel_format,
                              data!=RETRO_HW_FRAME_BUFFER_VALID&&pitch>=row?data:NULL,pitch,
-                             backend_name_matte?backend_name_matte():NULL,
-                             sprite_creator.hair?som_head_entry(&head_pack,sprite_creator.hair-1u):NULL);
+                             backend_name_matte?backend_name_matte():NULL,head);
             som_frontend_video(overlay_frame,width,height,row);
             return;
         }
@@ -11352,6 +11413,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     memset(creator_skin,0,sizeof(creator_skin));
     memset(creator_hair,0,sizeof(creator_hair));memset(creator_hair_colour,0,sizeof(creator_hair_colour));
     memset(creator_class,0,sizeof(creator_class));
+    creator_debug=0;
     if(backend_set_name_skin)backend_set_name_skin(NULL,0u,0u);
     if(backend_set_name_hair)backend_set_name_hair(NULL);
     sprite_creator_captures=0;

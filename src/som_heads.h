@@ -35,7 +35,7 @@ typedef struct { uint8_t *data; unsigned count; } SomHeadPack;
 static inline void som_heads_free(SomHeadPack *p){free(p->data);p->data=NULL;p->count=0;}
 static inline int som_heads_parse(SomHeadPack *p,const uint8_t *bytes,size_t size){
     som_heads_free(p);
-    if(!bytes||size<10u||memcmp(bytes,"SOMHEAD2",8))return 0;
+    if(!bytes||size<10u||memcmp(bytes,"SOMHEAD3",8))return 0;
     const unsigned n=bytes[8]|(unsigned)bytes[9]<<8;
     if(!n||n>SOM_HEADS_MAX||size<10u+(size_t)n*SOM_HEAD_ENTRY)return 0;
     p->data=(uint8_t*)malloc((size_t)n*SOM_HEAD_ENTRY);
@@ -52,7 +52,7 @@ static inline const uint8_t *som_head_hair(const uint8_t *e,unsigned k){return e
 /* The role at (x, y) of view 0 up, 1 down, 2 side (facing right). */
 static inline uint8_t som_head_role(const uint8_t *e,unsigned view,int x,int y){
     if(x<0||y<0||x>=SOM_HEAD_SIZE||y>=SOM_HEAD_SIZE||view>2u)return 0;
-    return e[SOM_HEAD_PIXELS+view*SOM_HEAD_SIZE*SOM_HEAD_SIZE+(unsigned)y*SOM_HEAD_SIZE+(unsigned)x];
+    return e[SOM_HEAD_PIXELS+view*SOM_HEAD_SIZE*SOM_HEAD_SIZE+(unsigned)y*SOM_HEAD_SIZE+(unsigned)x]&0x7Fu;
 }
 /* The head's eye centre in view 0-2 (the pack measured it): 1 if known.
  * A side view without one borrows the front's. */
@@ -83,19 +83,13 @@ static inline uint8_t som_head_index(const uint8_t *e,unsigned who,uint8_t role,
     return (uint8_t)best;
 }
 /* Hair only (player, 2026-11-27: "use mask to remove the face and
- * shoulders keeping just the hair"): the head's hair (roles 2-4), and its
- * outline and other colours (ribbons, bows) where they touch the hair. Face,
- * eyes, skin and shoulders are dropped: the hero keeps his own. 0 = none. */
+ * shoulders keeping just the hair"): the pixels the pack marked as the
+ * hairstyle (bit 0x80: above the brows, hair colours, what touches them).
+ * Face, eyes, skin and shoulders are dropped: the hero keeps his own. */
 static inline uint8_t som_head_hair_role(const uint8_t *e,unsigned view,int x,int y){
-    const uint8_t q=som_head_role(e,view,x,y);
-    if(q>=2u&&q<=4u)return q;
-    if(q!=1u&&q<16u)return 0;
-    static const int d[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
-    for(unsigned k=0;k<4u;k++){
-        const uint8_t n=som_head_role(e,view,x+d[k][0],y+d[k][1]);
-        if(n>=2u&&n<=4u)return q;
-    }
-    return 0;
+    if(x<0||y<0||x>=SOM_HEAD_SIZE||y>=SOM_HEAD_SIZE||view>2u||!e)return 0;
+    const uint8_t raw=e[SOM_HEAD_PIXELS+view*SOM_HEAD_SIZE*SOM_HEAD_SIZE+(unsigned)y*SOM_HEAD_SIZE+(unsigned)x];
+    return raw&0x80u?(uint8_t)(raw&0x7Fu):0u;            /* the pack marked the hairstyle by shape */
 }
 /* The tiles to draw instead this frame: tile -> 64 colour indices. */
 typedef struct {

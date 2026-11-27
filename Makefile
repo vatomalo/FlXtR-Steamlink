@@ -113,6 +113,18 @@ test-som-combo:
 
 .PHONY: test-som-combo
 
+test-som-perks:
+	@mkdir -p build
+	$(CC) $(CFLAGS) -Isrc tests/test_perk_runtime.c -o build/test-perk-runtime
+	./build/test-perk-runtime > /dev/null && echo "PASS: perk runtime"
+	$(CC) $(CFLAGS) -Isrc tests/test_perk_progression.c -o build/test-perk-progression
+	./build/test-perk-progression
+	$(CC) $(CFLAGS) -Isrc tests/test_perk_persistence.c -o build/test-perk-persistence
+	./build/test-perk-persistence
+	python3 -m unittest tests/test_perk_database.py
+
+.PHONY: test-som-perks
+
 test-som-mentalist:
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/som_mentalist_test.c -o build/som-mentalist-test

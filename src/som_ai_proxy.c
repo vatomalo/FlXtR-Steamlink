@@ -50,6 +50,8 @@
 #include "som_perf.h"
 #include "som_mentalist.h"
 #include "som_intercept.h"
+#include "som_temporal.h"
+#include "som_perk_runtime.h"
 static void som_fight_configure(void);
 static void som_fight_set_level(unsigned level);
 static void som_fight_general_elected(unsigned i);
@@ -141,6 +143,29 @@ static void som_whack_frame(const uint8_t *ram);
 static const char *som_class_attack_name(unsigned cls);
 static unsigned som_pad2_member(const uint8_t *ram);
 static void som_perks_frame(uint8_t *ram);
+/* Inherited perks (src/som_perk_runtime.h): the runtime, per-hero watch
+ * state, and the glue (before som_bullet_world). Time effects on monsters
+ * (src/som_temporal.h) include the Monk's bullet time. */
+static SomPerkRuntime perk_rt;
+static SomTemporal temporal;
+static uint8_t perk_rt_weapon[3]={0xFFu,0xFFu,0xFFu},perk_rt_mon_state[3],perk_rt_mon_id[3];
+static uint16_t perk_rt_still[3],perk_rt_x[3],perk_rt_y[3];
+static unsigned long perk_rt_attack_end[3],perk_gen_frame[3],perk_say_at,perk_rt_guard_rise[3];
+static unsigned perk_owed[3],perk_slot_drop[3],perk_rt_last_drop=8u;
+static unsigned long perk_owed_at[3];
+static int perk_rt_revalidate,perk_feedback_off,perk_in_intercept;
+/* the runtime's own hit and kill credit: the lead's B-string hits reach the
+ * runtime without going through the class passives (som_perk_hit), so those
+ * classes feel exactly as before when no inherited perk is equipped */
+static unsigned long perk_rt_hit_frame[3];
+static unsigned perk_rt_hit_who[3];
+static uint8_t perk_rt_live[3],perk_rt_species[3];
+static void som_perk_rt_credit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop);
+static uint8_t perk_rt_guarding[3];
+static void som_perk_rt_emit(const uint8_t *ram,unsigned who,int slot,unsigned type,unsigned amount,unsigned depth);
+static unsigned som_perk_owe(uint8_t *m,unsigned slot,unsigned amount);
+static void som_perk_rt_frame(uint8_t *ram);
+static int som_perk_rt_command(const char *command);
 static uint16_t som_word(const uint8_t *p);
 static void som_put_word(uint8_t *p,uint16_t v);
 /* The chain level with the Finisher Mastery and Weapon Flow perks. */
@@ -226,6 +251,8 @@ static const char *quest_file=SOM_QUEST_FILE;
 #define SOM_BRAIN_FILE "/home/apps/retroarch/cores/experimental/som_ai_brain"
 static const char *brain_file=SOM_BRAIN_FILE;
 #define SOM_DEBUG_MESSAGES_FILE "/home/apps/retroarch/cores/experimental/som_ai_debug_messages"
+#define SOM_PERKS_PENDING_FILE "/home/apps/retroarch/cores/experimental/som_perks_pending"
+#define SOM_PERK_FEEDBACK_OFF_FILE "/home/apps/retroarch/cores/experimental/som_perk_feedback_off"
 static const char *debug_messages_file=SOM_DEBUG_MESSAGES_FILE;
 #define SOM_P2_AI_FILE "/home/apps/retroarch/cores/experimental/som_ai_player2"
 static const char *p2_ai_file=SOM_P2_AI_FILE;
@@ -641,6 +668,20 @@ FORWARD(size_t,retro_get_memory_size,(unsigned id),(id))
 #endif
 static const char *prog_dir=SOM_PROG_DIR;
 static SomProgress prog;
+/* Equipped perks travel in the progress record ("pl1" lines). On a load the
+ * ids are put back as they are; the rules (unlocks, capacity) are applied
+ * on the next field frame, when the heroes' levels are in WRAM. Nothing in
+ * flight (cooldowns, stored damage, shields) survives a load. */
+static void som_perk_prog_store(SomProgress *p){
+    p->loadout_set=1;
+    for(unsigned who=0;who<3u;who++)p->loadout_n[who]=(uint8_t)som_prt_ids(&perk_rt,who,p->loadout[who]);
+}
+static void som_perk_prog_restore(const SomProgress *p){
+    for(unsigned who=0;who<3u;who++)
+        (void)som_prt_set_raw(&perk_rt,who,p->loadout[who],p->loadout_set?p->loadout_n[who]:0u);
+    som_prt_flush(&perk_rt);
+    perk_rt_revalidate=1;
+}
 static uint64_t prog_rom,prog_seen[SOM_PROG_SLOTS];
 static int prog_baseline,prog_was_field,prog_session_first=1;
 static void som_prog_path(uint64_t owner,const char *suffix,char *out,size_t cap){
@@ -664,7 +705,7 @@ static int som_prog_read(uint64_t owner,SomProgress *p){
 }
 static int som_prog_write(void){
     if(!prog.owner)return 0;                 /* a new game before its first save */
-    som_prog_from_disc(&prog,&disciplines);
+    som_prog_from_disc(&prog,&disciplines);som_perk_prog_store(&prog);
     prog.perks[0]=som_perk_bits(&disciplines);
     char text[SOM_PROG_TEXT_MAX];
     const size_t n=som_prog_format(&prog,text,sizeof(text));
@@ -725,11 +766,11 @@ static void som_prog_frame(void){
             const int got=som_prog_read(fp,&loaded);
             const int was_classless=disciplines.classless;
             if(was_classless)som_disc_init_keep();
-            if(got==SOM_PROG_OK){prog=loaded;som_prog_to_disc(&prog,&disciplines);}
+            if(got==SOM_PROG_OK){prog=loaded;som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);}
             else{
                 som_prog_fresh(&prog,prog_rom);
                 const uint8_t keep=disciplines.selected;
-                som_prog_to_disc(&prog,&disciplines);disciplines.selected=keep;
+                som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);disciplines.selected=keep;
             }
             prog.owner=fp;prog.slot=(unsigned)in_play;
             fprintf(stderr,"[som-ai] PROGRESS slot %d loaded (%016llx): %s\n",in_play+1,
@@ -738,11 +779,11 @@ static void som_prog_frame(void){
         }else if(in_play<0&&ram[0xE181]==0&&(prog_session_first||prog.owner||!disciplines.classless)){
             /* Level 1 and no save: a new game, and new games are classless. */
             som_prog_fresh(&prog,prog_rom);som_prog_classless(&prog);
-            som_prog_to_disc(&prog,&disciplines);
+            som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);
             fprintf(stderr,"[som-ai] PROGRESS new game: classless\n");
         }else if(in_play<0&&prog_session_first){
             const uint8_t keep=disciplines.selected;
-            som_prog_fresh(&prog,prog_rom);som_prog_to_disc(&prog,&disciplines);
+            som_prog_fresh(&prog,prog_rom);som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);
             disciplines.selected=keep;
             fprintf(stderr,"[som-ai] PROGRESS new game (no matching save): fresh progression\n");
         }
@@ -1112,7 +1153,8 @@ static SomBolt mage_bolts[SOM_BOLTS];
 /* Bullet time (see som_bullet_world). */
 #define SOM_BULLET_FRAMES 150u            /* 2.5 s */
 #define SOM_BULLET_COOLDOWN 1200ul         /* frames between two */
-static unsigned bullet_frames;
+/* bullet time is temporal.world (src/som_temporal.h) */
+#define bullet_frames (temporal.world)
 static unsigned long bullet_ready;
 static unsigned class_roll(void);
 /* The Mentalist's string: state here, the moves after the string helpers. */
@@ -1787,12 +1829,11 @@ static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,u
     if(!ram||slot>2u)return;
     /* Bonus damage we added earlier lands as a drop too: it is not a new hit
      * to earn a bonus on (it snowballed, 2026-11-25). */
-    static unsigned owed[3];
-    static unsigned long owed_at[3];
-    if(frame_number-owed_at[slot]>90ul)owed[slot]=0;
-    const unsigned ours=owed[slot]<drop?owed[slot]:drop;
-    owed[slot]-=ours;drop-=ours;
-    if(drop)perk_last_hit_damage=drop;
+    if(frame_number-perk_owed_at[slot]>90ul)perk_owed[slot]=0;
+    const unsigned ours=perk_owed[slot]<drop?perk_owed[slot]:drop;
+    perk_owed[slot]-=ours;drop-=ours;
+    if(drop){perk_last_hit_damage=drop;perk_slot_drop[slot]=drop;perk_gen_frame[slot]=0;
+             perk_rt_hit_frame[slot]=frame_number;perk_rt_hit_who[slot]=who;perk_rt_last_drop=drop;}
     uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
     if(hp_after){
         const unsigned hit_cls=som_disc_member_class(&disciplines,who);
@@ -1811,15 +1852,12 @@ static void som_perk_hit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop,u
                 if(!gambits.no_whack)som_cam_whack(&camera,m);
             }
         }
-        if(bonus){
-            /* The game's pending damage is one byte: only what fits is owed. */
-            const unsigned room=0xFFu-m[0x1F1],added=bonus<room?bonus:room;
-            owed[slot]+=added;owed_at[slot]=frame_number;
-            m[0x1F1]=(uint8_t)(m[0x1F1]+added);
-        }
+        /* The game's pending damage is one byte: only what fits is owed. */
+        if(bonus)(void)som_perk_owe(m,slot,bonus);
     }
     monster_hit_frame[slot]=frame_number;monster_hit_who[slot]=who;
     som_judged_hit(ram,who,slot);
+    if(drop)som_perk_rt_emit(ram,who,(int)slot,SOM_PEV_ATTACK_HIT,drop,0u);
 }
 /* The guard is up: the AI's block action, or physical R2. */
 static int som_guarding(void){
@@ -1887,6 +1925,19 @@ static void som_perks_hero(uint8_t *ram,unsigned who){
     }
     if(som_psi_mirror_hero(ram,who)&&hurt){som_put_word(hero+0x182,(uint16_t)prev);now_hp=prev;}
     const int guarding=som_guard_up(ram,who);
+    if(guarding&&!perk_rt_guarding[who])perk_rt_guard_rise[who]=frame_number;
+    perk_rt_guarding[who]=(uint8_t)guarding;
+    if(hurt&&now_hp<prev){
+        const int foe=som_bun_toucher(ram,hx,hy,SOM_BUN_HERO_TOUCH_X*2,SOM_BUN_HERO_TOUCH_Y*2,familiar.slot);
+        if(guarding){
+            som_perk_rt_emit(ram,who,foe,SOM_PEV_BLOCK,prev-now_hp,0u);
+            /* a just guard: raised at most 12 frames before the blow */
+            if(frame_number-perk_rt_guard_rise[who]<=12ul)
+                som_perk_rt_emit(ram,who,foe,SOM_PEV_PERFECT_BLOCK,prev-now_hp,0u);
+        }
+        som_perk_rt_emit(ram,who,foe,SOM_PEV_DAMAGE_POST,prev-now_hp,0u);
+        now_hp=som_word(hero+0x182);      /* a shield may have given some back */
+    }
     const unsigned cls=som_disc_member_class(&disciplines,who);
     const int samurai=cls==SOM_DISC_BUSHIDO,monk=cls==SOM_DISC_MARTIAL;
     /* Bullet time: a blow landing on the guard of a Monk, Samurai or Ninja,
@@ -1921,6 +1972,7 @@ static void som_perks_hero(uint8_t *ram,unsigned who){
             som_overlay_say(&overlay,samurai?"^Iai counter!":"^Counter palm!",SOM_MESSAGE_FRAMES/3u);
             fprintf(stderr,"[som-ai] %s %s: parried, hit monster %d for %u\n",som_party_names[who],
                     samurai?"IAI COUNTER":"COUNTER PALM",foe,damage);
+            som_perk_rt_emit(ram,who,foe,SOM_PEV_COUNTER,damage,0u);
             som_cam_counter(&camera,m);                       /* crash zoom */
         }
     }
@@ -1940,6 +1992,7 @@ static void som_perks_hero(uint8_t *ram,unsigned who){
             som_overlay_say(&overlay,"^Tiger Drop!",SOM_MESSAGE_FRAMES/3u);
             fprintf(stderr,"[som-ai] PERK %s Tiger Drop: guarded hit countered for %u on monster %d\n",
                     som_party_names[who],damage,foe);
+            som_perk_rt_emit(ram,who,foe,SOM_PEV_COUNTER,damage,0u);
         }
     }
     perk_hero_hp_prev[who]=now_hp;
@@ -1965,7 +2018,23 @@ static void som_perks_swings(uint8_t *ram){
             if(d>(som_weapon_long_range(o[0x1E4])?160:64))continue;
             if(best<0||d<best_d){best=(int)who;best_d=d;}
         }
-        if(best<=0||som_pad1_member_in(ram)==(unsigned)best)continue;   /* the lead: combo watcher */
+        if(best<=0||som_pad1_member_in(ram)==(unsigned)best){   /* the lead: combo watcher */
+            /* ... unless it was a string move the watcher does not see: the
+             * nearest swinging hero, every HP drop (owed damage aside), goes
+             * to the perk runtime only; the class passives stay as they were */
+            int lead=-1;long lead_d=0;
+            for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+                const uint8_t *o=ram+0xE000u+0x200u*who;
+                if(o[0]!=1||!(o[0x1C]&0xA0u))continue;
+                const long d=labs((long)som_bun_u16(m+2)-(long)som_bun_u16(o+2))+
+                             labs((long)som_bun_u16(m+4)-(long)som_bun_u16(o+4));
+                if(d>(som_weapon_long_range(o[0x1E4])?160:64))continue;
+                if(lead<0||d<lead_d){lead=(int)who;lead_d=d;}
+            }
+            if(lead>=0&&(lead==0||som_pad1_member_in(ram)==(unsigned)lead))
+                som_perk_rt_credit(ram,(unsigned)lead,slot,before-hp);
+            continue;
+        }
         perk_swing_done[best]=1;
         som_perk_hit(ram,(unsigned)best,slot,before-hp,hp);
     }
@@ -1982,10 +2051,20 @@ static void som_perks_frame(uint8_t *ram){
     }
     if(near)perk_quiet=0;
     else if(perk_quiet<SOM_FIGHT_QUIET_FRAMES)perk_quiet++;
-    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)                          /* a new fight */
+    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES){                         /* a new fight */
+        if(perk_first_hit_used[0]|perk_first_hit_used[1]|perk_first_hit_used[2]|
+           perk_rt.hero[0].hit_this_fight|perk_rt.hero[1].hit_this_fight|perk_rt.hero[2].hit_this_fight|
+           perk_rt.hero[0].hurt_this_fight|perk_rt.hero[1].hurt_this_fight|perk_rt.hero[2].hurt_this_fight)
+            for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++){
+                SomPerkEv ev;memset(&ev,0,sizeof(ev));
+                ev.type=SOM_PEV_COMBAT_END;ev.who=(uint8_t)w;ev.slot=-1;ev.frame=(uint32_t)frame_number;
+                som_prt_emit(&perk_rt,&ev);
+            }
         memset(perk_first_hit_used,0,sizeof(perk_first_hit_used));
+    }
     som_perks_swings(ram);
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++)som_perks_hero(ram,who);
+    som_perk_rt_frame(ram);
     /* Battle Rhythm: a monster a hero hit that dies within
      * SOM_KILL_CREDIT_FRAMES heals that hero. */
     for(unsigned slot=0;slot<3u;slot++){
@@ -6595,6 +6674,18 @@ static void som_cam_finisher_near(uint8_t *ram,unsigned who){
     if(!ram||who>=SOM_PARTY_MEMBERS)return;
     const uint8_t *o=ram+0xE000u+0x200u*who;
     const uint8_t *m=som_combo_locked_enemy(ram,who);
+    if(!perk_in_intercept){
+        /* every finisher passes here: the perks' COMBO_FINISHER */
+        int slot=-1;long best=-1;
+        for(unsigned k=0;k<3u;k++){
+            const uint8_t *e=ram+0xE600u+0x200u*k;
+            if(!som_bun_monster_alive(e)||(int)k==familiar.slot)continue;
+            if(m&&e!=m)continue;
+            const long d=labs((long)som_word(e+2)-(long)som_word(o+2))+labs((long)som_word(e+4)-(long)som_word(o+4));
+            if(d<=120&&(best<0||d<best)){best=d;slot=(int)k;}
+        }
+        som_perk_rt_emit(ram,who,slot,SOM_PEV_COMBO_FINISHER,perk_rt_last_drop,0u);
+    }
     if(!m){
         long best=-1;
         for(unsigned k=0;k<3u;k++){
@@ -6683,8 +6774,10 @@ static int som_intercept_x(uint8_t *ram){
     o[0x059]=0;o[0x1F1]=o[0x1F2]=0;
     const SomIcptMove *mv=&som_icpt_moves[icpt.next%SOM_ICPT_MOVES];
     icpt.next=(icpt.next+1u)%SOM_ICPT_MOVES;
-    som_monk_play(ram,o,mv->level,0u,perfect?3u:2u,mv->name);
+    perk_in_intercept=1;som_monk_play(ram,o,mv->level,0u,perfect?3u:2u,mv->name);perk_in_intercept=0;
     o[0x010]=face;
+    som_perk_rt_emit(ram,who,k,SOM_PEV_INTERCEPT,damage,0u);
+    som_perk_rt_emit(ram,who,k,SOM_PEV_COUNTER,damage,0u);
     char text[48];
     if(icpt.chain>1u)snprintf(text,sizeof text,"^%s%s|x%u",perfect?"Perfect ":"",mv->name,icpt.chain);
     else snprintf(text,sizeof text,"^%s%s",perfect?"Perfect ":"",mv->name);
@@ -8474,6 +8567,7 @@ static int som_handle_command(const char *command){
             return 1;
         }
     }
+    {const int r=som_perk_rt_command(command);if(r>=0)return r;}
     if(!strcmp(command,"fuma_swap"))
         return som_fuma_swap(backend_retro_get_memory_data?
             (uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL);
@@ -10438,6 +10532,19 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game){
     som_music_stop();music_check_frame=0;
     som_fight_configure();
     {const char *perks=getenv("FLXTR_SOM_PERKS");perks_enabled=!(perks&&!strcmp(perks,"0"));}
+    /* Inherited perks: loadouts come with the progress record. The pending
+     * switch lets SUPPORTED_PENDING_TEST perks be equipped (tests). */
+    {
+        SomPerkRuntime keep=perk_rt;
+        som_prt_init(&perk_rt);
+        memcpy(perk_rt.hero,keep.hero,sizeof(perk_rt.hero));
+        som_prt_flush(&perk_rt);
+        som_time_reset(&temporal);
+        const char *pend=getenv("FLXTR_SOM_PERKS_PENDING");
+        perk_rt.pending_ok=(pend&&!strcmp(pend,"1"))||access(SOM_PERKS_PENDING_FILE,F_OK)==0;
+        perk_feedback_off=access(SOM_PERK_FEEDBACK_OFF_FILE,F_OK)==0;
+        memset(perk_rt_weapon,0xFF,sizeof(perk_rt_weapon));
+    }
     prog_rom=game&&game->data&&game->size?som_prog_hash((const uint8_t*)game->data,game->size):0;
     som_prog_fresh(&prog,prog_rom);prog_baseline=0;prog_was_field=0;prog_session_first=1;
     memset(prog_seen,0,sizeof(prog_seen));
@@ -10544,13 +10651,14 @@ RETRO_API bool retro_serialize(void *data,size_t size){
     if(!core||!data||size<core)return false;
     if(!backend_retro_serialize(data,core))return false;
     if(size>=core+SOM_PROG_TRAILER_SIZE){
-        som_prog_from_disc(&prog,&disciplines);
+        som_prog_from_disc(&prog,&disciplines);som_perk_prog_store(&prog);
         som_prog_trailer_write(&prog,(uint8_t*)data+core);
     }
     return true;
 }
 RETRO_API bool retro_unserialize(const void *data,size_t size){
     ally_order.until=0;
+    som_prt_flush(&perk_rt);som_time_reset(&temporal);
     memset(revivals,0,sizeof(revivals));
     memset(rescue_ready,0,sizeof(rescue_ready));
     load_backend();
@@ -10560,7 +10668,7 @@ RETRO_API bool retro_unserialize(const void *data,size_t size){
         SomProgress loaded;
         if(som_prog_trailer_read((const uint8_t*)data+core,&loaded)==SOM_PROG_OK){
             if(disciplines.classless&&!loaded.classless)som_disc_init_keep();
-            prog=loaded;som_prog_to_disc(&prog,&disciplines);
+            prog=loaded;som_prog_to_disc(&prog,&disciplines);som_perk_prog_restore(&prog);
             prog_session_first=0;prog_was_field=1;
             fprintf(stderr,"[som-ai] PROGRESS restored from the save state (slot %u)\n",
                     prog.slot<SOM_PROG_SLOTS?prog.slot+1u:0u);
@@ -11113,21 +11221,433 @@ static void som_combo_spacing_after(uint8_t *ram,unsigned map,const SomComboPosi
  * their movement (put back where they stood) and of their attack gauge
  * (+0x1ED counts down half as fast), so they move and strike at half speed
  * while the game, the heroes and the music run as ever. */
+/* ---- Inherited perks (src/som_perk_runtime.h, docs/SOM_PERK_ARCHITECTURE.md) ----
+ * The proxy reports events where it already sees them (som_perk_hit,
+ * som_perks_hero, som_perks_frame, Intercept, finishers) and carries out the
+ * runtime's actions here, with the levers it already owns: pending damage
+ * +0x1F1 (owed, so bonus damage is never a new hit), HP restore, heals,
+ * class energy, the weapon gauge +0x1ED and time (src/som_temporal.h). */
+static int som_perk_rt_field(const uint8_t *ram){
+    return ram&&ram[0xE4]==1&&ram[0xE6]==0x0F&&ram[0xD0]==0;
+}
+static int som_perk_rt_boss(const uint8_t *m){return m[0x180]>=0x57u;}
+static int som_perk_rt_alive(const uint8_t *m,int slot){
+    return slot!=familiar.slot&&m[0]==1&&m[0x180]<0x80u&&som_word(m+0x182)!=0;
+}
+static SomEnergy *som_perk_rt_energy(unsigned who){
+    return who&&who<SOM_PARTY_MEMBERS?&ally_tech[who-1u].en:&energy;
+}
+/* Which way a monster faces (+0x10 as for the heroes: 0 up, 1 down, 2 right,
+ * 0x82 left), and whether the hero stands on its far side. */
+static int som_perk_rt_behind(const uint8_t *o,const uint8_t *m){
+    const int dx=(int)som_word(o+2)-(int)som_word(m+2),dy=(int)som_word(o+4)-(int)som_word(m+4);
+    switch(m[0x10]&0x83u){
+    case 0x00u:return dy>8;            /* faces up, hero below */
+    case 0x01u:return dy<-8;           /* faces down, hero above */
+    case 0x02u:return dx<-8;           /* faces right, hero left */
+    case 0x82u:return dx>8;            /* faces left, hero right */
+    default:return 0;
+    }
+}
+static void som_perk_rt_fill(const uint8_t *ram,unsigned who,int slot,unsigned type,unsigned amount,SomPerkEv *ev){
+    memset(ev,0,sizeof(*ev));
+    ev->type=(uint8_t)type;ev->who=(uint8_t)who;ev->slot=(int8_t)slot;ev->amount=(uint16_t)(amount>0xFFFFu?0xFFFFu:amount);
+    ev->frame=(uint32_t)frame_number;
+    const uint8_t *o=ram+0xE000u+0x200u*who;
+    ev->hp=(uint16_t)som_word(o+0x182);ev->hp_max=(uint16_t)som_word(o+0x184);
+    ev->weapon=o[0x1E4];ev->charge=o[0x19B];
+    ev->combo=(uint8_t)(who==som_pad1_member_in(ram)?(combo.hits>250u?250u:combo.hits):0u);
+    ev->still_frames=perk_rt_still[who];
+    const unsigned cls=som_disc_member_class(&disciplines,who);
+    if(cls<SOM_DISCIPLINE_COUNT){
+        const unsigned max=som_energy_max(disciplines.level[cls]);
+        ev->energy_pct=(uint8_t)(max?som_perk_rt_energy(who)->energy[cls]*100u/max:0u);
+    }
+    uint32_t f=0;
+    if(o[0x19B]&&!(o[0x1C]&0xA0u))f|=SOM_PFACT_CHARGING;
+    if(temporal.world)f|=SOM_PFACT_BULLET_TIME;
+    if(perk_quiet>=SOM_FIGHT_QUIET_FRAMES)f|=SOM_PFACT_OUT_OF_COMBAT;
+    if(som_guard_up(ram,who))f|=SOM_PFACT_OWNER_GUARDING;
+    if(familiar.slot>=0)f|=SOM_PFACT_FAMILIAR_ALIVE;
+    if(som_time_owned(&temporal,who))f|=SOM_PFACT_OWN_TIME_EFFECT;
+    const int ox=(int)som_word(o+2),oy=(int)som_word(o+4);
+    int close=0;
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *e=ram+0xE600u+0x200u*k;
+        if(som_perk_rt_alive(e,(int)k)&&abs((int)som_word(e+2)-ox)+abs((int)som_word(e+4)-oy)<=32)close=1;
+    }
+    if(!close)f|=SOM_PFACT_NO_MONSTER_CLOSE;
+    for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++){
+        const uint8_t *a=ram+0xE000u+0x200u*w;
+        if(w==who||a[0]!=1||!som_word(a+0x182))continue;
+        if(som_word(a+0x182)*2u<som_word(a+0x184)&&
+           abs((int)som_word(a+2)-ox)+abs((int)som_word(a+4)-oy)<=32)f|=SOM_PFACT_ALLY_LOW_HP_NEAR;
+    }
+    if(slot>=0&&slot<3){
+        const uint8_t *m=ram+0xE600u+0x200u*(unsigned)slot;
+        const int mx=(int)som_word(m+2),my=(int)som_word(m+4);
+        ev->target_id=m[0x180];ev->target_hp=(uint16_t)som_word(m+0x182);ev->target_max=(uint16_t)som_word(m+0x184);
+        const long d=labs((long)(mx-ox))+labs((long)(my-oy));
+        ev->dist=(uint16_t)(d>0xFFFF?0xFFFF:d);
+        if(perk_rt_mon_state[slot]==0x40u)f|=SOM_PFACT_TARGET_STAGGERED;   /* before this hit */
+        if(som_undead(m[0x180]))f|=SOM_PFACT_TARGET_UNDEAD;
+        if(som_perk_rt_boss(m))f|=SOM_PFACT_TARGET_BOSS;
+        if(ev->hp_max&&ev->target_max>=2u*ev->hp_max)f|=SOM_PFACT_TARGET_LARGE;
+        if(perk_rt_attack_end[slot]&&frame_number-perk_rt_attack_end[slot]<=30ul&&m[0x1C]!=0x80u)
+            f|=SOM_PFACT_TARGET_RECOVERING;
+        const int behind=som_perk_rt_behind(o,m);
+        if(behind)f|=SOM_PFACT_BEHIND;
+        if(behind&&m[0x1C]!=0x80u)f|=SOM_PFACT_TARGET_UNAWARE;
+        const unsigned speed=som_time_speed(&temporal,(unsigned)slot,m[0x180]);
+        if(speed<100u)f|=SOM_PFACT_TARGET_SLOWED;
+        if(!speed)f|=SOM_PFACT_TARGET_FROZEN;
+        int alone=1;
+        for(unsigned k=0;k<3u;k++){
+            const uint8_t *e=ram+0xE600u+0x200u*k;
+            if((int)k==slot||!som_perk_rt_alive(e,(int)k))continue;
+            if(abs((int)som_word(e+2)-mx)+abs((int)som_word(e+4)-my)<=64)alone=0;
+        }
+        if(alone)f|=SOM_PFACT_TARGET_ISOLATED;
+        for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++){
+            const uint8_t *a=ram+0xE000u+0x200u*w;
+            if(w==who||a[0]!=1||!som_word(a+0x182))continue;
+            if(abs((int)som_word(a+2)-mx)+abs((int)som_word(a+4)-my)<=48)f|=SOM_PFACT_ALLY_NEAR_TARGET;
+        }
+        if(familiar.slot>=0&&familiar.slot<3){
+            const uint8_t *fm=ram+0xE600u+0x200u*(unsigned)familiar.slot;
+            if(abs((int)som_word(fm+2)-mx)+abs((int)som_word(fm+4)-my)<=48)f|=SOM_PFACT_ALLY_NEAR_TARGET;
+        }
+    }
+    ev->facts=f;
+}
+static void som_perk_rt_emit(const uint8_t *ram,unsigned who,int slot,unsigned type,unsigned amount,unsigned depth){
+    if(!perks_enabled||!ram||who>=SOM_PARTY_MEMBERS||!perk_rt.hero[who].n)return;   /* bookkeeping too */
+    SomPerkEv ev;som_perk_rt_fill(ram,who,slot,type,amount,&ev);
+    ev.depth=(uint8_t)depth;
+    if(type==SOM_PEV_ENEMY_KILLED&&slot>=0&&slot<3){
+        /* the slot now holds the dead marker: judge the monster it was */
+        const uint8_t id=perk_rt_species[slot];
+        ev.target_id=id;ev.target_hp=0;
+        ev.facts&=~(uint32_t)(SOM_PFACT_TARGET_BOSS|SOM_PFACT_TARGET_UNDEAD);
+        if(id>=0x57u)ev.facts|=SOM_PFACT_TARGET_BOSS;
+        if(som_undead(id))ev.facts|=SOM_PFACT_TARGET_UNDEAD;
+    }
+    if(som_prt_emit(&perk_rt,&ev)){
+        char names[160];size_t n=0;names[0]=0;
+        for(unsigned i=0;i<perk_rt.n_fired&&n+30u<sizeof(names);i++){
+            const SomPerkDef *d=som_perk_def_by_id(perk_rt.fired_ids[i]);
+            n+=(size_t)snprintf(names+n,sizeof(names)-n,"%s%s",i?", ":"",d?d->name:"?");
+        }
+        fprintf(stderr,"[som-ai] PERK %s %s fires: %s\n",som_party_names[who],som_perk_event_names[type],names);
+    }
+}
+static unsigned som_perk_owe(uint8_t *m,unsigned slot,unsigned amount){
+    if(slot>2u||!amount)return 0;
+    if(frame_number-perk_owed_at[slot]>90ul)perk_owed[slot]=0;
+    const unsigned room=0xFFu-m[0x1F1],added=amount<room?amount:room;
+    perk_owed[slot]+=added;perk_owed_at[slot]=frame_number;
+    m[0x1F1]=(uint8_t)(m[0x1F1]+added);
+    return added;
+}
+/* The monster an action aims at, from the event's slot. */
+static int som_perk_rt_aim(const uint8_t *ram,const SomPerkAction *a,int k,unsigned who){
+    if(a->slot<0||a->slot>2)return -1;
+    const uint8_t *base=ram+0xE600u+0x200u*(unsigned)a->slot;
+    if(a->aim==SOM_PAT_SLOT)return som_perk_rt_alive(base,a->slot)&&base[0x180]==a->target_id?a->slot:-1;
+    const int bx=(int)som_word(base+2),by=(int)som_word(base+4);
+    const uint8_t *o=ram+0xE000u+0x200u*who;
+    const int vx=bx-(int)som_word(o+2),vy=by-(int)som_word(o+4);
+    const int radius=a->radius?(int)a->radius:64;
+    int best=-1,best_d=0;
+    for(int j=0;j<3;j++){
+        if(j==a->slot||(k>=0&&j!=k))continue;
+        const uint8_t *e=ram+0xE600u+0x200u*(unsigned)j;
+        if(!som_perk_rt_alive(e,j))continue;
+        const int dx=(int)som_word(e+2)-bx,dy=(int)som_word(e+4)-by,d=abs(dx)+abs(dy);
+        if(d>radius)continue;
+        if(a->aim==SOM_PAT_BEHIND_IN_LINE){
+            if(dx*vx+dy*vy<=0)continue;                      /* not beyond it */
+            const long cross=labs((long)dx*vy-(long)dy*vx),len=labs(vx)+labs(vy);
+            if(len&&cross/len>16)continue;                   /* off the line */
+        }
+        if(best<0||d<best_d){best=j;best_d=d;}
+    }
+    return best;
+}
+/* own: the hit's own extra damage (part of that attack); anything else is a
+ * perk's separate strike, and a kill by it is generated (depth 1). */
+static void som_perk_rt_damage(uint8_t *ram,int k,unsigned who,unsigned amount,unsigned perk_id,int own,int quiet){
+    uint8_t *m=ram+0xE600u+0x200u*(unsigned)k;
+    const unsigned got=som_perk_owe(m,(unsigned)k,amount);
+    if(!got)return;
+    if(!own)perk_gen_frame[k]=frame_number?frame_number:1ul;
+    perk_rt_hit_frame[k]=frame_number;perk_rt_hit_who[k]=who;
+    if(!quiet)fprintf(stderr,"[som-ai] PERK+ %s %s: +%u on monster %d\n",som_party_names[who],
+                      perk_id&&som_perk_def_by_id(perk_id)?som_perk_def_by_id(perk_id)->name:"bonus",got,k);
+}
+static void som_perk_rt_actions(uint8_t *ram){
+    SomPerkAction act[SOM_PRT_ACTIONS];
+    const unsigned n=som_prt_take(&perk_rt,act,SOM_PRT_ACTIONS);
+    for(unsigned i=0;i<n;i++){
+        const SomPerkAction *a=&act[i];
+        const unsigned who=a->who<SOM_PARTY_MEMBERS?a->who:0u;
+        uint8_t *o=ram+0xE000u+0x200u*who;
+        const SomPerkDef *d=a->perk_id?som_perk_def_by_id(a->perk_id):NULL;
+        const char *name=d?d->name:"bonus";
+        switch(a->type){
+        case SOM_PACT_DAMAGE:{
+            const int k=som_perk_rt_aim(ram,a,-1,who);
+            if(k>=0)som_perk_rt_damage(ram,k,who,a->amount,a->perk_id,a->bonus,0);
+            break;
+        }
+        case SOM_PACT_REFUND:{
+            if(a->slot<0||a->slot>2)break;
+            uint8_t *m=ram+0xE600u+0x200u*(unsigned)a->slot;
+            if(!som_perk_rt_alive(m,a->slot)||m[0x180]!=a->target_id)break;
+            const unsigned hp=som_word(m+0x182),max=som_word(m+0x184);
+            som_put_word(m+0x182,(uint16_t)(hp+a->amount>max?max:hp+a->amount));
+            break;
+        }
+        case SOM_PACT_AREA: case SOM_PACT_STAGGER:{
+            if(a->slot<0||a->slot>2)break;
+            const int area=a->aim==SOM_PAT_AREA;
+            for(int k=0;k<3;k++){
+                if(!area&&k!=a->slot)continue;
+                if(area&&a->exclude&&k==a->slot)continue;
+                if(k!=a->slot){
+                    SomPerkAction b=*a;b.aim=SOM_PAT_NEAREST_OTHER;
+                    if(som_perk_rt_aim(ram,&b,k,who)!=k)continue;
+                }else{
+                    const uint8_t *m=ram+0xE600u+0x200u*(unsigned)k;
+                    if(!som_perk_rt_alive(m,k)||m[0x180]!=a->target_id)continue;
+                }
+                som_perk_rt_damage(ram,k,who,a->type==SOM_PACT_STAGGER?1u:a->amount,a->perk_id,0,
+                                   a->type==SOM_PACT_STAGGER);
+                if(a->type==SOM_PACT_STAGGER)
+                    fprintf(stderr,"[som-ai] PERK+ %s %s: monster %d staggers\n",som_party_names[who],name,k);
+            }
+            break;
+        }
+        case SOM_PACT_HEAL:
+            if(o[0]==1&&som_word(o+0x182)&&a->amount){
+                som_queue_heal(o,a->amount);
+                fprintf(stderr,"[som-ai] PERK+ %s %s: heals %u\n",som_party_names[who],name,a->amount);
+            }
+            break;
+        case SOM_PACT_PARTY_HEAL:
+            for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++){
+                uint8_t *h=ram+0xE000u+0x200u*w;
+                if(h[0]==1&&som_word(h+0x182))som_queue_heal(h,som_word(h+0x184)*a->amount/100u+1u);
+            }
+            fprintf(stderr,"[som-ai] PERK+ %s %s: party heals %u%%\n",som_party_names[who],name,a->amount);
+            break;
+        case SOM_PACT_GIVE_BACK:
+            if(o[0]==1&&som_word(o+0x182)){
+                const unsigned hp=som_word(o+0x182),max=som_word(o+0x184);
+                const unsigned now=hp+a->amount>max?max:hp+a->amount;
+                som_put_word(o+0x182,(uint16_t)now);
+                perk_hero_hp_prev[who]=now;
+                fprintf(stderr,"[som-ai] PERK+ %s %s: %u HP given back\n",som_party_names[who],name,now-hp);
+            }
+            break;
+        case SOM_PACT_ENERGY:{
+            const unsigned cls=som_disc_member_class(&disciplines,who);
+            if(cls>=SOM_DISCIPLINE_COUNT)break;
+            SomEnergy *en=som_perk_rt_energy(who);
+            const int max=(int)som_energy_max(disciplines.level[cls]);
+            int v=(int)en->energy[cls]+(int16_t)a->amount;
+            en->energy[cls]=(uint16_t)(v<0?0:v>max?max:v);
+            break;
+        }
+        case SOM_PACT_GAUGE:
+            if(o[0x1ED]){
+                o[0x1ED]=(uint8_t)(o[0x1ED]-o[0x1ED]*(a->amount>100u?100u:a->amount)/100u);
+                fprintf(stderr,"[som-ai] PERK+ %s %s: gauge refilled %u%%\n",som_party_names[who],name,a->amount);
+            }
+            break;
+        case SOM_PACT_BULLET:
+            if(!temporal.world){
+                som_time_world(&temporal,a->frames);
+                som_cam_bullet(&camera,a->frames/2u);
+                som_overlay_say(&overlay,"^Bullet Time",SOM_MESSAGE_FRAMES/2u);
+                fprintf(stderr,"[som-ai] PERK+ %s %s: bullet time %u frames\n",som_party_names[who],name,a->frames);
+            }
+            break;
+        case SOM_PACT_BULLET_EXTEND:{
+            const unsigned got=som_time_world_extend(&temporal,a->frames,a->amount?a->amount:180u);
+            if(got)fprintf(stderr,"[som-ai] PERK+ %s %s: bullet time +%u\n",som_party_names[who],name,got);
+            break;
+        }
+        case SOM_PACT_TIME:{
+            if(a->slot<0||a->slot>2)break;
+            for(int k=0;k<3;k++){
+                if(a->aim!=SOM_PAT_AREA&&k!=a->slot)continue;
+                const uint8_t *m=ram+0xE600u+0x200u*(unsigned)k;
+                if(!som_perk_rt_alive(m,k))continue;
+                if(k!=a->slot){SomPerkAction b=*a;b.aim=SOM_PAT_NEAREST_OTHER;if(som_perk_rt_aim(ram,&b,k,who)!=k)continue;}
+                else if(m[0x180]!=a->target_id)continue;
+                const int boss=som_perk_rt_boss(m);
+                const unsigned frames=boss&&a->amount?a->amount:a->frames;
+                if(som_time_apply(&temporal,(unsigned)k,a->speed,frames,who,m[0x180],boss))
+                    fprintf(stderr,"[som-ai] PERK+ %s %s: monster %d at %u%% speed for %u frames\n",
+                            som_party_names[who],name,k,a->speed,frames);
+            }
+            break;
+        }
+        case SOM_PACT_EXECUTE:{
+            if(a->slot<0||a->slot>2)break;
+            uint8_t *m=ram+0xE600u+0x200u*(unsigned)a->slot;
+            if(!som_perk_rt_alive(m,a->slot)||m[0x180]!=a->target_id||som_perk_rt_boss(m))break;
+            som_put_word(m+0x182,1u);
+            som_perk_rt_damage(ram,a->slot,who,1u,a->perk_id,0,1);
+            fprintf(stderr,"[som-ai] PERK+ %s %s: monster %d executed\n",som_party_names[who],name,a->slot);
+            break;
+        }
+        case SOM_PACT_SAY:
+            if(d&&d->feedback&&*d->feedback&&!perk_feedback_off&&!overlay.frames_left&&
+               frame_number-perk_say_at>=90ul){
+                char text[24];snprintf(text,sizeof(text),"^%s",d->feedback);
+                som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/5u);
+                perk_say_at=frame_number;
+            }
+            break;
+        default:break;
+        }
+    }
+}
+static SomPerkUnlockView som_perk_rt_view(const uint8_t *ram,unsigned who){
+    SomPerkUnlockView v;memset(&v,0,sizeof(v));
+    v.level=disciplines.level;v.classless=disciplines.classless;
+    v.held=who<3u?disciplines.held[who]:0u;
+    v.hero_level=ram?(uint8_t)(ram[0xE000u+0x200u*who+0x181]+1u):1u;
+    return v;
+}
+/* After a load: apply the rules once the heroes are on the field. */
+static void som_perk_rt_revalidate(uint8_t *ram){
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const SomPerkUnlockView v=som_perk_rt_view(ram,who);
+        const unsigned had=perk_rt.hero[who].n,dropped=som_prt_revalidate(&perk_rt,who,&v);
+        if(had)fprintf(stderr,"[som-ai] PERKS %s: %u equipped, %u dropped (locked, unavailable or over capacity %u)\n",
+                       som_party_names[who],had-dropped,dropped,som_prt_capacity(v.hero_level));
+    }
+}
+/* A hit the class passives do not see (the lead's B-string moves). */
+static void som_perk_rt_credit(uint8_t *ram,unsigned who,unsigned slot,unsigned drop){
+    if(slot>2u||who>=SOM_PARTY_MEMBERS)return;
+    if(frame_number-perk_owed_at[slot]>90ul)perk_owed[slot]=0;
+    const unsigned ours=perk_owed[slot]<drop?perk_owed[slot]:drop;
+    perk_owed[slot]-=ours;drop-=ours;
+    if(!drop)return;
+    perk_slot_drop[slot]=drop;perk_gen_frame[slot]=0;perk_rt_last_drop=drop;
+    perk_rt_hit_frame[slot]=frame_number;perk_rt_hit_who[slot]=who;
+    som_perk_rt_emit(ram,who,(int)slot,SOM_PEV_ATTACK_HIT,drop,0u);
+}
+/* Once a frame after the game ran: switches, stillness, monster attack
+ * ends, the once-a-second passive, delayed damage, then the actions. */
+static void som_perk_rt_frame(uint8_t *ram){
+    if(!perks_enabled||!som_perk_rt_field(ram))return;
+    if(perk_rt_revalidate){perk_rt_revalidate=0;som_perk_rt_revalidate(ram);}
+    for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
+        const uint8_t *o=ram+0xE000u+0x200u*who;
+        if(o[0]!=1)continue;
+        const uint16_t x=som_word(o+2),y=som_word(o+4);
+        if(x==perk_rt_x[who]&&y==perk_rt_y[who]){if(perk_rt_still[who]<0xFFFFu)perk_rt_still[who]++;}
+        else perk_rt_still[who]=0;
+        perk_rt_x[who]=x;perk_rt_y[who]=y;
+        if(perk_rt_weapon[who]!=o[0x1E4]){
+            if(perk_rt_weapon[who]!=0xFFu){
+                /* the switch's monster: the locked one, else the nearest within 48 px */
+                int slot=-1,best=49;
+                const uint8_t *lock=som_combo_locked_enemy(ram,who);
+                for(unsigned k=0;k<3u;k++){
+                    const uint8_t *e=ram+0xE600u+0x200u*k;
+                    if(!som_perk_rt_alive(e,(int)k))continue;
+                    if(lock==e){slot=(int)k;break;}
+                    const int d=abs((int)som_word(e+2)-(int)x)+abs((int)som_word(e+4)-(int)y);
+                    if(d<best){best=d;slot=(int)k;}
+                }
+                som_perk_rt_emit(ram,who,slot,SOM_PEV_WEAPON_SWITCH,perk_rt_last_drop,0u);
+            }
+            else perk_rt.hero[who].weapon=o[0x1E4];
+            perk_rt_weapon[who]=o[0x1E4];
+        }
+        if(frame_number%60ul==who)som_perk_rt_emit(ram,who,-1,SOM_PEV_FRAME_PASSIVE,0u,0u);
+    }
+    for(unsigned k=0;k<3u;k++){
+        const uint8_t *m=ram+0xE600u+0x200u*k;
+        const int live=som_perk_rt_alive(m,(int)k);
+        if(perk_rt_live[k]&&!live&&(int)k!=familiar.slot&&perk_rt_hit_frame[k]&&
+           frame_number-perk_rt_hit_frame[k]<=SOM_KILL_CREDIT_FRAMES){
+            /* a kill by a perk's own damage is generated: depth 1 */
+            som_perk_rt_emit(ram,perk_rt_hit_who[k]%SOM_PARTY_MEMBERS,(int)k,SOM_PEV_ENEMY_KILLED,
+                             perk_slot_drop[k],perk_gen_frame[k]?1u:0u);
+            perk_rt_hit_frame[k]=0;perk_gen_frame[k]=0;
+        }
+        perk_rt_live[k]=(uint8_t)live;
+        if(live)perk_rt_species[k]=m[0x180];
+        if(perk_rt_mon_state[k]==0x80u&&m[0x1C]!=0x80u)perk_rt_attack_end[k]=frame_number;
+        perk_rt_mon_state[k]=m[0x1C];
+        if(perk_rt_mon_id[k]!=m[0x180]){som_prt_forget_slot(&perk_rt,k);perk_rt_mon_id[k]=m[0x180];}
+    }
+    som_prt_tick(&perk_rt,(uint32_t)frame_number,temporal.world!=0);
+    som_perk_rt_actions(ram);
+}
+/* Commands (harness and console; the perk menu uses the same calls):
+ * perk_equip_W_ID, perk_unequip_W_ID, perk_clear_W, perks_pending_on/off,
+ * perk_list. W = hero 0..2, ID = the perk's stable id. */
+static int som_perk_rt_command(const char *command){
+    unsigned who=0,id=0;char tail;
+    uint8_t *ram=som_live_wram();
+    if(sscanf(command,"perk_equip_%1u_%5u%c",&who,&id,&tail)==2&&who<SOM_PARTY_MEMBERS){
+        const SomPerkUnlockView v=som_perk_rt_view(ram,who);
+        const int r=som_prt_equip(&perk_rt,who,id,&v);
+        const SomPerkDef *d=som_perk_def_by_id(id);
+        fprintf(stderr,"[som-ai] PERKS %s equip %u %s: %s (%u/%u capacity)\n",som_party_names[who],id,
+                d?d->name:"?",som_peq_names[r],som_prt_used(&perk_rt,who),som_prt_capacity(v.hero_level));
+        return r==SOM_PEQ_OK;
+    }
+    if(sscanf(command,"perk_unequip_%1u_%5u%c",&who,&id,&tail)==2&&who<SOM_PARTY_MEMBERS){
+        const int r=som_prt_unequip(&perk_rt,who,id);
+        return r;
+    }
+    if(sscanf(command,"perk_clear_%1u%c",&who,&tail)==1&&who<SOM_PARTY_MEMBERS){
+        som_prt_clear_hero(&perk_rt,who);return 1;
+    }
+    if(!strcmp(command,"perks_pending_on")||!strcmp(command,"perks_pending_off")){
+        perk_rt.pending_ok=!strcmp(command,"perks_pending_on");
+        fprintf(stderr,"[som-ai] PERKS pending-test perks %s\n",perk_rt.pending_ok?"allowed":"locked");
+        return 1;
+    }
+    if(!strcmp(command,"perk_list")){
+        for(unsigned w=0;w<SOM_PARTY_MEMBERS;w++){
+            char line[160];
+            som_prt_format(&perk_rt,w,line,sizeof(line));
+            fprintf(stderr,"[som-ai] PERKS %s %s",som_party_names[w],line);
+        }
+        fprintf(stderr,"[som-ai] PERKS events %lu, activations %lu, dropped %lu/%lu, depth %lu, budget %lu\n",
+                perk_rt.events,perk_rt.activations,perk_rt.dropped_actions,perk_rt.dropped_delayed,
+                perk_rt.skipped_depth,perk_rt.skipped_budget);
+        return 1;
+    }
+    return -1;
+}
 static void som_bullet_world(uint8_t *ram){
     static int x[3],y[3];
     static uint8_t id[3];
-    if(!ram){bullet_frames=0;return;}
-    bullet_frames--;
-    const int hold=(bullet_frames&1u)!=0u;
+    if(!ram){som_time_reset(&temporal);return;}
     for(unsigned k=0;k<3u;k++){
         uint8_t *m=ram+0xE600u+0x200u*k;
         if(!som_bun_monster_alive(m)||(int)k==familiar.slot){id[k]=0xFFu;continue;}
+        /* bullet time alone keeps its own rhythm; per-monster time effects
+         * (perks) hold a slot at their own speed (src/som_temporal.h) */
+        const int hold=som_time_hold(&temporal,k,m[0x180]);
         if(hold&&id[k]==m[0x180]){
             som_put_word(m+2,(uint16_t)x[k]);som_put_word(m+4,(uint16_t)y[k]);
             if(m[0x1ED]&&m[0x1ED]<0x7Fu)m[0x1ED]++;
         }
         x[k]=(int)som_word(m+2);y[k]=(int)som_word(m+4);id[k]=m[0x180];
     }
+    (void)som_time_tick(&temporal);
 }
 RETRO_API void retro_run(void){
     if(!backend_run)load_backend();
@@ -11220,7 +11740,7 @@ RETRO_API void retro_run(void){
     SomComboPosition combo_pos[SOM_PARTY_MEMBERS];
     const unsigned combo_map=som_combo_positions(test_enabled&&on_turbo?som_live_wram():NULL,combo_pos);
     backend_run();
-    if(bullet_frames)som_bullet_world(som_live_wram());
+    if(som_time_active(&temporal))som_bullet_world(som_live_wram());
     if(test_enabled&&on_turbo)som_combo_spacing_after(som_live_wram(),combo_map,combo_pos);
     if(on_turbo)som_auto_target_frame(som_live_wram());
     som_guard_finish();

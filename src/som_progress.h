@@ -27,6 +27,7 @@
 #define SOM_PROG_TEXT_MAX 1024u
 #define SOM_PROG_TRAILER_MAGIC "SOMPROG2"
 #define SOM_PROG_V1_CLASSES 12u     /* classes a record had before 2026-11-20 */
+#define SOM_PROG_LOADOUT_MAX 12u    /* = SOM_PERK_MAX_EQUIPPED */
 
 typedef struct {
     uint64_t owner;          /* fingerprint of the save block, 0 = none yet */
@@ -38,6 +39,13 @@ typedef struct {
     uint32_t perks[4];       /* reserved for unlocks (bit sets) */
     uint8_t classless,party[2];   /* 0 in records from before classless games */
     uint16_t held[3];
+    /* Equipped inherited perks per hero (src/som_perk_runtime.h), stable perk
+     * ids as lines "pl1 <hero> <id>,<id>". Records without them (all before
+     * 2026-11-27) load with nothing equipped; older builds skip the lines.
+     * Ids are not checked here: the runtime drops unknown or locked ones. */
+    uint8_t loadout_set;
+    uint8_t loadout_n[3];
+    uint16_t loadout[3][SOM_PROG_LOADOUT_MAX];
 } SomProgress;
 
 static inline uint64_t som_prog_hash(const uint8_t *data,size_t size){
@@ -112,6 +120,20 @@ static inline size_t som_prog_format(const SomProgress *p,char *out,size_t cap){
         if(w<0||(size_t)w>=cap-n)return 0;
         n+=(size_t)w;
     }
+    for(unsigned who=0;p->loadout_set&&who<3u;who++){
+        w=snprintf(out+n,cap-n,"pl1 %u ",who);
+        if(w<0||(size_t)w>=cap-n)return 0;
+        n+=(size_t)w;
+        const unsigned count=p->loadout_n[who]>SOM_PROG_LOADOUT_MAX?SOM_PROG_LOADOUT_MAX:p->loadout_n[who];
+        if(!count){if(n+1u>=cap)return 0;out[n++]='-';}
+        for(unsigned i=0;i<count;i++){
+            w=snprintf(out+n,cap-n,i?",%u":"%u",(unsigned)p->loadout[who][i]);
+            if(w<0||(size_t)w>=cap-n)return 0;
+            n+=(size_t)w;
+        }
+        if(n+1u>=cap)return 0;
+        out[n++]='\n';out[n]=0;
+    }
     const uint64_t sum=som_prog_hash((const uint8_t*)out,n);
     w=snprintf(out+n,cap-n,"sum %016llx\n",(unsigned long long)sum);
     if(w<0||(size_t)w>=cap-n)return 0;
@@ -149,6 +171,21 @@ static inline int som_prog_parse(const char *text,size_t len,SomProgress *p){
             q.level[i]=(uint16_t)level;q.experience[i]=(uint32_t)xp;seen|=16<<0;
         }else if(sscanf(line,"perks %lx %lx %lx %lx",&k[0],&k[1],&k[2],&k[3])==4){
             for(unsigned j=0;j<4u;j++)q.perks[j]=(uint32_t)k[j];
+        }else if(sscanf(line,"pl1 %u",&i)==1&&i<3u){
+            /* ids up to the line's end; a bad number ends the list */
+            const char *c=line+4;
+            while(*c==' ')c++;
+            while(*c>='0'&&*c<='9')c++;
+            while(*c==' ')c++;
+            unsigned count=0;
+            while(*c>='0'&&*c<='9'&&count<SOM_PROG_LOADOUT_MAX){
+                unsigned long v=0;unsigned digits=0;
+                while(*c>='0'&&*c<='9'&&digits<6u){v=v*10u+(unsigned long)(*c-'0');c++;digits++;}
+                if(v&&v<=0xFFFFu)q.loadout[i][count++]=(uint16_t)v;
+                if(*c!=',')break;
+                c++;
+            }
+            q.loadout_n[i]=(uint8_t)count;q.loadout_set=1;
         }
         line=strchr(line,'\n');if(line)line++;
     }

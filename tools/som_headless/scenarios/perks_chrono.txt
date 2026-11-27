@@ -1,0 +1,54 @@
+# Chronomancy on the real ROM: Temporal Distortion (inherited by a Monk) - three
+# hits within a second slow the Rabites within 64 px to half speed (the bullet
+# time hold, per monster) while the Monk keeps his speed.
+#! expect-log PERKS BOY equip 2514 Temporal Distortion: ok
+#! expect-log PERK BOY ATTACK_HIT fires: Temporal Distortion
+#! expect-log PERK\+ BOY Temporal Distortion: monster \d at 50% speed for 120 frames
+expect u16 00DC == 130
+cmd camera_off
+# the save's progression is picked up on the first field frames: equip after it
+frames 60
+cmd class_1
+cmd test_level_1_40
+cmd test_level_15_40
+cmd perks_pending_on
+cmd perk_equip_0_2514
+frames 30
+hold RIGHT 2
+monster 2 -150 -150
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+monster 0 18 0
+monster 1 30 12
+hold B 2
+frames 14
+peek
+frames 60
+peek
+cmd perk_list

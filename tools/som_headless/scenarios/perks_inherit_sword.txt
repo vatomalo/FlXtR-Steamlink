@@ -1,0 +1,164 @@
+# Inherited perks across disciplines on the real ROM (start: rabites.state): a
+# Swordsman wears the Monk's Qi Burst and the universal Full Force and cuts
+# three Rabites made tough (HP poked up) so every 5th hit has neighbours.
+#! expect-log PERKS BOY equip 1108 Qi Burst: ok
+#! expect-log PERK BOY ATTACK_HIT fires: .*Qi Burst
+#! expect-log PERK\+ BOY Qi Burst: \+\d+ on monster \d
+expect u16 00DC == 130
+cmd camera_off
+# the save's progression is picked up on the first field frames: equip after it
+frames 60
+cmd class_0
+cmd test_level_1_40
+cmd test_level_13_40
+cmd perks_pending_on
+cmd perk_equip_0_1108
+cmd perk_equip_0_9001
+frames 30
+hold RIGHT 2
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 0 18 0
+monster 1 28 12
+monster 2 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 1 18 0
+monster 2 28 12
+monster 0 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 2 18 0
+monster 0 28 12
+monster 1 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 0 18 0
+monster 1 28 12
+monster 2 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 1 18 0
+monster 2 28 12
+monster 0 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 2 18 0
+monster 0 28 12
+monster 1 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 0 18 0
+monster 1 28 12
+monster 2 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 1 18 0
+monster 2 28 12
+monster 0 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 2 18 0
+monster 0 28 12
+monster 1 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 0 18 0
+monster 1 28 12
+monster 2 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 1 18 0
+monster 2 28 12
+monster 0 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 2 18 0
+monster 0 28 12
+monster 1 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 0 18 0
+monster 1 28 12
+monster 2 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 1 18 0
+monster 2 28 12
+monster 0 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 2 18 0
+monster 0 28 12
+monster 1 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 0 18 0
+monster 1 28 12
+monster 2 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 1 18 0
+monster 2 28 12
+monster 0 28 -12
+hold B 2
+frames 34
+poke E783 03
+poke E983 03
+poke EB83 03
+monster 2 18 0
+monster 0 28 12
+monster 1 28 -12
+hold B 2
+frames 34
+peek
+cmd perk_list

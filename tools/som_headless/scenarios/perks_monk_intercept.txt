@@ -1,0 +1,103 @@
+# Thunder Step on the real ROM: the Monk's Intercept (monk_intercept.txt's
+# steps) staggers the Rabite standing beside the one it stops.
+#! expect-log INTERCEPT BOY monster 0: .*Intercept
+#! expect-log PERK BOY INTERCEPT fires: Thunder Step
+#! expect-log PERK\+ BOY Thunder Step: monster \d staggers
+expect u16 00DC == 130
+cmd camera_off
+# the save's progression is picked up on the first field frames: equip after it
+frames 60
+cmd class_1
+cmd test_level_1_40
+cmd test_level_15_40
+cmd perks_pending_on
+cmd perk_equip_0_1112
+frames 60
+hold RIGHT 2
+frames 10
+monster 1 44 10
+monster 2 -150 -150
+monster 0 36 0
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+monster 0 36 0
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+frames 30
+hold X 1
+shot end
+cmd perk_list

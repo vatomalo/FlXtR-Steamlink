@@ -270,6 +270,10 @@ class Db:
         out = [("events", t) for t in p["triggers"] if t != "PASSIVE"]
         out += [("conditions", cond_split(c)[0]) for c in p["conditions"]]
         out += [("effects", e["type"]) for e in p["effects"]]
+        for e in p["effects"]:
+            for q in ("only", "target", "modifier", "clear_on", "release"):
+                if isinstance(e.get(q), str):
+                    out.append(("qualifiers", f"{q}.{e[q]}"))
         return out
 
     def status(self, p):
@@ -306,6 +310,10 @@ class Db:
             flags.append("SOM_PFXF_IGNORE_DEFENCE")
         if e.get("both_ways") or e.get("pin") or e.get("refresh") or e.get("show_warning"):
             flags.append("SOM_PFXF_OPTION")
+        if "pct_per_combo_hit" in e:
+            flags.append("SOM_PFXF_PER_COMBO")
+        if e.get("release") == "bullet_time_end":
+            flags.append("SOM_PFXF_RELEASE_BULLET")
         target = e.get("target") or ("area" if "radius" in e else "same")
         return dict(type="SOM_PFX_" + cname(e["type"]), a=int(a), base="SOM_PBASE_" + cname(base), b=int(b),
                     c=int(c), frames=int(f), delay=int(d), target="SOM_PTGT_" + cname(target),
@@ -313,6 +321,22 @@ class Db:
                     only="SOM_PONLY_" + cname(e.get("only", "none")),
                     clear="SOM_PCLEAR_" + cname(e.get("clear_on", "none")),
                     sub=self.token(sub) if sub else 0, flags="|".join(flags) or "0")
+
+    def effect_on(self, p, e):
+        """The trigger an effect belongs to in a perk with several: explicit
+        "on", else damage on the hit and shields on the hurt; 0 = all."""
+        trig = [t for t in p["triggers"] if t != "PASSIVE"]
+        on = e.get("on")
+        if on in self.caps["events"]:
+            return "SOM_PEV_" + cname(on)
+        if len(trig) > 1:
+            if e["type"] in ("damage_bonus", "crit", "stacking_damage"):
+                for t in ("ATTACK_HIT", "SPELL_HIT", "SUMMON_ATTACK"):
+                    if t in trig:
+                        return "SOM_PEV_" + t
+            if e["type"] == "shield" and "DAMAGE_POST" in trig:
+                return "SOM_PEV_DAMAGE_POST"
+        return "SOM_PEV_NONE"
 
     def cond_slots(self, c):
         name, args = cond_split(c)
@@ -359,9 +383,9 @@ class Db:
         enum("SomPerkStatus", "SOM_PSTAT_", STATUSES)
         enum("SomPerkGroup", "SOM_PGRP_", groups, True)
         enum("SomPerkTactic", "SOM_PAI_", [t for t in tactics if t != "none"], True)
-        L.append("enum { SOM_PFXF_EXCLUDE_TARGET = 1, SOM_PFXF_IGNORE_DEFENCE = 2, SOM_PFXF_OPTION = 4 };")
+        L.append("enum { SOM_PFXF_EXCLUDE_TARGET = 1, SOM_PFXF_IGNORE_DEFENCE = 2, SOM_PFXF_OPTION = 4, SOM_PFXF_RELEASE_BULLET = 8, SOM_PFXF_PER_COMBO = 16 };")
         L.append("enum { SOM_PDF_BOSS_OK = 1, SOM_PDF_GENERATED_OK = 2, SOM_PDF_UNIVERSAL = 4 };\n")
-        L.append("typedef struct { uint8_t type, base, target, modifier, only, clear, sub, flags;")
+        L.append("typedef struct { uint8_t type, base, target, modifier, only, clear, sub, flags, on;")
         L.append("                 int16_t a, b, c; uint16_t frames, delay; } SomPerkFx;")
         L.append("typedef struct { uint8_t type; int16_t arg, arg2; } SomPerkCondDef;")
         L.append("typedef struct {")
@@ -389,8 +413,9 @@ class Db:
             fxs = []
             for e in p["effects"]:
                 s = self.effect_slots(e)
+                s["on"] = self.effect_on(p, e)
                 fxs.append("{%(type)s, %(base)s, %(target)s, %(modifier)s, %(only)s, %(clear)s, %(sub)d, %(flags)s, "
-                           "%(a)d, %(b)d, %(c)d, %(frames)d, %(delay)d}" % s)
+                           "%(on)s, %(a)d, %(b)d, %(c)d, %(frames)d, %(delay)d}" % s)
             pre = [self.by_key[k]["id"] for k in p["prerequisites"]][:2] + [0, 0]
             rows.append(
                 f"    {{{p['id']}, {d['som_index']}, SOM_PCAT_{cname(p['category'])}, SOM_PTIER_{cname(p['tier'])}, "

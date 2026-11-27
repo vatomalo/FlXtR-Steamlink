@@ -1,0 +1,100 @@
+# Inherited perks on the real ROM (start: rabites.state from to_rabites.txt): a
+# Monk with Empty Hand and Flowing Fist punches a Rabite with another
+# beside it (fresh ones keep coming, as they die).
+#! expect-log PERKS BOY equip 1103 Empty Hand: ok
+#! expect-log PERK BOY ATTACK_HIT fires: Empty Hand
+#! expect-log PERK BOY ATTACK_HIT fires: .*Flowing Fist
+expect u16 00DC == 130
+cmd camera_off
+# the save's progression is picked up on the first field frames: equip after it
+frames 60
+cmd class_1
+cmd test_level_1_40
+cmd test_level_15_40
+cmd perks_pending_on
+cmd perk_equip_0_1103
+cmd perk_equip_0_1104
+frames 30
+hold RIGHT 2
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+monster 0 18 0
+monster 1 34 10
+monster 2 -150 -150
+hold B 2
+frames 30
+peek
+cmd perk_list

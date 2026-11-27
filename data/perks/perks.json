@@ -422,7 +422,7 @@
    "role": "resource",
    "mastery_required": 1,
    "capacity_cost": 1,
-   "description": "Out of a fight (no monster within 128 pixels for 5 seconds) you heal 1% of max HP each second.",
+   "description": "Out of a fight (no monster near for 3 seconds) you heal 1% of your max HP each second.",
    "triggers": ["FRAME_PASSIVE"],
    "conditions": ["out_of_combat"],
    "effects": [
@@ -1237,7 +1237,7 @@
    "conditions": [],
    "effects": [
     {"type": "temp_modifier", "modifier": "crit_next", "pct": 100, "charges": 1, "duration_frames": 180},
-    {"type": "ap_free", "on": "perfect_dodge"},
+    {"type": "ap_free", "on": "PERFECT_DODGE"},
     {"type": "disable_guard"}
    ],
    "cooldown_frames": 0,
@@ -3539,7 +3539,7 @@
    "triggers": ["WEAPON_SWITCH", "ATTACK_HIT"],
    "conditions": [],
    "effects": [
-    {"type": "attack_speed", "pct": 100},
+    {"type": "attack_speed", "pct": 100, "on": "WEAPON_SWITCH"},
     {"type": "damage_bonus", "pct": 15, "only": "after_switch"},
     {"type": "damage_bonus", "pct": -40, "only": "same_weapon_twice"}
    ],
@@ -4318,6 +4318,7 @@
    "triggers": ["ATTACK_HIT"],
    "conditions": ["bullet_time"],
    "effects": [
+    {"type": "damage_bonus", "pct": -100},
     {"type": "delayed_damage", "pct": 110, "release": "bullet_time_end"}
    ],
    "cooldown_frames": 0,
@@ -5531,7 +5532,7 @@
    "role": "defense",
    "mastery_required": 1,
    "capacity_cost": 1,
-   "description": "8% of each physical hit you take is given back.",
+   "description": "8% of each hit you take is given back.",
    "triggers": ["DAMAGE_POST"],
    "conditions": [],
    "effects": [
@@ -6308,7 +6309,7 @@
    "role": "combat",
    "mastery_required": 10,
    "capacity_cost": 1,
-   "description": "While any time effect of yours is running, your weapon gauge refills twice as fast.",
+   "description": "While any time effect of yours is running, your weapon gauge is topped up once a second.",
    "triggers": ["FRAME_PASSIVE"],
    "conditions": ["own_time_effect"],
    "effects": [

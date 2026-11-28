@@ -50,6 +50,7 @@
 #include "som_creator.h"
 #include "som_heads.h"
 #include "som_reaper.h"
+#include "som_flight.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include "som_mentalist.h"
@@ -845,7 +846,11 @@ FORWARD_VOID(retro_set_audio_sample,(retro_audio_sample_t cb),(cb))
  * (src/som_music_mix.h); retro_set_audio_sample_batch is defined below. */
 static void (*backend_retro_set_audio_sample_batch)(retro_audio_sample_batch_t cb);
 FORWARD_VOID(retro_set_controller_port_device,(unsigned port,unsigned device),(port,device))
-FORWARD_VOID(retro_reset,(void),())
+static void (*backend_retro_reset)(void);
+RETRO_API void retro_reset(void){
+    if(som_flight.active)som_flight_end(som_live_wram());
+    load_backend();backend_retro_reset();
+}
 /* Save states carry the save-owned progression (src/som_progress.h) in a
  * trailer after the core's own state: retro_serialize* are defined below. */
 static size_t (*backend_retro_serialize_size)(void);
@@ -2880,6 +2885,7 @@ static int16_t som_input_state(unsigned port,unsigned device,unsigned index,unsi
     if(sprite_creator_captures&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD)return 0;
     if(lead_swapped&&port<2u)port=1u-port;
     int16_t actual=physical_state?physical_state(port,device,index,id):0;
+    actual=som_flight_filter(port,device,index,id,actual);
     int bitmask=id==RETRO_DEVICE_ID_JOYPAD_MASK;
     if(port==1&&index==0&&(device&RETRO_DEVICE_MASK)==RETRO_DEVICE_JOYPAD){
         if(on_turbo){
@@ -3084,6 +3090,16 @@ static void som_input_poll(void){
         uint16_t current=0;
         for(unsigned key=0;key<16;key++)
             if(physical_state(0,RETRO_DEVICE_JOYPAD,0,key))current|=(uint16_t)(1u<<key);
+        const int flight_change=som_flight_input(current,last_physical_buttons,
+            som_live_wram(),som_pad1_member());
+        if(flight_change==1){
+            som_overlay_say(&overlay,"^FLIGHT ON|L2+R2+START to land",SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] PLAYER FLIGHT takeoff (map %u)\n",som_flight.map);
+        }else if(flight_change==2){
+            som_overlay_say(&overlay,"^LANDED|Flight ended",SOM_MESSAGE_FRAMES);
+            fprintf(stderr,"[som-ai] PLAYER FLIGHT landing (map %u)\n",som_flight.map);
+        }else if(flight_change<0)
+            som_overlay_say(&overlay,"^CANNOT FLY HERE|Use outdoors",SOM_MESSAGE_FRAMES);
         const uint16_t attack=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_B);
         const uint16_t secondary=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_Y);
         const uint16_t l2=(uint16_t)(1u<<RETRO_DEVICE_ID_JOYPAD_L2);
@@ -11792,6 +11808,7 @@ RETRO_API size_t retro_serialize_size(void){
 }
 RETRO_API bool retro_serialize(void *data,size_t size){
     load_backend();
+    if(som_flight.active)som_flight_end(som_live_wram());
     const size_t core=backend_retro_serialize_size?backend_retro_serialize_size():0;
     if(!core||!data||size<core)return false;
     if(!backend_retro_serialize(data,core))return false;
@@ -11802,6 +11819,7 @@ RETRO_API bool retro_serialize(void *data,size_t size){
     return true;
 }
 RETRO_API bool retro_unserialize(const void *data,size_t size){
+    if(som_flight.active)som_flight_end(som_live_wram());
     ally_order.until=0;
     som_prt_flush(&perk_rt);som_time_reset(&temporal);
     memset(revivals,0,sizeof(revivals));
@@ -11869,6 +11887,7 @@ static int som_save_auto_state(void){
     return 1;
 }
 RETRO_API void retro_unload_game(void){
+    if(som_flight.active)som_flight_end(som_live_wram());
     som_sprite_close();
     if(npc_work.active){
         size_t ram_size=0;
@@ -12888,7 +12907,11 @@ RETRO_API void retro_run(void){
     const unsigned combo_map=som_combo_positions(test_enabled&&on_turbo?som_live_wram():NULL,combo_pos);
     if(sprite_atlas_loaded)som_sprite_prepare(on_turbo&&test_enabled?som_live_wram():NULL);
     som_heads_prepare();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data)
+        som_flight_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     backend_run();
+    if(test_enabled&&on_turbo&&backend_retro_get_memory_data)
+        som_flight_frame((uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     if(som_time_active(&temporal))som_bullet_world(som_live_wram());
     if(test_enabled&&on_turbo)som_shuriken_throw(som_live_wram());
     if(test_enabled&&on_turbo)som_combo_spacing_after(som_live_wram(),combo_map,combo_pos);

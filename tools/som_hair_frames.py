@@ -206,6 +206,13 @@ def target_head(native):
     hair = [(x, y) for y, row in enumerate(native) for x, c in enumerate(row) if c in HAIR]
     if not hair:
         return None
+    # Keep the key anchor and facing measurement byte-for-byte compatible
+    # with som_frame_anchor() in src/som_heads.h. The attached outline is
+    # useful for sizing, but must never move the live lookup origin.
+    fill_xs, fill_ys = [p[0] for p in hair], [p[1] for p in hair]
+    fill_left, fill_right, fill_top = min(fill_xs), max(fill_xs), min(fill_ys)
+    cx = (fill_left + fill_right + 1) // 2
+
     shape = set(hair)
     for x, y in hair:
         shape.update((nx, ny) for nx, ny in ((x-1,y-1),(x,y-1),(x+1,y-1),
@@ -214,11 +221,10 @@ def target_head(native):
                      if 0 <= nx < SIZE and 0 <= ny < SIZE and native[ny][nx] == 1)
     xs, ys = [p[0] for p in shape], [p[1] for p in shape]
     left, right, top = min(xs), max(xs), min(ys)
-    cx = (left + right + 1) // 2
-    eye_points = [(x, y) for y in range(max(0, top + 3), min(SIZE, top + 24))
-                  for x in range(max(0, left - 4), min(SIZE, right + 5)) if native[y][x] == EYE]
+    eye_points = [(x, y) for y in range(max(0, fill_top + 3), min(SIZE, fill_top + 24))
+                  for x in range(max(0, fill_left - 4), min(SIZE, fill_right + 5)) if native[y][x] == EYE]
     if not eye_points:
-        return 0, False, (cx, top), (left, top, right, max(ys))
+        return 0, False, (cx, fill_top), (left, top, right, max(ys))
     ex = sum(x for x, _ in eye_points) // len(eye_points)
     ey = sum(y for _, y in eye_points) // len(eye_points)
     if _clusters(x for x, _ in eye_points) >= 2:

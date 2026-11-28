@@ -89,48 +89,60 @@ SKULL_BACK = ["....ooooo....",
 SKULL_INK = {"o": 1, "H": 7, "L": 7, "M": 6, "D": 5}
 
 
-def bald(image, eye_from_top=12):
-    """The frame without hair: the hand-made skull placed by the eyes (front:
-    their centre, brows on its last row; side: on the hair's middle; back:
-    from the hair's top). Old hair and its outline go; the face, the eyes and
-    the headband (8-10) are never painted over."""
+def bald(image, shave=1):
+    """The frame without hair, from its own head (player, 2026-11-28: the
+    template skulls "do not fit at all" in many poses): the game's hair is
+    shaved from the outside by `shave` pixels (only where it meets open
+    background, never where it touches the face or body), spike tips that
+    are left are smoothed away, and what remains is the skull: skin, lit
+    from the top left, with a fresh outline. So every pose, tilt and turn
+    keeps its own head shape. The face, eyes and headband are never touched."""
     h, w = len(image), len(image[0])
     out = [row[:] for row in image]
-    hair = [(x, y) for y in range(h) for x in range(w) if image[y][x] in HAIR]
+    hair = {(x, y) for y in range(h) for x in range(w) if image[y][x] in HAIR}
     if not hair:
         return out
-    top = min(y for _, y in hair)
-    eyes = [(x, y) for y in range(top, min(h, top + 22)) for x in range(w) if image[y][x] == EYE]
-    hair_cx = sum(x for x, _ in hair) // len(hair)
-    if eyes and len({x // 3 for x, _ in eyes}) > 1:
-        art, ey = SKULL_FRONT, sum(y for _, y in eyes) // len(eyes)
-        cx = sum(x for x, _ in eyes) // len(eyes)
-        x0, y0, mirror = cx - len(art[0]) // 2, ey - 2 - len(art), False
-    elif eyes:
-        art, ey = SKULL_SIDE, sum(y for _, y in eyes) // len(eyes)
-        ex = sum(x for x, _ in eyes) // len(eyes)
-        mirror = ex < hair_cx                   # the eye on the left: facing left
-        x0, y0 = hair_cx - len(art[0]) // 2 + (-1 if mirror else 1), ey - 2 - len(art)
-    else:
-        art, mirror = SKULL_BACK, False
-        x0, y0 = hair_cx - len(art[0]) // 2, top + 2
-    ey_line = y0 + len(art) + (3 if art is SKULL_BACK else 0)   # from behind: the old hair's shade to the neck
-    hair_outline = {(x, y) for y in range(h) for x in range(w) if image[y][x] == 1 and any(
-        0 <= y + dy < h and 0 <= x + dx < w and image[y + dy][x + dx] in HAIR
-        for dy in (-1, 0, 1) for dx in (-1, 0, 1))}
-    # the old hair (and its outline above the brows) goes
-    for y in range(h):
-        for x in range(w):
-            if image[y][x] in HAIR or ((x, y) in hair_outline and y < ey_line):
-                out[y][x] = 0
-    # the skull, over empty space only (the face and the headband stay)
-    for v, row in enumerate(art):
-        for u, k in enumerate(row):
-            if k == ".":
-                continue
-            x, y = x0 + (len(row) - 1 - u if mirror else u), y0 + v
-            if 0 <= x < w and 0 <= y < h and out[y][x] == 0:
-                out[y][x] = SKULL_INK[k]
+    near = lambda x, y: [(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+    ring = lambda x, y: [(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy]
+    # the hair as one shape: its dark strands (outline colour mostly among
+    # hair), its rim (dark pixels touching hair and open background) and any
+    # pocket it closes in
+    strands = {(x, y) for y in range(h) for x in range(w) if image[y][x] == 1 and
+               sum(p in hair for p in ring(x, y)) >= 3}
+    rim = {(x, y) for y in range(h) for x in range(w) if image[y][x] == 1 and
+           any(p in hair for p in near(x, y)) and
+           any(0 <= px < w and 0 <= py < h and image[py][px] == 0 for px, py in near(x, y))}
+    head = hair | strands | rim
+    outside, todo = set(), [(0, 0)]
+    while todo:                                  # the background reachable from the corner
+        x, y = todo.pop()
+        if (x, y) in outside or not (0 <= x < w and 0 <= y < h) or (x, y) in head or image[y][x]:
+            continue
+        outside.add((x, y))
+        todo += near(x, y)
+    xs = [x for x, _ in hair]; ys = [y for _, y in hair]
+    for y in range(min(ys), max(ys) + 1):
+        for x in range(min(xs), max(xs) + 1):
+            if (x, y) not in head and (x, y) not in outside and image[y][x] in (0, 1) and \
+                    sum(p in head for p in near(x, y)) >= 3:
+                head.add((x, y))
+    open_bg = lambda x, y: (x, y) in outside or not (0 <= x < w and 0 <= y < h)
+    keep = set(head)
+    for _ in range(shave + 1):                   # the rim, then `shave` layers of hair
+        edge = {p for p in keep if any(q not in keep and (open_bg(*q) or q in head) for q in near(*p))}
+        keep -= edge
+    for _ in range(2):                           # spike tips: fewer than two kept neighbours
+        keep -= {p for p in keep if sum(q in keep or (q not in head and not open_bg(*q)) for q in near(*p)) < 2}
+    for x, y in head:
+        out[y][x] = 0
+    for x, y in keep:
+        boundary = any(q not in keep and (open_bg(*q) or q in head) for q in near(x, y))
+        if boundary:
+            out[y][x] = 1
+        else:
+            lit = (x - 1, y) not in keep or (x, y - 1) not in keep or (x - 1, y - 1) not in keep
+            dark = (x + 1, y) not in keep or (x + 2, y) not in keep or (x, y + 1) not in keep
+            out[y][x] = 7 if lit and not dark else 5 if dark and not lit else 6 if dark else 7
     return out
 
 

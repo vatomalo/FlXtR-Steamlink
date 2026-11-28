@@ -1,0 +1,27 @@
+# The Necromancer's Grim Reaper (local x86, .srm: pad 1 plays the girl):
+# Necromancy 30, L2+X; the Reaper rises over her and reaps at 36 frames.
+#! expect-log GRIM REAPER rises over GIRL
+#! expect-log GRIM REAPER reaps
+frames 900
+hold START 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 400
+cmd camera_off
+cmd party_class_1_13
+cmd class_level_13_30
+frames 30
+cmd class_move
+frames 4
+shot reaper_rise
+frames 14
+shot reaper_hover
+frames 20
+shot reaper_strike
+frames 30
+shot reaper_fade
+frames 30

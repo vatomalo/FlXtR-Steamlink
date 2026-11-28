@@ -49,6 +49,7 @@
 #include "som_sprite_atlas.h"
 #include "som_creator.h"
 #include "som_heads.h"
+#include "som_reaper.h"
 #include "som_music_mix.h"
 #include "som_perf.h"
 #include "som_mentalist.h"
@@ -1477,6 +1478,17 @@ static int som_hundred_start_raw(uint8_t *ram);
 #define SOM_VOLLEY_COOLDOWN 180ul
 #define SOM_VOLLEY_RANGE 128
 static unsigned long class_move_ready,backstab_until;
+/* The Necromancer's Grim Reaper (som_reaper.h): L2+X from Necromancy
+ * SOM_REAPER_LEVEL; it rises over him, and at SOM_REAPER_STRIKE frames it
+ * reaps every monster on screen (the weak fall, the rest take a heavy hit). */
+#define SOM_REAPER_LEVEL 30u
+#define SOM_REAPER_COOLDOWN 1800ul
+#define SOM_REAPER_FRAMES 72ul
+#define SOM_REAPER_STRIKE 36ul
+static SomReaperArt reaper_art;
+static int reaper_on,reaper_struck;
+static unsigned reaper_who;
+static unsigned long reaper_start;
 static int som_class_move(uint8_t *ram);
 static int som_class_move_raw(uint8_t *ram);
 /* New classes' X (2026-11-20). Hunter: holy water, a flask that lands
@@ -1609,6 +1621,7 @@ static void som_lock_toggle_for(uint8_t *ram,unsigned who);
 static void som_auto_target_frame(uint8_t *ram);
 static void som_class_x_frame(uint8_t *ram);
 static void som_hundred_frame(uint8_t *ram);
+static void som_reaper_frame(uint8_t *ram);
 static void som_issen_cut(uint8_t *ram,int x,int y);
 /* Hold A (Circle) SOM_A_HOLD_FRAMES after an evade: the game's own run. The
  * evade fires on the press; once it is over and A is still held, the game
@@ -3486,7 +3499,7 @@ static void som_input_poll(void){
         if(xram&&!ring_ai_enabled&&!som_manual_disciplines&&
            (som_actor_class()==SOM_DISC_SWORD||som_actor_class()==SOM_DISC_ROGUE||
             som_actor_class()==SOM_DISC_ARCHER||som_actor_class()==SOM_DISC_HUNTER||
-            som_actor_class()==SOM_DISC_ARTIFICER)&&
+            som_actor_class()==SOM_DISC_ARTIFICER||som_actor_class()==SOM_DISC_NECRO)&&
            (current&l2_bit)&&(current&x_bit)&&!(current&r2)&&!special_suppress){
             x_spell_blocked=1;
             if(pressed&x_bit)som_class_move(xram);
@@ -6240,6 +6253,10 @@ static void som_hop_step(void){
         uint8_t *fists=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(fists)som_hundred_frame(fists);
     }
+    if(reaper_on){
+        uint8_t *rr=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        if(rr)som_reaper_frame(rr);
+    }
     if(kawarimi_armed_until){
         uint8_t *armed=backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
         if(armed)som_kawarimi_check(armed);
@@ -6679,7 +6696,11 @@ static int som_class_move_raw(uint8_t *ram){
     if(som_actor_locked(ram))return 0;              /* see SOM_STATUS_LOCKED */
     const unsigned d=som_actor_class();
     if(!ram||evade_active||blink_active||hundred_until)return 0;
-    const char *name=d==SOM_DISC_SWORD?"Whirlwind":d==SOM_DISC_ROGUE?"Shadowstep":
+    if(d==SOM_DISC_NECRO&&disciplines.level[SOM_DISC_NECRO]<SOM_REAPER_LEVEL){
+        char text[48];snprintf(text,sizeof(text),"^Grim Reaper|Necromancy Lv%u",SOM_REAPER_LEVEL);
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/3u);return 0;
+    }
+    const char *name=d==SOM_DISC_NECRO?"Grim Reaper":d==SOM_DISC_SWORD?"Whirlwind":d==SOM_DISC_ROGUE?"Shadowstep":
                      d==SOM_DISC_HUNTER?"Grand Cross":d==SOM_DISC_ARTIFICER?"Mine":"Volley";
     if(d==SOM_DISC_ARTIFICER){                 /* a mine where he stands */
         uint8_t *hero=SOM_ACT(ram);
@@ -6711,6 +6732,20 @@ static int som_class_move_raw(uint8_t *ram){
     uint8_t *hero=SOM_ACT(ram);
     const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
     unsigned hit=0;
+    if(d==SOM_DISC_NECRO){
+        if(!reaper_art.ready){
+            size_t size=0;const uint8_t *rom=som_art_rom(&size);
+            if(!som_reaper_load(&reaper_art,rom,size)){
+                som_overlay_say(&overlay,"^Grim Reaper|not in this ROM",SOM_MESSAGE_FRAMES/3u);return 0;
+            }
+        }
+        reaper_on=1;reaper_struck=0;reaper_start=frame_number;reaper_who=som_actor%SOM_PARTY_MEMBERS;
+        class_move_ready=frame_number+SOM_REAPER_COOLDOWN;
+        fprintf(stderr,"[som-ai] GRIM REAPER rises over %s\n",som_party_names[reaper_who]);
+        char text[48];snprintf(text,sizeof(text),"^Grim Reaper!");
+        som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
+        return 1;
+    }
     if(d==SOM_DISC_SWORD){
         hit=som_bun_blast(ram,hx,hy,14u+2u*disciplines.level[SOM_DISC_SWORD],familiar.slot);
         for(unsigned slot=0;slot<3u;slot++)if(monster_hit_frame[slot]!=frame_number&&(int)slot!=familiar.slot){
@@ -6779,6 +6814,32 @@ static int som_class_move_raw(uint8_t *ram){
     som_overlay_say(&overlay,text,SOM_MESSAGE_FRAMES/2u);
     fprintf(stderr,"[som-ai] %s: %u target(s)\n",name,hit);
     return 1;
+}
+/* The Reaper's strike: every monster on screen (in the camera's view of
+ * the Necromancer), the weak fall, the rest take a hit that grows with
+ * Necromancy; bosses are never reaped at once. Pending damage carries 255 a
+ * hit: more comes off the HP directly. */
+static void som_reaper_frame(uint8_t *ram){
+    if(!reaper_on)return;
+    if(frame_number-reaper_start>=SOM_REAPER_FRAMES||ram[0xE4]!=1u||ram[0xE6]!=0x0Fu){reaper_on=0;return;}
+    if(reaper_struck||frame_number-reaper_start<SOM_REAPER_STRIKE)return;
+    reaper_struck=1;
+    const uint8_t *hero=ram+0xE000u+0x200u*reaper_who;
+    const int hx=(int)som_bun_u16(hero+2),hy=(int)som_bun_u16(hero+4);
+    const unsigned damage=60u+6u*disciplines.level[SOM_DISC_NECRO];
+    unsigned reaped=0,hit=0;
+    for(unsigned slot=0;slot<3u;slot++){
+        if((int)slot==familiar.slot)continue;
+        uint8_t *m=ram+SOM_BUN_MONSTER_BASE+SOM_BUN_OBJECT*slot;
+        if(!som_bun_monster_alive(m)||!som_bun_near((int)som_bun_u16(m+2),(int)som_bun_u16(m+4),hx,hy,128,112))continue;
+        const unsigned hp=som_bun_u16(m+0x182),max_hp=som_bun_u16(m+0x184);
+        const unsigned take=som_reaper_take(hp,max_hp,m[0x180],damage);
+        if(!take)continue;
+        if(take>255u){const unsigned left=hp-(take-255u);m[0x182]=(uint8_t)left;m[0x183]=(uint8_t)(left>>8);}
+        som_class_damage(ram,slot,take>255u?255u:take);
+        if(take>=hp)reaped++;else hit++;
+    }
+    fprintf(stderr,"[som-ai] GRIM REAPER reaps: %u fall, %u hit (damage %u)\n",reaped,hit,damage);
 }
 /* L2+X (monk): Hundred Fists. */
 static int som_hundred_start_raw(uint8_t *ram){
@@ -9177,6 +9238,21 @@ static int som_handle_command(const char *command){
         som_party_class_saved();
         return 1;
     }
+    /* class_level_C_N: class C at level N (tests of level-gated moves) */
+    if(!strncmp(command,"class_level_",12)){
+        unsigned c=0,n=0;
+        if(sscanf(command+12,"%u_%u",&c,&n)!=2||c>=SOM_DISCIPLINE_COUNT||n<1u||n>100u)return 0;
+        disciplines.level[c]=(uint16_t)n;
+        fprintf(stderr,"[som-ai] CLASS %s level %u (test)\n",som_discipline_names[c],n);
+        return 1;
+    }
+    /* class_move: the actor's L2+X class move (Whirlwind ... Grim Reaper) */
+    if(!strcmp(command,"class_move")){
+        uint8_t *cram=backend_retro_get_memory_data?(uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM):NULL;
+        const int ok=cram&&som_class_move(cram);
+        fprintf(stderr,"[som-ai] CLASS MOVE %s (class %u)\n",ok?"done":"refused",som_actor_class());
+        return ok;
+    }
     /* creator_open: the ACT menu's debug creator, for the hero pad 1 plays */
     if(!strcmp(command,"creator_open")){som_gambit_result(SOM_GAMBIT_CREATOR);return 1;}
     /* hair_W_S_C: hero W (0 boy, 1 girl, 2 sprite) wears hair style S in
@@ -10993,7 +11069,7 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
     const int blades=weapon_drawn[0].draw.active||weapon_drawn[1].draw.active||weapon_drawn[2].draw.active;
     if(backend_retro_get_memory_data)
         som_weapon_mask_pick((const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
-    const int worker=(npc_work.active||flykick.active||blades||ukemi_draw.active||companion.draw.active||
+    const int worker=(npc_work.active||flykick.active||blades||ukemi_draw.active||companion.draw.active||reaper_on||
                       (fuma.active&&frame_number>=fuma.start))&&!menu;
     int general_x=-1,general_y=-1;
     char general_text[40]={0};
@@ -11209,6 +11285,31 @@ static void som_video_refresh_inner(const void *data,unsigned width,unsigned hei
                     som_armour_hero(overlay_frame,width,height,pitch,pixel_format,ram,oam_shown,
                         (const uint8_t*)backend_retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM),
                         main_depth&&depth_pitch>=SOM_CAM_W?main_depth:NULL,depth_pitch,who,img,ux0,uy0);
+            }
+            if(reaper_on&&reaper_art.ready){
+                /* the Reaper over the Necromancer: it rises for 12 frames, bobs,
+                 * flashes when it strikes, and fades in its last 12 frames */
+                const unsigned long t=frame_number-reaper_start;
+                const uint8_t *o=ram+0xE000u+0x200u*reaper_who;
+                const unsigned cam=(o[0x0B]&0x80u)?0xACu:0xA8u;
+                const int ax=(int16_t)(som_bun_u16(o+2)-som_bun_u16(ram+cam));
+                const int rise=t<12ul?(int)(12ul-t)*2:0;
+                const int ay=(int16_t)(som_bun_u16(o+4)-som_bun_u16(ram+cam+2u))+rise;
+                const unsigned layout=(unsigned)((t/SOM_REAPER_BOB)&1ul);
+                const int flash=t>=SOM_REAPER_STRIKE&&t<SOM_REAPER_STRIKE+6ul;
+                const int fade=t+12ul>=SOM_REAPER_FRAMES;
+                const unsigned sx=width>=512u?2u:1u,sy=height>=400u?2u:1u;
+                for(int dy=-60;dy<0;dy++)for(int dx=-24;dx<20;dx++){
+                    const uint8_t c=som_reaper_at(&reaper_art,layout,dx,dy);
+                    if(!c)continue;
+                    if(fade&&((dx+dy+(int)t)&1))continue;       /* fading: every other pixel */
+                    const int px=ax+dx,py=ay+dy;
+                    if(px<0||py<0||px>=(int)(width/sx)||py>=(int)(height/sy))continue;
+                    const uint8_t *rgb=reaper_art.rgb[c];
+                    som_overlay_fill(overlay_frame,pitch,pixel_format,(unsigned)px*sx,(unsigned)py*sy,sx,sy,
+                                     flash?som_overlay_color(pixel_format,255,255,255):
+                                           som_overlay_color(pixel_format,rgb[0],rgb[1],rgb[2]));
+                }
             }
             if(fuma.active&&frame_number>=fuma.start)
                 som_npc_work_draw(&fuma,ram,frame_number,overlay_frame,width,height,pitch,

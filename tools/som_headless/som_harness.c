@@ -16,7 +16,7 @@
  *   oam                      print OAM entries in the bottom HUD band
  *   save FILE                serialize, write FILE, check it reloads
  *   unload                   retro_unload_game (exit-time hooks)
- *   dump NAME                write OUTDIR/NAME.wram (128 KiB) and NAME.sram
+ *   dump NAME                write OUTDIR/NAME.wram (128 KiB), NAME.sram and NAME.vram
  *   bench N                  run N frames and print the time per frame
  *   audio NAME               from now on record the audio output (raw stereo
  *                            s16) to OUTDIR/NAME.raw
@@ -453,9 +453,10 @@ int main(int argc,char **argv){
             audio_out=fopen(path,"wb");audio_frames=0;
             fprintf(stderr,"[harness] audio recording to %s\n",path);
         }else if(sscanf(line,"dump %199s",b)==1){
-            const unsigned ids[2]={RETRO_MEMORY_SYSTEM_RAM,RETRO_MEMORY_SAVE_RAM};
-            const char *ext[2]={"wram","sram"};
-            for(unsigned i=0;i<2u;i++){
+            const unsigned ids[3]={RETRO_MEMORY_SYSTEM_RAM,RETRO_MEMORY_SAVE_RAM,RETRO_MEMORY_VIDEO_RAM};
+            const char *ext[3]={"wram","sram","vram"};
+            for(unsigned i=0;i<3u;i++){
+                if(!mem_size(ids[i]))continue;
                 char path[512];snprintf(path,sizeof(path),"%s/%s.%s",outdir,b,ext[i]);
                 FILE *o=fopen(path,"wb");
                 if(o&&mem(ids[i]))fwrite(mem(ids[i]),1,mem_size(ids[i]),o);

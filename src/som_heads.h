@@ -305,4 +305,72 @@ static inline unsigned som_heads_edit_tiles(SomHeadTiles *out,unsigned who,const
     }
     return n;
 }
+/* Prepared frames (tools/som_hair_frames.py; player, 2026-11-28: runtime
+ * hair "its really bad", chose prepared frames): pieces keyed by the FNV-1a
+ * 64 of their four tiles' bytes as the game copied them into video memory
+ * (top-left, top-right, bottom-left, bottom-right), each with its prepared
+ * 16 x 16 colour indices (as stored; the core flips them like the game's).
+ * Nothing is guessed: a piece the pack does not know stays the game's own. */
+#define SOM_FRAME_ENTRY (8u+256u)
+typedef struct { uint8_t *data; unsigned count; } SomFramePack;
+static inline void som_frames_free(SomFramePack *p){free(p->data);p->data=NULL;p->count=0;}
+static inline int som_frames_parse(SomFramePack *p,const uint8_t *b,size_t size){
+    som_frames_free(p);
+    if(!b||size<13u||memcmp(b,"SOMHAIRF1",9))return 0;
+    const unsigned n=b[9]|(unsigned)b[10]<<8|(unsigned)b[11]<<16|(unsigned)b[12]<<24;
+    if(!n||n>65536u||size<13u+(size_t)n*SOM_FRAME_ENTRY)return 0;
+    p->data=(uint8_t*)malloc((size_t)n*SOM_FRAME_ENTRY);
+    if(!p->data)return 0;
+    memcpy(p->data,b+13,(size_t)n*SOM_FRAME_ENTRY);p->count=n;
+    return 1;
+}
+static inline uint64_t som_frame_key_at(const SomFramePack *p,unsigned i){
+    const uint8_t *e=p->data+(size_t)i*SOM_FRAME_ENTRY;uint64_t k=0;
+    for(unsigned b=0;b<8u;b++)k|=(uint64_t)e[b]<<(8u*b);
+    return k;
+}
+static inline const uint8_t *som_frames_find(const SomFramePack *p,uint64_t key){
+    unsigned lo=0,hi=p->count;
+    while(lo<hi){
+        const unsigned mid=(lo+hi)/2u;const uint64_t k=som_frame_key_at(p,mid);
+        if(k==key)return p->data+(size_t)mid*SOM_FRAME_ENTRY+8u;
+        if(k<key)lo=mid+1u;else hi=mid;
+    }
+    return NULL;
+}
+/* The video memory bytes of tile tt (SNES 4bpp, 32 bytes). */
+static inline const uint8_t *som_vram_tile(const uint8_t *vram,unsigned tt){
+    const unsigned word=(tt&256u?0x7000u:0x6000u)+(tt&255u)*16u;
+    return vram+((word*2u)&0xFFFFu);
+}
+/* Hero who's pieces the pack knows, as replacement tiles. Returns how many. */
+static inline unsigned som_frames_hero(SomHeadTiles *out,const SomFramePack *p,unsigned who,
+                                       const uint8_t *oam,const uint8_t *vram){
+    unsigned n=0;
+    if(!p->count)return 0;
+    for(unsigned j=0;j<128u;j++){
+        const uint8_t *o=oam+4u*j;
+        if(!som_armour_piece(o,who))continue;
+        const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+        if(hb&2u)continue;
+        const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8);
+        unsigned tiles[4];uint64_t h=1469598103934665603ull;
+        for(unsigned q=0;q<4u;q++){
+            tiles[q]=(base&256u)|((base+(q&1u)+16u*(q>>1))&255u);
+            const uint8_t *t=som_vram_tile(vram,tiles[q]);
+            for(unsigned b=0;b<32u;b++){h^=t[b];h*=1099511628211ull;}
+        }
+        if(!h)h=1u;
+        const uint8_t *px=som_frames_find(p,h);
+        if(!px)continue;
+        for(unsigned q=0;q<4u;q++){
+            if(out->has[tiles[q]])continue;
+            uint8_t *dst=out->pixels[tiles[q]];
+            for(unsigned ty=0;ty<8u;ty++)for(unsigned tx=0;tx<8u;tx++)
+                dst[ty*8u+tx]=px[((q>>1)*8u+ty)*16u+(q&1u)*8u+tx];
+            out->has[tiles[q]]=1;n++;
+        }
+    }
+    return n;
+}
 #endif

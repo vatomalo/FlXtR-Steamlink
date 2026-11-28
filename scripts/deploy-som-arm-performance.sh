@@ -79,6 +79,7 @@ if [ "$what" = proxy ] || [ "$what" = all ]; then
   install_file build/som-ai/som_weapon_masks.bin "$E/som_weapon_masks.bin" 644
   install_file build/som-ai/som_cartwheel_frames.bin "$E/som_cartwheel_frames.bin" 644
   [ ! -f build/som-ai/som_heads.bin ] || install_file build/som-ai/som_heads.bin "$E/som_heads.bin" 644
+  [ ! -f build/som-ai/som_hair_bald.bin ] || install_file build/som-ai/som_hair_bald.bin "$E/som_hair_bald.bin" 644
   install_file build/som-ai/som_ai_weapon_masks_on "$E/som_ai_weapon_masks_on" 644
 fi
 echo "rollback: bash scripts/rollback-som-arm-performance.sh${host:+ --host $host}"

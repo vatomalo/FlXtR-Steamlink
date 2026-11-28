@@ -339,9 +339,21 @@ static SomHeadPack head_pack;
 static int head_pack_tried;
 static SomHeadTiles head_tiles;
 static unsigned head_tiles_used;
+/* Prepared bald frames (tools/som_hair_frames.py, the boy for now). */
+#define SOM_HAIR_BALD_FILE "/home/apps/retroarch/cores/experimental/som_hair_bald.bin"
+static SomFramePack bald_frames;
 static void som_heads_load(void){
     if(head_pack_tried)return;
     head_pack_tried=1;
+    {
+        FILE *b=fopen(SOM_HAIR_BALD_FILE,"rb");
+        if(b){
+            static uint8_t buf[13u+8192u*SOM_FRAME_ENTRY];
+            const size_t n=fread(buf,1,sizeof(buf),b);fclose(b);
+            if(som_frames_parse(&bald_frames,buf,n))
+                fprintf(stderr,"[som-ai] HAIR prepared bald frames: %u pieces\n",bald_frames.count);
+        }
+    }
     FILE *f=fopen(SOM_HEADS_FILE,"rb");
     if(!f){fprintf(stderr,"[som-ai] HEADS pack missing (%s): hair stays native\n",SOM_HEADS_FILE);return;}
     static uint8_t buf[10u+SOM_HEADS_MAX*SOM_HEAD_ENTRY];
@@ -10081,6 +10093,10 @@ static void som_heads_prepare(void){
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
         const uint8_t *o=ram+0xE000u+0x200u*who;
         if(o[0]!=1u||!creator_hair[who])continue;
+        if(som_hero_own_style(who)==SOM_OWN_BALD&&who==0u&&bald_frames.count){   /* prepared frames: exact */
+            head_tiles_used+=som_frames_hero(&head_tiles,&bald_frames,who,ram+0x0800u,vram);
+            continue;
+        }
         /* the frame itself says which way he faces (the byte lags in turns) */
         static uint8_t img[SOM_ARMOUR_BOX][SOM_ARMOUR_BOX];
         int x0,y0;

@@ -41,6 +41,9 @@ if [[ -n "${SOM_ROM_PATH:-}" ]]; then
   # The game's own heads as creator hair styles (never bundled: ROM-derived).
   python3 tools/som_head_pack.py "$SOM_ROM_PATH" build/som-ai/som_heads.bin
   echo "Staged game heads: build/som-ai/som_heads.bin"
+  # Prepared hair frames (bald, the boy): every frame from the ROM, made offline.
+  python3 tools/som_hair_frames.py "$SOM_ROM_PATH" build/som-ai/som_hair_bald.bin
+  echo "Staged prepared bald frames: build/som-ai/som_hair_bald.bin"
   # Bushido sprite masks: a locally extracted SD3 dagger is optional.
   # Donor images and the ROM are never committed or bundled.
   dagger_args=()

@@ -339,7 +339,7 @@ static SomHeadPack head_pack;
 static int head_pack_tried;
 static SomHeadTiles head_tiles;
 static unsigned head_tiles_used;
-/* Prepared bald frames (tools/som_hair_frames.py, the boy for now). */
+/* Prepared bald and ROM-head hair variants (tools/som_hair_frames.py). */
 #define SOM_HAIR_BALD_FILE "/home/apps/retroarch/cores/experimental/som_hair_bald.bin"
 static SomFramePack bald_frames;
 unsigned long som_frames_seen,som_frames_hit,som_frames_miss;
@@ -349,10 +349,19 @@ static void som_heads_load(void){
     {
         FILE *b=fopen(SOM_HAIR_BALD_FILE,"rb");
         if(b){
-            static uint8_t buf[13u+8192u*SOM_FRAME_ENTRY];
-            const size_t n=fread(buf,1,sizeof(buf),b);fclose(b);
-            if(som_frames_parse(&bald_frames,buf,n))
-                fprintf(stderr,"[som-ai] HAIR prepared bald frames: %u pieces\n",bald_frames.count);
+            if(fseek(b,0,SEEK_END)==0){
+                const long length=ftell(b);
+                if(length>0&&length<=8L*1024L*1024L&&fseek(b,0,SEEK_SET)==0){
+                    uint8_t *buf=(uint8_t*)malloc((size_t)length);
+                    if(buf){
+                        const size_t n=fread(buf,1,(size_t)length,b);
+                        if(n==(size_t)length&&som_frames_parse(&bald_frames,buf,n))
+                            fprintf(stderr,"[som-ai] HAIR prepared variants: %u pieces\n",bald_frames.count);
+                        free(buf);
+                    }
+                }
+            }
+            fclose(b);
         }
     }
     FILE *f=fopen(SOM_HEADS_FILE,"rb");
@@ -363,7 +372,8 @@ static void som_heads_load(void){
     else fprintf(stderr,"[som-ai] HEADS pack unreadable\n");
 }
 /* creator_hair[w]: 0 native, 1-5 own-hair styles (som_hair_styles.h),
- * 6+ the game heads (experimental). */
+ * 6+ ROM heads; the leader has precompiled variants, other slots use the
+ * existing live head compositor. */
 static const uint8_t *som_hero_head(unsigned who){
     return who<SOM_PARTY_MEMBERS&&creator_hair[who]>=SOM_OWN_STYLES?
         som_head_entry(&head_pack,creator_hair[who]-SOM_OWN_STYLES):NULL;
@@ -10094,8 +10104,21 @@ static void som_heads_prepare(void){
     for(unsigned who=0;who<SOM_PARTY_MEMBERS;who++){
         const uint8_t *o=ram+0xE000u+0x200u*who;
         if(o[0]!=1u||!creator_hair[who])continue;
-        if(som_hero_own_style(who)==SOM_OWN_BALD&&who==0u&&bald_frames.count){   /* prepared frames: exact */
-            head_tiles_used+=som_frames_hero(&head_tiles,&bald_frames,who,ram+0x0800u,vram);
+        const unsigned own_style=som_hero_own_style(who);
+        const uint8_t *borrowed_head=som_hero_head(who);
+        unsigned prepared_style=0;
+        int has_prepared_style=0;
+        if(own_style==SOM_OWN_BALD)has_prepared_style=1;
+        else if(borrowed_head){
+            prepared_style=(unsigned)creator_hair[who]-(unsigned)SOM_OWN_STYLES+1u;
+            has_prepared_style=1;
+        }
+        if(who==0u&&bald_frames.count&&has_prepared_style&&
+           som_frames_has_style(&bald_frames,prepared_style)){
+            /* These pose-specific bald/head composites are compiled from ROM
+             * frames. Gameplay does one keyed lookup; it never aligns or
+             * composes the hairstyle here. */
+            head_tiles_used+=som_frames_hero(&head_tiles,&bald_frames,who,ram+0x0800u,vram,prepared_style);
             static int dbg=-1;
             if(dbg<0){const char *e=getenv("FLXTR_SOM_HAIR_DEBUG");dbg=e&&!strcmp(e,"1");}
             if(dbg&&frame_number%300u==0u&&som_frames_seen)

@@ -65,7 +65,9 @@ Skin selection is applied by the existing party palette path, without
 substituting the character's body, pose or movement. It is session-only.
 Some native colours are shared across regions, so only the verified skin
 shade entries are changed. Hair styles, replacement face and eye layers,
-per-pose attachment coordinates, and save persistence remain pending.
+replacement face and eye layers, user-adjustable attachment coordinates, and
+save persistence remain pending. Leader hair variants are generated from the
+native animation set by the compiler described below.
 The test checks cancel and reopen, reversible layer controls, a held
 confirm without a leaked glyph, and an accepted name entering the story.
 
@@ -78,7 +80,8 @@ transform shades the torso with the selected skin palette, removes the outfit
 pattern, and preserves the native shoulders, stance and placement. Both transforms
 operate on a scratch tile row. Transparent pixels expose the game background,
 so there is no scenery reconstruction. The mapping is specific to the naming
-preview. Gameplay continues to use its original animation and equipment art.
+preview. Gameplay keeps its original animation and equipment geometry; the
+leader can use the compiled bald or borrowed-hair pixel variant.
 
 The scalp sits below the removed hair volume. The torso uses the selected
 skin ramp and shades the cowl footprint as part of the native shoulders.
@@ -92,15 +95,17 @@ Turbo ROM: the heroes and the villagers, monsters and objects left out),
 built at deploy time by `tools/som_head_pack.py` into `som_heads.bin`
 (ROM-derived, never committed or bundled). Each head is the top piece row of
 the standing frame, facing up, down and side, 16 x 16, with its colours stored
-by role (outline, hair, skin, white, others). In the field the proxy finds the
-hero's pieces in the OAM shadow before each frame and hands the core
-replacement tiles through the sprite atlas hook: the borrowed head inside
-its square, the game's own pixels outside, the old hair cleared where the head
-has none. The core draws them with native priority, clipping and transparency.
-Colours use the hero's palette: hair on entries 2-4 (the head's own hair
-colour, or the COLOUR row's), skin on the hero's skin, others on the nearest
-hero colour. Limits: tiles the game draws twice (the girl's and the sprite's
-mirrored halves facing up and down) carry one picture, so those views are
-mirrored; blank tiles are left alone, so a head wider than the hero's own
-pieces is cut at their edge; non-standing poses reuse the standing head.
-The drawn hair caps of the first attempt were removed.
+by role (outline, hair, skin, white, others). For the leader, the asset
+compiler aligns each borrowed hairstyle to the native eyes in every extracted
+animation pose; poses without visible eyes use that pose's own hair bounds.
+It overlays the hair on the pose-specific bald frame and emits style-tagged
+tile replacements. A nearest-neighbour uniform scale is clamped to 0.75–1.25
+to keep donor hair within the host head proportions. Gameplay selects the
+prepared style and performs direct pose-aware tile lookup, so it does not
+align, mask or composite hair each frame. Native OAM positions, priority,
+clipping and transparency remain in control.
+Hair roles map to the hero's palette entries 2-4, skin uses the native skin
+indices, and other source colours map to the nearest hero palette colour.
+The native animation pose and tile footprint stay intact. If a source frame
+or tile has no safe prepared match, the game keeps its original sprite piece.
+Other party slots still use the existing runtime path.

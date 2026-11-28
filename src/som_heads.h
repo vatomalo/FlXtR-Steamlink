@@ -21,6 +21,7 @@
  * there; the game's blank tiles are left alone, so a head wider than the
  * hero's own pieces is cut at their edge. Same code for all three heroes. */
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -306,18 +307,15 @@ static inline unsigned som_heads_edit_tiles(SomHeadTiles *out,unsigned who,const
     }
     return n;
 }
-/* Prepared frames (tools/som_hair_frames.py; player, 2026-11-28: runtime
- * hair "its really bad", chose prepared frames): pieces keyed by the FNV-1a
- * 64 of their four tiles' bytes as the game copied them into video memory
- * (top-left, top-right, bottom-left, bottom-right), each with its prepared
- * 16 x 16 colour indices (as stored; the core flips them like the game's).
- * Nothing is guessed: a piece the pack does not know stays the game's own. */
-#define SOM_FRAME_ENTRY (8u+256u)
+/* Prepared bald and hair frames (tools/som_hair_frames.py): style-tagged
+ * pieces keyed by the FNV-1a 64 of their four source tiles. Entries contain
+ * 16 x 16 colour indices as stored, before the core applies OAM flips. */
+#define SOM_FRAME_ENTRY (16u+256u)
 typedef struct { uint8_t *data; unsigned count; } SomFramePack;
 static inline void som_frames_free(SomFramePack *p){free(p->data);p->data=NULL;p->count=0;}
 static inline int som_frames_parse(SomFramePack *p,const uint8_t *b,size_t size){
     som_frames_free(p);
-    if(!b||size<13u||memcmp(b,"SOMHAIRF1",9))return 0;
+    if(!b||size<13u||memcmp(b,"SOMHAIRF3",9))return 0;
     const unsigned n=b[9]|(unsigned)b[10]<<8|(unsigned)b[11]<<16|(unsigned)b[12]<<24;
     if(!n||n>65536u||size<13u+(size_t)n*SOM_FRAME_ENTRY)return 0;
     p->data=(uint8_t*)malloc((size_t)n*SOM_FRAME_ENTRY);
@@ -326,35 +324,125 @@ static inline int som_frames_parse(SomFramePack *p,const uint8_t *b,size_t size)
     return 1;
 }
 static inline uint64_t som_frame_key_at(const SomFramePack *p,unsigned i){
-    const uint8_t *e=p->data+(size_t)i*SOM_FRAME_ENTRY;uint64_t k=0;
+    const uint8_t *e=p->data+(size_t)i*SOM_FRAME_ENTRY+8u;uint64_t k=0;
     for(unsigned b=0;b<8u;b++)k|=(uint64_t)e[b]<<(8u*b);
     return k;
 }
-static inline const uint8_t *som_frames_find(const SomFramePack *p,uint64_t key){
+static inline unsigned som_frame_style_at(const SomFramePack *p,unsigned i){
+    const uint8_t *e=p->data+(size_t)i*SOM_FRAME_ENTRY;
+    return e[0]|(unsigned)e[1]<<8;
+}
+static inline int som_frame_context_cmp(const SomFramePack *p,unsigned i,unsigned style,unsigned view,
+                                        unsigned mirror,int dx,int dy,unsigned hflip,unsigned vflip){
+    const uint8_t *e=p->data+(size_t)i*SOM_FRAME_ENTRY;
+    const unsigned es=e[0]|(unsigned)e[1]<<8;
+    if(es!=style)return es<style?-1:1;
+    if(e[2]!=view)return e[2]<view?-1:1;
+    if(e[3]!=mirror)return e[3]<mirror?-1:1;
+    if((int8_t)e[4]!=dx)return (int8_t)e[4]<dx?-1:1;
+    if((int8_t)e[5]!=dy)return (int8_t)e[5]<dy?-1:1;
+    if(e[6]!=hflip)return e[6]<hflip?-1:1;
+    if(e[7]!=vflip)return e[7]<vflip?-1:1;
+    return 0;
+}
+static inline const uint8_t *som_frames_find(const SomFramePack *p,unsigned style,unsigned view,unsigned mirror,
+                                            int dx,int dy,unsigned hflip,unsigned vflip,uint64_t key){
     unsigned lo=0,hi=p->count;
     while(lo<hi){
-        const unsigned mid=(lo+hi)/2u;const uint64_t k=som_frame_key_at(p,mid);
-        if(k==key)return p->data+(size_t)mid*SOM_FRAME_ENTRY+8u;
-        if(k<key)lo=mid+1u;else hi=mid;
+        const unsigned mid=(lo+hi)/2u;
+        const int cmp=som_frame_context_cmp(p,mid,style,view,mirror,dx,dy,hflip,vflip);
+        const uint64_t k=som_frame_key_at(p,mid);
+        if(!cmp&&k==key)return p->data+(size_t)mid*SOM_FRAME_ENTRY+16u;
+        if(cmp<0||(!cmp&&k<key))lo=mid+1u;else hi=mid;
     }
     return NULL;
+}
+static inline int som_frames_has_style(const SomFramePack *p,unsigned style){
+    unsigned lo=0,hi=p->count;
+    while(lo<hi){
+        const unsigned mid=(lo+hi)/2u,s=som_frame_style_at(p,mid);
+        if(s==style)return 1;
+        if(s<style)lo=mid+1u;else hi=mid;
+    }
+    return 0;
 }
 /* The video memory bytes of tile tt (SNES 4bpp, 32 bytes). */
 static inline const uint8_t *som_vram_tile(const uint8_t *vram,unsigned tt){
     const unsigned word=(tt&256u?0x7000u:0x6000u)+(tt&255u)*16u;
     return vram+((word*2u)&0xFFFFu);
 }
+typedef struct {int x,y,valid;unsigned view,mirror;} SomFrameAnchor;
+static inline unsigned som_frame_pixel(const uint8_t *vram,unsigned base,unsigned x,unsigned y){
+    const uint8_t *row=som_armour_row(vram,base,x/8u,y);
+    const unsigned bit=7u-(x&7u);
+    return ((row[0]>>bit)&1u)|(((row[1]>>bit)&1u)<<1)|
+           (((row[16]>>bit)&1u)<<2)|(((row[17]>>bit)&1u)<<3);
+}
+/* Locate this native pose's head from its pixels, using the same eye and
+ * hair rules as the offline compiler. No replacement pixels are composed. */
+static inline SomFrameAnchor som_frame_anchor(unsigned who,const uint8_t *oam,const uint8_t *vram){
+    SomFrameAnchor a={0,0,0,0,0};
+    int minx=INT_MAX,miny=INT_MAX,maxx=INT_MIN;
+    for(unsigned j=0;j<128u;j++){
+        const uint8_t *o=oam+4u*j;
+        if(!som_armour_piece(o,who))continue;
+        const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+        if(hb&2u)continue;
+        const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8),hf=(o[3]>>6)&1u,vf=(o[3]>>7)&1u;
+        int px=o[0]+256*(int)(hb&1u);if(px>=256)px-=512;
+        for(unsigned y=0;y<16u;y++)for(unsigned x=0;x<16u;x++){
+            const unsigned c=som_frame_pixel(vram,base,x,y);
+            if(c<2u||c>4u)continue;
+            const int sx=px+(int)(hf?15u-x:x),sy=o[1]+(int)(vf?15u-y:y);
+            if(sx<minx)minx=sx;
+            if(sx>maxx)maxx=sx;
+            if(sy<miny)miny=sy;
+        }
+    }
+    if(minx==INT_MAX)return a;
+    a.valid=1;
+    const int cx=(minx+maxx+1)/2;
+    int sumx=0,sumy=0,count=0,columns[512]={0};
+    for(unsigned j=0;j<128u;j++){
+        const uint8_t *o=oam+4u*j;
+        if(!som_armour_piece(o,who))continue;
+        const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
+        if(hb&2u)continue;
+        const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8),hf=(o[3]>>6)&1u,vf=(o[3]>>7)&1u;
+        int px=o[0]+256*(int)(hb&1u);if(px>=256)px-=512;
+        for(unsigned y=0;y<16u;y++)for(unsigned x=0;x<16u;x++){
+            if(som_frame_pixel(vram,base,x,y)!=15u)continue;
+            const int sx=px+(int)(hf?15u-x:x),sy=o[1]+(int)(vf?15u-y:y);
+            if(sy<miny+3||sy>=miny+24||sx<minx-4||sx>maxx+4)continue;
+            sumx+=sx;sumy+=sy;count++;
+            if(sx>=-256&&sx<256)columns[sx+256]=1;
+        }
+    }
+    if(!count){a.view=0;a.x=cx;a.y=miny;return a;}
+    const int ex=sumx/count,ey=sumy/count;
+    unsigned clusters=0;int previous=-9;
+    for(int i=0;i<512;i++)if(columns[i]){if(i-previous>2)clusters++;previous=i;}
+    if(clusters>=2u){a.view=1;a.x=ex;a.y=ey;}
+    else{a.view=2u;a.mirror=ex<cx;a.x=ex;a.y=ey;}
+    return a;
+}
 /* Hero who's pieces the pack knows, as replacement tiles. Returns how many. */
 static inline unsigned som_frames_hero(SomHeadTiles *out,const SomFramePack *p,unsigned who,
-                                       const uint8_t *oam,const uint8_t *vram){
+                                       const uint8_t *oam,const uint8_t *vram,unsigned style){
     unsigned n=0;
     if(!p->count)return 0;
+    const SomFrameAnchor anchor=som_frame_anchor(who,oam,vram);
+    if(!anchor.valid)return 0;
+    uint8_t ambiguous[512]={0};
     for(unsigned j=0;j<128u;j++){
         const uint8_t *o=oam+4u*j;
         if(!som_armour_piece(o,who))continue;
         const unsigned hb=(oam[512u+j/4u]>>(2u*(j%4u)))&3u;
         if(hb&2u)continue;
         const unsigned base=o[2]|((unsigned)(o[3]&1u)<<8);
+        const unsigned hflip=(o[3]>>6)&1u,vflip=(o[3]>>7)&1u;
+        int px=o[0]+256*(int)(hb&1u);if(px>=256)px-=512;
+        const int dx=px-anchor.x,dy=(int)o[1]-anchor.y;
         unsigned tiles[4];uint64_t h=1469598103934665603ull;
         for(unsigned q=0;q<4u;q++){
             tiles[q]=(base&256u)|((base+(q&1u)+16u*(q>>1))&255u);
@@ -362,7 +450,7 @@ static inline unsigned som_frames_hero(SomHeadTiles *out,const SomFramePack *p,u
             for(unsigned b=0;b<32u;b++){h^=t[b];h*=1099511628211ull;}
         }
         if(!h)h=1u;
-        const uint8_t *px=som_frames_find(p,h);
+        const uint8_t *pixels=som_frames_find(p,style,anchor.view,anchor.mirror,dx,dy,hflip,vflip,h);
         {   /* FLXTR_SOM_HAIR_DEBUG: pieces with hair (2-4) the pack missed */
             extern unsigned long som_frames_seen,som_frames_hit,som_frames_miss;
             int hair=0;
@@ -374,7 +462,7 @@ static inline unsigned som_frames_hero(SomHeadTiles *out,const SomFramePack *p,u
                 }
             }
             som_frames_seen++;
-            if(px)som_frames_hit++;else if(hair){som_frames_miss++;
+            if(pixels)som_frames_hit++;else if(hair){som_frames_miss++;
                 static unsigned logged;
                 static int dbg=-1;
                 if(dbg<0){const char *e=getenv("FLXTR_SOM_HAIR_DEBUG");dbg=e&&!strcmp(e,"1");}
@@ -382,13 +470,19 @@ static inline unsigned som_frames_hero(SomHeadTiles *out,const SomFramePack *p,u
                     (unsigned long long)h,tiles[0],tiles[1],tiles[2],tiles[3]);}
             }
         }
-        if(!px)continue;
+        if(!pixels)continue;
         for(unsigned q=0;q<4u;q++){
-            if(out->has[tiles[q]])continue;
-            uint8_t *dst=out->pixels[tiles[q]];
+            const unsigned tile=tiles[q];
+            if(ambiguous[tile])continue;
+            uint8_t candidate[64];
             for(unsigned ty=0;ty<8u;ty++)for(unsigned tx=0;tx<8u;tx++)
-                dst[ty*8u+tx]=px[((q>>1)*8u+ty)*16u+(q&1u)*8u+tx];
-            out->has[tiles[q]]=1;n++;
+                candidate[ty*8u+tx]=pixels[((q>>1)*8u+ty)*16u+(q&1u)*8u+tx];
+            if(out->has[tile]){
+                if(memcmp(out->pixels[tile],candidate,sizeof(candidate))){out->has[tile]=0;ambiguous[tile]=1;n--;}
+                continue;
+            }
+            memcpy(out->pixels[tile],candidate,sizeof(candidate));
+            out->has[tile]=1;n++;
         }
     }
     return n;

@@ -197,11 +197,22 @@ def _clusters(xs):
 
 
 def target_head(native):
-    """Find this pose's facing, eye anchor and native hair bounds."""
+    """Find this pose's facing, eye anchor and complete hair silhouette.
+
+    Palette indices 2-4 are the hair fill. Include only attached index-1
+    outline pixels in the measured bounds so host and donor boxes both cover
+    the full sprite, for each of the three ROM views (side mirrored to left).
+    """
     hair = [(x, y) for y, row in enumerate(native) for x, c in enumerate(row) if c in HAIR]
     if not hair:
         return None
-    xs, ys = [p[0] for p in hair], [p[1] for p in hair]
+    shape = set(hair)
+    for x, y in hair:
+        shape.update((nx, ny) for nx, ny in ((x-1,y-1),(x,y-1),(x+1,y-1),
+                                              (x-1,y),(x+1,y),
+                                              (x-1,y+1),(x,y+1),(x+1,y+1))
+                     if 0 <= nx < SIZE and 0 <= ny < SIZE and native[ny][nx] == 1)
+    xs, ys = [p[0] for p in shape], [p[1] for p in shape]
     left, right, top = min(xs), max(xs), min(ys)
     cx = (left + right + 1) // 2
     eye_points = [(x, y) for y in range(max(0, top + 3), min(SIZE, top + 24))
@@ -220,7 +231,14 @@ def _nearest_palette(rgb, palette):
 
 
 def overlay_head(base, native, head, palette):
-    """Precompose one source hairstyle at the native pose's measured anchor."""
+    """Precompose a matching-angle hairstyle against this pose's bare skull.
+
+    Every native animation pose is aligned separately. The donor's three
+    actual ROM views (back, front, profile) are selected independently; the
+    profile is mirrored for the opposite facing. Scale is measured separately
+    for width and height from each full hair silhouette, while the eyes anchor
+    front/profile views. This avoids treating one angle as a universal fit.
+    """
     target = target_head(native)
     if target is None:
         return [row[:] for row in base]
@@ -231,10 +249,16 @@ def overlay_head(base, native, head, palette):
     if not hair:
         return [row[:] for row in base]
     sx, sy = [p[0] for p in hair], [p[1] for p in hair]
-    left, right, top, bottom = bounds
-    fit = min((right - left + 1) / (max(sx) - min(sx) + 1),
-              (bottom - top + 1) / (max(sy) - min(sy) + 1))
-    scale = max(HEAD_SCALE_MIN, min(HEAD_SCALE_MAX, fit))
+    left, top, right, bottom = bounds
+    # Measure the donor hair and host hair silhouette separately for this
+    # exact pose. Independent axes matter: profiles are narrower than front
+    # views and attacks/falls change the visible hair height.
+    scale_x = max(HEAD_SCALE_MIN, min(HEAD_SCALE_MAX,
+        (right - left + 1) / (max(sx) - min(sx) + 1)))
+    scale_y = max(HEAD_SCALE_MIN, min(HEAD_SCALE_MAX,
+        (bottom - top + 1) / (max(sy) - min(sy) + 1)))
+    # Eye placement anchors front/profile views; back views use the crown and
+    # centre. These anchors are recalculated for every native animation pose.
     if view != 0 and eyes[view] is not None:
         src_eye_x, src_eye_y = eyes[view]
         if mirror:
@@ -249,8 +273,8 @@ def overlay_head(base, native, head, palette):
             if not encoded & 0x80:
                 continue
             mx = 15 - x if mirror else x
-            tx = int(round(target_anchor[0] + (mx - src_anchor[0]) * scale))
-            ty = int(round(target_anchor[1] + (y - src_anchor[1]) * scale))
+            tx = int(round(target_anchor[0] + (mx - src_anchor[0]) * scale_x))
+            ty = int(round(target_anchor[1] + (y - src_anchor[1]) * scale_y))
             if not (0 <= tx < SIZE and 0 <= ty < SIZE):
                 continue
             role = encoded & 0x7F

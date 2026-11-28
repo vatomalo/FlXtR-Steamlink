@@ -41,7 +41,11 @@ UKEMI_TIMING = (2, 3, 3, 3, 3, 4)
 # his facing, he dashes forward facing forward. Kinds 0xC8 + hero, side only.
 FORWARD_KIND_BASE = 0xC8
 FORWARD_WEAPON = 0xF9
-FORWARD_FRAMES = ((0, 65), (0, 66), (0, 67), (0xC0, 66), (0, 65))
+# Side (player, 2026-11-28: "make the swordman cartwheel jump to the sides
+# with an animation equivalent to the forwards and back"): a jump like the
+# up and down ones, the side crouch 45 and the airborne 46 (both face right),
+# no longer the game's sideways flip 65-67.
+FORWARD_FRAMES = ((0, 45), (0, 46), (0, 46), (0, 46), (0, 45))
 # The game's own back and front cartwheel (pose 0x93 facing up and down), for
 # maps where it refuses the reaction (2026-11-25). Facing 0 up, 1 down, 2 side.
 FORWARD_BY_FACING = {0: ((0, 47), (0, 42), (0, 48), (0, 42), (0, 47)),

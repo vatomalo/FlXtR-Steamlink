@@ -807,7 +807,9 @@ static int som_art_bottom(const uint8_t *cell){
 static int som_art_hero_moves(const uint8_t *rom,size_t size,SomArtOut *o){
     static const uint8_t tumble[3][6]={{47,142,143,144,145,47},{49,138,139,140,141,49},{45,134,135,136,137,45}};
     static const uint8_t tumble_ticks[6]={2,3,3,3,3,4};
-    static const uint8_t forward[3][5]={{47,42,48,42,47},{49,50,50,50,49},{65,66,67,66,65}};
+    /* up, down, side: the side is now a jump like the other two (crouch 45,
+     * airborne 46; player, 2026-11-28), not the game's sideways flip 65-67 */
+    static const uint8_t forward[3][5]={{47,42,48,42,47},{49,50,50,50,49},{45,46,46,46,45}};
     static const uint8_t kick[3][2]={{92,93},{90,91},{88,89}};
     SomArtRom g={rom,size,0};
     SomArtCell cell,turned;
@@ -852,7 +854,7 @@ static int som_art_hero_moves(const uint8_t *rom,size_t size,SomArtOut *o){
         for(unsigned facing=0;facing<3u;facing++){    /* the game's own cartwheel */
             som_art_entry(o,0xC8u+who,0xF9u,facing,5u,colours);
             for(unsigned i=0;i<5u;i++){
-                som_art_cell(&g,who,SOM_ART_NO_WEAPON,forward[facing][i],facing==2u&&i==3u?0xC0u:0u,cell);
+                som_art_cell(&g,who,SOM_ART_NO_WEAPON,forward[facing][i],0u,cell);
                 som_art_cell_frame(o,cell,1u);
             }
         }

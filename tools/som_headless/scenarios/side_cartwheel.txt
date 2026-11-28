@@ -1,0 +1,41 @@
+# The cartwheel classes' sideways evade is a jump like the up and down ones
+# (crouch 45, airborne 46), not the game's sideways flip (local x86, .srm:
+# the girl leads; she becomes a Swordsman and evades right, then left).
+frames 900
+hold START 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 200
+hold B 4
+frames 400
+cmd camera_off
+cmd party_class_1_0
+frames 30
+hold RIGHT 2
+frames 20
+hold RIGHT,A 1
+frames 2
+shot r1
+frames 5
+shot r2
+frames 5
+shot r3
+frames 5
+shot r4
+frames 5
+shot r5
+frames 30
+hold LEFT 2
+frames 20
+hold LEFT,A 1
+frames 2
+shot l1
+frames 5
+shot l2
+frames 5
+shot l3
+frames 5
+shot l4
+frames 30

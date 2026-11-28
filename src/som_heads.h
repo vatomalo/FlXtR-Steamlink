@@ -21,6 +21,7 @@
  * there; the game's blank tiles are left alone, so a head wider than the
  * hero's own pieces is cut at their edge. Same code for all three heroes. */
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "som_armour.h"
@@ -362,6 +363,25 @@ static inline unsigned som_frames_hero(SomHeadTiles *out,const SomFramePack *p,u
         }
         if(!h)h=1u;
         const uint8_t *px=som_frames_find(p,h);
+        {   /* FLXTR_SOM_HAIR_DEBUG: pieces with hair (2-4) the pack missed */
+            extern unsigned long som_frames_seen,som_frames_hit,som_frames_miss;
+            int hair=0;
+            for(unsigned q=0;q<4u&&!hair;q++){
+                const uint8_t *t=som_vram_tile(vram,tiles[q]);
+                for(unsigned y=0;y<8u&&!hair;y++)for(unsigned b=0;b<8u;b++){
+                    const unsigned c=((t[2u*y]>>b)&1u)|(((t[2u*y+1u]>>b)&1u)<<1)|(((t[16u+2u*y]>>b)&1u)<<2)|(((t[17u+2u*y]>>b)&1u)<<3);
+                    if(c>=2u&&c<=4u){hair=1;break;}
+                }
+            }
+            som_frames_seen++;
+            if(px)som_frames_hit++;else if(hair){som_frames_miss++;
+                static unsigned logged;
+                static int dbg=-1;
+                if(dbg<0){const char *e=getenv("FLXTR_SOM_HAIR_DEBUG");dbg=e&&!strcmp(e,"1");}
+                if(dbg&&logged<12u){logged++;fprintf(stderr,"[som-ai] HAIR miss key %016llx tiles %03X %03X %03X %03X\n",
+                    (unsigned long long)h,tiles[0],tiles[1],tiles[2],tiles[3]);}
+            }
+        }
         if(!px)continue;
         for(unsigned q=0;q<4u;q++){
             if(out->has[tiles[q]])continue;

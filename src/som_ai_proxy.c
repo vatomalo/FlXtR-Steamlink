@@ -342,6 +342,7 @@ static unsigned head_tiles_used;
 /* Prepared bald frames (tools/som_hair_frames.py, the boy for now). */
 #define SOM_HAIR_BALD_FILE "/home/apps/retroarch/cores/experimental/som_hair_bald.bin"
 static SomFramePack bald_frames;
+unsigned long som_frames_seen,som_frames_hit,som_frames_miss;
 static void som_heads_load(void){
     if(head_pack_tried)return;
     head_pack_tried=1;
@@ -10095,6 +10096,11 @@ static void som_heads_prepare(void){
         if(o[0]!=1u||!creator_hair[who])continue;
         if(som_hero_own_style(who)==SOM_OWN_BALD&&who==0u&&bald_frames.count){   /* prepared frames: exact */
             head_tiles_used+=som_frames_hero(&head_tiles,&bald_frames,who,ram+0x0800u,vram);
+            static int dbg=-1;
+            if(dbg<0){const char *e=getenv("FLXTR_SOM_HAIR_DEBUG");dbg=e&&!strcmp(e,"1");}
+            if(dbg&&frame_number%300u==0u&&som_frames_seen)
+                fprintf(stderr,"[som-ai] HAIR frames: pieces %lu, prepared %lu, hair pieces missed %lu\n",
+                        som_frames_seen,som_frames_hit,som_frames_miss);
             continue;
         }
         /* the frame itself says which way he faces (the byte lags in turns) */
